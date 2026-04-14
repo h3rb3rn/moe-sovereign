@@ -1,7 +1,7 @@
 """
 User-management database for MoE Admin UI.
 Postgres (psycopg3) via a module-global AsyncConnectionPool + bcrypt for passwords.
-Redis sync for fast auth lookups in the orchestrator.
+Valkey sync for fast auth lookups in the orchestrator.
 """
 
 import asyncio
@@ -666,7 +666,7 @@ async def get_all_granted_model_endpoints() -> list[str]:
 
 
 async def get_permissions_map(user_id: str) -> dict:
-    """Returns compact {resource_type: [resource_id, ...]} for Redis cache."""
+    """Returns compact {resource_type: [resource_id, ...]} for Valkey cache."""
     perms = await get_permissions(user_id)
     result: dict = {}
     for p in perms:
@@ -709,7 +709,7 @@ async def list_api_keys(user_id: str) -> list[dict]:
 
 
 async def revoke_api_key(key_id: str) -> Optional[str]:
-    """Locks a key; returns key_hash for Redis DEL."""
+    """Locks a key; returns key_hash for Valkey DEL."""
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute("SELECT key_hash FROM api_keys WHERE id=%s", (key_id,))
@@ -722,7 +722,7 @@ async def revoke_api_key(key_id: str) -> Optional[str]:
 
 
 async def get_active_key_hashes(user_id: str) -> list[dict]:
-    """All active API keys for a user (id + key_hash + cc_profile_id) for Redis sync."""
+    """All active API keys for a user (id + key_hash + cc_profile_id) for Valkey sync."""
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -1110,10 +1110,10 @@ async def admin_delete_user_cc_profile(profile_id: str) -> Optional[str]:
             return user_id if cur.rowcount > 0 else None
 
 
-# ─── Redis Sync ──────────────────────────────────────────────────────────────
+# ─── Valkey Sync ──────────────────────────────────────────────────────────────
 
 async def _get_redis():
-    """Lazy Redis connection (only when Redis is available)."""
+    """Lazy Valkey connection (only when Valkey is available)."""
     try:
         import redis.asyncio as aioredis
         r = aioredis.from_url(REDIS_URL, decode_responses=True)
@@ -1148,7 +1148,7 @@ def _get_user_cost_factor(perms: dict) -> float:
 
 
 async def sync_user_to_redis(user_id: str) -> None:
-    """Synct alle aktiven Keys eines Users in den Redis-Cache."""
+    """Synct alle aktiven Keys eines Users in den Valkey-Cache."""
     user = await get_user(user_id)
     if not user:
         return
@@ -1206,7 +1206,7 @@ async def sync_user_to_redis(user_id: str) -> None:
 
 
 async def invalidate_user_redis(user_id: str) -> None:
-    """Deletes all Redis keys for a user (on deactivation/deletion)."""
+    """Deletes all Valkey keys for a user (on deactivation/deletion)."""
     r = await _get_redis()
     if not r:
         return
@@ -1219,7 +1219,7 @@ async def invalidate_user_redis(user_id: str) -> None:
 
 
 async def invalidate_api_key_redis(key_hash: str) -> None:
-    """Deletes a single key from Redis (on revoke)."""
+    """Deletes a single key from Valkey (on revoke)."""
     r = await _get_redis()
     if not r:
         return
@@ -1230,7 +1230,7 @@ async def invalidate_api_key_redis(key_hash: str) -> None:
 
 
 async def get_redis_budget_usage(user_id: str) -> dict:
-    """Liest aktuellen Token-Verbrauch aus Redis-Countern (inkl. Input/Output-Trennung)."""
+    """Liest aktuellen Token-Verbrauch aus Valkey-Countern (inkl. Input/Output-Trennung)."""
     from datetime import date
     today = date.today().strftime("%Y-%m-%d")
     month = date.today().strftime("%Y-%m")

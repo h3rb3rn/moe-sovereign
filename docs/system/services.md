@@ -158,7 +158,7 @@ Metrics scraper. Collects metrics from the orchestrator, node exporter, and cAdv
 - **Image:** `prom/prometheus:latest`
 - **Port:** `9090`
 - **Retention:** 90 days
-- **Configuration:** `/opt/deployment/moe-sovereign/moe-infra/prometheus/prometheus.yml`
+- **Configuration:** `/opt/moe-sovereign/prometheus/prometheus.yml`
 
 ---
 
@@ -344,8 +344,8 @@ graph TD
 
 | Service | Host Path | Container Path |
 |---|---|---|
-| `langgraph-orchestrator` | `/opt/deployment/moe-sovereign/moe-infra/.env` | `/app/.env` (ro) |
-| `moe-admin` | `/opt/deployment/moe-sovereign/moe-infra/.env` | `/app/.env` (rw) |
+| `langgraph-orchestrator` | `/opt/moe-sovereign/.env` | `/app/.env` (ro) |
+| `moe-admin` | `/opt/moe-sovereign/.env` | `/app/.env` (rw) |
 | `moe-prometheus` | `./prometheus/prometheus.yml` | `/etc/prometheus/prometheus.yml` (ro) |
 | `moe-grafana` | `./grafana/provisioning` | `/etc/grafana/provisioning` (ro) |
 
@@ -414,11 +414,11 @@ sudo mkdir -p /opt/moe-infra/{neo4j-data,neo4j-logs,redis-data,langgraph-checkpo
 sudo mkdir -p /opt/grafana/{data,dashboards}
 
 # Create .env from template and customize
-cp /opt/deployment/moe-sovereign/moe-infra/temp.env /opt/deployment/moe-sovereign/moe-infra/.env
+cp /opt/moe-sovereign/temp.env /opt/moe-sovereign/.env
 # → configure INFERENCE_SERVERS, SEARXNG_URL, EXPERT_MODELS, GF_SECURITY_ADMIN_PASSWORD
 
 # Build and start all services
-cd /opt/deployment/moe-sovereign/moe-infra
+cd /opt/moe-sovereign
 sudo docker compose up -d --build
 ```
 

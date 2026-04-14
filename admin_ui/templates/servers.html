@@ -4,9 +4,14 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h5 class="mb-0 fw-bold"><i class="bi bi-hdd-stack me-2 text-primary"></i>Inference-Server</h5>
-  <button class="btn btn-sm btn-outline-primary" onclick="loadAll()">
-    <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
-  </button>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="loadAll()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+    <button class="btn btn-sm btn-outline-success" id="gen-dashboard-btn" onclick="generateDashboard()">
+      <i class="bi bi-graph-up-arrow me-1"></i>{{ t(request, 'btn.generate_dashboard') }}
+    </button>
+  </div>
 </div>
 
 <div class="row g-3" id="server-cards">
@@ -47,6 +52,18 @@
             <div class="fs-4 fw-bold">{{ srv.get('cost_factor', 1.0) }}</div>
             <div class="text-muted" style="font-size:.75rem">Faktor</div>
           </div>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" role="switch"
+                 id="srv-onto-{{ loop.index0 }}"
+                 data-server="{{ srv.name }}"
+                 data-idx="{{ loop.index0 }}"
+                 {% if srv.get('ontology_enabled') %}checked{% endif %}
+                 onchange="toggleOntology(this)">
+          <label class="form-check-label small" for="srv-onto-{{ loop.index0 }}">
+            {{ t(request, 'lbl.ontology_cronjob') }}
+          </label>
+          <span id="srv-onto-status-{{ loop.index0 }}" class="ms-2 small text-muted"></span>
         </div>
         <button class="btn btn-sm btn-outline-secondary w-100"
                 onclick="toggleModels({{ loop.index0 }}, '{{ srv.name }}')">
@@ -155,6 +172,85 @@ function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-document.addEventListener('DOMContentLoaded', loadAll);
+const _ontoPolls = {};
+async function toggleOntology(input) {
+  const name = input.dataset.server;
+  const idx  = input.dataset.idx;
+  const statusEl = document.getElementById(`srv-onto-status-${idx}`);
+  statusEl.textContent = input.checked ? 'queued…' : '';
+  try {
+    const r = await fetch(`/api/servers/${encodeURIComponent(name)}/ontology-toggle`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enabled: input.checked}),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    statusEl.textContent = 'Fehler: ' + e.message;
+    statusEl.className = 'ms-2 small text-danger';
+    input.checked = !input.checked;
+    return;
+  }
+  if (input.checked) {
+    clearInterval(_ontoPolls[idx]);
+    _ontoPolls[idx] = setInterval(() => pollOntologyStatus(name, idx, input), 2000);
+    pollOntologyStatus(name, idx, input);
+  } else {
+    clearInterval(_ontoPolls[idx]);
+    statusEl.textContent = '';
+    statusEl.className = 'ms-2 small text-muted';
+  }
+}
+
+async function pollOntologyStatus(name, idx, input) {
+  const statusEl = document.getElementById(`srv-onto-status-${idx}`);
+  try {
+    const d = await fetch(`/api/servers/${encodeURIComponent(name)}/ontology-status`).then(r => r.json());
+    const s = d.status || 'unknown';
+    statusEl.textContent = `${s}${d.message ? ': ' + d.message : ''}`;
+    statusEl.className = 'ms-2 small ' + (
+      s === 'ready' ? 'text-success' :
+      s === 'failed' ? 'text-danger' :
+      s === 'pulling' ? 'text-warning' :
+      'text-muted'
+    );
+    if (s === 'ready' || s === 'failed') {
+      clearInterval(_ontoPolls[idx]);
+    }
+  } catch (e) {
+    statusEl.textContent = 'poll error';
+    statusEl.className = 'ms-2 small text-danger';
+  }
+}
+
+async function generateDashboard() {
+  const btn = document.getElementById('gen-dashboard-btn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>…';
+  try {
+    const res = await fetch('/api/dashboards/regenerate', {method:'POST'}).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+    const msg = `Dashboard erzeugt.\nProbed: ${res.probed.length}\nPrometheus reloaded: ${res.prometheus_reloaded}\n${res.prometheus_error ? 'Warning: ' + res.prometheus_error : ''}`;
+    alert(msg);
+    if (res.dashboard_url) window.open(res.dashboard_url, '_blank');
+  } catch (e) {
+    alert('Fehler: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadAll();
+  // On page load, start polling for any server that has ontology enabled
+  document.querySelectorAll('input[id^="srv-onto-"]:checked').forEach(inp => {
+    const name = inp.dataset.server, idx = inp.dataset.idx;
+    pollOntologyStatus(name, idx, inp);
+  });
+});
 </script>
 {% endblock %}

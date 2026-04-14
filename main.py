@@ -118,14 +118,78 @@ _jwks_cache: tuple = (None, 0.0)
 
 
 def _read_expert_templates() -> list:
-    """Reads EXPERT_TEMPLATES dynamically from /app/.env (not os.getenv).
-    Cached for 60 seconds to minimize disk I/O. This makes templates
-    created in the Admin UI visible without a container restart."""
+    """Return the current expert-templates list.
+
+    Primary source: Postgres table ``admin_expert_templates`` (written by the
+    Admin UI). The Orchestrator used to read EXPERT_TEMPLATES from /app/.env,
+    but that blows past Linux MAX_ARG_STRLEN (128 kB) once enough templates
+    exist, crashing sibling containers on exec. The DB is now authoritative;
+    .env is a best-effort fallback for boot-time before DB is reachable.
+
+    Cached for 30 s — templates created in the Admin UI become visible within
+    half a minute without a container restart.
+    """
     import time as _time
     now = _time.monotonic()
     cache = _read_expert_templates._cache
-    if now - cache["ts"] < 60 and cache["data"] is not None:
+    if now - cache["ts"] < 30 and cache["data"] is not None:
         return cache["data"]
+
+    data = _load_templates_from_db_sync()
+    if data is None:
+        # Fallback: read .env directly (legacy path, rarely exercised now).
+        data = _load_templates_from_env_file()
+    if data is None:
+        data = json.loads(os.getenv("EXPERT_TEMPLATES", "[]"))
+
+    cache["ts"] = now
+    cache["data"] = data
+    return data
+_read_expert_templates._cache: dict = {"ts": 0.0, "data": None}
+
+
+def _load_templates_from_db_sync() -> Optional[list]:
+    """One-shot sync query against admin_expert_templates. Returns None on any
+    failure so the caller can fall back to .env."""
+    dsn = (
+        os.getenv("MOE_USERDB_URL")
+        or os.getenv("POSTGRES_CHECKPOINT_URL")
+        or ""
+    )
+    if not dsn:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT id, name, description, config_json, is_active "
+                    "FROM admin_expert_templates ORDER BY created_at ASC"
+                )
+                rows = cur.fetchall()
+    except Exception:
+        return None
+    result: list = []
+    for row in rows:
+        cfg = row.get("config_json")
+        if isinstance(cfg, str):
+            try:
+                tmpl = json.loads(cfg)
+            except json.JSONDecodeError:
+                tmpl = {}
+        elif isinstance(cfg, dict):
+            tmpl = dict(cfg)
+        else:
+            tmpl = {}
+        tmpl["id"] = row["id"]
+        tmpl["name"] = row["name"]
+        tmpl["description"] = row.get("description", "")
+        tmpl["is_active"] = row.get("is_active", True)
+        result.append(tmpl)
+    return result
+
+
+def _load_templates_from_env_file() -> Optional[list]:
+    """Legacy .env parser — kept as fallback when the DB is unreachable."""
     env_path = Path(os.getenv("ENV_FILE", "/app/.env"))
     try:
         for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -133,17 +197,11 @@ def _read_expert_templates() -> list:
                 raw = line[len("EXPERT_TEMPLATES="):].strip()
                 if raw.startswith('"') and raw.endswith('"'):
                     raw = raw[1:-1].replace('\\\\', '\\').replace('\\"', '"')
-                data = json.loads(raw)
-                cache["ts"] = now
-                cache["data"] = data
-                return data
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, list) else None
     except Exception:
-        pass
-    fallback = json.loads(os.getenv("EXPERT_TEMPLATES", "[]"))
-    cache["ts"] = now
-    cache["data"] = fallback
-    return fallback
-_read_expert_templates._cache: dict = {"ts": 0.0, "data": None}
+        return None
+    return None
 
 
 def _read_cc_profiles() -> list:
@@ -244,7 +302,7 @@ def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str]
     Returns None if no template is assigned → global EXPERTS are used.
     override_tmpl_id: If set, this template is loaded directly (model-ID routing).
     admin_override: If True, override_tmpl_id is loaded without permission check.
-    user_templates_json: Inline JSON map {tmpl_id: config} for user-owned templates (from Redis).
+    user_templates_json: Inline JSON map {tmpl_id: config} for user-owned templates (from Valkey).
     """
     try:
         perms = json.loads(permissions_json or "{}")
@@ -311,7 +369,7 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
     """Returns planner_prompt, judge_prompt and optional model overrides from the user's Expert Template.
     Model fields are stored as 'model@endpoint' strings; URL/token are resolved from INFERENCE_SERVERS.
     admin_override: If True, override_tmpl_id is loaded without permission check.
-    user_templates_json: Inline JSON map {tmpl_id: config} for user-owned templates (from Redis).
+    user_templates_json: Inline JSON map {tmpl_id: config} for user-owned templates (from Valkey).
     """
     empty = {"planner_prompt": "", "judge_prompt": "",
              "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
@@ -854,7 +912,7 @@ PROM_SYNTHESIS_CREATED  = Counter('moe_synthesis_persisted_total',     'Synthesi
 # --- USER AUTH & USAGE TRACKING ---
 
 async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
-    """Fallback: validate API key directly from Postgres (on Redis cache miss) and sync."""
+    """Fallback: validate API key directly from Postgres (on Valkey cache miss) and sync."""
     try:
         if _userdb_pool is None:
             return None
@@ -870,7 +928,7 @@ async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
         if not row:
             return None
         user_id = row["user_id"]
-        # Re-sync in Redis so next requests are fast. Relies on admin_ui.database's
+        # Re-sync in Valkey so next requests are fast. Relies on admin_ui.database's
         # own pool — initialised in lifespan(); logs loudly if that failed.
         try:
             from admin_ui.database import sync_user_to_redis as _sync
@@ -1087,7 +1145,7 @@ async def _register_active_request(chat_id: str, user_id: str, model: str,
                                     template_name: str = "", client_ip: str = "",
                                     backend_model: str = "", backend_host: str = "",
                                     api_key_id: str = "") -> None:
-    """Registers a running request in Redis for live monitoring."""
+    """Registers a running request in Valkey for live monitoring."""
     if redis_client is None:
         return
     try:
@@ -1129,7 +1187,7 @@ async def _register_active_request(chat_id: str, user_id: str, model: str,
 
 
 async def _deregister_active_request(chat_id: str) -> None:
-    """Remove a completed request from Redis live monitoring and write it to the history."""
+    """Remove a completed request from Valkey live monitoring and write it to the history."""
     if redis_client is None:
         return
     try:
@@ -1192,7 +1250,7 @@ async def _get_available_models(node: str) -> Optional[frozenset]:
 
 async def _increment_user_budget(user_id: str, tokens: int,
                                   prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
-    """Increments the Redis budget counter for a user (with cost factor of the assigned template).
+    """Increments the Valkey budget counter for a user (with cost factor of the assigned template).
     Tracks total, input, and output tokens separately."""
     if not user_id or user_id == "anon" or redis_client is None:
         return
@@ -1455,7 +1513,7 @@ class AgentState(TypedDict):
     reasoning_trace: str                                  # CoT output from the thinking node
     soft_cache_examples: str                              # similar previous Q&A pairs (few-shot context)
     images: List[Dict]                                    # extracted image data for vision expert
-    user_permissions: dict                                # from permissions_json (Redis) for permission checks
+    user_permissions: dict                                # from permissions_json (Valkey) for permission checks
     user_experts: dict                                    # per-user expert config from template
     tenant_ids: List[str]                                 # graph_tenant IDs from permissions (RBAC)
     provenance_sources: List[Dict]                        # [REF:entity] tags extracted from merger output
@@ -1508,7 +1566,7 @@ kafka_producer: Optional[AIOKafkaProducer] = None
 # ─── LEARNING HELPERS ────────────────────────────────────────────────────────
 
 def _perf_key(model: str, category: str) -> str:
-    """Redis key for expert performance: moe:perf:{model}:{category}"""
+    """Valkey key for expert performance: moe:perf:{model}:{category}"""
     safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", model)
     return f"moe:perf:{safe}:{category}"
 
@@ -1955,7 +2013,7 @@ async def _store_response_metadata(
     chroma_doc_id: str,
     plan: Optional[List[Dict]] = None,
 ) -> None:
-    """Stores response metadata for later feedback in Redis (TTL 7 days)."""
+    """Stores response metadata for later feedback in Valkey (TTL 7 days)."""
     if redis_client is None:
         return
     try:
@@ -2510,7 +2568,7 @@ async def graph_rag_node(state: AgentState):
     plan = state.get("plan", [])
     categories = [t.get("category", "") for t in plan if isinstance(t, dict)]
 
-    # GraphRAG-Cache (Redis, TTL=3600s)
+    # GraphRAG-Cache (Valkey, TTL=3600s)
     import hashlib as _hashlib
     _graph_cache_key = f"moe:graph:{_hashlib.sha256((state['input'][:200] + ''.join(sorted(categories))).encode()).hexdigest()[:16]}"
     if redis_client is not None:
@@ -2518,8 +2576,8 @@ async def graph_rag_node(state: AgentState):
             _cached_ctx = await redis_client.get(_graph_cache_key)
             if _cached_ctx:
                 _cached_ctx_str = _cached_ctx if isinstance(_cached_ctx, str) else _cached_ctx.decode()
-                logger.info(f"🔗 GraphRAG cache hit (Redis) — {len(_cached_ctx_str)} chars")
-                await _report(f"🔗 GraphRAG: context from Redis cache ({len(_cached_ctx_str)} chars)")
+                logger.info(f"🔗 GraphRAG cache hit (Valkey) — {len(_cached_ctx_str)} chars")
+                await _report(f"🔗 GraphRAG: context from Valkey cache ({len(_cached_ctx_str)} chars)")
                 return {"graph_context": _cached_ctx_str}
         except Exception as _ge:
             logger.debug(f"GraphRAG cache read error: {_ge}")
@@ -2647,7 +2705,7 @@ async def planner_node(state: AgentState):
     for _pr in (state.get("pending_reports") or []):
         await _report(_pr)
 
-    # Planner result cache: same request → same plan (Redis, TTL=30 min)
+    # Planner result cache: same request → same plan (Valkey, TTL=30 min)
     import hashlib as _hashlib
     _plan_cache_key = f"moe:plan:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
     if redis_client is not None:
@@ -2655,8 +2713,8 @@ async def planner_node(state: AgentState):
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
             if _cached_plan_raw:
                 _cached_plan = json.loads(_cached_plan_raw)
-                logger.info(f"📋 Planner cache hit (Redis) — skipping LLM")
-                await _report("📋 Planner: plan loaded from Redis cache")
+                logger.info(f"📋 Planner cache hit (Valkey) — skipping LLM")
+                await _report("📋 Planner: plan loaded from Valkey cache")
                 return {"plan": _cached_plan, "prompt_tokens": 0, "completion_tokens": 0}
         except Exception as _pe:
             logger.debug(f"Planner cache read error: {_pe}")
@@ -2881,7 +2939,7 @@ JSON array:"""
         logger.debug(f"⏭️ VRAM unload skipped: {PLANNER_MODEL} will be reused as expert")
     else:
         asyncio.create_task(_ollama_unload(PLANNER_MODEL, _PLANNER_BASE))
-    # Cache plan in Redis for reuse (fail-safe)
+    # Cache plan in Valkey for reuse (fail-safe)
     if redis_client is not None and plan:
         asyncio.create_task(redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))
     if _extracted_filters:
@@ -3459,7 +3517,7 @@ async def merger_node(state: AgentState):
                 asyncio.create_task(redis_client.setex(f"moe:qcache:{_q_hash}", 1800, res_content_clean))
             except Exception:
                 pass
-        # Save response metadata for feedback tracking in Redis (non-blocking)
+        # Save response metadata for feedback tracking in Valkey (non-blocking)
         asyncio.create_task(
             _store_response_metadata(
                 state.get("response_id", ""),
@@ -3854,7 +3912,7 @@ _last_loaded_models: Dict[str, set] = {}
 
 
 async def _gauge_updater_loop():
-    """Periodically update gauge metrics from ChromaDB, Neo4j, Redis, and inference servers (every 60s)."""
+    """Periodically update gauge metrics from ChromaDB, Neo4j, Valkey, and inference servers (every 60s)."""
     while True:
         try:
             await asyncio.sleep(60)
@@ -3873,7 +3931,7 @@ async def _gauge_updater_loop():
                     PROM_FLAGGED_RELS.set(stats.get("flagged_relations", 0))
                 except Exception:
                     pass
-            # Redis: planner patterns, ontology gaps, active request count
+            # Valkey: planner patterns, ontology gaps, active request count
             if redis_client is not None:
                 try:
                     PROM_PLANNER_PATS.set(await redis_client.zcard("moe:planner_success"))
@@ -3979,7 +4037,7 @@ async def _gauge_updater_loop():
 async def lifespan(app_: FastAPI):
     global app_graph, redis_client, _userdb_pool
     redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-    logger.info("✅ Redis client initialized")
+    logger.info("✅ Valkey client initialized")
     # moe_userdb pool: opened lazily, fails open so SQL-less startup is possible for tests
     try:
         _userdb_pool = AsyncConnectionPool(
@@ -3996,7 +4054,7 @@ async def lifespan(app_: FastAPI):
         logger.warning("moe_userdb pool nicht verbunden: %s", e)
         _userdb_pool = None
     # admin_ui.database has its own pool that backs sync_user_to_redis (used by
-    # _db_fallback_key_lookup when a user's API key hash is not yet in Redis).
+    # _db_fallback_key_lookup when a user's API key hash is not yet in Valkey).
     # Without this, the fallback silently errors and new or cache-evicted keys
     # return 401 — e.g. Open-WebUI loses access to /v1/models and expert templates.
     try:
@@ -4038,7 +4096,7 @@ async def lifespan(app_: FastAPI):
         logger.info("🔌 Neo4j connection closed")
     if redis_client is not None:
         await redis_client.aclose()
-        logger.info("🔌 Redis client closed")
+        logger.info("🔌 Valkey client closed")
     if _userdb_pool is not None:
         await _userdb_pool.close()
         logger.info("🔌 moe_userdb pool closed")
@@ -4487,7 +4545,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
         cache_hit_flag = data.get("cache_hit", False)
         PROM_REQUESTS.labels(mode=mode, cache_hit=str(cache_hit_flag).lower(), user_id=_uid).inc()
         PROM_RESPONSE_TIME.labels(mode=mode).observe(time.monotonic() - _t_start)
-        # Usage-Tracking in SQLite + Redis (fire-and-forget)
+        # Usage-Tracking in SQLite + Valkey (fire-and-forget)
         if _uid != "anon":
             asyncio.create_task(_log_usage_to_db(
                 user_id=_uid,
@@ -4518,7 +4576,7 @@ async def submit_feedback(req: FeedbackRequest):
     if not 1 <= req.rating <= 5:
         return {"status": "error", "message": "Rating must be between 1 and 5"}
     if redis_client is None:
-        return {"status": "error", "message": "Redis not available"}
+        return {"status": "error", "message": "Valkey not available"}
 
     meta = await redis_client.hgetall(f"moe:response:{req.response_id}")
     if not meta:
@@ -5991,11 +6049,170 @@ async def anthropic_messages(request: Request):
         }})
 
 
+_ONTOLOGY_RUN_KEY = "moe:maintenance:ontology:run"
+_ONTOLOGY_RUNS_HISTORY_KEY = "moe:maintenance:ontology:runs"
+
+
+async def _set_healer_status(**fields) -> None:
+    if redis_client is None:
+        return
+    try:
+        await redis_client.hset(_ONTOLOGY_RUN_KEY, mapping={k: str(v) for k, v in fields.items()})
+        await redis_client.expire(_ONTOLOGY_RUN_KEY, 86400)
+    except Exception:
+        pass
+
+
+async def _run_healer_task(concurrency: int, batch_size: int, run_id: str) -> None:
+    """Spawn gap_healer_templates.py --once in the orchestrator container."""
+    import time as _t
+    import uuid as _uuid
+    start = _t.time()
+    # Clear stale fields from previous runs first.
+    if redis_client is not None:
+        try:
+            await redis_client.delete(_ONTOLOGY_RUN_KEY)
+        except Exception:
+            pass
+    await _set_healer_status(
+        status="running", run_id=run_id, started_at=str(start),
+        concurrency=concurrency, batch_size=batch_size,
+        processed=0, written=0, failed=0, message="",
+    )
+    env = os.environ.copy()
+    env["CONCURRENCY"] = str(concurrency)
+    env["BATCH_SIZE"] = str(batch_size)
+    env.setdefault("REQUEST_TIMEOUT", "900")
+    env.setdefault("MOE_API_BASE", "http://localhost:8000")
+    # The healer calls /v1/chat/completions which requires a valid Bearer.
+    # Use the SYSTEM_API_KEY (installed with an active api_keys row).
+    sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    if sys_key:
+        env["MOE_API_KEY"] = sys_key
+    proc = await asyncio.create_subprocess_exec(
+        "python3", "/app/scripts/gap_healer_templates.py", "--once",
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    stats = {"processed": 0, "written": 0, "failed": 0}
+    assert proc.stdout is not None
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace")
+            if "✓" in text and "→" in text:
+                stats["written"] += 1
+            elif "?" in text and "→" in text:
+                stats["processed"] += 1
+            elif "✗" in text:
+                stats["failed"] += 1
+            if any(stats.values()):
+                await _set_healer_status(status="running", **stats)
+        rc = await proc.wait()
+    except Exception as e:
+        await _set_healer_status(status="failed", message=str(e)[:200])
+        return
+    final = "ready" if rc == 0 else "failed"
+    await _set_healer_status(
+        status=final, run_id=run_id, finished_at=str(_t.time()),
+        exit_code=rc, **stats,
+    )
+    if redis_client is not None:
+        try:
+            entry = json.dumps({
+                "run_id": run_id, "started_at": start, "finished_at": _t.time(),
+                "exit_code": rc, **stats,
+            })
+            await redis_client.lpush(_ONTOLOGY_RUNS_HISTORY_KEY, entry)
+            await redis_client.ltrim(_ONTOLOGY_RUNS_HISTORY_KEY, 0, 99)
+        except Exception:
+            pass
+
+
+@app.post("/v1/admin/ontology/trigger")
+async def trigger_ontology_healer(body: dict = None):
+    """Kick off one gap-healer iteration in the background."""
+    import uuid as _uuid
+    body = body or {}
+    if redis_client is not None:
+        try:
+            cur = await redis_client.hgetall(_ONTOLOGY_RUN_KEY)
+            if cur and cur.get("status") == "running":
+                return {"ok": False, "reason": "already_running", "status": cur}
+        except Exception:
+            pass
+    concurrency = max(1, min(32, int(body.get("concurrency") or 4)))
+    batch_size = max(1, min(200, int(body.get("batch_size") or 20)))
+    run_id = _uuid.uuid4().hex[:12]
+    asyncio.create_task(_run_healer_task(concurrency, batch_size, run_id))
+    return {"ok": True, "run_id": run_id}
+
+
+@app.get("/v1/admin/knowledge-stats")
+async def get_knowledge_stats():
+    """Aggregate Neo4j counters for the stats dashboard."""
+    try:
+        from neo4j import AsyncGraphDatabase
+        uri = os.environ.get("NEO4J_URI", "bolt://neo4j-knowledge:7687")
+        user = os.environ.get("NEO4J_USER", "neo4j")
+        pwd = os.environ.get("NEO4J_PASSWORD") or os.environ.get("NEO4J_PASS") or ""
+        driver = AsyncGraphDatabase.driver(uri, auth=(user, pwd))
+    except Exception as e:
+        return {"error": f"neo4j init: {e}"}
+    stats: dict = {}
+    try:
+        async with driver.session() as s:
+            r = await s.run("MATCH (e:Entity) RETURN count(e) AS n")
+            stats["entities_total"] = (await r.single())["n"]
+            r = await s.run("MATCH ()-[r]->() RETURN count(r) AS n")
+            stats["relations_total"] = (await r.single())["n"]
+            r = await s.run(
+                "MATCH (e:Entity) WHERE e.created_at >= datetime() - duration('P1D') "
+                "RETURN count(e) AS n"
+            )
+            stats["entities_last_24h"] = (await r.single())["n"]
+            r = await s.run(
+                "MATCH (e:Entity) WHERE e.created_at >= datetime() - duration('P7D') "
+                "RETURN count(e) AS n"
+            )
+            stats["entities_last_7d"] = (await r.single())["n"]
+            r = await s.run(
+                "MATCH (e:Entity) WHERE e.source IS NOT NULL "
+                "RETURN e.source AS source, count(e) AS n ORDER BY n DESC LIMIT 10"
+            )
+            stats["entities_by_source"] = [
+                {"source": rec["source"], "n": rec["n"]} async for rec in r
+            ]
+            r = await s.run(
+                "MATCH (e:Entity) WHERE e.type IS NOT NULL "
+                "RETURN e.type AS type, count(e) AS n ORDER BY n DESC LIMIT 10"
+            )
+            stats["top_types"] = [
+                {"type": rec["type"], "n": rec["n"]} async for rec in r
+            ]
+            r = await s.run(
+                "MATCH (e:Entity) WHERE e.curator_template IS NOT NULL "
+                "RETURN e.curator_template AS template, count(e) AS n "
+                "ORDER BY n DESC LIMIT 20"
+            )
+            stats["entities_by_curator"] = [
+                {"template": rec["template"], "n": rec["n"]} async for rec in r
+            ]
+    except Exception as e:
+        stats["error"] = str(e)
+    finally:
+        await driver.close()
+    return stats
+
+
 @app.get("/v1/admin/ontology-gaps")
 async def get_ontology_gaps(limit: int = 30):
     """Shows most frequent terms from answers not in the ontology."""
     if redis_client is None:
-        return {"error": "Redis not available"}
+        return {"error": "Valkey not available"}
     try:
         gaps = await redis_client.zrevrange("moe:ontology_gaps", 0, limit - 1, withscores=True)
         return {"gaps": [{"term": g, "count": int(s)} for g, s in gaps]}
@@ -6007,7 +6224,7 @@ async def get_ontology_gaps(limit: int = 30):
 async def get_planner_patterns(limit: int = 20):
     """Shows proven planner patterns based on positive user feedback."""
     if redis_client is None:
-        return {"error": "Redis not available"}
+        return {"error": "Valkey not available"}
     try:
         patterns = await redis_client.zrevrange("moe:planner_success", 0, limit - 1, withscores=True)
         return {"patterns": [{"signature": sig, "count": int(score)} for sig, score in patterns]}

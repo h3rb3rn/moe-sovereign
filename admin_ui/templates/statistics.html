@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Statistik — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold"><i class="bi bi-bar-chart-line me-2 text-primary"></i>{{ t(request, 'nav.statistics') }}</h5>
+  <div class="d-flex gap-2 align-items-center">
+    <select id="window-select" class="form-select form-select-sm" style="width:auto" onchange="loadTemplates()">
+      <option value="1d">Letzte 24 h</option>
+      <option value="7d" selected>Letzte 7 Tage</option>
+      <option value="30d">Letzte 30 Tage</option>
+    </select>
+    <button class="btn btn-sm btn-outline-primary" onclick="refreshAll()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+  </div>
+</div>
+
+<!-- Row 1: Live KPI Cards -->
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3 col-lg-2">
+    <div class="card h-100"><div class="card-body text-center">
+      <div class="text-muted small">Req/s</div>
+      <div class="fs-3 fw-bold" id="kpi-rate">–</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3 col-lg-2">
+    <div class="card h-100"><div class="card-body text-center">
+      <div class="text-muted small">Loaded Models</div>
+      <div class="fs-3 fw-bold" id="kpi-loaded">–</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3 col-lg-2">
+    <div class="card h-100"><div class="card-body text-center">
+      <div class="text-muted small">In-flight</div>
+      <div class="fs-3 fw-bold" id="kpi-inprog">–</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3 col-lg-2">
+    <div class="card h-100"><div class="card-body text-center">
+      <div class="text-muted small">CPU %</div>
+      <div class="fs-3 fw-bold" id="kpi-cpu">–</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3 col-lg-2">
+    <div class="card h-100"><div class="card-body text-center">
+      <div class="text-muted small">p95 Latenz</div>
+      <div class="fs-3 fw-bold" id="kpi-p95">–</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3 col-lg-2">
+    <div class="card h-100"><div class="card-body text-center">
+      <div class="text-muted small">Entities</div>
+      <div class="fs-3 fw-bold" id="kpi-entities">–</div>
+    </div></div>
+  </div>
+</div>
+
+<!-- Row 2: Knowledge Snapshot -->
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-info bg-opacity-10">
+        <i class="bi bi-diagram-2 me-2"></i><strong>{{ t(request, 'lbl.knowledge_snapshot') }}</strong>
+      </div>
+      <div class="card-body">
+        <div class="row small">
+          <div class="col-6"><span class="text-muted">Entities total:</span> <strong id="know-total">–</strong></div>
+          <div class="col-6"><span class="text-muted">Relations:</span> <strong id="know-relations">–</strong></div>
+          <div class="col-6"><span class="text-muted">+24 h:</span> <strong id="know-24h" class="text-success">–</strong></div>
+          <div class="col-6"><span class="text-muted">+7 d:</span> <strong id="know-7d" class="text-success">–</strong></div>
+        </div>
+        <hr class="my-2">
+        <div class="small">
+          <div class="fw-bold mb-1">Top entity types:</div>
+          <div id="know-types"></div>
+        </div>
+        <hr class="my-2">
+        <div class="small">
+          <div class="fw-bold mb-1">Entities per curator template:</div>
+          <div id="know-curators" style="max-height:180px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2b: Latency per node chart -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-warning bg-opacity-10">
+        <i class="bi bi-speedometer2 me-2"></i><strong>{{ t(request, 'lbl.latency_per_node') }}</strong>
+      </div>
+      <div class="card-body">
+        <canvas id="latency-chart" height="180"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 3: Template activity + Healer history -->
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-primary bg-opacity-10">
+        <i class="bi bi-bar-chart me-2"></i><strong>{{ t(request, 'lbl.template_activity') }}</strong>
+      </div>
+      <div class="card-body">
+        <canvas id="templates-chart" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-success bg-opacity-10">
+        <i class="bi bi-clock-history me-2"></i><strong>{{ t(request, 'lbl.healer_history') }}</strong>
+      </div>
+      <div class="card-body p-0">
+        <div style="max-height:360px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="sticky-top bg-white">
+              <tr><th>Start</th><th>Dauer</th><th>Processed</th><th class="text-success">Written</th><th class="text-danger">Failed</th></tr>
+            </thead>
+            <tbody id="healer-tbody">
+              <tr><td colspan="5" class="text-muted text-center py-3">Lädt…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let templatesChart = null, latencyChart = null;
+
+function fmt(x, d=1) {
+  if (x == null || isNaN(x)) return '–';
+  return Number(x).toLocaleString('de-DE', {maximumFractionDigits:d});
+}
+
+async function loadLive() {
+  try {
+    const d = await fetch('/api/statistics/live').then(r => r.json());
+    document.getElementById('kpi-rate').textContent = fmt(d.request_rate, 2);
+    document.getElementById('kpi-loaded').textContent = fmt(d.loaded_models, 0);
+    document.getElementById('kpi-inprog').textContent = fmt(d.in_progress, 0);
+    document.getElementById('kpi-cpu').textContent = fmt(d.cpu_avg_pct, 1) + '%';
+    document.getElementById('kpi-p95').textContent = d.p95_latency_s ? fmt(d.p95_latency_s, 2) + 's' : '–';
+    // Latency chart per node
+    const nodes = (d.latency_by_node || []).sort((a,b) => b.value - a.value);
+    const labels = nodes.map(n => n.node);
+    const values = nodes.map(n => n.value);
+    if (latencyChart) latencyChart.destroy();
+    const ctx = document.getElementById('latency-chart').getContext('2d');
+    latencyChart = new Chart(ctx, {
+      type: 'bar',
+      data: {labels, datasets:[{label:'p95 Latenz (s)', data: values, backgroundColor:'#ffc107'}]},
+      options: {scales:{y:{beginAtZero:true}}, plugins:{legend:{display:false}}},
+    });
+  } catch (e) { console.error(e); }
+}
+
+async function loadKnowledge() {
+  try {
+    const d = await fetch('/api/statistics/knowledge').then(r => r.json());
+    document.getElementById('know-total').textContent = fmt(d.entities_total, 0);
+    document.getElementById('know-relations').textContent = fmt(d.relations_total, 0);
+    document.getElementById('know-24h').textContent = '+' + fmt(d.entities_last_24h, 0);
+    document.getElementById('know-7d').textContent = '+' + fmt(d.entities_last_7d, 0);
+    document.getElementById('kpi-entities').textContent = fmt(d.entities_total, 0);
+
+    const types = d.top_types || [];
+    document.getElementById('know-types').innerHTML = types.map(t =>
+      `<span class="badge bg-secondary me-1 mb-1">${t.type}: ${t.n}</span>`
+    ).join('') || '<span class="text-muted">keine Daten</span>';
+
+    const curators = d.entities_by_curator || [];
+    document.getElementById('know-curators').innerHTML = curators.length
+      ? `<table class="table table-sm mb-0"><tbody>${curators.map(c =>
+          `<tr><td class="font-monospace small">${c.template}</td><td class="text-end"><strong>${c.n}</strong></td></tr>`
+        ).join('')}</tbody></table>`
+      : '<span class="text-muted">keine Daten</span>';
+  } catch (e) { console.error(e); }
+}
+
+async function loadHealer() {
+  const tbody = document.getElementById('healer-tbody');
+  try {
+    const d = await fetch('/api/statistics/healer?limit=50').then(r => r.json());
+    const runs = d.runs || [];
+    if (runs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">Noch keine Runs im Cache</td></tr>';
+      return;
+    }
+    tbody.innerHTML = runs.map(r => {
+      const ts = new Date(r.started_at * 1000);
+      const dur = r.finished_at ? Math.round(r.finished_at - r.started_at) : '–';
+      return `<tr>
+        <td class="small">${ts.toLocaleString('de-DE')}</td>
+        <td>${dur}s</td>
+        <td>${r.processed || 0}</td>
+        <td class="text-success">${r.written || 0}</td>
+        <td class="text-danger">${r.failed || 0}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Fehler: ${e.message}</td></tr>`;
+  }
+}
+
+async function loadTemplates() {
+  try {
+    const w = document.getElementById('window-select').value;
+    const d = await fetch('/api/statistics/templates?window=' + w).then(r => r.json());
+    const rows = (d.templates || []).slice(0, 15);
+    const labels = rows.map(r => r.template);
+    const values = rows.map(r => r.value);
+    if (templatesChart) templatesChart.destroy();
+    const ctx = document.getElementById('templates-chart').getContext('2d');
+    templatesChart = new Chart(ctx, {
+      type: 'bar',
+      data: {labels, datasets:[{label:'Invocations', data: values, backgroundColor:'#0d6efd'}]},
+      options: {indexAxis:'y', scales:{x:{beginAtZero:true}}, plugins:{legend:{display:false}}},
+    });
+  } catch (e) { console.error(e); }
+}
+
+function refreshAll() {
+  loadLive(); loadKnowledge(); loadHealer(); loadTemplates();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  refreshAll();
+  setInterval(loadLive, 10000);
+  setInterval(loadHealer, 15000);
+});
+</script>
+{% endblock %}

@@ -49,7 +49,7 @@ The installer will:
 4. Clone the repository
 5. Prompt you for an admin username, password, and optional domain
 6. Auto-generate secure secrets for Valkey, Neo4j, and Grafana
-7. Write `/opt/deployment/moe-sovereign/moe-infra/.env`
+7. Write `/opt/moe-sovereign/.env`
 8. Build and start all containers
 9. Wait for the API to become healthy
 10. Print access URLs
@@ -89,15 +89,15 @@ sudo mkdir -p \
 chroma-onnx-cache,chroma-data,redis-data,langgraph-checkpoints,\
 prometheus-data,admin-logs,userdb,few-shot} \
   /opt/grafana/{data,dashboards} \
-  /opt/deployment/moe-sovereign
+  /opt/moe-sovereign
 ```
 
 ### 3. Clone the repository
 
 ```bash
 git clone https://github.com/h3rb3rn/moe-sovereign.git \
-  /opt/deployment/moe-sovereign/moe-infra
-cd /opt/deployment/moe-sovereign/moe-infra
+  /opt/moe-sovereign
+cd /opt/moe-sovereign
 ```
 
 ### 4. Configure environment
@@ -201,7 +201,7 @@ graph LR
 Pull the latest code and rebuild:
 
 ```bash
-cd /opt/deployment/moe-sovereign/moe-infra
+cd /opt/moe-sovereign
 git pull
 sudo docker compose build
 sudo docker compose up -d

@@ -99,6 +99,7 @@
                   <th style="width:80px">API-Typ</th>
                   <th style="width:130px">{{ t(request, 'lbl.token') }}</th>
                   <th style="width:45px" title="{{ t(request, 'tip.active_toggle') }}">{{ t(request, 'status.active') }}</th>
+                  <th style="width:55px" title="{{ t(request, 'tip.ontology_cronjob') }}">{{ t(request, 'lbl.ontology_short') }}</th>
                   <th style="width:90px">Status</th>
                   <th style="width:36px"></th>
                 </tr>
@@ -134,6 +135,12 @@
                   <td class="text-center align-middle">
                     <input type="checkbox" name="srv_enabled_{{ loop.index0 }}" value="1"
                            class="form-check-input" {% if srv.get('enabled', True) %}checked{% endif %}>
+                  </td>
+                  <td class="text-center align-middle">
+                    <input type="checkbox" name="srv_ontology_enabled_{{ loop.index0 }}" value="1"
+                           class="form-check-input"
+                           title="{{ t(request, 'tip.ontology_cronjob') }}"
+                           {% if srv.get('ontology_enabled') %}checked{% endif %}>
                   </td>
                   <td><span class="badge bg-secondary srv-status-badge" style="font-size:.75rem">–</span></td>
                   <td><button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
@@ -759,6 +766,9 @@ function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeou
      <td class="text-center align-middle">
        <input type="checkbox" name="srv_enabled_${idx}" value="1" class="form-check-input" ${checkedAttr}>
      </td>
+     <td class="text-center align-middle">
+       <input type="checkbox" name="srv_ontology_enabled_${idx}" value="1" class="form-check-input">
+     </td>
      <td><span class="badge bg-secondary srv-status-badge" style="font-size:.75rem">–</span></td>
      <td><button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
                  onclick="removeServerRow(this)"><i class="bi bi-x"></i></button></td>`;
@@ -789,6 +799,7 @@ function reindexServerRows() {
     if (inputs[5]) inputs[5].name = `srv_timeout_${i}`;
     if (inputs[6]) inputs[6].name = `srv_token_${i}`;
     if (inputs[7]) inputs[7].name = `srv_enabled_${i}`;
+    if (inputs[8]) inputs[8].name = `srv_ontology_enabled_${i}`;
     if (selects[0]) selects[0].name = `srv_api_type_${i}`;
   });
 }

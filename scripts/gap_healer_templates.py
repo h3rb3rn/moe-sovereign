@@ -3,11 +3,18 @@
 
 Architecture:
 - Uses the MoE Sovereign API (NOT direct Ollama)
-- Rotates round-robin across 4 per-node templates:
+- Rotates round-robin across 7 per-node templates:
     moe-ontology-curator-n04-rtx
-    moe-ontology-curator-n06-m10
+    moe-ontology-curator-n06-m10-01
+    moe-ontology-curator-n06-m10-02
+    moe-ontology-curator-n06-m10-03
+    moe-ontology-curator-n06-m10-04
+    moe-ontology-curator-n07-gt
     moe-ontology-curator-n09-m60
-    moe-ontology-curator-n11-m10
+    moe-ontology-curator-n11-m10-01
+    moe-ontology-curator-n11-m10-02
+    moe-ontology-curator-n11-m10-03
+    moe-ontology-curator-n11-m10-04
 - Each template pins planner/experts/judge to one GPU node → warm cache
 - GraphRAG context injected automatically per request (learning loop)
 - Confidence threshold filters out hallucinations
@@ -25,6 +32,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -43,6 +51,14 @@ NEO4J_PASS = os.environ.get("NEO4J_PASSWORD", "") or os.environ.get("NEO4J_PASS"
 MOE_API_BASE = os.environ.get("MOE_API_BASE", "http://localhost:8000")
 MOE_API_KEY = os.environ.get("MOE_API_KEY", "")
 
+
+def _auth_headers() -> dict:
+    """Build headers, omitting Bearer if no API key is configured."""
+    h = {"Content-Type": "application/json"}
+    if MOE_API_KEY:
+        h["Authorization"] = f"Bearer {MOE_API_KEY}"
+    return h
+
 REDIS_URL = os.environ.get("REDIS_URL", "")
 GAP_ZSET_KEY = "moe:ontology_gaps"
 
@@ -50,18 +66,56 @@ BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "20"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "4"))
 MIN_CONFIDENCE = float(os.environ.get("MIN_CONFIDENCE", "0.5"))
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "1000"))
+RUN_ONCE = "--once" in sys.argv
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "600"))
 
 # Round-robin pool of pinned-node templates. Each template keeps all its
 # inference on one physical node for warm-cache throughput.
-_DEFAULT_POOL = [
+_STATIC_FALLBACK_POOL = [
     "moe-ontology-curator-n04-rtx",
-    "moe-ontology-curator-n06-m10",
+    "moe-ontology-curator-n06-m10-01",
+    "moe-ontology-curator-n06-m10-02",
+    "moe-ontology-curator-n06-m10-03",
+    "moe-ontology-curator-n06-m10-04",
+    "moe-ontology-curator-n07-gt",
     "moe-ontology-curator-n09-m60",
-    "moe-ontology-curator-n11-m10",
+    "moe-ontology-curator-n11-m10-01",
+    "moe-ontology-curator-n11-m10-02",
+    "moe-ontology-curator-n11-m10-03",
+    "moe-ontology-curator-n11-m10-04",
 ]
-_POOL_ENV = os.environ.get("TEMPLATE_POOL", "").strip()
-TEMPLATE_POOL = [t.strip() for t in _POOL_ENV.split(",") if t.strip()] if _POOL_ENV else _DEFAULT_POOL
+
+
+def _discover_pool() -> list[str]:
+    """Build the template pool dynamically from INFERENCE_SERVERS.
+
+    Any server with ``ontology_enabled: true`` contributes one template.
+    Falls back to the static pool if the env var is unparseable or empty.
+    Explicit override via TEMPLATE_POOL still wins for reproducibility.
+    """
+    override = os.environ.get("TEMPLATE_POOL", "").strip()
+    if override:
+        return [t.strip() for t in override.split(",") if t.strip()]
+
+    raw = os.environ.get("INFERENCE_SERVERS", "").strip()
+    if not raw:
+        return list(_STATIC_FALLBACK_POOL)
+    try:
+        servers = json.loads(raw)
+    except json.JSONDecodeError:
+        return list(_STATIC_FALLBACK_POOL)
+
+    pool = []
+    for s in servers:
+        if not isinstance(s, dict) or not s.get("ontology_enabled"):
+            continue
+        name = (s.get("name") or "").strip().lower()
+        if name:
+            pool.append(f"moe-ontology-curator-{name}")
+    return pool or list(_STATIC_FALLBACK_POOL)
+
+
+TEMPLATE_POOL = _discover_pool()
 
 
 USER_PROMPT = """Classify this unknown term for our knowledge graph:
@@ -74,7 +128,7 @@ The Judge will return a JSON entity entry. Do not respond with prose outside the
 
 
 async def fetch_gaps(client: httpx.AsyncClient, redis_cli=None) -> list[str]:
-    """Pull top ontology gaps. Prefer Redis (no HTTP dependency on busy orchestrator),
+    """Pull top ontology gaps. Prefer Valkey (no HTTP dependency on busy orchestrator),
     fall back to the admin API."""
     if redis_cli is not None:
         try:
@@ -82,11 +136,11 @@ async def fetch_gaps(client: httpx.AsyncClient, redis_cli=None) -> list[str]:
             if rows:
                 return rows if isinstance(rows[0], str) else [r.decode() for r in rows]
         except Exception as e:
-            print(f"  [!] Redis ZREVRANGE failed: {e}", flush=True)
+            print(f"  [!] Valkey ZREVRANGE failed: {e}", flush=True)
     try:
         r = await client.get(
             f"{MOE_API_BASE}/v1/admin/ontology-gaps",
-            headers={"Authorization": f"Bearer {MOE_API_KEY}"},
+            headers=_auth_headers(),
             timeout=15,
         )
         if r.status_code == 200:
@@ -166,10 +220,7 @@ async def classify_via_template(
     try:
         r = await client.post(
             f"{MOE_API_BASE}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {MOE_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers=_auth_headers(),
             json=body,
             timeout=REQUEST_TIMEOUT,
         )
@@ -330,9 +381,9 @@ async def main() -> int:
     if redis_cli:
         try:
             await redis_cli.ping()
-            print("  Redis:         connected (ZREM on resolve enabled)", flush=True)
+            print("  Valkey:         connected (ZREM on resolve enabled)", flush=True)
         except Exception as e:
-            print(f"  Redis:         ⚠ not available ({e}) — gaps will not auto-clear", flush=True)
+            print(f"  Valkey:         ⚠ not available ({e}) — gaps will not auto-clear", flush=True)
             redis_cli = None
     totals = {"processed": 0, "written": 0, "uncertain": 0, "failed": 0}
     iteration = 0
@@ -362,6 +413,10 @@ async def main() -> int:
             print(f"[{time.strftime('%H:%M:%S')}] Batch done in {dt_batch:.1f}s — "
                   f"totals: {totals['written']} written / {totals['processed']} processed",
                   flush=True)
+
+            if RUN_ONCE:
+                print("[--once] Exiting after one iteration.", flush=True)
+                break
 
     await driver.close()
     if redis_cli:

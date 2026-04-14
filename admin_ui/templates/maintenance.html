@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}Wartung — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold"><i class="bi bi-tools me-2 text-primary"></i>{{ t(request, 'nav.maintenance') }}</h5>
+  <span class="text-muted small">{{ inference_servers|length }} aktive Server</span>
+</div>
+
+<div class="row g-3">
+
+  <!-- Card 1: Ontology trigger -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-primary bg-opacity-10">
+        <i class="bi bi-diagram-3 me-2"></i><strong>{{ t(request, 'lbl.ontology_runner') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.ontology_runner_desc') }}</p>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label small mb-1">Concurrency</label>
+            <input type="number" id="onto-concurrency" class="form-control form-control-sm" value="4" min="1" max="32">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">Batch size</label>
+            <input type="number" id="onto-batch" class="form-control form-control-sm" value="20" min="1" max="200">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm w-100" id="btn-onto-trigger" onclick="triggerOntology()">
+          <i class="bi bi-play-fill me-1"></i>{{ t(request, 'btn.trigger_ontology') }}
+        </button>
+        <hr class="my-3">
+        <div class="small">
+          <div class="d-flex justify-content-between"><span class="text-muted">Status:</span>
+            <span id="onto-status" class="fw-bold">—</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Run ID:</span>
+            <span id="onto-run-id" class="font-monospace small">—</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Processed:</span>
+            <span id="onto-processed">0</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Written:</span>
+            <span id="onto-written" class="text-success">0</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Failed:</span>
+            <span id="onto-failed" class="text-danger">0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 2: Scan + Cleanup -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-warning bg-opacity-10">
+        <i class="bi bi-trash me-2"></i><strong>{{ t(request, 'lbl.cleanup') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.cleanup_desc') }}</p>
+        <div class="d-flex gap-2 mb-3">
+          <button class="btn btn-outline-secondary btn-sm flex-fill" onclick="scanOrphans()">
+            <i class="bi bi-search me-1"></i>{{ t(request, 'btn.cleanup_scan') }}
+          </button>
+          <button class="btn btn-warning btn-sm flex-fill" id="btn-cleanup-run" disabled onclick="runCleanup(false)">
+            <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.cleanup_run') }}
+          </button>
+        </div>
+        <div id="cleanup-report" class="small" style="max-height:340px;overflow-y:auto">
+          <div class="text-muted text-center py-4">{{ t(request, 'msg.cleanup_click_scan') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 2b: Template verification -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-info bg-opacity-10">
+        <i class="bi bi-check2-square me-2"></i><strong>{{ t(request, 'lbl.template_verify') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.template_verify_desc') }}</p>
+        <div class="d-flex gap-2 mb-3">
+          <button class="btn btn-outline-info btn-sm" onclick="verifyTemplates()">
+            <i class="bi bi-check2-square me-1"></i>{{ t(request, 'btn.template_verify') }}
+          </button>
+          <button class="btn btn-info btn-sm" id="btn-pull-missing" disabled onclick="pullMissing()">
+            <i class="bi bi-cloud-download me-1"></i>{{ t(request, 'btn.template_pull_missing') }}
+          </button>
+        </div>
+        <div id="verify-report" class="small" style="max-height:320px;overflow-y:auto">
+          <div class="text-muted text-center py-3">{{ t(request, 'msg.template_verify_click') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 3: Regeneration buttons -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-success bg-opacity-10">
+        <i class="bi bi-arrow-clockwise me-2"></i><strong>{{ t(request, 'lbl.regeneration') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.regeneration_desc') }}</p>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-outline-success btn-sm" onclick="regenDashboard()">
+            <i class="bi bi-graph-up-arrow me-1"></i>{{ t(request, 'btn.regen_dashboard') }}
+          </button>
+          <button class="btn btn-outline-success btn-sm" onclick="reloadPrometheus()">
+            <i class="bi bi-arrow-repeat me-1"></i>{{ t(request, 'btn.reload_prometheus') }}
+          </button>
+        </div>
+        <div id="regen-result" class="small mt-3 text-muted"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmtStatus(s) {
+  const map = {running: 'warning', ready: 'success', failed: 'danger', idle: 'secondary'};
+  const cls = map[s] || 'secondary';
+  return `<span class="badge bg-${cls}">${s}</span>`;
+}
+
+async function pollOntology() {
+  try {
+    const d = await fetch('/api/maintenance/ontology/status').then(r => r.json());
+    document.getElementById('onto-status').innerHTML = fmtStatus(d.status || 'idle');
+    document.getElementById('onto-run-id').textContent = d.run_id || '—';
+    document.getElementById('onto-processed').textContent = d.processed || 0;
+    document.getElementById('onto-written').textContent = d.written || 0;
+    document.getElementById('onto-failed').textContent = d.failed || 0;
+    document.getElementById('btn-onto-trigger').disabled = (d.status === 'running');
+  } catch (e) { /* ignore */ }
+}
+
+async function triggerOntology() {
+  const btn = document.getElementById('btn-onto-trigger');
+  btn.disabled = true;
+  try {
+    const body = {
+      concurrency: parseInt(document.getElementById('onto-concurrency').value) || 4,
+      batch_size: parseInt(document.getElementById('onto-batch').value) || 20,
+    };
+    const r = await fetch('/api/maintenance/ontology/trigger', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+    if (!r.ok) alert('Konnte nicht starten: ' + (r.reason || 'unbekannt'));
+  } catch (e) { alert('Fehler: ' + e.message); }
+  finally { pollOntology(); }
+}
+
+function orphanCount(o) {
+  return (o.templates_by_name?.length || 0) + (o.templates_by_pin?.length || 0)
+       + (o.redis_keys?.length || 0) + (o.neo4j_curator_entities || 0)
+       + (o.prometheus_static_targets?.length || 0);
+}
+
+function renderScanReport(d) {
+  const o = d.orphans;
+  const total = orphanCount(o);
+  const btn = document.getElementById('btn-cleanup-run');
+  btn.disabled = total === 0;
+  if (total === 0) {
+    return `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>Keine Altlasten gefunden. System sauber.</div>`;
+  }
+  const rows = [
+    ['Curator-Templates verwaist', o.templates_by_name.map(t => `${t.name} (${t.dead_node})`)],
+    ['Templates mit @DeadNode pin', o.templates_by_pin.map(t => `${t.name} → ${t.dead_nodes.join(',')}`)],
+    ['User-Templates mit DeadNode', o.user_templates_by_pin.map(t => `user=${t.user_id} → ${t.dead_nodes.join(',')}`)],
+    ['User-CC-Profiles mit DeadNode', o.user_cc_profiles_by_pin.map(t => `user=${t.user_id} → ${t.dead_nodes.join(',')}`)],
+    ['Valkey-Keys', o.redis_keys],
+    ['Neo4j Curator-Entities', [o.neo4j_curator_entities + ' Stück']],
+    ['Prometheus stale targets', o.prometheus_static_targets.map(t => `${t.job}: ${t.node} (${t.targets.join(',')})`)],
+  ].filter(r => r[1].length > 0);
+  let html = `<table class="table table-sm mb-0"><thead><tr><th>Kategorie</th><th>Einträge</th></tr></thead><tbody>`;
+  for (const [k, vs] of rows) {
+    html += `<tr><td class="fw-bold">${k}</td><td>`;
+    html += vs.map(v => `<div class="font-monospace" style="font-size:.78rem">${escapeHtml(String(v))}</div>`).join('');
+    html += `</td></tr>`;
+  }
+  html += `</tbody></table>`;
+  html += `<div class="small text-muted mt-2">Aktive Server: ${d.active_servers.join(', ')}</div>`;
+  return html;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function scanOrphans() {
+  const box = document.getElementById('cleanup-report');
+  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Scanne…</div>';
+  try {
+    const d = await fetch('/api/maintenance/scan').then(r => r.json());
+    box.innerHTML = renderScanReport(d);
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function runCleanup(dryRun) {
+  const box = document.getElementById('cleanup-report');
+  if (!dryRun && !confirm('Cleanup ausführen? Templates mit DeadNode-Pins werden auf Fallback-Node repinned, verwaiste Curator-Templates gelöscht, Neo4j-Entities als deprecated markiert.')) return;
+  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Bereinige…</div>';
+  try {
+    const d = await fetch('/api/maintenance/cleanup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dry_run: dryRun}),
+    }).then(r => r.json());
+    let html = `<div class="alert alert-success"><strong>Cleanup ${dryRun ? '(dry-run)' : ''} abgeschlossen:</strong><br>`;
+    for (const [k, v] of Object.entries(d.removed)) {
+      html += `<div>${k}: <strong>${v}</strong></div>`;
+    }
+    html += `</div>`;
+    if (d.errors && d.errors.length) {
+      html += `<div class="alert alert-warning small"><strong>Warnungen:</strong><ul class="mb-0">`;
+      for (const e of d.errors) html += `<li>${escapeHtml(e)}</li>`;
+      html += `</ul></div>`;
+    }
+    box.innerHTML = html;
+    document.getElementById('btn-cleanup-run').disabled = true;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function verifyTemplates() {
+  const box = document.getElementById('verify-report');
+  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Prüfe…</div>';
+  try {
+    const d = await fetch('/api/maintenance/templates/verify').then(r => r.json());
+    const missing = d.issues.filter(t => t.issues.some(i => i.kind === 'model_missing')).length;
+    document.getElementById('btn-pull-missing').disabled = missing === 0;
+    if (d.issues.length === 0) {
+      box.innerHTML = `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>Alle ${d.checked} Templates ok — alle Modelle physisch verfügbar.</div>`;
+      return;
+    }
+    let html = `<div class="mb-2 text-muted">Geprüft: ${d.checked}, ok: ${d.clean.length}, mit Problemen: ${d.issues.length}</div>`;
+    html += `<table class="table table-sm mb-0"><thead><tr><th>Template</th><th>Problem</th></tr></thead><tbody>`;
+    for (const t of d.issues) {
+      const details = t.issues.map(i => {
+        const cls = i.kind === 'model_missing' ? 'text-warning' : i.kind === 'dead_node' ? 'text-danger' : 'text-muted';
+        const label = i.kind === 'model_missing' ? 'fehlt' : i.kind === 'dead_node' ? 'Node existiert nicht' : 'Node nicht erreichbar';
+        return `<div class="${cls}"><span class="font-monospace">${escapeHtml(i.model)}@${escapeHtml(i.node)}</span>: ${label}</div>`;
+      }).join('');
+      html += `<tr><td class="font-monospace" style="font-size:.82rem">${escapeHtml(t.name)}</td><td>${details}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function pullMissing() {
+  const box = document.getElementById('verify-report');
+  if (!confirm('Fehlende Modelle per Ollama pull nachladen? Das kann pro Modell mehrere Minuten dauern.')) return;
+  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Lade Modelle…</div>';
+  try {
+    const d = await fetch('/api/maintenance/templates/pull-missing', {method:'POST'}).then(r => r.json());
+    let html = `<div class="alert alert-info"><strong>Pull abgeschlossen:</strong> ${d.pulled.length} Einträge</div>`;
+    html += `<table class="table table-sm"><thead><tr><th>Modell</th><th>Node</th><th>Status</th></tr></thead><tbody>`;
+    for (const p of d.pulled) {
+      const cls = p.ok ? 'text-success' : 'text-danger';
+      html += `<tr><td class="font-monospace">${escapeHtml(p.model)}</td><td>${escapeHtml(p.node)}</td><td class="${cls}">${p.ok ? (p.last_status||'ok') : escapeHtml(p.error||'failed')}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+    box.innerHTML = html;
+    document.getElementById('btn-pull-missing').disabled = true;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function regenDashboard() {
+  const box = document.getElementById('regen-result');
+  box.textContent = 'Regeneriere Dashboard…';
+  try {
+    const d = await fetch('/api/dashboards/regenerate', {method:'POST'}).then(r => r.json());
+    box.innerHTML = `Dashboard aktualisiert. Probed: ${d.probed.length} Server. Prometheus reloaded: ${d.prometheus_reloaded}.`;
+    if (d.dashboard_url) window.open(d.dashboard_url, '_blank');
+  } catch (e) { box.textContent = 'Fehler: ' + e.message; }
+}
+
+async function reloadPrometheus() {
+  const box = document.getElementById('regen-result');
+  box.textContent = 'Prometheus reload…';
+  try {
+    const d = await fetch('/api/maintenance/prometheus/reload', {method:'POST'}).then(r => r.json());
+    box.textContent = d.ok ? 'Prometheus reloaded.' : 'Fehler: ' + (d.error || d.status_code);
+  } catch (e) { box.textContent = 'Fehler: ' + e.message; }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  pollOntology();
+  setInterval(pollOntology, 3000);
+});
+</script>
+{% endblock %}
