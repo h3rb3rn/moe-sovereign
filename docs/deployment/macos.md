@@ -20,19 +20,32 @@ that list.
 
 ## One-time setup
 
-1. Install Docker Desktop ≥ 4.30 from <https://docs.docker.com/desktop/install/mac-install/>.
-2. Allow the project to use a host directory under your home folder. The
-   installer picks `~/moe-data` automatically on macOS.
-3. Open **Docker Desktop → Settings → Resources → File Sharing** and
-   verify that `/Users/<your-name>/moe-data` (or whichever path you set
-   in `MOE_DATA_ROOT`) is in the list. If not, click **+** to add it,
-   then **Apply & Restart**.
-4. Run the installer:
+`install.sh` is Linux-only (it uses `apt-get` and `/etc/os-release`). On
+macOS, use the dedicated bootstrap script — it generates the same
+`.env`, creates the host directories, and prints the next steps.
+
+1. Install Docker Desktop ≥ 4.30 from
+   <https://docs.docker.com/desktop/install/mac-install/>.
+2. Clone the repository:
    ```bash
-   curl -sSL https://moe-sovereign.org/install.sh | bash
+   git clone https://github.com/h3rb3rn/moe-sovereign.git
+   cd moe-sovereign
    ```
-   The script detects macOS, defaults `MOE_DATA_ROOT=$HOME/moe-data`,
-   creates the subdirectories, and writes the path into `.env`.
+3. Run the macOS bootstrap (interactive — asks for admin password):
+   ```bash
+   bash scripts/bootstrap-macos.sh
+   ```
+   It defaults `MOE_DATA_ROOT=$HOME/moe-data` and
+   `GRAFANA_DATA_ROOT=$HOME/moe-grafana`, creates the subdirectories,
+   generates random secrets for Postgres / Neo4j / Redis / Grafana, and
+   writes everything to `.env`.
+4. Open **Docker Desktop → Settings → Resources → File Sharing** and add
+   both paths the script printed (`$HOME/moe-data` and
+   `$HOME/moe-grafana`). Click **Apply & Restart**.
+5. Bring up the stack:
+   ```bash
+   docker compose up -d
+   ```
 
 ## Manual setup (without install.sh)
 

@@ -364,8 +364,10 @@ services:
     restart: "no"
     env_file:
       - .env
+    environment:
+      DOZZLE_USERS_FILE: /data/dozzle-users.yml
     volumes:
-      - ${MOE_DATA_ROOT}:${MOE_DATA_ROOT}
+      - ${MOE_DATA_ROOT}:/data
       - ./scripts/dozzle-init.sh:/dozzle-init.sh:ro
     command: ["sh", "/dozzle-init.sh"]
 
