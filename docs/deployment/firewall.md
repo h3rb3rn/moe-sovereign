@@ -7,17 +7,31 @@ shows the minimum firewall configuration for each hosting environment.
 
 ## Port inventory
 
-| Port | Service | Binding in `docker-compose.yml` | Must be firewalled? |
-|-----:|---------|----------------------------------|--------------------:|
-| 80   | Caddy reverse proxy (HTTP → HTTPS redirect) | `0.0.0.0:80` | No (public) |
-| 443  | Caddy reverse proxy (HTTPS) | `0.0.0.0:443` | No (public) |
-| 8002 | Orchestrator API (`/v1/chat/completions`, `/graph/*`, `/v1/admin/*`) | `0.0.0.0:8002` | **Yes — LAN/admins only** |
-| 8003 | MCP precision tool server (math, hashing, regex, subnet calc) | `0.0.0.0:8003` | **Yes — LAN/admins only** |
-| 8088 | Admin UI (user management, templates, permissions) | `0.0.0.0:8088` | **Yes — LAN/admins only** |
-| 8098 | ChromaDB internal direct-access port | `0.0.0.0:8098` | **Yes — LAN/admins only** |
-| 3001 | Grafana dashboards | `0.0.0.0:3001` | **Yes — LAN/admins only** |
-| 9100 | node-exporter | `127.0.0.1:9100` (loopback) | No (already loopback) |
-| 9338 | cAdvisor | `127.0.0.1:9338` (loopback) | No (already loopback) |
+All host ports listed below are configurable via `.env` — set
+`<SERVICE>_HOST_PORT=<n>` to remap. The defaults shown are the
+out-of-the-box values.
+
+| Default port | Service | `.env` override | Bind in `docker-compose.yml` | Must be firewalled? |
+|-----:|---------|-----------------|---------------------------------|--------------------:|
+| 80   | Caddy reverse proxy (HTTP → HTTPS) | `CADDY_HTTP_PORT` | `0.0.0.0` | No (public) |
+| 443  | Caddy reverse proxy (HTTPS / HTTP3) | `CADDY_HTTPS_PORT` | `0.0.0.0` | No (public) |
+| 8002 | Orchestrator API (`/v1/chat/completions`, `/graph/*`, `/v1/admin/*`) | `LANGGRAPH_HOST_PORT` | `0.0.0.0` | **Yes — LAN/admins only** |
+| 8003 | MCP precision tool server | `MCP_HOST_PORT` | `0.0.0.0` | **Yes — LAN/admins only** |
+| 8088 | Admin UI | `ADMIN_UI_HOST_PORT` | `0.0.0.0` | **Yes — LAN/admins only** |
+| 8098 | docs / ChromaDB direct port | `DOCS_HOST_PORT` | `0.0.0.0` | **Yes — LAN/admins only** |
+| 3001 | Grafana dashboards | `GRAFANA_HOST_PORT` | `0.0.0.0` | **Yes — LAN/admins only** |
+| 8001 | ChromaDB internal | `CHROMA_HOST_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 9090 | Prometheus | `PROMETHEUS_HOST_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 7474 | Neo4j Browser | `NEO4J_HTTP_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 7687 | Neo4j Bolt | `NEO4J_BOLT_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 9092 | Kafka broker | `KAFKA_HOST_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 9999 | Dozzle log viewer | `DOZZLE_HOST_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 9100 | node-exporter | `NODE_EXPORTER_HOST_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+| 9338 | cAdvisor | `CADVISOR_HOST_PORT` | `127.0.0.1` (loopback) | No (already loopback) |
+
+If a port is already used on your host (e.g. local nginx on `:80` or
+GitLab Pages on `:8088`), set the override in `.env` and run
+`docker compose up -d` — no edit to `docker-compose.yml` required.
 
 ## Why these ports need firewalling
 
