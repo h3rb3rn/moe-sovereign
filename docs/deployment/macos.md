@@ -131,6 +131,10 @@ Common follow-up errors and what they mean:
 
 | Error | Cause | Fix |
 |---|---|---|
+| `mounts denied: … is not shared from the host` | Path not in Docker Desktop File Sharing | Add `MOE_DATA_ROOT` and `GRAFANA_DATA_ROOT` under Settings → Resources → File Sharing, then Apply & Restart |
+| `POSTGRES_CHECKPOINT_PASSWORD: missing — run scripts/install.sh…` | Compose started before `.env` was generated | `bash scripts/bootstrap-macos.sh`, then retry |
+| `password authentication failed for user "moe_admin"` | Postgres volume was initialised with a different password (old install.sh run) | `docker compose down && rm -rf $MOE_DATA_ROOT/langgraph-checkpoints && docker compose up -d` — the init script re-creates `moe_admin` with the current `.env` password |
+| `pydantic ValidationError: searx_host` | Older image build — rebuild | `docker compose build langgraph-app && docker compose up -d langgraph-app` |
 | `permission denied` on a sub-volume | Host UID ≠ container UID | `chmod -R 0775 "$MOE_DATA_ROOT"` |
 | `Cannot connect to the Docker daemon` | Docker Desktop is not running | start it from /Applications |
 | `no matching manifest for linux/arm64` | Pinned amd64-only image | upstream issue; report or use `--platform linux/amd64` |

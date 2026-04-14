@@ -118,8 +118,11 @@ services:
       - POSTGRES_USER=langgraph
       - POSTGRES_PASSWORD=${POSTGRES_CHECKPOINT_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
       - POSTGRES_DB=langgraph
+      # Consumed by scripts/postgres-init/01-moe_admin.sh on first init only
+      - MOE_USERDB_PASSWORD=${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
     volumes:
       - ${MOE_DATA_ROOT}/langgraph-checkpoints:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph"]
       interval: 10s
