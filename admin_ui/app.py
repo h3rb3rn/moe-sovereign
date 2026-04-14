@@ -352,6 +352,26 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # ─── .env helpers ────────────────────────────────────────────────────────────
 
+def _safe_json(raw, default):
+    """Parse JSON from an env-derived string. Returns ``default`` when the
+    value is missing, empty, or malformed — never raises JSONDecodeError.
+
+    Used for env values like INFERENCE_SERVERS, EXPERT_MODELS,
+    EXPERT_TEMPLATES, CLAUDE_CODE_PROFILES etc. that are user-editable
+    via the Admin UI and can therefore be missing on first boot."""
+    if raw is None:
+        return default
+    if not isinstance(raw, str):
+        return raw
+    s = raw.strip()
+    if not s:
+        return default
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return default
+
+
 def read_env() -> dict:
     """Parse .env into a flat key→value dict. Handles EXPERT_MODELS double-quoting."""
     result = {}
@@ -426,7 +446,7 @@ def rebuild_inference_servers(form) -> list:
     """Reconstruct INFERENCE_SERVERS list from sequential form fields."""
     # Load existing servers to preserve tokens when field is left blank
     try:
-        existing = json.loads(read_env().get("INFERENCE_SERVERS", "[]"))
+        existing = _safe_json(read_env().get("INFERENCE_SERVERS", ""), [])
         existing_tokens = {s.get("name"): s.get("token", "ollama") for s in existing}
     except (json.JSONDecodeError, Exception):
         existing_tokens = {}
@@ -873,7 +893,7 @@ def build_template_ctx(request: Request) -> dict:
     except (json.JSONDecodeError, ValueError):
         inference_servers = []
     try:
-        custom_prompts = json.loads(config.get("CUSTOM_EXPERT_PROMPTS", "{}"))
+        custom_prompts = _safe_json(config.get("CUSTOM_EXPERT_PROMPTS", ""), {})
     except json.JSONDecodeError:
         custom_prompts = {}
     server_names = [s["name"] for s in inference_servers]
@@ -1192,12 +1212,7 @@ async def logout(request: Request):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, _=Depends(require_login)):
     cfg = read_env()
-    raw_servers = (cfg.get("INFERENCE_SERVERS", "") or "").strip()
-    try:
-        inference_servers = json.loads(raw_servers) if raw_servers else []
-    except json.JSONDecodeError:
-        # Malformed or placeholder value — treat as unconfigured.
-        inference_servers = []
+    inference_servers = _safe_json(cfg.get("INFERENCE_SERVERS", ""), [])
     if not inference_servers:
         return RedirectResponse("/setup", status_code=302)
     return TEMPLATES.TemplateResponse(request, "dashboard.html", build_template_ctx(request))
@@ -1207,7 +1222,7 @@ async def dashboard(request: Request, _=Depends(require_login)):
 async def setup_wizard(request: Request, _=Depends(require_login)):
     """First-run setup wizard — shown when no inference servers are configured."""
     cfg = read_env()
-    inference_servers = json.loads(cfg.get("INFERENCE_SERVERS", "[]") or "[]")
+    inference_servers = _safe_json(cfg.get("INFERENCE_SERVERS", ""), [])
     return TEMPLATES.TemplateResponse(request, "setup_wizard.html", {
         "request": request,
         "step": request.query_params.get("step", "1"),
@@ -3779,7 +3794,7 @@ async def user_templates_page(request: Request, user_id: str = Depends(require_u
     # Determine allowed inference servers for this user
     config = read_env()
     try:
-        all_servers = json.loads(config.get("INFERENCE_SERVERS", "[]"))
+        all_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
     except json.JSONDecodeError:
         all_servers = []
     permitted_server_names = set()
@@ -3818,7 +3833,7 @@ async def user_api_permitted_servers(user_id: str = Depends(require_user_login))
     model_endpoint_perms = perms.get("model_endpoint", [])
     config = read_env()
     try:
-        all_servers = json.loads(config.get("INFERENCE_SERVERS", "[]"))
+        all_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
     except json.JSONDecodeError:
         all_servers = []
     permitted_server_names = set()
@@ -4003,7 +4018,7 @@ def _get_permitted_servers_for_user(perms: dict) -> list:
     model_endpoint_perms = perms.get("model_endpoint", [])
     config = read_env()
     try:
-        all_servers = json.loads(config.get("INFERENCE_SERVERS", "[]"))
+        all_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
     except json.JSONDecodeError:
         all_servers = []
     permitted_server_names: set = set()
