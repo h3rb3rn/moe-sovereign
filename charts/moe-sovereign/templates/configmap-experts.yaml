@@ -1,0 +1,17 @@
+{{/*
+Builds a single ConfigMap from every YAML file under configs/experts/.
+The Helm .Files.Glob pattern is evaluated at package time, so the chart
+must be packaged from the repo root (or use `--include-crds` equivalent
+via a pre-package step).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "moe.fullname" . }}-experts
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+data:
+{{- range $path, $_ := .Files.Glob "configs/experts/*.yaml" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

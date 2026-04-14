@@ -1,0 +1,53 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    system: 'moe-sovereign'
+
+scrape_configs:
+
+  # --- MoE Orchestrator ---
+  - job_name: 'moe-orchestrator'
+    static_configs:
+      - targets: ['langgraph-orchestrator:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # --- Prometheus self-monitoring ---
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # --- Host-Metriken (CPU, RAM, Disk, Network) ---
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # --- Container-Metriken (cAdvisor) ---
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 15s
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'container_(tasks_state|memory_failures_total)'
+        action: drop
+
+  # --- Inference Node Metrics (CPU, RAM, Disk, GPU via node-exporter + textfile) ---
+  # Each Ollama worker node runs prometheus-node-exporter on port 9100
+  # with GPU metrics collected via nvidia-smi textfile collector.
+  #
+  # Replace the example targets below with the IPs (or DNS names) of your
+  # own inference nodes. The `node` label is free-form — use whatever
+  # identifier you prefer (e.g. hostname, rack position, GPU model).
+  - job_name: 'inference-nodes'
+    static_configs:
+      - targets: ['node-01.internal:9100']
+        labels:
+          node: 'node-01'
+      - targets: ['node-02.internal:9100']
+        labels:
+          node: 'node-02'
+    scrape_interval: 15s
+    scrape_timeout: 10s

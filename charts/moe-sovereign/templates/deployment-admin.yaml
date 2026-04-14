@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "moe.fullname" . }}-admin
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  replicas: {{ .Values.admin.replicas }}
+  selector:
+    matchLabels:
+      {{- include "moe.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: admin
+  template:
+    metadata:
+      labels:
+        {{- include "moe.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: admin
+    spec:
+      serviceAccountName: {{ include "moe.serviceAccountName" . }}
+      {{- if ne (include "moe.isOpenShift" .) "true" }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: admin
+          image: {{ include "moe.image.admin" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.admin.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "moe.fullname" . }}-env
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: admin-data
+              mountPath: /app/data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: admin-data
+          emptyDir: {}

@@ -1,0 +1,22 @@
+MoE Sovereign — profile "{{ .Values.profile }}" deployed as "{{ .Release.Name }}".
+
+Next steps:
+{{- if eq (include "moe.isOpenShift" .) "true" }}
+  oc get route {{ include "moe.fullname" . }}-orchestrator -o jsonpath='{.spec.host}'
+{{- else if .Values.ingress.enabled }}
+  http://{{ .Values.ingress.host }}/
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "moe.fullname" . }}-orchestrator {{ .Values.orchestrator.port }}:{{ .Values.orchestrator.port }}
+{{- end }}
+
+IMPORTANT:
+{{- if not .Values.auth.existingSecret }}
+  The JWT public key secret "{{ include "moe.fullname" . }}-auth" contains a
+  PLACEHOLDER. Override it before exposing the orchestrator:
+
+    helm upgrade {{ .Release.Name }} charts/moe-sovereign \
+      --set-file auth.{{ .Values.auth.publicKeyField }}=/path/to/jwt_public_key.pem
+{{- end }}
+{{- if and (eq .Values.profile "enterprise") (not .Values.postgresql.enabled) (not .Values.external.postgresUrl) }}
+  WARNING: enterprise profile with neither subchart nor external.postgresUrl set.
+{{- end }}

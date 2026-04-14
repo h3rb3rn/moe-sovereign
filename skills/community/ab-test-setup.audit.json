@@ -1,0 +1,9 @@
+{
+  "skill": "ab-test-setup",
+  "model": "phi4:14b",
+  "node": "floating",
+  "timestamp": "2026-04-12T19:45:38.152716",
+  "verdict": "safe",
+  "findings": [],
+  "summary": "The Claude Code skill definition for 'ab-test-setup' is focused on providing guidance and best practices for designing and implementing A/B tests. It does not contain any shell command execution, network access, file system writes outside the working directory, prompt injection patterns, data exfiltration risks, credential access, or privilege escalation elements. The content is purely informational and educational, aimed at helping users understand how to conduct effective A/B testing without involving any potentially insecure operations."
+}

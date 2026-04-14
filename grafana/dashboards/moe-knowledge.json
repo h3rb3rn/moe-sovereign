@@ -1,0 +1,186 @@
+{
+  "uid": "moe-knowledge",
+  "title": "Knowledge Base Health",
+  "description": "Neo4j Graph, ChromaDB Dokumente, Planner-Patterns und Ontologie-Zustand",
+  "tags": ["moe", "knowledge", "neo4j", "chroma"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Graph Entitäten",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "blue", "mode": "fixed" } } },
+      "targets": [{ "expr": "moe_graph_entities_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Graph Relationen",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "purple", "mode": "fixed" } } },
+      "targets": [{ "expr": "moe_graph_relations_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Entitäten:Relationen",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "decimals": 2, "noValue": "–" } },
+      "targets": [{ "expr": "moe_graph_entities_total / (moe_graph_relations_total + 0.0001)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Chroma Dokumente",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } } },
+      "targets": [{ "expr": "moe_chroma_documents_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Planner Patterns",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } },
+      "targets": [{ "expr": "moe_planner_patterns_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Ontologie Entitäten",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "moe_ontology_entities_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Neo4j Graph-Wachstum",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Entitäten" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Relationen" }, "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        { "expr": "moe_graph_entities_total", "legendFormat": "Entitäten", "refId": "A" },
+        { "expr": "moe_graph_relations_total", "legendFormat": "Relationen", "refId": "B" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "ChromaDB Dokument-Anzahl",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20 }, "color": { "fixedColor": "green", "mode": "fixed" } } },
+      "targets": [{ "expr": "moe_chroma_documents_total", "legendFormat": "Dokumente", "refId": "A" }]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Ontologie-Gesundheit",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } } },
+      "targets": [
+        { "expr": "moe_ontology_entities_total", "legendFormat": "Ontologie-Entitäten", "refId": "A" },
+        { "expr": "moe_ontology_gaps_total", "legendFormat": "Erkannte Lücken", "refId": "B" },
+        { "expr": "moe_planner_patterns_total", "legendFormat": "Planner Patterns", "refId": "C" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "gauge",
+      "title": "Ontologie Lückenrate",
+      "gridPos": { "x": 12, "y": 12, "w": 6, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100, "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 10, "color": "orange" }, { "value": 25, "color": "red" }] }
+        }
+      },
+      "targets": [{ "expr": "moe_ontology_gaps_total / (moe_ontology_entities_total + 0.0001) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Aktive Ontologie-Lücken",
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 11, "color": "orange" }, { "value": 31, "color": "red" }] } } },
+      "targets": [{ "expr": "moe_ontology_gaps_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Knowledge-Wachstum (pro Stunde)",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 7 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } } },
+      "targets": [
+        { "expr": "increase(moe_graph_entities_total[1h])", "legendFormat": "Neue Entitäten/h", "refId": "A" },
+        { "expr": "increase(moe_graph_relations_total[1h])", "legendFormat": "Neue Relationen/h", "refId": "B" },
+        { "expr": "increase(moe_chroma_documents_total[1h])", "legendFormat": "Neue Dokumente/h", "refId": "C" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Knowledge Base gesamt (Nodes + Docs)",
+      "gridPos": { "x": 0, "y": 27, "w": 8, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "moe_graph_entities_total + moe_graph_relations_total + moe_chroma_documents_total", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Planner Coverage",
+      "gridPos": { "x": 8, "y": 27, "w": 8, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "noValue": "–" } },
+      "targets": [{ "expr": "moe_planner_patterns_total / (moe_graph_entities_total + 0.0001) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Neo4j : Chroma Ratio",
+      "gridPos": { "x": 16, "y": 27, "w": 8, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "decimals": 2, "noValue": "–" } },
+      "targets": [{ "expr": "moe_graph_entities_total / (moe_chroma_documents_total + 0.0001)", "legendFormat": "", "refId": "A" }]
+    }
+  ]
+}

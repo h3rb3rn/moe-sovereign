@@ -1,0 +1,15 @@
+dependencies:
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 15.5.38
+- name: kafka
+  repository: https://charts.bitnami.com/bitnami
+  version: 28.3.0
+- name: valkey
+  repository: https://charts.bitnami.com/bitnami
+  version: 1.0.3
+- name: neo4j
+  repository: https://helm.neo4j.com/neo4j
+  version: 5.26.24
+digest: sha256:e1fbf8f30a914e8a8d7d9099776a8b6d0ac3a9c6bab594719f27fb2e66a3fe18
+generated: "2026-04-09T19:43:11.452145226+02:00"

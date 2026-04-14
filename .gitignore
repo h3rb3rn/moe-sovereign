@@ -1,0 +1,57 @@
+.env
+*.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+tmp_install/
+site/
+# Local Prometheus GPU scrape targets (contain private IPs — use gpu_targets.yml.example as template)
+prometheus/gpu_targets.yml
+
+# Backup env files with secrets
+.env.env.bak.*
+.env.bak
+.env.*.bak
+
+# Claude Code local settings (may contain IPs)
+.claude/settings.local.json
+
+# Agent logs with potentially sensitive data
+/tmp/
+*.log
+
+# Database files (contain user accounts, API key hashes)
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime data directories
+data/
+admin_ui/data/
+
+# Benchmark results (contain server names, IPs)
+benchmarks/results/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker overrides with local secrets
+docker-compose.override.yml
+
+# Certificates and keys
+*.pem
+*.key
+*.cert
+*.crt
+
+# Build artifacts
+node_modules/
+
+# Internal development notes (not for publication)
+docs/TODO.md
+SECURITY_TASKS.md
+SYSTEM.md

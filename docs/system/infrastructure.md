@@ -1,0 +1,160 @@
+# Infrastructure & Hardware
+
+## Overview
+
+The reference infrastructure consists of 7 GPU nodes running on repurposed enterprise and consumer hardware. It demonstrates that MoE Sovereign functions even under the most adverse hardware conditions.
+
+!!! note "Reference Implementation"
+    The nodes shown are Ollama instances. In an enterprise environment,
+    these can be replaced by cloud API endpoints, dedicated GPU clusters, or
+    cloud inference services.
+
+## Hardware Table
+
+| Node | CPU | RAM | GPUs | Total VRAM | Notes |
+|------|-----|-----|------|------------|-------|
+| **N1** | AMD Ryzen 5 5600G | 64 GB DDR4 | 3× RTX 2060 12 GB + 2× RTX 3060 12 GB | 60 GB | Consumer GPUs |
+| **N2** | Intel Core i5-4590 | 32 GB DDR3 | 1× Tesla M10 (4× 8 GB) | 32 GB | Legacy Enterprise |
+| **N3** | AMD Athlon II X2 270 | 16 GB DDR3 | 1× Tesla M10 (4× 8 GB) | 32 GB | Ultra-Legacy CPU |
+| **N4** | AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 3× Tesla M10 (96 GB) | 96 GB | HPC Server |
+| **N5** | AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 3× Tesla M10 (96 GB) | 96 GB | HPC Server (identical to N4) |
+| **N6** | AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 7× Tesla K80 (2× 12 GB) | 168 GB | Ollama37 fork (Kepler CC3.7) |
+| **EXP** | Dell Wyse Thin Client | minimal | Tesla M10 (32 GB) via eGPU | 32 GB | Experiment: MiniPCI → PCIe x16 |
+
+**Total VRAM: ~516 GB** (all nodes)
+
+## Network Topology
+
+### External Access — Host-Level Nginx
+
+The external access layer uses a Nginx instance running **natively on the host OS** (not in Docker).
+It terminates TLS via Let's Encrypt (certbot) and proxies requests to the Docker service ports.
+See [Webserver & Reverse Proxy](webserver.md) for full details.
+
+```mermaid
+graph TD
+    INET["🌐 Internet"]
+
+    subgraph HOST_OS["Host OS (native)"]
+        NGINX["Nginx\nTLS via Let's Encrypt\nPort 443"]
+    end
+
+    subgraph DOCKER_STACK["Docker Stack"]
+        ORCH["langgraph-orchestrator\n:8002"]
+        ADMIN["moe-admin\n:8088"]
+        DOCS_C["moe-caddy :80/:443\n→ moe-docs :8098\n→ moe-dozzle :9999"]
+    end
+
+    subgraph GPU_CLUSTER["GPU Cluster (separate nodes)"]
+        N1["N1: Consumer GPUs\n60 GB VRAM · Ollama :11434"]
+        N2["N2: Tesla M10\n32 GB VRAM · Ollama :11434"]
+        N3["N3: Tesla M10\n32 GB VRAM · Ollama :11434"]
+        N4["N4: 3× Tesla M10\n96 GB VRAM · Ollama :11434"]
+        N5["N5: 3× Tesla M10\n96 GB VRAM · Ollama :11434"]
+        N6["N6: 7× Tesla K80\n168 GB VRAM · Ollama37 :11434"]
+    end
+
+    INET -->|HTTPS| NGINX
+    NGINX -->|proxy_pass :8002| ORCH
+    NGINX -->|proxy_pass :8088| ADMIN
+    NGINX -->|proxy_pass :80/:443| DOCS_C
+    ORCH <-->|"HTTP/REST Ollama API"| N1
+    ORCH <-->|"HTTP/REST Ollama API"| N2
+    ORCH <-->|"HTTP/REST Ollama API"| N3
+    ORCH <-->|"HTTP/REST Ollama API"| N4
+    ORCH <-->|"HTTP/REST Ollama API"| N5
+    ORCH <-->|"HTTP/REST Ollama API"| N6
+```
+
+### Internal Container Dependency Graph
+
+```mermaid
+graph TD
+    KAFKA["moe-kafka\n:9092 KRaft"]
+    NEO4J["neo4j-knowledge\n:7687 Bolt · :7474 HTTP"]
+    MCP["mcp-precision\n:8003"]
+    CHROMA["chromadb-vector\n:8001"]
+    CACHE["terra_cache\nValkey :6379"]
+    PG["terra_checkpoints\nPostgres :5432"]
+    PROXY["docker-socket-proxy\n:2375 (read-only)"]
+
+    ORCH["langgraph-orchestrator\n:8002"]
+    ADMIN["moe-admin\n:8088"]
+    PROM["moe-prometheus\n:9090"]
+    GRAF["moe-grafana\n:3001"]
+    NODE["node-exporter\n:9100"]
+    CADV["cadvisor\n:9338"]
+    DOCS["moe-docs\n:8098"]
+    DOZZLE["moe-dozzle\n:9999"]
+    CADDY["moe-caddy\n:80/:443"]
+    SYNC["moe-docs-sync"]
+
+    %% orchestrator dependencies
+    ORCH -->|"redis://"| CACHE
+    ORCH -->|"postgresql://"| PG
+    ORCH -->|"http://"| CHROMA
+    ORCH -->|"bolt://"| NEO4J
+    ORCH -->|"kafka://"| KAFKA
+    ORCH -->|"http://"| MCP
+    KAFKA -.->|"moe.ingest consumer"| ORCH
+
+    %% admin dependencies
+    ADMIN -->|"http://"| ORCH
+    ADMIN -->|"http://"| PROM
+    ADMIN -->|"redis://"| CACHE
+    ADMIN -->|"postgresql://"| PG
+    ADMIN -->|"http:// Docker API"| PROXY
+
+    %% observability
+    PROM -->|"scrape :8002/metrics"| ORCH
+    PROM -->|"scrape :9100/metrics"| NODE
+    PROM -->|"scrape :9338/metrics"| CADV
+    GRAF -->|"datasource"| PROM
+
+    %% docs stack
+    CADDY -->|"reverse_proxy"| DOCS
+    CADDY -->|"reverse_proxy"| DOZZLE
+    SYNC -->|"HTTP ingest"| ORCH
+
+    style ORCH fill:#1e3a5f,color:#fff
+    style ADMIN fill:#2a1e5f,color:#fff
+    style KAFKA fill:#4a2a00,color:#fff
+    style NEO4J fill:#1e5f3a,color:#fff
+    style PROM fill:#5f2a00,color:#fff
+```
+
+## Ollama vs. Ollama37
+
+### Standard Ollama
+- Supports NVIDIA GPUs from **Compute Capability 5.0** (Maxwell+)
+- Tesla K80 (Kepler, CC 3.7): **not supported**
+
+### Ollama37 Fork
+- Reactivates CUDA support for **Compute Capability 3.7** (Kepler architecture)
+- Enables full inference on Tesla K80 GPUs
+- Same API as standard Ollama (drop-in)
+- Node N6: 7× Tesla K80 = 168 GB VRAM
+
+!!! tip "Key Innovation"
+    Tesla K80 GPUs are officially no longer supported by Ollama.
+    The Ollama37 fork reactivates these cards and enables full
+    inference on hardware that others treat as electronic waste.
+
+## VRAM Management
+
+The orchestrator manages model placement dynamically:
+
+- **VRAM inventory**: Each node reports available VRAM via Ollama API
+- **Model routing**: Large T2 models are preferentially placed on nodes with more VRAM
+- **Multi-GPU**: Tesla M10 and K80 are treated as a single logical pool
+- **Failover**: If a node fails, requests are automatically redirected to others
+
+## Runtime Stack per Node
+
+```mermaid
+flowchart TD
+    A["Debian 13 (Bookworm)"] --> B[Docker CE]
+    B --> C["Ollama (or Ollama37 for N6)"]
+    C --> D[NVIDIA Container Toolkit]
+    D --> E[CUDA 12.x]
+```

@@ -1,0 +1,15 @@
+{
+  "id": "cc-ref-native",
+  "name": "Reference: Native (Direct LLM)",
+  "description": "Direct LLM inference without MoE pipeline. Fast interactive coding, simple edits, tool calls routed directly to a single model. Lowest latency, no multi-expert synthesis.",
+  "moe_mode": "native",
+  "tool_model": "gemma4:31b",
+  "tool_endpoint": "<YOUR_OLLAMA_HOST>",
+  "accepted_models": ["claude-sonnet-4-20250514", "claude-sonnet-4-6-20250725"],
+  "system_prompt_prefix": "",
+  "stream_think": false,
+  "tool_max_tokens": 8192,
+  "reasoning_max_tokens": 4096,
+  "tool_choice": "required",
+  "enabled": true
+}

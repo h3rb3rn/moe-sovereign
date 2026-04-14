@@ -1,0 +1,427 @@
+services:
+
+  # --- Kafka (KRaft, kein Zookeeper) ---
+  moe-kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: moe-kafka
+    restart: always
+    ports:
+      - "127.0.0.1:9092:9092"
+    environment:
+      CLUSTER_ID: "moe-kafka-cluster-01"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@moe-kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://moe-kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 536870912
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - /opt/moe-infra/kafka-data:/var/lib/kafka/data
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+  # --- Neo4j Knowledge Graph (GraphRAG + Ontologie) ---
+  neo4j-knowledge:
+    image: neo4j:5-community
+    container_name: neo4j-knowledge
+    restart: always
+    ports:
+      - "127.0.0.1:7474:7474"   # Browser UI
+      - "127.0.0.1:7687:7687"   # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASS}
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=1g
+      - NEO4J_server_memory_pagecache_size=512m
+    volumes:
+      - /opt/moe-infra/neo4j-data:/data
+      - /opt/moe-infra/neo4j-logs:/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+
+  # --- MCP Precision Tools Server ---
+  mcp-precision:
+    build:
+      context: .
+      dockerfile: mcp_server/Dockerfile
+    container_name: mcp-precision
+    restart: always
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    volumes:
+      - /opt/moe-infra/generated:/app/generated:rw
+    environment:
+      - NEO4J_URI=bolt://neo4j-knowledge:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASS=${NEO4J_PASS}
+
+  # --- LangGraph Orchestrator (Dein Kern-System) ---
+  langgraph-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: langgraph-orchestrator
+    restart: always
+    ports:
+      - "8002:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@terra_cache:6379
+      - POSTGRES_CHECKPOINT_URL=postgresql://langgraph:${POSTGRES_CHECKPOINT_PASSWORD}@terra_checkpoints:5432/langgraph
+      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD}@terra_checkpoints:5432/moe_userdb
+      - CHROMA_HOST=chromadb-vector
+      - CHROMA_PORT=8000
+      - MCP_URL=http://mcp-precision:8003
+      - NEO4J_URI=bolt://neo4j-knowledge:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASS=${NEO4J_PASS}
+      - KAFKA_URL=kafka://moe-kafka:9092
+      # LITELLM_URL aktiviert das Unified API Gateway (leer = direkter Ollama-Zugriff als Fallback)
+      # - LITELLM_URL=http://litellm-proxy:4000
+    volumes:
+      - /opt/moe-infra/agent-logs:/app/logs
+      - /opt/moe-infra/chroma-onnx-cache:/root/.cache/chroma
+      - ./.env:/app/.env:ro
+      - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
+    depends_on:
+      - terra_cache
+      - terra_checkpoints
+      - chromadb-vector
+      - mcp-precision
+      - neo4j-knowledge
+      - moe-kafka
+
+  # --- Postgres (LangGraph checkpoints via AsyncPostgresSaver) ---
+  # Dedicated instance — keeps checkpoint data isolated from authentik-postgresql.
+  terra_checkpoints:
+    image: postgres:17-alpine
+    container_name: terra_checkpoints
+    restart: always
+    environment:
+      - POSTGRES_USER=langgraph
+      - POSTGRES_PASSWORD=${POSTGRES_CHECKPOINT_PASSWORD}
+      - POSTGRES_DB=langgraph
+    volumes:
+      - /opt/moe-infra/langgraph-checkpoints:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # --- Valkey (cache, moe:active:* keys, semaphores metadata) ---
+  # BSD-3-Clause drop-in for Redis. LangGraph checkpoints live in Postgres (terra_checkpoints),
+  # not here — valkey-search/RediSearch is not used (requires AVX2 which this host lacks).
+  terra_cache:
+    image: valkey/valkey:8-alpine
+    container_name: terra_cache
+    restart: always
+    command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    volumes:
+      - /opt/moe-infra/redis-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # --- ChromaDB (Vektorspeicher für RAG) ---
+  chromadb-vector:
+    image: chromadb/chroma:latest
+    container_name: chromadb-vector
+    restart: always
+    ports:
+      - "127.0.0.1:8001:8000" # Host Port 8001 -> Container Port 8000
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - /opt/moe-infra/chroma-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  # --- Prometheus (Metriken-Scraper) ---
+  moe-prometheus:
+    image: prom/prometheus:latest
+    container_name: moe-prometheus
+    restart: always
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /opt/moe-infra/prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - langgraph-app
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # --- Docker Socket Proxy (schützt Docker-Socket vor direktem Zugriff) ---
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: docker-socket-proxy
+    restart: always
+    environment:
+      CONTAINERS: 1   # GET /containers/*
+      STATS: 1        # GET /containers/*/stats
+      LOGS: 1         # GET /containers/*/logs (required by Dozzle)
+      EVENTS: 1       # GET /events (required by Dozzle real-time)
+      VERSION: 1      # GET /version
+      PING: 1         # GET /_ping
+      POST: 1         # POST /containers/*/restart
+      ALLOW_RESTARTS: 1  # required so moe-docs-sync can reload mkdocs serve after updating docs
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - default
+
+  # --- Admin UI (Web-Konfiguration für MoE Sovereign) ---
+  moe-admin:
+    build:
+      context: ./admin_ui
+      dockerfile: Dockerfile
+    container_name: moe-admin
+    restart: always
+    ports:
+      - "8088:8088"
+    env_file:
+      - .env
+    environment:
+      - PROMETHEUS_URL=http://moe-prometheus:9090
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@terra_cache:6379
+      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD}@terra_checkpoints:5432/moe_userdb
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    volumes:
+      - ./.env:/app/.env:rw
+      - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
+      - ./skills-upstream:/app/skills-upstream:rw
+      - /opt/moe-infra/admin-logs:/app/logs:rw
+    depends_on:
+      - langgraph-app
+      - moe-prometheus
+      - terra_cache
+      - terra_checkpoints
+      - docker-socket-proxy
+    networks:
+      - default
+      - authentik_network   # server-side token exchange with authentik-server
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  # --- Grafana (Visualisierung & Dashboards) ---
+  moe-grafana:
+    image: grafana/grafana:latest
+    container_name: moe-grafana
+    restart: always
+    ports:
+      - "3001:3000"
+    user: "472"
+    env_file:
+      - .env
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/moe-operations.json
+    volumes:
+      - /opt/grafana/data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - /opt/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - moe-prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # --- node-exporter (Host-Metriken: CPU, RAM, Disk, Network) ---
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: always
+    ports:
+      - "127.0.0.1:9100:9100"
+    pid: host
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.netclass.ignored-devices=^(veth|br|docker|lo).*'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
+  # --- cAdvisor (Container-Ressourcen-Metriken) ---
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9338:8080"
+    cap_add:
+      - SYS_ADMIN
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 256M
+
+  # --- MkDocs Dokumentations-Server ---
+  moe-docs:
+    image: squidfunk/mkdocs-material:latest
+    container_name: moe-docs
+    restart: unless-stopped
+    ports:
+      - "8098:8000"   # Direktzugriff intern: http://localhost:8098
+    volumes:
+      - .:/docs:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # --- MkDocs Sync-Agent (aktualisiert Status, Experts, Self-Correction alle 15 min) ---
+  moe-docs-sync:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sync
+    container_name: moe-docs-sync
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    volumes:
+      - .:/app
+      - /moe-few-shot:/moe-few-shot:ro
+    environment:
+      - DOCS_DIR=/app/docs
+      - EXPERTS_PATH=/app/prompts/systemprompt
+      - PROMETHEUS_URL=http://moe-prometheus:9090
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    command: >
+      sh -c "while true; do python /app/sync_agent.py; sleep 900; done"
+    depends_on:
+      - moe-prometheus
+      - docker-socket-proxy
+
+  # --- Dozzle Init (generates bcrypt users.yml from .env credentials) ---
+  moe-dozzle-init:
+    image: python:3.12-alpine
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - /opt/moe-infra:/opt/moe-infra
+      - ./scripts/dozzle-init.sh:/dozzle-init.sh:ro
+    command: ["sh", "/dozzle-init.sh"]
+
+  # --- Dozzle (Container Log Viewer) ---
+  moe-dozzle:
+    image: amir20/dozzle:latest
+    container_name: moe-dozzle
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DOZZLE_AUTH_PROVIDER: simple
+    ports:
+      - "127.0.0.1:9999:8080"   # local access: http://localhost:9999
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/moe-infra/dozzle-users.yml:/data/users.yml:ro
+    depends_on:
+      moe-dozzle-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+          memory: 128M
+
+  # --- Caddy Reverse Proxy (TLS für docs.moe-sovereign.org) ---
+  moe-caddy:
+    image: caddy:2-alpine
+    container_name: moe-caddy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./install.sh:/srv/install.sh:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - moe-docs
+      - moe-dozzle
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+
+networks:
+  authentik_network:
+    # Created automatically. If Authentik SSO is deployed separately,
+    # change to 'external: true' and ensure the network exists.
+    driver: bridge

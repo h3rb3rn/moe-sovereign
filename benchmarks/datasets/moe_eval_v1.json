@@ -1,0 +1,238 @@
+{
+  "name": "MoE-Eval v1",
+  "version": "1.0.0",
+  "description": "Evaluation dataset for the MoE Sovereign Compound AI System. Tests precision tools, compounding knowledge (GraphRAG), domain routing, and multi-turn memory — NOT raw token throughput.",
+  "author": "Philipp Horn <kontakt@philipp-horn.dev>",
+  "created_at": "2026-04-10",
+  "test_cases": [
+    {
+      "id": "precision-mcp-subnet",
+      "category": "precision",
+      "name": "Subnet Calculation (MCP deterministic)",
+      "description": "A complex subnet calculation that standard LLMs hallucinate but the MCP subnet_calc tool solves exactly. Tests whether the orchestrator correctly delegates to MCP.",
+      "type": "single_turn",
+      "prompt": "Berechne exakt: Für das Netzwerk 172.20.128.0/19 — wie lautet die Subnetzmaske, die Broadcast-Adresse, und wie viele nutzbare Host-Adressen gibt es? Zeige die Berechnung.",
+      "expected_answer": {
+        "subnet_mask": "255.255.224.0",
+        "broadcast": "172.20.159.255",
+        "usable_hosts": 8190,
+        "verification_keywords": ["255.255.224.0", "172.20.159.255", "8190"]
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": ["255.255.224.0", "172.20.159.255", "8190"],
+        "partial_credit": true
+      }
+    },
+    {
+      "id": "precision-mcp-math",
+      "category": "precision",
+      "name": "Complex Arithmetic with Units (MCP deterministic)",
+      "description": "Multi-step calculation with unit conversion that LLMs routinely get wrong. Tests the AST-whitelisted calculate + unit_convert MCP tools.",
+      "type": "single_turn",
+      "prompt": "Berechne: Ein Server verbraucht 342 Watt. Er läuft 24/7 für 365 Tage. Der Strompreis beträgt 0.2879 EUR/kWh. (a) Wie viel kWh verbraucht er pro Jahr? (b) Was kostet das pro Jahr in EUR? Zeige jeden Rechenschritt.",
+      "expected_answer": {
+        "kwh_per_year": 2995.92,
+        "cost_per_year_eur": 862.73,
+        "tolerance_pct": 1.0,
+        "verification_keywords": ["2995", "862"]
+      },
+      "scoring": {
+        "type": "numeric_tolerance",
+        "checks": [
+          {"field": "kwh", "expected": 2995.92, "tolerance_pct": 1.0},
+          {"field": "cost", "expected": 862.73, "tolerance_pct": 2.0}
+        ]
+      }
+    },
+    {
+      "id": "precision-mcp-date",
+      "category": "precision",
+      "name": "Date Arithmetic Across Leap Year (MCP deterministic)",
+      "description": "Date difference calculation spanning a leap year boundary — a classic LLM failure mode.",
+      "type": "single_turn",
+      "prompt": "Wie viele Tage liegen zwischen dem 15. Januar 2024 und dem 10. März 2024? Beachte: 2024 ist ein Schaltjahr.",
+      "expected_answer": {
+        "days": 55,
+        "verification_keywords": ["55"]
+      },
+      "scoring": {
+        "type": "exact_match",
+        "expected_value": "55"
+      }
+    },
+    {
+      "id": "compounding-memory-3turn",
+      "category": "compounding_knowledge",
+      "name": "Compounding Memory Test (3-Turn GraphRAG)",
+      "description": "Injects two novel fictional facts in turns 1+2, then asks a synthesis question in turn 3 that requires combining both facts. Tests the SYNTHESIS_INSIGHT mechanism and Neo4j knowledge persistence.",
+      "type": "multi_turn",
+      "turns": [
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Merke dir folgendes: Das Projekt 'Sovereign Shield' verwendet das X7-Protokoll für die interne Cluster-Kommunikation. Das X7-Protokoll ist ein experimentelles Protokoll das 2025 von der Forschungsabteilung entwickelt wurde.",
+          "expected_behavior": "System acknowledges the fact and potentially stores it via SYNTHESIS_INSIGHT into Neo4j."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Weitere Information: Das X7-Protokoll verwendet TCP-Port 9977 und erfordert TLS 1.3 Verschlüsselung. Die maximale Payload-Größe beträgt 64 KB.",
+          "expected_behavior": "System acknowledges the second fact. If GraphRAG ingest works, both facts should now be in Neo4j as linked entities."
+        },
+        {
+          "turn": 3,
+          "role": "synthesis_query",
+          "prompt": "Ich richte gerade die Firewall für das Projekt 'Sovereign Shield' ein. Welchen Port muss ich öffnen und welche Verschlüsselung ist erforderlich?",
+          "expected_answer": {
+            "port": "9977",
+            "encryption": "TLS 1.3",
+            "project_name": "Sovereign Shield",
+            "protocol": "X7",
+            "verification_keywords": ["9977", "TLS 1.3", "Sovereign Shield"]
+          },
+          "scoring": {
+            "type": "keyword_match",
+            "required_keywords": ["9977", "TLS 1.3"],
+            "bonus_keywords": ["X7", "Sovereign Shield", "64 KB"],
+            "partial_credit": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "compounding-memory-5turn",
+      "category": "compounding_knowledge",
+      "name": "Extended Memory Test (5-Turn Cross-Domain)",
+      "description": "A longer multi-turn sequence that injects facts across domains (technical + legal) and asks a cross-domain synthesis question.",
+      "type": "multi_turn",
+      "turns": [
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Notiz: Der Kunde 'Meridian GmbH' betreibt einen KI-Dienst unter der Domain meridian-ai.example.com."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Der KI-Dienst der Meridian GmbH verarbeitet personenbezogene Gesundheitsdaten (Art. 9 DSGVO) und benötigt daher eine Datenschutz-Folgenabschätzung nach Art. 35 DSGVO."
+        },
+        {
+          "turn": 3,
+          "role": "inject_fact",
+          "prompt": "Die Meridian GmbH hat ihren Sitz in München, Hauptstraße 42, und der Datenschutzbeauftragte heißt Dr. Maria Weber."
+        },
+        {
+          "turn": 4,
+          "role": "inject_fact",
+          "prompt": "Letzte Woche wurde festgestellt, dass der KI-Dienst unter meridian-ai.example.com Antwortzeiten über 30 Sekunden hat und die Verfügbarkeit bei nur 94.2% liegt."
+        },
+        {
+          "turn": 5,
+          "role": "synthesis_query",
+          "prompt": "Erstelle eine kurze Zusammenfassung der Situation bei der Meridian GmbH: welche datenschutzrechtlichen Pflichten bestehen, welche technischen Probleme vorliegen, und wer ist zuständig?",
+          "expected_answer": {
+            "verification_keywords": [
+              "Art. 9", "Art. 35", "Gesundheitsdaten",
+              "Datenschutz-Folgenabschätzung",
+              "30 Sekunden", "94.2%",
+              "Dr. Maria Weber"
+            ]
+          },
+          "scoring": {
+            "type": "keyword_match",
+            "required_keywords": ["Art. 35", "Gesundheitsdaten", "Dr. Maria Weber"],
+            "bonus_keywords": ["Art. 9", "94.2%", "meridian-ai", "München"],
+            "partial_credit": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "routing-legal",
+      "category": "domain_routing",
+      "name": "Legal Domain Routing (German Law)",
+      "description": "A strict legal question that must route to the 'legal_advisor' expert. Tests whether the planner correctly identifies the domain.",
+      "type": "single_turn",
+      "prompt": "Erkläre den Unterschied zwischen § 823 Abs. 1 BGB (deliktische Haftung) und § 280 Abs. 1 BGB (vertragliche Haftung). Wann greift welcher Anspruch und können beide nebeneinander bestehen?",
+      "expected_answer": {
+        "required_concepts": [
+          "absolute Rechte",
+          "Vertragsverhältnis",
+          "Anspruchskonkurrenz"
+        ],
+        "required_paragraphs": ["§ 823", "§ 280"],
+        "verification_keywords": ["§ 823", "§ 280", "deliktisch", "vertraglich"]
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": ["§ 823", "§ 280"],
+        "bonus_keywords": ["Anspruchskonkurrenz", "absolute Rechte", "Verschulden"],
+        "partial_credit": true
+      }
+    },
+    {
+      "id": "routing-medical",
+      "category": "domain_routing",
+      "name": "Medical Domain Routing (with Disclaimer)",
+      "description": "A medical information question that must route to 'medical_consult'. Tests whether the expert adds the required disclaimer.",
+      "type": "single_turn",
+      "prompt": "Was sind die typischen Symptome einer Hashimoto-Thyreoiditis und wie unterscheidet sich die Erkrankung von einer Basedow-Krankheit? Welche Laborwerte sind diagnostisch relevant?",
+      "expected_answer": {
+        "must_include_disclaimer": true,
+        "verification_keywords": ["TSH", "T3", "T4", "Antikörper", "Hypothyreose", "Hyperthyreose"],
+        "disclaimer_keywords": ["Arzt", "ärztlich", "Diagnose", "medizinisch"]
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": ["TSH", "Hypothyreose"],
+        "bonus_keywords": ["T3", "T4", "Antikörper", "TPO", "TRAK"],
+        "disclaimer_required": true,
+        "disclaimer_keywords": ["Arzt", "ärztlich", "Diagnose"],
+        "partial_credit": true
+      }
+    },
+    {
+      "id": "routing-code-review",
+      "category": "domain_routing",
+      "name": "Code Review Routing (Security Focus)",
+      "description": "A code review request that must route to 'code_reviewer'. Tests whether the expert correctly identifies an SQL injection vulnerability.",
+      "type": "single_turn",
+      "prompt": "Überprüfe folgenden Python-Code auf Sicherheitslücken:\n\n```python\ndef get_user(db, username):\n    query = f\"SELECT * FROM users WHERE name = '{username}'\"\n    return db.execute(query).fetchone()\n```\n\nWelche Schwachstelle liegt vor und wie würdest du sie beheben?",
+      "expected_answer": {
+        "vulnerability": "SQL Injection",
+        "fix": "parameterized query / prepared statement",
+        "verification_keywords": ["SQL Injection", "Parameter", "Prepared"]
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": ["SQL", "Injection"],
+        "bonus_keywords": ["parameterized", "prepared", "placeholder", "?", "%s"],
+        "partial_credit": true
+      }
+    },
+    {
+      "id": "multi-expert-synthesis",
+      "category": "multi_expert",
+      "name": "Multi-Expert Synthesis (Legal + Technical + Math)",
+      "description": "A question that requires simultaneous activation of multiple experts (legal + technical + math). Tests parallel expert fan-out and merger quality.",
+      "type": "single_turn",
+      "prompt": "Ein Startup hat 50.000 Nutzer-Datensätze und will diese für KI-Training nutzen. (a) Unter welcher DSGVO-Rechtsgrundlage ist das möglich? (b) Berechne den Speicherbedarf: 50.000 Embeddings × 768 Dimensionen × fp32 (4 Byte pro Wert). (c) Welche Pseudonymisierungstechnik empfiehlst du?",
+      "expected_answer": {
+        "legal_basis": "Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse)",
+        "storage_bytes": 153600000,
+        "storage_mb": 146.48,
+        "pseudonymization": "k-Anonymität oder Differential Privacy",
+        "verification_keywords": ["Art. 6", "153600000", "146", "Pseudonymisierung"]
+      },
+      "scoring": {
+        "type": "combined",
+        "checks": [
+          {"type": "keyword_match", "required_keywords": ["Art. 6"]},
+          {"type": "numeric_tolerance", "field": "storage", "expected": 146.48, "tolerance_pct": 5.0},
+          {"type": "keyword_match", "required_keywords": ["Pseudonymisierung"]}
+        ]
+      }
+    }
+  ]
+}

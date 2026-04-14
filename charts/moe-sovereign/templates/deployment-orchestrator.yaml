@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "moe.fullname" . }}-orchestrator
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  {{- if not .Values.orchestrator.autoscaling.enabled }}
+  replicas: {{ .Values.orchestrator.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "moe.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        {{- include "moe.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: orchestrator
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-env.yaml") . | sha256sum }}
+        checksum/experts: {{ include (print $.Template.BasePath "/configmap-experts.yaml") . | sha256sum }}
+        {{- with .Values.orchestrator.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "moe.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if ne (include "moe.isOpenShift" .) "true" }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: orchestrator
+          image: {{ include "moe.image.orchestrator" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if ne (include "moe.isOpenShift" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- else }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.orchestrator.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "moe.fullname" . }}-env
+          env:
+            - name: POSTGRES_CHECKPOINT_URL
+              {{- if .Values.postgresql.enabled }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.auth.existingSecret | default (printf "%s-postgresql" .Release.Name) }}
+                  key: postgres-password
+              {{- else }}
+              value: {{ .Values.external.postgresUrl | quote }}
+              {{- end }}
+            - name: JWT_PUBLIC_KEY_PATH
+              value: /etc/moe/auth/{{ .Values.auth.publicKeyField }}
+            {{- with .Values.orchestrator.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: cache
+              mountPath: /app/cache
+            - name: tmp
+              mountPath: /tmp
+            - name: experts
+              mountPath: {{ .Values.experts.mountPath }}
+              readOnly: true
+            - name: auth
+              mountPath: /etc/moe/auth
+              readOnly: true
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: experts
+          configMap:
+            name: {{ include "moe.fullname" . }}-experts
+        - name: auth
+          secret:
+            secretName: {{ .Values.auth.existingSecret | default (printf "%s-auth" (include "moe.fullname" .)) }}

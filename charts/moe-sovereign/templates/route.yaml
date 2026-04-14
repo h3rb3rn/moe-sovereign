@@ -1,0 +1,34 @@
+{{- if eq (include "moe.isOpenShift" .) "true" -}}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "moe.fullname" . }}-orchestrator
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "moe.fullname" . }}-orchestrator
+  port:
+    targetPort: http
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "moe.fullname" . }}-admin
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+spec:
+  to:
+    kind: Service
+    name: {{ include "moe.fullname" . }}-admin
+  port:
+    targetPort: http
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+{{- end -}}

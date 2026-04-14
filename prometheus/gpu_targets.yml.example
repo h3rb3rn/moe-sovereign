@@ -1,0 +1,28 @@
+# prometheus/gpu_targets.yml.example
+#
+# Copy this file to prometheus/gpu_targets.yml and fill in your GPU node details.
+# This file is gitignored — it contains your private infrastructure addresses.
+#
+# Each entry targets a nvidia-smi-exporter instance running on a GPU inference node.
+# Default exporter port: 9835
+# See: https://github.com/utkuozdemir/nvidia_gpu_exporter
+#
+# You must also mount this file into the Prometheus container. Add to docker-compose.yml:
+#
+#   moe-prometheus:
+#     volumes:
+#       - ./prometheus/gpu_targets.yml:/etc/prometheus/gpu_targets.yml:ro
+#
+# Then uncomment the file_sd_configs section in prometheus/prometheus.yml.
+
+- targets:
+    - 'YOUR_GPU_HOST_1:9835'
+  labels:
+    server: 'gpu-node-1'
+    gpu_model: 'RTX 3090'
+
+- targets:
+    - 'YOUR_GPU_HOST_2:9835'
+  labels:
+    server: 'gpu-node-2'
+    gpu_model: 'Tesla M10'

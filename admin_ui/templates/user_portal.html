@@ -1,0 +1,2289 @@
+<!DOCTYPE html>
+<html lang="{{ get_lang(request)[:2] }}" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    /* Apply saved theme before first paint to avoid flash */
+    (function(){
+      const t = localStorage.getItem('moe-theme') || 'light';
+      document.documentElement.setAttribute('data-bs-theme', t);
+    })();
+  </script>
+  <title>
+    {% if page == "login" %}{{ t(request, 'page.login') }}{% elif page == "forgot_password" %}{{ t(request, 'page.forgot_pw') }}{% elif page == "reset_password" %}{{ t(request, 'page.reset_pw') }}{% elif page == "dashboard" %}{{ t(request, 'page.user_dashboard') }}{% elif page == "profile" %}{{ t(request, 'page.profile_pw') }}{% elif page == "usage" %}{{ t(request, 'page.usage') }}{% elif page == "billing" %}{{ t(request, 'page.billing') }}{% elif page == "keys" %}{{ t(request, 'page.api_keys') }}{% elif page == "cc_profiles" %}{{ t(request, 'page.cc_profiles') }}{% else %}User Portal{% endif %}
+    – MoE Portal
+  </title>
+  <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/css/bootstrap-icons.min.css">
+  <script src="/static/js/chart.umd.min.js"></script>
+  <style>
+    body { background-color: var(--bs-body-bg); }
+    .navbar-brand span { color: #6ea8fe; font-weight: 700; }
+    .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: 10px; }
+    .card-header { border-radius: 10px 10px 0 0 !important; font-weight: 600; font-size: .9rem; }
+    .portal-sidebar { min-width: 200px; }
+    .sidebar-link { display: block; padding: .5rem .75rem; border-radius: 8px; text-decoration: none; color: #495057; font-size: .9rem; }
+    .sidebar-link:hover { background: #e9ecef; color: #212529; }
+    .sidebar-link.active { background: #0d6efd; color: #fff; }
+    .budget-bar .progress { height: 10px; border-radius: 5px; }
+    .key-mono { font-family: monospace; font-size: .82rem; word-break: break-all; }
+    footer { font-size: .78rem; color: #adb5bd; }
+  </style>
+<script>
+const CSRF_TOKEN = "{{ csrf_token }}";
+/* ─── CSRF: inject X-CSRF-Token into all mutating fetch() calls ─────────── */
+(function(){
+  const _origFetch = window.fetch;
+  const MUTATING = new Set(['POST','PUT','DELETE','PATCH']);
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    const method = (opts.method || 'GET').toUpperCase();
+    if (MUTATING.has(method)) {
+      opts.headers = Object.assign({'X-CSRF-Token': CSRF_TOKEN}, opts.headers || {});
+    }
+    return _origFetch.call(this, url, opts);
+  };
+})();
+</script>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3 sticky-top">
+  <a class="navbar-brand d-flex align-items-center gap-2" href="/user/dashboard">
+    <i class="bi bi-diagram-3-fill" style="color:#6ea8fe;font-size:1.3rem"></i>
+    <span>MoE</span><span class="text-white fw-normal ms-1">Portal</span>
+  </a>
+  {% if page != "login" %}
+  <div class="d-flex align-items-center gap-2">
+    {% if is_impersonating %}
+    <span class="badge bg-warning text-dark"><i class="bi bi-eye me-1"></i>{{ t(request, 'lbl.admin_preview') }}</span>
+    <a href="/user/impersonate/exit" class="btn btn-sm btn-warning">
+      <i class="bi bi-arrow-left me-1"></i>{{ t(request, 'lbl.impersonate_exit') }}
+    </a>
+    {% else %}
+    <span class="text-secondary small"><i class="bi bi-person-circle me-1"></i>{{ request.session.get("user_name","") }}</span>
+    <a href="/user/logout" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-box-arrow-right me-1"></i>{{ t(request, 'nav.logout') }}
+    </a>
+    {% endif %}
+    {# ── Dark / Light Mode Toggle ── #}
+    <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
+            onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
+      <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+    </button>
+    {# ── Language Switcher ── #}
+    {% set cur_lang = get_lang(request) %}
+    <form method="POST" action="/user/set-language" id="portal-lang-form" class="d-flex align-items-center ms-1">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <select name="lang" class="form-select form-select-sm text-white bg-dark border-secondary"
+              style="width:auto;font-size:.8rem"
+              onchange="document.getElementById('portal-lang-form').submit()">
+        <option value="de_DE" {% if cur_lang == 'de_DE' %}selected{% endif %}>🇩🇪 DE</option>
+        <option value="en_EN" {% if cur_lang == 'en_EN' %}selected{% endif %}>🇬🇧 EN</option>
+        <option value="fr_FR" {% if cur_lang == 'fr_FR' %}selected{% endif %}>🇫🇷 FR</option>
+        <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳 ZH</option>
+      </select>
+    </form>
+  </div>
+  {% endif %}
+</nav>
+
+{% if page == "login" %}
+<!-- ═══════════════════════════════════════════ LOGIN ═════════════════════════ -->
+<div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
+  <div class="card" style="width:380px">
+    <div class="card-header bg-dark text-white text-center py-3">
+      <i class="bi bi-diagram-3-fill me-2" style="color:#6ea8fe"></i>{{ t(request, 'portal.login_header') }}
+    </div>
+    <div class="card-body p-4">
+      {% if error %}
+      <div class="alert alert-danger py-2 small mb-3">{{ error }}</div>
+      {% endif %}
+      {% if oidc_enabled %}
+      <a href="/user/auth/login" class="btn btn-outline-primary w-100 mb-3 d-flex align-items-center justify-content-center gap-2">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+        {{ t(request, 'portal.sso_login') }}
+      </a>
+      <div class="d-flex align-items-center my-3">
+        <hr class="flex-grow-1"><span class="px-2 text-muted small">{{ t(request, 'lbl.or') }}</span><hr class="flex-grow-1">
+      </div>
+      {% endif %}
+      <form method="post" action="/user/login">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.username') }}</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-person"></i></span>
+            <input type="text" class="form-control" name="username" {% if not oidc_enabled %}autofocus{% endif %} required>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.password') }}</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" class="form-control" name="password" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="bi bi-box-arrow-in-right me-1"></i>{{ t(request, 'page.login') }}
+        </button>
+        <div class="text-center mt-3">
+          <a href="/user/forgot-password" class="small text-muted">{{ t(request, 'portal.forgot_link') }}</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% elif page == "forgot_password" %}
+<!-- ══════════════════════════════ PASSWORT VERGESSEN ══════════════════════════ -->
+<div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
+  <div class="card" style="width:420px">
+    <div class="card-header bg-dark text-white text-center py-3">
+      <i class="bi bi-envelope me-2" style="color:#6ea8fe"></i>{{ t(request, 'portal.forgot_header') }}
+    </div>
+    <div class="card-body p-4">
+      {% if sent %}
+      <div class="alert alert-success py-2 small mb-3">
+        <i class="bi bi-check-circle me-1"></i>
+        {{ t(request, 'info.reset_sent') }}
+      </div>
+      <a href="/user/login" class="btn btn-outline-secondary w-100">
+        <i class="bi bi-arrow-left me-1"></i>{{ t(request, 'btn.back_to_login') }}
+      </a>
+      {% else %}
+      {% if error %}
+      <div class="alert alert-danger py-2 small mb-3">{{ error }}</div>
+      {% endif %}
+      <p class="text-muted small mb-3">{{ t(request, 'info.forgot_pw_hint') }}</p>
+      <form method="post" action="/user/forgot-password">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.email_address') }}</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+            <input type="email" class="form-control" name="email" autofocus required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="bi bi-send me-1"></i>{{ t(request, 'btn.send_reset') }}
+        </button>
+        <div class="text-center mt-3">
+          <a href="/user/login" class="small text-muted">{{ t(request, 'btn.back_to_login') }}</a>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% elif page == "reset_password" %}
+<!-- ══════════════════════════════ PASSWORT RESET ═════════════════════════════ -->
+<div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
+  <div class="card" style="width:420px">
+    <div class="card-header bg-dark text-white text-center py-3">
+      <i class="bi bi-key me-2" style="color:#6ea8fe"></i>{{ t(request, 'portal.reset_header') }}
+    </div>
+    <div class="card-body p-4">
+      {% if done %}
+      <div class="alert alert-success py-2 small mb-3">
+        <i class="bi bi-check-circle me-1"></i>
+        {{ t(request, 'msg.pw_changed') }}
+      </div>
+      <a href="/user/login" class="btn btn-primary w-100">
+        <i class="bi bi-box-arrow-in-right me-1"></i>{{ t(request, 'btn.to_login') }}
+      </a>
+      {% elif not token_valid %}
+      <div class="alert alert-danger py-2 small mb-3">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        {{ error or t(request, 'msg.reset_link_invalid') }}
+      </div>
+      <a href="/user/forgot-password" class="btn btn-outline-secondary w-100">
+        <i class="bi bi-arrow-left me-1"></i>{{ t(request, 'btn.new_reset_link') }}
+      </a>
+      {% else %}
+      {% if error %}
+      <div class="alert alert-danger py-2 small mb-3">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="/user/reset-password">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.new_password') }} <span class="text-muted">({{ t(request, 'lbl.min_8_chars') }})</span></label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" class="form-control" name="new_password" minlength="8" autofocus required>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.confirm_password') }}</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+            <input type="password" class="form-control" name="confirm_pw" minlength="8" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">
+          <i class="bi bi-check-lg me-1"></i>{{ t(request, 'btn.set_password') }}
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% else %}
+<!-- ══════════════════════════════ AUTHENTICATED LAYOUT ══════════════════════ -->
+<div class="container py-4">
+  <div class="d-flex gap-4 align-items-start">
+
+    <!-- Sidebar -->
+    <div class="portal-sidebar">
+      <div class="card mb-3">
+        <div class="card-body py-3 text-center">
+          <i class="bi bi-person-circle fs-1 text-primary"></i>
+          <div class="fw-semibold mt-1">{{ user.display_name or user.username }}</div>
+          <div class="text-muted small">{{ user.email }}</div>
+        </div>
+      </div>
+      <nav class="card">
+        <div class="card-body py-2 px-2">
+          <a href="/user/dashboard" class="sidebar-link {% if page=='dashboard' %}active{% endif %}">
+            <i class="bi bi-speedometer2 me-2"></i>{{ t(request, 'portal.sidebar.dashboard') }}
+          </a>
+          <a href="/user/billing" class="sidebar-link {% if page=='billing' %}active{% endif %}">
+            <i class="bi bi-bar-chart-line me-2"></i>{{ t(request, 'portal.sidebar.billing') }}
+          </a>
+          <a href="/user/usage" class="sidebar-link {% if page=='usage' %}active{% endif %}">
+            <i class="bi bi-list-columns me-2"></i>{{ t(request, 'portal.sidebar.usage') }}
+          </a>
+          <a href="/user/keys" class="sidebar-link {% if page=='keys' %}active{% endif %}">
+            <i class="bi bi-key me-2"></i>{{ t(request, 'portal.sidebar.api_keys') }}
+          </a>
+          {% if can_create_templates %}
+          <a href="/user/templates" class="sidebar-link {% if page=='templates' %}active{% endif %}">
+            <i class="bi bi-diagram-3 me-2"></i>{{ t(request, 'portal.sidebar.templates') }}
+          </a>
+          {% endif %}
+          {% if can_create_cc_profiles %}
+          <a href="/user/cc-profiles" class="sidebar-link {% if page=='cc_profiles' %}active{% endif %}">
+            <i class="bi bi-cpu me-2"></i>{{ t(request, 'portal.sidebar.cc_profiles') }}
+          </a>
+          {% endif %}
+          <hr class="my-1">
+          <a href="/user/profile" class="sidebar-link {% if page=='profile' %}active{% endif %}">
+            <i class="bi bi-person-gear me-2"></i>{{ t(request, 'portal.sidebar.profile') }}
+          </a>
+        </div>
+      </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-grow-1">
+
+      {% if flash %}
+      <div class="alert alert-{{ flash_type or 'info' }} py-2 small mb-3">{{ flash }}</div>
+      {% endif %}
+
+      {# ─── DASHBOARD ─────────────────────────────────────────────────────── #}
+      {% if page == "dashboard" %}
+      <h5 class="mb-3"><i class="bi bi-speedometer2 me-2 text-primary"></i>{{ t(request, 'page.user_dashboard') }}</h5>
+
+      <!-- Budget-Status-Karten -->
+      {% set daily_pct  = (redis.daily_used / budget.daily_limit * 100) if budget.daily_limit else 0 %}
+      {% set month_pct  = (redis.monthly_used / budget.monthly_limit * 100) if budget.monthly_limit else 0 %}
+      {% set total_pct  = (redis.total_used / budget.total_limit * 100) if budget.total_limit else 0 %}
+      <div class="row g-3 mb-1" id="budget-cards">
+
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="small text-muted mb-1"><i class="bi bi-calendar-day me-1"></i>{{ t(request, 'lbl.today') }}</div>
+              <div class="fs-5 fw-bold" id="b-daily-used">{{ "{:,}".format(redis.daily_used) }}</div>
+              <div class="small text-muted">
+                <span id="b-daily-limit">{% if budget.daily_limit %}{{ "{:,}".format(budget.daily_limit) }}{% else %}&infin;{% endif %}</span> {{ t(request, 'lbl.tokens') }}
+                {% if budget.daily_limit %}
+                · <span id="b-daily-remaining" class="{% if daily_pct > 90 %}text-danger fw-semibold{% elif daily_pct > 70 %}text-warning{% else %}text-success{% endif %}">
+                  {{ "{:,}".format([budget.daily_limit - redis.daily_used, 0]|max) }} {{ t(request, 'portal.remaining_col') | lower }}
+                </span>
+                {% endif %}
+              </div>
+              <div class="small text-muted mt-1">
+                <span class="me-2" title="Input-Tokens (Prompt)"><i class="bi bi-arrow-right-circle text-primary me-1"></i><span id="b-daily-input">{{ "{:,}".format(redis.get('daily_input', 0)) }}</span> In</span>
+                <span title="Output-Tokens (Completion)"><i class="bi bi-arrow-left-circle text-success me-1"></i><span id="b-daily-output">{{ "{:,}".format(redis.get('daily_output', 0)) }}</span> Out</span>
+              </div>
+              {% if budget.daily_limit %}
+              <div class="progress mt-2 budget-bar">
+                <div id="b-daily-bar" class="progress-bar {% if daily_pct > 90 %}bg-danger{% elif daily_pct > 70 %}bg-warning{% else %}bg-success{% endif %}"
+                     style="width:{{ [daily_pct, 100]|min }}%"></div>
+              </div>
+              <div class="d-flex justify-content-between mt-1">
+                <small id="b-daily-pct" class="text-muted">{{ "%.1f"|format(daily_pct) }}%</small>
+                <small id="b-daily-reset" class="text-muted"></small>
+              </div>
+              {% else %}
+              <div class="mt-1"><small id="b-daily-reset" class="text-muted"></small></div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="small text-muted mb-1"><i class="bi bi-calendar-month me-1"></i>{{ t(request, 'lbl.this_month') }}</div>
+              <div class="fs-5 fw-bold" id="b-monthly-used">{{ "{:,}".format(redis.monthly_used) }}</div>
+              <div class="small text-muted">
+                <span id="b-monthly-limit">{% if budget.monthly_limit %}{{ "{:,}".format(budget.monthly_limit) }}{% else %}&infin;{% endif %}</span> {{ t(request, 'lbl.tokens') }}
+                {% if budget.monthly_limit %}
+                · <span id="b-monthly-remaining" class="{% if month_pct > 90 %}text-danger fw-semibold{% elif month_pct > 70 %}text-warning{% else %}text-success{% endif %}">
+                  {{ "{:,}".format([budget.monthly_limit - redis.monthly_used, 0]|max) }} {{ t(request, 'portal.remaining_col') | lower }}
+                </span>
+                {% endif %}
+              </div>
+              <div class="small text-muted mt-1">
+                <span class="me-2" title="Input-Tokens (Prompt)"><i class="bi bi-arrow-right-circle text-primary me-1"></i><span id="b-monthly-input">{{ "{:,}".format(redis.get('monthly_input', 0)) }}</span> In</span>
+                <span title="Output-Tokens (Completion)"><i class="bi bi-arrow-left-circle text-success me-1"></i><span id="b-monthly-output">{{ "{:,}".format(redis.get('monthly_output', 0)) }}</span> Out</span>
+              </div>
+              {% if budget.monthly_limit %}
+              <div class="progress mt-2 budget-bar">
+                <div id="b-monthly-bar" class="progress-bar {% if month_pct > 90 %}bg-danger{% elif month_pct > 70 %}bg-warning{% else %}bg-success{% endif %}"
+                     style="width:{{ [month_pct, 100]|min }}%"></div>
+              </div>
+              <div class="d-flex justify-content-between mt-1">
+                <small id="b-monthly-pct" class="text-muted">{{ "%.1f"|format(month_pct) }}%</small>
+                <small id="b-monthly-reset" class="text-muted"></small>
+              </div>
+              {% else %}
+              <div class="mt-1"><small id="b-monthly-reset" class="text-muted"></small></div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="small text-muted mb-1"><i class="bi bi-infinity me-1"></i>{{ t(request, 'lbl.total_budget') }}</div>
+              <div class="fs-5 fw-bold" id="b-total-used">{{ "{:,}".format(redis.total_used) }}</div>
+              <div class="small text-muted">
+                <span id="b-total-limit">{% if budget.total_limit %}{{ "{:,}".format(budget.total_limit) }}{% else %}&infin;{% endif %}</span> {{ t(request, 'lbl.tokens') }}
+                {% if budget.total_limit %}
+                · <span id="b-total-remaining" class="{% if total_pct > 90 %}text-danger fw-semibold{% elif total_pct > 70 %}text-warning{% else %}text-success{% endif %}">
+                  {{ "{:,}".format([budget.total_limit - redis.total_used, 0]|max) }} {{ t(request, 'portal.remaining_col') | lower }}
+                </span>
+                {% endif %}
+              </div>
+              <div class="small text-muted mt-1">
+                <span class="me-2" title="Input-Tokens (Prompt)"><i class="bi bi-arrow-right-circle text-primary me-1"></i><span id="b-total-input">{{ "{:,}".format(redis.get('total_input', 0)) }}</span> In</span>
+                <span title="Output-Tokens (Completion)"><i class="bi bi-arrow-left-circle text-success me-1"></i><span id="b-total-output">{{ "{:,}".format(redis.get('total_output', 0)) }}</span> Out</span>
+              </div>
+              {% if budget.total_limit %}
+              <div class="progress mt-2 budget-bar">
+                <div id="b-total-bar" class="progress-bar {% if total_pct > 90 %}bg-danger{% elif total_pct > 70 %}bg-warning{% else %}bg-info{% endif %}"
+                     style="width:{{ [total_pct, 100]|min }}%"></div>
+              </div>
+              <div class="mt-1">
+                <small id="b-total-pct" class="text-muted">{{ "%.1f"|format(total_pct) }}%</small>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="text-end mb-3">
+        <small class="text-muted" id="budget-last-update"></small>
+      </div>
+
+      <!-- 14-Tage Chart -->
+      {% if summary.daily %}
+      <div class="card mb-4">
+        <div class="card-header bg-dark text-white"><i class="bi bi-graph-up me-2"></i>{{ t(request, 'portal.chart_14d') }}</div>
+        <div class="card-body">
+          <canvas id="dailyChart" height="80"></canvas>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Aktive Keys -->
+      <div class="card">
+        <div class="card-header bg-dark text-white d-flex justify-content-between">
+          <span><i class="bi bi-key me-2"></i>{{ t(request, 'portal.active_keys') }}</span>
+          <a href="/user/keys" class="btn btn-sm btn-outline-light py-0" style="font-size:.75rem">{{ t(request, 'portal.manage') }}</a>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>Key-Prefix</th><th>Label</th><th>{{ t(request, 'lbl.last_used') }}</th></tr></thead>
+            <tbody>
+              {% for k in keys if k.is_active %}
+              <tr>
+                <td><code>{{ k.key_prefix }}...</code></td>
+                <td>{{ k.label or '—' }}</td>
+                <td><small class="text-muted">{{ k.last_used_at[:16] if k.last_used_at else t(request, 'lbl.never') }}</small></td>
+              </tr>
+              {% else %}
+              <tr><td colspan="3" class="text-muted text-center small py-2">{{ t(request, 'portal.no_keys_hint') | safe }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Meine Experten-Konfiguration -->
+      <div class="card mt-4">
+        <div class="card-header bg-dark text-white">
+          <i class="bi bi-collection-fill me-2"></i>{{ t(request, 'portal.my_expert_config') }}
+        </div>
+        <div class="card-body">
+          {% if user_templates %}
+            {% for tmpl in user_templates %}
+            <h6 class="fw-bold mb-1">{{ tmpl.name }}</h6>
+            {% if tmpl.description %}<p class="small text-muted mb-2">{{ tmpl.description }}</p>{% endif %}
+            {% if tmpl.experts %}
+            <table class="table table-sm mb-3" style="font-size:.85rem">
+              <thead class="table-light">
+                <tr><th>{{ t(request, 'portal.category_col') }}</th><th>{{ t(request, 'portal.models_col') }}</th></tr>
+              </thead>
+              <tbody>
+                {% for cat, cat_cfg in tmpl.experts.items() %}
+                <tr>
+                  <td><span class="badge bg-primary" style="font-size:.72rem">{{ cat }}</span></td>
+                  <td>
+                    {% if cat_cfg.models is defined %}
+                      {% for m in cat_cfg.models %}
+                      <span class="badge {% if m.get('role','primary') == 'always' %}bg-success{% elif m.get('role','primary') == 'fallback' %}bg-warning text-dark{% else %}bg-primary{% endif %} me-1" style="font-size:.72rem">
+                        {{ m.model }}@{{ m.endpoint }}
+                        {% if m.get('role','primary') == 'always' %}<i class="bi bi-lock-fill ms-1" title="{{ t(request, 'status.role_always') }}"></i>{% elif m.get('role','primary') == 'fallback' %}<i class="bi bi-arrow-down-circle ms-1" title="{{ t(request, 'status.role_fallback') }}"></i>{% else %}<i class="bi bi-lightning-fill ms-1" title="{{ t(request, 'status.role_primary') }}"></i>{% endif %}
+                      </span>
+                      {% endfor %}
+                    {% else %}
+                      <code>{{ cat_cfg.model }}@{{ cat_cfg.endpoint }}</code>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            {% else %}
+            <p class="small text-muted">{{ t(request, 'portal.no_experts') }}</p>
+            {% endif %}
+            {% endfor %}
+          {% else %}
+          <div class="alert alert-light py-2 small mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            {{ t(request, 'portal.no_template_assigned') }}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if can_create_templates or can_create_cc_profiles %}
+      <div class="card mt-4 border-primary">
+        <div class="card-header bg-primary text-white py-2">
+          <i class="bi bi-stars me-2"></i>{{ t(request, 'portal.expert_tools_header') }}
+        </div>
+        <div class="card-body">
+          <p class="small text-muted mb-2">{{ t(request, 'portal.expert_tools_desc') | safe }}</p>
+          <div class="d-flex gap-2">
+            {% if can_create_templates %}
+            <a href="/user/templates" class="btn btn-sm btn-outline-primary">
+              <i class="bi bi-diagram-3 me-1"></i>{{ t(request, 'portal.my_templates_link') }}
+            </a>
+            {% endif %}
+            {% if can_create_cc_profiles %}
+            <a href="/user/cc-profiles" class="btn btn-sm btn-outline-secondary">
+              <i class="bi bi-cpu me-1"></i>{{ t(request, 'portal.cc_profiles_link') }}
+            </a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <script>
+      (function() {
+        // ── Helper functions ──────────────────────────────────────────────────
+        function fmt(n) { return n == null ? '∞' : n.toLocaleString('de-DE'); }
+        function barClass(pct) {
+          return pct > 90 ? 'bg-danger' : pct > 70 ? 'bg-warning' : 'bg-success';
+        }
+        function countdown(isoStr) {
+          const diff = Math.max(0, new Date(isoStr) - new Date());
+          const h    = Math.floor(diff / 3600000);
+          const m    = Math.floor((diff % 3600000) / 60000);
+          if (h >= 24) {
+            const d = Math.floor(h / 24);
+            return `Reset in ${d} day${d !== 1 ? 's' : ''}`;
+          }
+          return `Reset in ${h}h ${m.toString().padStart(2,'0')}min`;
+        }
+        function applyBudget(d) {
+          function updateCard(prefix, used, limit, resetIso, input, output) {
+            const el = id => document.getElementById(prefix + id);
+            if (!el('-used')) return;
+            el('-used').textContent = fmt(used);
+            if (limit) {
+              const pct   = Math.min(100, used / limit * 100);
+              const rem   = Math.max(0, limit - used);
+              const bar   = el('-bar');
+              const remEl = el('-remaining');
+              const pctEl = el('-pct');
+              if (bar)   { bar.style.width = pct.toFixed(1) + '%'; bar.className = 'progress-bar ' + barClass(pct); }
+              if (remEl) { remEl.textContent = fmt(rem) + ' remaining'; remEl.className = pct > 90 ? 'text-danger fw-semibold' : pct > 70 ? 'text-warning' : 'text-success'; }
+              if (pctEl) pctEl.textContent = pct.toFixed(1) + '%';
+            }
+            const resetEl = el('-reset');
+            if (resetEl && resetIso) resetEl.textContent = countdown(resetIso);
+            // Update input/output breakdown
+            const inEl  = el('-input');
+            const outEl = el('-output');
+            if (inEl  && input  != null) inEl.textContent  = fmt(input);
+            if (outEl && output != null) outEl.textContent = fmt(output);
+          }
+          updateCard('b-daily',   d.daily_used,   d.daily_limit,   d.daily_reset_iso,   d.daily_input,   d.daily_output);
+          updateCard('b-monthly', d.monthly_used, d.monthly_limit, d.monthly_reset_iso, d.monthly_input, d.monthly_output);
+          updateCard('b-total',   d.total_used,   d.total_limit,   null,                d.total_input,   d.total_output);
+          const ts = document.getElementById('budget-last-update');
+          if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        }
+        // Initial reset countdowns (no API call, times come from server render on next poll)
+        function startCountdownTick() {
+          // Recalculate countdowns every 60s without new API call
+          setInterval(() => {
+            ['b-daily-reset','b-monthly-reset'].forEach(id => {
+              const el = document.getElementById(id);
+              if (el && el.dataset.resetIso) el.textContent = countdown(el.dataset.resetIso);
+            });
+          }, 60000);
+        }
+        // ── Poll loop ────────────────────────────────────────────────────────
+        async function pollBudget() {
+          try {
+            const r = await fetch('/user/api/budget');
+            if (!r.ok) return;
+            const d = await r.json();
+            applyBudget(d);
+            // Save reset ISO in data attributes for countdown tick
+            ['daily','monthly'].forEach(p => {
+              const el = document.getElementById('b-' + p + '-reset');
+              if (el && d[p + '_reset_iso']) el.dataset.resetIso = d[p + '_reset_iso'];
+            });
+          } catch(e) { /* silent */ }
+        }
+        if (document.getElementById('budget-cards')) {
+          pollBudget();
+          setInterval(pollBudget, 30000);
+          startCountdownTick();
+        }
+      })();
+      </script>
+
+      {# ─── BILLING ───────────────────────────────────────────────────────── #}
+      {% elif page == "billing" %}
+      <h5 class="mb-3"><i class="bi bi-bar-chart-line me-2 text-primary"></i>{{ t(request, 'page.billing') }}</h5>
+
+      <!-- Budget overview -->
+      {% set now_utc = now() if now is defined else none %}
+      <div class="card mb-4">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-piggy-bank me-2"></i>{{ t(request, 'portal.budget_status') }}</span>
+          <span class="badge bg-secondary" style="font-size:.7rem">{{ budget.budget_type or 'subscription' }}</span>
+        </div>
+        <div class="card-body">
+          <table class="table table-sm">
+            <thead class="table-light">
+              <tr><th>{{ t(request, 'portal.period_col') }}</th><th>{{ t(request, 'portal.total_col') }}</th><th class="text-primary">Input</th><th class="text-success">Output</th><th>{{ t(request, 'portal.limit_col') }}</th><th>{{ t(request, 'portal.remaining_col') }}</th><th>{{ t(request, 'portal.progress_col') }}</th><th>{{ t(request, 'portal.reset_col') }}</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><i class="bi bi-calendar-day me-1 text-muted"></i>{{ t(request, 'portal.period_daily') }}</td>
+                <td class="fw-semibold">{{ "{:,}".format(redis.daily_used) }}</td>
+                <td class="text-primary">{{ "{:,}".format(redis.get('daily_input', 0)) }}</td>
+                <td class="text-success">{{ "{:,}".format(redis.get('daily_output', 0)) }}</td>
+                <td>{% if budget.daily_limit %}{{ "{:,}".format(budget.daily_limit) }}{% else %}<span class="text-muted">&infin;</span>{% endif %}</td>
+                <td>{% if budget.daily_limit %}<span class="{% if (redis.daily_used / budget.daily_limit) > 0.9 %}text-danger fw-semibold{% elif (redis.daily_used / budget.daily_limit) > 0.7 %}text-warning{% else %}text-success{% endif %}">{{ "{:,}".format([budget.daily_limit - redis.daily_used, 0]|max) }}</span>{% else %}<span class="text-muted">&infin;</span>{% endif %}</td>
+                <td style="width:15%">
+                  {% if budget.daily_limit %}
+                  {% set pct = (redis.daily_used / budget.daily_limit * 100)|round(1) %}
+                  <div class="progress" style="height:6px"><div class="progress-bar {% if pct>90 %}bg-danger{% elif pct>70 %}bg-warning{% else %}bg-success{% endif %}" style="width:{{ [pct,100]|min }}%"></div></div>
+                  <small class="text-muted">{{ pct }}%</small>
+                  {% endif %}
+                </td>
+                <td><small class="text-muted" id="billing-daily-reset"></small></td>
+              </tr>
+              <tr>
+                <td><i class="bi bi-calendar-month me-1 text-muted"></i>{{ t(request, 'portal.period_monthly') }}</td>
+                <td class="fw-semibold">{{ "{:,}".format(redis.monthly_used) }}</td>
+                <td class="text-primary">{{ "{:,}".format(redis.get('monthly_input', 0)) }}</td>
+                <td class="text-success">{{ "{:,}".format(redis.get('monthly_output', 0)) }}</td>
+                <td>{% if budget.monthly_limit %}{{ "{:,}".format(budget.monthly_limit) }}{% else %}<span class="text-muted">&infin;</span>{% endif %}</td>
+                <td>{% if budget.monthly_limit %}<span class="{% if (redis.monthly_used / budget.monthly_limit) > 0.9 %}text-danger fw-semibold{% elif (redis.monthly_used / budget.monthly_limit) > 0.7 %}text-warning{% else %}text-success{% endif %}">{{ "{:,}".format([budget.monthly_limit - redis.monthly_used, 0]|max) }}</span>{% else %}<span class="text-muted">&infin;</span>{% endif %}</td>
+                <td>
+                  {% if budget.monthly_limit %}
+                  {% set pct = (redis.monthly_used / budget.monthly_limit * 100)|round(1) %}
+                  <div class="progress" style="height:6px"><div class="progress-bar {% if pct>90 %}bg-danger{% elif pct>70 %}bg-warning{% else %}bg-success{% endif %}" style="width:{{ [pct,100]|min }}%"></div></div>
+                  <small class="text-muted">{{ pct }}%</small>
+                  {% endif %}
+                </td>
+                <td><small class="text-muted" id="billing-monthly-reset"></small></td>
+              </tr>
+              <tr>
+                <td><i class="bi bi-infinity me-1 text-muted"></i>{{ t(request, 'portal.period_total') }}</td>
+                <td class="fw-semibold">{{ "{:,}".format(redis.total_used) }}</td>
+                <td class="text-primary">{{ "{:,}".format(redis.get('total_input', 0)) }}</td>
+                <td class="text-success">{{ "{:,}".format(redis.get('total_output', 0)) }}</td>
+                <td>{% if budget.total_limit %}{{ "{:,}".format(budget.total_limit) }}{% else %}<span class="text-muted">&infin;</span>{% endif %}</td>
+                <td>{% if budget.total_limit %}<span class="{% if (redis.total_used / budget.total_limit) > 0.9 %}text-danger fw-semibold{% elif (redis.total_used / budget.total_limit) > 0.7 %}text-warning{% else %}text-success{% endif %}">{{ "{:,}".format([budget.total_limit - redis.total_used, 0]|max) }}</span>{% else %}<span class="text-muted">&infin;</span>{% endif %}</td>
+                <td></td>
+                <td><small class="text-muted">{{ t(request, 'portal.no_reset') }}</small></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <script>
+      (function() {
+        function countdown(isoStr) {
+          const diff = Math.max(0, new Date(isoStr) - new Date());
+          const h = Math.floor(diff / 3600000);
+          const m = Math.floor((diff % 3600000) / 60000);
+          if (h >= 24) { const d = Math.floor(h/24); return `Reset in ${d} day${d!==1?'s':''}`; }
+          return `Reset in ${h}h ${m.toString().padStart(2,'00')}min`;
+        }
+        async function loadResets() {
+          try {
+            const d = await (await fetch('/user/api/budget')).json();
+            const dr = document.getElementById('billing-daily-reset');
+            const mr = document.getElementById('billing-monthly-reset');
+            if (dr && d.daily_reset_iso)   { dr.textContent = countdown(d.daily_reset_iso);   dr.dataset.iso = d.daily_reset_iso; }
+            if (mr && d.monthly_reset_iso) { mr.textContent = countdown(d.monthly_reset_iso); mr.dataset.iso = d.monthly_reset_iso; }
+          } catch(e) {}
+        }
+        loadResets();
+        setInterval(() => {
+          ['billing-daily-reset','billing-monthly-reset'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el && el.dataset.iso) el.textContent = countdown(el.dataset.iso);
+          });
+        }, 60000);
+      })();
+      </script>
+
+      <!-- Verbrauch nach Model -->
+      {% if summary.by_model %}
+      <div class="card mb-4">
+        <div class="card-header bg-dark text-white"><i class="bi bi-cpu me-2"></i>{{ t(request, 'portal.usage_by_model') }}</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead class="table-light"><tr><th>{{ t(request, 'portal.col_model') }}</th><th>{{ t(request, 'portal.filter_mode') }}</th><th>{{ t(request, 'portal.total_col') }}</th><th class="text-primary">Input</th><th class="text-success">Output</th><th>{{ t(request, 'portal.requests_col') }}</th></tr></thead>
+            <tbody>
+              {% for row in summary.by_model %}
+              <tr>
+                <td><code class="small">{{ row.model }}</code></td>
+                <td><span class="badge bg-secondary" style="font-size:.68rem">{{ row.moe_mode }}</span></td>
+                <td>{{ "{:,}".format(row.tokens) }}</td>
+                <td class="text-primary">{{ "{:,}".format(row.get('prompt_tokens', 0)) }}</td>
+                <td class="text-success">{{ "{:,}".format(row.get('completion_tokens', 0)) }}</td>
+                <td>{{ row.requests }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Monatliche Zusammenfassung -->
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card text-center">
+            <div class="card-body">
+              <div class="small text-muted">{{ t(request, 'portal.total_requests') }}</div>
+              <div class="fs-4 fw-bold">{{ summary.total.requests }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card text-center">
+            <div class="card-body">
+              <div class="small text-muted">{{ t(request, 'portal.total_tokens_card') }}</div>
+              <div class="fs-4 fw-bold">{{ "{:,}".format(summary.total.tokens) }}</div>
+              <div class="small mt-1">
+                <span class="text-primary me-2"><i class="bi bi-arrow-right-circle me-1"></i>{{ "{:,}".format(summary.total.get('prompt_tokens', 0)) }} In</span>
+                <span class="text-success"><i class="bi bi-arrow-left-circle me-1"></i>{{ "{:,}".format(summary.total.get('completion_tokens', 0)) }} Out</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card text-center">
+            <div class="card-body">
+              <div class="small text-muted">{{ t(request, 'portal.month_tokens') }}</div>
+              <div class="fs-4 fw-bold">{{ "{:,}".format(summary.month.tokens) }}</div>
+              <div class="small mt-1">
+                <span class="text-primary me-2"><i class="bi bi-arrow-right-circle me-1"></i>{{ "{:,}".format(summary.month.get('prompt_tokens', 0)) }} In</span>
+                <span class="text-success"><i class="bi bi-arrow-left-circle me-1"></i>{{ "{:,}".format(summary.month.get('completion_tokens', 0)) }} Out</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ─── USAGE HISTORY ─────────────────────────────────────────────────── #}
+      {% elif page == "usage" %}
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0"><i class="bi bi-list-columns me-2 text-primary"></i>{{ t(request, 'page.usage') }}</h5>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                  data-bs-toggle="dropdown">
+            {% if days==7 %}{{ t(request, 'portal.days_7') }}{% elif days==30 %}{{ t(request, 'portal.days_30') }}{% else %}{{ t(request, 'portal.days_90') }}{% endif %}
+          </button>
+          <ul class="dropdown-menu p-1">
+            <li><a class="dropdown-item small{% if days==7 %} active{% endif %}" href="/user/usage?days=7">{{ t(request, 'portal.days_7') }}</a></li>
+            <li><a class="dropdown-item small{% if days==30 %} active{% endif %}" href="/user/usage?days=30">{{ t(request, 'portal.days_30') }}</a></li>
+            <li><a class="dropdown-item small{% if days==90 %} active{% endif %}" href="/user/usage?days=90">{{ t(request, 'portal.days_90') }}</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Filter-Leiste -->
+      <div class="card mb-2">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small mb-1">{{ t(request, 'portal.filter_token') }}</label>
+              <input type="text" class="form-control form-control-sm" id="f_token"
+                     placeholder="{{ t(request, 'js.search_placeholder') }}" oninput="applyFilters()">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small mb-1">{{ t(request, 'portal.filter_mode') }}</label>
+              <select class="form-select form-select-sm" id="f_mode" onchange="applyFilters()">
+                <option value="">{{ t(request, 'portal.all_modes') }}</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small mb-1">{{ t(request, 'portal.filter_status') }}</label>
+              <select class="form-select form-select-sm" id="f_status" onchange="applyFilters()">
+                <option value="">{{ t(request, 'portal.all') }}</option>
+                <option value="ok">OK</option>
+                <option value="error">{{ t(request, 'portal.errors') }}</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small mb-1">{{ t(request, 'portal.filter_from') }}</label>
+              <input type="date" class="form-control form-control-sm" id="f_from" onchange="applyFilters()">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small mb-1">{{ t(request, 'portal.filter_to') }}</label>
+              <input type="date" class="form-control form-control-sm" id="f_to" onchange="applyFilters()">
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button class="btn btn-outline-secondary btn-sm w-100" onclick="resetFilters()" title="{{ t(request, 'portal.filter_reset_tip') }}">
+                <i class="bi bi-x-lg"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mt-1" style="font-size:.78rem;color:#6c757d" id="filter-count"></div>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:130px">{{ t(request, 'portal.col_timestamp') }}</th>
+                  <th style="width:90px">{{ t(request, 'portal.col_session') }}</th>
+                  <th>{{ t(request, 'portal.col_model') }}</th>
+                  <th style="width:100px">{{ t(request, 'portal.col_api_key') }}</th>
+                  <th style="width:90px">{{ t(request, 'portal.filter_mode') }}</th>
+                  <th class="text-end" style="width:75px">{{ t(request, 'portal.col_prompt') }}</th>
+                  <th class="text-end" style="width:85px">{{ t(request, 'portal.col_completion') }}</th>
+                  <th class="text-end" style="width:75px">{{ t(request, 'portal.total_col') }}</th>
+                  <th style="width:55px">Status</th>
+                  <th style="width:36px"></th>
+                </tr>
+              </thead>
+              <tbody id="usage-tbody">
+                {% for row in usage %}
+                <tr id="row-{{ row.id }}"
+                    data-model="{{ row.model }}"
+                    data-mode="{{ row.moe_mode }}"
+                    data-status="{{ row.status }}"
+                    data-token="{{ (row.key_label or row.key_prefix or '') | lower }}"
+                    data-ts="{{ row.requested_at[:10] }}">
+                  <td class="text-muted" style="white-space:nowrap">{{ row.requested_at[:16].replace("T"," ") }}</td>
+                  <td class="text-monospace text-muted" style="font-size:.72rem;white-space:nowrap" title="{{ row.session_id }}">{{ (row.session_id or '')[:8] }}…</td>
+                  <td>
+                    <div class="d-flex flex-column">
+                      <code class="small text-truncate" style="max-width:220px" title="{{ row.model }}">{{ row.model }}</code>
+                      {% if row.notes %}
+                      <span class="text-muted mt-1" style="font-size:.75rem;white-space:pre-wrap" id="note-text-{{ row.id }}">{{ row.notes }}</span>
+                      {% else %}
+                      <span class="text-muted mt-1" style="font-size:.75rem;display:none" id="note-text-{{ row.id }}"></span>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td>
+                    {% if row.key_label %}
+                    <span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="{{ row.key_prefix }}...">{{ row.key_label }}</span>
+                    {% elif row.key_prefix %}
+                    <code style="font-size:.72rem;color:#6c757d">…{{ row.key_prefix[-6:] }}</code>
+                    {% else %}
+                    <span class="text-muted" style="font-size:.75rem">—</span>
+                    {% endif %}
+                  </td>
+                  <td><span class="badge bg-secondary" style="font-size:.6rem">{{ row.moe_mode }}</span></td>
+                  <td class="text-end">{{ "{:,}".format(row.prompt_tokens) }}</td>
+                  <td class="text-end">{{ "{:,}".format(row.completion_tokens) }}</td>
+                  <td class="text-end fw-semibold">{{ "{:,}".format(row.total_tokens) }}</td>
+                  <td>
+                    {% if row.status == "ok" %}
+                    <span class="badge bg-success" style="font-size:.6rem">ok</span>
+                    {% else %}
+                    <span class="badge bg-danger" style="font-size:.6rem">{{ row.status[:8] }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <button class="btn btn-xs p-0 border-0 text-secondary"
+                            style="font-size:.9rem;line-height:1"
+                            title="{{ t(request, 'portal.note_edit') }}"
+                            onclick="openNoteModal('{{ row.id }}', document.getElementById('note-text-{{ row.id }}').innerText)">
+                      {% if row.notes %}<i class="bi bi-chat-left-text-fill text-primary"></i>{% else %}<i class="bi bi-chat-left-text"></i>{% endif %}
+                    </button>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="9" class="text-muted text-center py-4">{{ t(request, 'portal.no_entries') }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notiz-Modal -->
+      <div class="modal fade" id="noteModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header py-2">
+              <h6 class="modal-title"><i class="bi bi-chat-left-text me-2"></i>{{ t(request, 'portal.note_title') }}</h6>
+              <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <textarea id="noteTextarea" class="form-control" rows="4"
+                        placeholder="{{ t(request, 'portal.note_placeholder') }}"
+                        style="font-size:.88rem;resize:vertical"></textarea>
+            </div>
+            <div class="modal-footer py-2">
+              <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+              <button class="btn btn-sm btn-danger me-auto" onclick="saveNote(true)">
+                <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.delete') }}
+              </button>
+              <button class="btn btn-sm btn-primary" onclick="saveNote(false)">
+                <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save_profile') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script>
+      // ─── Timezone offset (from user profile) ────────────────────────────────
+      const TZ_OFFSET_HOURS = {{ (user.timezone_offset_hours if user is defined and user.timezone_offset_hours is defined else 0) | float }};
+
+      function applyTz(isoStr) {
+        if (!isoStr) return '—';
+        const d = new Date(isoStr.replace(' ', 'T') + (isoStr.includes('+') || isoStr.includes('Z') ? '' : 'Z'));
+        d.setMinutes(d.getMinutes() + TZ_OFFSET_HOURS * 60);
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+      }
+
+      // ─── Apply timezone to all timestamp cells ───────────────────────────────
+      document.addEventListener('DOMContentLoaded', () => {
+        _noteModal = new bootstrap.Modal(document.getElementById('noteModal'));
+
+        // Reformat timestamps with offset
+        if (TZ_OFFSET_HOURS !== 0) {
+          document.querySelectorAll('#usage-tbody tr[data-ts]').forEach(tr => {
+            const rawTs = tr.querySelector('td:first-child');
+            if (rawTs) {
+              const iso = tr.dataset.ts + 'T' + rawTs.textContent.trim().slice(11) + ':00';
+              rawTs.textContent = applyTz(rawTs.textContent.trim().replace(' ', 'T') + ':00');
+            }
+          });
+        }
+
+        // ─── Populate mode dropdown dynamically ──────────────────────────────
+        const modes = new Set();
+        document.querySelectorAll('#usage-tbody tr[data-mode]').forEach(tr => modes.add(tr.dataset.mode));
+        const modeSelect = document.getElementById('f_mode');
+        if (modeSelect) {
+          [...modes].sort().forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m; opt.textContent = m;
+            modeSelect.appendChild(opt);
+          });
+        }
+
+        updateFilterCount();
+      });
+
+      // ─── Filter logic ────────────────────────────────────────────────────────
+      function applyFilters() {
+        const fToken  = (document.getElementById('f_token')?.value  || '').toLowerCase().trim();
+        const fMode   = document.getElementById('f_mode')?.value   || '';
+        const fStatus = document.getElementById('f_status')?.value || '';
+        const fFrom   = document.getElementById('f_from')?.value   || '';
+        const fTo     = document.getElementById('f_to')?.value     || '';
+
+        document.querySelectorAll('#usage-tbody tr[data-ts]').forEach(tr => {
+          const token  = (tr.dataset.token  || '').toLowerCase();
+          const mode   = tr.dataset.mode   || '';
+          const status = tr.dataset.status || '';
+          const ts     = tr.dataset.ts     || '';
+
+          let visible = true;
+          if (fToken  && !token.includes(fToken))              visible = false;
+          if (fMode   && mode !== fMode)                       visible = false;
+          if (fStatus === 'ok'    && status !== 'ok')          visible = false;
+          if (fStatus === 'error' && status === 'ok')          visible = false;
+          if (fFrom   && ts < fFrom)                           visible = false;
+          if (fTo     && ts > fTo)                             visible = false;
+
+          tr.style.display = visible ? '' : 'none';
+        });
+        updateFilterCount();
+      }
+
+      function updateFilterCount() {
+        const all     = document.querySelectorAll('#usage-tbody tr[data-ts]').length;
+        const visible = document.querySelectorAll('#usage-tbody tr[data-ts]:not([style*="none"])').length;
+        const el = document.getElementById('filter-count');
+        if (el) el.textContent = all > 0 ? `${visible} of ${all} entries` : '';
+      }
+
+      function resetFilters() {
+        ['f_token','f_from','f_to'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        ['f_mode','f_status'].forEach(id => { const el = document.getElementById(id); if (el) el.selectedIndex = 0; });
+        applyFilters();
+      }
+
+      // ─── Note modal ──────────────────────────────────────────────────────────
+      let _noteModal, _noteUsageId;
+      function openNoteModal(usageId, currentNote) {
+        _noteUsageId = usageId;
+        document.getElementById('noteTextarea').value = currentNote.trim();
+        _noteModal.show();
+        setTimeout(() => document.getElementById('noteTextarea').focus(), 300);
+      }
+      async function saveNote(del) {
+        const note = del ? '' : document.getElementById('noteTextarea').value.trim();
+        const r = await fetch(`/user/usage/${_noteUsageId}/note`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({note})
+        });
+        if (!r.ok) { alert('Error saving'); return; }
+        // Update UI without reload
+        const el = document.getElementById(`note-text-${_noteUsageId}`);
+        const btn = el.closest('tr').querySelector('button i');
+        if (note) {
+          el.style.display = '';
+          el.innerText = note;
+          btn.className = 'bi bi-chat-left-text-fill text-primary';
+        } else {
+          el.style.display = 'none';
+          el.innerText = '';
+          btn.className = 'bi bi-chat-left-text';
+        }
+        _noteModal.hide();
+      }
+      </script>
+
+      {# ─── API KEYS ──────────────────────────────────────────────────────── #}
+      {% elif page == "keys" %}
+      <h5 class="mb-3"><i class="bi bi-key me-2 text-primary"></i>{{ t(request, 'page.api_keys') }}</h5>
+
+      {% if request.session.get("new_api_key") %}
+      <div class="alert alert-success">
+        <strong><i class="bi bi-exclamation-triangle me-1"></i>{{ t(request, 'portal.new_key_banner') }}:</strong><br>
+        <code class="key-mono">{{ request.session.get("new_api_key") }}</code>
+        <script>
+          // Remove from session after display
+          fetch('/user/keys/clear-session-key', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+        </script>
+      </div>
+      {% endif %}
+
+      <div class="card mb-4">
+        <div class="card-header bg-dark text-white"><i class="bi bi-key-fill me-2"></i>{{ t(request, 'portal.my_api_keys') }}</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr><th>Key-Prefix</th><th>Label</th><th>CC Profile</th><th>{{ t(request, 'portal.col_created') }}</th><th>{{ t(request, 'lbl.last_used') }}</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              {% for k in keys %}
+              <tr id="key-row-{{ k.id }}">
+                <td><code>{{ k.key_prefix }}...</code></td>
+                <td>
+                  <span id="key-label-text-{{ k.id }}" class="text-truncate" style="max-width:160px;display:inline-block">{{ k.label or '—' }}</span>
+                  <button class="btn btn-xs p-0 border-0 text-secondary ms-1" style="font-size:.85rem;line-height:1"
+                          title="{{ t(request, 'portal.label_edit_title') }}" onclick="openLabelEdit('{{ k.id }}', '{{ k.label or '' }}')">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                </td>
+                <td>
+                  {% if available_cc_profiles %}
+                  <select class="form-select form-select-sm" style="min-width:140px;font-size:.75rem"
+                          onchange="saveKeyCcProfile('{{ k.id }}', this.value)"
+                          id="key-cc-profile-{{ k.id }}">
+                    <option value="">{{ t(request, 'portal.user_default') }}</option>
+                    {% for p in available_cc_profiles %}
+                    <option value="{{ p.id }}"{% if k.cc_profile_id == p.id %} selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                  </select>
+                  {% else %}
+                  <small class="text-muted">—</small>
+                  {% endif %}
+                </td>
+                <td><small class="text-muted">{{ k.created_at[:10] }}</small></td>
+                <td><small class="text-muted">{{ k.last_used_at[:16] if k.last_used_at else t(request, 'lbl.never') }}</small></td>
+                <td>
+                  {% if k.is_active %}
+                  <span class="badge bg-success" style="font-size:.65rem">{{ t(request, 'status.active') }}</span>
+                  {% else %}
+                  <span class="badge bg-danger" style="font-size:.65rem">{{ t(request, 'status.locked') }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if k.is_active %}
+                  <form method="post" action="/user/keys/{{ k.id }}/revoke" style="display:inline"
+                        onsubmit="return confirm('{{ t(request, 'portal.revoke_confirm') }}')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.15rem .4rem">
+                      <i class="bi bi-lock"></i> {{ t(request, 'portal.revoke_key') }}
+                    </button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-muted text-center py-3">{{ t(request, 'portal.no_api_keys') }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Label-Edit Modal -->
+      <div class="modal fade" id="labelModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+          <div class="modal-content">
+            <div class="modal-header py-2">
+              <h6 class="modal-title"><i class="bi bi-pencil me-2"></i>{{ t(request, 'portal.label_edit_title') }}</h6>
+              <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <input type="text" id="labelInput" class="form-control form-control-sm"
+                     placeholder="{{ t(request, 'portal.key_label_hint') }}" maxlength="100">
+            </div>
+            <div class="modal-footer py-2">
+              <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+              <button class="btn btn-sm btn-primary" onclick="saveLabelEdit()">
+                <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save_profile') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+      let _labelModal, _labelKeyId;
+      document.addEventListener('DOMContentLoaded', () => {
+        _labelModal = new bootstrap.Modal(document.getElementById('labelModal'));
+      });
+      function openLabelEdit(keyId, currentLabel) {
+        _labelKeyId = keyId;
+        document.getElementById('labelInput').value = currentLabel;
+        _labelModal.show();
+        setTimeout(() => document.getElementById('labelInput').focus(), 300);
+      }
+      async function saveLabelEdit() {
+        const label = document.getElementById('labelInput').value.trim();
+        const r = await fetch(`/user/api/keys/${_labelKeyId}/label`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({label})
+        });
+        if (!r.ok) { alert('Error saving'); return; }
+        document.getElementById(`key-label-text-${_labelKeyId}`).textContent = label || '—';
+        _labelModal.hide();
+      }
+
+      async function saveKeyCcProfile(keyId, profileId) {
+        const r = await fetch(`/user/api/keys/${keyId}/cc-profile`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({cc_profile_id: profileId || null})
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          alert(d.detail || 'Error saving');
+          // Reset dropdown to previous value by reloading
+          window.location.reload();
+        }
+      }
+      </script>
+
+      <!-- Neuen Key erstellen -->
+      <div class="card">
+        <div class="card-header bg-dark text-white"><i class="bi bi-plus-circle me-2"></i>{{ t(request, 'portal.create_key_title') }}</div>
+        <div class="card-body">
+          <p class="small text-muted">{{ t(request, 'portal.key_note') }}</p>
+          <form method="post" action="/user/keys">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="row g-2 align-items-end">
+              <div class="col-8">
+                <label class="form-label small">{{ t(request, 'portal.key_label_optional') }}</label>
+                <input type="text" class="form-control form-control-sm" name="label" placeholder="{{ t(request, 'portal.key_label_hint') }}">
+              </div>
+              <div class="col-4">
+                <button type="submit" class="btn btn-primary btn-sm w-100">
+                  <i class="bi bi-key me-1"></i>{{ t(request, 'btn.create_key') }}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- API-Nutzung Anleitung -->
+      {% set api_base = public_api_url or "https://api.moe-intern/v1" %}
+      <div class="card mt-4">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-code-slash me-2"></i>{{ t(request, 'portal.api_usage_title') }}</span>
+          {% if public_api_url %}
+          <span class="badge bg-success font-monospace" style="font-size:.7rem">{{ public_api_url }}</span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <p class="small text-muted mb-2">{{ t(request, 'portal.api_bearer_desc') }}</p>
+          <pre class="bg-light p-3 rounded small" style="font-size:.8rem">curl {{ api_base }}/chat/completions \
+  -H "Authorization: Bearer moe-sk-xxxxxxxx..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen2.5-coder:32b","messages":[{"role":"user","content":"Hallo!"}]}'</pre>
+          <p class="small text-muted mb-1">{{ t(request, 'portal.api_x_key_desc') | safe }}</p>
+          <pre class="bg-light p-3 rounded small" style="font-size:.8rem">curl {{ api_base }}/messages \
+  -H "x-api-key: moe-sk-xxxxxxxx..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen2.5-coder:32b","max_tokens":1024,"messages":[{"role":"user","content":"Hallo!"}]}'</pre>
+        </div>
+      </div>
+
+      {# ─── PROFILE ───────────────────────────────────────────────────────── #}
+      {% elif page == "profile" %}
+      <h5 class="mb-3"><i class="bi bi-person-gear me-2 text-primary"></i>{{ t(request, 'page.profile_pw') }}</h5>
+      <div class="card">
+        <div class="card-header bg-dark text-white"><i class="bi bi-person me-2"></i>{{ t(request, 'portal.my_data') }}</div>
+        <div class="card-body">
+          <form method="post" action="/user/profile">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {# ── Account ── #}
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">{{ t(request, 'portal.username_readonly') }}</label>
+              <input type="text" class="form-control form-control-sm" value="{{ user.username }}" disabled>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">{{ t(request, 'lbl.display_name') }}</label>
+              <input type="text" class="form-control form-control-sm" name="display_name"
+                     value="{{ user.display_name or '' }}" placeholder="{{ t(request, 'portal.display_name_hint') }}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">{{ t(request, 'lbl.email') }} <span class="text-danger">*</span></label>
+              <input type="email" class="form-control form-control-sm" name="email"
+                     value="{{ user.email }}" required>
+            </div>
+            <hr class="my-3">
+            {# ── Persönliche Daten / Personal data ── #}
+            <p class="small fw-semibold mb-2"><i class="bi bi-person-vcard me-1"></i>{{ t(request, 'section.personal_data') }}</p>
+            <div class="row g-2 mb-2">
+              <div class="col-sm-6">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.first_name') }} <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" name="first_name"
+                       value="{{ user.first_name or '' }}" required>
+              </div>
+              <div class="col-sm-6">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.last_name') }} <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" name="last_name"
+                       value="{{ user.last_name or '' }}" required>
+              </div>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small fw-semibold">{{ t(request, 'lbl.street_address') }} <span class="text-danger">*</span></label>
+              <input type="text" class="form-control form-control-sm" name="street_address"
+                     value="{{ user.street_address or '' }}" placeholder="{{ t(request, 'lbl.street_address_hint') }}" required>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-sm-3">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.postal_code') }} <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" name="postal_code"
+                       value="{{ user.postal_code or '' }}" required>
+              </div>
+              <div class="col-sm-5">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.city') }} <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" name="city"
+                       value="{{ user.city or '' }}" required>
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.country') }}</label>
+                <input type="text" class="form-control form-control-sm" name="country"
+                       value="{{ user.country or '' }}" placeholder="DE">
+              </div>
+            </div>
+            <div class="row g-2 mb-3">
+              <div class="col-sm-5">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.date_of_birth') }}</label>
+                <input type="date" class="form-control form-control-sm" name="date_of_birth"
+                       value="{{ user.date_of_birth or '' }}">
+              </div>
+              <div class="col-sm-4">
+                <label class="form-label small fw-semibold">{{ t(request, 'lbl.gender') }}</label>
+                <select class="form-select form-select-sm" name="gender">
+                  <option value="" {% if not user.gender %}selected{% endif %}>—</option>
+                  <option value="M" {% if user.gender == 'M' %}selected{% endif %}>{{ t(request, 'lbl.gender_m') }}</option>
+                  <option value="W" {% if user.gender == 'W' %}selected{% endif %}>{{ t(request, 'lbl.gender_w') }}</option>
+                  <option value="D" {% if user.gender == 'D' %}selected{% endif %}>{{ t(request, 'lbl.gender_d') }}</option>
+                </select>
+              </div>
+            </div>
+            <hr class="my-3">
+            {# ── Passwort ── #}
+            <p class="small text-muted mb-2">{{ t(request, 'portal.change_pw_hint') }}</p>
+            <div class="mb-3">
+              <label class="form-label small">{{ t(request, 'lbl.new_password') }}</label>
+              <input type="password" class="form-control form-control-sm" name="new_password" placeholder="{{ t(request, 'portal.pw_placeholder') }}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label small">{{ t(request, 'lbl.confirm_password') }}</label>
+              <input type="password" class="form-control form-control-sm" name="confirm_pw">
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_profile') }}
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Timezone Settings -->
+      <div class="card mt-3">
+        <div class="card-header bg-dark text-white"><i class="bi bi-clock-history me-2"></i>{{ t(request, 'portal.timezone_header') }}</div>
+        <div class="card-body">
+          <p class="small text-muted mb-2">{{ t(request, 'portal.timezone_desc') }}</p>
+          <div class="d-flex align-items-center gap-3">
+            <select class="form-select form-select-sm" id="tzOffsetSelect" style="max-width:200px">
+              {% set current_tz = user.timezone_offset_hours if user.timezone_offset_hours is defined else 0 %}
+              {% for h in range(-12, 15) %}
+              {% for half in [0, 5] %}
+              {% set val = h + half / 10.0 %}
+              <option value="{{ val }}" {% if (val - current_tz)|abs < 0.1 %}selected{% endif %}>
+                UTC{% if val >= 0 %}+{% endif %}{{ "%.1f"|format(val) }}h
+              </option>
+              {% endfor %}
+              {% endfor %}
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="saveTzOffset()">
+              <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_profile') }}
+            </button>
+            <span id="tzSaveMsg" class="small text-success d-none">{{ t(request, 'portal.saved') }}</span>
+          </div>
+        </div>
+      </div>
+      <script>
+      async function saveTzOffset() {
+        const offset = parseFloat(document.getElementById('tzOffsetSelect').value);
+        const r = await fetch('/user/api/settings/timezone', {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({timezone_offset_hours: offset})
+        });
+        if (!r.ok) { alert('Error saving'); return; }
+        const msg = document.getElementById('tzSaveMsg');
+        msg.classList.remove('d-none');
+        setTimeout(() => msg.classList.add('d-none'), 2500);
+      }
+      </script>
+
+      <!-- Alert Settings -->
+      <div class="card mt-3">
+        <div class="card-header bg-dark text-white"><i class="bi bi-bell me-2"></i>{{ t(request, 'portal.alerts_header') }}</div>
+        <div class="card-body">
+          <form method="post" action="/user/alerts">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="mb-3 d-flex align-items-center gap-3">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" name="alert_enabled" id="alert_enabled"
+                       value="1" {% if user.alert_enabled %}checked{% endif %}>
+                <label class="form-check-label small fw-semibold" for="alert_enabled">{{ t(request, 'portal.alerts_enable') }}</label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">
+                {{ t(request, 'portal.threshold_label') }} <span id="threshold_val">{{ user.alert_threshold_pct or 80 }}%</span>
+              </label>
+              <input type="range" class="form-range" name="alert_threshold_pct" id="alert_threshold"
+                     min="50" max="99" step="1" value="{{ user.alert_threshold_pct or 80 }}"
+                     oninput="document.getElementById('threshold_val').textContent=this.value+'%'">
+              <div class="d-flex justify-content-between" style="font-size:.75rem;color:#888">
+                <span>50%</span><span>75%</span><span>99%</span>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">{{ t(request, 'portal.alert_email_label') }}</label>
+              <input type="email" class="form-control form-control-sm" name="alert_email"
+                     value="{{ user.alert_email or user.email or '' }}"
+                     placeholder="{{ t(request, 'portal.alert_email_hint') }}">
+              <div class="form-text small">{{ t(request, 'portal.alert_email_hint') }}</div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_settings') }}
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {# ─── MY TEMPLATES ─────────────────────────────────────────────────── #}
+      {% elif page == "templates" %}
+      <h5 class="mb-3"><i class="bi bi-diagram-3 me-2 text-primary"></i>{{ t(request, 'portal.my_templates_title') }}</h5>
+      <p class="text-muted small mb-3">{{ t(request, 'portal.my_templates_desc') | safe }}</p>
+
+      <!-- Vom Admin freigegebene Templates -->
+      {% if granted_templates %}
+      <div class="card mb-4 border-info">
+        <div class="card-header bg-info bg-opacity-10 text-info-emphasis d-flex align-items-center gap-2 py-2">
+          <i class="bi bi-shield-check"></i>
+          <span class="fw-semibold">{{ t(request, 'portal.admin_templates') }}</span>
+          <span class="badge bg-info text-dark ms-1" style="font-size:.7rem">{{ granted_templates|length }}</span>
+          <small class="text-muted ms-auto">{{ t(request, 'portal.admin_read_only') }}</small>
+        </div>
+        <div class="card-body p-0">
+          {% for tmpl in granted_templates %}
+          <div class="d-flex align-items-center justify-content-between px-3 py-2 {% if not loop.last %}border-bottom{% endif %}">
+            <div>
+              <strong>{{ tmpl.name }}</strong>
+              {% if tmpl.description %}<small class="text-muted ms-2">{{ tmpl.description }}</small>{% endif %}
+              <br>
+              <small class="text-muted">ID: <code>{{ tmpl.id }}</code></small>
+            </div>
+            <button class="btn btn-sm btn-outline-info flex-shrink-0"
+                    onclick="copyAdminTemplate('{{ tmpl.id|replace("'","\\'") }}', '{{ tmpl.name|replace("'","\\'") }}')"
+                    title="{{ t(request, 'portal.copy_btn') }}">
+              <i class="bi bi-copy me-1"></i>{{ t(request, 'portal.copy_btn') }}
+            </button>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="text-muted small">{{ t(request, 'portal.own_count').replace('{n}', my_templates|length|string) }}</span>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-sm" onclick="exportUserTemplates()" title="{{ t(request, 'btn.export_json') }}">
+            <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}
+          </button>
+          <label class="btn btn-outline-secondary btn-sm mb-0" title="{{ t(request, 'btn.import_json') }}">
+            <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
+            <input type="file" id="import-user-templates-file" accept=".json" style="display:none" onchange="importUserTemplates(this)">
+          </label>
+          <button class="btn btn-primary btn-sm" onclick="openNewTemplate()">
+            <i class="bi bi-plus me-1"></i>{{ t(request, 'btn.new_template') }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Template List -->
+      <div id="tmpl-list">
+      {% for tmpl in my_templates %}
+      <div class="card mb-2{% if tmpl.get('is_active', 1) == 0 %} opacity-50{% endif %}" id="tmpl-card-{{ tmpl.id|replace(':','_') }}">
+        <div class="card-body py-2 px-3 d-flex align-items-center justify-content-between">
+          <div>
+            <strong>{{ tmpl.name }}</strong>
+            {% if tmpl.description %}<small class="text-muted ms-2">{{ tmpl.description }}</small>{% endif %}
+            {% if tmpl.get('is_active', 1) == 0 %}
+            <span class="badge bg-danger ms-2" style="font-size:.65rem">{{ t(request, 'portal.deactivated') }}</span>
+            {% endif %}
+            <br>
+            <small class="text-muted">ID: <code>{{ tmpl.id }}</code></small>
+          </div>
+          <div class="d-flex gap-2">
+            {% if tmpl.get('is_active', 1) != 0 %}
+            <button class="btn btn-sm btn-outline-primary" onclick="editTemplate('{{ tmpl.id|replace('\'','\\\'') }}')">
+              <i class="bi bi-pencil"></i>
+            </button>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-danger" onclick="deleteTemplate('{{ tmpl.id|replace('\'','\\\'') }}', '{{ tmpl.name|replace('\'','\\\'') }}')">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="text-muted small text-center py-4">{{ t(request, 'portal.no_user_templates') }}</div>
+      {% endfor %}
+      </div>
+
+      <!-- Template Editor Modal-like inline section -->
+      <div id="tmpl-editor" class="card mt-3 d-none">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+          <span id="tmpl-editor-title"><i class="bi bi-diagram-3 me-2"></i>{{ t(request, 'portal.tmpl_edit_title') }}</span>
+          <button class="btn btn-sm btn-outline-light" onclick="closeTemplateEditor()">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <div class="card-body">
+          <input type="hidden" id="tmpl-editing-id" value="">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">{{ t(request, 'portal.tmpl_name_lbl') }} *</label>
+              <input type="text" class="form-control form-control-sm" id="tmpl-name" placeholder="{{ t(request, 'portal.tmpl_name_placeholder') }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">{{ t(request, 'portal.tmpl_desc_lbl') }}</label>
+              <input type="text" class="form-control form-control-sm" id="tmpl-desc" placeholder="{{ t(request, 'portal.tmpl_desc_placeholder') }}">
+            </div>
+          </div>
+
+          <!-- Optionale Planner/Judge Overrides -->
+          <div class="card mb-3">
+            <div class="card-header py-1 px-3" style="background:#f8f9fa">
+              <small class="fw-bold">{{ t(request, 'portal.tmpl_overrides_lbl') }}</small>
+              <small class="text-muted ms-2">({{ t(request, 'portal.tmpl_overrides_hint') }})</small>
+            </div>
+            <div class="card-body py-2">
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <label class="form-label small">{{ t(request, 'portal.tmpl_judge_model') }} <span class="text-muted">(llm@host, {{ t(request, 'portal.tmpl_empty_default') }})</span></label>
+                  <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-judge-model">
+                    <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small">{{ t(request, 'portal.tmpl_planner_model') }} <span class="text-muted">(llm@host, {{ t(request, 'portal.tmpl_empty_default') }})</span></label>
+                  <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-planner-model">
+                    <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
+                  </select>
+                </div>
+              </div>
+              <div class="mt-2">
+                <label class="form-label small">{{ t(request, 'portal.tmpl_judge_prompt') }} ({{ t(request, 'portal.tmpl_empty_default') }})</label>
+                <textarea class="form-control form-control-sm" id="tmpl-judge-prompt" rows="2"
+                          placeholder="{{ t(request, 'portal.tmpl_judge_prompt_ph') }}"></textarea>
+              </div>
+              <div class="mt-2">
+                <label class="form-label small">{{ t(request, 'portal.tmpl_planner_prompt') }} ({{ t(request, 'portal.tmpl_empty_default') }})</label>
+                <textarea class="form-control form-control-sm" id="tmpl-planner-prompt" rows="2"
+                          placeholder="{{ t(request, 'portal.tmpl_planner_prompt_ph') }}"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Expert Categories -->
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <small class="fw-bold">{{ t(request, 'portal.tmpl_expert_cats') }}</small>
+            <div class="d-flex gap-2 align-items-center">
+              <select class="form-select form-select-sm" id="tmpl-add-cat" style="width:180px">
+                {% for cat in expert_categories %}
+                <option value="{{ cat }}">{{ cat }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn btn-sm btn-outline-success" onclick="addExpertCategory()">
+                <i class="bi bi-plus"></i>
+              </button>
+              <input type="text" class="form-control form-control-sm" id="tmpl-custom-cat"
+                     placeholder="{{ t(request, 'portal.tmpl_custom_cat') }}" style="width:150px">
+            </div>
+          </div>
+          <div id="tmpl-experts-container"></div>
+
+          <div id="tmpl-error" class="alert alert-danger mt-2 d-none py-2 small"></div>
+          <div class="mt-3 d-flex gap-2">
+            <button class="btn btn-primary" onclick="saveTemplate()">
+              <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_profile') }}
+            </button>
+            <button class="btn btn-secondary" onclick="closeTemplateEditor()">{{ t(request, 'btn.cancel') }}</button>
+          </div>
+        </div>
+      </div>
+
+      <script>
+      const PERMITTED_SERVERS = {{ permitted_servers | tojson }};
+      let _templateData = {};
+      let PERMITTED_MODELS = [];  // populated async from /user/api/permitted-models
+
+      function _setSelectOrKeep(id, val) {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.value = val;
+        if (sel.value !== val && val) {
+          const opt = document.createElement('option');
+          opt.value = val; opt.textContent = val;
+          sel.prepend(opt);
+          sel.value = val;
+        }
+      }
+
+      function closeTemplateEditor() {
+        document.getElementById('tmpl-editor').classList.add('d-none');
+      }
+
+      function openNewTemplate() {
+        document.getElementById('tmpl-editing-id').value = '';
+        document.getElementById('tmpl-editor-title').innerHTML = '<i class="bi bi-diagram-3 me-2"></i>{{ t(request, 'btn.new_template') }}';
+        document.getElementById('tmpl-name').value = '';
+        document.getElementById('tmpl-desc').value = '';
+        document.getElementById('tmpl-judge-model').value = '';
+        document.getElementById('tmpl-planner-model').value = '';
+        document.getElementById('tmpl-judge-prompt').value = '';
+        document.getElementById('tmpl-planner-prompt').value = '';
+        document.getElementById('tmpl-experts-container').innerHTML = '';
+        document.getElementById('tmpl-error').classList.add('d-none');
+        document.getElementById('tmpl-editor').classList.remove('d-none');
+        document.getElementById('tmpl-editor').scrollIntoView({behavior:'smooth'});
+      }
+
+      async function editTemplate(tmplId) {
+        const res = await fetch('/user/api/templates');
+        const data = await res.json();
+        const tmpl = data.templates.find(t => t.id === tmplId);
+        if (!tmpl) { alert('Template not found'); return; }
+        const cfg = typeof tmpl.config_json === 'string' ? JSON.parse(tmpl.config_json) : tmpl.config_json || {};
+        document.getElementById('tmpl-editing-id').value = tmplId;
+        document.getElementById('tmpl-editor-title').innerHTML = '<i class="bi bi-pencil me-2"></i>{{ t(request, 'portal.tmpl_edit_title') }}';
+        document.getElementById('tmpl-name').value = tmpl.name;
+        document.getElementById('tmpl-desc').value = tmpl.description || '';
+        _setSelectOrKeep('tmpl-judge-model', cfg.judge_model || '');
+        _setSelectOrKeep('tmpl-planner-model', cfg.planner_model || '');
+        document.getElementById('tmpl-judge-prompt').value = cfg.judge_prompt || '';
+        document.getElementById('tmpl-planner-prompt').value = cfg.planner_prompt || '';
+        document.getElementById('tmpl-experts-container').innerHTML = '';
+        const experts = cfg.experts || {};
+        Object.entries(experts).forEach(([cat, catCfg]) => renderExpertCategory(cat, catCfg));
+        document.getElementById('tmpl-error').classList.add('d-none');
+        document.getElementById('tmpl-editor').classList.remove('d-none');
+        document.getElementById('tmpl-editor').scrollIntoView({behavior:'smooth'});
+      }
+
+      async function deleteTemplate(tmplId, name) {
+        if (!confirm(`Delete template "${name}"?`)) return;
+        const res = await fetch(`/user/api/templates/${encodeURIComponent(tmplId)}`, {method:'DELETE'});
+        if (res.ok) window.location.reload();
+        else { const d = await res.json(); alert('Error: ' + (d.detail||'unknown')); }
+      }
+
+      async function exportUserTemplates() {
+        const res = await fetch('/user/api/templates/export');
+        if (!res.ok) { alert('Export failed'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'my_expert_templates.json'; a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      async function copyAdminTemplate(tmplId, tmplName) {
+        if (!confirm(`Copy admin template "${tmplName}"?\n\nThe copy will be saved under "My Templates" and can be customized there.`)) return;
+        try {
+          const res = await fetch(`/user/api/templates/copy-from-admin/${encodeURIComponent(tmplId)}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+          });
+          if (res.ok) {
+            const data = await res.json();
+            alert(`Template copied as: "${data.template.name}"`);
+            window.location.reload();
+          } else {
+            const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+            alert('Error: ' + (err.detail || 'Unknown error'));
+          }
+        } catch(e) {
+          alert('Error copying: ' + e.message);
+        }
+      }
+
+      async function importUserTemplates(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const replace = confirm('Overwrite existing templates with the same name?\n\nOK = Replace | Cancel = Import new only');
+        const mode = replace ? 'replace' : 'merge';
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`/user/api/templates/import?mode=${mode}`, {method: 'POST', body: formData});
+        input.value = '';
+        if (res.ok) {
+          const data = await res.json();
+          alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
+          window.location.reload();
+        } else {
+          const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+          alert('Import failed: ' + (err.detail || 'Unknown error'));
+        }
+      }
+
+      function addExpertCategory() {
+        const sel = document.getElementById('tmpl-add-cat').value;
+        const custom = document.getElementById('tmpl-custom-cat').value.trim();
+        const cat = custom || sel;
+        if (!cat) return;
+        document.getElementById('tmpl-custom-cat').value = '';
+        renderExpertCategory(cat, {system_prompt: '', models: []});
+      }
+
+      function renderExpertCategory(cat, catCfg) {
+        const container = document.getElementById('tmpl-experts-container');
+        if (document.getElementById('cat-' + cat)) return; // already exists
+        const models = (catCfg.models || []).map((m, idx) => modelRowHtml(cat, idx, m)).join('');
+        const div = document.createElement('div');
+        div.className = 'card mb-2';
+        div.id = 'cat-' + cat;
+        div.innerHTML = `
+          <div class="card-header py-1 px-3 d-flex justify-content-between align-items-center" style="background:#e9ecef">
+            <span class="small fw-bold">${cat}</span>
+            <button class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .4rem"
+                    onclick="document.getElementById('cat-${cat}').remove()">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+          <div class="card-body py-2 px-3">
+            <div class="mb-2">
+              <label class="form-label small">System-Prompt</label>
+              <textarea class="form-control form-control-sm" id="cat-${cat}-prompt" rows="2"
+                        placeholder="Optional system prompt for ${cat}…">${catCfg.system_prompt||''}</textarea>
+            </div>
+            <div id="cat-${cat}-models">${models}</div>
+            <button class="btn btn-xs btn-outline-success mt-1" style="font-size:.75rem;padding:.15rem .5rem"
+                    onclick="addModelRow('${cat}')">
+              <i class="bi bi-plus me-1"></i>Add model
+            </button>
+          </div>`;
+        container.appendChild(div);
+      }
+
+      function _modelOptions(selectedVal) {
+        let opts = '<option value="">– Select model –</option>';
+        PERMITTED_MODELS.forEach(m => {
+          opts += `<option value="${m}" ${m===selectedVal?'selected':''}>${m}</option>`;
+        });
+        // If existing value not yet in list, add it
+        if (selectedVal && !PERMITTED_MODELS.includes(selectedVal)) {
+          opts += `<option value="${selectedVal}" selected>${selectedVal}</option>`;
+        }
+        return opts;
+      }
+
+      function modelRowHtml(cat, idx, m) {
+        const combined = (m.model && m.endpoint) ? `${m.model}@${m.endpoint}` : (m.model || '');
+        // Support legacy required=bool during transition
+        const curRole = m.role || (m.required === true ? 'always' : 'primary');
+        const roleOpts = [['primary','Primary'],['fallback','Fallback'],['always','Always']]
+          .map(([v,l]) => `<option value="${v}" ${v===curRole?'selected':''}>${l}</option>`).join('');
+        return `<div class="row g-2 mb-1 align-items-center" id="cat-${cat}-model-${idx}">
+          <div class="col-8">
+            <select class="form-select form-select-sm cat-model-llmhost">${_modelOptions(combined)}</select>
+          </div>
+          <div class="col-3">
+            <select class="form-select form-select-sm cat-model-role" style="font-size:.78rem" title="Execution role">
+              ${roleOpts}
+            </select>
+          </div>
+          <div class="col-1">
+            <button class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .4rem"
+                    onclick="this.closest('.row').remove()">
+              <i class="bi bi-x"></i>
+            </button>
+          </div>
+        </div>`;
+      }
+
+      function addModelRow(cat) {
+        const container = document.getElementById(`cat-${cat}-models`);
+        const idx = container.children.length;
+        container.insertAdjacentHTML('beforeend', modelRowHtml(cat, idx, {model:'',endpoint:'',role:'primary'}));
+      }
+
+      function collectTemplateConfig() {
+        const experts = {};
+        const cats = document.querySelectorAll('#tmpl-experts-container > .card');
+        cats.forEach(catDiv => {
+          const cat = catDiv.id.replace('cat-', '');
+          const prompt = document.getElementById(`cat-${cat}-prompt`)?.value || '';
+          const modelRows = document.querySelectorAll(`#cat-${cat}-models [id^="cat-${cat}-model-"]`);
+          const models = [];
+          modelRows.forEach(row => {
+            const llmhost  = row.querySelector('.cat-model-llmhost')?.value || '';
+            const roleEl   = row.querySelector('.cat-model-role');
+            const role     = roleEl ? roleEl.value : 'primary';
+            const atIdx    = llmhost.indexOf('@');
+            const model    = atIdx > -1 ? llmhost.slice(0, atIdx) : llmhost;
+            const endpoint = atIdx > -1 ? llmhost.slice(atIdx + 1) : '';
+            if (model) models.push({model, endpoint, role});
+          });
+          experts[cat] = {system_prompt: prompt, models};
+        });
+        return {
+          experts,
+          judge_model: document.getElementById('tmpl-judge-model').value.trim(),
+          planner_model: document.getElementById('tmpl-planner-model').value.trim(),
+          judge_prompt: document.getElementById('tmpl-judge-prompt').value.trim(),
+          planner_prompt: document.getElementById('tmpl-planner-prompt').value.trim(),
+        };
+      }
+
+      async function saveTemplate() {
+        const errEl = document.getElementById('tmpl-error');
+        errEl.classList.add('d-none');
+        const name = document.getElementById('tmpl-name').value.trim();
+        if (!name) { errEl.textContent = 'Name is required'; errEl.classList.remove('d-none'); return; }
+        const tmplId = document.getElementById('tmpl-editing-id').value;
+        const body = {
+          name,
+          description: document.getElementById('tmpl-desc').value.trim(),
+          config: collectTemplateConfig(),
+        };
+        const url  = tmplId ? `/user/api/templates/${encodeURIComponent(tmplId)}` : '/user/api/templates';
+        const meth = tmplId ? 'PUT' : 'POST';
+        const res  = await fetch(url, {method: meth, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.detail || 'Error'; errEl.classList.remove('d-none'); return; }
+        window.location.reload();
+      }
+
+      // Populate llm@host dropdowns from API
+      (async function loadPermittedModelsForTemplates() {
+        try {
+          PERMITTED_MODELS = await fetch('/user/api/permitted-models').then(r => r.json());
+          // Populate judge/planner selects
+          document.querySelectorAll('.tmpl-llmhost-select').forEach(sel => {
+            const prev = sel.value;
+            const firstOpt = sel.options[0];
+            sel.innerHTML = '';
+            if (firstOpt) sel.appendChild(firstOpt);
+            PERMITTED_MODELS.forEach(m => {
+              const opt = document.createElement('option');
+              opt.value = m; opt.textContent = m;
+              sel.appendChild(opt);
+            });
+            if (prev) sel.value = prev;
+          });
+        } catch(e) {
+          console.warn('Could not load models:', e);
+        }
+      })();
+      </script>
+
+      {# ─── CC PROFILES ──────────────────────────────────────────────────── #}
+      {% elif page == "cc_profiles" %}
+      <h5 class="mb-3"><i class="bi bi-cpu me-2 text-primary"></i>{{ t(request, 'portal.my_cc_profiles') }}</h5>
+      <p class="text-muted small mb-3">{{ t(request, 'portal.cc_profiles_desc') }}</p>
+
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <span></span>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-sm" onclick="exportUserCcProfiles()" title="{{ t(request, 'btn.export_json') }}">
+            <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}
+          </button>
+          <label class="btn btn-outline-secondary btn-sm mb-0" title="{{ t(request, 'btn.import_json') }}">
+            <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
+            <input type="file" id="import-user-cc-profiles-file" accept=".json" style="display:none" onchange="importUserCcProfiles(this)">
+          </label>
+          <button class="btn btn-sm btn-primary" onclick="openCcProfileModal()">
+            <i class="bi bi-plus-lg me-1"></i>{{ t(request, 'portal.btn_new_cc_profile') }}
+          </button>
+        </div>
+      </div>
+
+      {% if my_cc_profiles %}
+      <div class="row g-3 mb-4">
+        {% for prof in my_cc_profiles %}
+        {% set cfg = prof.config %}
+        <div class="col-12 col-md-6">
+          <div class="card{% if prof.get('is_active', 1) == 0 %} opacity-50{% endif %}{% if prof.is_default %} border-warning border-2{% endif %}">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                  <h6 class="fw-bold mb-0">{{ prof.name }}
+                    {% if prof.is_default %}
+                    <span class="badge bg-warning text-dark ms-1" style="font-size:.6rem"><i class="bi bi-star-fill me-1"></i>{{ t(request, 'portal.cc_default_badge') }}</span>
+                    {% endif %}
+                    {% if prof.source == 'admin' %}
+                    <span class="badge bg-info text-dark ms-1" style="font-size:.6rem"><i class="bi bi-shield-check me-1"></i>{{ t(request, 'portal.cc_granted_badge') }}</span>
+                    {% endif %}
+                    {% if prof.get('is_active', 1) == 0 %}
+                    <span class="badge bg-danger ms-1" style="font-size:.6rem">{{ t(request, 'portal.deactivated') }}</span>
+                    {% endif %}
+                  </h6>
+                  <small class="text-muted">ID: <code>{{ prof.id }}</code></small>
+                </div>
+                <div class="d-flex gap-1 flex-wrap justify-content-end">
+                  {% if not prof.is_default %}
+                  <button class="btn btn-xs btn-outline-warning btn-sm"
+                          title="Als Standard setzen"
+                          onclick="setDefaultCcProfile('{{ prof.id|replace('\'','\\\'') }}')">
+                    <i class="bi bi-star"></i>
+                  </button>
+                  {% else %}
+                  <button class="btn btn-xs btn-warning btn-sm"
+                          title="Standard entfernen"
+                          onclick="clearDefaultCcProfile()">
+                    <i class="bi bi-star-fill"></i>
+                  </button>
+                  {% endif %}
+                  {% if prof.editable and prof.get('is_active', 1) != 0 %}
+                  <button class="btn btn-xs btn-outline-primary btn-sm"
+                          onclick="editCcProfile('{{ prof.id|replace('\'','\\\'') }}')">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  {% endif %}
+                  <button class="btn btn-xs btn-outline-secondary btn-sm"
+                          title="Als Vorlage kopieren"
+                          onclick="copyCcProfile('{{ prof.id|replace('\'','\\\'') }}')">
+                    <i class="bi bi-copy"></i>
+                  </button>
+                  {% if prof.editable %}
+                  <button class="btn btn-xs btn-outline-secondary btn-sm"
+                          title="Als JSON-Datei exportieren"
+                          onclick="exportCcProfileAsFile('{{ prof.id|replace('\'','\\\'') }}')">
+                    <i class="bi bi-download"></i>
+                  </button>
+                  <button class="btn btn-xs btn-outline-secondary btn-sm"
+                          title="JSON-Quellcode anzeigen"
+                          onclick="showCcProfileJson('{{ prof.id|replace('\'','\\\'') }}')">
+                    <i class="bi bi-code-slash"></i>
+                  </button>
+                  <button class="btn btn-xs btn-outline-danger btn-sm"
+                          onclick="deleteCcProfile('{{ prof.id|replace('\'','\\\'') }}', '{{ prof.name|replace('\'','\\\'') }}')">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="d-flex flex-wrap gap-2" style="font-size:.8rem">
+                <span class="badge bg-secondary">{{ cfg.moe_mode or 'native' }}</span>
+                <span class="badge bg-light text-dark border font-monospace">{{ cfg.tool_model or '—' }}@{{ cfg.tool_endpoint or '—' }}</span>
+                {% if cfg.tool_choice and cfg.tool_choice != 'auto' %}
+                <span class="badge bg-info text-dark">choice: {{ cfg.tool_choice }}</span>
+                {% endif %}
+                {% if cfg.stream_think %}
+                <span class="badge bg-warning text-dark">stream_think</span>
+                {% endif %}
+              </div>
+              {% if cfg.system_prompt_prefix %}
+              <div class="mt-2 text-muted small text-truncate" style="max-width:100%" title="{{ cfg.system_prompt_prefix }}">
+                <i class="bi bi-chat-left-quote me-1"></i>{{ cfg.system_prompt_prefix[:80] }}{% if cfg.system_prompt_prefix|length > 80 %}…{% endif %}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-muted text-center py-5">
+        <i class="bi bi-cpu" style="font-size:2rem"></i>
+        <p class="mt-2">{{ t(request, 'portal.no_cc_profiles') }}</p>
+      </div>
+      {% endif %}
+
+      <!-- CC Profile Modal -->
+      <div class="card mb-3" id="cc-profile-editor" style="display:none">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span id="cc-editor-title"><i class="bi bi-plus-circle me-2"></i>{{ t(request, 'portal.btn_new_cc_profile') }}</span>
+          <button class="btn btn-sm btn-outline-secondary" onclick="closeCcProfileEditor()">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <div class="card-body">
+          <input type="hidden" id="cc-editing-id" value="">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Name *</label>
+              <input type="text" class="form-control form-control-sm" id="cc-name" placeholder="{{ t(request, 'portal.cc_name_placeholder') }}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">MoE Modus</label>
+              <select class="form-select form-select-sm" id="cc-moe-mode" onchange="onCcMoeModeChange()">
+                <option value="native">native – direct to tool model</option>
+                <option value="moe_reasoning">moe_reasoning – Reasoning expert</option>
+                <option value="moe_orchestrated">moe_orchestrated – full MoE</option>
+              </select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Akzeptierte Claude Model-IDs <span class="text-muted">(kommagetrennt, leer = alle)</span></label>
+            <textarea class="form-control form-control-sm font-monospace" id="cc-accepted-models" rows="2"
+                      placeholder="claude-sonnet-4-6,claude-haiku-4-5-20251001"></textarea>
+          </div>
+          <div class="row g-3 mb-3" id="cc-template-row" style="display:none">
+            <div class="col-12">
+              <label class="form-label small fw-semibold">Expert Template <span class="text-muted">(für moe_orchestrated)</span></label>
+              <select class="form-select form-select-sm" id="cc-expert-template">
+                <option value="">— kein Template (globale Experten) —</option>
+                {% for tmpl in expert_templates %}
+                <option value="{{ tmpl.id }}">{{ tmpl.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-8">
+              <label class="form-label small fw-semibold">Tool-Modell <span class="text-muted">(llm@host)</span></label>
+              <select class="form-select form-select-sm" id="cc-tool-llmhost">
+                <option value="">– Loading models… –</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Tool Choice</label>
+              <select class="form-select form-select-sm" id="cc-tool-choice">
+                <option value="auto">auto</option>
+                <option value="required">required</option>
+              </select>
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Max Tool-Tokens</label>
+              <input type="number" class="form-control form-control-sm" id="cc-tool-max-tokens" value="8192" min="512">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-semibold">Max Reasoning-Tokens</label>
+              <input type="number" class="form-control form-control-sm" id="cc-reasoning-max-tokens" value="16384" min="512">
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">System-Prompt Prefix</label>
+            <textarea class="form-control form-control-sm" id="cc-system-prefix" rows="2"
+                      placeholder="Optional prefix for all system prompts…"></textarea>
+          </div>
+          <div class="mb-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="cc-stream-think">
+              <label class="form-check-label small" for="cc-stream-think">
+                Stream MoE pipeline progress as text (stream_think)
+              </label>
+            </div>
+          </div>
+          <div id="cc-err" class="alert alert-danger py-1 small d-none"></div>
+          <div class="d-flex gap-2 justify-content-end">
+            <button class="btn btn-sm btn-outline-secondary" onclick="closeCcProfileEditor()">{{ t(request, 'btn.cancel') }}</button>
+            <button class="btn btn-sm btn-primary" onclick="saveCcProfile()">
+              <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save_profile') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CC Profile JSON Source Modal -->
+      <div class="modal fade" id="ccJsonModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>CC Profile – JSON Quellcode</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <pre id="cc-json-source" class="bg-dark text-light p-3 rounded" style="font-size:.78rem;max-height:400px;overflow-y:auto"></pre>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-sm btn-outline-secondary"
+                      onclick="navigator.clipboard.writeText(document.getElementById('cc-json-source').textContent).then(()=>this.textContent='Kopiert!').catch(()=>{})">
+                <i class="bi bi-clipboard me-1"></i>In Zwischenablage kopieren
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script>
+      const _ccProfiles = {{ my_cc_profiles | tojson }};
+
+      function onCcMoeModeChange() {
+        const mode = document.getElementById('cc-moe-mode').value;
+        document.getElementById('cc-template-row').style.display = mode === 'moe_orchestrated' ? '' : 'none';
+      }
+
+      function _fillCcFormFromConfig(cfg, name, isNew) {
+        document.getElementById('cc-name').value = name || '';
+        document.getElementById('cc-moe-mode').value = cfg.moe_mode || 'native';
+        document.getElementById('cc-accepted-models').value = (cfg.accepted_models || []).join(', ');
+        document.getElementById('cc-expert-template').value = cfg.expert_template_id || '';
+        const llmhostVal = (cfg.tool_model && cfg.tool_endpoint)
+          ? `${cfg.tool_model}@${cfg.tool_endpoint}`
+          : (cfg.tool_model || '');
+        const sel = document.getElementById('cc-tool-llmhost');
+        sel.value = llmhostVal;
+        if (sel.value !== llmhostVal && llmhostVal) {
+          const opt = document.createElement('option');
+          opt.value = llmhostVal; opt.textContent = llmhostVal;
+          sel.prepend(opt);
+          sel.value = llmhostVal;
+        }
+        document.getElementById('cc-tool-choice').value = cfg.tool_choice || 'auto';
+        document.getElementById('cc-tool-max-tokens').value = cfg.tool_max_tokens || 8192;
+        document.getElementById('cc-reasoning-max-tokens').value = cfg.reasoning_max_tokens || 16384;
+        document.getElementById('cc-system-prefix').value = cfg.system_prompt_prefix || '';
+        document.getElementById('cc-stream-think').checked = !!cfg.stream_think;
+        onCcMoeModeChange();
+      }
+
+      function openCcProfileModal() {
+        document.getElementById('cc-editing-id').value = '';
+        document.getElementById('cc-editor-title').innerHTML = '<i class="bi bi-plus-circle me-2"></i>{{ t(request, 'portal.btn_new_cc_profile') }}';
+        _fillCcFormFromConfig({}, '', true);
+        document.getElementById('cc-err').classList.add('d-none');
+        document.getElementById('cc-profile-editor').style.display = '';
+        document.getElementById('cc-name').focus();
+      }
+
+      function closeCcProfileEditor() {
+        document.getElementById('cc-profile-editor').style.display = 'none';
+      }
+
+      function editCcProfile(profileId) {
+        const prof = _ccProfiles.find(p => p.id === profileId);
+        if (!prof) return;
+        let cfg = {};
+        try { cfg = JSON.parse(prof.config_json); } catch(e) {}
+        document.getElementById('cc-editing-id').value = prof.id;
+        document.getElementById('cc-editor-title').innerHTML = '<i class="bi bi-pencil me-2"></i>{{ t(request, 'portal.cc_edit_title') }}';
+        _fillCcFormFromConfig(cfg, prof.name, false);
+        document.getElementById('cc-err').classList.add('d-none');
+        document.getElementById('cc-profile-editor').style.display = '';
+        document.getElementById('cc-name').focus();
+      }
+
+      function copyCcProfile(profileId) {
+        const prof = _ccProfiles.find(p => p.id === profileId);
+        if (!prof) return;
+        let cfg = {};
+        try { cfg = JSON.parse(prof.config_json); } catch(e) {}
+        document.getElementById('cc-editing-id').value = '';
+        document.getElementById('cc-editor-title').innerHTML = '<i class="bi bi-plus-circle me-2"></i>{{ t(request, 'portal.btn_new_cc_profile') }}';
+        _fillCcFormFromConfig(cfg, `Copy of ${prof.name}`, true);
+        document.getElementById('cc-err').classList.add('d-none');
+        document.getElementById('cc-profile-editor').style.display = '';
+        document.getElementById('cc-name').focus();
+      }
+
+      function exportCcProfileAsFile(profileId) {
+        const prof = _ccProfiles.find(p => p.id === profileId);
+        if (!prof) return;
+        let cfg = {};
+        try { cfg = JSON.parse(prof.config_json); } catch(e) {}
+        const payload = JSON.stringify({
+          type: 'cc_profile', scope: 'user', version: '1.0',
+          exported_at: new Date().toISOString(),
+          items: [{ name: prof.name, config: cfg }]
+        }, null, 2);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([payload], {type: 'application/json'}));
+        a.download = `cc_profile_${prof.name.replace(/\W+/g, '_')}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
+      function showCcProfileJson(profileId) {
+        const prof = _ccProfiles.find(p => p.id === profileId);
+        if (!prof) return;
+        let cfg = {};
+        try { cfg = JSON.parse(prof.config_json); } catch(e) {}
+        const payload = JSON.stringify({
+          type: 'cc_profile', scope: 'user', version: '1.0',
+          exported_at: new Date().toISOString(),
+          items: [{ name: prof.name, config: cfg }]
+        }, null, 2);
+        document.getElementById('cc-json-source').textContent = payload;
+        new bootstrap.Modal(document.getElementById('ccJsonModal')).show();
+      }
+
+      async function deleteCcProfile(profileId, name) {
+        if (!confirm(`Delete CC profile "${name}"?`)) return;
+        const res = await fetch(`/user/api/cc-profiles/${encodeURIComponent(profileId)}`, {method:'DELETE'});
+        if (res.ok) { window.location.reload(); }
+        else { const d = await res.json(); alert(d.detail || 'Error'); }
+      }
+
+      async function setDefaultCcProfile(profileId) {
+        const res = await fetch(`/user/api/cc-profiles/${encodeURIComponent(profileId)}/set-default`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:'{}'});
+        if (res.ok) { window.location.reload(); }
+        else { const d = await res.json(); alert(d.detail || 'Error'); }
+      }
+
+      async function clearDefaultCcProfile() {
+        const res = await fetch('/user/api/cc-profiles/default', {method:'DELETE'});
+        if (res.ok) { window.location.reload(); }
+        else { const d = await res.json(); alert(d.detail || 'Error'); }
+      }
+
+      async function saveCcProfile() {
+        const errEl = document.getElementById('cc-err');
+        errEl.classList.add('d-none');
+        const profileId = document.getElementById('cc-editing-id').value;
+        const name = document.getElementById('cc-name').value.trim();
+        if (!name) { errEl.textContent = 'Name is required'; errEl.classList.remove('d-none'); return; }
+        const llmhost = document.getElementById('cc-tool-llmhost').value;
+        const atIdx   = llmhost.indexOf('@');
+        const tool_model    = atIdx > -1 ? llmhost.slice(0, atIdx) : llmhost;
+        const tool_endpoint = atIdx > -1 ? llmhost.slice(atIdx + 1) : '';
+        const body = {
+          name,
+          moe_mode:             document.getElementById('cc-moe-mode').value,
+          accepted_models:      document.getElementById('cc-accepted-models').value.split(',').map(s => s.trim()).filter(Boolean),
+          expert_template_id:   document.getElementById('cc-expert-template').value,
+          tool_model,
+          tool_endpoint,
+          tool_choice:          document.getElementById('cc-tool-choice').value,
+          tool_max_tokens:      parseInt(document.getElementById('cc-tool-max-tokens').value) || 8192,
+          reasoning_max_tokens: parseInt(document.getElementById('cc-reasoning-max-tokens').value) || 16384,
+          system_prompt_prefix: document.getElementById('cc-system-prefix').value.trim(),
+          stream_think:         document.getElementById('cc-stream-think').checked,
+        };
+        const url  = profileId ? `/user/api/cc-profiles/${encodeURIComponent(profileId)}` : '/user/api/cc-profiles';
+        const meth = profileId ? 'PUT' : 'POST';
+        const res  = await fetch(url, {method: meth, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.detail || 'Error'; errEl.classList.remove('d-none'); return; }
+        window.location.reload();
+      }
+
+      // Populate llm@host dropdown from API
+      (async function loadPermittedModels() {
+        try {
+          const models = await fetch('/user/api/permitted-models').then(r => r.json());
+          const sel = document.getElementById('cc-tool-llmhost');
+          const prev = sel.value;
+          sel.innerHTML = '<option value="">– Select model –</option>';
+          models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m; opt.textContent = m;
+            sel.appendChild(opt);
+          });
+          if (prev) sel.value = prev;
+        } catch(e) {
+          console.warn('Could not load models:', e);
+        }
+      })();
+
+      async function exportUserCcProfiles() {
+        const res = await fetch('/user/api/cc-profiles/export');
+        if (!res.ok) { alert('Export failed'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'my_cc_profiles.json'; a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      async function importUserCcProfiles(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const replace = confirm('Overwrite existing profiles with the same name?\n\nOK = Replace | Cancel = Import new only');
+        const mode = replace ? 'replace' : 'merge';
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`/user/api/cc-profiles/import?mode=${mode}`, {method: 'POST', body: formData});
+        input.value = '';
+        if (res.ok) {
+          const data = await res.json();
+          alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
+          window.location.reload();
+        } else {
+          const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+          alert('Import failed: ' + (err.detail || 'Unknown error'));
+        }
+      }
+      </script>
+
+      {% endif %}
+
+    </div><!-- /main content -->
+  </div><!-- /flex -->
+</div><!-- /container -->
+{% endif %}
+
+<footer class="text-center py-3 mt-2">
+  {{ t(request, 'footer.portal') }}
+</footer>
+
+<script src="/static/js/bootstrap.bundle.min.js"></script>
+
+{% if page == "dashboard" and summary.daily %}
+<script>
+const dailyData = {{ summary.daily | tojson }};
+const ctx = document.getElementById('dailyChart').getContext('2d');
+new Chart(ctx, {
+  type: 'bar',
+  data: {
+    labels: dailyData.map(d => d.day),
+    datasets: [
+      {
+        label: 'Input (Prompt)',
+        data: dailyData.map(d => d.prompt_tokens || 0),
+        backgroundColor: 'rgba(13,110,253,0.65)',
+        borderColor: 'rgba(13,110,253,1)',
+        borderWidth: 1,
+        stack: 'tokens'
+      },
+      {
+        label: 'Output (Completion)',
+        data: dailyData.map(d => d.completion_tokens || 0),
+        backgroundColor: 'rgba(25,135,84,0.65)',
+        borderColor: 'rgba(25,135,84,1)',
+        borderWidth: 1,
+        stack: 'tokens'
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { display: true, position: 'top', labels: { font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          footer: (items) => {
+            const total = items.reduce((s, i) => s + i.parsed.y, 0);
+            return 'Total: ' + total.toLocaleString();
+          }
+        }
+      }
+    },
+    scales: {
+      y: { beginAtZero: true, stacked: true, ticks: { font: { size: 11 } } },
+      x: { stacked: true, ticks: { font: { size: 11 } } }
+    }
+  }
+});
+</script>
+{% endif %}
+
+<script>
+/* ─── Dark / Light theme toggle ─────────────────────────────────────────── */
+function _applyTheme(theme) {
+  document.documentElement.setAttribute('data-bs-theme', theme);
+  localStorage.setItem('moe-theme', theme);
+  const icon = document.getElementById('themeIcon');
+  if (icon) icon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-bs-theme') || 'light';
+  _applyTheme(cur === 'dark' ? 'light' : 'dark');
+}
+document.addEventListener('DOMContentLoaded', function() {
+  const cur = localStorage.getItem('moe-theme') || 'light';
+  _applyTheme(cur);
+});
+</script>
+</body>
+</html>

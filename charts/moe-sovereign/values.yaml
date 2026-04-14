@@ -1,0 +1,150 @@
+# Default values for moe-sovereign.
+# Profile defaults to "enterprise": no data-tier subcharts deployed, all
+# connection strings expected from the user. See values-solo.yaml and
+# values-team.yaml for the other two profiles.
+
+profile: enterprise
+
+image:
+  registry: ghcr.io
+  repository: moe-sovereign/orchestrator
+  tag: ""                # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+mcp:
+  image:
+    repository: moe-sovereign/mcp-precision
+    tag: ""
+  replicas: 1
+  port: 8003
+
+admin:
+  image:
+    repository: moe-sovereign/admin-ui
+    tag: ""
+  replicas: 1
+  port: 8088
+
+orchestrator:
+  replicas: 2
+  port: 8000
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podAnnotations: {}
+  extraEnv: []
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# OpenShift toggle — when true, we omit runAsUser/fsGroup so the SCC
+# can inject its namespace-range UID, and we emit a Route instead of Ingress.
+openshift:
+  enabled: false
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 0
+  fsGroup: 0
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  host: moe.local
+  tls:
+    enabled: false
+    secretName: moe-tls
+  annotations: {}
+
+route:
+  enabled: false       # automatically flipped when .Values.openshift.enabled
+  host: ""
+  tls:
+    termination: edge
+
+networkPolicy:
+  enabled: true
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# JWT / multi-tenancy config. The public key goes in a secret, not values.
+auth:
+  jwtIssuer: "https://admin.moe.local"
+  jwtAudience: "moe-orchestrator"
+  existingSecret: ""
+  # key of the data entry inside the secret that holds the PEM public key
+  publicKeyField: "jwt_public_key.pem"
+
+rateLimit:
+  defaultRpm: 60
+  defaultBurst: 10
+
+# External connection strings — ignored when the matching subchart is enabled.
+external:
+  postgresUrl: ""       # postgres://user:pass@host:5432/moe
+  kafkaUrl: ""          # host:9092
+  valkeyUrl: ""         # redis://host:6379/0
+  neo4jUri: ""          # bolt://host:7687
+  chromaHost: ""        # http://host:8000
+
+# Expert templates are mounted as a ConfigMap built from configs/experts/*.yaml
+experts:
+  mountPath: /app/configs/experts
+
+observability:
+  enabled: true
+  loki:
+    url: ""             # http://loki.observability.svc:3100/loki/api/v1/push
+  tempo:
+    url: ""             # http://tempo.observability.svc:4317
+  alloy:
+    image: grafana/alloy:latest
+
+# ---------- Subchart toggles ----------
+postgresql:
+  enabled: false
+  auth:
+    username: moe
+    database: moe
+    existingSecret: moe-postgres
+
+kafka:
+  enabled: false
+  controller:
+    replicaCount: 1
+
+valkey:
+  enabled: false
+  architecture: standalone
+
+neo4j:
+  enabled: false

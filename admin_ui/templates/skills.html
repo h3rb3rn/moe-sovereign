@@ -1,0 +1,519 @@
+{% extends "base.html" %}
+{% block title %}Skills – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-terminal section-icon text-primary"></i>{{ t(request, 'page.skills') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.skills_desc') }}</small>
+  </div>
+  <button class="btn btn-primary btn-sm" onclick="openCreateModal()">
+    <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.new_skill') }}
+  </button>
+</div>
+
+<!-- Tab Navigation -->
+<ul class="nav nav-tabs mb-3" id="skillTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="local-tab" data-bs-toggle="tab" data-bs-target="#local-pane"
+            type="button" role="tab">
+      <i class="bi bi-person-gear me-1"></i>Meine Skills
+      <span class="badge bg-secondary ms-1" id="local-count">…</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="upstream-tab" data-bs-toggle="tab" data-bs-target="#upstream-pane"
+            type="button" role="tab" onclick="loadUpstream()">
+      <i class="bi bi-github me-1"></i>Upstream <span class="text-muted small">(anthropics/skills)</span>
+      <span class="badge bg-secondary ms-1" id="upstream-count">…</span>
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="community-tab" data-bs-toggle="tab" data-bs-target="#community-pane"
+            type="button" role="tab" onclick="loadCommunity()">
+      <i class="bi bi-cloud-download me-1"></i>Community <span class="text-muted small">(skills.sh)</span>
+      <span class="badge bg-secondary ms-1" id="community-count">…</span>
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <!-- ── Tab 1: Meine Skills ──────────────────────────────────────────────── -->
+  <div class="tab-pane fade show active" id="local-pane" role="tabpanel">
+    <div class="alert alert-info py-2 small mb-3">
+      <i class="bi bi-info-circle me-1"></i>
+      <strong>{{ t(request, 'info.skills_resolve') }}:</strong> {{ t(request, 'info.skills_how') }}
+      {{ t(request, 'info.skills_tokens') }}
+    </div>
+    <div id="skills-grid" class="row g-3">
+      <div class="col-12 text-center text-muted py-5" id="loading-state">
+        <div class="spinner-border spinner-border-sm me-2" role="status"></div>Skills werden geladen…
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab 2: Upstream (Anthropic) ────────────────────────────────────── -->
+  <div class="tab-pane fade" id="upstream-pane" role="tabpanel">
+    <div class="d-flex justify-content-between align-items-start mb-3 gap-3 flex-wrap">
+      <div class="alert alert-secondary py-2 small mb-0 flex-grow-1">
+        <i class="bi bi-github me-1"></i>
+        Quelle: <a href="https://github.com/anthropics/skills" target="_blank" class="alert-link">github.com/anthropics/skills</a>
+        — {{ t(request, 'info.skills_upstream') }}
+      </div>
+      <button class="btn btn-outline-secondary btn-sm" onclick="pullUpstream(this)" style="white-space:nowrap">
+        <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.git_pull') }}
+      </button>
+      <button class="btn btn-outline-primary btn-sm ms-2" onclick="pullCommunity(this)" style="white-space:nowrap">
+        <i class="bi bi-cloud-download me-1"></i>Pull Community Skills
+      </button>
+    </div>
+    <div id="upstream-grid" class="row g-3">
+      <div class="col-12 text-center text-muted py-5" id="upstream-loading">
+        <i class="bi bi-cloud-arrow-down me-2"></i>{{ t(request, 'empty.click_tab') }}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab 3: Community Skills (skills.sh / GitHub) ────────────────────── -->
+  <div class="tab-pane fade" id="community-pane" role="tabpanel">
+    <div class="d-flex justify-content-between align-items-start mb-3 gap-3 flex-wrap">
+      <div class="alert alert-info py-2 small mb-0 flex-grow-1">
+        <i class="bi bi-cloud-download me-1"></i>
+        305+ community skills from <a href="https://github.com/alirezarezvani/claude-skills" target="_blank" class="alert-link">alirezarezvani/claude-skills</a>.
+        Skills require a security audit before activation.
+      </div>
+      <button class="btn btn-outline-primary btn-sm" onclick="pullCommunity(this)" style="white-space:nowrap">
+        <i class="bi bi-cloud-download me-1"></i>Pull Community Skills
+      </button>
+    </div>
+    <div id="community-grid" class="row g-3">
+      <div class="col-12 text-center text-muted py-5" id="community-loading">
+        <i class="bi bi-cloud me-2"></i>Click tab to load community skills
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- ── Edit/Create Modal ──────────────────────────────────────────────────── -->
+<div class="modal fade" id="skillModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="skillModalLabel">{{ t(request, 'modal.new_skill') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Name <small class="text-muted">(Slash-Command ohne /)</small></label>
+          <input type="text" class="form-control font-monospace" id="sk-name" placeholder="z.B. mein-skill" pattern="[a-z0-9][a-z0-9\-]*">
+          <div class="form-text">Nur Kleinbuchstaben, Ziffern und Bindestriche. Wird zu <code>/name</code>.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'lbl.description') }} <small class="text-muted">(for auto-trigger)</small></label>
+          <textarea class="form-control" id="sk-description" rows="2" placeholder="Short description of the skill…"></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'lbl.body') }}</label>
+          <textarea class="form-control font-monospace" id="sk-body" rows="14" placeholder="Prompt-Inhalt…"></textarea>
+          <div class="form-text">Use <code>$ARGUMENTS</code> as a placeholder for passed arguments.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary" onclick="saveSkill()">
+          <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save_profile') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SKILLS_URL = '/api/skills';
+const UPSTREAM_URL = '/api/skills/upstream';
+let _modal = null;
+let _editName = null;
+let _upstreamLoaded = false;
+
+function getModal() {
+  if (!_modal) _modal = new bootstrap.Modal(document.getElementById('skillModal'));
+  return _modal;
+}
+
+function showFlash(msg, type = 'success') {
+  const c = document.getElementById('flash-container');
+  c.innerHTML = `<div class="alert alert-${type} alert-dismissible flash-bar" role="alert">
+    ${msg} <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Local Skills ─────────────────────────────────────────────────────────────
+
+async function loadSkills() {
+  try {
+    const r = await fetch(SKILLS_URL);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const skills = await r.json();
+    document.getElementById('local-count').textContent = skills.length;
+    renderGrid(skills);
+  } catch(e) {
+    document.getElementById('skills-grid').innerHTML =
+      `<div class="col-12"><div class="alert alert-danger">Fehler beim Laden: ${e.message}</div></div>`;
+  }
+}
+
+function renderGrid(skills) {
+  const grid = document.getElementById('skills-grid');
+  if (!skills.length) {
+    grid.innerHTML = `<div class="col-12"><div class="alert alert-info">
+      <i class="bi bi-info-circle me-2"></i>Noch keine Skills. Erstelle den ersten oder importiere aus dem Upstream-Tab.
+    </div></div>`;
+    return;
+  }
+  grid.innerHTML = skills.map(renderCard).join('');
+}
+
+function renderCard(s) {
+  const enabled  = s.enabled;
+  const badgeCls = enabled ? 'bg-success' : 'bg-secondary';
+  const badgeTxt = enabled ? 'Aktiv' : 'Deaktiviert';
+  const cardCls  = enabled ? '' : 'border-secondary border-opacity-25';
+  const hdrCls   = enabled ? 'bg-light' : 'bg-secondary bg-opacity-10 text-muted';
+  const toggleTxt = enabled
+    ? '<i class="bi bi-pause-circle me-1"></i>Deaktivieren'
+    : '<i class="bi bi-play-circle me-1"></i>Aktivieren';
+  const toggleCls = enabled ? 'btn-outline-warning' : 'btn-outline-success';
+  const desc = s.description ? `<p class="card-text text-muted small mb-2">${escHtml(s.description)}</p>` : '';
+
+  return `<div class="col-md-6 col-xl-4">
+    <div class="card h-100 ${cardCls}">
+      <div class="card-header ${hdrCls} d-flex justify-content-between align-items-center">
+        <span class="font-monospace">/${escHtml(s.name)}</span>
+        <span class="badge ${badgeCls}">${badgeTxt}</span>
+      </div>
+      <div class="card-body pb-2">
+        ${desc}
+        <code class="small text-muted">${escHtml(s.path)}</code>
+      </div>
+      <div class="card-footer bg-transparent d-flex gap-2 flex-wrap">
+        <button class="btn btn-sm ${toggleCls}" onclick="toggleSkill('${escHtml(s.name)}', this)">${toggleTxt}</button>
+        <button class="btn btn-sm btn-outline-primary" onclick="openEditModal('${escHtml(s.name)}')">
+          <i class="bi bi-pencil me-1"></i>{{ t(request, 'btn.edit') }}
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteSkill('${escHtml(s.name)}', this)">
+          <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.delete') }}
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openCreateModal() {
+  _editName = null;
+  document.getElementById('skillModalLabel').textContent = 'New Skill';
+  const ni = document.getElementById('sk-name');
+  ni.value = ''; ni.readOnly = false;
+  ni.classList.remove('form-control-plaintext','fw-bold'); ni.classList.add('form-control');
+  document.getElementById('sk-description').value = '';
+  document.getElementById('sk-body').value = '';
+  getModal().show();
+}
+
+async function openEditModal(name) {
+  try {
+    const r = await fetch(`${SKILLS_URL}/${name}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const s = await r.json();
+    _editName = name;
+    document.getElementById('skillModalLabel').textContent = `Edit Skill: /${name}`;
+    const ni = document.getElementById('sk-name');
+    ni.value = name; ni.readOnly = true;
+    ni.classList.remove('form-control'); ni.classList.add('form-control-plaintext','fw-bold','font-monospace');
+    document.getElementById('sk-description').value = s.description || '';
+    document.getElementById('sk-body').value = s.body || '';
+    getModal().show();
+  } catch(e) {
+    showFlash(`Error loading: ${e.message}`, 'danger');
+  }
+}
+
+async function saveSkill() {
+  const name = document.getElementById('sk-name').value.trim().toLowerCase();
+  const description = document.getElementById('sk-description').value.trim();
+  const body = document.getElementById('sk-body').value.trim();
+  if (!_editName && !name) return showFlash('Name ist erforderlich.', 'warning');
+  if (!_editName && !/^[a-z0-9][a-z0-9\-]*$/.test(name))
+    return showFlash('Name darf nur Kleinbuchstaben, Ziffern und Bindestriche enthalten.', 'warning');
+  try {
+    const r = _editName
+      ? await fetch(`${SKILLS_URL}/${_editName}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({description,body})})
+      : await fetch(SKILLS_URL,                   {method:'POST',headers:{'Content-Type':'application/json'}, body:JSON.stringify({name,description,body})});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    getModal().hide();
+    showFlash('Skill gespeichert.');
+    loadSkills();
+  } catch(e) {
+    showFlash(`Error: ${e.message}`, 'danger');
+  }
+}
+
+async function deleteSkill(name, btn) {
+  if (!confirm(`Delete skill '/${name}'?`)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${SKILLS_URL}/${name}`, {method:'DELETE'});
+    if (!r.ok) { const d = await r.json(); throw new Error(d.detail || `HTTP ${r.status}`); }
+    showFlash(`Skill '/${name}' deleted.`);
+    loadSkills();
+  } catch(e) {
+    btn.disabled = false;
+    showFlash(`Error: ${e.message}`, 'danger');
+  }
+}
+
+async function toggleSkill(name, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${SKILLS_URL}/${name}/toggle`, {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    showFlash(`Skill '/${name}' ${data.enabled ? 'aktiviert' : 'deaktiviert'}.`);
+    loadSkills();
+  } catch(e) {
+    btn.disabled = false;
+    showFlash(`Fehler: ${e.message}`, 'danger');
+  }
+}
+
+// ── Upstream Skills ───────────────────────────────────────────────────────────
+
+async function loadUpstream() {
+  if (_upstreamLoaded) return;
+  _upstreamLoaded = true;
+  const grid = document.getElementById('upstream-grid');
+  grid.innerHTML = `<div class="col-12 text-center text-muted py-4">
+    <div class="spinner-border spinner-border-sm me-2"></div>Lade Upstream-Skills…</div>`;
+  try {
+    const r = await fetch(UPSTREAM_URL);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const skills = await r.json();
+    document.getElementById('upstream-count').textContent = skills.length;
+    renderUpstreamGrid(skills);
+  } catch(e) {
+    grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">Fehler: ${e.message}</div></div>`;
+  }
+}
+
+function renderUpstreamGrid(skills) {
+  const grid = document.getElementById('upstream-grid');
+  if (!skills.length) {
+    grid.innerHTML = `<div class="col-12"><div class="alert alert-info">Keine Upstream-Skills gefunden.</div></div>`;
+    return;
+  }
+  grid.innerHTML = skills.map(renderUpstreamCard).join('');
+}
+
+function renderUpstreamCard(s) {
+  const existsBadge = s.local_exists
+    ? `<span class="badge bg-success ms-1" title="Lokal vorhanden">✓ Importiert</span>`
+    : '';
+  const refs = s.ref_count > 0
+    ? `<span class="text-muted small ms-2"><i class="bi bi-files me-1"></i>${s.ref_count} Referenz-Datei${s.ref_count>1?'en':''}</span>`
+    : '';
+  const desc = s.description
+    ? `<p class="card-text text-muted small mb-2" style="max-height:3.5em;overflow:hidden">${escHtml(s.description.substring(0,180))}${s.description.length>180?'…':''}</p>`
+    : '<p class="text-muted small fst-italic mb-2">Keine Beschreibung</p>';
+  const importBtnTxt = s.local_exists
+    ? '<i class="bi bi-arrow-clockwise me-1"></i>Aktualisieren'
+    : '<i class="bi bi-download me-1"></i>Importieren';
+  const importBtnCls = s.local_exists ? 'btn-outline-warning' : 'btn-outline-success';
+
+  return `<div class="col-md-6 col-xl-4">
+    <div class="card h-100">
+      <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span class="font-monospace">/${escHtml(s.name)}</span>
+        <span>${existsBadge}</span>
+      </div>
+      <div class="card-body pb-2">
+        ${desc}
+        <div class="d-flex align-items-center">
+          <code class="small text-muted">${escHtml(s.dir)}/SKILL.md</code>${refs}
+        </div>
+      </div>
+      <div class="card-footer bg-transparent">
+        <button class="btn btn-sm ${importBtnCls}" onclick="importSkill('${escHtml(s.name)}', this)">
+          ${importBtnTxt}
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function importSkill(name, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importing…';
+  try {
+    const r = await fetch(`${UPSTREAM_URL}/import/${encodeURIComponent(name)}`, {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    showFlash(`Skill '/${data.name}' ${data.overwritten ? 'updated' : 'imported'} — now available server-side.`);
+    _upstreamLoaded = false;
+    loadUpstream();
+    loadSkills();
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-download me-1"></i>Importieren';
+    showFlash(`Fehler: ${e.message}`, 'danger');
+  }
+}
+
+let _communityLoaded = false;
+async function loadCommunity() {
+  if (_communityLoaded) return;
+  const grid = document.getElementById('community-grid');
+  grid.innerHTML = '<div class="col-12 text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading community skills…</div>';
+  try {
+    const r = await fetch('/api/skills/community');
+    const skills = await r.json();
+    document.getElementById('community-count').textContent = skills.length;
+    if (!skills.length) {
+      grid.innerHTML = '<div class="col-12 text-center text-muted py-5"><i class="bi bi-cloud me-2" style="font-size:2rem"></i><p class="mt-2">No community skills found. Click "Pull Community Skills" to download.</p></div>';
+      return;
+    }
+    grid.innerHTML = skills.map(s => {
+      const auditBadge = s.audit_status === 'safe'
+        ? '<span class="badge bg-success" style="font-size:.6rem">Audited: Safe</span>'
+        : s.audit_status === 'warning'
+        ? '<span class="badge bg-warning text-dark" style="font-size:.6rem">Audited: Warning</span>'
+        : s.audit_status === 'blocked'
+        ? '<span class="badge bg-danger" style="font-size:.6rem">Blocked</span>'
+        : '<span class="badge bg-secondary" style="font-size:.6rem">Unaudited</span>';
+      return `<div class="col-12 col-md-6 col-lg-4">
+        <div class="card h-100">
+          <div class="card-body py-2 px-3">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <strong style="font-size:.85rem">/${escHtml(s.name)}</strong>
+              ${auditBadge}
+            </div>
+            <p class="text-muted small mb-1" style="font-size:.75rem">${escHtml(s.description || '—')}</p>
+            <div class="d-flex gap-1">
+              <button class="btn btn-xs btn-outline-info" style="font-size:.7rem" onclick="auditSkill('${escHtml(s.name)}', this)">
+                <i class="bi bi-shield-check me-1"></i>Audit
+              </button>
+              ${s.audit_status === 'safe' || s.audit_status === 'warning' ? `
+                <button class="btn btn-xs btn-outline-success" style="font-size:.7rem" onclick="activateSkill('${escHtml(s.name)}', this)">
+                  <i class="bi bi-play-circle me-1"></i>Activate
+                </button>
+              ` : ''}
+              ${s.audit_status === 'blocked' ? `
+                <button class="btn btn-xs btn-outline-secondary" style="font-size:.7rem" disabled>
+                  <i class="bi bi-x-circle me-1"></i>Blocked
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    _communityLoaded = true;
+  } catch(e) {
+    grid.innerHTML = `<div class="col-12 text-danger small">${escHtml(e.message)}</div>`;
+  }
+}
+
+async function auditSkill(name, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Auditing…';
+  try {
+    const r = await fetch(`/api/skills/community/${encodeURIComponent(name)}/audit`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'phi4:14b', node: ''}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const verdict = data.verdict || 'unknown';
+    const color = verdict === 'safe' ? 'success' : verdict === 'warning' ? 'warning' : 'danger';
+    showFlash(`<strong>Audit /${name}:</strong> ${verdict}<br><small>${escHtml((data.summary || '').slice(0, 200))}</small>`);
+    _communityLoaded = false;
+    loadCommunity();
+  } catch(e) {
+    showFlash(`Audit failed: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-shield-check me-1"></i>Audit';
+  }
+}
+
+async function activateSkill(name, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Activating…';
+  try {
+    const r = await fetch(`/api/skills/community/${encodeURIComponent(name)}/activate`, {
+      method: 'POST',
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    showFlash(`<strong>/${name}</strong> activated successfully. Available in the next pipeline request.`, 'success');
+    btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Active';
+    btn.classList.remove('btn-outline-success');
+    btn.classList.add('btn-success');
+    btn.disabled = true;
+  } catch(e) {
+    showFlash(`Activation failed: ${e.message}`, 'danger');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-play-circle me-1"></i>Activate';
+  }
+}
+
+async function pullCommunity(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pulling community skills…';
+  try {
+    const r = await fetch('/api/skills/community/pull', {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    showFlash(`<strong>Community Pull:</strong><br><pre style="font-size:.75rem;max-height:200px;overflow:auto">${escHtml(data.output || 'Done')}</pre>`);
+    _upstreamLoaded = false;
+    loadUpstream();
+    loadSkills();
+  } catch(e) {
+    showFlash(`Community pull failed: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Pull Community Skills';
+  }
+}
+
+async function pullUpstream(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pulling…';
+  try {
+    const r = await fetch(`${UPSTREAM_URL}/pull`, {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const msg = data.output || 'Already up to date.';
+    showFlash(`<strong>git pull:</strong> ${escHtml(msg)}`);
+    _upstreamLoaded = false;
+    loadUpstream();
+  } catch(e) {
+    showFlash(`git pull fehlgeschlagen: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Git Pull';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadSkills);
+</script>
+{% endblock %}

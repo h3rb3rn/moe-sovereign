@@ -1,0 +1,331 @@
+{
+  "uid": "moe-infra",
+  "title": "Infrastructure & Resources",
+  "description": "Host-Metriken, Container-Ressourcen und GPU-Auslastung aller Ollama-Server",
+  "tags": ["moe", "infrastructure", "gpu"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "rate_interval",
+        "type": "custom",
+        "label": "Rate Interval",
+        "query": "1m,5m,10m,30m",
+        "current": { "text": "5m", "value": "5m" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Host System",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "type": "gauge",
+      "title": "CPU Auslastung",
+      "gridPos": { "x": 0, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 60, "color": "orange" }, { "value": 85, "color": "red" }] }
+        }
+      },
+      "targets": [{ "expr": "(1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[$rate_interval]))) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "RAM Auslastung",
+      "gridPos": { "x": 4, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 70, "color": "orange" }, { "value": 90, "color": "red" }] }
+        }
+      },
+      "targets": [{ "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "RAM belegt",
+      "gridPos": { "x": 8, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "RAM gesamt",
+      "gridPos": { "x": 12, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "blue" } } },
+      "targets": [{ "expr": "node_memory_MemTotal_bytes", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Disk belegt /",
+      "gridPos": { "x": 16, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "expr": "node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} - node_filesystem_free_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"}", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 6,
+      "type": "gauge",
+      "title": "Disk Auslastung /",
+      "gridPos": { "x": 20, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 75, "color": "orange" }, { "value": 90, "color": "red" }] }
+        }
+      },
+      "targets": [{ "expr": "(1 - node_filesystem_free_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"}) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "CPU Nutzung nach Modus (gestapelt)",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] } },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 30, "lineWidth": 1, "stacking": { "mode": "normal" } } } },
+      "targets": [
+        { "expr": "avg by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\"}[$rate_interval]))", "legendFormat": "{{mode}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Speicher Übersicht",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "lineWidth": 2 } } },
+      "targets": [
+        { "expr": "node_memory_MemTotal_bytes", "legendFormat": "Gesamt", "refId": "A" },
+        { "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "Belegt", "refId": "B" },
+        { "expr": "node_memory_MemAvailable_bytes", "legendFormat": "Verfügbar", "refId": "C" },
+        { "expr": "node_memory_Buffers_bytes + node_memory_Cached_bytes", "legendFormat": "Buffers+Cache", "refId": "D" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Netzwerk I/O",
+      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "custom": { "lineWidth": 2 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Empfangen" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Gesendet" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }, { "id": "custom.transform", "value": "negative-Y" }] }
+        ]
+      },
+      "targets": [
+        { "expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|veth.*|br-.*|docker.*\"}[$rate_interval]))", "legendFormat": "Empfangen", "refId": "A" },
+        { "expr": "sum(rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|br-.*|docker.*\"}[$rate_interval]))", "legendFormat": "Gesendet", "refId": "B" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Disk I/O",
+      "gridPos": { "x": 12, "y": 13, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "custom": { "lineWidth": 2 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Schreiben" }, "properties": [{ "id": "custom.transform", "value": "negative-Y" }] }
+        ]
+      },
+      "targets": [
+        { "expr": "sum(rate(node_disk_read_bytes_total[$rate_interval]))", "legendFormat": "Lesen", "refId": "A" },
+        { "expr": "sum(rate(node_disk_written_bytes_total[$rate_interval]))", "legendFormat": "Schreiben", "refId": "B" }
+      ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Container Ressourcen (cAdvisor)",
+      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Container CPU Auslastung",
+      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
+      "targets": [{ "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[$rate_interval])) * 100", "legendFormat": "{{name}}", "refId": "A" }]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Container Speicher Nutzung",
+      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
+      "targets": [{ "expr": "sum by (name) (container_memory_usage_bytes{name!=\"\"})", "legendFormat": "{{name}}", "refId": "A" }]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Container Netzwerk Empfang",
+      "gridPos": { "x": 0, "y": 30, "w": 12, "h": 7 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [{ "expr": "sum by (name) (rate(container_network_receive_bytes_total{name!=\"\"}[$rate_interval]))", "legendFormat": "{{name}}", "refId": "A" }]
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Container Speicher Top 10",
+      "gridPos": { "x": 12, "y": 30, "w": 12, "h": 7 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [{ "expr": "topk(10, sum by (name) (container_memory_usage_bytes{name!=\"\"}))", "legendFormat": "{{name}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "GPU Metriken — Ollama Server (nvidia-gpu-exporter erforderlich)",
+      "gridPos": { "x": 0, "y": 37, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "GPU VRAM Nutzung nach Server & GPU",
+      "gridPos": { "x": 0, "y": 38, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "lineWidth": 2 } } },
+      "targets": [{ "expr": "nvidia_smi_memory_used_bytes", "legendFormat": "{{server}} GPU{{gpu}} ({{name}})", "refId": "A" }]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "GPU Temperatur",
+      "gridPos": { "x": 12, "y": 38, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "custom": { "lineWidth": 2 } },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "A" }, "properties": [{ "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 75, "color": "orange" }, { "value": 85, "color": "red" }] } }, { "id": "custom.thresholdsStyle", "value": { "mode": "line" } }] }
+        ]
+      },
+      "targets": [{ "expr": "nvidia_smi_temperature_gpu", "legendFormat": "{{server}} GPU{{gpu}}", "refId": "A" }]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "GPU Core Auslastung %",
+      "gridPos": { "x": 0, "y": 46, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
+      "targets": [{ "expr": "nvidia_smi_utilization_gpu_ratio * 100", "legendFormat": "{{server}} GPU{{gpu}}", "refId": "A" }]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "GPU Memory Bandwidth %",
+      "gridPos": { "x": 12, "y": 46, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
+      "targets": [{ "expr": "nvidia_smi_utilization_memory_ratio * 100", "legendFormat": "{{server}} GPU{{gpu}}", "refId": "A" }]
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "N04-RTX VRAM gesamt",
+      "gridPos": { "x": 0, "y": 54, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "sum(nvidia_smi_memory_total_bytes{server=\"N04-RTX\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "N04-RTX VRAM genutzt",
+      "gridPos": { "x": 4, "y": 54, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }] } } },
+      "targets": [{ "expr": "sum(nvidia_smi_memory_used_bytes{server=\"N04-RTX\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "N06-M10 VRAM gesamt",
+      "gridPos": { "x": 8, "y": 54, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "sum(nvidia_smi_memory_total_bytes{server=\"N06-M10\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "N06-M10 VRAM genutzt",
+      "gridPos": { "x": 12, "y": 54, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }] } } },
+      "targets": [{ "expr": "sum(nvidia_smi_memory_used_bytes{server=\"N06-M10\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "N07-GT VRAM gesamt",
+      "gridPos": { "x": 16, "y": 54, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "sum(nvidia_smi_memory_total_bytes{server=\"N07-GT\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "N07-GT VRAM genutzt",
+      "gridPos": { "x": 20, "y": 54, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }] } } },
+      "targets": [{ "expr": "sum(nvidia_smi_memory_used_bytes{server=\"N07-GT\"})", "legendFormat": "", "refId": "A" }]
+    }
+  ]
+}

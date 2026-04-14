@@ -1,0 +1,37 @@
+# --- LangChain & LangGraph ---
+langchain>=0.3.0
+langchain-openai
+langchain-community
+langchain-chroma
+langgraph>=0.4.0
+langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary,pool]>=3.2.0
+
+# --- API & Server ---
+fastapi>=0.115.0
+uvicorn[standard]
+pydantic>=2.0.0
+python-multipart
+python-dotenv
+
+# --- Datenbanken & Mathe ---
+redis>=5.0.0
+chromadb>=0.6.0
+numpy>=1.26.0,<2.0.0
+sympy==1.12
+neo4j>=5.0.0
+
+# --- Web & Networking ---
+beautifulsoup4
+httpx
+aiohttp
+
+# --- Kafka ---
+aiokafka>=0.11.0
+
+# --- Monitoring ---
+prometheus_client>=0.21.0
+
+# --- OIDC/JWT ---
+PyJWT>=2.8.0
+cryptography>=42.0.0

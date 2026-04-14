@@ -1,0 +1,855 @@
+{% extends "base.html" %}
+
+{% block title %}Expert Templates – MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type }} flash-bar mb-0 text-center py-2">{{ flash }}</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-collection-fill me-2 text-primary"></i>{{ t(request, 'page.templates') }}</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" onclick="exportTemplates()" title="Alle Templates als JSON exportieren">
+      <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}
+    </button>
+    <label class="btn btn-outline-secondary btn-sm mb-0" title="Templates aus JSON-Datei importieren">
+      <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
+      <input type="file" id="import-templates-file" accept=".json" style="display:none" onchange="importTemplates(this)">
+    </label>
+    <button class="btn btn-outline-secondary btn-sm" title="Paste JSON code directly" data-bs-toggle="modal" data-bs-target="#importTemplateCodeModal">
+      <i class="bi bi-code-slash me-1"></i>{{ t(request, 'btn.import_code') }}
+    </button>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createTemplateModal">
+      <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.new_template') }}
+    </button>
+  </div>
+</div>
+
+<div class="alert alert-info py-2 small mb-3">
+  <i class="bi bi-info-circle me-1"></i>
+  {{ t(request, 'info.templates_desc') }}
+  <strong>{{ t(request, 'status.required') }}</strong> {{ t(request, 'info.templates_tiers') }}
+  {{ t(request, 'info.templates_perm') }}
+</div>
+
+<!-- Template Cards -->
+{% if templates %}
+<div class="row g-3">
+  {% for tmpl in templates %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-collection me-2"></i>{{ tmpl.name }}</span>
+        <div class="d-flex gap-2 align-items-center">
+          {% if tmpl._privacy_level == 'local_only' %}
+          <span class="badge bg-success" style="font-size:.72rem" title="All models run on local infrastructure — no data leaves your network"><i class="bi bi-shield-check me-1"></i>Local Only</span>
+          {% elif tmpl._privacy_level == 'mixed' %}
+          <span class="badge bg-warning text-dark" style="font-size:.72rem" title="Some models use external APIs — data may leave your network"><i class="bi bi-exclamation-triangle me-1"></i>Mixed</span>
+          {% elif tmpl._privacy_level == 'external' %}
+          <span class="badge bg-danger" style="font-size:.72rem" title="All models use external APIs — data leaves your network"><i class="bi bi-cloud-arrow-up me-1"></i>External</span>
+          {% endif %}
+          <span class="badge bg-secondary" style="font-size:.72rem">{{ tmpl.experts|length }} {{ t(request, 'tmpl.categories') }}</span>
+          {% if tmpl.planner_prompt is defined and tmpl.planner_prompt %}
+          <span class="badge bg-info text-dark" style="font-size:.65rem" title="{{ tmpl.planner_prompt[:80] }}"><i class="bi bi-diagram-3 me-1"></i>Planner</span>
+          {% endif %}
+          {% if tmpl.planner_model is defined and tmpl.planner_model %}
+          <span class="badge bg-info" style="font-size:.65rem" title="Planner-LLM: {{ tmpl.planner_model }}"><i class="bi bi-cpu me-1"></i>{{ tmpl.planner_model }}</span>
+          {% endif %}
+          {% if tmpl.judge_prompt is defined and tmpl.judge_prompt %}
+          <span class="badge bg-secondary" style="font-size:.65rem" title="{{ tmpl.judge_prompt[:80] }}"><i class="bi bi-shield-check me-1"></i>Judge</span>
+          {% endif %}
+          {% if tmpl.judge_model is defined and tmpl.judge_model %}
+          <span class="badge bg-dark" style="font-size:.65rem" title="Judge-LLM: {{ tmpl.judge_model }}"><i class="bi bi-cpu me-1"></i>{{ tmpl.judge_model }}</span>
+          {% endif %}
+          <button class="btn btn-xs btn-outline-light" style="font-size:.75rem;padding:.2rem .5rem"
+                  onclick="copyTemplate('{{ tmpl.id }}')" title="Als Vorlage kopieren">
+            <i class="bi bi-copy"></i>
+          </button>
+          <button class="btn btn-xs btn-outline-light" style="font-size:.75rem;padding:.2rem .5rem"
+                  onclick="openEditModal('{{ tmpl.id }}')">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:.2rem .5rem"
+                  onclick="deleteTemplate('{{ tmpl.id }}', '{{ tmpl.name }}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body py-2">
+        {% if tmpl.description %}
+        <p class="small text-muted mb-2">{{ tmpl.description }}</p>
+        {% endif %}
+        {% if tmpl.experts %}
+        <table class="table table-sm expert-table mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:160px">{{ t(request, 'lbl.category') }}</th>
+              <th>{{ t(request, 'table.llms') }}</th>
+              <th style="width:120px">{{ t(request, 'table.system_prompt') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cat, cat_cfg in tmpl.experts.items() %}
+            <tr>
+              <td><span class="badge bg-primary" style="font-size:.72rem">{{ cat }}</span></td>
+              <td>
+                {% if cat_cfg.models is defined %}
+                  {% for m in cat_cfg.models %}
+                  <span class="badge {% if m.get('role','primary') == 'always' %}bg-success{% elif m.get('role','primary') == 'fallback' %}bg-warning text-dark{% else %}bg-primary{% endif %} me-1" style="font-size:.72rem" title="{{ t(request, 'status.role_' + m.get('role', 'primary')) }}">
+                    <code style="font-size:.82rem;color:inherit">{{ m.model }}@{{ m.endpoint }}</code>
+                    {% if m.get('role','primary') == 'always' %}<i class="bi bi-lock-fill ms-1"></i>{% elif m.get('role','primary') == 'fallback' %}<i class="bi bi-arrow-down-circle ms-1"></i>{% else %}<i class="bi bi-lightning-fill ms-1"></i>{% endif %}
+                  </span>
+                  {% endfor %}
+                {% else %}
+                  <code style="font-size:.82rem">{{ cat_cfg.model }}@{{ cat_cfg.endpoint }}</code>
+                {% endif %}
+              </td>
+              <td>
+                {% if cat_cfg.system_prompt is defined and cat_cfg.system_prompt %}
+                <span class="badge bg-warning text-dark" style="font-size:.65rem" title="{{ cat_cfg.system_prompt[:80] }}">
+                  <i class="bi bi-chat-text me-1"></i>Custom
+                </span>
+                {% else %}
+                <span class="text-muted small">Standard</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="small text-muted mb-0">Keine Experten konfiguriert.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-collection" style="font-size:2rem;opacity:.3"></i>
+    <p class="mt-2 mb-0">{{ t(request, 'empty.no_templates') }}</p>
+    <button class="btn btn-primary btn-sm mt-3" data-bs-toggle="modal" data-bs-target="#createTemplateModal">
+      <i class="bi bi-plus-circle me-1"></i>Erstes Template erstellen
+    </button>
+  </div>
+</div>
+{% endif %}
+
+<!-- ─── Create Template Modal ───────────────────────────────────────────── -->
+<div class="modal fade" id="createTemplateModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h6 class="modal-title"><i class="bi bi-plus-circle me-2"></i>{{ t(request, 'modal.new_template') }}</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3 mb-3">
+          <div class="col-md-5">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" id="ct_name" placeholder="z.B. Developer Setup">
+          </div>
+          <div class="col-md-7">
+            <label class="form-label">{{ t(request, 'lbl.description') }}</label>
+            <input type="text" class="form-control" id="ct_desc" placeholder="Kurze Beschreibung (optional)">
+          </div>
+        </div>
+        <hr>
+        <p class="small fw-bold mb-2">Experten konfigurieren <span class="text-muted fw-normal">(nur aktivierte Kategorien werden aufgenommen)</span></p>
+        <div id="ct_experts_table"></div>
+        <div id="ct_medical_legal_warn" class="alert alert-warning d-none mt-2 mb-1 py-2 small" role="alert">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i><strong>{{ t(request, 'warn.medical_legal.title') }}:</strong>
+          {{ t(request, 'warn.medical_legal.body') }}
+        </div>
+        <div class="d-flex align-items-center gap-2 mt-2 mb-1">
+          <input type="text" class="form-control form-control-sm" id="ct_new_cat_input"
+                 style="max-width:220px" placeholder="Neue Kategorie (z.B. finance)">
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addExpertCategory('ct')">
+            <i class="bi bi-plus-circle me-1"></i>Neue Experten-Kategorie
+          </button>
+        </div>
+        <hr>
+        <p class="small fw-bold mb-2"><i class="bi bi-sliders me-1 text-primary"></i>Orchestration Prompts &amp; Models <span class="text-muted fw-normal">(Planner &amp; Judge/Merger — empty = system default)</span></p>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label small mb-1"><i class="bi bi-diagram-3 me-1 text-info"></i>Planner LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
+            <div id="ct_planner_llm_select"></div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small mb-1"><i class="bi bi-shield-check me-1"></i>Judge/Merger LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
+            <div id="ct_judge_llm_select"></div>
+          </div>
+          <div class="col-12">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:.1rem .4rem"
+                      onclick="toggleOrchestratorPrompt('ct','planner')">
+                <i class="bi bi-diagram-3 me-1"></i>Planner LLM System Prompt
+              </button>
+              <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:.1rem .4rem"
+                      onclick="toggleOrchestratorPrompt('ct','judge')">
+                <i class="bi bi-shield-check me-1"></i>Judge/Merger-LLM System-Prompt
+              </button>
+            </div>
+            <div id="ct_planner_area" style="display:none" class="mb-2">
+              <label class="form-label small mb-1 text-muted">Planer-LLM System-Prompt <span class="badge bg-info text-dark" style="font-size:.6rem">Planner</span></label>
+              <textarea id="ct_planner_prompt" class="form-control form-control-sm font-monospace" rows="5"
+                        style="font-size:.78rem" placeholder="Leer = Standard-Prompt"></textarea>
+              <div class="d-flex gap-2 mt-1">
+                <button type="button" class="btn btn-xs btn-outline-info" style="font-size:.7rem;padding:.1rem .4rem"
+                        onclick="fillDefaultPrompt('ct','planner')"><i class="bi bi-arrow-clockwise me-1"></i>Standard laden</button>
+              </div>
+            </div>
+            <div id="ct_judge_area" style="display:none">
+              <label class="form-label small mb-1 text-muted">Judge/Merger-LLM System-Prompt <span class="badge bg-secondary" style="font-size:.6rem">Judge</span></label>
+              <textarea id="ct_judge_prompt" class="form-control form-control-sm font-monospace" rows="5"
+                        style="font-size:.78rem" placeholder="Empty = default prompt (mode-dependent)"></textarea>
+              <div class="d-flex gap-2 mt-1">
+                <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.7rem;padding:.1rem .4rem"
+                        onclick="fillDefaultPrompt('ct','judge')"><i class="bi bi-arrow-clockwise me-1"></i>Load default</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="ct_error" class="alert alert-danger mt-2 d-none py-2 small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="createTemplate()">
+          <i class="bi bi-check2 me-1"></i>{{ t(request, 'btn.new_template') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Edit Template Modal ─────────────────────────────────────────────── -->
+<div class="modal fade" id="editTemplateModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h6 class="modal-title"><i class="bi bi-pencil me-2"></i>{{ t(request, 'portal.tmpl_edit_title') }}</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="editModalBody">
+        <div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary btn-sm" id="saveEditBtn">
+          <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_profile') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const EXPERT_CATEGORIES = {{ expert_categories | tojson }};
+// Custom categories added by user per modal prefix
+const _extraCats = {};
+
+// Categories that trigger the medical/legal liability disclaimer
+const _SENSITIVE_CATS = ['medical_consult', 'legal_advisor'];
+const _WARN_TITLE = {{ t(request, 'warn.medical_legal.title') | tojson }};
+const _WARN_BODY  = {{ t(request, 'warn.medical_legal.body')  | tojson }};
+
+// ─── Default Orchestration Prompts ───────────────────────────────────────────
+const DEFAULT_PLANNER_PROMPT = `You are the orchestrator of a Mixture-of-Experts system.
+Break down the following request into 1–4 subtasks.
+
+Mandatorily extract all numerical constraints and technical parameters from the request (e.g. model sizes, MTU values, protocol overheads, chemical doses, bitrates). Embed these as IMMUTABLE_CONSTANTS directly into each subtask description for the experts, so that experts cannot hallucinate default values.`;
+
+const DEFAULT_JUDGE_PROMPT = `Synthesize the following information into a clear, complete response.
+Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low) > cache.
+Ignore contradictory expert statements when MCP or graph data is available.
+
+Act as a cross-domain validator: compare all numerical values in the expert responses with the original request. In case of discrepancies, the original value has absolute priority. If an expert ignored a subtask, name the gap explicitly instead of filling it with hallucinations.`;
+
+function toggleOrchestratorPrompt(prefix, type) {
+  const area = document.getElementById(`${prefix}_${type}_area`);
+  if (area) area.style.display = area.style.display === 'none' ? '' : 'none';
+}
+
+function fillDefaultPrompt(prefix, type) {
+  const el = document.getElementById(`${prefix}_${type}_prompt`);
+  if (el) el.value = type === 'planner' ? DEFAULT_PLANNER_PROMPT : DEFAULT_JUDGE_PROMPT;
+}
+
+// ─── Load available LLMs ─────────────────────────────────────────────────────
+let _availableLlms = null;
+async function fetchAvailableLlms() {
+  if (_availableLlms) return _availableLlms;
+  try {
+    const r = await fetch('/api/available-llms');
+    _availableLlms = await r.json();
+  } catch(e) {
+    _availableLlms = [];
+  }
+  return _availableLlms;
+}
+
+// ─── LLM-Dropdown (Bootstrap dropdown mit Suche) ─────────────────────────────
+function buildLlmDropdown(containerId, availableLlms, selectedVal) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const uid = containerId.replace(/[^a-zA-Z0-9]/g, '_');
+  const opts = availableLlms.map(v => {
+    const sel = v === selectedVal ? 'selected' : '';
+    return `<option value="${v}" ${sel}>${v}</option>`;
+  }).join('');
+  container.innerHTML = `<select class="form-select form-select-sm llm-select" style="font-family:monospace;font-size:.82rem">
+    <option value="">— Select model —</option>${opts}
+  </select>`;
+  if (selectedVal) container.querySelector('select').value = selectedVal;
+}
+
+function getLlmValue(containerId) {
+  const sel = document.getElementById(containerId)?.querySelector('select');
+  return sel ? sel.value : '';
+}
+
+// ─── Experten-Konfigurations-Tabelle (neues Format) ──────────────────────────
+// existingExperts: {cat: {system_prompt, models:[{model,endpoint,required}]}}
+function buildExpertRows(prefix, existingExperts, availableLlms) {
+  existingExperts = existingExperts || {};
+  availableLlms   = availableLlms   || [];
+  // Merge standard categories + extras from existing experts + user-added ones
+  const extraFromExisting = Object.keys(existingExperts).filter(k => !EXPERT_CATEGORIES.includes(k));
+  const userAdded = _extraCats[prefix] || [];
+  _extraCats[prefix] = [...new Set([...extraFromExisting, ...userAdded])];
+  const allCategories = [...EXPERT_CATEGORIES, ..._extraCats[prefix]];
+  let rows = '';
+  for (const cat of allCategories) {
+    const catCfg = existingExperts[cat] || null;
+    const active = !!catCfg;
+    const models = catCfg ? (catCfg.models || []) : [];
+    const sysPrompt = catCfg ? (catCfg.system_prompt || '') : '';
+    const modelsHtml = _buildModelRows(prefix, cat, models, availableLlms);
+    rows += `
+    <tr id="${prefix}_row_${cat}" class="${active ? '' : 'table-secondary'}">
+      <td class="ps-2 align-top" style="width:180px">
+        <div class="form-check mb-1">
+          <input class="form-check-input" type="checkbox" id="${prefix}_cb_${cat}" ${active ? 'checked' : ''}
+                 onchange="toggleExpertRow('${prefix}','${cat}',this.checked)">
+          <label class="form-check-label small fw-bold" for="${prefix}_cb_${cat}">${cat}</label>
+        </div>
+      </td>
+      <td class="align-top">
+        <div id="${prefix}_models_${cat}" class="${active ? '' : 'opacity-50 pe-none'}">
+          <table class="table table-sm mb-1" style="font-size:.82rem">
+            <thead><tr>
+              <th style="width:55%">LLM@Node</th>
+              <th style="width:28%" class="text-center">Required</th>
+              <th style="width:17%"></th>
+            </tr></thead>
+            <tbody id="${prefix}_mrows_${cat}">${modelsHtml}</tbody>
+          </table>
+          <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.1rem .5rem"
+                  onclick="addModelRow('${prefix}','${cat}')">
+            <i class="bi bi-plus"></i> Add LLM
+          </button>
+        </div>
+      </td>
+      <td class="align-top" style="width:220px">
+        <div id="${prefix}_sp_area_${cat}" class="${active ? '' : 'opacity-50 pe-none'}">
+          <button type="button" class="btn btn-xs btn-outline-secondary mb-1" style="font-size:.72rem;padding:.1rem .4rem"
+                  onclick="toggleSysPrompt('${prefix}','${cat}')">
+            <i class="bi bi-chat-text me-1"></i>System-Prompt
+            ${sysPrompt ? '<span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">✎</span>' : ''}
+          </button>
+          <div id="${prefix}_sp_${cat}" style="display:none">
+            <textarea id="${prefix}_sptxt_${cat}" class="form-control form-control-sm font-monospace"
+                      rows="4" placeholder="Empty = default prompt"
+                      style="font-size:.78rem">${_escHtml(sysPrompt)}</textarea>
+          </div>
+        </div>
+      </td>
+    </tr>`;
+  }
+  return `
+  <table class="table table-sm mb-0" id="${prefix}_expert_table">
+    <thead class="table-light">
+      <tr>
+        <th style="width:180px">Category</th>
+        <th>LLMs <span class="text-muted small fw-normal">(green = always, blue = primary, orange = fallback)</span></th>
+        <th style="width:220px">System-Prompt</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function _escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function _buildModelRows(prefix, cat, models, availableLlms) {
+  if (!models || models.length === 0) {
+    // Default empty row
+    models = [{"model": availableLlms[0] ? availableLlms[0].split('@')[0] : '', "endpoint": availableLlms[0] ? (availableLlms[0].split('@')[1]||'') : '', "role": "primary"}];
+  }
+  return models.map((m, idx) => _buildModelRow(prefix, cat, m, idx, availableLlms)).join('');
+}
+
+let _rowCounters = {};
+function _buildModelRow(prefix, cat, m, idx, availableLlms) {
+  const key = `${prefix}_${cat}`;
+  if (!_rowCounters[key]) _rowCounters[key] = 0;
+  const rowId = `${prefix}_mr_${cat}_${_rowCounters[key]++}`;
+  const curVal = m.model && m.endpoint ? `${m.model}@${m.endpoint}` : (m.model || '');
+  // Support legacy required=bool during transition
+  const curRole = m.role || (m.required === true ? 'always' : 'primary');
+  const opts = availableLlms.map(v => {
+    const isFloating = !v.includes('@');
+    const label = isFloating ? `☁️ ${v} (Floating)` : v;
+    return `<option value="${v}" ${v===curVal?'selected':''}>${label}</option>`;
+  }).join('');
+  const roleOpts = [['primary','Primary'],['fallback','Fallback'],['always','Always']]
+    .map(([v,l]) => `<option value="${v}" ${v===curRole?'selected':''}>${l}</option>`).join('');
+  return `<tr id="${rowId}">
+    <td>
+      <select class="form-select form-select-sm llm-select" style="font-family:monospace;font-size:.8rem">
+        <option value="">— select —</option>${opts}
+      </select>
+    </td>
+    <td class="text-center">
+      <select class="form-select form-select-sm role-select" style="font-size:.78rem" title="Execution role">
+        ${roleOpts}
+      </select>
+    </td>
+    <td class="text-center">
+      <button type="button" class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .3rem"
+              onclick="removeModelRow('${rowId}')">
+        <i class="bi bi-trash"></i>
+      </button>
+    </td>
+  </tr>`;
+}
+
+function removeModelRow(rowId) {
+  document.getElementById(rowId)?.remove();
+}
+
+function addModelRow(prefix, cat) {
+  const tbody = document.getElementById(`${prefix}_mrows_${cat}`);
+  if (!tbody) return;
+  const llms = _availableLlms || [];
+  const key = `${prefix}_${cat}`;
+  if (!_rowCounters[key]) _rowCounters[key] = 0;
+  const rowId = `${prefix}_mr_${cat}_${_rowCounters[key]++}`;
+  const opts = llms.map(v => `<option value="${v}">${v}</option>`).join('');
+  const roleOpts = [['primary','Primary'],['fallback','Fallback'],['always','Always']]
+    .map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+  tbody.insertAdjacentHTML('beforeend', `<tr id="${rowId}">
+    <td>
+      <select class="form-select form-select-sm llm-select" style="font-family:monospace;font-size:.8rem">
+        <option value="">— select —</option>${opts}
+      </select>
+    </td>
+    <td class="text-center">
+      <select class="form-select form-select-sm role-select" style="font-size:.78rem" title="Execution role">
+        ${roleOpts}
+      </select>
+    </td>
+    <td class="text-center">
+      <button type="button" class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .3rem"
+              onclick="removeModelRow('${rowId}')">
+        <i class="bi bi-trash"></i>
+      </button>
+    </td>
+  </tr>`);
+}
+
+function toggleExpertRow(prefix, cat, enabled) {
+  document.getElementById(`${prefix}_row_${cat}`)?.classList.toggle('table-secondary', !enabled);
+  const modelDiv = document.getElementById(`${prefix}_models_${cat}`);
+  const spArea   = document.getElementById(`${prefix}_sp_area_${cat}`);
+  if (modelDiv) { modelDiv.classList.toggle('opacity-50', !enabled); modelDiv.classList.toggle('pe-none', !enabled); }
+  if (spArea)   { spArea.classList.toggle('opacity-50', !enabled);   spArea.classList.toggle('pe-none', !enabled); }
+  _updateMedicalLegalWarning(prefix);
+}
+
+function _updateMedicalLegalWarning(prefix) {
+  const warn = document.getElementById(`${prefix}_medical_legal_warn`);
+  if (!warn) return;
+  const anyActive = _SENSITIVE_CATS.some(cat => {
+    const cb = document.getElementById(`${prefix}_cb_${cat}`);
+    return cb && cb.checked;
+  });
+  warn.classList.toggle('d-none', !anyActive);
+}
+
+function toggleSysPrompt(prefix, cat) {
+  const div = document.getElementById(`${prefix}_sp_${cat}`);
+  if (div) div.style.display = div.style.display === 'none' ? '' : 'none';
+}
+
+function collectExperts(prefix) {
+  const experts = {};
+  for (const cat of [...EXPERT_CATEGORIES, ...(_extraCats[prefix] || [])]) {
+    const cb = document.getElementById(`${prefix}_cb_${cat}`);
+    if (!cb || !cb.checked) continue;
+    const tbody = document.getElementById(`${prefix}_mrows_${cat}`);
+    if (!tbody) continue;
+    const models = [];
+    for (const tr of tbody.querySelectorAll('tr')) {
+      const sel = tr.querySelector('.llm-select');
+      if (!sel || !sel.value) continue;
+      const atIdx = sel.value.lastIndexOf('@');
+      const model = atIdx > 0 ? sel.value.substring(0, atIdx) : sel.value;
+      const ep    = atIdx > 0 ? sel.value.substring(atIdx + 1) : '';
+      const roleEl = tr.querySelector('.role-select');
+      const role = roleEl ? roleEl.value : 'primary';
+      if (model) models.push({model, endpoint: ep, role});
+    }
+    const sysPromptTxt = document.getElementById(`${prefix}_sptxt_${cat}`);
+    const system_prompt = sysPromptTxt ? sysPromptTxt.value.trim() : '';
+    if (models.length > 0) {
+      experts[cat] = {system_prompt, models};
+    }
+  }
+  return experts;
+}
+
+// ─── Add new expert category ─────────────────────────────────────────────────
+function addExpertCategory(prefix) {
+  const input = document.getElementById(`${prefix}_new_cat_input`);
+  const raw = input.value.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  if (!raw) return;
+  const allKnown = [...EXPERT_CATEGORIES, ...(_extraCats[prefix] || [])];
+  if (allKnown.includes(raw)) {
+    input.classList.add('is-invalid');
+    setTimeout(() => input.classList.remove('is-invalid'), 1500);
+    return;
+  }
+  // Collect current state before re-render
+  const currentExperts = collectExperts(prefix);
+  if (!_extraCats[prefix]) _extraCats[prefix] = [];
+  _extraCats[prefix].push(raw);
+  input.value = '';
+  const llms = _availableLlms || [];
+  const tableContainer = document.getElementById(`${prefix}_experts_table`);
+  tableContainer.innerHTML = buildExpertRows(prefix, currentExperts, llms);
+  // Auto-activate the new row
+  const cb = document.getElementById(`${prefix}_cb_${raw}`);
+  if (cb && !cb.checked) { cb.checked = true; toggleExpertRow(prefix, raw, true); }
+}
+
+// ─── Page init ───────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  const llms = await fetchAvailableLlms();
+  document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, llms);
+
+  document.getElementById('createTemplateModal').addEventListener('show.bs.modal', async () => {
+    if (document.getElementById('ct_name').dataset.prefilled) return;
+    document.getElementById('ct_name').value = '';
+    document.getElementById('ct_desc').value = '';
+    _extraCats['ct'] = [];
+    const l = await fetchAvailableLlms();
+    document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, l);
+    buildLlmDropdown('ct_planner_llm_select', l, '');
+    buildLlmDropdown('ct_judge_llm_select',   l, '');
+    _updateMedicalLegalWarning('ct');
+  });
+  document.getElementById('createTemplateModal').addEventListener('hidden.bs.modal', () => {
+    delete document.getElementById('ct_name').dataset.prefilled;
+    _extraCats['ct'] = [];
+  });
+});
+
+// ─── Copy (als Vorlage kopieren) ──────────────────────────────────────────────
+async function copyTemplate(tmplId) {
+  const [list, llms] = await Promise.all([
+    fetch('/api/expert-templates').then(r => r.json()),
+    fetchAvailableLlms(),
+  ]);
+  const src = list.find(t => t.id === tmplId);
+  if (!src) return;
+
+  document.getElementById('ct_name').value = `Copy of ${src.name}`;
+  document.getElementById('ct_desc').value = src.description || '';
+  document.getElementById('ct_name').dataset.prefilled = '1';
+  document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', src.experts || {}, llms);
+  // Copy orchestration prompts
+  const ctPlanner = document.getElementById('ct_planner_prompt');
+  const ctJudge   = document.getElementById('ct_judge_prompt');
+  if (ctPlanner) { ctPlanner.value = src.planner_prompt || ''; if (src.planner_prompt) document.getElementById('ct_planner_area').style.display = ''; }
+  if (ctJudge)   { ctJudge.value   = src.judge_prompt   || ''; if (src.judge_prompt)   document.getElementById('ct_judge_area').style.display   = ''; }
+  buildLlmDropdown('ct_planner_llm_select', llms, src.planner_model || '');
+  buildLlmDropdown('ct_judge_llm_select',   llms, src.judge_model   || '');
+  _updateMedicalLegalWarning('ct');
+  document.getElementById('ct_error').classList.add('d-none');
+  new bootstrap.Modal(document.getElementById('createTemplateModal')).show();
+}
+
+// ─── Create ───────────────────────────────────────────────────────────────────
+async function createTemplate() {
+  const btn = document.querySelector('#createTemplateModal .btn-primary');
+  const err = document.getElementById('ct_error');
+  err.classList.add('d-none');
+  const name = document.getElementById('ct_name').value.trim();
+  if (!name) { err.textContent = 'Name is required.'; err.classList.remove('d-none'); return; }
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/expert-templates', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        description:    document.getElementById('ct_desc').value.trim(),
+        planner_prompt: document.getElementById('ct_planner_prompt').value.trim(),
+        judge_prompt:   document.getElementById('ct_judge_prompt').value.trim(),
+        planner_model:  getLlmValue('ct_planner_llm_select'),
+        judge_model:    getLlmValue('ct_judge_llm_select'),
+        experts:        collectExperts('ct'),
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.detail || 'Error'; err.classList.remove('d-none'); return; }
+    window.location.reload();
+  } finally { btn.disabled = false; }
+}
+
+// ─── Edit ─────────────────────────────────────────────────────────────────────
+let _currentEditId = null;
+async function openEditModal(tmplId) {
+  _currentEditId = tmplId;
+  _extraCats['et'] = [];
+  document.getElementById('editModalBody').innerHTML =
+    '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+  const modal = new bootstrap.Modal(document.getElementById('editTemplateModal'));
+  modal.show();
+
+  const [listRes, llms] = await Promise.all([
+    fetch('/api/expert-templates').then(r => r.json()),
+    fetchAvailableLlms(),
+  ]);
+  const tmpl = listRes.find(t => t.id === tmplId);
+  if (!tmpl) { document.getElementById('editModalBody').innerHTML = '<p class="text-danger">Template not found.</p>'; return; }
+
+  document.getElementById('editModalBody').innerHTML = `
+    <div class="row g-3 mb-3">
+      <div class="col-md-5">
+        <label class="form-label">Name <span class="text-danger">*</span></label>
+        <input type="text" class="form-control" id="et_name" value="${_escHtml(tmpl.name)}">
+      </div>
+      <div class="col-md-7">
+        <label class="form-label">Description</label>
+        <input type="text" class="form-control" id="et_desc" value="${_escHtml(tmpl.description||'')}">
+      </div>
+    </div>
+    <hr>
+    <p class="small fw-bold mb-2">Configure experts</p>
+    <div id="et_experts_table">${buildExpertRows('et', tmpl.experts || {}, llms)}</div>
+    <div id="et_medical_legal_warn" class="alert alert-warning d-none mt-2 mb-1 py-2 small" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i><strong>${_WARN_TITLE}:</strong>
+      ${_WARN_BODY}
+    </div>
+    <div class="d-flex align-items-center gap-2 mt-2 mb-1">
+      <input type="text" class="form-control form-control-sm" id="et_new_cat_input"
+             style="max-width:220px" placeholder="New category (e.g. finance)">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addExpertCategory('et')">
+        <i class="bi bi-plus-circle me-1"></i>New expert category
+      </button>
+    </div>
+    <hr>
+    <p class="small fw-bold mb-2"><i class="bi bi-sliders me-1 text-primary"></i>Orchestration Prompts &amp; Models <span class="text-muted fw-normal">(Planner &amp; Judge/Merger — empty = system default)</span></p>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label small mb-1"><i class="bi bi-diagram-3 me-1 text-info"></i>Planner LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
+        <div id="et_planner_llm_select"></div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label small mb-1"><i class="bi bi-shield-check me-1"></i>Judge/Merger LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
+        <div id="et_judge_llm_select"></div>
+      </div>
+      <div class="col-12">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:.1rem .4rem"
+                  onclick="toggleOrchestratorPrompt('et','planner')">
+            <i class="bi bi-diagram-3 me-1"></i>Planner LLM System Prompt
+            ${tmpl.planner_prompt ? '<span class="badge bg-info text-dark ms-1" style="font-size:.6rem">✎</span>' : ''}
+          </button>
+          <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:.1rem .4rem"
+                  onclick="toggleOrchestratorPrompt('et','judge')">
+            <i class="bi bi-shield-check me-1"></i>Judge/Merger-LLM System-Prompt
+            ${tmpl.judge_prompt ? '<span class="badge bg-secondary ms-1" style="font-size:.6rem">✎</span>' : ''}
+          </button>
+        </div>
+        <div id="et_planner_area" style="${tmpl.planner_prompt ? '' : 'display:none'}" class="mb-2">
+          <label class="form-label small mb-1 text-muted">Planner LLM System Prompt <span class="badge bg-info text-dark" style="font-size:.6rem">Planner</span></label>
+          <textarea id="et_planner_prompt" class="form-control form-control-sm font-monospace" rows="5"
+                    style="font-size:.78rem" placeholder="Empty = default prompt">${_escHtml(tmpl.planner_prompt || '')}</textarea>
+          <div class="d-flex gap-2 mt-1">
+            <button type="button" class="btn btn-xs btn-outline-info" style="font-size:.7rem;padding:.1rem .4rem"
+                    onclick="fillDefaultPrompt('et','planner')"><i class="bi bi-arrow-clockwise me-1"></i>Load default</button>
+          </div>
+        </div>
+        <div id="et_judge_area" style="${tmpl.judge_prompt ? '' : 'display:none'}">
+          <label class="form-label small mb-1 text-muted">Judge/Merger LLM System Prompt <span class="badge bg-secondary" style="font-size:.6rem">Judge</span></label>
+          <textarea id="et_judge_prompt" class="form-control form-control-sm font-monospace" rows="5"
+                    style="font-size:.78rem" placeholder="Empty = default prompt (mode-dependent)">${_escHtml(tmpl.judge_prompt || '')}</textarea>
+          <div class="d-flex gap-2 mt-1">
+            <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.7rem;padding:.1rem .4rem"
+                    onclick="fillDefaultPrompt('et','judge')"><i class="bi bi-arrow-clockwise me-1"></i>Load default</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <hr class="my-2">
+    <div class="row g-2 mt-1">
+      <div class="col-12"><small class="text-muted fw-bold">Pipeline Toggles</small></div>
+      <div class="col-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_enable_cache" ${tmpl.enable_cache !== false ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_enable_cache">Cache (ChromaDB)</label>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_enable_graphrag" ${tmpl.enable_graphrag !== false ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_enable_graphrag">GraphRAG (Neo4j)</label>
+        </div>
+      </div>
+      <div class="col-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_enable_web_research" ${tmpl.enable_web_research !== false ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_enable_web_research">Web Research</label>
+        </div>
+      </div>
+    </div>
+    <div id="et_error" class="alert alert-danger mt-2 d-none py-2 small"></div>`;
+
+  buildLlmDropdown('et_planner_llm_select', llms, tmpl.planner_model || '');
+  buildLlmDropdown('et_judge_llm_select',   llms, tmpl.judge_model   || '');
+  _updateMedicalLegalWarning('et');
+  document.getElementById('saveEditBtn').onclick = saveEditTemplate;
+}
+
+async function saveEditTemplate() {
+  const err  = document.getElementById('et_error');
+  err.classList.add('d-none');
+  const name = document.getElementById('et_name').value.trim();
+  if (!name) { err.textContent = 'Name is required.'; err.classList.remove('d-none'); return; }
+  const btn = document.getElementById('saveEditBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/expert-templates/${_currentEditId}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        description:    document.getElementById('et_desc').value.trim(),
+        planner_prompt: document.getElementById('et_planner_prompt').value.trim(),
+        judge_prompt:   document.getElementById('et_judge_prompt').value.trim(),
+        planner_model:  getLlmValue('et_planner_llm_select'),
+        judge_model:    getLlmValue('et_judge_llm_select'),
+        experts:        collectExperts('et'),
+        enable_cache:        document.getElementById('et_enable_cache').checked,
+        enable_graphrag:     document.getElementById('et_enable_graphrag').checked,
+        enable_web_research: document.getElementById('et_enable_web_research').checked,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.detail || 'Error'; err.classList.remove('d-none'); return; }
+    window.location.reload();
+  } finally { btn.disabled = false; }
+}
+
+// ─── Delete ───────────────────────────────────────────────────────────────────
+async function deleteTemplate(tmplId, name) {
+  if (!confirm(`Delete template "${name}"?`)) return;
+  const res = await fetch(`/api/expert-templates/${tmplId}`, {method: 'DELETE'});
+  if (res.ok) window.location.reload();
+}
+
+async function exportTemplates() {
+  const res = await fetch('/api/expert-templates/export');
+  if (!res.ok) { alert('Export failed'); return; }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'expert_templates.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importTemplates(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const replace = confirm('Overwrite existing templates with the same name?\n\nOK = Replace | Cancel = Import new only');
+  const mode = replace ? 'replace' : 'merge';
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`/api/expert-templates/import?mode=${mode}`, {method: 'POST', body: formData});
+  input.value = '';
+  if (res.ok) {
+    const data = await res.json();
+    alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
+    window.location.reload();
+  } else {
+    const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+    alert('Import failed: ' + (err.detail || 'Unknown error'));
+  }
+}
+
+async function importTemplatesFromCode() {
+  const raw = document.getElementById('import-tmpl-code').value.trim();
+  if (!raw) { alert('Please paste JSON code.'); return; }
+  let data;
+  try { data = JSON.parse(raw); } catch(e) { alert('Invalid JSON: ' + e.message); return; }
+  const mode = document.getElementById('import-tmpl-code-mode').value;
+  const res = await fetch(`/api/expert-templates/import?mode=${mode}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (res.ok) {
+    const d = await res.json();
+    alert(`Import complete: ${d.imported} imported, ${d.skipped} skipped`);
+    bootstrap.Modal.getInstance(document.getElementById('importTemplateCodeModal')).hide();
+    window.location.reload();
+  } else {
+    const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+    alert('Import failed: ' + (err.detail || 'Unknown error'));
+  }
+}
+</script>
+
+<!-- ── Import JSON-Code Modal ─────────────────────────────────────────────── -->
+<div class="modal fade" id="importTemplateCodeModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>{{ t(request, 'modal.import_profiles') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'modal.import_mode') }}</label>
+          <select id="import-tmpl-code-mode" class="form-select form-select-sm" style="width:auto">
+            <option value="merge">{{ t(request, 'modal.merge') }}</option>
+            <option value="replace">{{ t(request, 'modal.replace') }}</option>
+          </select>
+        </div>
+        <label class="form-label">{{ t(request, 'modal.json_code') }}</label>
+        <textarea id="import-tmpl-code" class="form-control font-monospace" rows="14"
+          placeholder='{"type":"expert_template","version":"1.0","items":[...]}'></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary" onclick="importTemplatesFromCode()">
+          <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

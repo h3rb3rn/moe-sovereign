@@ -1,0 +1,20 @@
+# GitGuardian configuration
+# https://docs.gitguardian.com/ggshield-docs/reference/config
+version: 2
+
+paths-ignore:
+  # Documentation contains intentional placeholder examples
+  - "docs/**/*.md"
+  - "FAQ.md"
+  - "README.md"
+  - "skills/**/*.md"
+  # Helm chart templates contain placeholder-only secret scaffolding
+  - "charts/**/templates/*.yaml"
+
+# Known-false-positive patterns
+matches-ignore:
+  # Placeholder API keys in documentation
+  - match: "moe-sk-<YOUR_KEY_HERE>"
+    reason: "Documentation placeholder, not a real credential."
+  - match: "moe-sk-<48_hex_chars_replace_me_with_real_key>"
+    reason: "Documentation placeholder, not a real credential."

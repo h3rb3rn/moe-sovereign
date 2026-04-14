@@ -1,0 +1,39 @@
+apiVersion: v2
+name: moe-sovereign
+description: MoE Sovereign orchestrator — universal deployment for Docker, Podman, k8s, OpenShift, LXC
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - moe
+  - llm
+  - orchestrator
+  - langgraph
+  - fastapi
+home: https://github.com/moe-sovereign/moe-infra
+sources:
+  - https://github.com/moe-sovereign/moe-infra
+maintainers:
+  - name: MoE Sovereign
+
+# Data-tier dependencies are optional: enterprise users point at their
+# existing clusters via values.yaml; homelab users flip `enabled: true`
+# and get a full stack from one `helm install`.
+dependencies:
+  - name: postgresql
+    version: "15.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: kafka
+    version: "28.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: kafka.enabled
+  - name: valkey
+    version: "1.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: valkey.enabled
+  - name: neo4j
+    version: "5.x.x"
+    repository: https://helm.neo4j.com/neo4j
+    condition: neo4j.enabled

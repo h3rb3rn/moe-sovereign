@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ t(request, 'quarantine.title') }} – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-shield-exclamation section-icon text-warning"></i>{{ t(request, 'quarantine.title') }}</h5>
+    <small class="text-muted">{{ t(request, 'quarantine.desc') }}</small>
+  </div>
+  <button class="btn btn-outline-secondary btn-sm" onclick="loadQuarantine()">
+    <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+  </button>
+</div>
+
+<div id="loading" class="text-center py-5 text-muted">
+  <div class="spinner-border spinner-border-sm me-2"></div>Loading...
+</div>
+
+<div id="quarantine-container" class="d-none">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle small">
+      <thead class="table-light">
+        <tr>
+          <th>{{ t(request, 'quarantine.subject') }}</th>
+          <th>{{ t(request, 'quarantine.relation') }}</th>
+          <th>{{ t(request, 'quarantine.object') }}</th>
+          <th class="text-end">{{ t(request, 'quarantine.reach') }}</th>
+          <th>{{ t(request, 'quarantine.source') }}</th>
+          <th class="text-end">{{ t(request, 'quarantine.confidence') }}</th>
+          <th>{{ t(request, 'quarantine.timestamp') }}</th>
+          <th>{{ t(request, 'quarantine.actions') }}</th>
+        </tr>
+      </thead>
+      <tbody id="q-tbody"></tbody>
+    </table>
+  </div>
+  <small class="text-muted" id="q-count"></small>
+</div>
+
+<div id="q-empty" class="text-center py-5 text-muted d-none">
+  <i class="bi bi-shield-check" style="font-size:2.5rem"></i>
+  <p class="mt-2">{{ t(request, 'quarantine.empty') }}</p>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escHtml(s) { return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+
+async function loadQuarantine() {
+  document.getElementById('loading').classList.remove('d-none');
+  document.getElementById('quarantine-container').classList.add('d-none');
+  document.getElementById('q-empty').classList.add('d-none');
+  try {
+    const r = await fetch('/api/quarantine');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    render(data.entries || []);
+  } catch(e) {
+    document.getElementById('loading').classList.add('d-none');
+    alert('Error: ' + e.message);
+  }
+}
+
+function render(entries) {
+  document.getElementById('loading').classList.add('d-none');
+  if (!entries.length) {
+    document.getElementById('q-empty').classList.remove('d-none');
+    return;
+  }
+  document.getElementById('quarantine-container').classList.remove('d-none');
+  const tbody = document.getElementById('q-tbody');
+  tbody.innerHTML = entries.map((e, i) => {
+    const ts = e.ts ? new Date(e.ts).toLocaleString('de-DE') : '—';
+    return `<tr>
+      <td><code>${escHtml(e.s)}</code> <small class="text-muted">${escHtml(e.s_type)}</small></td>
+      <td><span class="badge bg-primary">${escHtml(e.r)}</span></td>
+      <td><code>${escHtml(e.o)}</code> <small class="text-muted">${escHtml(e.o_type)}</small></td>
+      <td class="text-end"><span class="badge bg-danger">${e.reach || '?'}</span></td>
+      <td class="font-monospace small">${escHtml(e.source_model || '?')}</td>
+      <td class="text-end">${(e.confidence || 0).toFixed(2)}</td>
+      <td class="text-nowrap small">${ts}</td>
+      <td>
+        <button class="btn btn-success btn-sm me-1" onclick="qAction('approve', ${i})" title="Approve">
+          <i class="bi bi-check-lg"></i>
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="qAction('reject', ${i})" title="Reject">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('q-count').textContent = `${entries.length} quarantined triples`;
+  window._qEntries = entries;
+}
+
+async function qAction(action, idx) {
+  const entry = window._qEntries[idx];
+  if (!entry) return;
+  try {
+    const r = await fetch(`/api/quarantine/${action}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(entry),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    loadQuarantine();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+loadQuarantine();
+</script>
+{% endblock %}

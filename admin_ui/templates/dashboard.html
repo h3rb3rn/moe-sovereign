@@ -1,0 +1,917 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type|default('info') }} flash-bar alert-dismissible fade show mb-0 rounded-0 py-2 text-center small" role="alert">
+  <i class="bi bi-{% if flash_type == 'success' %}check-circle{% elif flash_type == 'danger' %}x-circle{% else %}info-circle{% endif %}-fill me-2"></i>
+  {{ flash }}
+  <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+{# ── Service status (outside the save form) ── #}
+<div class="card mb-4">
+  <div class="card-header bg-dark text-white d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-activity section-icon"></i>{{ t(request, 'lbl.services') }}</span>
+    <div class="d-flex align-items-center gap-3">
+      <span class="text-muted small" id="status-last-update"></span>
+      <a href="/logs" class="btn btn-sm btn-outline-light py-0 px-2" style="font-size:.78rem" title="Container Log Viewer (Dozzle)">
+        <i class="bi bi-terminal me-1"></i>Logs
+      </a>
+    </div>
+  </div>
+  <div class="card-body py-3">
+    <div class="d-flex flex-wrap gap-3">
+      {% set containers = [
+        ("langgraph-orchestrator", "Orchestrator"),
+        ("moe-kafka",              "Kafka"),
+        ("neo4j-knowledge",        "Neo4j"),
+        ("mcp-precision",          "MCP Tools"),
+        ("terra_cache",            "Valkey"),
+        ("chromadb-vector",        "ChromaDB"),
+        ("moe-grafana",            "Grafana"),
+        ("moe-prometheus",         "Prometheus"),
+        ("moe-docs",               "Docs"),
+        ("moe-docs-sync",          "Docs Sync"),
+        ("moe-caddy",              "Caddy"),
+        ("moe-dozzle",             "Log Viewer"),
+        ("node-exporter",          "Node Exporter"),
+        ("cadvisor",               "cAdvisor"),
+      ] %}
+      {% for cname, label in containers %}
+      <div class="d-flex flex-column gap-1" style="min-width:110px">
+        <div class="d-flex align-items-center gap-2">
+          {% if cname == "moe-dozzle" %}
+          <a href="/logs" class="text-decoration-none text-muted small fw-semibold" title="Open Log Viewer">{{ label }} <i class="bi bi-box-arrow-up-right" style="font-size:.7rem"></i></a>
+          {% else %}
+          <span class="text-muted small fw-semibold">{{ label }}</span>
+          {% endif %}
+          <span id="status-{{ cname }}" class="badge status-badge bg-secondary">...</span>
+        </div>
+        <div id="meta-{{ cname }}" class="text-muted" style="font-size:0.7rem;display:none">
+          <span id="uptime-{{ cname }}"></span>&nbsp;·&nbsp;CPU:&nbsp;<span id="cpu-{{ cname }}"></span>%&nbsp;·&nbsp;<span id="mem-{{ cname }}"></span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{# ── Haupt-Konfigurationsformular ── #}
+<form method="POST" action="/save" id="config-form" novalidate>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <div class="row g-4">
+
+    {# ── Inference-Server ── #}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header bg-primary bg-opacity-10 text-primary d-flex align-items-center justify-content-between">
+          <span><i class="bi bi-hdd-stack section-icon"></i>{{ t(request, 'lbl.inference') }}</span>
+          <a href="/servers" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-box-arrow-up-right me-1"></i>{{ t(request, 'page.servers') }}
+          </a>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">
+            <label class="form-label" for="SEARXNG_URL">SearXNG URL (Web-Suche)</label>
+            <input type="url" id="SEARXNG_URL" name="SEARXNG_URL" class="form-control font-monospace"
+                   value="{{ config.get('SEARXNG_URL','') }}">
+          </div>
+          <div class="mt-3">
+            <div class="d-flex align-items-center mb-2 gap-2">
+              <span class="form-label mb-0">{{ t(request, 'lbl.ollama_servers') }}</span>
+              <span class="text-muted small">{{ t(request, 'lbl.inference_changes') }}</span>
+            </div>
+            <table class="table table-sm mb-2" id="servers-table">
+              <thead>
+                <tr>
+                  <th style="width:100px">Name</th>
+                  <th>URL (/v1)</th>
+                  <th style="width:55px">GPUs</th>
+                  <th style="width:65px" title="Total usable VRAM in GB. Used for floating node selection — models larger than this are not routed here.">VRAM GB <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
+                  <th style="width:60px" title="{{ t(request, 'tip.factor') }}">{{ t(request, 'table.factor') }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
+                  <th style="width:75px" title="{{ t(request, 'tip.timeout') }}">{{ t(request, 'lbl.timeout') }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
+                  <th style="width:80px">API-Typ</th>
+                  <th style="width:130px">{{ t(request, 'lbl.token') }}</th>
+                  <th style="width:45px" title="{{ t(request, 'tip.active_toggle') }}">{{ t(request, 'status.active') }}</th>
+                  <th style="width:90px">Status</th>
+                  <th style="width:36px"></th>
+                </tr>
+              </thead>
+              <tbody id="server-tbody">
+                {% for srv in inference_servers %}
+                <tr>
+                  <td><input type="text" name="srv_name_{{ loop.index0 }}" value="{{ srv.name }}"
+                             class="form-control form-control-sm font-monospace" placeholder="RTX"></td>
+                  <td><input type="url"  name="srv_url_{{ loop.index0 }}"  value="{{ srv.url }}"
+                             class="form-control form-control-sm font-monospace" placeholder="http://....:11434/v1"></td>
+                  <td><input type="number" name="srv_gpu_count_{{ loop.index0 }}" value="{{ srv.gpu_count }}"
+                             class="form-control form-control-sm" min="0" max="64"></td>
+                  <td><input type="number" name="srv_vram_gb_{{ loop.index0 }}" value="{{ srv.get('vram_gb', '') }}"
+                             class="form-control form-control-sm" min="0" max="1000" step="1" placeholder="auto"></td>
+                  <td><input type="number" name="srv_cost_factor_{{ loop.index0 }}" value="{{ srv.get('cost_factor', 1.0) }}"
+                             class="form-control form-control-sm" min="0.1" max="100" step="0.1"></td>
+                  <td>
+                    <input type="number" name="srv_timeout_{{ loop.index0 }}"
+                           value="{{ srv.get('timeout', '') }}"
+                           class="form-control form-control-sm" min="1" placeholder="global">
+                  </td>
+                  <td>
+                    <select name="srv_api_type_{{ loop.index0 }}" class="form-select form-select-sm">
+                      <option value="ollama" {% if srv.get('api_type','ollama')=='ollama' %}selected{% endif %}>Ollama</option>
+                      <option value="openai" {% if srv.get('api_type','ollama')=='openai' %}selected{% endif %}>OpenAI</option>
+                    </select>
+                  </td>
+                  <td><input type="password" name="srv_token_{{ loop.index0 }}"
+                             class="form-control form-control-sm font-monospace"
+                             placeholder="{% if srv.get('token') and srv.get('token') != 'ollama' %}••••••••{% else %}ollama{% endif %}"
+                             autocomplete="new-password"></td>
+                  <td class="text-center align-middle">
+                    <input type="checkbox" name="srv_enabled_{{ loop.index0 }}" value="1"
+                           class="form-check-input" {% if srv.get('enabled', True) %}checked{% endif %}>
+                  </td>
+                  <td><span class="badge bg-secondary srv-status-badge" style="font-size:.75rem">–</span></td>
+                  <td><button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
+                              onclick="removeServerRow(this)"><i class="bi bi-x"></i></button></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            <button type="button" class="btn btn-sm btn-outline-success me-2" onclick="addServerRow()">
+              <i class="bi bi-plus"></i> {{ t(request, 'btn.add_server') }}
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-info" onclick="testAllServers()">
+              <i class="bi bi-wifi me-1"></i>{{ t(request, 'btn.test_all') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Modelle ── #}
+    <div class="col-12 col-lg-6">
+      <div class="card h-100">
+        <div class="card-header bg-success bg-opacity-10 text-success">
+          <i class="bi bi-cpu section-icon"></i>{{ t(request, 'section.models') }}
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-8">
+              <label class="form-label" for="JUDGE_MODEL">Judge-Modell (Merger / Critic)</label>
+              <input type="text" id="JUDGE_MODEL" name="JUDGE_MODEL" class="form-control font-monospace"
+                     value="{{ config.get('JUDGE_MODEL','magistral:24b') }}">
+            </div>
+            <div class="col-4">
+              <label class="form-label" for="JUDGE_ENDPOINT">Endpoint</label>
+              <select id="JUDGE_ENDPOINT" name="JUDGE_ENDPOINT" class="form-select endpoint-select"
+                      data-selected="{{ config.get('JUDGE_ENDPOINT','RTX') }}"></select>
+            </div>
+            <div class="col-8">
+              <label class="form-label" for="PLANNER_MODEL">Planner-Modell (Task-Zerlegung)</label>
+              <input type="text" id="PLANNER_MODEL" name="PLANNER_MODEL" class="form-control font-monospace"
+                     value="{{ config.get('PLANNER_MODEL','phi4:14b') }}">
+            </div>
+            <div class="col-4">
+              <label class="form-label" for="PLANNER_ENDPOINT">Endpoint</label>
+              <select id="PLANNER_ENDPOINT" name="PLANNER_ENDPOINT" class="form-select endpoint-select"
+                      data-selected="{{ config.get('PLANNER_ENDPOINT','RTX') }}"></select>
+            </div>
+            <div class="col-8">
+              <label class="form-label" for="GRAPH_INGEST_MODEL">Graph Ingest-Modell (Kausal-Extraktion)</label>
+              <input type="text" id="GRAPH_INGEST_MODEL" name="GRAPH_INGEST_MODEL" class="form-control font-monospace"
+                     placeholder="— same as Judge —"
+                     value="{{ config.get('GRAPH_INGEST_MODEL','') }}">
+            </div>
+            <div class="col-4">
+              <label class="form-label" for="GRAPH_INGEST_ENDPOINT">Endpoint</label>
+              <select id="GRAPH_INGEST_ENDPOINT" name="GRAPH_INGEST_ENDPOINT" class="form-select endpoint-select"
+                      data-selected="{{ config.get('GRAPH_INGEST_ENDPOINT','') }}"></select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Claude Code ── #}
+    <div class="col-12 col-lg-6">
+      <div class="card h-100">
+        <div class="card-header" style="background:rgba(139,92,246,.1);color:#7c3aed">
+          <i class="bi bi-code-slash section-icon"></i>{{ t(request, 'section.cc_integration') }}
+        </div>
+        <div class="card-body">
+          <p class="small text-muted mb-3">
+            <code class="small">ANTHROPIC_BASE_URL=http://&lt;server&gt;:8002</code>
+          </p>
+
+          {# ── CC Profile status ── #}
+          <div class="mb-3">
+            <label class="form-label fw-semibold">{{ t(request, 'lbl.enabled_profiles') }}</label>
+            {% if enabled_profiles_count > 0 %}
+            <div class="d-flex align-items-center gap-2 mb-2 p-2 rounded border border-success bg-success bg-opacity-10">
+              <i class="bi bi-check-circle-fill text-success"></i>
+              <div class="flex-grow-1 small">
+                <strong>{{ enabled_profiles_count }}</strong> {{ t(request, 'lbl.enabled_profiles') }}
+              </div>
+              <a href="/profiles" class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:.78rem">
+                <i class="bi bi-pencil me-1"></i>{{ t(request, 'btn.edit') }}
+              </a>
+            </div>
+            {% else %}
+            <div class="alert alert-warning py-2 px-3 mb-2 small">
+              <i class="bi bi-exclamation-triangle me-2"></i>
+              {{ t(request, 'info.no_profiles_enabled') }}
+            </div>
+            {% endif %}
+
+            {% if profiles %}
+            <div class="mt-1">
+              <a href="/profiles" class="small text-decoration-none text-muted">
+                <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.manage_profiles') }}
+              </a>
+            </div>
+            {% else %}
+            <a href="/profiles" class="btn btn-sm btn-primary">
+              <i class="bi bi-plus-lg me-1"></i>{{ t(request, 'btn.first_profile') }}
+            </a>
+            {% endif %}
+          </div>
+
+          {# ── Fallback-Einstellungen (collapsed) ── #}
+          <div>
+            <button class="btn btn-link text-muted p-0 small text-decoration-none"
+                    type="button"
+                    data-bs-toggle="collapse" data-bs-target="#cc-fallback-settings"
+                    aria-expanded="false">
+              <i class="bi bi-chevron-right me-1 cc-chevron"></i>{{ t(request, 'lbl.fallback_settings') }}
+              <span class="text-muted" style="font-size:.74rem">{{ t(request, 'lbl.fallback_note') }}</span>
+            </button>
+            <div class="collapse mt-3" id="cc-fallback-settings">
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label" for="CLAUDE_CODE_MODELS">
+                    Accepted Claude Model IDs
+                    <span class="text-muted small">(comma-separated — must be on the Claude Code whitelist)</span>
+                  </label>
+                  <input type="text" id="CLAUDE_CODE_MODELS" name="CLAUDE_CODE_MODELS"
+                         class="form-control font-monospace"
+                         placeholder="claude-sonnet-4-6,claude-opus-4-6,..."
+                         value="{{ config.get('CLAUDE_CODE_MODELS','claude-opus-4-6,claude-sonnet-4-6,claude-haiku-4-5-20251001,claude-opus-4-5,claude-sonnet-4-5,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022,claude-3-7-sonnet-20250219') }}">
+                  <div class="form-text">The model IDs that Claude Code sends via <code>ANTHROPIC_MODEL=...</code>. The MCP server accepts and routes them internally.</div>
+                </div>
+              </div>
+              <div class="row g-3 mt-1">
+                <div class="col-8">
+                  <label class="form-label" for="CLAUDE_CODE_TOOL_MODEL">
+                    Tool Model
+                    <i class="bi bi-info-circle text-muted" style="font-size:.75rem"
+                       title="The local LLM that executes tool calls (Bash, file access)"></i>
+                  </label>
+                  <input type="text" id="CLAUDE_CODE_TOOL_MODEL" name="CLAUDE_CODE_TOOL_MODEL"
+                         class="form-control font-monospace"
+                         value="{{ config.get('CLAUDE_CODE_TOOL_MODEL','devstral:24b') }}">
+                </div>
+                <div class="col-4">
+                  <label class="form-label" for="CLAUDE_CODE_TOOL_ENDPOINT">Endpoint</label>
+                  <select id="CLAUDE_CODE_TOOL_ENDPOINT" name="CLAUDE_CODE_TOOL_ENDPOINT"
+                          class="form-select endpoint-select"
+                          data-selected="{{ config.get('CLAUDE_CODE_TOOL_ENDPOINT','RTX') }}"></select>
+                </div>
+              </div>
+              <div class="row g-3 mt-1">
+                <div class="col-12">
+                  <label class="form-label" for="CLAUDE_CODE_MODE">
+                    Mode
+                    <i class="bi bi-info-circle text-muted" style="font-size:.75rem"
+                       title="How text prompts are processed. Tool calls always go through the tool model."></i>
+                  </label>
+                  <select id="CLAUDE_CODE_MODE" name="CLAUDE_CODE_MODE" class="form-select">
+                    <option value="native"
+                      {% if config.get('CLAUDE_CODE_MODE','moe_orchestrated') == 'native' %}selected{% endif %}>
+                      Native — Prompt directly to tool model (no MoE routing)
+                    </option>
+                    <option value="moe_reasoning"
+                      {% if config.get('CLAUDE_CODE_MODE','moe_orchestrated') == 'moe_reasoning' %}selected{% endif %}>
+                      MoE Reasoning — Prompt via reasoning expert (thinking blocks)
+                    </option>
+                    <option value="moe_orchestrated"
+                      {% if config.get('CLAUDE_CODE_MODE','moe_orchestrated') == 'moe_orchestrated' %}selected{% endif %}>
+                      MoE Orchestrated — Full pipeline: Planner + all experts
+                    </option>
+                  </select>
+                  <div class="form-text">Tool calls always run via the tool model, regardless of mode.</div>
+                </div>
+              </div>
+              <div class="row g-3 mt-1" id="reasoning-model-row">
+                <div class="col-8">
+                  <label class="form-label" for="CLAUDE_CODE_REASONING_MODEL">
+                    Reasoning Model
+                    <span class="text-muted small">(empty = from expert models)</span>
+                  </label>
+                  <input type="text" id="CLAUDE_CODE_REASONING_MODEL" name="CLAUDE_CODE_REASONING_MODEL"
+                         class="form-control font-monospace"
+                         placeholder="e.g. deepseek-r1:32b or qwq:32b"
+                         value="{{ config.get('CLAUDE_CODE_REASONING_MODEL','') }}">
+                </div>
+                <div class="col-4">
+                  <label class="form-label" for="CLAUDE_CODE_REASONING_ENDPOINT">Endpoint</label>
+                  <select id="CLAUDE_CODE_REASONING_ENDPOINT" name="CLAUDE_CODE_REASONING_ENDPOINT"
+                          class="form-select endpoint-select"
+                          data-selected="{{ config.get('CLAUDE_CODE_REASONING_ENDPOINT','') }}"></select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    {# ── System ── #}
+    <div class="col-12 col-lg-6">
+      <div class="card h-100">
+        <div class="card-header bg-warning bg-opacity-10 text-warning-emphasis">
+          <i class="bi bi-gear section-icon"></i>{{ t(request, 'section.system') }}
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label" for="TOKEN_PRICE_EUR">{{ t(request, 'lbl.token_price') }}
+              <span class="text-muted small">— z.B. 0.00002 = €20 / 1 Mio. Tokens</span>
+            </label>
+            <input type="number" id="TOKEN_PRICE_EUR" name="TOKEN_PRICE_EUR"
+                   class="form-control" step="0.000001" min="0"
+                   value="{{ config.get('TOKEN_PRICE_EUR','0.00002') }}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="LOG_LEVEL">{{ t(request, 'lbl.log_level') }}</label>
+            <select id="LOG_LEVEL" name="LOG_LEVEL" class="form-select">
+              {% for lvl in ['DEBUG','INFO','WARNING','ERROR','CRITICAL'] %}
+              <option value="{{ lvl }}" {% if config.get('LOG_LEVEL','INFO')==lvl %}selected{% endif %}>{{ lvl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-0">
+            <label class="form-label" for="OLLAMA_API_KEY">Ollama API Key</label>
+            <input type="text" id="OLLAMA_API_KEY" name="OLLAMA_API_KEY" class="form-control font-monospace"
+                   value="{{ config.get('OLLAMA_API_KEY','ollama') }}">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── E-Mail / SMTP ── #}
+    <div class="col-12 col-lg-6">
+      <div class="card h-100">
+        <div class="card-header bg-info bg-opacity-10 text-info-emphasis">
+          <i class="bi bi-envelope section-icon"></i>{{ t(request, 'section.smtp') }}
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-8">
+              <label class="form-label small" for="SMTP_HOST">SMTP Host</label>
+              <input type="text" id="SMTP_HOST" name="SMTP_HOST" class="form-control form-control-sm font-monospace"
+                     value="{{ config.get('SMTP_HOST', '') }}" placeholder="z.B. smtp.example.com">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small" for="SMTP_PORT">Port</label>
+              <input type="number" id="SMTP_PORT" name="SMTP_PORT" class="form-control form-control-sm"
+                     value="{{ config.get('SMTP_PORT', '587') }}" min="1" max="65535">
+            </div>
+            <div class="col-md-2 d-flex flex-column justify-content-end pb-1 gap-1">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="SMTP_STARTTLS" value="1"
+                       id="SMTP_STARTTLS" {% if config.get('SMTP_STARTTLS','1') == '1' %}checked{% endif %}>
+                <label class="form-check-label small" for="SMTP_STARTTLS">STARTTLS</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="SMTP_SSL" value="1"
+                       id="SMTP_SSL" {% if config.get('SMTP_SSL','0') == '1' %}checked{% endif %}>
+                <label class="form-check-label small" for="SMTP_SSL">{{ t(request, 'lbl.smtp_ssl') }}</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small" for="SMTP_USER">{{ t(request, 'lbl.smtp_user') }}</label>
+              <input type="text" id="SMTP_USER" name="SMTP_USER" class="form-control form-control-sm"
+                     value="{{ config.get('SMTP_USER', '') }}" placeholder="optional" autocomplete="off">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small" for="SMTP_PASS">{{ t(request, 'lbl.smtp_pass') }}</label>
+              <input type="password" id="SMTP_PASS" name="SMTP_PASS" class="form-control form-control-sm"
+                     placeholder="{% if config.get('SMTP_PASS') %}••••••••{% else %}optional{% endif %}" autocomplete="new-password">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small" for="SMTP_FROM">{{ t(request, 'lbl.smtp_from') }}</label>
+              <input type="email" id="SMTP_FROM" name="SMTP_FROM" class="form-control form-control-sm"
+                     value="{{ config.get('SMTP_FROM', 'noreply@moe.intern') }}">
+            </div>
+            <div class="col-12 pt-1 d-flex align-items-center gap-2 flex-wrap">
+              <input type="email" id="smtpTestEmail" class="form-control form-control-sm"
+                     style="max-width:260px" placeholder="{{ t(request, 'lbl.smtp_test_recipient') }}">
+              <button type="button" class="btn btn-sm btn-outline-info" onclick="smtpTest()">
+                <i class="bi bi-send me-1"></i>{{ t(request, 'btn.test_smtp') }}
+              </button>
+              <span id="smtpTestResult" class="small"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Public URLs ── #}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header bg-success bg-opacity-10 text-success-emphasis">
+          <i class="bi bi-globe section-icon"></i>{{ t(request, 'section.public_urls') }}
+          <span class="text-muted fw-normal small ms-2">{{ t(request, 'lbl.public_urls_note') }}</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label small" for="APP_BASE_URL">{{ t(request, 'lbl.user_portal_url') }}</label>
+              <input type="url" id="APP_BASE_URL" name="APP_BASE_URL" class="form-control form-control-sm font-monospace"
+                     value="{{ config.get('APP_BASE_URL', 'http://localhost:8088') }}"
+                     placeholder="https://login.moe-admin.de">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small" for="PUBLIC_ADMIN_URL">{{ t(request, 'lbl.admin_url') }}</label>
+              <input type="url" id="PUBLIC_ADMIN_URL" name="PUBLIC_ADMIN_URL" class="form-control form-control-sm font-monospace"
+                     value="{{ config.get('PUBLIC_ADMIN_URL', '') }}"
+                     placeholder="https://admin.moe-admin.de">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small" for="PUBLIC_API_URL">{{ t(request, 'lbl.public_api_url') }}</label>
+              <input type="url" id="PUBLIC_API_URL" name="PUBLIC_API_URL" class="form-control form-control-sm font-monospace"
+                     value="{{ config.get('PUBLIC_API_URL', '') }}"
+                     placeholder="https://node05.moe-admin.de/v1">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small" for="LOG_URL">{{ t(request, 'lbl.log_url') }}</label>
+              <input type="url" id="LOG_URL" name="LOG_URL" class="form-control form-control-sm font-monospace"
+                     value="{{ config.get('LOG_URL', '') }}"
+                     placeholder="https://logs.example.com">
+              <div class="form-text">{{ t(request, 'lbl.log_url_help') }}</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small" for="PROMETHEUS_URL_PUBLIC">{{ t(request, 'lbl.prometheus_url_public') }}</label>
+              <input type="url" id="PROMETHEUS_URL_PUBLIC" name="PROMETHEUS_URL_PUBLIC" class="form-control form-control-sm font-monospace"
+                     value="{{ config.get('PROMETHEUS_URL_PUBLIC', '') }}"
+                     placeholder="https://metrics.example.com">
+              <div class="form-text">{{ t(request, 'lbl.prometheus_url_public_help') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── SSO / OIDC ── #}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header bg-info bg-opacity-10 text-info-emphasis d-flex align-items-center justify-content-between"
+             style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#sso-settings-body">
+          <span><i class="bi bi-person-badge section-icon"></i>{{ t(request, 'section.sso') }}</span>
+          <i class="bi bi-chevron-down small"></i>
+        </div>
+        <div class="collapse {% if config.get('AUTHENTIK_URL') %}show{% endif %}" id="sso-settings-body">
+          <div class="card-body">
+            <div class="row g-2">
+              <div class="col-md-6">
+                <label class="form-label small" for="AUTHENTIK_URL">{{ t(request, 'lbl.sso_url') }}</label>
+                <input type="url" id="AUTHENTIK_URL" name="AUTHENTIK_URL" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get('AUTHENTIK_URL', '') }}"
+                       placeholder="http://authentik-server:9000">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small" for="OIDC_CLIENT_ID">{{ t(request, 'lbl.oidc_client_id') }}</label>
+                <input type="text" id="OIDC_CLIENT_ID" name="OIDC_CLIENT_ID" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get('OIDC_CLIENT_ID', '') }}"
+                       placeholder="moe-infra" autocomplete="off">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small" for="OIDC_CLIENT_SECRET">{{ t(request, 'lbl.oidc_client_secret') }}</label>
+                <input type="password" id="OIDC_CLIENT_SECRET" name="OIDC_CLIENT_SECRET" class="form-control form-control-sm font-monospace"
+                       placeholder="{% if config.get('OIDC_CLIENT_SECRET') %}••••••••{% else %}{{ t(request, 'lbl.not_set') }}{% endif %}"
+                       autocomplete="new-password">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small" for="OIDC_JWKS_URL">{{ t(request, 'lbl.oidc_jwks_url') }}</label>
+                <input type="url" id="OIDC_JWKS_URL" name="OIDC_JWKS_URL" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get('OIDC_JWKS_URL', '') }}"
+                       placeholder="{{ config.get('AUTHENTIK_URL', '') }}/application/o/…/jwks/">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small" for="OIDC_ISSUER">{{ t(request, 'lbl.oidc_issuer') }}</label>
+                <input type="url" id="OIDC_ISSUER" name="OIDC_ISSUER" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get('OIDC_ISSUER', '') }}"
+                       placeholder="{{ config.get('AUTHENTIK_URL', '') }}/application/o/…/">
+              </div>
+              <div class="col-12">
+                <label class="form-label small" for="OIDC_END_SESSION_URL">{{ t(request, 'lbl.oidc_end_session_url') }}</label>
+                <input type="url" id="OIDC_END_SESSION_URL" name="OIDC_END_SESSION_URL" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get('OIDC_END_SESSION_URL', '') }}"
+                       placeholder="{{ config.get('AUTHENTIK_URL', '') }}/application/o/…/end-session/">
+                <div class="form-text">{{ t(request, 'lbl.oidc_end_session_hint') }}</div>
+              </div>
+              <div class="col-12">
+                <label class="form-label small" for="PUBLIC_SSO_URL">{{ t(request, 'lbl.public_sso_url') }}</label>
+                <input type="url" id="PUBLIC_SSO_URL" name="PUBLIC_SSO_URL" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get('PUBLIC_SSO_URL', '') }}"
+                       placeholder="https://authentik.example.com">
+                <div class="form-text">{{ t(request, 'lbl.public_sso_url_hint') }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── CORS-Konfiguration ── #}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header bg-warning bg-opacity-10 text-warning-emphasis d-flex align-items-center justify-content-between"
+             style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#cors-settings-body">
+          <span><i class="bi bi-shield-lock section-icon"></i>CORS Configuration (Open WebUI direct connections)</span>
+          <i class="bi bi-chevron-down small"></i>
+        </div>
+        <div class="collapse" id="cors-settings-body">
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-12">
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="checkbox" name="CORS_ALL_ORIGINS" value="1"
+                         id="CORS_ALL_ORIGINS"
+                         {% if config.get('CORS_ALL_ORIGINS','0') == '1' %}checked{% endif %}
+                         onchange="document.getElementById('cors-origins-wrap').classList.toggle('d-none', this.checked)">
+                  <label class="form-check-label small" for="CORS_ALL_ORIGINS">
+                    Allow all origins (<code>*</code>) — for internal/test deployments only
+                  </label>
+                </div>
+              </div>
+              <div class="col-12 {% if config.get('CORS_ALL_ORIGINS','0') == '1' %}d-none{% endif %}"
+                   id="cors-origins-wrap">
+                <label class="form-label small" for="CORS_ORIGINS"
+                       title="One domain per line, e.g. https://chat.moe-sovereign.org">
+                  Allowed Origins (Whitelist)
+                  <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i>
+                </label>
+                <textarea id="CORS_ORIGINS" name="CORS_ORIGINS"
+                          class="form-control form-control-sm font-monospace" rows="4"
+                          placeholder="https://chat.moe-sovereign.org&#10;https://other-domain.example.com">{{ config.get('CORS_ORIGINS','').replace(',','\n') }}</textarea>
+                <div class="form-text">One domain per line. Empty = no CORS (direct connections disabled).</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Advanced pipeline settings ── #}
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header bg-secondary bg-opacity-10 text-secondary d-flex align-items-center justify-content-between"
+             style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#advanced-settings-body">
+          <span><i class="bi bi-sliders2 section-icon"></i>Advanced Pipeline Settings</span>
+          <i class="bi bi-chevron-down small"></i>
+        </div>
+        <div class="collapse" id="advanced-settings-body">
+          <div class="card-body">
+            <div class="row g-3">
+              {# Cache #}
+              <div class="col-12"><h6 class="text-muted fw-semibold small text-uppercase mb-0">Cache</h6><hr class="mt-1 mb-2"></div>
+              {% for key, label, default, tip in [
+                ('CACHE_HIT_THRESHOLD',    'Cache Hit Threshold (Cosine)', '0.15', 'Distance below which a cache hit is counted (0.0–1.0)'),
+                ('SOFT_CACHE_THRESHOLD',   'Soft Cache Max Distance',      '0.50', 'Use as few-shot example up to this distance'),
+                ('SOFT_CACHE_MAX_EXAMPLES','Soft Cache Max Examples',      '2',    'Maximum number of similar responses as context'),
+                ('CACHE_MIN_RESPONSE_LEN', 'Min. Response Length for Cache','150', 'Responses shorter than this value are not cached'),
+              ] %}
+              <div class="col-md-3">
+                <label class="form-label" for="{{ key }}" title="{{ tip }}">{{ label }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></label>
+                <input type="text" id="{{ key }}" name="{{ key }}" class="form-control form-control-sm font-monospace"
+                       value="{{ config.get(key, default) }}">
+              </div>
+              {% endfor %}
+              {# Expert Routing #}
+              <div class="col-12"><h6 class="text-muted fw-semibold small text-uppercase mb-0 mt-2">Expert-Routing</h6><hr class="mt-1 mb-2"></div>
+              {% for key, label, default, tip in [
+                ('EXPERT_TIER_BOUNDARY_B', 'T1/T2 Boundary (B Params.)', '20',   'Models ≤ this size = T1 (fast)'),
+                ('EXPERT_MIN_SCORE',       'Min. Score for Tier',        '0.3',  'Expert below this score is not selected'),
+                ('EXPERT_MIN_DATAPOINTS',  'Min. Datapoints (Score)',    '5',    'Below this count → neutral score 0.5'),
+                ('HISTORY_MAX_TURNS',      'Max. Conversation Turns',    '4',    'Conversation context: number of turns'),
+                ('HISTORY_MAX_CHARS',      'Max. History Characters',    '3000', 'Conversation context: character limit'),
+                ('PLANNER_MAX_TASKS',      'Max. Planner Tasks',         '4',    'Maximum parallel tasks per request'),
+              ] %}
+              <div class="col-md-2">
+                <label class="form-label" for="{{ key }}" title="{{ tip }}">{{ label }}</label>
+                <input type="number" id="{{ key }}" name="{{ key }}" class="form-control form-control-sm"
+                       value="{{ config.get(key, default) }}" min="0">
+              </div>
+              {% endfor %}
+              {# Timeouts #}
+              <div class="col-12"><h6 class="text-muted fw-semibold small text-uppercase mb-0 mt-2">Timeouts &amp; Token-Limits</h6><hr class="mt-1 mb-2"></div>
+              {% for key, label, default in [
+                ('JUDGE_TIMEOUT',        'Judge Timeout (s)',           '900'),
+                ('EXPERT_TIMEOUT',       'Expert Timeout (s)',          '900'),
+                ('PLANNER_TIMEOUT',      'Planner Timeout (s)',         '300'),
+                ('PLANNER_RETRIES',      'Planner Retries',             '2'),
+                ('TOOL_MAX_TOKENS',      'Tool max_tokens',             '8192'),
+                ('REASONING_MAX_TOKENS', 'Reasoning max_tokens',        '16384'),
+                ('MAX_EXPERT_OUTPUT_CHARS','Max. Expert Output (chars)', '2400'),
+                ('SSE_CHUNK_SIZE',       'SSE Chunk Size (chars)',       '50'),
+              ] %}
+              <div class="col-md-3">
+                <label class="form-label" for="{{ key }}">{{ label }}</label>
+                <input type="number" id="{{ key }}" name="{{ key }}" class="form-control form-control-sm"
+                       value="{{ config.get(key, default) }}" min="1">
+              </div>
+              {% endfor %}
+              {# Judge Refinement #}
+              <div class="col-12"><h6 class="text-muted fw-semibold small text-uppercase mb-0 mt-2">Judge Refinement Loop</h6><hr class="mt-1 mb-2"></div>
+              <div class="col-md-3">
+                <label class="form-label" for="JUDGE_REFINE_MAX_ROUNDS" title="Max. refinement rounds when experts answer with low confidence. 0 = disabled.">Refinement Max. Rounds <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></label>
+                <input type="number" id="JUDGE_REFINE_MAX_ROUNDS" name="JUDGE_REFINE_MAX_ROUNDS" class="form-control form-control-sm"
+                       value="{{ config.get('JUDGE_REFINE_MAX_ROUNDS', '2') }}" min="0" max="5">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" for="JUDGE_REFINE_MIN_IMPROVEMENT" title="Minimum text change rate (0–1) for a refinement round to count as an improvement. Recommended: 0.15">Min. Improvement Rate <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></label>
+                <input type="number" id="JUDGE_REFINE_MIN_IMPROVEMENT" name="JUDGE_REFINE_MIN_IMPROVEMENT" class="form-control form-control-sm"
+                       value="{{ config.get('JUDGE_REFINE_MIN_IMPROVEMENT', '0.15') }}" min="0" max="1" step="0.05">
+              </div>
+              {# Feedback #}
+              <div class="col-12"><h6 class="text-muted fw-semibold small text-uppercase mb-0 mt-2">Feedback &amp; Selbstbewertung</h6><hr class="mt-1 mb-2"></div>
+              {% for key, label, default, tip in [
+                ('EVAL_CACHE_FLAG_THRESHOLD',   'Cache Flag Threshold (Self-Eval ≤)', '2', 'Self-evaluations ≤ this value flag the cache entry'),
+                ('FEEDBACK_POSITIVE_THRESHOLD', 'Positive Feedback Threshold (≥)',    '4', 'User rating ≥ this value = positive signal'),
+                ('FEEDBACK_NEGATIVE_THRESHOLD', 'Negative Feedback Threshold (≤)',    '2', 'User rating ≤ this value = negative signal'),
+              ] %}
+              <div class="col-md-4">
+                <label class="form-label" for="{{ key }}" title="{{ tip }}">{{ label }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></label>
+                <input type="number" id="{{ key }}" name="{{ key }}" class="form-control form-control-sm"
+                       value="{{ config.get(key, default) }}" min="1" max="5">
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>{# end row #}
+
+  {# ── Save ── #}
+  <div class="d-flex justify-content-end mt-4 gap-2">
+    <a href="/" class="btn btn-secondary">
+      <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+    </a>
+    <button type="submit" class="btn btn-primary px-4" id="save-btn">
+      <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save') }}
+    </button>
+  </div>
+
+</form>
+
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ─── SMTP test ────────────────────────────────────────────────────────────────
+async function smtpTest() {
+  const btn = document.querySelector('[onclick="smtpTest()"]');
+  const res = document.getElementById('smtpTestResult');
+  const emailInput = document.getElementById('smtpTestEmail');
+  const to = emailInput.value.trim();
+  if (!to) { emailInput.focus(); return; }
+  btn.disabled = true;
+  res.textContent = '…';
+  res.className = 'small text-muted';
+  try {
+    const r = await fetch('/admin/test-smtp', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({to})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      res.textContent = '{{ t(request, "msg.smtp_test_ok") }}'.replace('{to}', d.to);
+      res.className = 'small text-success';
+    } else {
+      res.textContent = '{{ t(request, "msg.smtp_test_fail") }}'.replace('{error}', d.error);
+      res.className = 'small text-danger';
+    }
+  } catch(e) {
+    res.textContent = String(e);
+    res.className = 'small text-danger';
+  } finally { btn.disabled = false; }
+}
+
+// ─── Server names (from Jinja2, for dynamic endpoint dropdowns) ──────────────
+const SERVER_NAMES = {{ server_names | tojson }};
+
+function populateEndpointSelects() {
+  document.querySelectorAll('select.endpoint-select').forEach(sel => {
+    if (!sel.id && sel.name) sel.id = sel.name; // ensure id for convertSelectToDropdown
+    if (sel.options.length > 0) {
+      if (!sel._ddConverted) convertSelectToDropdown(sel.id);
+      return;
+    }
+    const selected = sel.dataset.selected || '';
+    (SERVER_NAMES.length ? SERVER_NAMES : ['RTX','TESLA']).forEach(n => {
+      sel.add(new Option(n, n, false, n === selected));
+    });
+    if (sel.id) convertSelectToDropdown(sel.id);
+  });
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+                    .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Inference-Server Editor ─────────────────────────────────────────────────
+
+function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeout, costFactor, enabled) {
+  const apiOpts = ['ollama','openai'].map(t =>
+    `<option value="${t}" ${t===(apiType||'ollama')?'selected':''}>${t==='openai'?'OpenAI':'Ollama'}</option>`
+  ).join('');
+  const checkedAttr = (enabled !== false) ? 'checked' : '';
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td><input type="text" name="srv_name_${idx}" value="${escHtml(name)}"
+               class="form-control form-control-sm font-monospace" placeholder="RTX"></td>
+     <td><input type="url"  name="srv_url_${idx}"  value="${escHtml(url)}"
+               class="form-control form-control-sm font-monospace" placeholder="http://....:11434/v1"></td>
+     <td><input type="number" name="srv_gpu_count_${idx}" value="${gpuCount||1}"
+               class="form-control form-control-sm" min="0" max="64"></td>
+     <td><input type="number" name="srv_vram_gb_${idx}" value="${vramGb||''}"
+               class="form-control form-control-sm" min="0" max="1000" step="1" placeholder="auto"></td>
+     <td><input type="number" name="srv_cost_factor_${idx}" value="${costFactor||1.0}"
+               class="form-control form-control-sm" min="0.1" max="100" step="0.1"></td>
+     <td><input type="number" name="srv_timeout_${idx}" value="${timeout||''}"
+               class="form-control form-control-sm" min="1" placeholder="global"></td>
+     <td><select name="srv_api_type_${idx}" class="form-select form-select-sm">${apiOpts}</select></td>
+     <td><input type="password" name="srv_token_${idx}"
+               class="form-control form-control-sm font-monospace"
+               placeholder="${(token && token !== 'ollama') ? '••••••••' : 'ollama'}"
+               autocomplete="new-password"></td>
+     <td class="text-center align-middle">
+       <input type="checkbox" name="srv_enabled_${idx}" value="1" class="form-check-input" ${checkedAttr}>
+     </td>
+     <td><span class="badge bg-secondary srv-status-badge" style="font-size:.75rem">–</span></td>
+     <td><button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
+                 onclick="removeServerRow(this)"><i class="bi bi-x"></i></button></td>`;
+  return tr;
+}
+
+function addServerRow() {
+  const tbody = document.getElementById('server-tbody');
+  tbody.appendChild(buildServerRow(tbody.rows.length, '', '', 1, '', 'ollama', 'ollama', '', 1.0));
+  reindexServerRows();
+}
+
+function removeServerRow(btn) {
+  btn.closest('tr').remove();
+  reindexServerRows();
+}
+
+function reindexServerRows() {
+  const tbody = document.getElementById('server-tbody');
+  Array.from(tbody.rows).forEach((row, i) => {
+    const inputs  = row.querySelectorAll('input');
+    const selects = row.querySelectorAll('select');
+    if (inputs[0]) inputs[0].name = `srv_name_${i}`;
+    if (inputs[1]) inputs[1].name = `srv_url_${i}`;
+    if (inputs[2]) inputs[2].name = `srv_gpu_count_${i}`;
+    if (inputs[3]) inputs[3].name = `srv_vram_gb_${i}`;
+    if (inputs[4]) inputs[4].name = `srv_cost_factor_${i}`;
+    if (inputs[5]) inputs[5].name = `srv_timeout_${i}`;
+    if (inputs[6]) inputs[6].name = `srv_token_${i}`;
+    if (inputs[7]) inputs[7].name = `srv_enabled_${i}`;
+    if (selects[0]) selects[0].name = `srv_api_type_${i}`;
+  });
+}
+
+async function testAllServers() {
+  const tbody  = document.getElementById('server-tbody');
+  const badges = tbody.querySelectorAll('.srv-status-badge');
+  badges.forEach(b => { b.className = 'badge bg-secondary srv-status-badge'; b.textContent = '...'; });
+  try {
+    const data = await fetch('/api/servers/health').then(r => r.json());
+    data.forEach(srv => {
+      Array.from(tbody.rows).forEach(row => {
+        const nameInput = row.querySelector('input[name^="srv_name_"]');
+        if (!nameInput || nameInput.value !== srv.name) return;
+        const badge = row.querySelector('.srv-status-badge');
+        if (!badge) return;
+        if (srv.ok) {
+          badge.className   = 'badge bg-success srv-status-badge';
+          badge.textContent = `${srv.latency_ms} ms · ${srv.models_count} Modelle`;
+        } else {
+          badge.className   = 'badge bg-danger srv-status-badge';
+          badge.textContent = 'Fehler';
+        }
+      });
+    });
+  } catch {
+    badges.forEach(b => { b.className = 'badge bg-warning srv-status-badge'; b.textContent = '?'; });
+  }
+}
+
+// ─── Dienste-Status Polling ──────────────────────────────────────────────────
+
+function updateStatus() {
+  fetch('/api/status')
+    .then(r => r.json())
+    .then(data => {
+      Object.entries(data).forEach(([name, info]) => {
+        if (name === 'provider_limits') return;
+        const el = document.getElementById('status-' + name);
+        if (!el) return;
+        el.className = 'badge status-badge ' + (info.running ? 'bg-success' : 'bg-danger');
+        el.textContent = info.running ? 'running' : info.status;
+        const meta = document.getElementById('meta-' + name);
+        if (meta) {
+          if (info.running && info.uptime) {
+            const upEl = document.getElementById('uptime-' + name);
+            const cpuEl = document.getElementById('cpu-' + name);
+            const memEl = document.getElementById('mem-' + name);
+            if (upEl) upEl.textContent = info.uptime;
+            if (cpuEl) cpuEl.textContent = info.cpu_pct ?? '—';
+            if (memEl) memEl.textContent = info.mem ?? '—';
+            meta.style.display = '';
+          } else {
+            meta.style.display = 'none';
+          }
+        }
+      });
+      const ts = document.getElementById('status-last-update');
+      if (ts) ts.textContent = "{{ t(request, 'lbl.last_update') }} " + new Date().toLocaleTimeString('{{ "de-DE" if get_lang(request) == "de_DE" else "en-US" }}');
+    })
+    .catch(() => {});
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  populateEndpointSelects();
+  convertSelectToDropdown('CLAUDE_CODE_MODE');
+  convertSelectToDropdown('LOG_LEVEL');
+  convertSelectToDropdown('cc-profile-select');
+  updateStatus();
+  setInterval(updateStatus, 15000);
+  // Dropdown-Checkbox label updater (delegated, works for static + dynamic rows)
+  document.addEventListener('change', e => {
+    if (!e.target.classList.contains('ep-cb')) return;
+    const lblId = e.target.dataset.lbl;
+    if (!lblId) return;
+    const lbl = document.getElementById(lblId);
+    if (!lbl) return;
+    const dropdown = e.target.closest('.dropdown');
+    if (!dropdown) return;
+    const cnt = dropdown.querySelectorAll('.ep-cb:checked').length;
+    lbl.textContent = cnt + ' Server';
+  });
+});
+
+// ─── Claude Code Reasoning-Row Sichtbarkeit ─────────────────────────────────
+
+(function () {
+  var modeSelect    = document.getElementById('CLAUDE_CODE_MODE');
+  var reasoningRow  = document.getElementById('reasoning-model-row');
+  var fallbackPanel = document.getElementById('cc-fallback-settings');
+  if (!modeSelect || !reasoningRow) return;
+  function updateReasoningRow() {
+    reasoningRow.style.display = modeSelect.value === 'moe_reasoning' ? '' : 'none';
+  }
+  modeSelect.addEventListener('change', updateReasoningRow);
+  // Re-check whenever the collapse opens
+  if (fallbackPanel) {
+    fallbackPanel.addEventListener('shown.bs.collapse', updateReasoningRow);
+  }
+  updateReasoningRow();
+})();
+
+// ─── Chevron icon for fallback collapse ──────────────────────────────────────
+
+(function () {
+  var panel = document.getElementById('cc-fallback-settings');
+  if (!panel) return;
+  panel.addEventListener('show.bs.collapse', function () {
+    document.querySelectorAll('.cc-chevron').forEach(el => {
+      el.classList.replace('bi-chevron-right', 'bi-chevron-down');
+    });
+  });
+  panel.addEventListener('hide.bs.collapse', function () {
+    document.querySelectorAll('.cc-chevron').forEach(el => {
+      el.classList.replace('bi-chevron-down', 'bi-chevron-right');
+    });
+  });
+})();
+
+document.getElementById('config-form').addEventListener('submit', () => {
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+});
+</script>
+{% endblock %}

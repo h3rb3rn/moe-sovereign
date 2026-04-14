@@ -1,0 +1,176 @@
+{
+  "uid": "moe-toolcalls",
+  "title": "MoE Tool Calls & Latency",
+  "description": "Tool-Call-Erfolgsrate, Format-Fehler, Timeouts und LLM-Latenz nach Node",
+  "tags": ["moe", "toolcalls", "latency"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "rate_interval",
+        "type": "custom",
+        "label": "Rate Interval",
+        "query": "1m,5m,10m,30m",
+        "current": { "text": "5m", "value": "5m" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Tool Calls gesamt",
+      "description": "Erfolgreiche + Timeouts + Format-Fehler",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "sum(moe_tool_call_success_total) + sum(moe_tool_call_timeout_total) + sum(moe_tool_call_format_errors_total)", "legendFormat": "Gesamt", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Erfolgsrate",
+      "description": "Anteil erfolgreicher Tool-Calls (JSON tool_use Format erkannt)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "red" }, { "value": 80, "color": "orange" }, { "value": 95, "color": "green" }] }
+        }
+      },
+      "targets": [{ "expr": "sum(moe_tool_call_success_total) / (sum(moe_tool_call_success_total) + sum(moe_tool_call_timeout_total) + sum(moe_tool_call_format_errors_total) + 0.0001) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Timeout-Rate",
+      "description": "Anteil der Tool-Calls die den Node-Timeout überschritten haben",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 5, "color": "orange" }, { "value": 20, "color": "red" }] }
+        }
+      },
+      "targets": [{ "expr": "sum(moe_tool_call_timeout_total) / (sum(moe_tool_call_success_total) + sum(moe_tool_call_timeout_total) + sum(moe_tool_call_format_errors_total) + 0.0001) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Format-Fehler gesamt",
+      "description": "Tool-Calls mit falschem Antwort-Format (z.B. Qwen-Raw-Tags statt JSON)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 1, "color": "orange" }, { "value": 10, "color": "red" }] }
+        }
+      },
+      "targets": [{ "expr": "sum(moe_tool_call_format_errors_total)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "LLM Call Latenz P50 / P95 / P99 nach Node",
+      "description": "Antwortzeiten des Inference-Servers pro Node — hilft langsame Server (z.B. N06-M10 Tesla M10) zu identifizieren",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "lineWidth": 2 },
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 30, "color": "orange" }, { "value": 120, "color": "red" }] }
+        }
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (node, le) (rate(moe_tool_call_duration_seconds_bucket{phase=\"llm_call\"}[$rate_interval])))", "legendFormat": "P50 {{node}}", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (node, le) (rate(moe_tool_call_duration_seconds_bucket{phase=\"llm_call\"}[$rate_interval])))", "legendFormat": "P95 {{node}}", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (node, le) (rate(moe_tool_call_duration_seconds_bucket{phase=\"llm_call\"}[$rate_interval])))", "legendFormat": "P99 {{node}}", "refId": "C" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Ø LLM-Latenz nach Node",
+      "description": "Durchschnittliche LLM-Call-Dauer pro Inference-Node (inkl. Modell-Loading)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "palette-classic" } } },
+      "targets": [
+        { "expr": "sum by (node) (rate(moe_tool_call_duration_seconds_sum{phase=\"llm_call\"}[$rate_interval])) / sum by (node) (rate(moe_tool_call_duration_seconds_count{phase=\"llm_call\"}[$rate_interval]))", "legendFormat": "{{node}}", "refId": "A", "instant": true }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Timeouts nach Node",
+      "description": "Timeout-Ereignisse pro Node über Zeit — häufen sich Timeouts auf N06-M10?",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 7 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20 },
+          "color": { "mode": "palette-classic" },
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 0.01, "color": "red" }] }
+        }
+      },
+      "targets": [
+        { "expr": "sum by (node) (rate(moe_tool_call_timeout_total[$rate_interval]))", "legendFormat": "Timeouts {{node}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "Format-Fehler nach Typ",
+      "description": "qwen_raw = Modell gibt eigenes XML-Format aus (Tools nicht übergeben), empty = leere Antwort",
+      "gridPos": { "x": 12, "y": 12, "w": 6, "h": 7 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "pieType": "pie", "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } },
+      "targets": [
+        { "expr": "sum by (format) (moe_tool_call_format_errors_total)", "legendFormat": "{{format}}", "refId": "A", "instant": true }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "barchart",
+      "title": "Erfolg vs. Fehler nach Node",
+      "description": "Stacked: Erfolgreiche / Timeout / Format-Fehler je Node",
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 7 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "stacking": "normal", "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } },
+      "targets": [
+        { "expr": "sum by (node) (moe_tool_call_success_total)",      "legendFormat": "Erfolg {{node}}",       "refId": "A", "instant": true },
+        { "expr": "sum by (node) (moe_tool_call_timeout_total)",      "legendFormat": "Timeout {{node}}",      "refId": "B", "instant": true },
+        { "expr": "sum by (node) (moe_tool_call_format_errors_total)", "legendFormat": "Format-Fehler {{node}}","refId": "C", "instant": true }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Erfolgreiche Tool Calls nach Node",
+      "description": "Rate erfolgreicher Tool-Calls (json_tool_use Format) pro Node",
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 6 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "sum"] } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 }, "color": { "mode": "palette-classic" } } },
+      "targets": [
+        { "expr": "sum by (node) (rate(moe_tool_call_success_total[$rate_interval]))", "legendFormat": "{{node}}", "refId": "A" }
+      ]
+    }
+  ]
+}

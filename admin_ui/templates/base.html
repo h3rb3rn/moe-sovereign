@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="{{ get_lang(request)[:2] }}" data-bs-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MoE Admin{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/css/bootstrap-icons.min.css">
+  <script>
+    /* Apply saved theme before first paint to avoid flash */
+    (function(){
+      const t = localStorage.getItem('moe-theme') || 'light';
+      document.documentElement.setAttribute('data-bs-theme', t);
+    })();
+  </script>
+  <style>
+    body { background-color: var(--bs-body-bg); }
+    .navbar-brand span { color: #6ea8fe; font-weight: 700; }
+    .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: 10px; }
+    .card-header { border-radius: 10px 10px 0 0 !important; font-weight: 600; font-size: .9rem; letter-spacing: .03em; }
+    .section-icon { font-size: 1.1rem; margin-right: 6px; }
+    .status-badge { font-size: .78rem; padding: .35em .7em; }
+    .expert-table td { vertical-align: middle; padding: .3rem .5rem; }
+    .expert-table th { font-size: .82rem; color: #6c757d; font-weight: 600; padding: .4rem .5rem; }
+    .btn-add-model { font-size: .82rem; }
+    .form-label { font-size: .88rem; font-weight: 500; color: #495057; }
+    .form-control, .form-select { font-size: .9rem; }
+    .flash-bar { border-radius: 0; position: sticky; top: 56px; z-index: 999; }
+    footer { font-size: .78rem; color: #adb5bd; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-3 sticky-top">
+  <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+    <i class="bi bi-diagram-3-fill" style="color:#6ea8fe;font-size:1.3rem"></i>
+    <span>MoE</span><span class="text-white fw-normal ms-1">Admin</span>
+  </a>
+  <div class="d-flex align-items-center gap-3">
+    {% if request.session.get("authenticated") %}
+    <a href="/" class="btn btn-sm btn-outline-light {% if request.url.path == '/' %}active{% endif %}">
+      <i class="bi bi-sliders me-1"></i>{{ t(request, 'nav.config') }}
+    </a>
+    <a href="/monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/monitoring' %}active{% endif %}">
+      <i class="bi bi-graph-up me-1"></i>{{ t(request, 'nav.monitoring') }}
+    </a>
+    <a href="/live-monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/live-monitoring' %}active{% endif %}">
+      <i class="bi bi-activity me-1"></i>{{ t(request, 'nav.live') }}
+    </a>
+    <a href="/servers" class="btn btn-sm btn-outline-light {% if request.url.path == '/servers' %}active{% endif %}">
+      <i class="bi bi-hdd-stack me-1"></i>{{ t(request, 'nav.server') }}
+    </a>
+    <a href="/profiles" class="btn btn-sm btn-outline-light {% if request.url.path == '/profiles' %}active{% endif %}">
+      <i class="bi bi-person-badge me-1"></i>{{ t(request, 'nav.cc_profiles') }}{% if enabled_profiles_count is defined and enabled_profiles_count %} <span class="badge bg-success ms-1" style="font-size:.65rem">{{ enabled_profiles_count }}</span>{% endif %}
+    </a>
+    <a href="/skills" class="btn btn-sm btn-outline-light {% if request.url.path == '/skills' %}active{% endif %}">
+      <i class="bi bi-terminal me-1"></i>{{ t(request, 'nav.skills') }}
+    </a>
+    <a href="/mcp-tools" class="btn btn-sm btn-outline-light {% if request.url.path == '/mcp-tools' %}active{% endif %}">
+      <i class="bi bi-tools me-1"></i>{{ t(request, 'nav.mcp_tools') }}
+    </a>
+    <a href="/tool-eval" class="btn btn-sm btn-outline-light {% if request.url.path == '/tool-eval' %}active{% endif %}">
+      <i class="bi bi-clipboard-data me-1"></i>{{ t(request, 'nav.tool_eval') }}
+    </a>
+    <a href="/knowledge" class="btn btn-sm btn-outline-light {% if request.url.path == '/knowledge' %}active{% endif %}">
+      <i class="bi bi-database-gear me-1"></i>Knowledge
+    </a>
+    <a href="/federation" class="btn btn-sm btn-outline-light {% if request.url.path == '/federation' %}active{% endif %}">
+      <i class="bi bi-globe2 me-1"></i>Federation
+    </a>
+    <a href="/quarantine" class="btn btn-sm btn-outline-light {% if request.url.path == '/quarantine' %}active{% endif %}">
+      <i class="bi bi-shield-exclamation me-1"></i>{{ t(request, 'nav.quarantine') }}
+    </a>
+    <a href="/templates" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/templates') %}active{% endif %}">
+      <i class="bi bi-collection me-1"></i>{{ t(request, 'nav.templates') }}
+    </a>
+    <a href="/users" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/users') %}active{% endif %}">
+      <i class="bi bi-people me-1"></i>{{ t(request, 'nav.users') }}
+    </a>
+    <a href="/user-content" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/user-content') %}active{% endif %}">
+      <i class="bi bi-person-lines-fill me-1"></i>{{ t(request, 'nav.user_content') }}
+    </a>
+    <span class="text-secondary small"><i class="bi bi-person-circle me-1"></i>{{ request.session.get("user","admin") }}</span>
+    <a href="/logout" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-box-arrow-right me-1"></i>{{ t(request, 'nav.logout') }}
+    </a>
+    {# ── Dark / Light Mode Toggle ── #}
+    <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
+            onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
+      <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+    </button>
+    {# ── Language Switcher ── #}
+    {% set cur_lang = get_lang(request) %}
+    <form method="POST" action="/set-language" id="admin-lang-form" class="d-flex align-items-center ms-1">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <select name="lang" class="form-select form-select-sm text-white bg-dark border-secondary"
+              style="width:auto;font-size:.8rem"
+              onchange="document.getElementById('admin-lang-form').submit()">
+        <option value="de_DE" {% if cur_lang == 'de_DE' %}selected{% endif %}>🇩🇪 DE</option>
+        <option value="en_EN" {% if cur_lang == 'en_EN' %}selected{% endif %}>🇬🇧 EN</option>
+        <option value="fr_FR" {% if cur_lang == 'fr_FR' %}selected{% endif %}>🇫🇷 FR</option>
+        <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳 ZH</option>
+      </select>
+    </form>
+    {% endif %}
+  </div>
+</nav>
+
+{% block flash %}{% endblock %}
+
+<main class="container py-4">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="text-center py-3 mt-2">
+  {{ t(request, 'footer.text') }}
+</footer>
+
+<script src="/static/js/bootstrap.bundle.min.js"></script>
+<script>
+const CSRF_TOKEN = "{{ csrf_token }}";
+/* ─── CSRF: inject X-CSRF-Token into all mutating fetch() calls ─────────── */
+(function(){
+  const _origFetch = window.fetch;
+  const MUTATING = new Set(['POST','PUT','DELETE','PATCH']);
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    const method = (opts.method || 'GET').toUpperCase();
+    if (MUTATING.has(method)) {
+      opts.headers = Object.assign({'X-CSRF-Token': CSRF_TOKEN}, opts.headers || {});
+    }
+    return _origFetch.call(this, url, opts);
+  };
+})();
+</script>
+<script>
+/* ─── i18n strings for JS ───────────────────────────────────────────────── */
+window.MoeI18n = {
+  select_placeholder: "{{ t(request, 'js.select_placeholder') }}",
+  search_placeholder: "{{ t(request, 'js.search_placeholder') }}",
+  no_options:         "{{ t(request, 'js.no_options') }}"
+};
+
+/* ─── Shared Single-Select Dropdown Utility ─────────────────────────────── */
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+/**
+ * Builds a checkbox-style single-select dropdown inside the element with wrapperId.
+ * Stores the selected value in a hidden input #wrapperId_val.
+ * items: [{value, label}] or [string]
+ */
+function buildSingleDropdown(wrapperId, items, currentVal, onChange) {
+  const wrap = document.getElementById(wrapperId);
+  if (!wrap) return;
+  const norm  = items.map(o => typeof o === 'string' ? {value:o,label:o} : o);
+  const cur   = norm.find(o => o.value === currentVal);
+  const valId = wrapperId + '_val', lblId = wrapperId + '_lbl';
+  const filtId = wrapperId + '_filter';
+  const opts  = norm.map(o => {
+    const on = o.value === currentVal;
+    return `<li class="dd-opt-li"><a class="dropdown-item d-flex align-items-center gap-2 py-1 small${on?' active':''}" href="#"
+      data-val="${escHtml(o.value)}" data-lbl="${escHtml(o.label)}">
+      <i class="bi bi-check2 flex-shrink-0${on?'':' invisible'}"></i><span>${escHtml(o.label)}</span>
+    </a></li>`;
+  }).join('');
+  wrap.innerHTML = `
+    <input type="hidden" id="${valId}" value="${escHtml(currentVal||'')}">
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start" type="button"
+              data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <span id="${lblId}">${escHtml(cur ? cur.label : (currentVal||window.MoeI18n.select_placeholder))}</span>
+      </button>
+      <ul class="dropdown-menu p-1" style="max-height:320px;overflow-y:auto;min-width:100%">
+        <li class="px-2 pt-1 pb-1 sticky-top bg-white">
+          <input id="${filtId}" type="text" class="form-control form-control-sm" placeholder="${window.MoeI18n.search_placeholder}"
+                 autocomplete="off" oninput="_ddFilter(this,'${wrapperId}')">
+        </li>
+        <li><hr class="dropdown-divider mt-0 mb-1"></li>
+        ${opts||`<li><span class="dropdown-item text-muted small">${window.MoeI18n.no_options}</span></li>`}
+      </ul>
+    </div>`;
+  // Prevent dropdown close when clicking inside (filter input or items)
+  wrap.querySelector('.dropdown-menu')?.addEventListener('click', e => e.stopPropagation());
+  wrap.querySelector(`#${filtId}`)?.addEventListener('keydown', e => e.stopPropagation());
+  wrap.querySelectorAll('[data-val]').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault();
+    const val=a.dataset.val, lbl=a.dataset.lbl;
+    document.getElementById(valId).value = val;
+    document.getElementById(lblId).textContent = lbl;
+    wrap.querySelectorAll('[data-val]').forEach(x => {
+      const t = x.dataset.val === val;
+      x.classList.toggle('active', t);
+      x.querySelector('.bi-check2')?.classList.toggle('invisible', !t);
+    });
+    // Close dropdown after selection
+    const btn = wrap.querySelector('[data-bs-toggle="dropdown"]');
+    bootstrap.Dropdown.getInstance(btn)?.hide();
+    if (onChange) onChange(val);
+  }));
+}
+function _ddFilter(input, wrapperId) {
+  const term = input.value.toLowerCase();
+  document.getElementById(wrapperId)?.querySelectorAll('.dd-opt-li').forEach(li => {
+    const a = li.querySelector('[data-val]');
+    if (!a) return;
+    const match = a.dataset.val.toLowerCase().includes(term) || a.dataset.lbl.toLowerCase().includes(term);
+    li.style.display = match ? '' : 'none';
+  });
+}
+
+/** Read current value from a dropdown built with buildSingleDropdown */
+function getDdValue(wrapperId) {
+  return document.getElementById(wrapperId+'_val')?.value ?? '';
+}
+
+/**
+ * Wraps a native <select id="selectId"> with a custom dropdown.
+ * The native select is hidden but stays in the DOM for form submission.
+ * Call syncDropdown(selectId) if you programmatically change select.value externally.
+ */
+function convertSelectToDropdown(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel || sel._ddConverted) return;
+  sel._ddConverted = true;
+  const wrapperId = selectId + '_dd';
+  sel._ddWrapperId = wrapperId;
+  sel.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none';
+  const wrap = document.createElement('div');
+  wrap.id = wrapperId;
+  sel.parentNode.insertBefore(wrap, sel.nextSibling);
+  const items = [...sel.options].map(o => ({value:o.value, label:o.text.trim()}));
+  buildSingleDropdown(wrapperId, items, sel.value, val => {
+    sel.value = val;
+    sel.dispatchEvent(new Event('change', {bubbles:true}));
+  });
+}
+
+/** Re-sync a converted dropdown's UI when native select.value was changed externally */
+function syncDropdown(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel || !sel._ddWrapperId) return;
+  const w=sel._ddWrapperId, val=sel.value;
+  const valEl=document.getElementById(w+'_val'), lblEl=document.getElementById(w+'_lbl');
+  if (valEl) valEl.value = val;
+  if (lblEl) { const o=[...sel.options].find(o=>o.value===val); if(o) lblEl.textContent=o.text.trim(); }
+  const wrap=document.getElementById(w);
+  if (wrap) wrap.querySelectorAll('[data-val]').forEach(a => {
+    const t=a.dataset.val===val;
+    a.classList.toggle('active',t);
+    a.querySelector('.bi-check2')?.classList.toggle('invisible',!t);
+  });
+}
+</script>
+<script>
+/* ─── Dark / Light theme toggle ─────────────────────────────────────────── */
+function _applyTheme(theme) {
+  document.documentElement.setAttribute('data-bs-theme', theme);
+  localStorage.setItem('moe-theme', theme);
+  const icon = document.getElementById('themeIcon');
+  if (icon) icon.className = theme === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-bs-theme') || 'light';
+  _applyTheme(cur === 'dark' ? 'light' : 'dark');
+}
+/* Sync icon after page load */
+document.addEventListener('DOMContentLoaded', function() {
+  const cur = localStorage.getItem('moe-theme') || 'light';
+  _applyTheme(cur);
+});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

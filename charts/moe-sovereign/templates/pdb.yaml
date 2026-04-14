@@ -1,0 +1,14 @@
+{{- if .Values.pdb.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "moe.fullname" . }}-orchestrator
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "moe.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+{{- end -}}

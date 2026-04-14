@@ -1,0 +1,27 @@
+# Team profile — full stack bundled via Bitnami subcharts.
+# Single `helm install` gives a homelab / KMU-grade deployment.
+
+profile: team
+
+orchestrator:
+  replicas: 2
+
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 20Gi
+
+kafka:
+  enabled: true
+  controller:
+    replicaCount: 3
+    persistence:
+      size: 20Gi
+
+valkey:
+  enabled: true
+  architecture: replication
+
+neo4j:
+  enabled: true

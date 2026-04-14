@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Federation – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-globe2 section-icon text-primary"></i> MoE Libris Federation</h5>
+    <small class="text-muted">Federated knowledge exchange with MoE Libris hubs. <em>Latin 'liber' = free &amp; book.</em></small>
+  </div>
+  <div>
+    <button class="btn btn-sm btn-outline-primary" onclick="testConnection()"><i class="bi bi-plug me-1"></i>Test Connection</button>
+    <button class="btn btn-sm btn-outline-success" onclick="triggerPull()"><i class="bi bi-cloud-download me-1"></i>Pull</button>
+    <button class="btn btn-sm btn-outline-warning" onclick="triggerPush()"><i class="bi bi-cloud-upload me-1"></i>Push</button>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- CONNECTION SETTINGS -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header bg-primary bg-opacity-10">
+        <h6 class="mb-0"><i class="bi bi-gear me-2"></i>Hub Connection</h6>
+      </div>
+      <div class="card-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="fedEnabled" {% if config.enabled %}checked{% endif %}>
+          <label class="form-check-label fw-bold" for="fedEnabled">Federation Enabled</label>
+        </div>
+
+        <div class="mb-2">
+          <label class="form-label small fw-bold">Node ID</label>
+          <input type="text" id="nodeId" class="form-control form-control-sm" value="{{ config.node_id }}" placeholder="my-sovereign-instance">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-bold">Node Name</label>
+          <input type="text" id="nodeName" class="form-control form-control-sm" value="{{ config.node_name }}" placeholder="My MoE Sovereign">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-bold">Hub URL</label>
+          <input type="url" id="hubUrl" class="form-control form-control-sm" value="{{ config.hub_url }}" placeholder="https://libris.example.org">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-bold">Hub API Key</label>
+          <div class="input-group input-group-sm">
+            <input type="password" id="hubApiKey" class="form-control form-control-sm" placeholder="{% if config.hub_api_key %}••••••••{% else %}lbk-...{% endif %}">
+            <button class="btn btn-outline-secondary" type="button" onclick="this.previousElementSibling.type = this.previousElementSibling.type === 'password' ? 'text' : 'password'"><i class="bi bi-eye"></i></button>
+          </div>
+          <small class="text-muted">Leave empty to keep existing key</small>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-bold">Sync Interval (seconds)</label>
+          <input type="number" id="syncInterval" class="form-control form-control-sm" value="{{ config.sync_interval_seconds }}" min="300" max="86400">
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="autoPush" {% if config.auto_push_enabled %}checked{% endif %}>
+          <label class="form-check-label" for="autoPush">Auto-push new knowledge (for 'auto' domains)</label>
+        </div>
+
+        <button class="btn btn-primary btn-sm" onclick="saveConfig()"><i class="bi bi-save me-1"></i>Save Configuration</button>
+
+        <div class="mt-3 small text-muted" id="syncStatus">
+          {% if config.last_push_at %}Last push: {{ config.last_push_at }}{% endif %}
+          {% if config.last_pull_at %}<br>Last pull: {{ config.last_pull_at }}{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOMAIN POLICIES -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header bg-success bg-opacity-10 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-funnel me-2"></i>Domain Policies</h6>
+        <button class="btn btn-sm btn-outline-success" onclick="addPolicy()"><i class="bi bi-plus"></i></button>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Domain</th>
+              <th style="width:110px">Mode</th>
+              <th style="width:80px">Min Conf.</th>
+              <th style="width:70px">Verified</th>
+              <th style="width:40px"></th>
+            </tr>
+          </thead>
+          <tbody id="policyTable">
+            {% for p in policies %}
+            <tr data-domain="{{ p.domain }}">
+              <td><code>{{ p.domain }}</code></td>
+              <td>
+                <select class="form-select form-select-sm policy-mode" onchange="updatePolicy('{{ p.domain }}')">
+                  <option value="auto" {% if p.mode == 'auto' %}selected{% endif %}>Auto</option>
+                  <option value="manual" {% if p.mode == 'manual' %}selected{% endif %}>Manual</option>
+                  <option value="blocked" {% if p.mode == 'blocked' %}selected{% endif %}>Blocked</option>
+                </select>
+              </td>
+              <td><input type="number" class="form-control form-control-sm policy-conf" value="{{ p.min_confidence }}" min="0" max="1" step="0.1" onchange="updatePolicy('{{ p.domain }}')"></td>
+              <td class="text-center"><input type="checkbox" class="form-check-input policy-verified" {% if p.only_verified %}checked{% endif %} onchange="updatePolicy('{{ p.domain }}')"></td>
+              <td><button class="btn btn-sm btn-outline-danger" onclick="deletePolicy('{{ p.domain }}')"><i class="bi bi-trash"></i></button></td>
+            </tr>
+            {% endfor %}
+            {% if not policies %}
+            <tr id="noPoliciesRow"><td colspan="5" class="text-muted text-center small py-3">No domain policies configured. Click + to add one.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer small text-muted">
+        <strong>Auto:</strong> Push automatically on sync &nbsp;|&nbsp;
+        <strong>Manual:</strong> Queue for admin review &nbsp;|&nbsp;
+        <strong>Blocked:</strong> Never share
+      </div>
+    </div>
+  </div>
+
+  <!-- OUTBOX -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-warning bg-opacity-10">
+        <h6 class="mb-0"><i class="bi bi-inbox me-2"></i>Outbox Queue</h6>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Domain</th>
+              <th>Triples</th>
+              <th>Entities</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th>Sent</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in outbox %}
+            <tr>
+              <td><code class="small">{{ entry.id[:8] }}</code></td>
+              <td><code>{{ entry.domain }}</code></td>
+              <td>{{ entry.triple_count }}</td>
+              <td>{{ entry.entity_count }}</td>
+              <td>
+                {% if entry.status == 'pending' %}<span class="badge bg-warning">pending</span>
+                {% elif entry.status == 'sent' %}<span class="badge bg-success">sent</span>
+                {% elif entry.status == 'failed' %}<span class="badge bg-danger">failed</span>
+                {% else %}<span class="badge bg-secondary">{{ entry.status }}</span>{% endif %}
+              </td>
+              <td class="small">{{ entry.created_at[:16] if entry.created_at else '' }}</td>
+              <td class="small">{{ entry.sent_at[:16] if entry.sent_at else '—' }}</td>
+              <td class="small text-danger">{{ entry.error[:50] if entry.error else '' }}</td>
+            </tr>
+            {% endfor %}
+            {% if not outbox %}
+            <tr><td colspan="8" class="text-muted text-center small py-3">No outbox entries.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = '{{ csrf_token }}';
+
+function flash(msg, type='success') {
+  const c = document.getElementById('flash-container');
+  c.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${msg}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+}
+
+async function saveConfig() {
+  const body = {
+    enabled: document.getElementById('fedEnabled').checked,
+    node_id: document.getElementById('nodeId').value.trim(),
+    node_name: document.getElementById('nodeName').value.trim(),
+    hub_url: document.getElementById('hubUrl').value.trim(),
+    hub_api_key: document.getElementById('hubApiKey').value.trim(),
+    sync_interval_seconds: parseInt(document.getElementById('syncInterval').value) || 3600,
+    auto_push_enabled: document.getElementById('autoPush').checked,
+  };
+  const r = await fetch('/api/federation/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const d = await r.json();
+  if (d.ok) flash('Configuration saved.');
+  else flash(d.error || 'Save failed', 'danger');
+}
+
+async function updatePolicy(domain) {
+  const row = document.querySelector(`tr[data-domain="${domain}"]`);
+  if (!row) return;
+  const body = {
+    domain,
+    mode: row.querySelector('.policy-mode').value,
+    min_confidence: parseFloat(row.querySelector('.policy-conf').value) || 0.7,
+    only_verified: row.querySelector('.policy-verified').checked,
+  };
+  const r = await fetch('/api/federation/policies', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const d = await r.json();
+  if (d.ok) flash(`Policy for '${domain}' updated.`);
+}
+
+async function deletePolicy(domain) {
+  if (!confirm(`Delete policy for '${domain}'?`)) return;
+  const r = await fetch(`/api/federation/policies/${domain}`, {method:'DELETE'});
+  if (r.ok) { flash(`Policy '${domain}' deleted.`); location.reload(); }
+}
+
+function addPolicy() {
+  const categories = {{ expert_categories | tojson }};
+  const existing = [...document.querySelectorAll('#policyTable tr[data-domain]')].map(r => r.dataset.domain);
+  const available = categories.filter(c => !existing.includes(c));
+  if (!available.length) { flash('All domains already have policies.', 'warning'); return; }
+  const domain = prompt('Select domain:\n' + available.join(', '));
+  if (!domain || !available.includes(domain)) return;
+
+  const noPolicies = document.getElementById('noPoliciesRow');
+  if (noPolicies) noPolicies.remove();
+
+  const tbody = document.getElementById('policyTable');
+  const tr = document.createElement('tr');
+  tr.dataset.domain = domain;
+  tr.innerHTML = `
+    <td><code>${domain}</code></td>
+    <td><select class="form-select form-select-sm policy-mode" onchange="updatePolicy('${domain}')">
+      <option value="auto">Auto</option><option value="manual">Manual</option><option value="blocked" selected>Blocked</option>
+    </select></td>
+    <td><input type="number" class="form-control form-control-sm policy-conf" value="0.7" min="0" max="1" step="0.1" onchange="updatePolicy('${domain}')"></td>
+    <td class="text-center"><input type="checkbox" class="form-check-input policy-verified" checked onchange="updatePolicy('${domain}')"></td>
+    <td><button class="btn btn-sm btn-outline-danger" onclick="deletePolicy('${domain}')"><i class="bi bi-trash"></i></button></td>`;
+  tbody.appendChild(tr);
+  updatePolicy(domain);
+}
+
+async function testConnection() {
+  const url = document.getElementById('hubUrl').value.trim();
+  if (!url) { flash('Enter a Hub URL first.', 'warning'); return; }
+  flash('Testing connection...', 'info');
+  const r = await fetch('/api/federation/test', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({hub_url:url})});
+  const d = await r.json();
+  if (d.status === 'ok') flash(`Connected! Hub node: ${d.node_id || '?'}, version: ${d.version || '?'}`);
+  else flash(`Connection failed: ${d.error || d.status}`, 'danger');
+}
+
+async function triggerPush() {
+  if (!confirm('Push knowledge to the Libris hub now?')) return;
+  flash('Pushing...', 'info');
+  const r = await fetch('/api/federation/push', {method:'POST', headers:{'Content-Type':'application/json'}});
+  const d = await r.json();
+  if (d.ok || d.queued) flash(`Push complete: ${d.detail || JSON.stringify(d)}`);
+  else flash(`Push failed: ${d.error || 'unknown error'}`, 'danger');
+}
+
+async function triggerPull() {
+  flash('Pulling from hub...', 'info');
+  const r = await fetch('/api/federation/pull', {method:'POST', headers:{'Content-Type':'application/json'}});
+  const d = await r.json();
+  if (d.ok || d.entities_created !== undefined)
+    flash(`Pull complete: ${d.entities_created||0} entities, ${d.relations_created||0} relations imported.`);
+  else flash(`Pull failed: ${d.error || 'unknown error'}`, 'danger');
+}
+</script>
+{% endblock %}

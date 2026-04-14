@@ -1,0 +1,48 @@
+# Quadlet unit — systemd-native rootless container management.
+# Install to: ~/.config/containers/systemd/moe-orchestrator.container
+# Requires podman >= 4.4. systemd will auto-generate a matching .service.
+
+[Unit]
+Description=MoE Sovereign Orchestrator (rootless podman)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=ghcr.io/moe-sovereign/orchestrator:latest
+ContainerName=moe-orchestrator
+AutoUpdate=registry
+
+# Writable paths — host bind-mounts survive container recreation.
+Volume=%h/moe/logs:/app/logs:Z
+Volume=%h/moe/cache:/app/cache:Z
+Volume=%h/moe/experts:/app/configs/experts:Z,ro
+
+# 12-factor env. Override by placing an EnvironmentFile= drop-in.
+Environment=MOE_PROFILE=solo
+Environment=MOE_LOGS_DIR=/app/logs
+Environment=MOE_CACHE_DIR=/app/cache
+Environment=MOE_EXPERTS_DIR=/app/configs/experts
+EnvironmentFile=-%h/moe/orchestrator.env
+
+# Read-only rootfs with a writable tmpfs for /tmp, same as k8s spec.
+ReadOnly=true
+Tmpfs=/tmp:rw,size=64m
+
+PublishPort=8000:8000
+
+# Journald log driver means Alloy's loki.source.journal picks them up
+# without any extra wiring — the log-correlation bridge from LXC to k8s.
+LogDriver=journald
+
+# Security hardening — matches chart containerSecurityContext.
+NoNewPrivileges=true
+DropCapability=ALL
+UserNS=keep-id
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

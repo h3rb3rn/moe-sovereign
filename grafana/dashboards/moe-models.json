@@ -1,0 +1,206 @@
+{
+  "uid": "moe-models",
+  "title": "LLM & Expert Usage",
+  "description": "Token-Verbrauch, Modell-Auslastung, Expert-Aufrufe und Konfidenz-Verteilung",
+  "tags": ["moe", "llm", "experts"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 2,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "rate_interval",
+        "type": "custom",
+        "label": "Rate Interval",
+        "query": "1m,5m,10m,30m",
+        "current": { "text": "5m", "value": "5m" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Tokens gesamt",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "sum(moe_tokens_total)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Prompt Tokens",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "blue", "mode": "fixed" } } },
+      "targets": [{ "expr": "sum(moe_tokens_total{token_type=\"prompt\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Completion Tokens",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } } },
+      "targets": [{ "expr": "sum(moe_tokens_total{token_type=\"completion\"})", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Expert Calls gesamt",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } },
+      "targets": [{ "expr": "sum(moe_expert_calls_total)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Tokens / Request",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "decimals": 0, "noValue": "–" } },
+      "targets": [{ "expr": "sum(moe_tokens_total) / (sum(moe_requests_total) + 0.0001)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Experts / Request",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "decimals": 1, "noValue": "–" } },
+      "targets": [{ "expr": "sum(moe_expert_calls_total) / (sum(moe_requests_total) + 0.0001)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Token-Verbrauch nach Modell (gesamt)",
+      "gridPos": { "x": 0, "y": 4, "w": 14, "h": 10 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 80 } } },
+      "targets": [{ "expr": "sort_desc(sum by (model) (moe_tokens_total))", "legendFormat": "{{model}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "Prompt vs. Completion",
+      "gridPos": { "x": 14, "y": 4, "w": 5, "h": 10 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "pieType": "donut", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [{ "expr": "sum by (token_type) (moe_tokens_total)", "legendFormat": "{{token_type}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 9,
+      "type": "piechart",
+      "title": "Expert Calls nach Kategorie",
+      "gridPos": { "x": 19, "y": 4, "w": 5, "h": 10 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "pieType": "pie", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [{ "expr": "sort_desc(sum by (category) (moe_expert_calls_total))", "legendFormat": "{{category}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Token-Durchsatz nach Modell",
+      "gridPos": { "x": 0, "y": 14, "w": 16, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } } } },
+      "targets": [{ "expr": "sum by (model) (rate(moe_tokens_total[$rate_interval]))", "legendFormat": "{{model}}", "refId": "A" }]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Prompt vs. Completion Rate",
+      "gridPos": { "x": 16, "y": 14, "w": 8, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 2 } } },
+      "targets": [{ "expr": "sum by (token_type) (rate(moe_tokens_total[$rate_interval]))", "legendFormat": "{{token_type}}", "refId": "A" }]
+    },
+    {
+      "id": 12,
+      "type": "barchart",
+      "title": "Top-Modelle nach Expert-Calls",
+      "gridPos": { "x": 0, "y": 22, "w": 8, "h": 9 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sort_desc(sum by (model) (moe_expert_calls_total))", "legendFormat": "{{model}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 13,
+      "type": "barchart",
+      "title": "Expert-Calls nach Kategorie",
+      "gridPos": { "x": 8, "y": 22, "w": 8, "h": 9 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "expr": "sort_desc(sum by (category) (moe_expert_calls_total))", "legendFormat": "{{category}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 14,
+      "type": "barchart",
+      "title": "Expert-Calls & Timeouts nach Node",
+      "description": "Expert-Calls gesamt vs. Timeouts pro Node — rot = Timeout-Anteil",
+      "gridPos": { "x": 16, "y": 22, "w": 8, "h": 9 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "orientation": "horizontal", "stacking": "none", "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "Timeout.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        { "expr": "sort_desc(sum by (node) (moe_expert_calls_total))",     "legendFormat": "Calls {{node}}",   "refId": "A", "instant": true },
+        { "expr": "sort_desc(sum by (node) (moe_tool_call_timeout_total))", "legendFormat": "Timeout {{node}}", "refId": "B", "instant": true }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "piechart",
+      "title": "Konfidenz-Verteilung",
+      "gridPos": { "x": 0, "y": 31, "w": 8, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "pieType": "donut", "tooltip": { "mode": "single" }, "legend": { "displayMode": "table", "placement": "right", "values": ["percent"] } },
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "hoch" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "mittel" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "niedrig" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [{ "expr": "sum by (level) (moe_expert_confidence_total)", "legendFormat": "{{level}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Konfidenz-Rate über Zeit",
+      "gridPos": { "x": 8, "y": 31, "w": 16, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "hoch" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "mittel" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "niedrig" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [{ "expr": "sum by (level) (rate(moe_expert_confidence_total[$rate_interval]))", "legendFormat": "{{level}}", "refId": "A" }]
+    }
+  ]
+}

@@ -1,0 +1,512 @@
+{% extends "base.html" %}
+
+{% block title %}CC Profile — MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type }} flash-bar alert-dismissible mb-0 rounded-0" role="alert">
+  {{ flash }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h5 class="mb-0"><i class="bi bi-person-badge me-2 text-primary"></i>{{ t(request, 'page.profiles') }}</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" onclick="exportProfiles()" title="Alle Profile als JSON exportieren">
+      <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}
+    </button>
+    <label class="btn btn-outline-secondary btn-sm mb-0" title="Profile aus JSON-Datei importieren">
+      <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
+      <input type="file" id="import-profiles-file" accept=".json" style="display:none" onchange="importProfiles(this)">
+    </label>
+    <button class="btn btn-outline-secondary btn-sm" title="Paste JSON code directly" data-bs-toggle="modal" data-bs-target="#importProfileCodeModal">
+      <i class="bi bi-code-slash me-1"></i>{{ t(request, 'btn.import_code') }}
+    </button>
+    <button class="btn btn-primary btn-sm" onclick="openCreateModal()">
+      <i class="bi bi-plus-lg me-1"></i>{{ t(request, 'btn.new_profile') }}
+    </button>
+  </div>
+</div>
+
+{% if not profiles %}
+<div class="alert alert-info">
+  {{ t(request, 'empty.no_profiles') }}
+</div>
+{% endif %}
+
+<div class="row g-3" id="profiles-grid">
+  {% for p in profiles %}
+  {% set is_enabled = p.get('enabled', True) %}
+  <div class="col-md-6 col-xl-4" id="card-{{ p.id }}">
+    <div class="card h-100 {% if not is_enabled %}opacity-75{% endif %}">
+      <div class="card-header d-flex align-items-center justify-content-between bg-light">
+        <span class="fw-semibold">{{ p.name }}</span>
+        {% if is_enabled %}
+        <span class="badge bg-success">{{ t(request, 'status.enabled') }}</span>
+        {% else %}
+        <span class="badge bg-secondary">{{ t(request, 'status.disabled') }}</span>
+        {% endif %}
+      </div>
+      <div class="card-body small">
+        <table class="table table-sm table-borderless mb-0" style="font-size:.82rem">
+          <tr>
+            <th class="text-muted fw-normal ps-0" style="width:40%">{{ t(request, 'lbl.models') }}</th>
+            <td class="font-monospace">
+              {% if p.accepted_models %}
+                {{ p.accepted_models | join(', ') }}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <th class="text-muted fw-normal ps-0">Tool-Modell</th>
+            <td class="font-monospace">{{ p.tool_model or '—' }}</td>
+          </tr>
+          <tr>
+            <th class="text-muted fw-normal ps-0">Endpoint</th>
+            <td><span class="badge bg-secondary">{{ p.tool_endpoint or '—' }}</span></td>
+          </tr>
+          <tr>
+            <th class="text-muted fw-normal ps-0">MoE-Modus</th>
+            <td>
+              {% if p.moe_mode == 'native' %}
+              <span class="badge bg-primary">native</span>
+              {% elif p.moe_mode == 'moe_reasoning' %}
+              <span class="badge bg-warning text-dark">moe_reasoning</span>
+              {% else %}
+              <span class="badge bg-info text-dark">moe_orchestrated</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <th class="text-muted fw-normal ps-0">Think-Stream</th>
+            <td>
+              {% if p.stream_think %}
+              <i class="bi bi-check-circle-fill text-success"></i> on
+              {% else %}
+              <i class="bi bi-x-circle text-muted"></i> off
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <th class="text-muted fw-normal ps-0">max_tokens</th>
+            <td class="font-monospace">Tool: {{ p.tool_max_tokens or 8192 }} / Reasoning: {{ p.reasoning_max_tokens or 16384 }}</td>
+          </tr>
+          {% if p.tool_timeout %}
+          <tr>
+            <th class="text-muted fw-normal ps-0">Timeout</th>
+            <td class="font-monospace">{{ p.tool_timeout }}s</td>
+          </tr>
+          {% endif %}
+          {% if p.expert_template_id %}
+          <tr>
+            <th class="text-muted fw-normal ps-0">Template</th>
+            <td class="font-monospace small">
+              {% set tmpl = expert_templates | selectattr('id', 'equalto', p.expert_template_id) | first | default(none) %}
+              {% if tmpl %}{{ tmpl.name }}{% else %}<span class="text-muted">{{ p.expert_template_id }}</span>{% endif %}
+            </td>
+          </tr>
+          {% endif %}
+          {% if p.system_prompt_prefix %}
+          <tr>
+            <th class="text-muted fw-normal ps-0">Prefix</th>
+            <td class="text-truncate font-monospace" style="max-width:200px" title="{{ p.system_prompt_prefix }}">{{ p.system_prompt_prefix[:60] }}…</td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+      <div class="card-footer d-flex gap-2 bg-transparent border-top-0 pt-0">
+        {% if is_enabled %}
+        <button class="btn btn-outline-warning btn-sm flex-grow-1" onclick="toggleProfile('{{ p.id }}', true, this)">
+          <i class="bi bi-toggle-on me-1"></i>{{ t(request, 'btn.disable_profile') }}
+        </button>
+        {% else %}
+        <button class="btn btn-success btn-sm flex-grow-1" onclick="toggleProfile('{{ p.id }}', false, this)">
+          <i class="bi bi-toggle-off me-1"></i>{{ t(request, 'btn.enable_profile') }}
+        </button>
+        {% endif %}
+        <button class="btn btn-outline-secondary btn-sm" onclick="openEditModal('{{ p.id }}')" title="Edit">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-outline-danger btn-sm" onclick="deleteProfile('{{ p.id }}', this)" title="{{ t(request, 'btn.delete') }}">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Profil-Modal (Create / Edit) ── #}
+<div class="modal fade" id="profileModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="profileModalTitle">{{ t(request, 'modal.new_profile') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="pm-id">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label">{{ t(request, 'lbl.profile_name') }}</label>
+            <input type="text" class="form-control" id="pm-name" placeholder="z.B. Produktiv-AIHUB">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Akzeptierte Claude Model-IDs <span class="text-muted small">(kommagetrennt)</span></label>
+            <textarea class="form-control font-monospace" id="pm-models" rows="3"
+              placeholder="claude-sonnet-4-6,claude-haiku-4-5-20251001"></textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Tool-Modell <span class="text-muted small">(model@host)</span></label>
+            <div id="pm-llm-select">
+              <select class="form-select font-monospace" disabled>
+                <option>{{ t(request, 'js.loading_models') }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">MoE-Modus</label>
+            <select class="form-select" id="pm-moe-mode" onchange="onMoeModeChange()">
+              <option value="native">native — Direkt an Tool-Modell</option>
+              <option value="moe_reasoning">moe_reasoning — Reasoning-Expert</option>
+              <option value="moe_orchestrated">moe_orchestrated — Volle Pipeline</option>
+            </select>
+          </div>
+          <div class="col-md-8 d-none" id="pm-template-row">
+            <label class="form-label">Expert Template <span class="text-muted small">(for moe_orchestrated)</span></label>
+            <select class="form-select" id="pm-expert-template">
+              <option value="">— no template (global experts) —</option>
+              {% for tmpl in expert_templates %}
+              <option value="{{ tmpl.id }}">{{ tmpl.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Tool Choice <span class="text-muted small">(for OSS models)</span></label>
+            <select class="form-select" id="pm-tool-choice">
+              <option value="auto">auto — model decides</option>
+              <option value="required">required — force tool</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Tool max_tokens</label>
+            <input type="number" class="form-control" id="pm-tool-tokens" value="8192" min="512">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Reasoning max_tokens</label>
+            <input type="number" class="form-control" id="pm-reasoning-tokens" value="16384" min="512">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">{{ t(request, 'lbl.timeout') }} <span class="text-muted small">(Sekunden, leer = {{ t(request, 'lbl.server_default') }})</span></label>
+            <input type="number" class="form-control" id="pm-tool-timeout" min="30" placeholder="{{ t(request, 'lbl.server_default') }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">System-Prompt Prefix <span class="text-muted small">(optional, prepended to every system prompt)</span></label>
+            <textarea class="form-control font-monospace" id="pm-prefix" rows="3"
+              placeholder="You are a specialized assistant for..."></textarea>
+          </div>
+          <div class="col-12">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="pm-stream-think">
+              <label class="form-check-label" for="pm-stream-think">
+                Send MoE think-stream to Claude Code
+                <span class="text-muted small">(shows pipeline progress: 📋 Planner analyzing…)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary" onclick="saveProfile()">
+          <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save_profile') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Sync notification banner — shown after profile save/delete #}
+<div id="sync-banner" class="alert alert-info alert-dismissible fade d-none position-fixed start-50 translate-middle-x" role="alert"
+     style="top:1rem;z-index:9998;max-width:700px;box-shadow:0 4px 12px rgba(0,0,0,.15)">
+  <i class="bi bi-info-circle me-2"></i>
+  <span id="sync-banner-text">{{ t(request, 'msg.profile_sync_hint') }}</span>
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+{# Spinner overlay shown while the orchestrator restarts after a toggle #}
+<div id="toggle-overlay" class="d-none position-fixed top-0 start-0 w-100 h-100 d-flex flex-column
+     align-items-center justify-content-center" style="background:rgba(0,0,0,.6);z-index:9999">
+  <div class="spinner-border text-light mb-3" style="width:3rem;height:3rem"></div>
+  <p class="text-white fw-semibold" id="toggle-overlay-msg">Updating profile — restarting orchestrator…</p>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PROFILES = {{ profiles | tojson }};
+
+function profileById(id) { return PROFILES.find(p => p.id === id); }
+
+// ─── LLM dropdown ────────────────────────────────────────────────────────────
+let _availableLlms = null;
+
+async function fetchAvailableLlms() {
+  if (_availableLlms) return _availableLlms;
+  try {
+    const r = await fetch('/api/available-llms');
+    _availableLlms = await r.json();
+  } catch(e) {
+    _availableLlms = [];
+  }
+  return _availableLlms;
+}
+
+function buildLlmDropdown(containerId, availableLlms, selectedVal) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const opts = availableLlms.map(v => {
+    const sel = v === selectedVal ? 'selected' : '';
+    return `<option value="${v}" ${sel}>${v}</option>`;
+  }).join('');
+  container.innerHTML = `<select class="form-select font-monospace" style="font-size:.85rem" id="pm-llm-select-inner">
+    <option value="">— Select model —</option>${opts}
+  </select>`;
+  if (selectedVal) container.querySelector('select').value = selectedVal;
+}
+
+function getLlmSelectValue() {
+  const sel = document.getElementById('pm-llm-select-inner');
+  return sel ? sel.value : '';
+}
+
+// ─── Modals ───────────────────────────────────────────────────────────────────
+
+async function fillModal(profile) {
+  document.getElementById('pm-id').value             = profile?.id || '';
+  document.getElementById('pm-name').value           = profile?.name || '';
+  document.getElementById('pm-models').value         = (profile?.accepted_models || []).join(', ');
+  document.getElementById('pm-moe-mode').value       = profile?.moe_mode || 'native';
+  syncDropdown('pm-moe-mode');
+  document.getElementById('pm-tool-choice').value   = profile?.tool_choice || 'auto';
+  syncDropdown('pm-tool-choice');
+  document.getElementById('pm-prefix').value         = profile?.system_prompt_prefix || '';
+  document.getElementById('pm-stream-think').checked = profile?.stream_think || false;
+  document.getElementById('pm-tool-tokens').value    = profile?.tool_max_tokens || 8192;
+  document.getElementById('pm-reasoning-tokens').value = profile?.reasoning_max_tokens || 16384;
+  document.getElementById('pm-tool-timeout').value   = profile?.tool_timeout || '';
+  document.getElementById('pm-expert-template').value = profile?.expert_template_id || '';
+  onMoeModeChange();
+
+  // Populate LLM dropdown
+  const llms = await fetchAvailableLlms();
+  const selectedLlm = (profile?.tool_model && profile?.tool_endpoint)
+    ? `${profile.tool_model}@${profile.tool_endpoint}`
+    : (profile?.tool_model || '');
+  buildLlmDropdown('pm-llm-select', llms, selectedLlm);
+}
+
+function onMoeModeChange() {
+  const mode = document.getElementById('pm-moe-mode').value;
+  const row  = document.getElementById('pm-template-row');
+  if (mode === 'moe_orchestrated') {
+    row.classList.remove('d-none');
+  } else {
+    row.classList.add('d-none');
+    document.getElementById('pm-expert-template').value = '';
+  }
+}
+
+async function openCreateModal() {
+  document.getElementById('profileModalTitle').textContent = '{{ t(request, "modal.new_profile") }}';
+  new bootstrap.Modal(document.getElementById('profileModal')).show();
+  await fillModal(null);
+}
+
+async function openEditModal(id) {
+  const p = profileById(id);
+  if (!p) return;
+  document.getElementById('profileModalTitle').textContent = '{{ t(request, "modal.edit_profile") }}';
+  new bootstrap.Modal(document.getElementById('profileModal')).show();
+  await fillModal(p);
+}
+
+// ─── Sync banner ─────────────────────────────────────────────────────────────
+function showSyncBanner() {
+  const el = document.getElementById('sync-banner');
+  if (!el) return;
+  el.classList.remove('d-none');
+  el.classList.add('show');
+}
+document.addEventListener('DOMContentLoaded', () => {
+  if (sessionStorage.getItem('show_sync_banner')) {
+    sessionStorage.removeItem('show_sync_banner');
+    showSyncBanner();
+  }
+});
+
+// ─── API calls ───────────────────────────────────────────────────────────────
+async function saveProfile() {
+  const id = document.getElementById('pm-id').value;
+  const _llmVal = getLlmSelectValue();
+  const _atIdx  = _llmVal.lastIndexOf('@');
+  const _toolModel    = _atIdx >= 0 ? _llmVal.slice(0, _atIdx)    : _llmVal;
+  const _toolEndpoint = _atIdx >= 0 ? _llmVal.slice(_atIdx + 1)   : '';
+  const body = {
+    name:                 document.getElementById('pm-name').value.trim(),
+    accepted_models:      document.getElementById('pm-models').value.split(',').map(s => s.trim()).filter(Boolean),
+    tool_model:           _toolModel,
+    tool_endpoint:        _toolEndpoint,
+    moe_mode:             document.getElementById('pm-moe-mode').value,
+    tool_choice:          document.getElementById('pm-tool-choice').value,
+    system_prompt_prefix: document.getElementById('pm-prefix').value.trim(),
+    stream_think:         document.getElementById('pm-stream-think').checked,
+    tool_max_tokens:      parseInt(document.getElementById('pm-tool-tokens').value) || 8192,
+    reasoning_max_tokens: parseInt(document.getElementById('pm-reasoning-tokens').value) || 16384,
+    tool_timeout:         parseInt(document.getElementById('pm-tool-timeout').value) || null,
+    expert_template_id:   document.getElementById('pm-expert-template').value,
+  };
+  if (!body.name) { alert('Please enter a profile name.'); return; }
+
+  const url    = id ? `/api/profiles/${id}` : '/api/profiles';
+  const method = id ? 'PUT' : 'POST';
+  const resp   = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    if (data.restart_hint) { sessionStorage.setItem('show_sync_banner', '1'); }
+    location.reload();
+  } else {
+    const err = await resp.json().catch(() => ({detail: resp.statusText}));
+    alert('Error: ' + (err.detail || 'Unknown'));
+  }
+}
+
+async function deleteProfile(id, btn) {
+  if (!confirm('Delete profile?')) return;
+  btn.disabled = true;
+  const resp = await fetch(`/api/profiles/${id}`, { method: 'DELETE' });
+  if (resp.ok) {
+    document.getElementById(`card-${id}`)?.remove();
+    showSyncBanner();
+  } else {
+    const err = await resp.json().catch(() => ({detail: resp.statusText}));
+    alert('Error: ' + (err.detail || 'Unknown'));
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  convertSelectToDropdown('pm-moe-mode');
+  convertSelectToDropdown('pm-tool-choice');
+});
+
+async function toggleProfile(id, currentlyEnabled, btn) {
+  const action = currentlyEnabled ? '{{ t(request, "btn.disable_profile") }}' : '{{ t(request, "btn.enable_profile") }}';
+  if (!confirm(`${action} profile? The orchestrator will be restarted.`)) return;
+  btn.disabled = true;
+  const msg = currentlyEnabled
+    ? '{{ t(request, "msg.profile_disabled") }}'
+    : '{{ t(request, "msg.profile_enabled") }}';
+  document.getElementById('toggle-overlay-msg').textContent = msg;
+  document.getElementById('toggle-overlay').classList.remove('d-none');
+  document.getElementById('toggle-overlay').classList.add('d-flex');
+  const resp = await fetch(`/api/profiles/${id}/toggle`, { method: 'POST' });
+  if (resp.ok) {
+    setTimeout(() => location.reload(), 4000);
+  } else {
+    document.getElementById('toggle-overlay').classList.add('d-none');
+    document.getElementById('toggle-overlay').classList.remove('d-flex');
+    btn.disabled = false;
+    const err = await resp.json().catch(() => ({detail: resp.statusText}));
+    alert('Error: ' + (err.detail || 'Unknown'));
+  }
+}
+
+async function exportProfiles() {
+  const res = await fetch('/api/profiles/export');
+  if (!res.ok) { alert('Export failed'); return; }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'cc_profiles.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importProfiles(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const replace = confirm('Overwrite existing profiles with the same name?\n\nOK = Replace | Cancel = Import new only');
+  const mode = replace ? 'replace' : 'merge';
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`/api/profiles/import?mode=${mode}`, {method: 'POST', body: formData});
+  input.value = '';
+  if (res.ok) {
+    const data = await res.json();
+    alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
+    window.location.reload();
+  } else {
+    const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+    alert('Import failed: ' + (err.detail || 'Unknown error'));
+  }
+}
+
+async function importProfilesFromCode() {
+  const raw = document.getElementById('import-profile-code').value.trim();
+  if (!raw) { alert('Please paste JSON code.'); return; }
+  let data;
+  try { data = JSON.parse(raw); } catch(e) { alert('Invalid JSON: ' + e.message); return; }
+  const mode = document.getElementById('import-profile-code-mode').value;
+  const res = await fetch(`/api/profiles/import?mode=${mode}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (res.ok) {
+    const d = await res.json();
+    alert(`Import complete: ${d.imported} imported, ${d.skipped} skipped`);
+    bootstrap.Modal.getInstance(document.getElementById('importProfileCodeModal')).hide();
+    window.location.reload();
+  } else {
+    const err = await res.json().catch(() => ({detail: 'Unknown error'}));
+    alert('Import failed: ' + (err.detail || 'Unknown error'));
+  }
+}
+</script>
+
+<!-- ── Import JSON-Code Modal ─────────────────────────────────────────────── -->
+<div class="modal fade" id="importProfileCodeModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>{{ t(request, 'modal.import_profiles') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'modal.import_mode') }}</label>
+          <select id="import-profile-code-mode" class="form-select form-select-sm" style="width:auto">
+            <option value="merge">{{ t(request, 'modal.merge') }}</option>
+            <option value="replace">{{ t(request, 'modal.replace') }}</option>
+          </select>
+        </div>
+        <label class="form-label">{{ t(request, 'modal.json_code') }}</label>
+        <textarea id="import-profile-code" class="form-control font-monospace" rows="14"
+          placeholder='{"type":"cc_profile","version":"1.0","items":[...]}'></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary" onclick="importProfilesFromCode()">
+          <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

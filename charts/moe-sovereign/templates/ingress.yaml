@@ -1,0 +1,38 @@
+{{- if and .Values.ingress.enabled (ne (include "moe.isOpenShift" .) "true") -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "moe.fullname" . }}
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "moe.fullname" . }}-orchestrator
+                port:
+                  number: {{ .Values.orchestrator.port }}
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "moe.fullname" . }}-admin
+                port:
+                  number: {{ .Values.admin.port }}
+{{- end -}}

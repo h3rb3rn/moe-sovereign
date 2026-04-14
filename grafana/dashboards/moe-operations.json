@@ -1,0 +1,185 @@
+{
+  "uid": "moe-operations",
+  "title": "MoE System Overview",
+  "description": "Request-Durchsatz, Latenz, Cache-Performance und Qualitätsmetriken",
+  "tags": ["moe", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 2,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "rate_interval",
+        "type": "custom",
+        "label": "Rate Interval",
+        "query": "1m,5m,10m,30m",
+        "current": { "text": "5m", "value": "5m" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests / 24h",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "blue" }] } } },
+      "targets": [{ "expr": "increase(moe_requests_total[24h])", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Cache Hit Rate",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdMarkers": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "red" }, { "value": 40, "color": "orange" }, { "value": 70, "color": "green" }] }
+        }
+      },
+      "targets": [{ "expr": "rate(moe_cache_hits_total[$rate_interval]) / (rate(moe_cache_hits_total[$rate_interval]) + rate(moe_cache_misses_total[$rate_interval]) + 0.0001) * 100", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Latenz P50",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 30, "color": "orange" }] } } },
+      "targets": [{ "expr": "histogram_quantile(0.50, sum by (le) (rate(moe_response_duration_seconds_bucket[5m])))", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Latenz P95",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 20, "color": "orange" }, { "value": 60, "color": "red" }] } } },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(moe_response_duration_seconds_bucket[5m])))", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Latenz P99",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "green" }, { "value": 60, "color": "orange" }, { "value": 120, "color": "red" }] } } },
+      "targets": [{ "expr": "histogram_quantile(0.99, sum by (le) (rate(moe_response_duration_seconds_bucket[5m])))", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Ø Self-Eval Score",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "decimals": 2, "min": 1, "max": 5, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "value": null, "color": "red" }, { "value": 3, "color": "orange" }, { "value": 4, "color": "green" }] } } },
+      "targets": [{ "expr": "sum(moe_self_eval_score_sum) / sum(moe_self_eval_score_count)", "legendFormat": "", "refId": "A" }]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Request Rate nach Modus",
+      "gridPos": { "x": 0, "y": 4, "w": 14, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10, "lineWidth": 2 } } },
+      "targets": [{ "expr": "sum by (mode) (rate(moe_requests_total[$rate_interval]))", "legendFormat": "{{mode}}", "refId": "A" }]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Cache Hits vs. Misses",
+      "gridPos": { "x": 14, "y": 4, "w": 10, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 15, "lineWidth": 2 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Cache Hits" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Cache Misses" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        { "expr": "rate(moe_cache_hits_total[$rate_interval])", "legendFormat": "Cache Hits", "refId": "A" },
+        { "expr": "rate(moe_cache_misses_total[$rate_interval])", "legendFormat": "Cache Misses", "refId": "B" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Latenz Perzentilen (P50 / P95 / P99)",
+      "gridPos": { "x": 0, "y": 12, "w": 14, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2 } } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(moe_response_duration_seconds_bucket[$rate_interval])))", "legendFormat": "P50 gesamt", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(moe_response_duration_seconds_bucket[$rate_interval])))", "legendFormat": "P95 gesamt", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(moe_response_duration_seconds_bucket[$rate_interval])))", "legendFormat": "P99 gesamt", "refId": "C" },
+        { "expr": "histogram_quantile(0.95, sum by (node, le) (rate(moe_tool_call_duration_seconds_bucket{phase=\"llm_call\"}[$rate_interval])))", "legendFormat": "P95 LLM {{node}}", "refId": "D" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Ø Antwortdauer nach Modus",
+      "gridPos": { "x": 14, "y": 12, "w": 10, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "expr": "sum by (mode) (rate(moe_response_duration_seconds_sum[$rate_interval])) / sum by (mode) (rate(moe_response_duration_seconds_count[$rate_interval]) + 0.0001)", "legendFormat": "{{mode}}", "refId": "A" }]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Qualitäts-Scores (Self-Eval & Feedback)",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 1, "max": 5, "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
+      "targets": [
+        { "expr": "sum(moe_self_eval_score_sum) / (sum(moe_self_eval_score_count) + 0.0001)", "legendFormat": "Self-Eval Ø", "refId": "A" },
+        { "expr": "sum(moe_feedback_score_sum) / (sum(moe_feedback_score_count) + 0.0001)", "legendFormat": "User Feedback Ø", "refId": "B" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "piechart",
+      "title": "Request-Modus Verteilung",
+      "gridPos": { "x": 12, "y": 20, "w": 6, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "pieType": "donut", "tooltip": { "mode": "single" }, "legend": { "displayMode": "table", "placement": "right", "values": ["percent"] } },
+      "targets": [{ "expr": "sum by (mode) (moe_requests_total)", "legendFormat": "{{mode}}", "refId": "A", "instant": true }]
+    },
+    {
+      "id": 13,
+      "type": "piechart",
+      "title": "Cache Hit / Miss",
+      "gridPos": { "x": 18, "y": 20, "w": 6, "h": 8 },
+      "datasource": { "uid": "moe-prometheus", "type": "prometheus" },
+      "options": { "pieType": "donut", "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "right" } },
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Hits" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Misses" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        { "expr": "sum(moe_cache_hits_total)", "legendFormat": "Hits", "refId": "A", "instant": true },
+        { "expr": "sum(moe_cache_misses_total)", "legendFormat": "Misses", "refId": "B", "instant": true }
+      ]
+    }
+  ]
+}

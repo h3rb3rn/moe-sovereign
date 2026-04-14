@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}MCP Tools – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-tools section-icon text-primary"></i>{{ t(request, 'page.mcp_tools') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.mcp_desc') }}</small>
+  </div>
+  <button class="btn btn-outline-secondary btn-sm" onclick="loadTools()">
+    <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+  </button>
+</div>
+
+<div id="error-state" class="alert alert-warning d-none">
+  <i class="bi bi-exclamation-triangle me-2"></i>
+  MCP-Server nicht erreichbar. Läuft der <code>mcp-precision</code>-Container?
+</div>
+
+<div id="stats-row" class="d-flex gap-3 mb-3 align-items-center d-none">
+  <span>Gesamt: <strong id="total-count">–</strong></span>
+  <span class="badge bg-success px-3" id="enabled-count">– aktiv</span>
+  <span class="badge bg-secondary px-3" id="disabled-count">– deaktiviert</span>
+  <span class="text-muted small ms-2" id="last-update"></span>
+</div>
+
+<div id="loading-state" class="text-center text-muted py-5">
+  <div class="spinner-border spinner-border-sm me-2" role="status"></div>Tools werden geladen…
+</div>
+
+<div class="card d-none" id="tools-card">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:18%">{{ t(request, 'table.tool_name') }}</th>
+          <th>{{ t(request, 'table.description') }}</th>
+          <th style="width:10%" class="text-center">{{ t(request, 'table.status') }}</th>
+          <th style="width:12%" class="text-center">{{ t(request, 'table.actions') }}</th>
+        </tr>
+      </thead>
+      <tbody id="tools-tbody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const MCP_TOOLS_URL = '/api/mcp-tools';
+
+function showFlash(msg, type = 'success') {
+  const c = document.getElementById('flash-container');
+  c.innerHTML = `<div class="alert alert-${type} alert-dismissible flash-bar" role="alert">
+    ${msg} <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+}
+
+async function loadTools() {
+  document.getElementById('loading-state').classList.remove('d-none');
+  document.getElementById('tools-card').classList.add('d-none');
+  document.getElementById('error-state').classList.add('d-none');
+  document.getElementById('stats-row').classList.add('d-none');
+
+  try {
+    const r = await fetch(MCP_TOOLS_URL);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const tools = data.tools || [];
+    renderTable(tools);
+    updateStats(tools);
+  } catch(e) {
+    document.getElementById('loading-state').classList.add('d-none');
+    document.getElementById('error-state').classList.remove('d-none');
+    console.error(e);
+  }
+}
+
+function updateStats(tools) {
+  const enabled = tools.filter(t => t.enabled).length;
+  const disabled = tools.length - enabled;
+  document.getElementById('total-count').textContent = tools.length;
+  document.getElementById('enabled-count').textContent = `${enabled} aktiv`;
+  document.getElementById('disabled-count').textContent = `${disabled} deaktiviert`;
+  document.getElementById('last-update').textContent =
+    'Stand: ' + new Date().toLocaleTimeString('de-DE');
+  document.getElementById('stats-row').classList.remove('d-none');
+}
+
+function renderTable(tools) {
+  document.getElementById('loading-state').classList.add('d-none');
+  document.getElementById('tools-card').classList.remove('d-none');
+
+  const tbody = document.getElementById('tools-tbody');
+  if (!tools.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Keine Tools gefunden</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tools.map(t => renderRow(t)).join('');
+}
+
+function renderRow(t) {
+  const enabled = t.enabled !== false;
+  const badgeCls = enabled ? 'bg-success' : 'bg-secondary';
+  const badgeTxt = enabled ? 'Aktiv' : 'Deaktiviert';
+  const btnCls   = enabled ? 'btn-outline-warning' : 'btn-outline-success';
+  const btnTxt   = enabled ? '<i class="bi bi-pause-circle me-1"></i>Deaktivieren'
+                           : '<i class="bi bi-play-circle me-1"></i>Aktivieren';
+  return `<tr id="row-${escHtml(t.name)}">
+    <td><code class="fw-bold">${escHtml(t.name)}</code></td>
+    <td><span class="text-muted small">${escHtml(t.description || '')}</span></td>
+    <td class="text-center">
+      <span class="badge ${badgeCls} status-badge" id="badge-${escHtml(t.name)}">${badgeTxt}</span>
+    </td>
+    <td class="text-center">
+      <button class="btn btn-sm ${btnCls}" id="btn-${escHtml(t.name)}"
+              onclick="toggleTool('${escHtml(t.name)}', this)">
+        ${btnTxt}
+      </button>
+    </td>
+  </tr>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function toggleTool(name, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(`${MCP_TOOLS_URL}/${name}/toggle`, {method: 'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+
+    // In-place update ohne Reload
+    const enabled = data.enabled;
+    const badge = document.getElementById(`badge-${name}`);
+    badge.className = `badge ${enabled ? 'bg-success' : 'bg-secondary'} status-badge`;
+    badge.textContent = enabled ? 'Aktiv' : 'Deaktiviert';
+
+    btn.className = `btn btn-sm ${enabled ? 'btn-outline-warning' : 'btn-outline-success'}`;
+    btn.innerHTML = enabled
+      ? '<i class="bi bi-pause-circle me-1"></i>Deaktivieren'
+      : '<i class="bi bi-play-circle me-1"></i>Aktivieren';
+
+    // Stats neu berechnen
+    const allRows = document.querySelectorAll('#tools-tbody tr');
+    const enabledCount = document.querySelectorAll('#tools-tbody .badge.bg-success').length;
+    const total = allRows.length;
+    document.getElementById('enabled-count').textContent = `${enabledCount} aktiv`;
+    document.getElementById('disabled-count').textContent = `${total - enabledCount} deaktiviert`;
+
+    showFlash(`Tool '${name}' ${enabled ? 'aktiviert' : 'deaktiviert'}.`);
+  } catch(e) {
+    showFlash(`Fehler: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadTools);
+</script>
+{% endblock %}

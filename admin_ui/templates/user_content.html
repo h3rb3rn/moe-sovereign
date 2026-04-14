@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block title %}User Content — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold"><i class="bi bi-person-lines-fill me-2 text-primary"></i>{{ t(request, 'page.user_content') }}</h5>
+  <button class="btn btn-sm btn-outline-primary" onclick="loadContent()">
+    <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+  </button>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="contentTabs">
+  <li class="nav-item">
+    <a class="nav-link active" id="tab-templates" href="#" onclick="switchTab('templates'); return false;">
+      <i class="bi bi-diagram-3 me-1"></i>Experten-Templates
+      <span class="badge bg-secondary ms-1" id="badge-templates">–</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" id="tab-cc" href="#" onclick="switchTab('cc'); return false;">
+      <i class="bi bi-cpu me-1"></i>CC Profile
+      <span class="badge bg-secondary ms-1" id="badge-cc">–</span>
+    </a>
+  </li>
+</ul>
+
+<!-- Filter -->
+<div class="mb-3">
+  <input type="text" class="form-control form-control-sm" id="content-filter"
+         placeholder="Filter nach Username oder Name…" oninput="applyFilter()">
+</div>
+
+<!-- Templates Tab -->
+<div id="panel-templates">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>User</th>
+          <th>{{ t(request, 'table.name') }}</th>
+          <th>{{ t(request, 'table.description') }}</th>
+          <th>{{ t(request, 'table.created') }}</th>
+          <th>{{ t(request, 'table.status') }}</th>
+          <th class="text-end">{{ t(request, 'table.actions') }}</th>
+        </tr>
+      </thead>
+      <tbody id="templates-tbody">
+        <tr><td colspan="6" class="text-center text-muted py-4">
+          <span class="spinner-border spinner-border-sm me-2"></span>{{ t(request, 'lbl.loading') }}
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- CC Profile Tab -->
+<div id="panel-cc" style="display:none">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>User</th>
+          <th>{{ t(request, 'table.name') }}</th>
+          <th>Tool-Modell</th>
+          <th>MoE-Modus</th>
+          <th>{{ t(request, 'table.created') }}</th>
+          <th>{{ t(request, 'table.status') }}</th>
+          <th class="text-end">{{ t(request, 'table.actions') }}</th>
+        </tr>
+      </thead>
+      <tbody id="cc-tbody">
+        <tr><td colspan="7" class="text-center text-muted py-4">
+          <span class="spinner-border spinner-border-sm me-2"></span>{{ t(request, 'lbl.loading') }}
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _templates = [];
+let _ccProfiles = [];
+let _activeTab = 'templates';
+
+function switchTab(tab) {
+  _activeTab = tab;
+  document.getElementById('tab-templates').classList.toggle('active', tab === 'templates');
+  document.getElementById('tab-cc').classList.toggle('active', tab === 'cc');
+  document.getElementById('panel-templates').style.display = tab === 'templates' ? '' : 'none';
+  document.getElementById('panel-cc').style.display       = tab === 'cc' ? '' : 'none';
+  applyFilter();
+}
+
+function escHtml(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function statusBadge(is_active) {
+  return is_active
+    ? '<span class="badge bg-success">aktiv</span>'
+    : '<span class="badge bg-danger">deaktiviert</span>';
+}
+
+function renderTemplates(rows) {
+  const tbody = document.getElementById('templates-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Keine Templates vorhanden.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(t => `
+    <tr data-username="${escHtml((t.username||'').toLowerCase())}" data-name="${escHtml((t.name||'').toLowerCase())}">
+      <td><span class="badge bg-light text-dark border">${escHtml(t.display_name || t.username)}</span>
+          <code class="ms-1 small text-muted">${escHtml(t.username)}</code></td>
+      <td class="fw-semibold">${escHtml(t.name)}</td>
+      <td class="text-muted small">${escHtml((t.description||'').slice(0,60))}${(t.description||'').length>60?'…':''}</td>
+      <td class="text-muted small" style="white-space:nowrap">${escHtml((t.created_at||'').slice(0,10))}</td>
+      <td>${statusBadge(t.is_active)}</td>
+      <td class="text-end">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-${t.is_active ? 'warning' : 'success'}"
+                  title="${t.is_active ? 'Deaktivieren' : 'Aktivieren'}"
+                  onclick="toggleTemplate('${escHtml(t.id)}', ${t.is_active ? 0 : 1})">
+            <i class="bi bi-${t.is_active ? 'pause-fill' : 'play-fill'}"></i>
+          </button>
+          <button class="btn btn-outline-danger" title="Löschen"
+                  onclick="deleteTemplate('${escHtml(t.id)}', '${escHtml(t.name)}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function renderCcProfiles(rows) {
+  const tbody = document.getElementById('cc-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Keine CC Profile vorhanden.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(p => {
+    let cfg = {};
+    try { cfg = JSON.parse(p.config_json || '{}'); } catch {}
+    const toolModel = cfg.tool_model ? `${cfg.tool_model}@${cfg.tool_endpoint||'?'}` : '—';
+    return `
+    <tr data-username="${escHtml((p.username||'').toLowerCase())}" data-name="${escHtml((p.name||'').toLowerCase())}">
+      <td><span class="badge bg-light text-dark border">${escHtml(p.display_name || p.username)}</span>
+          <code class="ms-1 small text-muted">${escHtml(p.username)}</code></td>
+      <td class="fw-semibold">${escHtml(p.name)}</td>
+      <td><code class="small">${escHtml(toolModel)}</code></td>
+      <td><span class="badge bg-secondary" style="font-size:.65rem">${escHtml(cfg.moe_mode||'native')}</span></td>
+      <td class="text-muted small" style="white-space:nowrap">${escHtml((p.created_at||'').slice(0,10))}</td>
+      <td>${statusBadge(p.is_active)}</td>
+      <td class="text-end">
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-${p.is_active ? 'warning' : 'success'}"
+                  title="${p.is_active ? 'Deaktivieren' : 'Aktivieren'}"
+                  onclick="toggleCcProfile('${escHtml(p.id)}', ${p.is_active ? 0 : 1})">
+            <i class="bi bi-${p.is_active ? 'pause-fill' : 'play-fill'}"></i>
+          </button>
+          <button class="btn btn-outline-danger" title="Löschen"
+                  onclick="deleteCcProfile('${escHtml(p.id)}', '${escHtml(p.name)}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function applyFilter() {
+  const q = (document.getElementById('content-filter').value || '').toLowerCase();
+  const tbody = _activeTab === 'templates'
+    ? document.getElementById('templates-tbody')
+    : document.getElementById('cc-tbody');
+  Array.from(tbody.querySelectorAll('tr[data-username]')).forEach(tr => {
+    const match = !q || tr.dataset.username.includes(q) || tr.dataset.name.includes(q);
+    tr.style.display = match ? '' : 'none';
+  });
+}
+
+async function loadContent() {
+  try {
+    const data = await fetch('/api/admin/user-content').then(r => r.json());
+    _templates  = data.templates  || [];
+    _ccProfiles = data.cc_profiles || [];
+    document.getElementById('badge-templates').textContent = _templates.length;
+    document.getElementById('badge-cc').textContent        = _ccProfiles.length;
+    renderTemplates(_templates);
+    renderCcProfiles(_ccProfiles);
+    applyFilter();
+  } catch (e) {
+    document.getElementById('templates-tbody').innerHTML =
+      `<tr><td colspan="6" class="text-danger text-center py-3">Fehler beim Laden: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function toggleTemplate(id, newActive) {
+  const res = await fetch(`/api/admin/user-templates/${encodeURIComponent(id)}/active`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({is_active: !!newActive}),
+  });
+  if (res.ok) loadContent();
+  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+}
+
+async function deleteTemplate(id, name) {
+  if (!confirm(`Template "${name}" wirklich löschen?`)) return;
+  const res = await fetch(`/api/admin/user-templates/${encodeURIComponent(id)}`, {method: 'DELETE'});
+  if (res.ok) loadContent();
+  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+}
+
+async function toggleCcProfile(id, newActive) {
+  const res = await fetch(`/api/admin/user-cc-profiles/${encodeURIComponent(id)}/active`, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({is_active: !!newActive}),
+  });
+  if (res.ok) loadContent();
+  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+}
+
+async function deleteCcProfile(id, name) {
+  if (!confirm(`CC Profil "${name}" wirklich löschen?`)) return;
+  const res = await fetch(`/api/admin/user-cc-profiles/${encodeURIComponent(id)}`, {method: 'DELETE'});
+  if (res.ok) loadContent();
+  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+}
+
+document.addEventListener('DOMContentLoaded', loadContent);
+</script>
+{% endblock %}

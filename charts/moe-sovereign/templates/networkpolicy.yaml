@@ -1,0 +1,38 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "moe.fullname" . }}-orchestrator
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "moe.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Allow ingress-controller / OpenShift router
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: {{ .Values.orchestrator.port }}
+          protocol: TCP
+    # Allow in-namespace components (admin, mcp, alloy sidecar scrape)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: moe-sovereign
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Data tier + observability — the operator is expected to refine this
+    # to specific CIDRs/namespace selectors for their environment.
+    - {}
+{{- end -}}

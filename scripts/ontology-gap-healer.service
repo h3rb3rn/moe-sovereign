@@ -1,0 +1,26 @@
+# systemd service for the Ontology Gap Healer
+# Install: sudo cp ontology-gap-healer.{service,timer} /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now ontology-gap-healer.timer
+
+[Unit]
+Description=MoE Sovereign — Autonomous Knowledge Healing (Ontology Gap Closer)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/moe-sovereign
+EnvironmentFile=/opt/moe-sovereign/.env
+ExecStart=/bin/bash -c 'source /opt/moe-sovereign/.env 2>/dev/null; /usr/bin/docker exec -e MOE_API_KEY="$${MOE_API_KEY}" langgraph-orchestrator python3 /app/scripts/close_ontology_gaps.py'
+# The script runs INSIDE the orchestrator container so it has network
+# access to Neo4j, Kafka, and the inference nodes. The .env provides
+# MOE_API_KEY and NEO4J_PASSWORD.
+TimeoutStartSec=3600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ontology-gap-healer
+
+[Install]
+WantedBy=multi-user.target

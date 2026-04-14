@@ -1,0 +1,173 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "CPU Usage per Node",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "percentunit", "min": 0, "max": 1, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]}},
+        "overrides": []
+      },
+      "targets": [{
+        "expr": "1 - avg by (node) (rate(node_cpu_seconds_total{job=\"inference-nodes\", mode=\"idle\"}[5m]))",
+        "legendFormat": "{{node}}"
+      }],
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "title": "RAM Usage per Node",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "bytes", "min": 0},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes{job=\"inference-nodes\"} - node_memory_MemAvailable_bytes{job=\"inference-nodes\"}",
+          "legendFormat": "{{node}} used"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes{job=\"inference-nodes\"}",
+          "legendFormat": "{{node}} total"
+        }
+      ],
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "title": "GPU VRAM Usage per GPU",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "bytes", "min": 0},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "node_gpu_memory_used_bytes{job=\"inference-nodes\"}",
+          "legendFormat": "{{node}} GPU{{gpu}} used"
+        },
+        {
+          "expr": "node_gpu_memory_total_bytes{job=\"inference-nodes\"}",
+          "legendFormat": "{{node}} GPU{{gpu}} total"
+        }
+      ],
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "title": "GPU Utilization %",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}},
+        "overrides": []
+      },
+      "targets": [{
+        "expr": "node_gpu_utilization_percent{job=\"inference-nodes\"}",
+        "legendFormat": "{{node}} GPU{{gpu}}"
+      }],
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "title": "VRAM Usage per Node (Stacked)",
+      "type": "barchart",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "bytes"},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (node_gpu_memory_used_bytes{job=\"inference-nodes\"})",
+          "legendFormat": "{{node}} VRAM used"
+        },
+        {
+          "expr": "sum by (node) (node_gpu_memory_total_bytes{job=\"inference-nodes\"}) - sum by (node) (node_gpu_memory_used_bytes{job=\"inference-nodes\"})",
+          "legendFormat": "{{node}} VRAM free"
+        }
+      ],
+      "options": {"stacking": {"mode": "normal"}}
+    },
+    {
+      "title": "Disk Usage per Node",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.85}]}
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr": "1 - (node_filesystem_avail_bytes{job=\"inference-nodes\", mountpoint=\"/\", fstype!=\"tmpfs\"} / node_filesystem_size_bytes{job=\"inference-nodes\", mountpoint=\"/\", fstype!=\"tmpfs\"})",
+        "legendFormat": "{{node}}"
+      }],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "title": "Loaded LLMs per Node (via Ollama API)",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "custom.hidden", "value": true}]}
+        ]
+      },
+      "targets": [{
+        "expr": "moe_loaded_models_info{job=\"moe-orchestrator\"}",
+        "legendFormat": "{{model}} @ {{server}}",
+        "format": "table",
+        "instant": true
+      }],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true}, "renameByName": {"model": "Model", "server": "Node", "gpu_count": "GPUs"}}}
+      ],
+      "options": {"showHeader": true}
+    },
+    {
+      "title": "Network I/O per Node",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "moe-prometheus"},
+      "fieldConfig": {
+        "defaults": {"unit": "Bps"},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (rate(node_network_receive_bytes_total{job=\"inference-nodes\", device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
+          "legendFormat": "{{node}} RX"
+        },
+        {
+          "expr": "sum by (node) (rate(node_network_transmit_bytes_total{job=\"inference-nodes\", device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
+          "legendFormat": "{{node}} TX"
+        }
+      ],
+      "options": {"tooltip": {"mode": "multi"}}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["moe", "gpu", "infrastructure", "ollama"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "GPU & Inference Nodes",
+  "uid": "moe-gpu-nodes",
+  "version": 1
+}

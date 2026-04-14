@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block title %}Tool Eval – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-clipboard-data section-icon text-primary"></i>{{ t(request, 'page.tool_eval') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.tool_eval_desc') }}</small>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" id="auto-refresh" checked>
+      <label class="form-check-label small" for="auto-refresh">{{ t(request, 'info.auto_refresh') }}</label>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="loadEval()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+  </div>
+</div>
+
+<!-- Summary badges -->
+<div id="summary-bar" class="mb-3 d-flex gap-3 flex-wrap"></div>
+
+<div id="error-state" class="alert alert-warning d-none">
+  <i class="bi bi-exclamation-triangle me-2"></i>
+  <span id="error-msg">Orchestrator nicht erreichbar.</span>
+</div>
+
+<div id="loading" class="text-center py-5 text-muted">
+  <div class="spinner-border spinner-border-sm me-2"></div>Lade Eval-Daten…
+</div>
+
+<!-- Tab navigation for the two table views -->
+<ul class="nav nav-tabs mb-3" id="evalTabs">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-mcp-history">
+      <i class="bi bi-tools me-1"></i>MCP Tool Call History
+      <span class="badge bg-primary tab-badge ms-1" id="badge-mcp">0</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-cc-eval">
+      <i class="bi bi-clipboard-data me-1"></i>Claude Code Tool Eval
+      <span class="badge bg-secondary tab-badge ms-1" id="badge-cc">0</span>
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- Tab 1: MCP Tool Call History (from mcp_node in the pipeline) -->
+  <div class="tab-pane fade show active" id="tab-mcp-history">
+    <div id="mcp-table-container" class="d-none">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle small">
+          <thead class="table-light">
+            <tr>
+              <th>{{ t(request, 'table.started') }}</th>
+              <th>Tool</th>
+              <th>Task / Aufgabe</th>
+              <th>Argumente</th>
+              <th>Ergebnis</th>
+              <th>Template</th>
+              <th>User</th>
+              <th class="text-end">Latenz</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="mcp-tbody"></tbody>
+        </table>
+      </div>
+      <small class="text-muted" id="mcp-count-info"></small>
+    </div>
+    <div id="mcp-empty" class="text-center py-4 text-muted d-none">
+      <i class="bi bi-inbox" style="font-size:2rem"></i>
+      <p class="mt-2">Noch keine MCP Tool Calls aufgezeichnet.<br>
+      <small>MCP Calls werden ab dem nächsten Container-Restart geloggt.</small></p>
+    </div>
+  </div>
+
+  <!-- Tab 2: Claude Code Tool Eval (from /v1/messages endpoint) -->
+  <div class="tab-pane fade" id="tab-cc-eval">
+    <div id="table-container" class="d-none">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle small">
+          <thead class="table-dark">
+            <tr>
+              <th>Zeit</th>
+              <th>Modell</th>
+              <th>Input-Typ</th>
+              <th class="text-center">Tools verf.</th>
+              <th>Output</th>
+              <th>Tool aufgerufen</th>
+              <th class="text-end">Latenz</th>
+              <th class="text-end">Tokens</th>
+              <th>Choice</th>
+            </tr>
+          </thead>
+          <tbody id="eval-tbody"></tbody>
+        </table>
+      </div>
+      <small class="text-muted" id="total-lines-info"></small>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let _refreshTimer = null;
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts; }
+}
+
+function fmtDateTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' ' +
+           d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts; }
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function rowClass(rec) {
+  if (rec.output_type === 'tool_use') return 'table-success';
+  if (rec.tools_available > 0 && rec.output_type !== 'tool_use') return 'table-warning';
+  return '';
+}
+
+function outputBadge(rec) {
+  if (rec.output_type === 'tool_use') return '<span class="badge bg-success">tool_use</span>';
+  if (rec.output_type === 'end_turn') return '<span class="badge bg-secondary">end_turn</span>';
+  return `<span class="badge bg-dark">${rec.output_type || '?'}</span>`;
+}
+
+function inputBadge(type) {
+  const map = {
+    'tool_result': '<span class="badge bg-info text-dark">tool_result</span>',
+    'tool_use_request': '<span class="badge bg-primary">tool_use_req</span>',
+    'text': '<span class="badge bg-light text-dark border">text</span>',
+  };
+  return map[type] || `<span class="badge bg-dark">${type}</span>`;
+}
+
+async function loadEval() {
+  document.getElementById('error-state').classList.add('d-none');
+  document.getElementById('loading').classList.remove('d-none');
+  document.getElementById('table-container').classList.add('d-none');
+
+  try {
+    const r = await fetch('/api/tool-eval?limit=80');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderEval(data);
+  } catch(e) {
+    document.getElementById('loading').classList.add('d-none');
+    document.getElementById('error-msg').textContent = e.message;
+    document.getElementById('error-state').classList.remove('d-none');
+  }
+}
+
+function renderEval(data) {
+  document.getElementById('loading').classList.add('d-none');
+  document.getElementById('table-container').classList.remove('d-none');
+
+  const records = data.records || [];
+
+  // Split records into MCP pipeline calls vs Claude Code tool-eval calls
+  const mcpRecords = records.filter(r => r.source === 'mcp_node');
+  const ccRecords = records.filter(r => r.source !== 'mcp_node');
+
+  // Update badges
+  document.getElementById('badge-mcp').textContent = mcpRecords.length;
+  document.getElementById('badge-cc').textContent = ccRecords.length;
+
+  // Render MCP Tool Call History table
+  const mcpContainer = document.getElementById('mcp-table-container');
+  const mcpEmpty = document.getElementById('mcp-empty');
+  const mcpTbody = document.getElementById('mcp-tbody');
+  if (mcpRecords.length > 0) {
+    mcpContainer.classList.remove('d-none');
+    mcpEmpty.classList.add('d-none');
+    mcpTbody.innerHTML = mcpRecords.map(r => {
+      const argsStr = r.args ? JSON.stringify(r.args).substring(0, 80) : '—';
+      const resultStr = r.result ? r.result.substring(0, 120) : (r.error || '—');
+      const statusBadge = r.error
+        ? '<span class="badge bg-danger">Fehler</span>'
+        : '<span class="badge bg-success">OK</span>';
+      const latency = r.latency_s != null ? `${r.latency_s.toFixed(3)}s` : '—';
+      const userId = (r.user_id || '').substring(0, 8);
+      return `<tr class="${r.error ? 'table-danger' : ''}">
+        <td class="text-nowrap">${fmtDateTime(r.ts)}</td>
+        <td><span class="badge bg-primary">${r.tool || '?'}</span></td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(r.task || '')}">${escHtml((r.task || '').substring(0, 80))}</td>
+        <td><code style="font-size:.75rem" title="${escHtml(JSON.stringify(r.args || {}))}">${escHtml(argsStr)}</code></td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(resultStr)}">${escHtml(resultStr.substring(0, 80))}</td>
+        <td><span class="badge bg-info text-dark">${escHtml(r.template || '—')}</span></td>
+        <td class="font-monospace text-muted">${userId || '—'}</td>
+        <td class="text-end">${latency}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('mcp-count-info').textContent =
+      `${mcpRecords.length} MCP Tool Calls angezeigt`;
+  } else {
+    mcpContainer.classList.add('d-none');
+    mcpEmpty.classList.remove('d-none');
+  }
+
+  // Continue with CC records below
+
+  // Summary: tool_use_request turns only (where tool calling is expected)
+  const toolReqRecs = records.filter(r => r.input_type === 'tool_use_request');
+  const toolCalled = toolReqRecs.filter(r => r.output_type === 'tool_use');
+  const rate = toolReqRecs.length > 0
+    ? Math.round((toolCalled.length / toolReqRecs.length) * 100)
+    : null;
+
+  // Per-model stats
+  const modelStats = {};
+  for (const r of toolReqRecs) {
+    const m = r.model || '?';
+    if (!modelStats[m]) modelStats[m] = { total: 0, called: 0 };
+    modelStats[m].total++;
+    if (r.output_type === 'tool_use') modelStats[m].called++;
+  }
+
+  const summaryBar = document.getElementById('summary-bar');
+  summaryBar.innerHTML = '';
+  if (rate !== null) {
+    const badgeClass = rate >= 70 ? 'bg-success' : rate >= 40 ? 'bg-warning text-dark' : 'bg-danger';
+    summaryBar.innerHTML += `<span class="badge ${badgeClass} fs-6">Tool-Call-Rate: ${rate}% (${toolCalled.length}/${toolReqRecs.length})</span>`;
+  }
+  for (const [model, stat] of Object.entries(modelStats)) {
+    const pct = stat.total > 0 ? Math.round((stat.called / stat.total) * 100) : 0;
+    const cls = pct >= 70 ? 'bg-success' : pct >= 40 ? 'bg-warning text-dark' : 'bg-danger';
+    summaryBar.innerHTML += `<span class="badge ${cls}">${model}: ${pct}% (${stat.called}/${stat.total})</span>`;
+  }
+
+  const tbody = document.getElementById('eval-tbody');
+  tbody.innerHTML = records.map(rec => {
+    const toolNames = (rec.tools_called || []).join(', ') || '—';
+    const latency = rec.latency_s != null ? `${rec.latency_s.toFixed(2)}s` : '—';
+    const tokens = (rec.input_tokens || 0) + '+' + (rec.output_tokens || 0);
+    return `<tr class="${rowClass(rec)}">
+      <td class="text-nowrap">${fmtTime(rec.ts)}</td>
+      <td class="font-monospace" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${rec.model || ''}">${rec.model || '—'}</td>
+      <td>${inputBadge(rec.input_type)}</td>
+      <td class="text-center">${rec.tools_available ?? '—'}</td>
+      <td>${outputBadge(rec)}</td>
+      <td class="font-monospace">${toolNames}</td>
+      <td class="text-end">${latency}</td>
+      <td class="text-end text-muted">${tokens}</td>
+      <td><span class="badge ${rec.tool_choice_sent === 'required' ? 'bg-warning text-dark' : 'bg-light text-dark border'}">${rec.tool_choice_sent || 'auto'}</span></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('total-lines-info').textContent =
+    `${records.length} Einträge angezeigt, ${data.total_lines || 0} Zeilen gesamt in tool_eval.jsonl`;
+}
+
+function setupAutoRefresh() {
+  const cb = document.getElementById('auto-refresh');
+  cb.addEventListener('change', () => {
+    if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+    if (cb.checked) _refreshTimer = setInterval(loadEval, 10000);
+  });
+  _refreshTimer = setInterval(loadEval, 10000);
+}
+
+loadEval();
+setupAutoRefresh();
+</script>
+{% endblock %}

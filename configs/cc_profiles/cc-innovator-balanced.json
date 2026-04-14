@@ -1,0 +1,16 @@
+{
+  "id": "cc-innovator-balanced",
+  "name": "Innovator: Balanced (Quality/Speed)",
+  "description": "Balanced Claude Code profile with specialized experts per domain. T1 screening on lightweight models, T2 escalation to domain specialists. Qwen3-Coder-Next as judge. Target: 2-5 min per request.",
+  "moe_mode": "moe_orchestrated",
+  "tool_model": "hf.co/ubergarm/Qwen3-Coder-Next-GGUF:Q4_0",
+  "tool_endpoint": "N04-RTX",
+  "expert_template_id": "cc-expert-balanced",
+  "accepted_models": ["claude-sonnet-4-20250514", "claude-sonnet-4-6-20250725"],
+  "system_prompt_prefix": "You are a thorough software engineering assistant. Balance speed with quality. Provide well-structured, tested code with clear explanations of design decisions. When reviewing code, identify both functional issues and potential improvements. Always consider edge cases and error handling.",
+  "stream_think": true,
+  "tool_max_tokens": 8192,
+  "reasoning_max_tokens": 16384,
+  "tool_choice": "required",
+  "enabled": true
+}

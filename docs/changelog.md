@@ -1,0 +1,13950 @@
+# Changelog
+
+All notable changes to the Sovereign MoE Orchestrator are documented here.
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic versioning for manual releases, date-based labels for auto-tracked changes.
+
+> **Metadata fields used in every entry:**
+> `impact` (patch / minor / major) · `breaking` (yes / no) · `domain` (affected subsystems)
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-14] - 2026-04-14
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `da880a5a` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `base.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `70caef43` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `f7c9a953` on `patch/v1.8.1-fixes` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `f7c9a953` on `patch/v1.8.1-fixes` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `f7c9a953` on `patch/v1.8.1-fixes` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `f7c9a953` on `patch/v1.8.1-fixes` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `profiles.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `profiles.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `profiles.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `profiles.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8b65e32d` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `b1b945d3` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-13] - 2026-04-13
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `base.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `skills.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `8d18aff2` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `monitoring.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-12] - 2026-04-12
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **MCP Tools**: `requirements.txt`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-11] - 2026-04-11
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | MCP Tools, Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 2 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | MCP Tools, Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 2 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | MCP Tools, Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 2 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `self_correction.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `base.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `05c1dc94` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `tool_eval.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `tool_eval.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Admin UI**: `tool_eval.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-10] - 2026-04-10
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `b524d0fa` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `4a545995` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `4a545995` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `4a545995` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `Dockerfile`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `4a545995` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `live_monitoring.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `live_monitoring.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `live_monitoring.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `live_monitoring.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `live_monitoring.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `requirements.txt`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `Dockerfile`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Docs Sync Agent**: `sync_agent.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Docs Sync Agent |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Docs Sync Agent**: `sync_agent.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Docs Sync Agent |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `e9405be0` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `697ef075` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `697ef075` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `697ef075` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `697ef075` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `697ef075` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `697ef075` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `1f6229fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `1f6229fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `1f6229fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `1f6229fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-09] - 2026-04-09
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **MCP Tools**: `server.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | MCP Tools |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [2026-04-08] - Dozzle, Setup Wizard, install.sh
+
+> `impact: minor` · `breaking: no` · `domain: infra, admin-ui, docs`
+
+### Added
+
+- **Dozzle log viewer** — new `moe-dozzle` container (amir20/dozzle:latest) accessible at `logs.moe-sovereign.org` via Caddy; bcrypt auth via `/opt/moe-infra/dozzle-users.yml`; added to CONTAINER_NAMES in Admin UI monitoring table
+- **Setup Wizard** — first-run 4-step web wizard (`/setup`) in Admin UI; triggers automatically when `INFERENCE_SERVERS` is empty; covers inference servers, judge/planner models, and public URLs; implemented in all 4 UI languages
+- **`install.sh`** — curl-able bash installer for Debian 11/12/13; auto-installs Docker CE, creates `/opt/` directories, generates secure secrets, prompts for admin credentials, deploys the full stack
+- **`.env.example`** — comprehensive template with all 80+ variables documented and grouped by subsystem
+- **`moe-sovereign.org` Caddy block** — serves `install.sh` via `file_server`; redirects all other traffic to docs
+- **Installation guide** (`docs/guide/installation.md`) — requirements, one-line install, manual setup, directory layout, upgrade procedure
+- **First-Time Setup guide** (`docs/guide/first-setup.md`) — wizard walkthrough, backend types, minimum viable config example
+
+### Removed
+
+- **"Expert Models — Global Default" card** — removed from Admin UI dashboard; model assignment is fully handled via Expert Templates and per-user API token auth; `rebuild_expert_models()` function deleted; `EXPERT_MODELS` no longer written by `save_config()`
+
+### Changed
+
+- Caddy config: added `moe-sovereign.org` and `logs.moe-sovereign.org` virtual hosts
+- docker-socket-proxy: added `LOGS`, `EVENTS`, `VERSION`, `PING` endpoint permissions
+- Quickstart docs: deployment section references `install.sh`
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [2026-04-08] — Memory Palace: Domain-Scoped Retrieval, Expert Memory Isolation & Auto-Save Hooks
+
+### Added
+
+- **Metadata-Filtered Semantic Search** (`main.py` — `planner_node`, `graph_rag_node`):
+  The planner now optionally extracts `metadata_filters` (e.g. `{"expert_domain": "code_reviewer"}`)
+  from the first task object. `graph_rag_node` applies these as a ChromaDB `where` clause
+  after the Neo4j traversal, appending domain-scoped results to `graph_context` under a
+  `[Domain-Filtered Memory]` label. Degrades silently on errors.
+
+- **Isolated Expert Memory** (`main.py` — `merger_node`; `graph_rag/manager.py`):
+  Every response stored in ChromaDB is tagged with `expert_domain` metadata.
+  The `moe.ingest` Kafka payload gains a `source_expert` field that flows through the
+  consumer into `extract_and_ingest()` and `ingest_synthesis()`, tagging all resulting
+  `:Entity` nodes, relations, and `:Synthesis` nodes in Neo4j with their origin expert category.
+
+- **`POST /v1/memory/ingest` endpoint** (`main.py`):
+  New FastAPI endpoint that accepts `{session_summary, key_decisions, domain, source_model,
+  confidence}` and publishes to `moe.ingest` for async GraphRAG processing. Enables
+  external tools to persist knowledge without accessing Kafka directly.
+
+- **Claude Code Auto-Save Hooks** (`hooks/`):
+  Two bash scripts — `mempal_precompact_hook.sh` (PreCompact) and `mempal_save_hook.sh`
+  (Stop) — POST session summaries to `/v1/memory/ingest` before context is lost.
+  Configured via `~/.claude/settings.json`. See `hooks/README.md` for setup.
+
+- **Documentation** (`docs/system/intelligence/memory_palace.md`):
+  New chapter in the Intelligence & Learning section covering all three features with
+  architecture diagrams, schema references, and operational runbook.
+
+### Changed
+
+- `AgentState` gains `metadata_filters: Dict` field
+- `moe.ingest` Kafka payload gains `source_expert` field
+- ChromaDB `moe_fact_cache` documents gain `expert_domain` metadata field
+- Neo4j `:Entity` nodes and relations gain `expert_domain` property
+- Neo4j `:Synthesis` nodes gain `expert_domain` property
+- `docs/system/architecture.md`, `dataflow.md`, `pipeline.md`,
+  `intelligence/index.md`, `intelligence/compounding_knowledge.md` updated
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | ChromaDB / Neo4j / Orchestrator / Claude Code Integration |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `aa6cd5fc` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [2026-04-08] — Compounding Knowledge Base
+
+### Added
+
+- **Synthesis Persistence** (`main.py`, `graph_rag/manager.py`): The `merger_node` now appends a `<SYNTHESIS_INSIGHT>` JSON block to its output when it produces a novel multi-source comparison, inference, or synthesis. The block is automatically stripped from the user-facing response. The Kafka consumer reads the `synthesis_insight` field on `moe.ingest` messages and calls the new `graph_manager.ingest_synthesis()` method, which creates a `:Synthesis` node in Neo4j (idempotent, sha256-keyed) and links it to relevant `:Entity` nodes via `:RELATED_TO`. These nodes surface in future `graph_rag_node` 2-hop traversals.
+
+- **Graph Linting / Knowledge Janitor** (`main.py`, `graph_rag/manager.py`): New Kafka topic `moe.linting` (constant `KAFKA_TOPIC_LINTING`). Any message on this topic triggers `graph_manager.run_graph_linting()` as a background task. Phase 1 deletes orphaned `:Entity` nodes (no relationships, LIMIT 50). Phase 2 iterates contradictory relationship pairs from `_CONTRADICTORY_PAIRS`, detects same-subject conflicts, calls the Ingest LLM for resolution, and flags the losing relationship (`flagged=true`, `lint_note`, `lint_ts`, `lint_model`). All LLM calls are throttled via the existing `_ingest_semaphore` with 0.5 s sleep between iterations.
+
+- **New documentation chapter** `docs/system/intelligence/compounding_knowledge.md`: Full description of both features including architecture diagrams, Cypher queries, operational runbook, and Neo4j schema changes.
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | GraphRAG, Kafka, Orchestrator, Documentation |
+| `files changed` | 8 (`main.py`, `graph_rag/manager.py`, `docs/system/kafka.md`, `docs/system/architecture.md`, `docs/system/dataflow.md`, `docs/system/pipeline.md`, `docs/system/toolstack/graphrag_neo4j.md`, `docs/system/intelligence/compounding_knowledge.md`) |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Documentation (mkDocs)**: `mkdocs.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Documentation (mkDocs) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | major |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **GraphRAG**: `manager.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | GraphRAG |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `c8881644` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Orchestrator (main.py)**: `main.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Orchestrator (main.py) |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `expert_templates.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-08] - 2026-04-08
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `4b3c04d1` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `database.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `zh_CN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `fr_FR.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `en_EN.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `de_DE.lang`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `base.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `base.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `base.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `users.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `dashboard.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `user_portal.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `login.html`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [auto-2026-04-07] - 2026-04-07
+
+### Changed
+
+- **Admin UI**: `app.py`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Admin UI |
+| `git` | `35ab3e4f` on `main` |
+| `files changed` | 1 |
+
+---
+
+## [3.0.0] - 2026-04-07
+
+### Added — Causal Learning Loop
+
+- **GraphRAG / Neo4j** (`graph_rag/ontology.py`): Three new procedural relation types with enterprise seed triples
+  - `NECESSITATES_PRESENCE` (Action → Location): performing an action requires physical presence at a location
+  - `DEPENDS_ON_LOCATION` (Action → Location): action outcome depends on a reachable location
+  - `ENABLES_ACTION` (Condition → Action): a prerequisite resource or state makes an action possible
+  - 25 new entities across three new types: `Action`, `Location`, `Condition`
+  - Seed triples cover IT operations workflows (on-premises deployment, hardware installation, remote access)
+
+- **GraphRAG Manager** (`graph_rag/manager.py`): Procedural reasoning in extraction and retrieval
+  - Extended extraction prompt to elicit factual and procedural triples in a single LLM call
+  - `_query_procedural_requirements()`: targeted Cypher traversal when `Action`-type entities appear in results
+  - `_get_ingest_semaphore()`: `asyncio.Semaphore(2)` caps concurrent background ingest calls
+  - Auto-detection: extracted procedural triples override upstream `knowledge_type` hint
+  - `extract_and_ingest()` extended with optional `knowledge_type` param; returns detected type
+
+- **Orchestrator** (`main.py`): Graph ingest LLM decoupled from judge/merger
+  - `GRAPH_INGEST_MODEL` / `GRAPH_INGEST_ENDPOINT`: dedicated model for background extraction; falls back to judge LLM when unset
+  - `knowledge_type` field added to `moe.ingest` Kafka events
+  - `graph_rag_node`: prepends explicit merger annotation when `[Procedural Requirements]` block is present
+
+- **Admin UI** (`admin_ui/templates/dashboard.html`, `admin_ui/app.py`): Graph Ingest Model selector
+  - New field in Models card following `model@endpoint` pattern
+  - Persisted via `GRAPH_INGEST_MODEL` / `GRAPH_INGEST_ENDPOINT` env keys
+
+- **Documentation** (`docs/system/intelligence/`): New *Intelligence & Learning* section
+  - `causal_learning.md`: motivation, ontology, extraction pipeline, Cypher queries, enterprise use cases
+  - `context_extension.md`: six mechanisms for effective context extension despite small LLM context windows
+  - Updated `architecture.md` and `dataflow.md` with corrected diagrams and topic names
+
+### Changed
+
+- `mkdocs.yml`: new top-level nav section *Intelligence & Learning*
+- `sync_agent.py`: all generated content translated to English
+- `docs/changelog.md`: deduplicated 1051 auto-generated duplicate entries; all entries translated to English; metadata fields added to every release
+
+| Metadata | Value |
+|---|---|
+| `impact` | major — new knowledge type in graph; existing triples unaffected (MERGE is idempotent) |
+| `breaking` | no — `extract_and_ingest()` extended with optional param only |
+| `domain` | GraphRAG, Kafka, Admin UI, Documentation |
+
+---
+
+## [2.3.0] - 2026-04-07
+
+### Changed — Security Hardening & Admin UI Overhaul
+
+- **Admin UI**: CSRF tokens on all state-changing forms; rate limiting on auth endpoints; session management improvements; all four locale files updated (de_DE, en_EN, fr_FR, zh_CN)
+- **Infrastructure** (`docker-compose.yml`): Redis Stack configured via `REDIS_ARGS`; middleware ordering verified
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor — no API changes; session behaviour hardened |
+| `breaking` | no |
+| `domain` | Admin UI, Infrastructure, Security |
+
+---
+
+## [2.2.1] - 2026-04-06
+
+### Changed — Admin UI Internationalisation & Claude Code Profile Fixes
+
+- **Admin UI**: Full i18n pass across all 14 templates and four locale files; `Dockerfile` rebuilt
+- **Orchestrator** (`main.py`): Claude Code profile `expert_template_id` resolution corrected; vision mode fixed for image attachments; process table display fixed
+- **Documentation** (`mkdocs.yml`): navigation labels standardised to English
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch — UI and i18n fixes; API unchanged |
+| `breaking` | no |
+| `domain` | Admin UI, i18n, Claude Code Integration |
+
+---
+
+## [2.2.0] - 2026-04-05
+
+### Added
+
+- **Admin UI** (`profiles.html`, `app.py`): Expert-template selector in Claude Code profile editor — profiles can now assign an individual expert template (visible only in `moe_orchestrated` mode)
+- **Orchestrator** (`main.py`): `expert_template_id` in CC profiles loaded via `admin_override=True` without permission check
+- **Auto-documentation** (`sync_agent.py`, `scripts/doc_sync_hook.sh`): Claude Code PostToolUse hook writes changelog entries to `docs/changelog_pending.jsonl`; `sync_agent.py --changelog-only` flushes pending entries every 15 min
+- **Expert template `claude-code-agent`**: system prompts for all expert categories optimised for autonomous tool execution in agentic loops
+
+### Changed
+
+- `_resolve_user_experts` / `_resolve_template_prompts`: new optional `admin_override: bool` parameter
+- CC profiles: new optional field `expert_template_id`
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor — new optional field; existing profiles unaffected |
+| `breaking` | no |
+| `domain` | Admin UI, Claude Code Integration, Expert Templates |
+
+---
+
+## [2.1.0] - 2026-03-29
+
+### Added
+
+- **Two-Tier Expert System**: `_infer_tier()` routes T1 (≤20B params) first; T2 (>20B) only when T1 confidence is below threshold — saves VRAM on simple requests, escalates for complex ones
+- **Chat-history injection**: `_truncate_history()` — last 4 turns, max 3000 chars — all expert LLMs receive conversation context; `chat_history` field added to `AgentState` and API layer
+- **Citation tracking**: `_web_search_with_citations()` appends structured source references (title + URL) to web research results
+- **`thinking_node`**: new node between `research_fallback` and `merger`; activated for complex plans or low-confidence results; 4-step chain-of-thought; output as `reasoning_trace`
+- **Expert deduplication**: `_dedup_by_category()` keeps highest-confidence result per category; prevents echo chamber
+- **`critic_node`**: post-merger validation for `medical_consult` and `legal_advisor` (safety-critical); judge LLM checks for factual errors and dangerous statements
+
+### Changed
+
+- Graph topology: `research_fallback → thinking → merger → critic → END`
+- `expert_worker`: two-tier logic replaces simple parallel fan-out
+- Judge LLM updated to reasoning-focused model
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor — pipeline extended; API compatible |
+| `breaking` | no |
+| `domain` | Orchestrator, Expert Routing, Safety |
+
+---
+
+## [2.0.0] - 2026-03-29
+
+### Added
+
+- **Kafka integration** (KRaft mode, no Zookeeper): topics `moe.ingest`, `moe.requests`, `moe.feedback`; `AIOKafkaProducer` with 12-retry backoff; `AIOKafkaConsumer` as permanent asyncio background task; graceful degradation when Kafka unavailable
+- **GraphRAG / Neo4j Knowledge Graph**: `GraphRAGManager` with 2-hop traversal; base ontology 104 entities / 100 relations across 4 domains; background triple extraction via judge LLM; conflict detection; domain filter prevents cross-domain contamination; API endpoints `GET /graph/stats`, `GET /graph/search`
+- **MCP Precision Tools Server** (port 8003): 16 deterministic tools — calculate (safe AST evaluator), date arithmetic, unit conversion, statistics, regex, subnet calculator, base64, JSON query
+- **Self-learning infrastructure**: `POST /v1/feedback` endpoint; expert performance tracking in Redis (Laplace smoothing); cache flags low-rated entries; response metadata TTL 7 days
+- **LangGraph pipeline extended**: `mcp_node`, `graph_rag_node` added to parallel fan-out; cache short-circuit at cosine distance < 0.15; expert output cap 2400 chars
+- **Confidence scoring**: structured expert output `KONFIDENZ: hoch | mittel | niedrig`; merger prioritises by confidence
+- **Research fallback node**: automatic web search on low-confidence results; forced for safety-critical categories
+- **Output modes**: `moe-orchestrator`, `moe-orchestrator-code`, `moe-orchestrator-concise`
+- **Token tracking**: accumulated `prompt_tokens` + `completion_tokens` across all LLM calls in every response
+- **Open WebUI `<think>` panel**: progress reports from all nodes via `contextvars.ContextVar`
+- **Open WebUI internal-request detection**: fast-paths title/autocomplete prompts directly to judge
+
+### Fixed
+
+- Planner returning strings instead of task dicts → `_sanitize_plan()` added
+- Neo4j deprecated relation type warnings removed from `_CONTRADICTORY_PAIRS`
+- docker-compose duplicate `environment` block merged
+
+| Metadata | Value |
+|---|---|
+| `impact` | major — Kafka and Neo4j are new required infrastructure |
+| `breaking` | yes — requires `moe-kafka` and `neo4j-knowledge` services |
+| `domain` | Orchestrator, Infrastructure, GraphRAG, MCP, Kafka |
+
+---
+
+## [1.2.0] - 2026-02-12
+
+### Added
+
+- SymPy mathematics module: equation solving, simplification, differentiation, integration
+
+### Changed
+
+- Expert worker: improved stagger algorithm
+- GPU count dynamically configurable via environment variable
+- Improved CUDA OOM error detection and handling
+
+### Fixed
+
+- Checkpointer initialisation error (`_GeneratorContextManager`)
+- Memory leak in expert worker semaphore management
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Orchestrator, Math |
+
+---
+
+## [1.1.0] - 2026-02-11
+
+### Added
+
+- LangGraph Mixture-of-Experts orchestration (initial pipeline)
+- Multi-node GPU cluster support via Ollama
+- Redis checkpoint persistence for graph state
+- ChromaDB vector store for knowledge caching
+- SearXNG web research integration
+- Docker Compose deployment
+- OpenAI-compatible API endpoint (`/v1/chat/completions`) with SSE streaming
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor — initial functional release |
+| `breaking` | no |
+| `domain` | Orchestrator, Infrastructure |
+
+---
+
+## [1.0.0] - 2026-02-10
+
+### Added
+
+- Project initialisation with LangGraph base structure
+- Core nodes: `cache_lookup`, `planner`, `expert_workers`, `merger`
+- Docker configuration and basic error handling
+
+| Metadata | Value |
+|---|---|
+| `impact` | major — initial release |
+| `breaking` | n/a |
+| `domain` | Orchestrator |

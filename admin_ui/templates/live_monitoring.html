@@ -1,0 +1,514 @@
+{% extends "base.html" %}
+{% block title %}Live Monitoring – MoE Admin{% endblock %}
+
+{% block content %}
+<style>
+  .live-badge {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: #22c55e;
+    border-radius: 50%;
+    animation: pulse 1.4s infinite;
+    margin-right: 6px;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.7); }
+    70%  { box-shadow: 0 0 0 8px rgba(34,197,94,0); }
+    100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+  }
+  .duration-ok   { color: #16a34a; font-weight: 600; }
+  .duration-warn { color: #d97706; font-weight: 600; }
+  .duration-crit { color: #dc2626; font-weight: 700; }
+  .metric-chip {
+    display: inline-block;
+    background: #f1f5f9;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: .8rem;
+    margin: 2px;
+    color: #334155;
+  }
+  .metric-chip strong { color: #0f172a; }
+  .model-row { font-size: .84rem; }
+  .vram-bar-wrap { height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 3px; min-width: 80px; }
+  .vram-bar { height: 6px; background: #6366f1; border-radius: 3px; }
+  .server-card { margin-bottom: 1.5rem; }
+  .loaded-model-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #ede9fe; border-radius: 8px;
+    padding: 4px 10px; margin: 3px; font-size: .82rem;
+  }
+  .loaded-model-badge .bi { color: #7c3aed; }
+  #last-update { font-size: .8rem; color: #64748b; }
+  .tab-badge { font-size: .7rem; padding: .15em .5em; vertical-align: middle; }
+</style>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0 fw-bold">
+    <span class="live-badge"></span>{{ t(request, 'page.live') }}
+  </h4>
+  <div class="d-flex align-items-center gap-3">
+    <span id="last-update">{{ t(request, 'info.updating') }}</span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="forceRefresh()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Jetzt aktualisieren
+    </button>
+    <div class="form-check form-switch mb-0 d-flex align-items-center gap-2">
+      <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+      <label class="form-check-label small" for="autoRefreshToggle">Auto 5s</label>
+    </div>
+  </div>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="liveMonTab">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-active">
+      <i class="bi bi-activity me-1"></i>{{ t(request, 'section.active_procs') }}
+      <span class="badge bg-secondary tab-badge" id="badge-active">0</span>
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-llm">
+      <i class="bi bi-gpu-card me-1"></i>{{ t(request, 'section.llm_instances') }}
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- ── Tab 1: Aktive Prozesse ───────────────────────────────────────────── -->
+  <div class="tab-pane fade show active" id="tab-active">
+    <div class="card">
+      <div class="card-header bg-dark text-white d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-activity me-2"></i>{{ t(request, 'section.api_requests') }}</span>
+        <small class="text-secondary">{{ t(request, 'info.color_coding') }}</small>
+      </div>
+      <div class="card-body p-0">
+        <div id="active-requests-container">
+          <div class="text-center text-muted py-5" id="active-empty">
+            <i class="bi bi-hourglass" style="font-size:2rem"></i>
+            <div class="mt-2">{{ t(request, 'empty.no_requests') }}</div>
+          </div>
+          <table class="table table-sm table-hover mb-0 d-none" id="active-table">
+            <thead class="table-light">
+              <tr>
+                <th>{{ t(request, 'table.started') }}</th>
+                <th>{{ t(request, 'table.duration') }}</th>
+                <th>User</th>
+                <th>Model</th>
+                <th>{{ t(request, 'table.mode') }}</th>
+                <th>{{ t(request, 'table.template') }}</th>
+                <th>{{ t(request, 'table.type') }}</th>
+                <th>{{ t(request, 'table.client_ip') }}</th>
+                <th>API-Key</th>
+                <th>{{ t(request, 'table.request_id') }}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="active-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Prozess-Verlauf ────────────────────────────────────────────────── -->
+    <div class="card mt-3">
+      <div class="card-header d-flex align-items-center justify-content-between" style="background:#f8f9fa">
+        <span><i class="bi bi-clock-history me-2 text-secondary"></i>{{ t(request, 'section.proc_history') }}</span>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" onclick="fetchCompletedRequests()">
+            <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()">
+            <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.history_clear') }}
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="text-center text-muted py-4 small" id="history-empty">
+          <i class="bi bi-inbox" style="font-size:1.5rem"></i>
+          <div class="mt-1">{{ t(request, 'empty.no_procs') }}</div>
+        </div>
+        <table class="table table-sm table-hover mb-0 d-none" id="history-table" style="font-size:.82rem">
+          <thead class="table-light">
+            <tr>
+              <th>{{ t(request, 'table.started') }}</th>
+              <th>{{ t(request, 'table.ended') }}</th>
+              <th>{{ t(request, 'table.duration') }}</th>
+              <th>User</th>
+              <th>Model</th>
+              <th>{{ t(request, 'table.mode') }}</th>
+              <th>{{ t(request, 'table.type') }}</th>
+              <th>API-Key</th>
+              <th>{{ t(request, 'table.status') }}</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab 2: LLM Instanzen ────────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="tab-llm">
+    <div id="llm-instances-container">
+      <div class="text-center text-muted py-5" id="llm-loading">
+        <div class="spinner-border spinner-border-sm me-2"></div>Lade Instanz-Daten…
+      </div>
+      <div class="row" id="llm-cards"></div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _refreshTimer = null;
+
+/* ── Hilfsfunktionen ───────────────────────────────────────────────────────── */
+function fmtDateTime(iso) {
+  if (!iso) return '–';
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric'});
+  const time = d.toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  return `${date} ${time}`;
+}
+function fmtDuration(s) {
+  if (s === null || s === undefined) return '–';
+  if (s < 60) return s.toFixed(1) + 's';
+  return (s / 60).toFixed(1) + 'min';
+}
+function durationClass(s) {
+  if (s === null || s === undefined) return '';
+  if (s <= 30)  return 'duration-ok';
+  if (s <= 120) return 'duration-warn';
+  return 'duration-crit';
+}
+function fmtMb(mb) {
+  if (!mb || mb === 0) return '–';
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+  return mb.toFixed(0) + ' MB';
+}
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function expiresIn(iso) {
+  if (!iso) return '–';
+  try {
+    const diff = (new Date(iso) - Date.now()) / 1000;
+    if (diff <= 0) return '<span class="text-danger">abgelaufen</span>';
+    if (diff < 60) return `<span class="text-warning">${diff.toFixed(0)}s</span>`;
+    return `${(diff/60).toFixed(0)}min`;
+  } catch { return '–'; }
+}
+
+/* ── Aktive Prozesse ───────────────────────────────────────────────────────── */
+async function fetchActiveRequests() {
+  try {
+    const data = await fetch('/api/live/active-requests').then(r => r.json());
+    const reqs = data.requests || [];
+    document.getElementById('badge-active').textContent = reqs.length;
+
+    if (reqs.length === 0) {
+      document.getElementById('active-empty').classList.remove('d-none');
+      document.getElementById('active-table').classList.add('d-none');
+      return;
+    }
+    document.getElementById('active-empty').classList.add('d-none');
+    document.getElementById('active-table').classList.remove('d-none');
+
+    // Sort by duration descending (longest first)
+    reqs.sort((a, b) => (b.duration_s || 0) - (a.duration_s || 0));
+
+    const rows = reqs.map(r => `
+      <tr>
+        <td class="text-nowrap">${fmtDateTime(r.started_at)}</td>
+        <td class="text-nowrap"><span class="${durationClass(r.duration_s)}">${fmtDuration(r.duration_s)}</span></td>
+        <td>${escHtml(r.username || r.user_id || '–')}</td>
+        <td><code style="font-size:.8rem">${escHtml(r.model || '–')}${(r.moe_mode === 'native' && r.backend_host) ? `<span class="text-info" style="font-size:.8rem">@${escHtml(r.backend_host)}</span>` : ''}${(r.backend_model && r.backend_model !== (r.model || '')) ? `<span class="text-muted ms-1" style="font-size:.75rem">(${escHtml(r.backend_model)})</span>` : ''}</code></td>
+        <td><span class="badge bg-info text-dark">${escHtml(r.moe_mode || '–')}</span></td>
+        <td>${escHtml(r.template_name || '–')}</td>
+        <td><span class="badge ${r.type==='streaming'?'bg-primary':'bg-secondary'}">${escHtml(r.type || '–')}</span></td>
+        <td><code style="font-size:.75rem">${escHtml(r.client_ip || '–')}</code></td>
+        <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
+        <td><code style="font-size:.7rem">${escHtml((r.chat_id||'').slice(-12))}</code></td>
+        <td><button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.72rem"
+                    onclick="killRequest('${escHtml(r.chat_id||'')}')">
+              <i class="bi bi-x-circle me-1"></i>Kill
+            </button></td>
+      </tr>`).join('');
+    document.getElementById('active-tbody').innerHTML = rows;
+  } catch(e) {
+    // Surface the error visibly instead of leaving a silent empty table.
+    console.warn('active-requests fetch failed:', e);
+    const tbody = document.getElementById('active-tbody');
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="11" class="text-danger text-center py-3">
+        <i class="bi bi-exclamation-triangle me-1"></i>Render error: ${escHtml(e && e.message || e)}
+      </td></tr>`;
+    }
+  }
+}
+
+/* ── LLM Instanzen ─────────────────────────────────────────────────────────── */
+async function fetchLLMInstances() {
+  try {
+    const data = await fetch('/api/live/llm-instances').then(r => r.json());
+    const servers = data.servers || [];
+    document.getElementById('llm-loading').classList.add('d-none');
+    const container = document.getElementById('llm-cards');
+
+    container.innerHTML = servers.map(srv => {
+      const statusBadge = srv.ok
+        ? `<span class="badge bg-success">Online</span>`
+        : `<span class="badge bg-danger">Offline</span>`;
+      const apiTypeBadge = srv.api_type === 'ollama'
+        ? `<span class="badge bg-purple" style="background:#7c3aed">Ollama</span>`
+        : `<span class="badge bg-warning text-dark">OpenAI</span>`;
+      const latency = srv.latency_ms >= 0 ? `${srv.latency_ms}ms` : '–';
+      const version = srv.version ? `v${escHtml(srv.version)}` : '';
+
+      // Geladene Modelle (Ollama /api/ps)
+      let loadedSection = '';
+      if (srv.api_type === 'ollama') {
+        const loaded = srv.loaded_models || [];
+        if (loaded.length > 0) {
+          loadedSection = `
+            <div class="mt-3">
+              <div class="fw-semibold mb-2" style="font-size:.85rem">
+                <i class="bi bi-lightning-charge-fill text-warning me-1"></i>Loaded models (${loaded.length})
+              </div>
+              <table class="table table-sm table-bordered mb-0 model-row">
+                <thead class="table-light">
+                  <tr>
+                    <th>Model</th><th>VRAM</th><th>Total</th><th>Parameters</th><th>Quant.</th><th>Family</th><th>Expires</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${loaded.map(m => `
+                    <tr>
+                      <td><strong>${escHtml(m.name)}</strong></td>
+                      <td>${fmtMb(m.size_vram_mb)}</td>
+                      <td>${fmtMb(m.size_total_mb)}</td>
+                      <td>${escHtml(m.parameter_size||'–')}</td>
+                      <td>${escHtml(m.quantization||'–')}</td>
+                      <td>${escHtml(m.family||'–')}</td>
+                      <td>${expiresIn(m.expires_at)}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>`;
+        } else {
+          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>Kein Modell geladen (Idle)</div>`;
+        }
+      }
+
+      // Ollama /metrics
+      let metricsSection = '';
+      const m = srv.metrics || {};
+      if (Object.keys(m).length > 0) {
+        const inProgress = m.ollama_requests_in_progress !== undefined ? m.ollama_requests_in_progress : '–';
+        const pending    = m.ollama_pending_requests     !== undefined ? m.ollama_pending_requests     : '–';
+        const loadedCnt  = m.ollama_loaded_models        !== undefined ? m.ollama_loaded_models        : '–';
+        const totalReqs  = m.ollama_request_duration_seconds_count !== undefined
+                           ? Math.round(m.ollama_request_duration_seconds_count) : '–';
+        const avgDur     = m.avg_request_duration_s !== undefined ? m.avg_request_duration_s + 's' : '–';
+        const reqSize    = m.ollama_request_size_bytes_sum  ? (m.ollama_request_size_bytes_sum  / 1e6).toFixed(1) + ' MB' : '–';
+        const respSize   = m.ollama_response_size_bytes_sum ? (m.ollama_response_size_bytes_sum / 1e6).toFixed(1) + ' MB' : '–';
+
+        const inProgColor = inProgress > 0 ? 'text-warning fw-bold' : '';
+        const pendColor   = pending     > 0 ? 'text-danger fw-bold'  : '';
+
+        metricsSection = `
+          <div class="mt-3">
+            <div class="fw-semibold mb-2" style="font-size:.85rem">
+              <i class="bi bi-bar-chart-line me-1 text-primary"></i>Ollama Metriken
+            </div>
+            <div class="d-flex flex-wrap gap-1">
+              <span class="metric-chip"><strong class="${inProgColor}">${inProgress}</strong> in Arbeit</span>
+              <span class="metric-chip"><strong class="${pendColor}">${pending}</strong> wartend</span>
+              <span class="metric-chip"><strong>${loadedCnt}</strong> geladen</span>
+              <span class="metric-chip"><strong>${totalReqs}</strong> Anfragen gesamt</span>
+              <span class="metric-chip">Ø <strong>${avgDur}</strong> / Anfrage</span>
+              <span class="metric-chip">↑ <strong>${reqSize}</strong> Eingabe</span>
+              <span class="metric-chip">↓ <strong>${respSize}</strong> Ausgabe</span>
+            </div>
+          </div>`;
+      }
+
+      // Available models
+      const avail = srv.available_models || [];
+      let availSection = '';
+      if (avail.length > 0) {
+        availSection = `
+          <div class="mt-3">
+            <details>
+              <summary class="fw-semibold" style="font-size:.85rem;cursor:pointer">
+                <i class="bi bi-archive me-1 text-secondary"></i>Available models (${avail.length})
+              </summary>
+              <table class="table table-sm table-hover mt-2 mb-0 model-row">
+                <thead class="table-light"><tr><th>Name</th><th>Size</th><th>Parameters</th><th>Quant.</th></tr></thead>
+                <tbody>
+                  ${avail.map(m => `<tr>
+                    <td><code style="font-size:.78rem">${escHtml(m.name)}</code></td>
+                    <td>${escHtml(m.size_gb !== '–' ? m.size_gb + ' GB' : '–')}</td>
+                    <td>${escHtml(m.parameter_size||'–')}</td>
+                    <td>${escHtml(m.quantization||'–')}</td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </details>
+          </div>`;
+      }
+
+      const errorAlert = srv.error
+        ? `<div class="alert alert-danger py-1 px-2 mt-2 small"><i class="bi bi-exclamation-triangle me-1"></i>${escHtml(srv.error)}</div>`
+        : '';
+
+      return `
+        <div class="col-12 col-xl-6 server-card">
+          <div class="card h-100">
+            <div class="card-header d-flex align-items-center justify-content-between">
+              <div class="d-flex align-items-center gap-2">
+                ${statusBadge}
+                ${apiTypeBadge}
+                <strong>${escHtml(srv.name)}</strong>
+                ${version ? `<small class="text-muted">${version}</small>` : ''}
+              </div>
+              <div class="d-flex align-items-center gap-2 text-muted small">
+                <i class="bi bi-gpu-card"></i>${srv.gpu_count} GPU
+                <i class="bi bi-speedometer2 ms-2"></i>${latency}
+                <span class="badge bg-light text-dark border ms-1">Tier ${srv.tier}</span>
+                <span class="badge bg-light text-dark border">×${srv.cost_factor}</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="text-muted small mb-1"><i class="bi bi-link-45deg me-1"></i><code>${escHtml(srv.url)}</code></div>
+              ${errorAlert}
+              ${loadedSection}
+              ${metricsSection}
+              ${availSection}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch(e) {
+    console.warn('llm-instances fetch failed:', e);
+  }
+}
+
+/* ── Prozess killen ────────────────────────────────────────────────────────── */
+async function killRequest(chatId) {
+  if (!chatId) return;
+  if (!confirm(`Prozess ${chatId.slice(-12)} aus dem Live-Monitoring entfernen?`)) return;
+  try {
+    const r = await fetch(`/api/live/kill-request/${encodeURIComponent(chatId)}`, {method: 'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      await fetchActiveRequests();
+      await fetchCompletedRequests();
+    } else {
+      alert('Kill fehlgeschlagen: ' + (d.error || 'Unbekannt'));
+    }
+  } catch(e) {
+    console.warn('Kill fehlgeschlagen:', e);
+  }
+}
+
+/* ── Prozess-Verlauf ───────────────────────────────────────────────────────── */
+async function fetchCompletedRequests() {
+  try {
+    const data = await fetch('/api/live/completed-requests').then(r => r.json());
+    const reqs = data.requests || [];
+    if (reqs.length === 0) {
+      document.getElementById('history-empty').classList.remove('d-none');
+      document.getElementById('history-table').classList.add('d-none');
+      return;
+    }
+    document.getElementById('history-empty').classList.add('d-none');
+    document.getElementById('history-table').classList.remove('d-none');
+
+    const rows = reqs.map(r => {
+      const statusBadge = r.status === 'killed'
+        ? `<span class="badge bg-danger" style="font-size:.65rem">killed</span>`
+        : `<span class="badge bg-success" style="font-size:.65rem">completed</span>`;
+
+      // Dauer berechnen aus started_at und ended_at
+      let dur = '–';
+      if (r.started_at && r.ended_at) {
+        try {
+          const s = new Date(r.started_at), e = new Date(r.ended_at);
+          dur = fmtDuration((e - s) / 1000);
+        } catch {}
+      }
+
+      return `<tr>
+        <td class="text-nowrap text-muted">${fmtDateTime(r.started_at)}</td>
+        <td class="text-nowrap text-muted">${fmtDateTime(r.ended_at)}</td>
+        <td class="text-nowrap">${dur}</td>
+        <td>${escHtml(r.username || r.user_id || '–')}</td>
+        <td><code style="font-size:.78rem">${escHtml(r.model || '–')}${(r.moe_mode === 'native' && r.backend_host) ? `<span class="text-info" style="font-size:.78rem">@${escHtml(r.backend_host)}</span>` : ''}${(r.backend_model && r.backend_model !== (r.model || '')) ? `<span class="text-muted ms-1" style="font-size:.72rem">(${escHtml(r.backend_model)})</span>` : ''}</code></td>
+        <td><span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.moe_mode || '–')}</span></td>
+        <td><span class="badge ${(r.type||'')===('streaming')?'bg-primary':'bg-secondary'}" style="font-size:.6rem">${escHtml(r.type || '–')}</span></td>
+        <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('history-tbody').innerHTML = rows;
+  } catch(e) {
+    console.warn('completed-requests fetch failed:', e);
+  }
+}
+
+async function clearHistory() {
+  if (!confirm('Delete entire process history?')) return;
+  try {
+    const res = await fetch('/api/live/completed-requests', {method: 'DELETE'});
+    const d = await res.json();
+    if (d.ok) {
+      document.getElementById('history-empty').classList.remove('d-none');
+      document.getElementById('history-table').classList.add('d-none');
+      document.getElementById('history-tbody').innerHTML = '';
+    } else {
+      alert('Error deleting: ' + (d.error || 'Unknown'));
+    }
+  } catch(e) {
+    console.warn('clearHistory failed:', e);
+  }
+}
+
+/* ── Auto-Refresh ──────────────────────────────────────────────────────────── */
+function updateLastUpdateTime() {
+  document.getElementById('last-update').textContent =
+    'Zuletzt: ' + new Date().toLocaleTimeString('de-DE');
+}
+
+function doRefresh() {
+  Promise.all([fetchActiveRequests(), fetchLLMInstances(), fetchCompletedRequests()])
+    .then(() => updateLastUpdateTime());
+}
+
+function forceRefresh() {
+  doRefresh();
+}
+
+function startAutoRefresh() {
+  if (_refreshTimer) clearInterval(_refreshTimer);
+  _refreshTimer = setInterval(doRefresh, 5000);
+}
+
+function stopAutoRefresh() {
+  if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+}
+
+document.getElementById('autoRefreshToggle').addEventListener('change', function() {
+  if (this.checked) { startAutoRefresh(); } else { stopAutoRefresh(); }
+});
+
+// Initial laden und Refresh starten
+doRefresh();
+fetchCompletedRequests();
+startAutoRefresh();
+</script>
+{% endblock %}

@@ -1,0 +1,21 @@
+# systemd timer — runs the gap healer every night at 02:00 local time
+# when inference nodes are typically idle.
+#
+# Install: sudo cp ontology-gap-healer.{service,timer} /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now ontology-gap-healer.timer
+#
+# Check status: systemctl list-timers ontology-gap-healer.timer
+# Manual run:   sudo systemctl start ontology-gap-healer.service
+# Logs:         journalctl -u ontology-gap-healer -f
+
+[Unit]
+Description=Nightly ontology gap healing for MoE Sovereign
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

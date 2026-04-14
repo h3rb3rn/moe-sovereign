@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}{{ t(request, 'wizard.title') }} — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="container py-5" style="max-width: 780px;">
+
+  {# ── Progress bar ── #}
+  {% set total_steps = 4 %}
+  {% set current_step = step | int %}
+  {% set pct = (current_step / total_steps * 100) | int %}
+
+  <div class="text-center mb-4">
+    <h2 class="fw-bold">
+      <i class="bi bi-stars me-2 text-primary"></i>{{ t(request, 'wizard.title') }}
+    </h2>
+    <p class="text-muted small">Step {{ current_step }} of {{ total_steps }}</p>
+  </div>
+
+  <div class="progress mb-4" style="height: 8px;">
+    <div class="progress-bar bg-primary" role="progressbar"
+         style="width: {{ pct }}%" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100">
+    </div>
+  </div>
+
+  {# ────────────────────────────────────────────────────────────── #}
+  {# STEP 1 — Welcome                                               #}
+  {# ────────────────────────────────────────────────────────────── #}
+  {% if current_step == 1 %}
+  <div class="card">
+    <div class="card-header bg-primary bg-opacity-10 text-primary-emphasis">
+      <i class="bi bi-hand-wave section-icon"></i>{{ t(request, 'wizard.step1.title') }}
+    </div>
+    <div class="card-body py-4">
+      <p class="mb-3">{{ t(request, 'wizard.step1.body') }}</p>
+
+      <div class="alert alert-info py-3">
+        <div class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>What you will need:</div>
+        <ul class="mb-0 ps-3">
+          <li>At least one <strong>inference server</strong> — Ollama, OpenAI, LiteLLM, vLLM, or any OpenAI-compatible API</li>
+          <li>A <strong>Judge model</strong> (the merger/synthesizer — can be the same as experts)</li>
+          <li>Optionally, a separate <strong>Planner model</strong> (for routing decisions)</li>
+        </ul>
+      </div>
+
+      <div class="d-flex gap-3 mt-3">
+        <div class="border rounded p-3 flex-fill text-center">
+          <i class="bi bi-server fs-3 text-success d-block mb-2"></i>
+          <strong>Ollama (local)</strong>
+          <div class="text-muted small">http://host:11434/v1</div>
+        </div>
+        <div class="border rounded p-3 flex-fill text-center">
+          <i class="bi bi-cloud fs-3 text-primary d-block mb-2"></i>
+          <strong>OpenAI / LiteLLM</strong>
+          <div class="text-muted small">https://api.openai.com/v1</div>
+        </div>
+        <div class="border rounded p-3 flex-fill text-center">
+          <i class="bi bi-gpu-card fs-3 text-warning d-block mb-2"></i>
+          <strong>vLLM / Custom</strong>
+          <div class="text-muted small">Any OpenAI-compatible</div>
+        </div>
+      </div>
+
+      <form method="post" action="/setup/save" class="mt-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="step" value="1">
+        <div class="d-flex justify-content-end">
+          <button type="submit" class="btn btn-primary px-4">
+            {{ t(request, 'wizard.btn.next') }} <i class="bi bi-arrow-right ms-1"></i>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ────────────────────────────────────────────────────────────── #}
+  {# STEP 2 — Inference Servers                                      #}
+  {# ────────────────────────────────────────────────────────────── #}
+  {% elif current_step == 2 %}
+  <div class="card">
+    <div class="card-header bg-success bg-opacity-10 text-success-emphasis">
+      <i class="bi bi-server section-icon"></i>{{ t(request, 'wizard.step2.title') }}
+    </div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">{{ t(request, 'wizard.step2.hint') }}</p>
+
+      <form method="post" action="/setup/save" id="wizard-server-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="step" value="2">
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle" id="wizard-server-table">
+            <thead class="table-light">
+              <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th style="width:70px">GPUs</th>
+                <th style="width:90px">API Type</th>
+                <th>API Key / Token</th>
+                <th style="width:36px"></th>
+              </tr>
+            </thead>
+            <tbody id="wizard-server-tbody">
+              {% for srv in inference_servers %}
+              <tr>
+                <td><input type="text" name="srv_name_{{ loop.index0 }}"
+                           value="{{ srv.name }}" class="form-control form-control-sm font-monospace"
+                           placeholder="RTX" required></td>
+                <td><input type="url" name="srv_url_{{ loop.index0 }}"
+                           value="{{ srv.url }}" class="form-control form-control-sm font-monospace"
+                           placeholder="http://...:11434/v1" required></td>
+                <td><input type="number" name="srv_gpu_count_{{ loop.index0 }}"
+                           value="{{ srv.gpu_count | default(1) }}"
+                           class="form-control form-control-sm" min="0" max="64"></td>
+                <td>
+                  <select name="srv_api_type_{{ loop.index0 }}" class="form-select form-select-sm">
+                    <option value="ollama" {% if srv.api_type == 'ollama' %}selected{% endif %}>Ollama</option>
+                    <option value="openai" {% if srv.api_type == 'openai' %}selected{% endif %}>OpenAI</option>
+                  </select>
+                </td>
+                <td><input type="password" name="srv_token_{{ loop.index0 }}"
+                           class="form-control form-control-sm font-monospace"
+                           placeholder="{{ '••••••••' if srv.token and srv.token != 'ollama' else 'ollama' }}"
+                           autocomplete="new-password"></td>
+                <td><button type="button" class="btn btn-sm btn-outline-danger px-1"
+                            onclick="removeWizardServerRow(this)"><i class="bi bi-x"></i></button></td>
+              </tr>
+              {% endfor %}
+              {% if not inference_servers %}
+              <tr>
+                <td><input type="text" name="srv_name_0"
+                           class="form-control form-control-sm font-monospace"
+                           placeholder="MyServer" required></td>
+                <td><input type="url" name="srv_url_0"
+                           class="form-control form-control-sm font-monospace"
+                           placeholder="http://localhost:11434/v1" required></td>
+                <td><input type="number" name="srv_gpu_count_0" value="1"
+                           class="form-control form-control-sm" min="0" max="64"></td>
+                <td>
+                  <select name="srv_api_type_0" class="form-select form-select-sm">
+                    <option value="ollama">Ollama</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </td>
+                <td><input type="password" name="srv_token_0"
+                           class="form-control form-control-sm font-monospace"
+                           placeholder="ollama" autocomplete="new-password"></td>
+                <td><button type="button" class="btn btn-sm btn-outline-danger px-1"
+                            onclick="removeWizardServerRow(this)"><i class="bi bi-x"></i></button></td>
+              </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+
+        <button type="button" class="btn btn-sm btn-outline-success mb-3" onclick="addWizardServerRow()">
+          <i class="bi bi-plus me-1"></i>Add server
+        </button>
+
+        <div class="d-flex justify-content-between mt-2">
+          <a href="/setup?step=1" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back
+          </a>
+          <button type="submit" class="btn btn-primary px-4">
+            {{ t(request, 'wizard.btn.next') }} <i class="bi bi-arrow-right ms-1"></i>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ────────────────────────────────────────────────────────────── #}
+  {# STEP 3 — Core Models                                           #}
+  {# ────────────────────────────────────────────────────────────── #}
+  {% elif current_step == 3 %}
+  {% set servers = inference_servers %}
+  {% set judge_model = config.get('JUDGE_MODEL', '') %}
+  {% set judge_endpoint = config.get('JUDGE_ENDPOINT', '') %}
+  {% set planner_model = config.get('PLANNER_MODEL', '') %}
+  {% set planner_endpoint = config.get('PLANNER_ENDPOINT', '') %}
+
+  <div class="card">
+    <div class="card-header bg-warning bg-opacity-10 text-warning-emphasis">
+      <i class="bi bi-cpu section-icon"></i>{{ t(request, 'wizard.step3.title') }}
+    </div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">{{ t(request, 'wizard.step3.hint') }}</p>
+
+      {% if not servers %}
+      <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        No inference servers configured yet. <a href="/setup?step=2">Go back and add a server first.</a>
+      </div>
+      {% endif %}
+
+      <form method="post" action="/setup/save">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="step" value="3">
+
+        <div class="mb-4">
+          <div class="fw-semibold mb-2"><i class="bi bi-award me-1 text-warning"></i>Judge / Merger Model</div>
+          <div class="alert alert-info py-2 small mb-3">
+            The Judge synthesizes all expert results into the final response. Choose your most capable model.
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Model name</label>
+              <input type="text" name="JUDGE_MODEL" value="{{ judge_model }}"
+                     class="form-control font-monospace" placeholder="e.g. qwen2.5:72b" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Server (endpoint)</label>
+              <select name="JUDGE_ENDPOINT" class="form-select">
+                {% for srv in servers %}
+                <option value="{{ srv.name }}" {% if judge_endpoint == srv.name %}selected{% endif %}>
+                  {{ srv.name }} — {{ srv.url }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <div class="fw-semibold mb-2"><i class="bi bi-diagram-3 me-1 text-primary"></i>Planner Model
+            <span class="badge bg-secondary ms-1" style="font-size:.7rem">optional</span>
+          </div>
+          <p class="text-muted small mb-2">The Planner routes requests to the right experts. Leave blank to use the Judge model for planning too.</p>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Model name</label>
+              <input type="text" name="PLANNER_MODEL" value="{{ planner_model }}"
+                     class="form-control font-monospace" placeholder="leave blank = same as Judge">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Server (endpoint)</label>
+              <select name="PLANNER_ENDPOINT" class="form-select">
+                <option value="">— same as Judge —</option>
+                {% for srv in servers %}
+                <option value="{{ srv.name }}" {% if planner_endpoint == srv.name %}selected{% endif %}>
+                  {{ srv.name }} — {{ srv.url }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between mt-4">
+          <a href="/setup?step=2" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back
+          </a>
+          <div class="d-flex gap-2">
+            <a href="/setup?step=4" class="btn btn-outline-secondary">{{ t(request, 'wizard.btn.skip') }}</a>
+            <button type="submit" class="btn btn-primary px-4">
+              {{ t(request, 'wizard.btn.next') }} <i class="bi bi-arrow-right ms-1"></i>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ────────────────────────────────────────────────────────────── #}
+  {# STEP 4 — Public URLs                                           #}
+  {# ────────────────────────────────────────────────────────────── #}
+  {% elif current_step == 4 %}
+  <div class="card">
+    <div class="card-header bg-info bg-opacity-10 text-info-emphasis">
+      <i class="bi bi-globe section-icon"></i>{{ t(request, 'wizard.step4.title') }}
+    </div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">{{ t(request, 'wizard.step4.hint') }}</p>
+
+      <form method="post" action="/setup/save">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="step" value="4">
+
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label">Base URL (API endpoint)</label>
+            <input type="url" name="APP_BASE_URL"
+                   value="{{ config.get('APP_BASE_URL', 'http://localhost:8088') }}"
+                   class="form-control font-monospace"
+                   placeholder="http://localhost:8088">
+            <div class="form-text">Used in API response links and CORS config.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Public Admin UI URL <span class="text-muted">(optional)</span></label>
+            <input type="url" name="PUBLIC_ADMIN_URL"
+                   value="{{ config.get('PUBLIC_ADMIN_URL', '') }}"
+                   class="form-control font-monospace"
+                   placeholder="https://admin.moe-sovereign.org">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Public API URL <span class="text-muted">(optional)</span></label>
+            <input type="url" name="PUBLIC_API_URL"
+                   value="{{ config.get('PUBLIC_API_URL', '') }}"
+                   class="form-control font-monospace"
+                   placeholder="https://api.moe-sovereign.org">
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between mt-4">
+          <a href="/setup?step=3" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Back
+          </a>
+          <div class="d-flex gap-2">
+            <a href="/?wizard_done=1" class="btn btn-outline-secondary">{{ t(request, 'wizard.btn.skip') }}</a>
+            <button type="submit" class="btn btn-success px-4">
+              <i class="bi bi-check-lg me-1"></i>{{ t(request, 'wizard.btn.finish') }}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ─── Wizard Server Table ─────────────────────────────────────────────────────
+
+function addWizardServerRow() {
+  const tbody = document.getElementById('wizard-server-tbody');
+  const idx   = tbody.rows.length;
+  const tr    = document.createElement('tr');
+  tr.innerHTML =
+    `<td><input type="text" name="srv_name_${idx}"
+               class="form-control form-control-sm font-monospace" placeholder="MyServer" required></td>
+     <td><input type="url" name="srv_url_${idx}"
+               class="form-control form-control-sm font-monospace"
+               placeholder="http://localhost:11434/v1" required></td>
+     <td><input type="number" name="srv_gpu_count_${idx}" value="1"
+               class="form-control form-control-sm" min="0" max="64"></td>
+     <td><select name="srv_api_type_${idx}" class="form-select form-select-sm">
+           <option value="ollama">Ollama</option>
+           <option value="openai">OpenAI</option>
+         </select></td>
+     <td><input type="password" name="srv_token_${idx}"
+               class="form-control form-control-sm font-monospace"
+               placeholder="ollama" autocomplete="new-password"></td>
+     <td><button type="button" class="btn btn-sm btn-outline-danger px-1"
+                 onclick="removeWizardServerRow(this)"><i class="bi bi-x"></i></button></td>`;
+  tbody.appendChild(tr);
+  reindexWizardServerRows();
+}
+
+function removeWizardServerRow(btn) {
+  btn.closest('tr').remove();
+  reindexWizardServerRows();
+}
+
+function reindexWizardServerRows() {
+  const tbody = document.getElementById('wizard-server-tbody');
+  if (!tbody) return;
+  Array.from(tbody.rows).forEach((row, i) => {
+    const inputs  = row.querySelectorAll('input');
+    const selects = row.querySelectorAll('select');
+    if (inputs[0]) inputs[0].name = `srv_name_${i}`;
+    if (inputs[1]) inputs[1].name = `srv_url_${i}`;
+    if (inputs[2]) inputs[2].name = `srv_gpu_count_${i}`;
+    if (inputs[3]) inputs[3].name = `srv_token_${i}`;
+    if (selects[0]) selects[0].name = `srv_api_type_${i}`;
+  });
+}
+</script>
+{% endblock %}

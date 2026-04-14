@@ -1,0 +1,537 @@
+{% extends "base.html" %}
+{% block title %}Monitoring — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold"><i class="bi bi-graph-up me-2 text-primary"></i>{{ t(request, 'page.monitoring') }}</h5>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small" id="last-update">{{ t(request, 'lbl.loading') }}</span>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadMetrics()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+    <a href="http://{{ request.headers.get('host','').split(':')[0] }}:9090" target="_blank"
+       class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-box-arrow-up-right me-1"></i>Prometheus
+    </a>
+  </div>
+</div>
+
+{# ── Provider Rate Limits (Claude Code) ── #}
+<div class="row g-3 mb-4" id="provider-limits-row" style="display:none">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-warning bg-opacity-10 text-warning-emphasis d-flex align-items-center">
+        <i class="bi bi-shield-exclamation me-2"></i>{{ t(request, 'section.provider_limits') }}
+      </div>
+      <div class="card-body py-2 px-3" id="provider-limits-body">
+        <span class="text-muted small">{{ t(request, 'lbl.no_data') }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── System-Gauges ── #}
+<div class="row g-3 mb-4" id="gauges-row">
+  {% set gauges = [
+    ("chroma_docs",       t(request, 'metric.chromadb_docs'),     "bi-database",      "primary"),
+    ("graph_entities",    t(request, 'metric.neo4j_entities'),    "bi-diagram-2",     "success"),
+    ("graph_relations",   t(request, 'metric.neo4j_relations'),   "bi-bezier2",       "info"),
+    ("ontology_entities", t(request, 'metric.ontology_entities'), "bi-list-columns",  "secondary"),
+    ("planner_patterns",  t(request, 'metric.planner_patterns'),  "bi-trophy",        "warning"),
+    ("ontology_gaps",     t(request, 'metric.ontology_gaps'),     "bi-question-circle","danger"),
+  ] %}
+  {% for key, label, icon, color in gauges %}
+  <div class="col-6 col-md-4 col-xl-2">
+    <div class="card text-center h-100 border-{{ color }} border-opacity-25">
+      <div class="card-body py-3">
+        <i class="bi {{ icon }} fs-4 text-{{ color }} mb-1 d-block"></i>
+        <div class="fs-4 fw-bold" id="gauge-{{ key }}">–</div>
+        <div class="text-muted" style="font-size:.75rem">{{ label }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ── LLM Server Status ── #}
+<div class="row g-3 mb-4" id="llm-status-row">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between" style="background:rgba(99,102,241,.08);color:#4338ca">
+        <span><i class="bi bi-gpu-card me-2"></i>{{ t(request, 'section.llm_server_status') }}</span>
+        <span class="text-muted small" id="llm-status-time"></span>
+      </div>
+      <div class="card-body py-2" id="llm-status-body">
+        <span class="text-muted small"><i class="bi bi-hourglass me-1"></i>{{ t(request, 'lbl.loading') }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Charts Row 1 ── #}
+<div class="row g-4 mb-4">
+
+  {# Token-Verbrauch pro Modell #}
+  <div class="col-12 col-xl-7">
+    <div class="card h-100">
+      <div class="card-header bg-primary bg-opacity-10 text-primary">
+        <i class="bi bi-bar-chart me-2"></i>{{ t(request, 'section.token_usage') }}
+        <span class="badge bg-primary ms-2 float-end" id="total-tokens-badge">–</span>
+      </div>
+      <div class="card-body" style="height:300px">
+        <canvas id="chart-tokens"></canvas>
+      </div>
+    </div>
+  </div>
+
+  {# Cache-Trefferquote #}
+  <div class="col-12 col-xl-5">
+    <div class="card h-100">
+      <div class="card-header bg-success bg-opacity-10 text-success">
+        <i class="bi bi-lightning me-2"></i>{{ t(request, 'section.cache_perf') }}
+      </div>
+      <div class="card-body">
+        <div class="text-center mb-3">
+          <div class="display-4 fw-bold" id="cache-rate">–</div>
+          <div class="text-muted small">{{ t(request, 'metric.hit_rate') }}</div>
+        </div>
+        <div class="row text-center g-2 mb-3">
+          <div class="col-6">
+            <div class="border rounded p-2">
+              <div class="fs-5 fw-bold text-success" id="cache-hits">–</div>
+              <div class="text-muted" style="font-size:.75rem">{{ t(request, 'metric.hits') }}</div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="border rounded p-2">
+              <div class="fs-5 fw-bold text-warning" id="cache-misses">–</div>
+              <div class="text-muted" style="font-size:.75rem">{{ t(request, 'metric.misses') }}</div>
+            </div>
+          </div>
+        </div>
+        <div style="height:130px">
+          <canvas id="chart-cache"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{# ── Charts Row 2 ── #}
+<div class="row g-4 mb-4">
+
+  {# Expert-Aufrufe pro Kategorie #}
+  <div class="col-12 col-md-6">
+    <div class="card h-100">
+      <div class="card-header" style="background:rgba(139,92,246,.1);color:#7c3aed">
+        <i class="bi bi-people me-2"></i>{{ t(request, 'section.expert_calls_cat') }}
+      </div>
+      <div class="card-body" style="height:280px">
+        <canvas id="chart-categories"></canvas>
+      </div>
+    </div>
+  </div>
+
+  {# Expert-Aufrufe pro Modell #}
+  <div class="col-12 col-md-6">
+    <div class="card h-100">
+      <div class="card-header" style="background:rgba(139,92,246,.1);color:#7c3aed">
+        <i class="bi bi-cpu me-2"></i>{{ t(request, 'section.expert_calls_mdl') }}
+      </div>
+      <div class="card-body" style="height:280px">
+        <canvas id="chart-models"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{# ── Charts Row 2b: Modell × Node ── #}
+<div class="row g-4 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header" style="background:rgba(139,92,246,.1);color:#7c3aed">
+        <i class="bi bi-diagram-3 me-2"></i>{{ t(request, 'section.expert_calls_node') }}
+      </div>
+      <div class="card-body" style="height:320px">
+        <canvas id="chart-models-nodes"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Charts Row 3 ── #}
+<div class="row g-4 mb-4">
+
+  {# Anfragen nach Mode #}
+  <div class="col-12 col-md-4">
+    <div class="card h-100">
+      <div class="card-header bg-info bg-opacity-10 text-info-emphasis">
+        <i class="bi bi-chat-dots me-2"></i>{{ t(request, 'section.req_by_mode') }}
+      </div>
+      <div class="card-body" style="height:240px">
+        <canvas id="chart-modes"></canvas>
+      </div>
+    </div>
+  </div>
+
+  {# Konfidenz-Verteilung #}
+  <div class="col-12 col-md-4">
+    <div class="card h-100">
+      <div class="card-header bg-warning bg-opacity-10 text-warning-emphasis">
+        <i class="bi bi-speedometer2 me-2"></i>{{ t(request, 'section.confidence') }}
+      </div>
+      <div class="card-body" style="height:240px">
+        <canvas id="chart-confidence"></canvas>
+      </div>
+    </div>
+  </div>
+
+  {# Antwortzeiten + Bewertungen #}
+  <div class="col-12 col-md-4">
+    <div class="card h-100">
+      <div class="card-header bg-danger bg-opacity-10 text-danger-emphasis">
+        <i class="bi bi-stopwatch me-2"></i>{{ t(request, 'section.latency') }}
+      </div>
+      <div class="card-body">
+        <table class="table table-sm mb-3">
+          <tr><td class="text-muted small">{{ t(request, 'metric.p50') }}</td>
+              <td class="fw-semibold text-end" id="rt-p50">–</td></tr>
+          <tr><td class="text-muted small">{{ t(request, 'metric.p95') }}</td>
+              <td class="fw-semibold text-end" id="rt-p95">–</td></tr>
+        </table>
+        <div class="row text-center g-2">
+          <div class="col-12 text-muted" style="font-size:.78rem">{{ t(request, 'metric.self_rating') }}</div>
+          <div class="col-12">
+            <div class="fs-3 fw-bold" id="self-eval-avg">–</div>
+            <div class="text-muted small">{{ t(request, 'metric.of_5') }}</div>
+          </div>
+          <div class="col-12 text-muted mt-2" style="font-size:.78rem">{{ t(request, 'metric.user_rating') }}</div>
+          <div class="col-12">
+            <div class="fs-3 fw-bold" id="feedback-avg">–</div>
+            <div class="text-muted small">{{ t(request, 'metric.of_5') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/chart.umd.min.js"></script>
+<script>
+// ─── Farb-Palette ──────────────────────────────────────────────────────────
+const COLORS = [
+  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
+  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+  '#54a24b','#72b7b2','#4c78a8','#f58518','#e45756',
+];
+const ALPHA = (hex, a) => hex + Math.round(a*255).toString(16).padStart(2,'0');
+
+// ─── Chart-Instanzen ────────────────────────────────────────────────────────
+const charts = {};
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function barChart(canvasId, labels, data, title='') {
+  destroyChart(canvasId);
+  const ctx = document.getElementById(canvasId);
+  if (!ctx || !labels.length) return;
+  charts[canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: COLORS.map(c => ALPHA(c, 0.75)),
+        borderColor:      COLORS,
+        borderWidth: 1,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false }, title: { display: !!title, text: title } },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+}
+
+function doughnutChart(canvasId, labels, data) {
+  destroyChart(canvasId);
+  const ctx = document.getElementById(canvasId);
+  if (!ctx || !labels.length) return;
+  charts[canvasId] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: COLORS.map(c => ALPHA(c, 0.8)),
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12 } } }
+    }
+  });
+}
+
+// ─── Daten laden ─────────────────────────────────────────────────────────────
+
+async function loadProviderLimits() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) return;
+    const data = await r.json();
+    const limits = data.provider_limits || {};
+    const keys = Object.keys(limits);
+    const row  = document.getElementById('provider-limits-row');
+    const body = document.getElementById('provider-limits-body');
+    if (!keys.length) { row.style.display = 'none'; return; }
+    row.style.display = '';
+    body.innerHTML = keys.map(ep => {
+      const d = limits[ep];
+      const pct = d.limit_tokens ? Math.round(d.remaining_tokens / d.limit_tokens * 100) : null;
+      const color = d.exhausted ? 'danger' : (pct !== null && pct < 20 ? 'warning' : 'success');
+      const resetStr = d.reset_time ? new Date(d.reset_time * 1000).toLocaleTimeString() : '–';
+      const remStr = d.remaining_tokens !== undefined ? d.remaining_tokens : '–';
+      const limStr = d.limit_tokens !== undefined ? d.limit_tokens : '–';
+      return `<span class="badge bg-${color} me-2">${ep}</span>`
+           + `<span class="me-3 small">${remStr} / ${limStr} Token verbleibend`
+           + (pct !== null ? ` (${pct}%)` : '')
+           + ` · Reset: ${resetStr}</span>`;
+    }).join('<br>');
+  } catch(e) {}
+}
+
+async function loadLLMStatus() {
+  try {
+    const data = await fetch('/api/live/llm-instances').then(r => r.json());
+    const servers = data.servers || [];
+    const timeEl = document.getElementById('llm-status-time');
+    if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('de-DE');
+
+    const body = document.getElementById('llm-status-body');
+    if (!body) return;
+    if (!servers.length) {
+      body.innerHTML = '<span class="text-muted small">Keine Server konfiguriert</span>';
+      return;
+    }
+
+    body.innerHTML = `<div class="row g-2">` + servers.map(srv => {
+      const ok = srv.ok;
+      const statusBadge = ok
+        ? `<span class="badge bg-success" style="font-size:.65rem">Online</span>`
+        : `<span class="badge bg-danger" style="font-size:.65rem">Offline</span>`;
+      const apiTypeBadge = srv.api_type === 'ollama'
+        ? `<span class="badge" style="background:#7c3aed;font-size:.6rem">Ollama</span>`
+        : `<span class="badge bg-warning text-dark" style="font-size:.6rem">OpenAI</span>`;
+      const latency = srv.latency_ms >= 0 ? `${srv.latency_ms}ms` : '–';
+
+      const loaded = srv.loaded_models || [];
+      let loadedHtml = '';
+      if (srv.api_type === 'ollama') {
+        if (loaded.length > 0) {
+          loadedHtml = loaded.map(m => {
+            const vram = m.size_vram_mb ? `<span class="text-muted" style="font-size:.7rem"> ${m.size_vram_mb >= 1024 ? (m.size_vram_mb/1024).toFixed(1)+'GB' : m.size_vram_mb+'MB'} VRAM</span>` : '';
+            return `<span class="badge bg-light text-dark border me-1 mt-1" style="font-size:.7rem;font-weight:400">
+              <i class="bi bi-lightning-fill text-warning me-1" style="font-size:.6rem"></i>${escHtml(m.name)}${vram}
+            </span>`;
+          }).join('');
+        } else {
+          loadedHtml = `<span class="text-muted" style="font-size:.75rem"><i class="bi bi-moon me-1"></i>Idle</span>`;
+        }
+      } else {
+        const cnt = srv.available_models_count || 0;
+        loadedHtml = `<span class="text-muted" style="font-size:.75rem">${cnt} Modelle verfügbar</span>`;
+      }
+
+      const errorHtml = (!ok && srv.error)
+        ? `<div class="text-danger mt-1" style="font-size:.72rem"><i class="bi bi-exclamation-triangle me-1"></i>${escHtml(srv.error.slice(0,80))}</div>`
+        : '';
+
+      // Hardware metrics (from node-exporter on port 9100)
+      let hwHtml = '';
+      const hw = srv.hardware || {};
+      if (hw.ram_total_gb) {
+        const ramPct = hw.ram_pct || 0;
+        const ramColor = ramPct > 85 ? 'bg-danger' : ramPct > 70 ? 'bg-warning' : 'bg-success';
+        hwHtml += `<div class="d-flex gap-2 mt-1 align-items-center" style="font-size:.7rem">`;
+        hwHtml += `<span class="text-muted"><i class="bi bi-memory me-1"></i>RAM ${hw.ram_used_gb}/${hw.ram_total_gb} GB</span>`;
+        hwHtml += `<div class="progress flex-grow-1" style="height:6px"><div class="progress-bar ${ramColor}" style="width:${ramPct}%"></div></div>`;
+        if (hw.disk_pct) {
+          const diskColor = hw.disk_pct > 85 ? 'bg-danger' : hw.disk_pct > 70 ? 'bg-warning' : 'bg-success';
+          hwHtml += `<span class="text-muted ms-2"><i class="bi bi-hdd me-1"></i>${hw.disk_pct}%</span>`;
+        }
+        hwHtml += `</div>`;
+      }
+      if (hw.gpus && hw.gpus.length > 0) {
+        hwHtml += `<div class="d-flex gap-1 mt-1 flex-wrap" style="font-size:.65rem">`;
+        hw.gpus.forEach(g => {
+          const vramPct = g.vram_total_gb ? Math.round(g.vram_used_gb / g.vram_total_gb * 100) : 0;
+          const vramColor = vramPct > 85 ? 'danger' : vramPct > 50 ? 'warning' : 'success';
+          const utilPct = g.util_pct || 0;
+          hwHtml += `<span class="badge bg-${vramColor}" style="font-size:.6rem" title="GPU${g.gpu}: ${g.vram_used_gb}/${g.vram_total_gb}GB VRAM, ${utilPct}% util">GPU${g.gpu} ${g.vram_used_gb}G/${g.vram_total_gb}G ${utilPct}%</span>`;
+        });
+        hwHtml += `</div>`;
+      }
+
+      return `<div class="col-12 col-md-6 col-xl-4">
+        <div class="border rounded p-2 h-100" style="background:#fafafa">
+          <div class="d-flex align-items-center gap-1 mb-1 flex-wrap">
+            ${statusBadge}${apiTypeBadge}
+            <strong style="font-size:.85rem">${escHtml(srv.name)}</strong>
+            <span class="text-muted ms-auto" style="font-size:.72rem"><i class="bi bi-speedometer2 me-1"></i>${latency} · ${srv.gpu_count} GPU</span>
+          </div>
+          <div>${loadedHtml}</div>
+          ${hwHtml}
+          ${errorHtml}
+        </div>
+      </div>`;
+    }).join('') + `</div>`;
+  } catch(e) {
+    const body = document.getElementById('llm-status-body');
+    if (body) body.innerHTML = `<span class="text-muted small text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Fehler: ${escHtml(String(e))}</span>`;
+  }
+}
+
+async function loadMetrics() {
+  loadProviderLimits();
+  loadLLMStatus();
+  document.getElementById('last-update').textContent = 'Lädt...';
+  try {
+    const r = await fetch('/api/monitoring');
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+
+    // Gauges
+    const sys = d.system || {};
+    document.getElementById('gauge-chroma_docs').textContent      = fmt(sys.chroma_docs);
+    document.getElementById('gauge-graph_entities').textContent   = fmt(sys.graph_entities);
+    document.getElementById('gauge-graph_relations').textContent  = fmt(sys.graph_relations);
+    document.getElementById('gauge-ontology_entities').textContent= fmt(sys.ontology_entities);
+    document.getElementById('gauge-planner_patterns').textContent = fmt(sys.planner_patterns);
+    document.getElementById('gauge-ontology_gaps').textContent    = fmt(sys.ontology_gaps);
+
+    // Token-Chart
+    const tokModels = d.tokens_by_model || [];
+    const totalTok  = tokModels.reduce((s, x) => s + x.value, 0);
+    document.getElementById('total-tokens-badge').textContent = fmtNum(totalTok) + ' gesamt';
+    barChart('chart-tokens',
+      tokModels.map(x => x.labels.model || '?'),
+      tokModels.map(x => x.value));
+
+    // Cache
+    const hitRate = d.cache_hit_rate || 0;
+    document.getElementById('cache-rate').textContent  = (hitRate * 100).toFixed(1) + '%';
+    document.getElementById('cache-hits').textContent  = fmt(d.cache_hits);
+    document.getElementById('cache-misses').textContent= fmt(d.cache_misses);
+    doughnutChart('chart-cache',
+      ['Treffer', 'Fehlschläge'],
+      [d.cache_hits || 0, d.cache_misses || 0]);
+
+    // Kategorien
+    const cats = d.calls_by_category || [];
+    barChart('chart-categories',
+      cats.map(x => x.labels.category || '?'),
+      cats.map(x => x.value));
+
+    // Modelle
+    const mods = d.calls_by_model || [];
+    barChart('chart-models',
+      mods.map(x => x.labels.model || '?'),
+      mods.map(x => x.value));
+
+    // Modell × Node — Grouped Bar Chart
+    (function() {
+      const raw = d.calls_by_model_node || [];
+      if (!raw.length) return;
+      const nodeSet = [...new Set(raw.map(x => x.labels.node || '?'))].sort();
+      const modelSet = [...new Set(raw.map(x => x.labels.model || '?'))];
+      const nodeColors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#a855f7'];
+      const datasets = nodeSet.map((node, ni) => ({
+        label: node,
+        data: modelSet.map(model => {
+          const hit = raw.find(x => x.labels.model === model && x.labels.node === node);
+          return hit ? hit.value : 0;
+        }),
+        backgroundColor: ALPHA(nodeColors[ni % nodeColors.length], 0.75),
+        borderColor:     nodeColors[ni % nodeColors.length],
+        borderWidth: 1,
+      }));
+      destroyChart('chart-models-nodes');
+      const ctx = document.getElementById('chart-models-nodes');
+      if (ctx) charts['chart-models-nodes'] = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: modelSet, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: true, position: 'bottom' } },
+          scales: { x: { stacked: false }, y: { beginAtZero: true } }
+        }
+      });
+    })();
+
+    // Modes
+    const modes = d.requests_by_mode || [];
+    doughnutChart('chart-modes',
+      modes.map(x => x.labels.mode || '?'),
+      modes.map(x => x.value));
+
+    // Konfidenz
+    const conf = d.confidence_dist || [];
+    doughnutChart('chart-confidence',
+      conf.map(x => x.labels.level || '?'),
+      conf.map(x => x.value));
+
+    // Latenz
+    const p50 = d.response_p50 || 0;
+    const p95 = d.response_p95 || 0;
+    document.getElementById('rt-p50').textContent = p50 ? p50.toFixed(1) + ' s' : '–';
+    document.getElementById('rt-p95').textContent = p95 ? p95.toFixed(1) + ' s' : '–';
+
+    // Selbstbewertung Ø aus Buckets berechnen
+    document.getElementById('self-eval-avg').textContent = calcAvgFromBuckets(d.self_eval_buckets);
+    document.getElementById('feedback-avg').textContent  = calcAvgFromBuckets(d.feedback_buckets);
+
+    document.getElementById('last-update').textContent =
+      'Stand: ' + new Date().toLocaleTimeString('de-DE');
+  } catch (e) {
+    document.getElementById('last-update').textContent = 'Fehler: ' + e.message;
+  }
+}
+
+function fmt(v)    { return v == null ? '–' : Math.round(v).toLocaleString('de-DE'); }
+function fmtNum(v) { return v > 1e6 ? (v/1e6).toFixed(1)+'M' : v > 1e3 ? (v/1e3).toFixed(1)+'K' : Math.round(v).toString(); }
+
+function calcAvgFromBuckets(buckets) {
+  if (!buckets || !buckets.length) return '–';
+  // Buckets haben le=1,2,3,4,5,+Inf — wir berechnen den Mittelwert näherungsweise
+  // Indem wir den Count per Bucket-Bereich (Differenz) * Bucket-Mitte summieren
+  const sorted = buckets.filter(b => b.labels.le && b.labels.le !== '+Inf')
+                        .sort((a,b) => parseFloat(a.labels.le) - parseFloat(b.labels.le));
+  if (!sorted.length) return '–';
+  let total = 0, count = 0, prevCount = 0;
+  for (const b of sorted) {
+    const le   = parseFloat(b.labels.le);
+    const cnt  = b.value - prevCount;
+    total      += cnt * le;
+    count      += cnt;
+    prevCount  = b.value;
+  }
+  return count > 0 ? (total / count).toFixed(2) + ' / 5' : '–';
+}
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadMetrics();
+  setInterval(loadMetrics, 30000);
+});
+</script>
+{% endblock %}

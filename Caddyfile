@@ -1,0 +1,18 @@
+docs.moe-sovereign.org {
+    tls internal
+    reverse_proxy moe-docs:8000
+}
+
+moe-sovereign.org {
+    tls internal
+    handle /install.sh {
+        root * /srv
+        file_server
+    }
+    redir * https://docs.moe-sovereign.org{uri} 302
+}
+
+logs.moe-sovereign.org {
+    tls internal
+    reverse_proxy moe-dozzle:8080
+}

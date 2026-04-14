@@ -1,0 +1,1098 @@
+{% extends "base.html" %}
+
+{% block title %}User Management – MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type }} flash-bar mb-0 text-center py-2">{{ flash }}</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-people-fill me-2 text-primary"></i>{{ t(request, 'page.users') }}</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" onclick="openSendEmailModal('*','','')">
+      <i class="bi bi-envelope me-1"></i>{{ t(request, 'btn.send_bulk_email') }}
+    </button>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createUserModal">
+      <i class="bi bi-person-plus me-1"></i>{{ t(request, 'btn.new_user') }}
+    </button>
+  </div>
+</div>
+
+<!-- User-Tabelle -->
+<div class="card mb-4">
+  <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-table section-icon"></i>Registrierte User</span>
+    <span class="badge bg-secondary">{{ users|length }} {{ t(request, 'lbl.total') }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle" id="usersTable">
+        <thead class="table-light">
+          <tr>
+            <th style="width:40px"></th>
+            <th>{{ t(request, 'table.username') }}</th>
+            <th>{{ t(request, 'table.email') }}</th>
+            <th>{{ t(request, 'table.budget') }}</th>
+            <th>{{ t(request, 'table.created') }}</th>
+            <th>{{ t(request, 'table.status') }}</th>
+            <th style="width:120px">{{ t(request, 'table.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr class="{% if not u.is_active %}table-secondary text-muted{% endif %}">
+            <td class="text-center">
+              <i class="bi bi-person-circle fs-5 {% if u.is_admin %}text-warning{% else %}text-secondary{% endif %}"></i>
+            </td>
+            <td>
+              <strong>{{ u.username }}</strong>
+              {% if u.display_name %}<br><small class="text-muted">{{ u.display_name }}</small>{% endif %}
+              {% if u.role == 'admin' %}<span class="badge bg-warning text-dark ms-1" style="font-size:.65rem">Admin</span>
+              {% elif u.role == 'expert' %}<span class="badge bg-info text-dark ms-1" style="font-size:.65rem">Experte</span>
+              {% elif u.role == 'subscriber' %}<span class="badge bg-success ms-1" style="font-size:.65rem">Abonent</span>
+              {% elif u.is_admin %}<span class="badge bg-warning text-dark ms-1" style="font-size:.65rem">Admin</span>{% endif %}
+            </td>
+            <td><small>{{ u.email }}</small></td>
+            <td>
+              <small class="text-muted">
+                {% if u.daily_limit %}{{ "{:,}".format(u.daily_limit) }}{% else %}&infin;{% endif %} /
+                {% if u.monthly_limit %}{{ "{:,}".format(u.monthly_limit) }}{% else %}&infin;{% endif %} /
+                {% if u.total_limit %}{{ "{:,}".format(u.total_limit) }}{% else %}&infin;{% endif %}
+              </small>
+            </td>
+            <td><small class="text-muted">{{ u.created_at[:10] }}</small></td>
+            <td>
+              {% if u.is_active %}
+              <span class="badge bg-success status-badge">{{ t(request, 'status.active') }}</span>
+              {% else %}
+              <span class="badge bg-danger status-badge">{{ t(request, 'status.locked') }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.2rem .5rem"
+                      onclick="openUserDetail('{{ u.id }}','{{ u.username }}')">
+                <i class="bi bi-gear"></i>
+              </button>
+              <a href="/admin/users/{{ u.id }}/impersonate"
+                 class="btn btn-xs btn-outline-info" style="font-size:.75rem;padding:.2rem .5rem"
+                 title="Als {{ u.username }} einspringen">
+                <i class="bi bi-eye"></i>
+              </a>
+              <button class="btn btn-xs btn-outline-primary" style="font-size:.75rem;padding:.2rem .5rem"
+                      onclick="openSendEmailModal('{{ u.id }}','{{ u.username }}','{{ u.email }}')"
+                      title="{{ t(request, 'btn.send_email') }}">
+                <i class="bi bi-envelope"></i>
+              </button>
+              <button class="btn btn-xs btn-outline-warning" style="font-size:.75rem;padding:.2rem .5rem"
+                      onclick="sendPasswordReset('{{ u.id }}','{{ u.username }}','{{ u.email }}')"
+                      title="{{ t(request, 'btn.send_reset') }}">
+                <i class="bi bi-key"></i>
+              </button>
+              {% if u.is_active %}
+              <button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:.2rem .5rem"
+                      onclick="toggleUser('{{ u.id }}', 0, '{{ u.username }}')">
+                <i class="bi bi-lock"></i>
+              </button>
+              {% else %}
+              <button class="btn btn-xs btn-outline-success" style="font-size:.75rem;padding:.2rem .5rem"
+                      onclick="toggleUser('{{ u.id }}', 1, '{{ u.username }}')">
+                <i class="bi bi-unlock"></i>
+              </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="text-center text-muted py-4">{{ t(request, 'empty.no_users') }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Create User Modal ─────────────────────────────────────────────── -->
+<div class="modal fade" id="createUserModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h6 class="modal-title"><i class="bi bi-person-plus me-2"></i>{{ t(request, 'modal.new_user') }}</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Username <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="cu_username" placeholder="max.mustermann"
+                 pattern="[a-zA-Z0-9._-]{3,50}" maxlength="50" required
+                 title="3–50 Zeichen, nur Buchstaben, Zahlen, . _ -">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">E-Mail <span class="text-danger">*</span></label>
+          <input type="email" class="form-control form-control-sm" id="cu_email" placeholder="max@example.com" required>
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-6">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.first_name') }} <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" id="cu_first_name" required>
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.last_name') }} <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" id="cu_last_name" required>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.street_address') }} <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="cu_street" required>
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-4">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.postal_code') }} <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" id="cu_postal" required>
+          </div>
+          <div class="col-5">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.city') }} <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" id="cu_city" required>
+          </div>
+          <div class="col-3">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.country') }}</label>
+            <input type="text" class="form-control form-control-sm" id="cu_country" placeholder="DE">
+          </div>
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-6">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.date_of_birth') }}</label>
+            <input type="date" class="form-control form-control-sm" id="cu_dob">
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold">{{ t(request, 'lbl.gender') }}</label>
+            <select class="form-select form-select-sm" id="cu_gender">
+              <option value="">—</option>
+              <option value="M">{{ t(request, 'lbl.gender_m') }}</option>
+              <option value="W">{{ t(request, 'lbl.gender_w') }}</option>
+              <option value="D">{{ t(request, 'lbl.gender_d') }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.display_name') }}</label>
+          <input type="text" class="form-control form-control-sm" id="cu_display" placeholder="Max Mustermann">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Passwort <span class="text-danger">*</span></label>
+          <input type="password" class="form-control form-control-sm" id="cu_password" placeholder="{{ t(request, 'lbl.min_8_chars') }}"
+                 minlength="8" autocomplete="new-password" required>
+        </div>
+        <hr>
+        <p class="small text-muted mb-2">Token Budgets (empty = unlimited)</p>
+        <div class="row g-2">
+          <div class="col-4">
+            <label class="form-label small">Daily</label>
+            <input type="number" class="form-control form-control-sm" id="cu_daily" placeholder="e.g. 50000">
+          </div>
+          <div class="col-4">
+            <label class="form-label small">Monthly</label>
+            <input type="number" class="form-control form-control-sm" id="cu_monthly" placeholder="e.g. 500000">
+          </div>
+          <div class="col-4">
+            <label class="form-label small">Total</label>
+            <input type="number" class="form-control form-control-sm" id="cu_total" placeholder="e.g. 2000000">
+          </div>
+        </div>
+        <div class="mb-2 mt-3">
+          <label class="form-label small">{{ t(request, 'lbl.role') }}</label>
+          <select class="form-select form-select-sm" id="cu_role">
+            <option value="user">User</option>
+            <option value="subscriber">Subscriber</option>
+            <option value="expert">Expert</option>
+            <option value="admin">Administrator</option>
+          </select>
+        </div>
+        <div id="cu_error" class="alert alert-danger mt-2 d-none py-2 small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="createUser()">
+          <i class="bi bi-check2 me-1"></i>{{ t(request, 'btn.create_user') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Global API Key Alert (outside all modals, persistent) ─────────── -->
+<div id="global-key-alert" class="alert alert-success alert-dismissible d-none"
+     style="position:fixed;top:70px;left:50%;transform:translateX(-50%);z-index:9999;min-width:480px;max-width:700px;word-break:break-all;box-shadow:0 4px 20px rgba(0,0,0,.3)">
+  <button type="button" class="btn-close" onclick="document.getElementById('global-key-alert').classList.add('d-none')"></button>
+</div>
+
+<!-- ─── User Detail Modal ─────────────────────────────────────────────── -->
+<div class="modal fade" id="userDetailModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h6 class="modal-title" id="detailModalTitle"><i class="bi bi-person-gear me-2"></i>{{ t(request, 'modal.edit_user') }}</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="detailModalBody">
+        <div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Send Email Modal ─────────────────────────────────────────────────── -->
+<div class="modal fade" id="sendEmailModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h6 class="modal-title" id="sendEmailTitle">
+          <i class="bi bi-envelope me-2"></i>{{ t(request, 'modal.send_email_title') }}
+        </h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="sem_user_id">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.email_recipient') }}</label>
+          <input type="text" class="form-control form-control-sm" id="sem_recipient" readonly>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.email_subject') }} <span class="text-danger">*</span></label>
+          <input type="text" class="form-control form-control-sm" id="sem_subject" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.email_body') }} <span class="text-danger">*</span></label>
+          <textarea class="form-control form-control-sm" id="sem_body" rows="6" required></textarea>
+        </div>
+        <div id="sem_result" class="d-none alert py-2 small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button type="button" class="btn btn-primary btn-sm" id="sem_send_btn" onclick="submitSendEmail()">
+          <i class="bi bi-send me-1"></i>{{ t(request, 'btn.send_email') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const csrf = "{{ csrf_token }}";
+const TOKEN_PRICE_EUR = {{ token_price_eur | default(0.00002) }};
+
+async function createUser() {
+  const btn = document.querySelector('#createUserModal .btn-primary');
+  const err = document.getElementById('cu_error');
+  err.classList.add('d-none');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        username:      document.getElementById('cu_username').value.trim(),
+        email:         document.getElementById('cu_email').value.trim(),
+        display_name:  document.getElementById('cu_display').value.trim(),
+        password:      document.getElementById('cu_password').value,
+        role:          document.getElementById('cu_role').value,
+        first_name:    document.getElementById('cu_first_name').value.trim(),
+        last_name:     document.getElementById('cu_last_name').value.trim(),
+        street_address:document.getElementById('cu_street').value.trim(),
+        postal_code:   document.getElementById('cu_postal').value.trim(),
+        city:          document.getElementById('cu_city').value.trim(),
+        country:       document.getElementById('cu_country').value.trim(),
+        date_of_birth: document.getElementById('cu_dob').value || null,
+        gender:        document.getElementById('cu_gender').value || null,
+        daily_limit:   document.getElementById('cu_daily').value || null,
+        monthly_limit: document.getElementById('cu_monthly').value || null,
+        total_limit:   document.getElementById('cu_total').value || null,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.detail || 'Fehler'; err.classList.remove('d-none'); return; }
+    window.location.reload();
+  } finally { btn.disabled = false; }
+}
+
+async function toggleUser(uid, active, name) {
+  if (!confirm(`User "${name}" ${active ? 'aktivieren' : 'sperren'}?`)) return;
+  const res = await fetch(`/api/users/${uid}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({is_active: active})
+  });
+  if (res.ok) window.location.reload();
+}
+
+// Cache for resources (loaded once per page session)
+let _resourcesCache = null;
+async function _loadResources() {
+  if (_resourcesCache) return _resourcesCache;
+  try {
+    const r = await fetch('/api/resources');
+    _resourcesCache = await r.json();
+  } catch(e) { _resourcesCache = {expert_template:[],cc_profile:[],model_endpoint:[],moe_mode:['native','moe_orchestrated','moe_reasoning'],skill:[],mcp_tool:[]}; }
+  return _resourcesCache;
+}
+
+// Build a grouped LLM dropdown, grouped by node
+function buildLLMGroupedDropdown(wrapperId, uid, models) {
+  const wrap = document.getElementById(wrapperId);
+  if (!wrap) return;
+
+  // Group by node
+  const groups = {};
+  for (const m of models) {
+    const at = m.lastIndexOf('@');
+    const node = at >= 0 ? m.slice(at + 1) : '(unbekannt)';
+    const model = at >= 0 ? m.slice(0, at) : m;
+    if (!groups[node]) groups[node] = [];
+    groups[node].push({model, full: m});
+  }
+
+  if (!Object.keys(groups).length) {
+    wrap.innerHTML = '<span class="text-muted small">No models available</span>';
+    return;
+  }
+
+  let html = '<div class="llm-group-container">';
+  for (const [node, items] of Object.entries(groups)) {
+    const groupId = `llmg_${node.replace(/[^a-z0-9]/gi,'_')}`;
+    const nodeE   = escHtml(node);
+    const uidE    = escHtml(uid);
+    html += `
+    <div class="border rounded mb-1" style="background:#f8f9fa">
+      <div class="d-flex align-items-center px-2 py-1 gap-2" style="background:#e1f5fe;border-radius:4px 4px 0 0">
+        <i class="bi bi-hdd-rack-fill text-info" style="font-size:.8rem"></i>
+        <span class="small fw-bold text-info">${nodeE}</span>
+        <span class="text-muted small ms-1">(${escHtml(items.length)} models)</span>
+        <div class="ms-auto d-flex gap-1">
+          <button class="btn btn-xs btn-outline-primary" style="font-size:.7rem;padding:.1rem .4rem"
+                  onclick="grantNodeAll('${uidE}','${nodeE}',[${items.map(i=>`'${escHtml(i.full)}'`).join(',')}])"
+                  title="Grant all currently available models on ${nodeE}">
+            <i class="bi bi-check2-all me-1"></i>All current
+          </button>
+          <button class="btn btn-xs btn-outline-warning" style="font-size:.7rem;padding:.1rem .4rem"
+                  onclick="grantNodeWildcard('${uidE}','*@${nodeE}')"
+                  title="Grant all models incl. future ones on ${nodeE}">
+            <i class="bi bi-infinity me-1"></i>All (incl. future)
+          </button>
+        </div>
+      </div>
+      <div class="px-2 py-1" id="${escHtml(groupId)}">
+        ${items.map(i => `
+        <label class="d-flex gap-2 align-items-center py-0 mb-0 small" style="cursor:pointer">
+          <input type="checkbox" class="perm-opt-cb form-check-input mt-0" value="${escHtml(i.full)}">
+          <span class="text-truncate">${escHtml(i.model)}</span>
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+async function grantNodeAll(uid, node, models) {
+  if (!confirm(`Grant all ${models.length} current models on ${node} for this user?`)) return;
+  for (const ri of models) {
+    await fetch(`/api/users/${uid}/permissions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({resource_type: 'model_endpoint', resource_id: ri})
+    });
+  }
+  openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim());
+}
+
+async function grantNodeWildcard(uid, wildcardPerm) {
+  const node = wildcardPerm.replace('*@', '');
+  if (!confirm(`Grant all models on ${node} incl. future ones for this user?\n\nThis saves a wildcard entry (${wildcardPerm}).`)) return;
+  const res = await fetch(`/api/users/${uid}/permissions`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({resource_type: 'model_endpoint', resource_id: wildcardPerm})
+  });
+  if (res.ok) openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim());
+}
+
+// Build a multi-select dropdown for a given resource list
+function buildMultiDropdown(wrapperId, labelId, items, labelFn) {
+  const wrap = document.getElementById(wrapperId);
+  if (!wrap) return;
+  const itemsHtml = items.map(o => {
+    const val = typeof o === 'object' ? o.id : o;
+    const lbl = labelFn ? labelFn(o) : (typeof o === 'object' ? `${o.name} (${o.id})` : o);
+    return `<li><label class="dropdown-item d-flex gap-2 align-items-center py-1">
+      <input type="checkbox" class="perm-opt-cb form-check-input mt-0" value="${val}"> ${lbl}
+    </label></li>`;
+  }).join('');
+  wrap.innerHTML = `<div class="dropdown w-100">
+    <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start" type="button"
+            data-bs-toggle="dropdown" data-bs-auto-close="outside">
+      <span id="${labelId}">Select option…</span>
+    </button>
+    <ul class="dropdown-menu p-1" style="max-height:220px;overflow-y:auto;min-width:280px">${itemsHtml || '<li><span class="dropdown-item text-muted small">No options available</span></li>'}</ul>
+  </div>`;
+  wrap.querySelectorAll('.perm-opt-cb').forEach(cb => cb.addEventListener('change', () => {
+    const sel = [...wrap.querySelectorAll('.perm-opt-cb:checked')].map(c => c.value);
+    document.getElementById(labelId).textContent = sel.length ? sel.join(', ') : 'Select option…';
+  }));
+}
+
+async function openUserDetail(uid, name, activeTab = 'tab-budget') {
+  const _titleEl = document.getElementById('detailModalTitle');
+  _titleEl.innerHTML = '';
+  const _titleIcon = document.createElement('i');
+  _titleIcon.className = 'bi bi-person-gear me-2';
+  _titleEl.appendChild(_titleIcon);
+  _titleEl.appendChild(document.createTextNode(name));
+  document.getElementById('detailModalBody').innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+  const modal = new bootstrap.Modal(document.getElementById('userDetailModal'));
+  modal.show();
+
+  let res, resources;
+  try {
+    [res, resources] = await Promise.all([fetch(`/api/users/${uid}`), _loadResources()]);
+  } catch(e) {
+    console.error('Error loading user details:', e);
+    document.getElementById('detailModalBody').innerHTML = '<div class="alert alert-danger">Error loading data.</div>';
+    return;
+  }
+  const data = await res.json();
+  const u    = data.user;
+  const keys = data.keys;
+  const perms= data.permissions;
+  const use  = data.usage;
+  const bgt  = u;
+  const budgetType = u.budget_type || 'subscription';
+
+  let html = `
+  <div class="d-flex align-items-center gap-3 mb-3 p-2 border rounded bg-light">
+    <div class="d-flex align-items-center gap-2">
+      <label class="form-label small mb-0 fw-bold">Role:</label>
+      <select class="form-select form-select-sm" id="user_role_sel" style="width:160px">
+        <option value="user" ${u.role==='user'?'selected':''}>User</option>
+        <option value="subscriber" ${u.role==='subscriber'?'selected':''}>Subscriber</option>
+        <option value="expert" ${u.role==='expert'?'selected':''}>Expert</option>
+        <option value="admin" ${u.role==='admin'||u.is_admin?'selected':''}>Administrator</option>
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="saveUserRole('${uid}')">
+        <i class="bi bi-save"></i>
+      </button>
+    </div>
+    <div class="ms-auto">
+      <button class="btn btn-sm ${u.is_active ? 'btn-outline-danger' : 'btn-outline-success'}"
+              onclick="toggleUser('${uid}', ${u.is_active ? 0 : 1}, '${name}')">
+        ${u.is_active ? '<i class="bi bi-person-x me-1"></i>Lock' : '<i class="bi bi-person-check me-1"></i>Activate'}
+      </button>
+    </div>
+  </div>
+  <ul class="nav nav-tabs mb-3" id="detailTabs">
+    <li class="nav-item"><a class="nav-link active" href="#tab-stammdaten" data-bs-toggle="tab">{{ t(request, 'section.personal_data') }}</a></li>
+    <li class="nav-item"><a class="nav-link" href="#tab-budget" data-bs-toggle="tab">Budget</a></li>
+    <li class="nav-item"><a class="nav-link" href="#tab-perms" data-bs-toggle="tab">Permissions</a></li>
+    <li class="nav-item"><a class="nav-link" href="#tab-keys" data-bs-toggle="tab">API Keys</a></li>
+    <li class="nav-item"><a class="nav-link" href="#tab-usage" data-bs-toggle="tab">Usage</a></li>
+  </ul>
+  <div class="tab-content">
+
+  <!-- Stammdaten Tab -->
+  <div class="tab-pane active" id="tab-stammdaten">
+    <div class="row g-2">
+      <div class="col-sm-6">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.first_name') }} <span class="text-danger">*</span></label>
+        <input type="text" class="form-control form-control-sm" id="sd_first_name" value="${escHtml(u.first_name||'')}">
+      </div>
+      <div class="col-sm-6">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.last_name') }} <span class="text-danger">*</span></label>
+        <input type="text" class="form-control form-control-sm" id="sd_last_name" value="${escHtml(u.last_name||'')}">
+      </div>
+      <div class="col-12">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.email') }} <span class="text-danger">*</span></label>
+        <input type="email" class="form-control form-control-sm" id="sd_email" value="${escHtml(u.email||'')}">
+      </div>
+      <div class="col-12">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.street_address') }} <span class="text-danger">*</span></label>
+        <input type="text" class="form-control form-control-sm" id="sd_street" value="${escHtml(u.street_address||'')}">
+      </div>
+      <div class="col-sm-3">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.postal_code') }} <span class="text-danger">*</span></label>
+        <input type="text" class="form-control form-control-sm" id="sd_postal" value="${escHtml(u.postal_code||'')}">
+      </div>
+      <div class="col-sm-5">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.city') }} <span class="text-danger">*</span></label>
+        <input type="text" class="form-control form-control-sm" id="sd_city" value="${escHtml(u.city||'')}">
+      </div>
+      <div class="col-sm-4">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.country') }}</label>
+        <input type="text" class="form-control form-control-sm" id="sd_country" value="${escHtml(u.country||'')}">
+      </div>
+      <div class="col-sm-5">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.date_of_birth') }}</label>
+        <input type="date" class="form-control form-control-sm" id="sd_dob" value="${escHtml(u.date_of_birth||'')}">
+      </div>
+      <div class="col-sm-4">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.gender') }}</label>
+        <select class="form-select form-select-sm" id="sd_gender">
+          <option value="" ${!u.gender?'selected':''}>—</option>
+          <option value="M" ${u.gender==='M'?'selected':''}>{{ t(request, 'lbl.gender_m') }}</option>
+          <option value="W" ${u.gender==='W'?'selected':''}>{{ t(request, 'lbl.gender_w') }}</option>
+          <option value="D" ${u.gender==='D'?'selected':''}>{{ t(request, 'lbl.gender_d') }}</option>
+        </select>
+      </div>
+      <div class="col-12 mt-2">
+        <button class="btn btn-primary btn-sm" onclick="saveStammdaten('${uid}')">
+          <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_profile') }}
+        </button>
+        <span id="sd_save_msg" class="ms-2 small d-none text-success">{{ t(request, 'portal.saved') }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Budget Tab -->
+  <div class="tab-pane" id="tab-budget">
+    <div class="row g-3 mb-2">
+      <div class="col-md-4">
+        <label class="form-label small">Daily Limit (Tokens)</label>
+        <input type="number" class="form-control form-control-sm" id="bgt_daily" value="${bgt.daily_limit||''}" placeholder="unlimited">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small">Monthly Limit</label>
+        <input type="number" class="form-control form-control-sm" id="bgt_monthly" value="${bgt.monthly_limit||''}" placeholder="unlimited">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small">Total Limit</label>
+        <input type="number" class="form-control form-control-sm" id="bgt_total" value="${bgt.total_limit||''}" placeholder="unlimited">
+      </div>
+    </div>
+    <p class="small text-muted mb-1">Current usage:
+      Today <strong>${(use.daily_used||0).toLocaleString()}</strong> tokens
+      <span class="text-success">(≈ €${((use.daily_used||0)*TOKEN_PRICE_EUR).toFixed(4)})</span> |
+      Month <strong>${(use.monthly_used||0).toLocaleString()}</strong>
+      <span class="text-success">(≈ €${((use.monthly_used||0)*TOKEN_PRICE_EUR).toFixed(4)})</span> |
+      Total <strong>${(use.total_used||0).toLocaleString()}</strong>
+      <span class="text-success">(≈ €${((use.total_used||0)*TOKEN_PRICE_EUR).toFixed(4)})</span>
+    </p>
+    ${bgt.daily_limit ? `<p class="small text-muted mb-1">Monthly limit corresponds to ≈ <strong>€${(bgt.monthly_limit*TOKEN_PRICE_EUR).toFixed(2)}</strong></p>` : ''}
+    <div class="mb-3">
+      <label class="form-label small fw-bold">Budget Type</label>
+      <div class="d-flex gap-4">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="budget_type_r" id="bt_sub_r" value="subscription" ${budgetType==='subscription'?'checked':''}>
+          <label class="form-check-label small" for="bt_sub_r">Subscription (monthly reset)</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="budget_type_r" id="bt_once_r" value="onetime" ${budgetType==='onetime'?'checked':''}>
+          <label class="form-check-label small" for="bt_once_r">One-time (no reset)</label>
+        </div>
+      </div>
+    </div>
+    <button class="btn btn-sm btn-primary" onclick="saveBudget('${uid}')"><i class="bi bi-save me-1"></i>Save budget</button>
+  </div>
+
+  <!-- Freigaben Tab -->
+  <div class="tab-pane" id="tab-perms">
+    <p class="small text-muted mb-2"><i class="bi bi-info-circle me-1"></i>By default all access is blocked. Grant explicitly here.</p>
+
+    <!-- Active permissions -->
+    <div class="d-flex justify-content-between align-items-center mb-1">
+      <span class="small fw-bold">Active Permissions</span>
+      <button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:.15rem .5rem" onclick="revokeSelectedPerms('${uid}')">
+        <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.revoke_selected') }}
+      </button>
+    </div>
+    <table class="table table-sm mb-3">
+      <thead class="table-light"><tr>
+        <th style="width:2rem"><input type="checkbox" id="revoke-all-cb" title="Select all"></th>
+        <th>Typ</th><th>Ressource</th><th></th>
+      </tr></thead>
+      <tbody id="perms-body">
+        ${perms.map(p => {
+          const badgeColor = {expert_template:'success',cc_profile:'primary',model_endpoint:'info',moe_mode:'warning',skill:'secondary',mcp_tool:'dark'}[p.resource_type] || 'secondary';
+          // Resolve human-readable name for named resource types
+          let displayName = p.resource_id;
+          if (p.resource_type === 'expert_template') {
+            const found = (resources.expert_template || []).find(t => t.id === p.resource_id);
+            if (found) displayName = `${found.name} <span class="text-muted" style="font-size:.7rem">(${p.resource_id})</span>`;
+          } else if (p.resource_type === 'cc_profile') {
+            const found = (resources.cc_profile || []).find(t => t.id === p.resource_id);
+            if (found) displayName = `${found.name} <span class="text-muted" style="font-size:.7rem">(${p.resource_id})</span>`;
+          }
+          return `<tr>
+            <td><input type="checkbox" class="revoke-cb" value="${p.id}"></td>
+            <td><span class="badge bg-${badgeColor}" style="font-size:.7rem">${p.resource_type}</span></td>
+            <td style="font-size:.85rem">${displayName}</td>
+            <td><button class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .4rem" onclick="revokePerm('${uid}','${p.id}')"><i class="bi bi-trash"></i></button></td>
+          </tr>`;
+        }).join('')}
+        ${perms.length===0 ? '<tr><td colspan="4" class="text-muted text-center small">No permissions</td></tr>' : ''}
+      </tbody>
+    </table>
+
+    <!-- Section 1: Expert Template -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e8f5e9">
+        <i class="bi bi-collection-fill text-success"></i>
+        <span class="small fw-bold">Expert Template</span>
+        <span class="text-muted small ms-1">— Assign expert configuration package</span>
+      </div>
+      <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center">
+          <div class="col-10" id="perm_tmpl_wrap">
+            <span class="text-muted small">Loading…</span>
+          </div>
+          <div class="col-2">
+            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','expert_template','perm_tmpl_wrap')">
+              <i class="bi bi-plus"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Claude Code Profile -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e3f2fd">
+        <i class="bi bi-person-badge-fill text-primary"></i>
+        <span class="small fw-bold">Claude Code Profile</span>
+        <span class="text-muted small ms-1">— CC profile via Anthropic Messages API</span>
+      </div>
+      <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center">
+          <div class="col-10" id="perm_cc_wrap">
+            <span class="text-muted small">Loading…</span>
+          </div>
+          <div class="col-2">
+            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','cc_profile','perm_cc_wrap')">
+              <i class="bi bi-plus"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 3: Native LLMs (OpenAI API) -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e1f5fe">
+        <i class="bi bi-cpu-fill text-info"></i>
+        <span class="small fw-bold">Native LLMs</span>
+        <span class="text-muted small ms-1">— OpenAI API model access</span>
+      </div>
+      <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center">
+          <div class="col-10" id="perm_llm_wrap">
+            <span class="text-muted small">Loading…</span>
+          </div>
+          <div class="col-2">
+            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','model_endpoint','perm_llm_wrap')">
+              <i class="bi bi-plus"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 4: Skills -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#f3e5f5">
+        <i class="bi bi-magic text-purple" style="color:#7b1fa2"></i>
+        <span class="small fw-bold">Skills</span>
+        <span class="text-muted small ms-1">— Server-side slash commands (/skill-name)</span>
+      </div>
+      <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center mb-1">
+          <div class="col-10" id="perm_skill_wrap">
+            <span class="text-muted small">Loading…</span>
+          </div>
+          <div class="col-2">
+            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','skill','perm_skill_wrap')" title="Grant selected skills">
+              <i class="bi bi-plus"></i>
+            </button>
+          </div>
+        </div>
+        <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.15rem .5rem"
+                onclick="grantWildcard('${uid}','skill')" title="Grant all skills">
+          <i class="bi bi-check-all me-1"></i>Grant all skills
+        </button>
+      </div>
+    </div>
+
+    <!-- Section 5: MCP Tools -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e8eaf6">
+        <i class="bi bi-tools" style="color:#283593"></i>
+        <span class="small fw-bold">MCP Tools</span>
+        <span class="text-muted small ms-1">— Precision Tools (Math, Subnet, Date, Legal…)</span>
+      </div>
+      <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center mb-1">
+          <div class="col-10" id="perm_mcp_wrap">
+            <span class="text-muted small">Loading…</span>
+          </div>
+          <div class="col-2">
+            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','mcp_tool','perm_mcp_wrap')" title="Grant selected MCP tools">
+              <i class="bi bi-plus"></i>
+            </button>
+          </div>
+        </div>
+        <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.15rem .5rem"
+                onclick="grantWildcard('${uid}','mcp_tool')" title="Grant all MCP tools">
+          <i class="bi bi-check-all me-1"></i>Grant all MCP tools
+        </button>
+      </div>
+    </div>
+
+    <!-- Advanced: MoE mode (rarely needed) -->
+    <details class="mt-1">
+      <summary class="small text-muted" style="cursor:pointer">
+        <i class="bi bi-gear me-1"></i>Advanced permissions (moe_mode)
+      </summary>
+      <div class="mt-2 p-2 border rounded">
+        <div class="row g-2 align-items-end">
+          <div class="col-4">
+            <select class="form-select form-select-sm" id="perm_adv_type">
+              <option value="moe_mode">moe_mode</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <input class="form-control form-control-sm" id="perm_adv_id" placeholder="e.g. native, moe_orchestrated">
+          </div>
+          <div class="col-2">
+            <button class="btn btn-sm btn-success w-100" onclick="grantAdvPerm('${uid}')"><i class="bi bi-plus"></i></button>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <div class="mt-3 pt-2 border-top d-flex gap-2 justify-content-end">
+      <button class="btn btn-sm btn-outline-secondary" onclick="openUserDetail('${uid}','${name}')">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+      </button>
+      <button class="btn btn-sm btn-success" onclick="saveAllFreigaben('${uid}','${name}')">
+        <i class="bi bi-floppy me-1"></i>{{ t(request, 'btn.save_permissions') }}
+      </button>
+    </div>
+  </div>
+
+  <!-- API Keys Tab -->
+  <div class="tab-pane" id="tab-keys">
+    <table class="table table-sm mb-2">
+      <thead class="table-light"><tr><th>Prefix</th><th>Label</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        ${keys.map(k=>`<tr>
+          <td><code>${k.key_prefix}...</code></td>
+          <td>${k.label||'—'}</td>
+          <td><small class="text-muted">${k.last_used_at ? k.last_used_at.slice(0,16) : 'never'}</small></td>
+          <td>${k.is_active ? '<span class="badge bg-success" style="font-size:.65rem">Active</span>' : '<span class="badge bg-danger" style="font-size:.65rem">Locked</span>'}</td>
+          <td>${k.is_active ? `<button class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .4rem" onclick="revokeKey('${uid}','${k.id}')"><i class="bi bi-lock"></i></button>` : ''}</td>
+        </tr>`).join('')}
+        ${keys.length===0 ? '<tr><td colspan="5" class="text-muted text-center small">No keys</td></tr>' : ''}
+      </tbody>
+    </table>
+    <div class="row g-2 align-items-end">
+      <div class="col-8"><input class="form-control form-control-sm" id="new_key_label" placeholder="Key label (optional)"></div>
+      <div class="col-4"><button class="btn btn-sm btn-primary w-100" onclick="createKey('${uid}')"><i class="bi bi-key me-1"></i>Create key</button></div>
+    </div>
+    <div id="new_key_display" class="alert alert-success mt-2 d-none" style="font-size:.82rem;word-break:break-all"></div>
+  </div>
+
+  <!-- Verbrauch Tab -->
+  <div class="tab-pane" id="tab-usage">
+    <div class="row text-center g-3 mb-3">
+      <div class="col-4">
+        <div class="card bg-light"><div class="card-body py-2">
+          <div class="small text-muted">Today (Tokens)</div>
+          <strong>${(use.daily_used||0).toLocaleString()}</strong>
+        </div></div>
+      </div>
+      <div class="col-4">
+        <div class="card bg-light"><div class="card-body py-2">
+          <div class="small text-muted">This Month</div>
+          <strong>${(use.monthly_used||0).toLocaleString()}</strong>
+        </div></div>
+      </div>
+      <div class="col-4">
+        <div class="card bg-light"><div class="card-body py-2">
+          <div class="small text-muted">Total</div>
+          <strong>${(use.total_used||0).toLocaleString()}</strong>
+        </div></div>
+      </div>
+    </div>
+    <a href="/api/users/${uid}/usage?days=30" target="_blank" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-download me-1"></i>Details as JSON (30 days)
+    </a>
+  </div>
+
+  </div>`; // end tab-content
+
+  document.getElementById('detailModalBody').innerHTML = html;
+
+  // Activate requested tab (default: tab-budget)
+  if (activeTab !== 'tab-budget') {
+    const tabEl = document.querySelector(`[href="#${activeTab}"]`);
+    if (tabEl) new bootstrap.Tab(tabEl).show();
+  }
+
+  // "Select all" checkbox for bulk revoke
+  const selectAllCb = document.getElementById('revoke-all-cb');
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', function() {
+      document.querySelectorAll('.revoke-cb').forEach(cb => cb.checked = this.checked);
+    });
+  }
+
+  // Initialize permission section dropdowns
+  buildMultiDropdown('perm_tmpl_wrap', 'perm_tmpl_label',
+    resources.expert_template || [],
+    o => `${o.name} (${o.id})`);
+  buildMultiDropdown('perm_cc_wrap', 'perm_cc_label',
+    resources.cc_profile || [],
+    o => `${o.name} (${o.id})`);
+  buildLLMGroupedDropdown('perm_llm_wrap', uid, resources.model_endpoint || []);
+  buildMultiDropdown('perm_skill_wrap', 'perm_skill_label',
+    resources.skill || [],
+    o => o.name || o.id);
+  buildMultiDropdown('perm_mcp_wrap', 'perm_mcp_label',
+    resources.mcp_tool || [],
+    o => o.name || o.id);
+}
+
+async function saveStammdaten(uid) {
+  const required = ['sd_first_name','sd_last_name','sd_email','sd_street','sd_postal','sd_city'];
+  for (const id of required) {
+    if (!document.getElementById(id)?.value.trim()) {
+      alert('{{ t(request, "msg.required_fields_missing") }}');
+      return;
+    }
+  }
+  const res = await fetch(`/api/users/${uid}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      first_name:     document.getElementById('sd_first_name').value.trim(),
+      last_name:      document.getElementById('sd_last_name').value.trim(),
+      email:          document.getElementById('sd_email').value.trim(),
+      street_address: document.getElementById('sd_street').value.trim(),
+      postal_code:    document.getElementById('sd_postal').value.trim(),
+      city:           document.getElementById('sd_city').value.trim(),
+      country:        document.getElementById('sd_country').value.trim(),
+      date_of_birth:  document.getElementById('sd_dob').value || null,
+      gender:         document.getElementById('sd_gender').value || null,
+    })
+  });
+  const msg = document.getElementById('sd_save_msg');
+  if (res.ok) {
+    msg.classList.remove('d-none');
+    setTimeout(() => msg.classList.add('d-none'), 2500);
+  } else {
+    const d = await res.json();
+    alert('Error: ' + (d.detail || 'unknown'));
+  }
+}
+
+async function saveUserRole(uid) {
+  const role = document.getElementById('user_role_sel').value;
+  const res = await fetch(`/api/users/${uid}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({role})
+  });
+  if (res.ok) { alert('Role saved'); window.location.reload(); }
+  else { const d = await res.json(); alert('Error: ' + (d.detail||'unknown')); }
+}
+
+async function saveBudget(uid) {
+  const budgetTypeEl = document.querySelector('input[name="budget_type_r"]:checked');
+  const res = await fetch(`/api/users/${uid}/budget`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      daily_limit:   document.getElementById('bgt_daily').value || null,
+      monthly_limit: document.getElementById('bgt_monthly').value || null,
+      total_limit:   document.getElementById('bgt_total').value || null,
+      budget_type:   budgetTypeEl ? budgetTypeEl.value : 'subscription',
+    })
+  });
+  if (res.ok) alert('Budget saved');
+}
+
+async function grantWildcard(uid, resourceType) {
+  if (!confirm(`Grant all ${resourceType === 'skill' ? 'Skills' : 'MCP Tools'} for this user?`)) return;
+  const res = await fetch(`/api/users/${uid}/permissions`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({resource_type: resourceType, resource_id: '*'})
+  });
+  if (res.ok) {
+    const detail = document.getElementById('detailModalTitle')?.textContent?.replace(/.*?([^\s]+)$/, '$1') || 'User';
+    openUserDetail(uid, detail, 'tab-perms');
+  }
+}
+
+async function saveAllFreigaben(uid, name) {
+  const sections = [
+    {type: 'expert_template', wrap: 'perm_tmpl_wrap'},
+    {type: 'cc_profile',      wrap: 'perm_cc_wrap'},
+    {type: 'model_endpoint',  wrap: 'perm_llm_wrap'},
+    {type: 'skill',           wrap: 'perm_skill_wrap'},
+    {type: 'mcp_tool',        wrap: 'perm_mcp_wrap'},
+  ];
+  let saved = 0;
+  for (const s of sections) {
+    const wrap = document.getElementById(s.wrap);
+    if (!wrap) continue;
+    const ids = [...wrap.querySelectorAll('.perm-opt-cb:checked')].map(c => c.value);
+    for (const ri of ids) {
+      await fetch(`/api/users/${uid}/permissions`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resource_type: s.type, resource_id: ri})
+      });
+      saved++;
+    }
+  }
+  if (saved > 0) openUserDetail(uid, name, 'tab-perms');
+}
+
+async function grantSection(uid, resourceType, wrapperId) {
+  const wrap = document.getElementById(wrapperId);
+  const ids = wrap
+    ? [...wrap.querySelectorAll('.perm-opt-cb:checked')].map(c => c.value)
+    : [];
+  if (!ids.length) {
+    const btn = wrap ? wrap.closest('.card-body')?.querySelector('button.btn-success') : null;
+    if (btn) {
+      btn.classList.add('btn-danger');
+      btn.title = 'Please select options first';
+      setTimeout(() => { btn.classList.remove('btn-danger'); btn.title = ''; }, 1500);
+    }
+    return;
+  }
+  for (const ri of ids) {
+    await fetch(`/api/users/${uid}/permissions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({resource_type: resourceType, resource_id: ri})
+    });
+  }
+  openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim(), 'tab-perms');
+}
+
+async function grantAdvPerm(uid) {
+  const rt = document.getElementById('perm_adv_type').value;
+  const ri = (document.getElementById('perm_adv_id')?.value || '').trim();
+  if (!ri) return;
+  await fetch(`/api/users/${uid}/permissions`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({resource_type: rt, resource_id: ri})
+  });
+  openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim(), 'tab-perms');
+}
+
+async function revokePerm(uid, pid) {
+  if (!confirm('Freigabe entziehen?')) return;
+  await fetch(`/api/users/${uid}/permissions/${pid}`, {method:'DELETE'});
+  openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim(), 'tab-perms');
+}
+
+async function revokeSelectedPerms(uid) {
+  const checked = [...document.querySelectorAll('.revoke-cb:checked')];
+  if (!checked.length) return;
+  if (!confirm(`${checked.length} Freigabe(n) entziehen?`)) return;
+  for (const cb of checked) {
+    await fetch(`/api/users/${uid}/permissions/${cb.value}`, {method:'DELETE'});
+  }
+  openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim(), 'tab-perms');
+}
+
+async function createKey(uid) {
+  const label = (document.getElementById('new_key_label') || {}).value || '';
+  const res = await fetch(`/api/users/${uid}/keys`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({label})
+  });
+  const data = await res.json();
+  if (res.ok) {
+    // Show raw key in persistent global alert (survives modal reload)
+    const userName = document.getElementById('detailModalTitle').textContent.trim();
+    const alertEl = document.getElementById('global-key-alert');
+    alertEl.innerHTML = `<button type="button" class="btn-close" onclick="this.closest('#global-key-alert').classList.add('d-none')"></button>
+      <strong><i class="bi bi-key me-1"></i>Neuer API Key — jetzt kopieren! (nur einmalig sichtbar)</strong><br>
+      <code class="fs-6 d-block mt-1 p-2 bg-light rounded">${data.raw_key}</code>
+      <small class="text-muted">User: ${userName}</small>`;
+    alertEl.classList.remove('d-none');
+    // Reload modal content (key display in global alert survives this)
+    openUserDetail(uid, userName);
+  }
+}
+
+async function revokeKey(uid, kid) {
+  if (!confirm('API Key sperren?')) return;
+  await fetch(`/api/users/${uid}/keys/${kid}`, {method:'DELETE'});
+  openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim());
+}
+
+// ─── Send Email ───────────────────────────────────────────────────────────────
+function openSendEmailModal(userId, username, email) {
+  document.getElementById('sem_user_id').value  = userId;
+  document.getElementById('sem_subject').value  = '';
+  document.getElementById('sem_body').value     = '';
+  const res = document.getElementById('sem_result');
+  res.className = 'd-none alert py-2 small';
+  res.textContent = '';
+  if (userId === '*') {
+    document.getElementById('sendEmailTitle').innerHTML =
+      '<i class="bi bi-envelope me-2"></i>{{ t(request, "btn.send_bulk_email") }}';
+    document.getElementById('sem_recipient').value = '{{ t(request, "lbl.all_active_users") }}';
+  } else {
+    document.getElementById('sendEmailTitle').innerHTML =
+      '<i class="bi bi-envelope me-2"></i>{{ t(request, "modal.send_email_title") }}';
+    document.getElementById('sem_recipient').value = `${username} <${email}>`;
+  }
+  new bootstrap.Modal(document.getElementById('sendEmailModal')).show();
+}
+
+async function submitSendEmail() {
+  const btn     = document.getElementById('sem_send_btn');
+  const res     = document.getElementById('sem_result');
+  const userId  = document.getElementById('sem_user_id').value;
+  const subject = document.getElementById('sem_subject').value.trim();
+  const body    = document.getElementById('sem_body').value.trim();
+  if (!subject || !body) {
+    res.textContent = '{{ t(request, "msg.email_fields_required") }}';
+    res.className = 'alert alert-danger py-2 small';
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/admin/send-email', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: userId, subject, body})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      res.textContent = '{{ t(request, "msg.email_sent") }}'.replace('{n}', d.sent);
+      res.className = 'alert alert-success py-2 small';
+    } else {
+      res.textContent = d.error || 'Error';
+      res.className = 'alert alert-danger py-2 small';
+    }
+  } catch(e) {
+    res.textContent = String(e);
+    res.className = 'alert alert-danger py-2 small';
+  } finally { btn.disabled = false; }
+}
+
+// ─── Admin Password Reset ─────────────────────────────────────────────────────
+async function sendPasswordReset(userId, username, email) {
+  const msg = `{{ t(request, "msg.confirm_reset") }}`.replace('{user}', username).replace('{email}', email);
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch(`/admin/users/${userId}/send-reset`, {method: 'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      alert('{{ t(request, "msg.admin_reset_sent") }}'.replace('{email}', d.to));
+    } else {
+      alert('Error: ' + (d.error || 'Unknown error'));
+    }
+  } catch(e) { alert(String(e)); }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,92 @@
+// Universal Grafana Alloy pipeline for MoE Sovereign.
+// Runs identically under systemd (LXC), as a docker-compose sidecar,
+// and as a k8s DaemonSet. The only differences are the log sources
+// activated via environment variables.
+//
+// Required env:
+//   LOKI_URL       push endpoint, e.g. https://loki.example.com/loki/api/v1/push
+//   TEMPO_URL      OTLP gRPC endpoint for traces, e.g. tempo:4317
+//   MOE_HOSTNAME   label to identify the host/pod
+//   MOE_CLUSTER    label to identify the cluster ("lxc", "homelab", "prod-eu1")
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ---------- Log sources (pick one per platform) ----------
+
+// LXC / bare-metal — systemd journald
+loki.source.journal "journal" {
+  max_age       = "12h"
+  relabel_rules = loki.relabel.journal.rules
+  forward_to    = [loki.process.enrich.receiver]
+  labels        = {
+    job   = "moe",
+    host  = sys.env("MOE_HOSTNAME"),
+  }
+}
+
+loki.relabel "journal" {
+  forward_to = []
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+}
+
+// Common enrichment — extracts W3C traceparent into a label so Loki
+// "derived fields" can link directly to Tempo traces.
+loki.process "enrich" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.regex {
+    expression = "traceparent=00-(?P<trace_id>[0-9a-f]{32})-"
+  }
+  stage.labels {
+    values = { trace_id = "" }
+  }
+  stage.static_labels {
+    values = {
+      cluster = sys.env("MOE_CLUSTER"),
+    }
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = sys.env("LOKI_URL")
+  }
+}
+
+// ---------- Metrics scraping (Prometheus compatible) ----------
+
+prometheus.scrape "moe_orchestrator" {
+  targets         = [{ __address__ = "127.0.0.1:8000", job = "moe-orchestrator" }]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = sys.env("PROM_REMOTE_WRITE_URL")
+  }
+}
+
+// ---------- OTLP receiver for Tempo traces ----------
+
+otelcol.receiver.otlp "default" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = sys.env("TEMPO_URL")
+    tls { insecure = true }
+  }
+}

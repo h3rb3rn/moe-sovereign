@@ -1,0 +1,95 @@
+{{- if .Values.observability.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "moe.fullname" . }}-alloy
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+data:
+  config.river: |
+    // Universal Alloy pipeline — same semantics as deploy/alloy/alloy.river
+    // running on LXC/Compose, only the discovery source differs.
+
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    loki.source.kubernetes "pods" {
+      targets    = discovery.kubernetes.pods.targets
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = {{ .Values.observability.loki.url | quote }}
+      }
+      external_labels = {
+        cluster = "{{ .Release.Namespace }}",
+        source  = "k8s",
+      }
+    }
+
+    otelcol.receiver.otlp "default" {
+      grpc { endpoint = "0.0.0.0:4317" }
+      http { endpoint = "0.0.0.0:4318" }
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = {{ .Values.observability.tempo.url | quote }}
+        tls { insecure = true }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "moe.fullname" . }}-alloy
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+spec:
+  selector:
+    matchLabels:
+      {{- include "moe.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: alloy
+  template:
+    metadata:
+      labels:
+        {{- include "moe.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: alloy
+    spec:
+      serviceAccountName: {{ include "moe.serviceAccountName" . }}
+      containers:
+        - name: alloy
+          image: {{ .Values.observability.alloy.image }}
+          args:
+            - run
+            - /etc/alloy/config.river
+            - --server.http.listen-addr=0.0.0.0:12345
+          ports:
+            - { name: http,     containerPort: 12345 }
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "moe.fullname" . }}-alloy
+        - name: varlog
+          hostPath:
+            path: /var/log
+{{- end -}}

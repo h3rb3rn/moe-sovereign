@@ -1,0 +1,162 @@
+site_name: Sovereign MoE – Documentation
+site_description: Sovereign Mixture-of-Experts Orchestrator – Complete Documentation
+site_author: Philipp Horn
+docs_dir: docs
+
+theme:
+  name: material
+  font: false
+  language: en
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Dark mode
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search:
+      lang: en
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra_javascript:
+  # Local mermaid.min.js is kept purely so mkdocs-material's built-in
+  # loader (which checks `typeof mermaid == "undefined"`) can reuse it and
+  # skip its own unpkg.com fetch — useful for offline / air-gapped builds.
+  # Do NOT add a mermaid-init.js: material handles init + render + theme
+  # switching on its own. See docs/assets/js/README.md.
+  - assets/js/mermaid.min.js
+
+nav:
+  - Overview: index.md
+  - Quick Start & Guide:
+    - guide/index.md
+    - Installation: guide/installation.md
+    - First-Time Setup: guide/first-setup.md
+    - Quick Start: guide/quickstart.md
+    - User Handbook: guide/handout.md
+    - API Reference: guide/api.md
+    - Claude Code: guide/claude-code.md
+    - Claude Code Profiles: guide/claude-code-profiles.md
+    - Agent Integration Profiles: guide/agent-profiles.md
+    - Expert Templates & Profiles: guide/templating-guide.md
+    - Best Practices: guide/best-practices.md
+    - Open WebUI: guide/open-webui.md
+    - Continue / Cursor: guide/continue-dev.md
+    - FAQ: faq.md
+  - Admin Backend:
+    - admin/index.md
+    - Users & Roles: admin/users.md
+    - Permissions: admin/permissions.md
+    - Token Budget & Costs: admin/budget.md
+    - Expert Templates: admin/templates.md
+    - Claude Code Profiles: admin/profiles.md
+    - Monitoring & Processes: admin/monitoring.md
+  - Federation:
+    - federation/index.md
+    - Setup Guide: federation/setup.md
+    - Protocol: federation/protocol.md
+    - Trust & Security: federation/trust.md
+    - Server Discovery: federation/registry.md
+  - User Portal:
+    - portal/index.md
+    - Dashboard & Billing: portal/dashboard.md
+    - API Keys: portal/keys.md
+    - Custom Templates & Profiles: portal/templates.md
+  - Deployment:
+    - deployment/index.md
+    - LXC / Proxmox: deployment/lxc.md
+    - Docker Compose: deployment/compose.md
+    - Podman (rootless): deployment/podman.md
+    - Kubernetes & OpenShift: deployment/kubernetes.md
+    - Universal Observability: deployment/observability.md
+    - GPU & Node Monitoring: deployment/gpu-monitoring.md
+    - Firewall & Network Exposure: deployment/firewall.md
+  - System:
+    - system/index.md
+    - Architecture: system/architecture.md
+    - System Documentation: system/overview.md
+    - Pipeline Details: system/pipeline.md
+    - Data Flow: system/dataflow.md
+    - Infrastructure: system/infrastructure.md
+    - Hardware: system/hardware.md
+    - Tool Stack:
+      - system/toolstack/index.md
+      - LangGraph: system/toolstack/langgraph.md
+      - GraphRAG / Neo4j: system/toolstack/graphrag_neo4j.md
+      - MCP Precision Tools: system/toolstack/mcp_tools.md
+      - Ollama Cluster: system/toolstack/ollama_cluster.md
+    - MoE-Eval Benchmarks: system/benchmarks.md
+    - Kafka Event Streaming: system/kafka.md
+    - Docker Services: system/services.md
+    - Webserver & Reverse Proxy: system/webserver.md
+    - UI Screenshots: system/screenshots.md
+    - System Status: system/status.md
+  - Intelligence & Learning:
+    - system/intelligence/index.md
+    - Causal Learning Loop: system/intelligence/causal_learning.md
+    - Context Extension: system/intelligence/context_extension.md
+    - Compounding Knowledge Base: system/intelligence/compounding_knowledge.md
+    - Memory Palace: system/intelligence/memory_palace.md
+    - Autonomous Knowledge Healing: system/intelligence/autonomous_healing.md
+    - Enterprise Features: system/intelligence/enterprise_features.md
+  - Reference:
+    - Authentication: reference/auth.md
+    - Import & Export (incl. Knowledge Bundles): reference/import-export.md
+    - Expert Categories: reference/expert-categories.md
+    - Expert Reference Template: reference/expert-template.md
+    - Expert Prompts: reference/expert-prompts.md
+    - Expert Overview (Live): experts/index.md
+    - User Management (Technical): reference/user-management.md
+  - Dokumentation (DE):
+    - Agenten-Profile: guide/de/agent-profiles.md
+    - Experten-Vorlagen & Profile: guide/de/templating-guide.md
+    - Best Practices: guide/de/best-practices.md
+    - Claude Code Profile: guide/de/claude-code-profiles.md
+    - GPU-Monitoring: deployment/de/gpu-monitoring.md
+    - Import & Export: reference/de/import-export.md
+  - Changelog: changelog.md
+  - Legal:
+    - Privacy & Data Handling: PRIVACY.md
+    - Third-Party Notices: THIRD_PARTY_NOTICES.md

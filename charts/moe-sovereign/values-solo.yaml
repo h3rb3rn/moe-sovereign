@@ -1,0 +1,58 @@
+# Solo profile — single-node k3s / Raspberry Pi / Proxmox LXC with k3s.
+# All services enabled, but dimensioned for a ~4 GB host.
+
+profile: solo
+
+orchestrator:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+
+mcp:
+  replicas: 1
+admin:
+  replicas: 1
+
+pdb:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: traefik
+  host: moe.lan
+
+postgresql:
+  enabled: true
+  primary:
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 384Mi }
+    persistence:
+      size: 2Gi
+
+kafka:
+  enabled: true
+  controller:
+    replicaCount: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    persistence:
+      size: 2Gi
+
+valkey:
+  enabled: true
+  master:
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits:   { cpu: 200m, memory: 128Mi }
+    persistence:
+      size: 1Gi
+
+neo4j:
+  enabled: false       # heavy; solo users can flip if they need GraphRAG

@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Export / Import – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-database-gear section-icon text-primary"></i> Knowledge Export / Import</h5>
+    <small class="text-muted">Export learned knowledge as community bundles or import shared knowledge from other MoE instances.</small>
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- EXPORT CARD -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header bg-primary bg-opacity-10">
+        <h6 class="mb-0"><i class="bi bi-box-arrow-up me-2"></i>Export Knowledge Bundle</h6>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">Export entities, relations, and syntheses from the knowledge graph. Sensitive data (tenant IDs, source models) is stripped by default.</p>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Domain Filter</label>
+          <input type="text" id="export-domains" class="form-control form-control-sm"
+                 placeholder="e.g. technical_support, code_reviewer (empty = all)">
+          <div class="form-text">Comma-separated expert domains. Leave empty to export all.</div>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label fw-bold">Min Trust Score</label>
+            <input type="number" id="export-min-trust" class="form-control form-control-sm"
+                   value="0.3" min="0" max="1" step="0.1">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-bold">Options</label>
+            <div class="form-check mt-1">
+              <input class="form-check-input" type="checkbox" id="export-strip" checked>
+              <label class="form-check-label small" for="export-strip">Strip sensitive data</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="export-syntheses" checked>
+              <label class="form-check-label small" for="export-syntheses">Include syntheses</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary btn-sm" onclick="exportKnowledge()">
+            <i class="bi bi-download me-1"></i>Export Bundle
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="previewExport()">
+            <i class="bi bi-eye me-1"></i>Preview Stats
+          </button>
+        </div>
+
+        <div id="export-result" class="mt-3" style="display:none">
+          <div class="alert alert-success small mb-0">
+            <i class="bi bi-check-circle me-1"></i>
+            <span id="export-stats"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPORT CARD -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header bg-success bg-opacity-10">
+        <h6 class="mb-0"><i class="bi bi-box-arrow-in-down me-2"></i>Import Knowledge Bundle</h6>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">Import a knowledge bundle from another MoE instance or the community. Entities are merged by name; relations with lower trust don't overwrite existing ones.</p>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Bundle File (JSON)</label>
+          <input type="file" id="import-file" class="form-control form-control-sm" accept=".json">
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label fw-bold">Trust Ceiling</label>
+            <input type="number" id="import-trust-floor" class="form-control form-control-sm"
+                   value="0.5" min="0.1" max="1.0" step="0.1">
+            <div class="form-text">Max trust for imported data (prevents overriding local verified facts).</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-bold">Source Tag</label>
+            <input type="text" id="import-source" class="form-control form-control-sm"
+                   value="community_import" placeholder="community_import">
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-info btn-sm" onclick="validateImport()">
+            <i class="bi bi-search me-1"></i>Validate (Dry Run)
+          </button>
+          <button class="btn btn-success btn-sm" onclick="executeImport()" id="btn-import" disabled>
+            <i class="bi bi-upload me-1"></i>Import
+          </button>
+        </div>
+
+        <div id="import-preview" class="mt-3" style="display:none">
+          <div class="card bg-light">
+            <div class="card-body p-2">
+              <h6 class="card-title small fw-bold mb-2" id="import-preview-title">Validation Result</h6>
+              <table class="table table-sm table-borderless mb-0 small">
+                <tbody id="import-preview-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="import-result" class="mt-3" style="display:none">
+          <div class="alert small mb-0" id="import-result-alert">
+            <span id="import-result-text"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BUNDLE PREVIEW -->
+<div id="bundle-preview" class="mt-3" style="display:none">
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h6 class="mb-0"><i class="bi bi-file-earmark-code me-2"></i>Bundle Preview</h6>
+      <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('bundle-preview').style.display='none'">
+        <i class="bi bi-x"></i>
+      </button>
+    </div>
+    <div class="card-body" style="max-height:400px; overflow:auto">
+      <pre id="bundle-json" class="small mb-0" style="white-space:pre-wrap"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentBundle = null;
+
+async function previewExport() {
+  const domains = document.getElementById('export-domains').value.trim();
+  const minTrust = document.getElementById('export-min-trust').value;
+  const strip = document.getElementById('export-strip').checked;
+  const params = new URLSearchParams({min_trust: minTrust, strip_sensitive: strip});
+  if (domains) params.set('domains', domains);
+
+  try {
+    const r = await fetch(`/api/knowledge/export?${params}`);
+    const data = await r.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+    currentBundle = data;
+    const el = document.getElementById('export-result');
+    el.style.display = 'block';
+    document.getElementById('export-stats').textContent =
+      `${data.stats.entities} entities, ${data.stats.relations} relations, ${data.stats.syntheses} syntheses ready for export.`;
+
+    // Show preview
+    const preview = document.getElementById('bundle-preview');
+    preview.style.display = 'block';
+    const sample = {...data, entities: data.entities.slice(0, 10), relations: data.relations.slice(0, 10), syntheses: data.syntheses.slice(0, 5)};
+    sample._note = `Showing first 10/10/5 of ${data.stats.entities}/${data.stats.relations}/${data.stats.syntheses}`;
+    document.getElementById('bundle-json').textContent = JSON.stringify(sample, null, 2);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function exportKnowledge() {
+  const domains = document.getElementById('export-domains').value.trim();
+  const minTrust = document.getElementById('export-min-trust').value;
+  const strip = document.getElementById('export-strip').checked;
+  const params = new URLSearchParams({min_trust: minTrust, strip_sensitive: strip});
+  if (domains) params.set('domains', domains);
+
+  try {
+    const r = await fetch(`/api/knowledge/export?${params}`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `moe-knowledge-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch(e) { alert('Export failed: ' + e.message); }
+}
+
+function getImportBundle() {
+  return new Promise((resolve, reject) => {
+    const file = document.getElementById('import-file').files[0];
+    if (!file) { reject(new Error('No file selected')); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { resolve(JSON.parse(reader.result)); }
+      catch(e) { reject(new Error('Invalid JSON file')); }
+    };
+    reader.readAsText(file);
+  });
+}
+
+async function validateImport() {
+  try {
+    const bundle = await getImportBundle();
+    const r = await fetch('/api/knowledge/validate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bundle}),
+    });
+    const data = await r.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+
+    const el = document.getElementById('import-preview');
+    el.style.display = 'block';
+    document.getElementById('import-preview-title').textContent = 'Validation Result (Dry Run)';
+    document.getElementById('import-preview-body').innerHTML = `
+      <tr><td class="text-success fw-bold">Entities to create:</td><td>${data.entities_created}</td></tr>
+      <tr><td class="text-muted">Entities skipped (exist):</td><td>${data.entities_skipped}</td></tr>
+      <tr><td class="text-success fw-bold">Relations to create:</td><td>${data.relations_created}</td></tr>
+      <tr><td class="text-muted">Relations skipped (higher trust exists):</td><td>${data.relations_skipped}</td></tr>
+      <tr><td class="text-success fw-bold">Syntheses to create:</td><td>${data.syntheses_created}</td></tr>
+      ${data.errors && data.errors.length ? `<tr><td class="text-danger">Errors:</td><td>${data.errors.length}</td></tr>` : ''}
+    `;
+    document.getElementById('btn-import').disabled = false;
+  } catch(e) { alert(e.message); }
+}
+
+async function executeImport() {
+  if (!confirm('Import knowledge bundle? This will add new entities and relations to your knowledge graph.')) return;
+  try {
+    const bundle = await getImportBundle();
+    const trustFloor = document.getElementById('import-trust-floor').value;
+    const sourceTag = document.getElementById('import-source').value.trim() || 'community_import';
+
+    const r = await fetch('/api/knowledge/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bundle, trust_floor: parseFloat(trustFloor), source_tag: sourceTag}),
+    });
+    const data = await r.json();
+    const el = document.getElementById('import-result');
+    el.style.display = 'block';
+    const alert = document.getElementById('import-result-alert');
+    if (data.error) {
+      alert.className = 'alert alert-danger small mb-0';
+      document.getElementById('import-result-text').textContent = 'Import failed: ' + data.error;
+    } else {
+      alert.className = 'alert alert-success small mb-0';
+      document.getElementById('import-result-text').textContent =
+        `Import complete: ${data.entities_created} entities, ${data.relations_created} relations, ` +
+        `${data.syntheses_created} syntheses created. ${data.errors?.length || 0} errors.`;
+    }
+  } catch(e) { alert('Import failed: ' + e.message); }
+}
+</script>
+{% endblock %}

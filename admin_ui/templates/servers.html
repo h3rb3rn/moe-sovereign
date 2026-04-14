@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Server — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold"><i class="bi bi-hdd-stack me-2 text-primary"></i>Inference-Server</h5>
+  <button class="btn btn-sm btn-outline-primary" onclick="loadAll()">
+    <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+  </button>
+</div>
+
+<div class="row g-3" id="server-cards">
+  {% for srv in inference_servers %}
+  <div class="col-12 col-md-6 col-xl-4" id="srv-card-{{ loop.index0 }}">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span class="fw-bold"><i class="bi bi-cpu me-2 text-primary"></i>{{ srv.name }}</span>
+        <span class="badge bg-secondary" id="srv-badge-{{ loop.index0 }}">–</span>
+      </div>
+      <div class="card-body">
+        <div class="text-muted small font-monospace mb-1">{{ srv.url }}</div>
+        <div class="mb-2 d-flex gap-2 align-items-center">
+          {% if srv.get('api_type','ollama') == 'openai' %}
+          <span class="badge bg-primary">OpenAI</span>
+          {% else %}
+          <span class="badge bg-secondary">Ollama</span>
+          {% endif %}
+          {% set tok = srv.get('token','') %}
+          {% if tok and tok != 'ollama' %}
+          <span class="badge bg-warning text-dark font-monospace" style="font-size:.7rem">{{ tok[:4] }}****</span>
+          {% endif %}
+        </div>
+        <div class="d-flex gap-3 mb-3">
+          <div class="text-center">
+            <div class="fs-4 fw-bold" id="srv-latency-{{ loop.index0 }}">–</div>
+            <div class="text-muted" style="font-size:.75rem">{{ t(request, 'table.latency') }}</div>
+          </div>
+          <div class="text-center">
+            <div class="fs-4 fw-bold" id="srv-models-count-{{ loop.index0 }}">–</div>
+            <div class="text-muted" style="font-size:.75rem">{{ t(request, 'lbl.models') }}</div>
+          </div>
+          <div class="text-center">
+            <div class="fs-4 fw-bold">{{ srv.gpu_count }}</div>
+            <div class="text-muted" style="font-size:.75rem">{{ t(request, 'table.gpus') }}</div>
+          </div>
+          <div class="text-center">
+            <div class="fs-4 fw-bold">{{ srv.get('cost_factor', 1.0) }}</div>
+            <div class="text-muted" style="font-size:.75rem">Faktor</div>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary w-100"
+                onclick="toggleModels({{ loop.index0 }}, '{{ srv.name }}')">
+          <i class="bi bi-list-ul me-1"></i>Modelle anzeigen
+        </button>
+        <div id="srv-models-{{ loop.index0 }}" class="mt-2" style="display:none">
+          <div class="text-center text-muted small py-2" id="srv-models-loading-{{ loop.index0 }}">
+            <span class="spinner-border spinner-border-sm me-1"></span>{{ t(request, 'lbl.loading') }}
+          </div>
+          <div class="table-responsive" style="max-height:280px;overflow-y:auto">
+            <table class="table table-sm mb-0" id="srv-models-table-{{ loop.index0 }}" style="display:none">
+              <thead class="sticky-top bg-white">
+                <tr>
+                  <th>Modell</th>
+                  <th style="width:65px" class="text-end">GB</th>
+                  <th style="width:80px">Quant.</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const _modelsLoaded = {};
+const _modelsVisible = {};
+
+async function loadAll() {
+  const badges     = document.querySelectorAll('[id^="srv-badge-"]');
+  const latencies  = document.querySelectorAll('[id^="srv-latency-"]');
+  const modelCnts  = document.querySelectorAll('[id^="srv-models-count-"]');
+  badges.forEach(b => { b.className = 'badge bg-secondary'; b.textContent = '...'; });
+
+  let data;
+  try {
+    data = await fetch('/api/servers/health').then(r => r.json());
+  } catch {
+    badges.forEach(b => { b.className = 'badge bg-danger'; b.textContent = 'Fehler'; });
+    return;
+  }
+
+  data.forEach((srv, i) => {
+    const badge  = document.getElementById(`srv-badge-${i}`);
+    const lat    = document.getElementById(`srv-latency-${i}`);
+    const mCnt   = document.getElementById(`srv-models-count-${i}`);
+    if (!badge) return;
+    if (srv.ok) {
+      badge.className   = 'badge bg-success';
+      badge.textContent = 'online';
+      if (lat)  lat.textContent  = srv.latency_ms;
+      if (mCnt) mCnt.textContent = srv.models_count;
+    } else {
+      badge.className   = 'badge bg-danger';
+      badge.textContent = 'offline';
+      if (lat)  lat.textContent  = '–';
+      if (mCnt) mCnt.textContent = '–';
+    }
+  });
+}
+
+async function toggleModels(idx, serverName) {
+  const container = document.getElementById(`srv-models-${idx}`);
+  const isVisible = _modelsVisible[idx];
+  _modelsVisible[idx] = !isVisible;
+  container.style.display = isVisible ? 'none' : 'block';
+  if (!isVisible && !_modelsLoaded[idx]) {
+    await loadModels(idx, serverName);
+  }
+}
+
+async function loadModels(idx, serverName) {
+  const loading = document.getElementById(`srv-models-loading-${idx}`);
+  const table   = document.getElementById(`srv-models-table-${idx}`);
+  try {
+    const models = await fetch(`/api/servers/models?server=${encodeURIComponent(serverName)}`).then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    });
+    if (loading) loading.style.display = 'none';
+    if (table) {
+      const tbody = table.querySelector('tbody');
+      tbody.innerHTML = '';
+      models.forEach(m => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="font-monospace" style="font-size:.82rem">${escHtml(m.name)}</td>
+                        <td class="text-end" style="font-size:.82rem">${m.size_gb}</td>
+                        <td style="font-size:.78rem">${escHtml(m.quantization || '–')}</td>`;
+        tbody.appendChild(tr);
+      });
+      table.style.display = '';
+    }
+    _modelsLoaded[idx] = true;
+  } catch (e) {
+    if (loading) { loading.innerHTML = `<span class="text-danger">Fehler: ${e.message}</span>`; }
+  }
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+document.addEventListener('DOMContentLoaded', loadAll);
+</script>
+{% endblock %}
