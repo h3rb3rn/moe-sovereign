@@ -113,6 +113,7 @@ nav:
     - Universal Observability: deployment/observability.md
     - GPU & Node Monitoring: deployment/gpu-monitoring.md
     - Firewall & Network Exposure: deployment/firewall.md
+    - macOS (Docker Desktop): deployment/macos.md
   - System:
     - system/index.md
     - Architecture: system/architecture.md

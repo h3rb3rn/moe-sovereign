@@ -25,7 +25,7 @@ services:
       KAFKA_LOG_RETENTION_BYTES: 536870912
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
     volumes:
-      - /opt/moe-infra/kafka-data:/var/lib/kafka/data
+      - ${MOE_DATA_ROOT}/kafka-data:/var/lib/kafka/data
     deploy:
       resources:
         limits:
@@ -45,8 +45,8 @@ services:
       - NEO4J_server_memory_heap_max__size=1g
       - NEO4J_server_memory_pagecache_size=512m
     volumes:
-      - /opt/moe-infra/neo4j-data:/data
-      - /opt/moe-infra/neo4j-logs:/logs
+      - ${MOE_DATA_ROOT}/neo4j-data:/data
+      - ${MOE_DATA_ROOT}/neo4j-logs:/logs
     deploy:
       resources:
         limits:
@@ -65,7 +65,7 @@ services:
     env_file:
       - .env
     volumes:
-      - /opt/moe-infra/generated:/app/generated:rw
+      - ${MOE_DATA_ROOT}/generated:/app/generated:rw
     environment:
       - NEO4J_URI=bolt://neo4j-knowledge:7687
       - NEO4J_USER=neo4j
@@ -96,8 +96,8 @@ services:
       # LITELLM_URL aktiviert das Unified API Gateway (leer = direkter Ollama-Zugriff als Fallback)
       # - LITELLM_URL=http://litellm-proxy:4000
     volumes:
-      - /opt/moe-infra/agent-logs:/app/logs
-      - /opt/moe-infra/chroma-onnx-cache:/root/.cache/chroma
+      - ${MOE_DATA_ROOT}/agent-logs:/app/logs
+      - ${MOE_DATA_ROOT}/chroma-onnx-cache:/root/.cache/chroma
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
     depends_on:
@@ -119,7 +119,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_CHECKPOINT_PASSWORD}
       - POSTGRES_DB=langgraph
     volumes:
-      - /opt/moe-infra/langgraph-checkpoints:/var/lib/postgresql/data
+      - ${MOE_DATA_ROOT}/langgraph-checkpoints:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph"]
       interval: 10s
@@ -140,7 +140,7 @@ services:
     restart: always
     command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
     volumes:
-      - /opt/moe-infra/redis-data:/data
+      - ${MOE_DATA_ROOT}/redis-data:/data
     deploy:
       resources:
         limits:
@@ -158,7 +158,7 @@ services:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
     volumes:
-      - /opt/moe-infra/chroma-data:/data
+      - ${MOE_DATA_ROOT}/chroma-data:/data
     deploy:
       resources:
         limits:
@@ -174,7 +174,7 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - /opt/moe-infra/prometheus-data:/prometheus
+      - ${MOE_DATA_ROOT}/prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -227,7 +227,7 @@ services:
       - ./.env:/app/.env:rw
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
-      - /opt/moe-infra/admin-logs:/app/logs:rw
+      - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
     depends_on:
       - langgraph-app
       - moe-prometheus
@@ -365,7 +365,7 @@ services:
     env_file:
       - .env
     volumes:
-      - /opt/moe-infra:/opt/moe-infra
+      - ${MOE_DATA_ROOT}:${MOE_DATA_ROOT}
       - ./scripts/dozzle-init.sh:/dozzle-init.sh:ro
     command: ["sh", "/dozzle-init.sh"]
 
@@ -382,7 +382,7 @@ services:
       - "127.0.0.1:9999:8080"   # local access: http://localhost:9999
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /opt/moe-infra/dozzle-users.yml:/data/users.yml:ro
+      - ${MOE_DATA_ROOT}/dozzle-users.yml:/data/users.yml:ro
     depends_on:
       moe-dozzle-init:
         condition: service_completed_successfully
