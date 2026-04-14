@@ -203,19 +203,113 @@ CREATE INDEX IF NOT EXISTS idx_fed_outbox_domain ON federation_outbox(domain);
 _pool: Optional[AsyncConnectionPool] = None
 
 
+async def _bootstrap_role_and_db() -> None:
+    """Legacy-install rescue: create moe_admin role + moe_userdb database on an
+    existing Postgres volume that pre-dates scripts/postgres-init/01-moe_admin.sh.
+
+    /docker-entrypoint-initdb.d/* only runs on first init. Operators who
+    initialised their volume before that script existed get stuck with a
+    'database "moe_userdb" does not exist' error forever. We fix it from
+    the application side: connect as the superuser (POSTGRES_USER, which
+    owns the bootstrap 'langgraph' database), CREATE ROLE/DATABASE if
+    missing, then let init_db() retry the normal pool open.
+    """
+    import urllib.parse as _url
+
+    parsed = _url.urlparse(DATABASE_URL)
+    if not parsed.hostname:
+        raise RuntimeError("MOE_USERDB_URL has no hostname — cannot bootstrap")
+    su_user = os.getenv("POSTGRES_USER", "langgraph")
+    su_pass = os.getenv("POSTGRES_CHECKPOINT_PASSWORD", "")
+    su_db   = os.getenv("POSTGRES_DB", su_user)
+    if not su_pass:
+        raise RuntimeError(
+            "POSTGRES_CHECKPOINT_PASSWORD not set — cannot bootstrap moe_userdb"
+        )
+
+    target_user = parsed.username or "moe_admin"
+    target_pass = _url.unquote(parsed.password or "")
+    target_db   = (parsed.path or "/moe_userdb").lstrip("/") or "moe_userdb"
+
+    dsn = (
+        f"host={parsed.hostname} port={parsed.port or 5432} "
+        f"user={su_user} password={su_pass} dbname={su_db}"
+    )
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s",
+                (target_user,),
+            )
+            if not await cur.fetchone():
+                # Role name and password are not user-controlled here but we
+                # still route the password through a parameterised string:
+                # psycopg does not parameterise DDL, so use literal escaping
+                # (double single-quotes) on the password only.
+                await cur.execute(
+                    f"CREATE ROLE {target_user} LOGIN PASSWORD "
+                    f"'{target_pass.replace(chr(39), chr(39)*2)}'"
+                )
+            else:
+                await cur.execute(
+                    f"ALTER ROLE {target_user} WITH LOGIN PASSWORD "
+                    f"'{target_pass.replace(chr(39), chr(39)*2)}'"
+                )
+            await cur.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s", (target_db,)
+            )
+            if not await cur.fetchone():
+                await cur.execute(f"CREATE DATABASE {target_db} OWNER {target_user}")
+            await cur.execute(
+                f"GRANT ALL PRIVILEGES ON DATABASE {target_db} TO {target_user}"
+            )
+    logger.info(
+        "🔧 bootstrapped role %s and database %s via %s superuser",
+        target_user, target_db, su_user,
+    )
+
+
 async def init_db() -> None:
-    """Open the connection pool and create the schema if it doesn't exist yet."""
+    """Open the connection pool and create the schema if it doesn't exist yet.
+
+    On legacy Postgres volumes that were initialised before the
+    /docker-entrypoint-initdb.d/ init script existed, the moe_admin role
+    and moe_userdb database are missing. We detect that once and bootstrap
+    them as the Postgres superuser so the user never has to wipe the
+    volume manually."""
     global _pool
     if _pool is None:
-        _pool = AsyncConnectionPool(
-            DATABASE_URL,
-            min_size=1,
-            max_size=10,
-            open=False,
-            kwargs={"row_factory": dict_row, "autocommit": False},
-        )
-        await _pool.open()
-        await _pool.wait()
+        for attempt in range(2):
+            try:
+                _pool = AsyncConnectionPool(
+                    DATABASE_URL,
+                    min_size=1,
+                    max_size=10,
+                    open=False,
+                    kwargs={"row_factory": dict_row, "autocommit": False},
+                )
+                await _pool.open()
+                await _pool.wait()
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                legacy_db = 'database "moe_userdb"' in msg and "does not exist" in msg
+                legacy_role = 'role "moe_admin"' in msg and "does not exist" in msg
+                bad_pw = 'password authentication failed for user "moe_admin"' in msg
+                if attempt == 0 and (legacy_db or legacy_role or bad_pw):
+                    logger.warning(
+                        "moe_userdb connection failed (%s) — running one-time bootstrap",
+                        e.__class__.__name__,
+                    )
+                    if _pool is not None:
+                        try:
+                            await _pool.close()
+                        except Exception:
+                            pass
+                        _pool = None
+                    await _bootstrap_role_and_db()
+                    continue
+                raise
         logger.info("moe_userdb pool opened: %s", DATABASE_URL.split("@")[-1])
     async with _pool.connection() as conn:
         async with conn.cursor() as cur:
