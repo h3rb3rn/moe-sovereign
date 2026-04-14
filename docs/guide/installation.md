@@ -16,13 +16,30 @@ Debian 11 (bullseye), 12 (bookworm), and 13 (trixie) are supported. Other Linux 
 
 ---
 
-## One-Line Install
+## One-Line Install (Linux)
 
 Run this on a fresh Debian system as root or with sudo:
 
 ```bash
 curl -sSL https://moe-sovereign.org/install.sh | bash
 ```
+
+## macOS
+
+`install.sh` is Linux-only (it uses `apt-get`). On macOS use the
+dedicated bootstrap script — it generates `.env` with random secrets
+and pre-creates the host directories under `$HOME`:
+
+```bash
+git clone https://github.com/h3rb3rn/moe-sovereign.git
+cd moe-sovereign
+bash scripts/bootstrap-macos.sh
+docker compose up -d
+```
+
+Full walkthrough including Docker Desktop File Sharing setup,
+Apple Silicon notes and host-side Ollama (Metal) tips:
+[Deployment → macOS](../deployment/macos.md).
 
 The installer will:
 

@@ -21,6 +21,13 @@ Incoming requests are analyzed, distributed to specialized LLM experts, calculat
 | `chromadb-vector` | 8001 | Vector cache (semantic cache) |
 | `moe-kafka` | 9092 | Event streaming (ingest, audit log, feedback) |
 
+> **Port collisions?** Every host port in the table can be remapped via
+> `.env` (e.g. `ADMIN_UI_HOST_PORT=8089`) — see
+> [Deployment → Docker Compose](../deployment/compose.md#configuration-via-env-no-compose-file-edits-needed)
+> for the full list. macOS users should run
+> `bash scripts/bootstrap-macos.sh` instead of `install.sh`; details
+> in [Deployment → macOS](../deployment/macos.md).
+
 ---
 
 ## Pipeline
