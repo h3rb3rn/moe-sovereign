@@ -4117,6 +4117,12 @@ if _cors_origins:
         allow_headers=["Authorization", "x-api-key", "Content-Type"],
     )
 
+@app.get("/health")
+async def health_check():
+    """Liveness probe for Docker HEALTHCHECK and load balancers."""
+    return {"status": "ok"}
+
+
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus scrape endpoint — returns all moe_* metrics."""

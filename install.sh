@@ -202,6 +202,16 @@ mkdir -p \
 
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
+# Fix ownership for containers that run as non-root.
+# kafka (confluentinc/cp-kafka): appuser uid=1000
+chown -R 1000:1000 "${MOE_DATA_ROOT}/kafka-data" 2>/dev/null || true
+# prometheus: runs as nobody uid=65534
+chown -R 65534:65534 "${MOE_DATA_ROOT}/prometheus-data" 2>/dev/null || true
+# langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
+chown -R 1001:0 "${MOE_DATA_ROOT}/agent-logs" 2>/dev/null || true
+# grafana: uid=472
+chown -R 472:472 "${GRAFANA_DATA_ROOT}/data" "${GRAFANA_DATA_ROOT}/dashboards" 2>/dev/null || true
+
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo ""
   echo "  [!] macOS: Docker Desktop must allow ${MOE_DATA_ROOT} for bind"
@@ -495,7 +505,7 @@ fi
   echo 'EXPERT_TIER_BOUNDARY_B=20'
   echo 'EXPERT_MIN_SCORE=0.3'
   echo 'EXPERT_MIN_DATAPOINTS=5'
-  echo 'EVAL_CACHE_FLAG_THRESHOLD=2.0'
+  echo 'EVAL_CACHE_FLAG_THRESHOLD=2'
   echo 'FEEDBACK_POSITIVE_THRESHOLD=4'
   echo 'FEEDBACK_NEGATIVE_THRESHOLD=2'
   echo ""
@@ -546,7 +556,10 @@ fi
   echo 'PUBLIC_SSO_URL='
 } > "${MOE_ENV_FILE}"
 
-chmod 600 "${MOE_ENV_FILE}"
+# 644: containers bind-mount this :ro and run as non-root (uid 1001 for langgraph,
+# uid 1001 for moe-admin). chmod 600 would lock them out. The file is read-only
+# inside all containers anyway, so world-readable on the host is acceptable.
+chmod 644 "${MOE_ENV_FILE}"
 echo "  Configuration written ✓"
 
 # =============================================================================
