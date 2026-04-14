@@ -1238,7 +1238,6 @@ async def setup_wizard(request: Request, _=Depends(require_login)):
         "config": cfg,
         "csrf_token": get_csrf_token(request),
         "lang": get_lang(request),
-        "t": make_t(get_lang(request)),
     })
 
 
