@@ -1495,7 +1495,12 @@ ingest_llm = (
     if GRAPH_INGEST_MODEL and GRAPH_INGEST_URL
     else None  # resolved to judge_llm at call site
 )
-search      = SearxSearchWrapper(searx_host=os.getenv("SEARXNG_URL"))
+_SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip()
+search: Optional[SearxSearchWrapper] = (
+    SearxSearchWrapper(searx_host=_SEARXNG_URL) if _SEARXNG_URL else None
+)
+if search is None:
+    logger.info("SEARXNG_URL not set — web search disabled")
 graph_manager:  Optional[GraphRAGManager]  = None
 redis_client:   Optional[aioredis.Redis]   = None
 kafka_producer: Optional[AIOKafkaProducer] = None
@@ -1914,7 +1919,10 @@ def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: in
     return result
 
 async def _web_search_with_citations(query: str) -> str:
-    """Search via SearXNG and return result text with source citations."""
+    """Search via SearXNG and return result text with source citations.
+    Returns an empty string when SEARXNG_URL is unset (web search disabled)."""
+    if search is None:
+        return ""
     try:
         raw_results = await asyncio.to_thread(search.results, query, num_results=5)
         if not raw_results:
