@@ -1192,7 +1192,12 @@ async def logout(request: Request):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, _=Depends(require_login)):
     cfg = read_env()
-    inference_servers = json.loads(cfg.get("INFERENCE_SERVERS", "[]") or "[]")
+    raw_servers = (cfg.get("INFERENCE_SERVERS", "") or "").strip()
+    try:
+        inference_servers = json.loads(raw_servers) if raw_servers else []
+    except json.JSONDecodeError:
+        # Malformed or placeholder value — treat as unconfigured.
+        inference_servers = []
     if not inference_servers:
         return RedirectResponse("/setup", status_code=302)
     return TEMPLATES.TemplateResponse(request, "dashboard.html", build_template_ctx(request))

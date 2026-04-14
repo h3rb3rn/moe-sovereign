@@ -101,12 +101,18 @@ services:
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
     depends_on:
-      - terra_cache
-      - terra_checkpoints
-      - chromadb-vector
-      - mcp-precision
-      - neo4j-knowledge
-      - moe-kafka
+      terra_cache:
+        condition: service_started
+      terra_checkpoints:
+        condition: service_healthy
+      chromadb-vector:
+        condition: service_started
+      mcp-precision:
+        condition: service_started
+      neo4j-knowledge:
+        condition: service_started
+      moe-kafka:
+        condition: service_started
 
   # --- Postgres (LangGraph checkpoints via AsyncPostgresSaver) ---
   # Dedicated instance — keeps checkpoint data isolated from authentik-postgresql.
@@ -124,10 +130,11 @@ services:
       - ${MOE_DATA_ROOT}/langgraph-checkpoints:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph"]
+      test: ["CMD-SHELL", "pg_isready -U langgraph -d langgraph && psql -U langgraph -d moe_userdb -c 'SELECT 1' >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -232,11 +239,16 @@ services:
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
     depends_on:
-      - langgraph-app
-      - moe-prometheus
-      - terra_cache
-      - terra_checkpoints
-      - docker-socket-proxy
+      langgraph-app:
+        condition: service_started
+      moe-prometheus:
+        condition: service_started
+      terra_cache:
+        condition: service_started
+      terra_checkpoints:
+        condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
     networks:
       - default
       - authentik_network   # server-side token exchange with authentik-server
