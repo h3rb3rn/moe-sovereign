@@ -40,7 +40,7 @@ services:
       - "127.0.0.1:7474:7474"   # Browser UI
       - "127.0.0.1:7687:7687"   # Bolt
     environment:
-      - NEO4J_AUTH=neo4j/${NEO4J_PASS}
+      - NEO4J_AUTH=neo4j/${NEO4J_PASS:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
       - NEO4J_server_memory_heap_initial__size=512m
       - NEO4J_server_memory_heap_max__size=1g
       - NEO4J_server_memory_pagecache_size=512m
@@ -69,7 +69,7 @@ services:
     environment:
       - NEO4J_URI=bolt://neo4j-knowledge:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASS=${NEO4J_PASS}
+      - NEO4J_PASS=${NEO4J_PASS:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
@@ -83,15 +83,15 @@ services:
     env_file:
       - .env
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@terra_cache:6379
-      - POSTGRES_CHECKPOINT_URL=postgresql://langgraph:${POSTGRES_CHECKPOINT_PASSWORD}@terra_checkpoints:5432/langgraph
-      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD}@terra_checkpoints:5432/moe_userdb
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_cache:6379
+      - POSTGRES_CHECKPOINT_URL=postgresql://langgraph:${POSTGRES_CHECKPOINT_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_checkpoints:5432/langgraph
+      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_checkpoints:5432/moe_userdb
       - CHROMA_HOST=chromadb-vector
       - CHROMA_PORT=8000
       - MCP_URL=http://mcp-precision:8003
       - NEO4J_URI=bolt://neo4j-knowledge:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASS=${NEO4J_PASS}
+      - NEO4J_PASS=${NEO4J_PASS:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
       - KAFKA_URL=kafka://moe-kafka:9092
       # LITELLM_URL aktiviert das Unified API Gateway (leer = direkter Ollama-Zugriff als Fallback)
       # - LITELLM_URL=http://litellm-proxy:4000
@@ -116,7 +116,7 @@ services:
     restart: always
     environment:
       - POSTGRES_USER=langgraph
-      - POSTGRES_PASSWORD=${POSTGRES_CHECKPOINT_PASSWORD}
+      - POSTGRES_PASSWORD=${POSTGRES_CHECKPOINT_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
       - POSTGRES_DB=langgraph
     volumes:
       - ${MOE_DATA_ROOT}/langgraph-checkpoints:/var/lib/postgresql/data
@@ -138,7 +138,7 @@ services:
     image: valkey/valkey:8-alpine
     container_name: terra_cache
     restart: always
-    command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}", "--appendonly", "yes"]
     volumes:
       - ${MOE_DATA_ROOT}/redis-data:/data
     deploy:
@@ -220,8 +220,8 @@ services:
       - .env
     environment:
       - PROMETHEUS_URL=http://moe-prometheus:9090
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@terra_cache:6379
-      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD}@terra_checkpoints:5432/moe_userdb
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_cache:6379
+      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_checkpoints:5432/moe_userdb
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
     volumes:
       - ./.env:/app/.env:rw
@@ -255,7 +255,7 @@ services:
       - .env
     environment:
       - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
