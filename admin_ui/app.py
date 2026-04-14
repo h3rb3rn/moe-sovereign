@@ -888,8 +888,7 @@ def compute_privacy_level(template: dict, inference_servers: list) -> str:
 def build_template_ctx(request: Request) -> dict:
     config = read_env()
     try:
-        raw_srv = config.get("INFERENCE_SERVERS", "")
-        inference_servers = json.loads(raw_srv) if raw_srv else []
+        inference_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
     except (json.JSONDecodeError, ValueError):
         inference_servers = []
     try:
@@ -1443,8 +1442,7 @@ async def profiles_page(request: Request, _=Depends(require_login)):
     config = read_env()
     inference_servers = []
     try:
-        raw_srv = config.get("INFERENCE_SERVERS", "")
-        inference_servers = json.loads(raw_srv) if raw_srv else []
+        inference_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
     except json.JSONDecodeError:
         pass
     server_names = [s["name"] for s in inference_servers]
@@ -1657,14 +1655,12 @@ async def expert_templates_page(request: Request, _=Depends(require_login)):
     server_names = []
     expert_models = {}
     try:
-        raw_srv = config.get("INFERENCE_SERVERS", "")
-        servers = json.loads(raw_srv) if raw_srv else []
+        servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
         server_names = [s["name"] for s in servers]
     except json.JSONDecodeError:
         pass
     try:
-        raw_em = config.get("EXPERT_MODELS", "")
-        expert_models = json.loads(raw_em) if raw_em else {}
+        expert_models = _safe_json(config.get("EXPERT_MODELS", ""), {})
     except json.JSONDecodeError:
         pass
     templates = load_expert_templates()
