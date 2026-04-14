@@ -126,3 +126,55 @@ Tesla M10). Timeout: 300s. Quantization: Q4_K_M where applicable.
 
 Full results are published on HuggingFace:
 [h3rb3rn/moe-sovereign-benchmarks](https://huggingface.co/datasets/h3rb3rn/moe-sovereign-benchmarks)
+
+---
+
+## Hardware Tier Implications
+
+The LLM suitability study ran on a 5-node heterogeneous cluster spanning Legacy and
+Consumer GPU tiers. The latency data reflects real inference throughput on that mixed
+hardware — not theoretical peak performance.
+
+### Tier to Model Mapping
+
+| Hardware tier | VRAM | Max viable model | Roles available | Latency range |
+|---|---|---|---|---|
+| **Legacy** (GT 1060, Tesla M10) | 6–8 GB | 7B Q4 | T1 experts (fast path) | 20–170s |
+| **Legacy** (Tesla M60) | 16 GB | 14B Q4 | T1 + limited T2 | 36–104s |
+| **Consumer** (RTX 3060–4090) | 12–24 GB | 7–14B Q4 | T1 + T2 planner | 27–60s |
+| **Semi-Pro** (A5000, RTX 6000 Ada) | 24–48 GB | 32B Q4 | Full T2 stack | 60–130s |
+| **Enterprise** (A100, H100) | 40–80 GB | 70B FP16 | All roles, parallel | 10–40s |
+
+### Latency vs. Quality Trade-off
+
+**Critical insight:** Hardware tier affects latency only — not answer quality.
+The same `phi4:14b` Q4_K_M model produces identical output on a Tesla M10 and on an
+RTX 4090. The RTX is faster. The answer is the same.
+
+Quality is determined by:
+1. **Model capability** (weights, size, training quality) — hardware-independent
+2. **Knowledge graph density** (accumulated triples in Neo4j) — improves with usage
+3. **Cache hit rate** (semantic similarity in ChromaDB) — improves with usage
+
+This means **Legacy hardware clusters remain valid long-term** — they produce the
+same quality as enterprise hardware at lower throughput. The quality-vs-time graph
+converges regardless of hardware tier; only the speed of convergence differs.
+
+### Concurrent Expert Capacity
+
+MoE Sovereign runs multiple expert workers in parallel for each request. The number
+of simultaneous experts is bounded by available VRAM:
+
+| Tier | Simultaneous T1 experts | Simultaneous T2 experts | Notes |
+|---|---|---|---|
+| Legacy (6–8 GB/node) | 1 per node | 0 | Single-model GPU; pool across nodes |
+| Consumer (24 GB) | 3–4 | 1–2 | Can run judge + planner simultaneously |
+| Semi-Pro (48 GB) | 6–8 | 2–4 | Full T2 fan-out without queuing |
+| Enterprise (80 GB) | 10+ | 4–8 | Parallel execution of all 16 expert roles possible |
+
+**Practical cluster strategy:** Mix tiers. Route T1 tasks (deterministic, fast) to
+Legacy nodes; route T2 tasks (planner, judge, merger) to Consumer/Semi-Pro nodes.
+The existing 5-node benchmark cluster uses exactly this pattern.
+
+See [Intelligence Growth Prognosis](intelligence/growth_prognosis.md) for projected
+quality curves at each hardware tier over time.

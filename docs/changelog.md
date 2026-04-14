@@ -8,6 +8,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.1.1] - 2026-04-15
+
+### Fixed — Fresh-Install Reliability (Debian 13 LXC)
+
+All bugs were discovered during a live install test on a clean Debian 13 (trixie)
+LXC container. Each was fixed in `install.sh` and verified by redeploying on the
+same container. Branch: `debug/lxc-install`.
+
+- **`install.sh`**: Added `chown -R 1000:1000 kafka-data` — `moe-kafka` (confluentinc/cp-kafka)
+  runs as `appuser` uid=1000; directories created by the installer as root caused an
+  immediate crash loop on first start
+- **`install.sh`**: Added `chown -R 65534:65534 prometheus-data` — `moe-prometheus` runs as
+  uid=65534 (nobody); missing write permission caused a panic on `queries.active`
+- **`install.sh`**: Added `chown -R 472:472 grafana/data grafana/dashboards` — `moe-grafana`
+  runs as uid=472; `mkdir plugins` failed with permission denied
+- **`install.sh`**: Added `chown -R 1001:0 agent-logs` — `langgraph-orchestrator` and
+  `mcp-precision` run as `moe` uid=1001
+- **`install.sh`**: Changed `.env` permissions from `chmod 600` to `chmod 644` — containers
+  bind-mount `.env:ro` and run as uid=1001; `chmod 600` locked them out at startup with
+  `PermissionError: [Errno 13]`. The `:ro` mount flag is the access control mechanism;
+  world-readable on the host is acceptable.
+- **`install.sh`**: Changed `EVAL_CACHE_FLAG_THRESHOLD=2.0` to `2` — `main.py:732` calls
+  `int(os.getenv("EVAL_CACHE_FLAG_THRESHOLD", "2"))` which raises `ValueError` on float strings
+- **`main.py`**: Added `GET /health` endpoint — the Dockerfile `HEALTHCHECK` called
+  `http://127.0.0.1:8000/health` but no such route existed; all containers reported
+  `(unhealthy)` despite functioning correctly
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch — fixes silent runtime failures on fresh installs |
+| `breaking` | no |
+| `domain` | Installer, Orchestrator |
+| `branch` | `debug/lxc-install` |
+| `tested-on` | Debian 13 (trixie) LXC, Docker CE, Proxmox |
+
+---
+
 ## [auto-2026-04-14] - 2026-04-14
 
 ### Changed
