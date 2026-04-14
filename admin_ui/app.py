@@ -484,6 +484,8 @@ def rebuild_inference_servers(form) -> list:
             except (ValueError, TypeError):
                 vram_gb_val = None
             enabled = form.get(f"srv_enabled_{i}") == "1"
+            ontology_enabled = form.get(f"srv_ontology_enabled_{i}") == "1"
+            curator_model_val = (form.get(f"srv_curator_model_{i}", "") or "").strip()
             entry = {
                 "name":        name.strip(),
                 "url":         url,
@@ -497,6 +499,10 @@ def rebuild_inference_servers(form) -> list:
                 entry["timeout"] = timeout_val
             if vram_gb_val is not None:
                 entry["vram_gb"] = vram_gb_val
+            if ontology_enabled:
+                entry["ontology_enabled"] = True
+            if curator_model_val:
+                entry["curator_model"] = curator_model_val
             servers.append(entry)
         i += 1
     return servers
@@ -612,9 +618,12 @@ def _load_expert_templates_from_env() -> list:
 
 
 def _save_expert_templates_to_env(templates: list) -> None:
-    """Write expert templates to .env (kept in sync as backup)."""
-    json_str = json.dumps(templates, ensure_ascii=False, separators=(",", ":"))
-    write_env({"EXPERT_TEMPLATES": json_str})
+    """Historical: used to mirror templates to .env. Disabled because large
+    template sets bloat .env past the Linux E2BIG env limit, crashing the
+    admin container on exec. The database is now the single source of truth.
+    Kept as a no-op so call sites stay working until they're cleaned up.
+    """
+    return
 
 
 async def refresh_expert_templates_cache() -> list:
@@ -1241,9 +1250,18 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
     step = form.get("step", "1")
 
     updates: dict = {}
+    server_diff: dict = {}
     if step == "2":
+        old_servers = _get_inference_servers()
         servers = rebuild_inference_servers(form)
         updates["INFERENCE_SERVERS"] = json.dumps(servers, ensure_ascii=False, separators=(",", ":"))
+        old_names = {s.get("name") for s in old_servers if s.get("name")}
+        new_names = {s.get("name") for s in servers if s.get("name")}
+        server_diff = {
+            "removed": sorted(old_names - new_names),
+            "added": [s for s in servers if s.get("name") not in old_names],
+            "servers": servers,
+        }
     elif step == "3":
         updates["JUDGE_MODEL"]        = form.get("JUDGE_MODEL", "").strip()
         updates["JUDGE_ENDPOINT"]     = form.get("JUDGE_ENDPOINT", "").strip()
@@ -1256,6 +1274,28 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
 
     if updates:
         write_env(updates)
+
+    if server_diff:
+        # Cleanup orphans left by removed servers, auto-provision curator
+        # templates for newly added ontology-enabled servers. Both run as
+        # background tasks so the HTTP response stays snappy.
+        async def _post_save_hooks():
+            try:
+                if server_diff["removed"]:
+                    await _maintenance.cleanup_orphans(server_diff["servers"], dry_run=False)
+            except Exception as e:
+                logger.warning("post-save cleanup failed: %s", e)
+            try:
+                redis_cli = await _get_provision_redis()
+                for srv in server_diff["added"]:
+                    if srv.get("ontology_enabled"):
+                        await _curator_provisioner.provision_curator_for_server(
+                            srv, redis_cli=redis_cli,
+                            refresh_cache_cb=refresh_expert_templates_cache,
+                        )
+            except Exception as e:
+                logger.warning("post-save provision failed: %s", e)
+        asyncio.create_task(_post_save_hooks())
 
     next_step = str(int(step) + 1)
     if int(next_step) > 4:
@@ -2120,6 +2160,264 @@ async def _fetch_server_models(srv: dict) -> list:
         return []
 
 
+# ─── Ontology Curator Provisioning (checkbox → auto-template) ────────────────
+
+import curator_provisioner as _curator_provisioner  # noqa: E402
+
+_provision_redis_cli = None
+
+
+async def _get_provision_redis():
+    """Lazy singleton Valkey client for provisioning status tracking."""
+    global _provision_redis_cli
+    if _provision_redis_cli is not None:
+        return _provision_redis_cli
+    url = os.environ.get("REDIS_URL", "").strip()
+    if not url:
+        return None
+    try:
+        import redis.asyncio as _redis
+        cli = _redis.from_url(url, decode_responses=True)
+        await cli.ping()
+        _provision_redis_cli = cli
+        return cli
+    except Exception:
+        return None
+
+
+def _update_server_flags(server_name: str, updates: dict) -> Optional[dict]:
+    """Patch one server entry in INFERENCE_SERVERS env. Returns the updated entry."""
+    servers = _get_inference_servers()
+    target = None
+    for s in servers:
+        if s.get("name") == server_name:
+            target = s
+            break
+    if target is None:
+        return None
+    for k, v in updates.items():
+        if v is None or v == "":
+            target.pop(k, None)
+        else:
+            target[k] = v
+    write_env({"INFERENCE_SERVERS": json.dumps(servers, ensure_ascii=False)})
+    return target
+
+
+@app.post("/api/servers/{server_name}/ontology-toggle", dependencies=[Depends(require_login)])
+async def api_ontology_toggle(server_name: str, request: Request):
+    """Enable/disable a server for ontology gap cronjob + kick off provisioning."""
+    body = await request.json()
+    enabled = bool(body.get("enabled"))
+    curator_model = (body.get("curator_model") or "").strip()
+
+    updates = {"ontology_enabled": True if enabled else None}
+    if curator_model:
+        updates["curator_model"] = curator_model
+    target = _update_server_flags(server_name, updates)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"server {server_name} not found")
+
+    redis_cli = await _get_provision_redis()
+    if enabled:
+        async def _runner():
+            await _curator_provisioner.provision_curator_for_server(
+                target, redis_cli=redis_cli, refresh_cache_cb=refresh_expert_templates_cache,
+            )
+        asyncio.create_task(_runner())
+        return {"ok": True, "status": "queued", "server": server_name}
+
+    await _curator_provisioner.remove_curator_for_server(server_name, redis_cli=redis_cli)
+    return {"ok": True, "status": "disabled", "server": server_name}
+
+
+@app.get("/api/servers/{server_name}/ontology-status", dependencies=[Depends(require_login)])
+async def api_ontology_status(server_name: str):
+    """Poll the provisioning status of a server. Frontend uses this for live updates."""
+    redis_cli = await _get_provision_redis()
+    status = await _curator_provisioner.get_provision_status(redis_cli, server_name)
+    return {"server": server_name, **status}
+
+
+# ─── Grafana auto-dashboard generator ────────────────────────────────────────
+
+import grafana_generator as _grafana_gen  # noqa: E402
+import maintenance as _maintenance  # noqa: E402
+import statistics as _statistics  # noqa: E402
+
+
+# ─── Statistics routes ──────────────────────────────────────────────────────
+
+@app.get("/statistics", response_class=HTMLResponse)
+async def statistics_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "statistics.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/statistics/live", dependencies=[Depends(require_login)])
+async def api_statistics_live():
+    return await _statistics.get_live_kpis()
+
+
+@app.get("/api/statistics/knowledge", dependencies=[Depends(require_login)])
+async def api_statistics_knowledge():
+    return await _statistics.get_knowledge_snapshot()
+
+
+@app.get("/api/statistics/healer", dependencies=[Depends(require_login)])
+async def api_statistics_healer(limit: int = 50):
+    return await _statistics.get_healer_history(limit=max(1, min(500, limit)))
+
+
+@app.get("/api/statistics/templates", dependencies=[Depends(require_login)])
+async def api_statistics_templates(window: str = "7d"):
+    return await _statistics.get_template_activity(window=window)
+
+
+# ─── Maintenance routes ──────────────────────────────────────────────────────
+
+@app.get("/maintenance", response_class=HTMLResponse)
+async def maintenance_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "maintenance.html", {
+        "csrf_token": get_csrf_token(request),
+        "inference_servers": _get_inference_servers(),
+    })
+
+
+@app.get("/api/maintenance/scan", dependencies=[Depends(require_login)])
+async def api_maintenance_scan():
+    servers = _get_inference_servers()
+    return await _maintenance.scan_orphans(servers)
+
+
+@app.post("/api/maintenance/cleanup", dependencies=[Depends(require_login)])
+async def api_maintenance_cleanup(request: Request):
+    dry_run = False
+    try:
+        body = await request.json()
+        dry_run = bool(body.get("dry_run", False))
+    except Exception:
+        pass
+    servers = _get_inference_servers()
+    return await _maintenance.cleanup_orphans(servers, dry_run=dry_run)
+
+
+@app.post("/api/maintenance/ontology/trigger", dependencies=[Depends(require_login)])
+async def api_maintenance_ontology_trigger(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    concurrency = int(body.get("concurrency") or 4)
+    batch_size = int(body.get("batch_size") or 20)
+    concurrency = max(1, min(32, concurrency))
+    batch_size = max(1, min(200, batch_size))
+    return await _maintenance.trigger_ontology_healer(concurrency, batch_size)
+
+
+@app.get("/api/maintenance/ontology/status", dependencies=[Depends(require_login)])
+async def api_maintenance_ontology_status():
+    return await _maintenance.get_ontology_healer_status()
+
+
+@app.get("/api/maintenance/templates/verify", dependencies=[Depends(require_login)])
+async def api_maintenance_templates_verify():
+    servers = _get_inference_servers()
+    return await _maintenance.verify_templates(servers)
+
+
+@app.post("/api/maintenance/templates/pull-missing", dependencies=[Depends(require_login)])
+async def api_maintenance_templates_pull_missing():
+    servers = _get_inference_servers()
+    report = await _maintenance.verify_templates(servers)
+    return await _maintenance.pull_missing_models(servers, report)
+
+
+@app.post("/api/maintenance/prometheus/reload", dependencies=[Depends(require_login)])
+async def api_maintenance_prometheus_reload():
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(_maintenance.PROMETHEUS_RELOAD_URL)
+            return {"ok": r.status_code in (200, 204), "status_code": r.status_code}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+GRAFANA_DASHBOARDS_DIR = Path(os.environ.get(
+    "GRAFANA_DASHBOARDS_DIR", "/app/grafana/dashboards",
+))
+PROMETHEUS_YML_PATH = Path(os.environ.get(
+    "PROMETHEUS_YML_PATH", "/app/prometheus/prometheus.yml",
+))
+PROMETHEUS_RELOAD_URL = os.environ.get(
+    "PROMETHEUS_RELOAD_URL", "http://moe-prometheus:9090/-/reload",
+)
+GRAFANA_EXTERNAL_URL = os.environ.get("GRAFANA_EXTERNAL_URL", "/grafana")
+
+
+async def _probe_metrics(client: httpx.AsyncClient, url: str) -> bool:
+    try:
+        r = await client.get(url, timeout=3.0)
+        return r.status_code == 200 and "HELP" in r.text[:2048]
+    except Exception:
+        return False
+
+
+@app.post("/api/dashboards/regenerate", dependencies=[Depends(require_login)])
+async def api_dashboards_regenerate():
+    """Probe all inference servers, generate a master Grafana dashboard,
+    patch the Prometheus scrape config for Ollama /metrics and trigger a
+    Prometheus reload.
+    """
+    servers = _get_inference_servers()
+    probed: list[dict] = []
+
+    async with httpx.AsyncClient() as client:
+        for s in servers:
+            url = s.get("url", "")
+            host, port = _grafana_gen._split_host_port(url) if url else ("", 0)
+            ollama_ok = await _probe_metrics(client, f"http://{host}:{port}/metrics") if host else False
+            exporter_ok = await _probe_metrics(client, f"http://{host}:9100/metrics") if host else False
+            probed.append({
+                "name": s.get("name"), "host": host, "port": port,
+                "ollama_metrics": ollama_ok, "node_exporter": exporter_ok,
+            })
+
+    # Dashboard
+    dash = _grafana_gen.build_overview_dashboard(servers)
+    GRAFANA_DASHBOARDS_DIR.mkdir(parents=True, exist_ok=True)
+    dash_path = GRAFANA_DASHBOARDS_DIR / "moe-inference-overview.json"
+    dash_path.write_text(json.dumps(dash, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Prometheus config
+    job = _grafana_gen.build_ollama_scrape_job(servers)
+    prom_changed = False
+    prom_reloaded = False
+    prom_error = None
+    try:
+        prom_changed = _grafana_gen.merge_prometheus_config(PROMETHEUS_YML_PATH, job)
+    except Exception as e:
+        prom_error = f"merge failed: {e}"
+
+    if prom_changed and not prom_error:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(PROMETHEUS_RELOAD_URL)
+                prom_reloaded = r.status_code in (200, 204)
+        except Exception as e:
+            prom_error = f"reload failed: {e}"
+
+    return {
+        "ok": True,
+        "dashboard_path": str(dash_path),
+        "dashboard_url": f"{GRAFANA_EXTERNAL_URL}/d/{_grafana_gen.DASHBOARD_UID}",
+        "probed": probed,
+        "prometheus_changed": prom_changed,
+        "prometheus_reloaded": prom_reloaded,
+        "prometheus_error": prom_error,
+    }
+
+
 # ─── Skills Routes ────────────────────────────────────────────────────────────
 
 @app.get("/skills", response_class=HTMLResponse)
@@ -2822,14 +3120,14 @@ async def quarantine_page(request: Request, _=Depends(require_login)):
 
 @app.get("/api/quarantine", dependencies=[Depends(require_login)])
 async def api_quarantine_list():
-    """Lists quarantined triples from Redis sorted set."""
+    """Lists quarantined triples from Valkey sorted set."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(f"{ORCHESTRATOR_URL}/v1/admin/quarantine")
             r.raise_for_status()
             return r.json()
     except httpx.ConnectError:
-        # Fall back to direct Redis access if orchestrator unavailable
+        # Fall back to direct Valkey access if orchestrator unavailable
         pass
     return {"entries": []}
 
@@ -4449,7 +4747,7 @@ async def live_monitoring_page(request: Request, _=Depends(require_login)):
 
 @app.get("/api/live/active-requests", dependencies=[Depends(require_login)])
 async def api_live_active_requests():
-    """Reads all active requests from Redis (moe:active:* keys) and logs the snapshot."""
+    """Reads all active requests from Valkey (moe:active:* keys) and logs the snapshot."""
     now = datetime.now(timezone.utc)
     requests_list = []
     try:
@@ -4478,7 +4776,7 @@ async def api_live_active_requests():
                 except Exception:
                     pass
     except Exception as exc:
-        logger.warning("Live active-requests Redis error: %s", exc)
+        logger.warning("Live active-requests Valkey error: %s", exc)
 
     snapshot = {
         "requests":  requests_list,
@@ -4515,7 +4813,7 @@ async def api_kill_request(chat_id: str):
 
 @app.delete("/api/live/completed-requests", dependencies=[Depends(require_login)])
 async def api_clear_completed_requests():
-    """Deletes the entire process history from Redis."""
+    """Deletes the entire process history from Valkey."""
     try:
         r = await db._get_redis()
         await r.delete("moe:admin:completed")
@@ -4527,7 +4825,7 @@ async def api_clear_completed_requests():
 
 @app.get("/api/live/completed-requests", dependencies=[Depends(require_login)])
 async def api_completed_requests():
-    """Returns historically completed/killed processes from the Redis history."""
+    """Returns historically completed/killed processes from the Valkey history."""
     try:
         r = await db._get_redis()
         entries = await r.zrevrange("moe:admin:completed", 0, HISTORY_MAX_ENTRIES - 1)

@@ -163,10 +163,16 @@ Example pool:
 ```
 moe-ontology-curator-n04-rtx  → 5×12 GB RTX, planner qwen2.5:7b,
                                  general mistral-nemo:12b
-moe-ontology-curator-n06-m10  → 4×8  GB Tesla M10, all 7-8B models
+moe-ontology-curator-n06-m10-01 → 1×8 GB Tesla M10, mistral-nemo:latest
+moe-ontology-curator-n06-m10-02 → 1×8 GB Tesla M10, glm4:9b
+moe-ontology-curator-n06-m10-03 → 1×8 GB Tesla M10, llama3.1:8b
+moe-ontology-curator-n06-m10-04 → 1×8 GB Tesla M10, hermes3:8b
 moe-ontology-curator-n07-gt   → 2×6  GB GT 1060, uniform 7B quantised
 moe-ontology-curator-n09-m60  → 4×8  GB Tesla M60, mistral:7b + hermes3:8b
-moe-ontology-curator-n11-m10  → 4×8  GB Tesla M10, mistral:7b family
+moe-ontology-curator-n11-m10-01 → 1×8 GB Tesla M10, mistral:7b
+moe-ontology-curator-n11-m10-02 → 1×8 GB Tesla M10, glm4:9b (cross-node vs N06-02)
+moe-ontology-curator-n11-m10-03 → 1×8 GB Tesla M10, llama3.1:8b (cross-node vs N06-03)
+moe-ontology-curator-n11-m10-04 → 1×8 GB Tesla M10, qwen2.5:7b
 ```
 
 The healer rotates round-robin across the pool. Because each template

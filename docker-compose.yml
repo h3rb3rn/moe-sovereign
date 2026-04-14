@@ -238,6 +238,9 @@ services:
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
+      - ./grafana/dashboards:/app/grafana/dashboards:rw
+      - ./prometheus/prometheus.yml:/app/prometheus/prometheus.yml:rw
+      - ${MOE_DATA_ROOT}/gap-healer-stats:/app/gap-healer-stats:ro
     depends_on:
       langgraph-app:
         condition: service_started
