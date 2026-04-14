@@ -37,24 +37,42 @@ that list.
 ## Manual setup (without install.sh)
 
 ```bash
-# 1. Choose a shared path
+# 1. Choose shared paths (Grafana keeps its own root for separate backups)
 export MOE_DATA_ROOT="$HOME/moe-data"
+export GRAFANA_DATA_ROOT="$HOME/moe-grafana"
 
 # 2. Pre-create the subdirectories
 mkdir -p "$MOE_DATA_ROOT"/{kafka-data,neo4j-data,neo4j-logs,agent-logs,\
 chroma-onnx-cache,chroma-data,redis-data,prometheus-data,admin-logs,\
 userdb,few-shot}
+mkdir -p "$GRAFANA_DATA_ROOT"/{data,dashboards}
 
-# 3. Add MOE_DATA_ROOT to your .env
-echo "MOE_DATA_ROOT=$MOE_DATA_ROOT" >> .env
+# 3. Add the host roots to your .env
+{
+  echo "MOE_DATA_ROOT=$MOE_DATA_ROOT"
+  echo "GRAFANA_DATA_ROOT=$GRAFANA_DATA_ROOT"
+} >> .env
 
-# 4. Add the path to Docker Desktop File Sharing
+# 4. Add BOTH paths to Docker Desktop File Sharing
 #    Settings → Resources → File Sharing → +  →  $MOE_DATA_ROOT
+#    Settings → Resources → File Sharing → +  →  $GRAFANA_DATA_ROOT
 #    → Apply & Restart
 
 # 5. Bring up the stack
 docker compose up -d
 ```
+
+### Configurable host paths
+
+All container bind mounts derive from these `.env` variables — adjust
+them once and every service follows. `install.sh` writes the right
+defaults for your platform.
+
+| Variable | Linux default | macOS default | What it holds |
+|---|---|---|---|
+| `MOE_DATA_ROOT` | `/opt/moe-infra` | `$HOME/moe-data` | Postgres, Neo4j, Redis, ChromaDB, Kafka, Prometheus, agent/admin logs, few-shot store |
+| `GRAFANA_DATA_ROOT` | `/opt/grafana` | `$HOME/moe-grafana` | Grafana SQLite + dashboards |
+| `FEW_SHOT_HOST_DIR` | `${MOE_DATA_ROOT}/few-shot` | same | Override only if you mount a separate dataset disk |
 
 ## Apple Silicon notes
 

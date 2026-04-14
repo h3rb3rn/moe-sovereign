@@ -261,9 +261,9 @@ services:
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/moe-operations.json
     volumes:
-      - /opt/grafana/data:/var/lib/grafana
+      - ${GRAFANA_DATA_ROOT:-/opt/grafana}/data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - /opt/grafana/dashboards:/var/lib/grafana/dashboards
+      - ${GRAFANA_DATA_ROOT:-/opt/grafana}/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - moe-prometheus
     deploy:
@@ -346,7 +346,7 @@ services:
           memory: 512M
     volumes:
       - .:/app
-      - /moe-few-shot:/moe-few-shot:ro
+      - ${FEW_SHOT_HOST_DIR:-${MOE_DATA_ROOT}/few-shot}:/moe-few-shot:ro
     environment:
       - DOCS_DIR=/app/docs
       - EXPERTS_PATH=/app/prompts/systemprompt

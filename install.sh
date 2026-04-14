@@ -165,15 +165,24 @@ echo "[4/9] Creating host directories..."
 case "$(uname -s)" in
   Darwin)
     MOE_DATA_ROOT_DEFAULT="${HOME}/moe-data"
-    GRAFANA_ROOT_DEFAULT="${HOME}/moe-grafana"
+    GRAFANA_DATA_ROOT_DEFAULT="${HOME}/moe-grafana"
     ;;
   *)
     MOE_DATA_ROOT_DEFAULT="/opt/moe-infra"
-    GRAFANA_ROOT_DEFAULT="/opt/grafana"
+    GRAFANA_DATA_ROOT_DEFAULT="/opt/grafana"
     ;;
 esac
+# Preserve existing host roots from a previous install — moving them
+# would orphan the data volumes. Read directly from .env (the full
+# preservation block runs later, but we need these values now).
+if [[ -f "${MOE_ENV_FILE}" ]]; then
+  _prev_data=$(grep -E '^MOE_DATA_ROOT=' "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-)
+  _prev_graf=$(grep -E '^GRAFANA_DATA_ROOT=' "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-)
+  [[ -n "$_prev_data" ]] && MOE_DATA_ROOT_DEFAULT="$_prev_data"
+  [[ -n "$_prev_graf" ]] && GRAFANA_DATA_ROOT_DEFAULT="$_prev_graf"
+fi
 MOE_DATA_ROOT="${MOE_DATA_ROOT:-$MOE_DATA_ROOT_DEFAULT}"
-GRAFANA_ROOT="${GRAFANA_ROOT:-$GRAFANA_ROOT_DEFAULT}"
+GRAFANA_DATA_ROOT="${GRAFANA_DATA_ROOT:-$GRAFANA_DATA_ROOT_DEFAULT}"
 
 mkdir -p \
   "${MOE_DATA_ROOT}/kafka-data" \
@@ -187,8 +196,8 @@ mkdir -p \
   "${MOE_DATA_ROOT}/admin-logs" \
   "${MOE_DATA_ROOT}/userdb" \
   "${MOE_DATA_ROOT}/few-shot" \
-  "${GRAFANA_ROOT}/data" \
-  "${GRAFANA_ROOT}/dashboards" \
+  "${GRAFANA_DATA_ROOT}/data" \
+  "${GRAFANA_DATA_ROOT}/dashboards" \
   /opt/moe-sovereign 2>/dev/null || true
 
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
@@ -402,8 +411,10 @@ fi
   echo "# Edit this file or use the Admin UI to change settings."
   echo "# After changes: sudo docker compose up -d"
   echo ""
-  echo "# --- Host data root (bind-mount source for Postgres/Neo4j/Redis/...) ---"
+  echo "# --- Host data roots (bind-mount sources) ---"
   printf 'MOE_DATA_ROOT=%s\n'            "${MOE_DATA_ROOT}"
+  printf 'GRAFANA_DATA_ROOT=%s\n'        "${GRAFANA_DATA_ROOT}"
+  printf 'FEW_SHOT_HOST_DIR=%s\n'        "${MOE_DATA_ROOT}/few-shot"
   echo ""
   echo "# --- Authentication (Admin UI) ---"
   printf 'ADMIN_USER=%s\n'               "${ADMIN_USER}"
