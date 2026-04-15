@@ -281,3 +281,96 @@ The runner script: `benchmarks/run_all_parallel.sh`
 | compounding-memory-3turn | 8.2 | 9.0 | +0.8 |
 | compounding-memory-5turn | 0.6 | 0.0 (timeout) | -0.6 |
 | Average score (ref-30b) | 6.8 | 7.6 | +0.8 |
+
+---
+
+## April 2026 — M10-Gremium Evaluation: Can Graph Density Compensate for Small LLMs?
+
+**Test date:** 2026-04-15. Research question: Does a dense knowledge graph (5,353 nodes) compensate
+for using only 7–9B models distributed across 8 Tesla M10 nodes (8 GB VRAM each)?
+
+### Template: `moe-m10-8b-gremium`
+
+| Component | Model | Node |
+|---|---|---|
+| Planner | phi4:14b | N07-GT (2× GT 1060, 12 GB total) |
+| Judge | phi4:14b | N07-GT |
+| code_reviewer | qwen2.5-coder:7b | N06-M10-01 |
+| math | mathstral:7b | N06-M10-02 |
+| medical_consult | meditron:7b | N06-M10-03 |
+| legal_advisor | sauerkrautlm-7b-hero | N06-M10-04 |
+| reasoning | qwen3:8b | N11-M10-01 |
+| science | gemma2:9b | N11-M10-02 |
+| translation | glm4:9b | N11-M10-03 |
+| data_analyst | qwen2.5:7b | N11-M10-04 |
+
+### Multi-Domain Challenge Prompt
+
+A single-turn prompt (1,893 chars) spanning four domains requiring cross-expert synthesis:
+legal/compliance (DSGVO, EU AI Act), medical statistics (sensitivity/specificity, sample size),
+technical infrastructure (10 TB/day, 5-year archive with compression), and ML fundamentals
+(bias-variance, regularization, DICOM augmentation).
+
+Deterministic scoring checks (7 items, total weight 10.5):
+`10 TB/day` (2.0), `2.74 PB archive` (2.0), `Art. 9 DSGVO` (1.5),
+`EU AI Act high risk` (1.5), `AUROC/MCC metric` (1.5), `bias-variance` (1.0), `regularization` (1.0).
+
+### Results
+
+| Template | det_score | Elapsed | Tokens in | Tokens out | Experts invoked | Planner retries |
+|---|---|---|---|---|---|---|
+| `moe-reference-30b-balanced` | **6.67 / 10** | 528s | 15,875 | 14,615 | Multiple (N04-RTX + N09-M60) | 0 |
+| `moe-m10-8b-gremium` | **4.29 / 10** | 2,542s | 31,926 | 8,172 | 1 (legal_advisor only) | 2 failures |
+
+#### Deterministic Hit/Miss Detail
+
+| Check | ref-30b | m10-gremium |
+|---|---|---|
+| daily volume = 10 TB | ✓ | ✓ |
+| 5y archive ≈ 2.74 PB | ✗ (computed ~14.5 PB) | ✗ |
+| Art. 9 DSGVO | ✗ (regex miss — cited as "Art. 9 § 2") | ✗ (cited as "GDPR Article 9") |
+| EU AI Act high risk | ✓ | ✓ |
+| AUROC / MCC | ✓ | ✗ |
+| bias-variance tradeoff | ✓ | ✓ |
+| regularization technique | ✓ | ✗ |
+
+### Root-Cause Analysis
+
+**Critical failure: GraphRAG context overflow on N07-GT**
+
+With 5,353 graph nodes the GraphRAG retrieval injects ~5,000 tokens of triples into the
+planner prompt. phi4:14b on N07-GT has a context window of 8,192 tokens. The resulting
+prompt (system instruction + graph context + user query) saturates the window, causing
+phi4:14b to answer the question in prose rather than return the required JSON routing plan.
+
+| Planner attempt | Duration | Outcome |
+|---|---|---|
+| 1 | ~11 min | Prose answer — "Planner parse error (attempt 1)" |
+| 2 | ~8 min | Prose answer — "Planner could not parse JSON — fallback" |
+| 3 | ~9 min | **Valid JSON** (partial — only `legal_advisor` routed) |
+
+After 3 attempts and 28 minutes, only the `legal_advisor` expert was dispatched.
+The sauerkrautlm-7b-hero model responded in critique/evaluation mode rather than providing
+direct answers, further degrading coverage.
+
+**Total overhead:** 2,542s vs 528s for ref-30b — a **4.8× penalty** from context overflow alone.
+
+### Key Findings
+
+1. **Graph density hurts small-context planners.** At 5,353 nodes the GraphRAG injection
+   volume exceeds phi4:14b's effective instruction-following capacity on an 8,192-token window.
+   The planner model needs a context window of ≥ 16,384 tokens, or GraphRAG retrieval must be
+   capped (e.g. top-k = 10 triples instead of exhaustive retrieval) when the planner is on
+   legacy hardware.
+
+2. **M10 experts are viable in isolation** — sauerkrautlm-7b-hero returned a coherent legal
+   analysis within its domain. The weakness was routing (only 1 of 8 experts invoked) and
+   response style (critique mode).
+
+3. **The knowledge graph does NOT compensate for context overflow.** Graph density improves
+   answer quality only when the planner can parse and route correctly. A failed planner
+   negates all expert and graph benefits.
+
+4. **Mitigation:** Either (a) pin the planner to a node with a larger context window
+   (≥ 16 k tokens, e.g. N04-RTX with qwen2.5-coder:7b or phi4:14b at extended context),
+   or (b) hard-cap GraphRAG retrieval depth for templates with legacy-hardware planners.
