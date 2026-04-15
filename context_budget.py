@@ -120,15 +120,28 @@ def graphrag_budget_chars(
 ) -> int:
     """Compute the maximum number of characters for GraphRAG context injection.
 
-    Priority:
-    1. ``override_chars`` — explicit value from template config (if > 0).
-    2. Auto-compute from ``model``'s context window (if model is known).
-    3. ``DEFAULT_GRAPHRAG_CHARS`` — global fallback.
+    Priority (highest to lowest):
+    1. ``override_chars > 0``  — explicit char limit from template config.
+    2. ``override_chars == -1``  — skip template limit; auto-compute from model
+       context window only (sentinel: "no internal cap, only the env-var global
+       cap ``MAX_GRAPH_CONTEXT_CHARS`` applies").
+    3. ``override_chars == 0``  — auto (same as -1, kept for clarity).
+       Auto-compute from ``model``'s known context window.
+    4. ``DEFAULT_GRAPHRAG_CHARS``  — global fallback when model is unknown.
+
+    The per-template ``graphrag_max_chars`` field maps directly to
+    ``override_chars``:
+      - ``graphrag_max_chars: N  (N > 0)``  → exact N chars.
+      - ``graphrag_max_chars: 0``            → auto (full model capacity).
+      - ``graphrag_max_chars: -1``           → same as 0, explicit intent.
+
+    The global ceiling ``MAX_GRAPH_CONTEXT_CHARS`` (env var, applied by the
+    caller) is the only remaining cap after this function returns.
 
     Args:
         model:          The merger/judge model name (e.g. "phi4:14b").
         query_chars:    Length of the user query in characters.
-        override_chars: Per-template explicit limit (0 = auto).
+        override_chars: Per-template explicit limit (0 or -1 = auto).
 
     Returns:
         Maximum GraphRAG chars that fit within the model's context window.
@@ -137,13 +150,12 @@ def graphrag_budget_chars(
     if override_chars > 0:
         return override_chars
 
+    # override_chars == 0 or -1 → auto-compute from model context window.
     ctx_tokens = get_model_context_window(model)
     if ctx_tokens <= 0:
+        # Unknown model — use the conservative fallback.
         return DEFAULT_GRAPHRAG_CHARS
 
     query_tokens = (query_chars + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
     available = ctx_tokens - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - query_tokens
-    budget_chars = max(MIN_GRAPHRAG_CHARS, available * CHARS_PER_TOKEN)
-
-    # Never exceed the default — prevents unexpected token storms on large models.
-    return min(budget_chars, DEFAULT_GRAPHRAG_CHARS)
+    return max(MIN_GRAPHRAG_CHARS, available * CHARS_PER_TOKEN)

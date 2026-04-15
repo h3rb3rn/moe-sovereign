@@ -2,14 +2,14 @@
 
 The MoE-Eval benchmark suite (`benchmarks/`) evaluates the orchestrator as a
 **Compound AI System** — not raw token throughput. It tests cognitive accuracy,
-expert routing, deterministic tool usage, and compounding knowledge (GraphRAG).
+expert routing, deterministic tool usage, and graph-based knowledge accumulation (GraphRAG).
 
 ## Test categories
 
 | Category | Tests | What it measures |
 |---|---|---|
 | **Precision / MCP** | 3 | Deterministic calculations via MCP tools (subnet, math, dates) — things LLMs hallucinate |
-| **Compounding Memory** | 2 | Multi-turn knowledge accumulation via GraphRAG SYNTHESIS_INSIGHT loop |
+| **Graph-State-Tracking Memory** | 2 | Multi-turn knowledge accumulation via GraphRAG SYNTHESIS_INSIGHT loop |
 | **Domain Routing** | 3 | Planner correctly routes to legal/medical/code expert domains |
 | **Multi-Expert Synthesis** | 1 | Parallel expert fan-out + merger quality for cross-domain questions |
 
@@ -186,7 +186,7 @@ quality curves at each hardware tier over time.
 This benchmark campaign was conducted on **2026-04-15** after extensive system
 operation had grown the Neo4j knowledge graph to a substantial density. The
 purpose: measure whether accumulated graph knowledge meaningfully improves
-Compounding Memory test scores compared to the earlier sparse-graph run.
+Graph-State-Tracking Memory test scores compared to the earlier sparse-graph run.
 
 ### Knowledge Graph State at Run Time
 
@@ -284,7 +284,74 @@ The runner script: `benchmarks/run_all_parallel.sh`
 
 ---
 
+## April 2026 — moe-m10-gremium-deep: Orchestrated 8-Expert Template
+
+> **Status:** Benchmark pending — template created 2026-04-16, results to be filled in after run.
+
+### Motivation
+
+The previous `moe-m10-8b-gremium` template failed due to GraphRAG context overflow on N07-GT
+(phi4:14b, 8 192-token window). Root cause: 5 353 graph nodes injected ~5 000 tokens into the
+planner prompt. Fix: move Planner + Judge to **phi4:14b@N04-RTX** (16 384-token window, Flash
+Attention enabled), and enforce that GraphRAG goes only to the Judge, never the Planner.
+
+### Template: `moe-m10-gremium-deep`
+
+| Component | Model | Node | Notes |
+|---|---|---|---|
+| Planner | phi4:14b | N04-RTX | 16K context, Flash Attention, routing only — no GraphRAG |
+| Judge | phi4:14b | N04-RTX | 16K context, receives ≤12 000 chars GraphRAG |
+| code_reviewer | qwen2.5-coder:7b | N06-M10-01 | SOTA 7B coding (SWE-bench) |
+| math | mathstral:7b | N06-M10-02 | Purpose-built STEM/Math |
+| medical_consult | meditron:7b | N06-M10-03 | Fine-tuned PubMed + medical guidelines |
+| legal_advisor | sroecker/sauerkrautlm-7b-hero | N06-M10-04 | Best German-law 7B, 32K context |
+| reasoning | qwen3:8b | N11-M10-01 | SOTA reasoning <8B (2025-2026) |
+| science | gemma2:9b | N11-M10-02 | Strong STEM, 71.3 % MMLU |
+| translation | qwen2.5:7b | N11-M10-03 | Strong multilingual DE/EN/FR |
+| technical_support | qwen2.5-coder:7b | N11-M10-04 | Structured output, MCP tool-calling |
+
+**Deep mode:** GraphRAG enabled, web search enabled, MCP tools enabled, chain-of-thought
+thinking (`force_think: true` → `agent_orchestrated` pipeline), cache disabled for clean
+benchmark measurements.
+
+### Model Selection Rationale
+
+All 8 expert models fit within 8 GB VRAM (Q4_K_M quantization, ≤ 5.7 GB). No CPU offloading.
+Models selected via benchmark research (April 2026):
+
+| Expert | Model | Key metric | Source |
+|---|---|---|---|
+| code_reviewer | qwen2.5-coder:7b | SWE-bench SOTA 7B | Alibaba / Qwen team |
+| math | mathstral:7b | MATH benchmark SOTA 7B | Mistral AI |
+| medical_consult | meditron:7b | MedQA > GPT-3.5 | EPFL |
+| legal_advisor | sauerkrautlm-7b-hero | Best German 7B, 32K | sroecker |
+| reasoning | qwen3:8b | GPQA leader <8B | Alibaba |
+| science | gemma2:9b | 71.3 % MMLU | Google |
+| translation | qwen2.5:7b | Best western-EU multilingual 7B | Alibaba |
+| technical_support | qwen2.5-coder:7b | Structured output + tool-calling | Alibaba |
+
+### Results
+
+*(To be filled after benchmark run)*
+
+| Template | Score | Elapsed | Tokens in | Tokens out | Experts invoked | Planner retries |
+|---|---|---|---|---|---|---|
+| `moe-m10-gremium-deep` | **TBD** | TBD | TBD | TBD | TBD | TBD |
+
+### Comparison: Native vs. Orchestrated M10
+
+| Mode | Template | Score | Notes |
+|---|---|---|---|
+| Native (per-GPU) | `moe-benchmark-n06-m10` | 3.3 / 10 | Single 7–8B model, no routing |
+| Native (per-GPU) | `moe-benchmark-n11-m10` | 3.6 / 10 | Single 7–8B model, no routing |
+| Orchestrated | `moe-m10-gremium-deep` | **TBD** | 8 domain specialists + phi4:14b judge |
+
+---
+
 ## April 2026 — M10-Gremium Evaluation: Can Graph Density Compensate for Small LLMs?
+
+> **Archive — superseded:** This template failed due to GraphRAG context overflow on N07-GT.
+> Successor: `moe-m10-gremium-deep` with Planner/Judge on N04-RTX (see section above).
 
 **Test date:** 2026-04-15. Research question: Does a dense knowledge graph (5,353 nodes) compensate
 for using only 7–9B models distributed across 8 Tesla M10 nodes (8 GB VRAM each)?

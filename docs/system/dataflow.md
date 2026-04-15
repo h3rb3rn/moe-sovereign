@@ -152,7 +152,7 @@ Before the knowledge-type heuristic runs, the merger response is scanned for a `
 
 The consumer then calls `graph_manager.ingest_synthesis()` **in parallel** with the normal triple extraction. The two paths are independent — a synthesis can exist alongside extracted triples from the same response.
 
-See [Compounding Knowledge Base](../intelligence/compounding_knowledge.md) for full details.
+See [Graph-basierte Wissensakkumulation](../intelligence/compounding_knowledge.md) for full details.
 
 ---
 

@@ -6,7 +6,7 @@ After installation, the Admin UI automatically redirects first-time visitors to 
 
 ## Why Inference Servers Are Required
 
-MoE Sovereign is a *Mixture-of-Experts orchestrator* — it routes requests to specialized LLM models and merges their answers. Without at least one inference server (an LLM API endpoint), the system cannot route, plan, or respond to any queries.
+MoE Sovereign is a *Multi-Model Orchestrator* — it routes requests to specialized LLM models and merges their answers. Without at least one inference server (an LLM API endpoint), the system cannot route, plan, or respond to any queries.
 
 The minimum viable configuration is:
 

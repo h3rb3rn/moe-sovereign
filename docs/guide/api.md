@@ -1,6 +1,6 @@
 # MoE API — User Guide
 
-**Sovereign Mixture of Experts Orchestrator**
+**Sovereign Multi-Model Orchestrator**
 Internal AI platform · Access documentation for API users
 
 ---

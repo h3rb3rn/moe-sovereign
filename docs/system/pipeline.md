@@ -134,7 +134,7 @@ flowchart LR
 - Synthesizes all expert results
 - Evaluates quality and consistency
 - Generates the final response (SSE stream or JSON)
-- Appends a `<SYNTHESIS_INSIGHT>` JSON block when the response constitutes a novel multi-source comparison or logical inference (see [Compounding Knowledge Base](intelligence/compounding_knowledge.md))
+- Appends a `<SYNTHESIS_INSIGHT>` JSON block when the response constitutes a novel multi-source comparison or logical inference (see [Graph-basierte Wissensakkumulation](intelligence/compounding_knowledge.md))
 - The synthesis block is stripped from the user-facing response and persisted as a `:Synthesis` node in Neo4j via the `moe.ingest` Kafka topic
 
 ---

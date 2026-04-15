@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-**Sovereign MoE** is a fully self-hosted Mixture-of-Experts LLM system. Incoming requests are analyzed by an orchestrator and distributed to specialized LLM experts, external search tools, and precision calculation tools. The results are synthesized by a Judge LLM.
+**Sovereign MoE** is a fully self-hosted Multi-Model LLM-System. Incoming requests are analyzed by an orchestrator and distributed to specialized LLM experts, external search tools, and precision calculation tools. The results are synthesized by a Judge LLM.
 
 The system is **OpenAI API-compatible** (including correctly terminating streaming) and can be embedded as a drop-in replacement in clients like Open WebUI.
 

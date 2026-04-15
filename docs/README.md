@@ -1,6 +1,6 @@
 # MoE Sovereign
 
-Self-hosted Mixture-of-Experts orchestration system. Routes queries to specialized local LLMs, enriches context via Neo4j knowledge graph and web search, synthesizes answers with a judge LLM. OpenAI-compatible API — works with Claude Code, Continue.dev, Open Code, and any OpenAI-compatible client.
+Self-hosted Multi-Model Orchestration system. Routes queries to specialized local LLMs, enriches context via Neo4j knowledge graph and web search, synthesizes answers with a judge LLM. OpenAI-compatible API — works with Claude Code, Continue.dev, Open Code, and any OpenAI-compatible client.
 
 ## Stack
 

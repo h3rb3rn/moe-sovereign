@@ -70,12 +70,12 @@ knowledge-enriched analysis, any task where quality matters more than speed.
 | Knowledge Accumulation | No | No | Yes (GraphRAG) |
 | Domain Routing | No | No | Yes (15 categories) |
 | MCP Precision Tools | No | No | Yes (23 tools) |
-| Compounding Effect | No | No | Yes (9.3x speedup over time) |
+| Accumulation Effect | No | No | Yes (9.3x speedup over time) |
 | Thinking Blocks | No | Yes | Optional |
 | Parallel Expert Execution | No | No | Yes |
 | Critic / Fact-Check | No | No | Yes (medical, legal) |
 
-!!! tip "The compounding effect"
+!!! tip "The accumulation effect"
     In orchestrated mode, GraphRAG stores synthesis results as
     `SYNTHESIS_INSIGHT` relations. Future requests in the same domain
     benefit from this accumulated knowledge. Over 5 epochs, benchmarks show
@@ -423,7 +423,7 @@ curl https://your-moe-instance.example.com/v1/models \
 | Creative writing | Template with `creative_writer` expert | Stylistically tuned models |
 | Data analysis | Template with `data_analyst` + MCP tools | MCP provides exact calculations |
 
-### The Compounding Effect in Chat Sessions
+### The Accumulation Effect in Chat Sessions
 
 In interactive sessions using orchestrated templates, every exchange
 enriches the GraphRAG knowledge graph. This means:
@@ -434,7 +434,7 @@ enriches the GraphRAG knowledge graph. This means:
 - **Returning to a topic days later**: accumulated knowledge is still
   available, providing continuity across sessions
 
-This compounding effect is most valuable for ongoing projects, research
+This accumulation effect is most valuable for ongoing projects, research
 topics, or domains you query repeatedly.
 
 ### Session Management Tips
@@ -477,7 +477,7 @@ Controls Neo4j knowledge graph enrichment.
 | **Enabled** (default) | Prior synthesis results are stored and injected into future requests. Knowledge accumulates over time. |
 | **Disabled** | No knowledge persistence. Each request is independent. |
 
-**Impact:** Enabling GraphRAG is what drives the compounding effect (9.3x
+**Impact:** Enabling GraphRAG is what drives the accumulation effect (9.3x
 speedup over 5 epochs). Disabling it is appropriate for privacy-sensitive
 queries where you do not want knowledge to persist, or for isolated
 one-off questions.

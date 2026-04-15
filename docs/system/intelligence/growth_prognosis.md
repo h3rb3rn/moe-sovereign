@@ -63,7 +63,7 @@ the `moe-reference` template. Scoring: 40% deterministic + 60% LLM-judge.
 |---|---|---|
 | Precision / MCP (subnet calc) | **8.8 / 10** | Near-perfect; MCP tools fully substitute hallucination-prone LLM arithmetic |
 | Precision / MCP (complex arithmetic) | **6.8 / 10** | Some unit-handling edge cases in MCP tool responses |
-| Compounding Memory | **≥5.0 / 10** | Meets healthy deployment threshold; improves with graph density |
+| Graph-State-Tracking Memory | **≥5.0 / 10** | Meets healthy deployment threshold; improves with graph density |
 | Domain Routing | Target ≥7.0 | Expert classification working; measured at deployment baseline |
 
 **Interpreting the scores:** The 8.8 on subnet calculation and 6.8 on complex arithmetic
@@ -569,7 +569,7 @@ Consumer tier in 2–3 years. The hardware tier boundaries are shifting downward
 
 ### 8.4 MoE Architecture in Open Models
 
-Mixtral 8×7B demonstrated that sparse Mixture-of-Experts architecture achieves dense
+Mixtral 8×7B demonstrated that sparse multi-expert architecture achieves dense
 model quality at lower per-request cost. Qwen3-235B (MoE variant) follows this pattern.
 MoE Sovereign's multi-expert routing is architecturally aligned with this trend — the
 software architecture anticipates hardware MoE as a first-class accelerator.
