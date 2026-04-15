@@ -237,7 +237,7 @@ class GraphRAGManager:
         found: Dict[str, Any] = {}
 
         async with self.driver.session() as session:
-            for term in terms[:6]:
+            for term in terms[:3]:
                 result = await session.run(
                     f"""
                     MATCH (e:Entity)
@@ -245,7 +245,7 @@ class GraphRAGManager:
                         OR toLower(e.aliases_str) CONTAINS toLower($term))
                     {type_filter}
                     {tenant_filter}
-                    WITH e LIMIT 3
+                    WITH e LIMIT 1
                     OPTIONAL MATCH (e)-[r1]->(n1:Entity)
                     OPTIONAL MATCH (n1)-[r2]->(n2:Entity)
                     RETURN
@@ -258,13 +258,13 @@ class GraphRAGManager:
                             source_model: r1.source_model,
                             confidence:   r1.confidence,
                             version:      r1.version
-                        }})[..12] AS direct,
+                        }})[..6] AS direct,
                         collect(DISTINCT {{
                             via:    n1.name,
                             rel:    type(r2),
                             target: n2.name,
                             ttype:  n2.type
-                        }})[..8] AS indirect
+                        }})[..4] AS indirect
                     """,
                     {
                         "term": term,
@@ -293,7 +293,7 @@ class GraphRAGManager:
 
             if rels:
                 rel_parts = []
-                for r in rels[:8]:
+                for r in rels[:4]:
                     part = f"{r['rel']} {r['target']}"
                     conf = r.get("confidence")
                     src  = r.get("source_model")
@@ -311,7 +311,7 @@ class GraphRAGManager:
             if indirect:
                 ind_parts = [
                     f"{r['via']} → {r['rel']} → {r['target']}"
-                    for r in indirect[:4]
+                    for r in indirect[:2]
                     if r["target"]
                 ]
                 if ind_parts:
