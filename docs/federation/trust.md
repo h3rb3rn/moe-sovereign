@@ -152,5 +152,19 @@ Before any triple leaves the node, the privacy scrubber removes sensitive metada
 
 The scrubber runs after the outbound policy filter and before signing. The signed bundle contains only scrubbed data, ensuring the original sensitive metadata never leaves the node.
 
+!!! warning "First-Line Defense Only — Contextual PII Is Not Detected"
+    The privacy scrubber removes known patterns (IPs, emails, API keys, file paths).
+    It **cannot** detect contextual or structural PII — cases where individually
+    harmless triples combine to reveal sensitive information (the "Mosaic Effect").
+
+    **Example:** The triples `(Person X, IS_CEO_OF, Company Y)` and
+    `(Company Y, HAS_EMPLOYEE_WITH_CONDITION, Diabetes)` are each benign in isolation.
+    Their combination is not.
+
+    MoE Libris is designed for sharing **structural domain knowledge** (IT protocols,
+    generic medical facts, software engineering patterns) — not conversation logs or
+    entity-linked sensitive data. The human operator initiating a push is responsible
+    for ensuring no contextual PII enters the federation bundle.
+
 !!! warning "Custom Scrubber Rules"
     If your knowledge graph contains domain-specific sensitive data (e.g., patient IDs, internal project names), add custom scrubber rules in the Admin UI under **Federation > Privacy Rules**.

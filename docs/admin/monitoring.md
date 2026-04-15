@@ -43,9 +43,9 @@ flowchart LR
 
 ### System Monitoring
 
-Fully populated dashboard after 24 h of production traffic — all six system gauges, LLM server status row, Chart.js widgets for token usage, cache performance, expert-calls-by-category/model/mode, requests-by-mode donut, confidence distribution, and latency & ratings.
+Fully populated dashboard after production traffic — all six system gauges, LLM server status row, Chart.js widgets for token usage, cache performance, expert-calls-by-category/model/mode, requests-by-mode donut, confidence distribution, and latency & ratings.
 
-![System Monitoring](../assets/screenshots/admin_monitoring.png)
+![System Monitoring](../assets/screenshots/monitoring-dashboard.png)
 
 !!! note "Privacy"
     Internal node identifiers in this screenshot (e.g. `NODE-XX`) are anonymised
