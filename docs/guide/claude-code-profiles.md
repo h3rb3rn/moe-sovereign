@@ -134,7 +134,7 @@ All three profiles use `moe_orchestrated` mode with dedicated expert templates.
 
 ### 5-Epoch Benchmark Results
 
-A controlled benchmark across 5 consecutive runs measures the **compounding effect**
+A controlled benchmark across 5 consecutive runs measures the **accumulation effect**
 of the MoE knowledge pipeline. Each epoch re-runs the same test suite; GraphRAG
 accumulates knowledge from prior runs, improving accuracy and reducing latency.
 
@@ -146,7 +146,7 @@ accumulates knowledge from prior runs, improving accuracy and reducing latency.
 | 4 | 7.8 / 10 | 45s | 0.16x |
 | 5 | 8.1 / 10 | 30s | 0.11x |
 
-**Compounding effect:** By Epoch 5, the system delivers **9.3x faster** responses
+**Accumulation effect:** By Epoch 5, the system delivers **9.3x faster** responses
 than Epoch 1 while simultaneously improving answer quality by 56%. This is driven
 by three mechanisms:
 
@@ -157,7 +157,7 @@ by three mechanisms:
 3. **Model warmth** — sticky sessions and the model registry keep frequently
    used models loaded in VRAM, eliminating cold-start overhead
 
-The compounding effect is most pronounced in Epochs 1-3 (steep improvement) and
+The accumulation effect is most pronounced in Epochs 1-3 (steep improvement) and
 plateaus around Epoch 4-5 as the knowledge graph saturates for the test domain.
 
 ---

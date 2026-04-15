@@ -1,6 +1,6 @@
 # Contributing to Sovereign MoE
 
-Thank you for your interest in contributing to **Sovereign MoE** — a self-hosted, modular Mixture-of-Experts LLM orchestration system. This guide explains how to contribute effectively while keeping the core system stable.
+Thank you for your interest in contributing to **Sovereign MoE** — a self-hosted, modular Multi-Model LLM-Orchestrierung system. This guide explains how to contribute effectively while keeping the core system stable.
 
 ---
 

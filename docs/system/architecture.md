@@ -2,7 +2,7 @@
 
 ## Overview
 
-MoE Sovereign is a LangGraph-based Mixture-of-Experts orchestrator. Each incoming query is decomposed by a planner LLM into typed tasks, routed to specialist models in parallel, enriched with knowledge graph context and optional web research, then synthesized by a judge LLM into a single coherent response.
+MoE Sovereign is a LangGraph-based Multi-Model Orchestrator. Each incoming query is decomposed by a planner LLM into typed tasks, routed to specialist models in parallel, enriched with knowledge graph context and optional web research, then synthesized by a judge LLM into a single coherent response.
 
 All caching is multi-layered: semantic vector cache (ChromaDB), plan cache (Valkey), GraphRAG cache (Valkey), and performance-scored expert routing (Valkey). The API is fully OpenAI-compatible.
 
@@ -179,7 +179,7 @@ graph LR
 
 The `knowledge_type` field on `moe.ingest` distinguishes **factual** (entities, measurements, definitions) from **procedural** (action→location requirements, causal chains) ingests. The Graph Ingest LLM adapts its extraction strategy accordingly.
 
-The optional `synthesis_insight` field carries a JSON object `{summary, entities, insight_type}` when the merger produced a novel multi-source synthesis. The consumer creates a `:Synthesis` node in Neo4j for it. See [Compounding Knowledge Base](../intelligence/compounding_knowledge.md).
+The optional `synthesis_insight` field carries a JSON object `{summary, entities, insight_type}` when the merger produced a novel multi-source synthesis. The consumer creates a `:Synthesis` node in Neo4j for it. See [Graph-basierte Wissensakkumulation](../intelligence/compounding_knowledge.md).
 
 The `source_expert` field carries the dominant expert category (e.g. `"medical_consult"`, `"code_reviewer"`) that produced the response. The consumer forwards it to `extract_and_ingest()` and `ingest_synthesis()` as `expert_domain`, tagging all resulting Neo4j nodes and relations. See [Memory Palace](../intelligence/memory_palace.md).
 

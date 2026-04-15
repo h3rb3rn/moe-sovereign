@@ -88,7 +88,7 @@ flowchart TD
 | **4. Tools** | 27 MCP precision tools (math, subnet, date, legal) via AST-whitelist --- zero hallucination |
 | **5. GraphRAG** | Neo4j context enrichment with domain-scoped entity filters and trust-score decay |
 | **6. Judge** | Synthesises expert outputs, evaluates quality, retries on failure (up to 3 attempts) |
-| **7. Ingest** | Validated knowledge flows back into Neo4j via Kafka for compounding acceleration |
+| **7. Ingest** | Validated knowledge flows back into Neo4j via Kafka for graph accumulation acceleration |
 
 ---
 
@@ -105,7 +105,7 @@ flowchart TD
 | **7** | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |
 | **9** | Deployment Flexibility | One OCI image &rarr; LXC (tested), Docker Compose (tested), Podman (planned), Helm/K8s (architecturally prepared, community validation requested) |
-| **10** | 9.3&times; Compounding | 707 s &rarr; 76 s latency over 5 benchmark epochs |
+| **10** | 9.3&times; Akkumulations-Speedup | 707 s &rarr; 76 s latency over 5 benchmark epochs |
 
 ---
 
@@ -149,7 +149,7 @@ flowchart LR
 | **Security Code Review** | **9.0/10** | SQLi + XSS identified and fixed |
 | **Adversarial MCP** | **9/9 blocked** | All code injection attempts stopped by AST firewall |
 | **69 LLM Model Test** | **phi4:14b** | Best planner/judge from 69 models tested |
-| **Compounding Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache) |
+| **Accumulation Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache) |
 
 ---
 

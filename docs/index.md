@@ -1,6 +1,6 @@
 # Sovereign MoE – Documentation
 
-**Self-hosted Mixture-of-Experts Orchestrator** — Routes requests to specialized local LLMs, enriches context via Neo4j Knowledge Graph and web search, and synthesizes results with a Judge LLM. OpenAI-compatible API endpoint — works with Claude Code, Continue.dev, and any OpenAI-compatible client.
+**Self-hosted Multi-Model Orchestrator** — Routes requests to specialized local LLMs, enriches context via Neo4j Knowledge Graph and web search, and synthesizes results with a Judge LLM. OpenAI-compatible API endpoint — works with Claude Code, Continue.dev, and any OpenAI-compatible client.
 
 ---
 

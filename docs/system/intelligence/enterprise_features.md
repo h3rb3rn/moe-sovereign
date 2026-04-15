@@ -162,7 +162,7 @@ The most likely causes: (1) the cosine distance threshold of 0.15 is very strict
 (2) the cache primarily benefits repeated *plan patterns* (L2 Valkey cache, SHA-256
 hash match) rather than full-response caching.
 
-The compounding effect observed in the benchmark runs (55% latency reduction between
+The accumulation effect observed in the benchmark runs (55% latency reduction between
 Run 1 and Run 2) is primarily driven by **GraphRAG context enrichment** and **model
 warmth**, not by the L1 semantic cache. This is an honest result — the cache hierarchy
 adds value for specific patterns (identical queries within 30 minutes), but is not

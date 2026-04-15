@@ -11,7 +11,7 @@ psycopg[binary,pool]>=3.2.0
 fastapi>=0.115.0
 uvicorn[standard]
 pydantic>=2.0.0
-python-multipart
+python-multipart>=0.0.26
 python-dotenv
 
 # --- Datenbanken & Mathe ---
@@ -34,4 +34,4 @@ prometheus_client>=0.21.0
 
 # --- OIDC/JWT ---
 PyJWT>=2.8.0
-cryptography>=42.0.0
+cryptography>=46.0.7

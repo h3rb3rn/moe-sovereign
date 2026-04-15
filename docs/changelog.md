@@ -11578,7 +11578,7 @@ same container. Branch: `debug/lxc-install`.
 
 ---
 
-## [2026-04-08] — Compounding Knowledge Base
+## [2026-04-08] — Graph-basierte Wissensakkumulation
 
 ### Added
 
@@ -13956,7 +13956,7 @@ same container. Branch: `debug/lxc-install`.
 
 ### Added
 
-- LangGraph Mixture-of-Experts orchestration (initial pipeline)
+- LangGraph Multi-Model Orchestration (initial pipeline)
 - Multi-node GPU cluster support via Ollama
 - Redis checkpoint persistence for graph state
 - ChromaDB vector store for knowledge caching

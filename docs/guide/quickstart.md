@@ -2,7 +2,7 @@
 
 ## What is MoE Sovereign?
 
-A self-hosted Mixture-of-Experts LLM system running on dedicated GPU hardware.
+A self-hosted Multi-Model LLM-System running on dedicated GPU hardware.
 Incoming requests are analyzed, distributed to specialized LLM experts, calculation tools, and a knowledge base, structurally analyzed by a reasoning model, and synthesized by a judge LLM.
 
 **OpenAI API compatible** — drop-in replacement for Open WebUI and other clients.

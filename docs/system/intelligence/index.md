@@ -12,7 +12,7 @@ Both address fundamental limitations of small local LLMs — not by replacing th
 |---|---|
 | [Causal Learning Loop](causal_learning.md) | How the system learns world-rules and procedural dependencies from its own responses, stores them in Neo4j, and surfaces them back into future queries |
 | [Context Extension](context_extension.md) | How the MoE architecture effectively extends the usable context window for coding agents and large-document workflows, despite the small native context of local LLMs |
-| [Compounding Knowledge Base](compounding_knowledge.md) | How the system actively maintains its own knowledge base: synthesis persistence (novel insights → `:Synthesis` Neo4j nodes) and graph linting (orphan cleanup + contradiction resolution via background LLM) |
+| [Graph-basierte Wissensakkumulation](compounding_knowledge.md) | How the system actively maintains its own knowledge base: synthesis persistence (novel insights → `:Synthesis` Neo4j nodes) and graph linting (orphan cleanup + contradiction resolution via background LLM) |
 | [Memory Palace](memory_palace.md) | Domain-scoped retrieval via metadata filters, isolated expert memory with `expert_domain` tagging in ChromaDB and Neo4j, and Claude Code auto-save hooks that persist session knowledge before context loss |
 
 ---

@@ -1,4 +1,4 @@
-# Compounding Knowledge Base
+# Graph-basierte Wissensakkumulation
 
 > **Design Principle:** MoE Sovereign does not just retrieve knowledge — it actively builds it. Every synthesis the system produces is a candidate for permanent storage. Every contradiction in the graph is a candidate for resolution. Over time, the knowledge base becomes more accurate, more connected, and more valuable.
 
@@ -12,7 +12,7 @@ The causal learning loop (see [Causal Learning](causal_learning.md)) established
 
 2. **The graph accumulates contradictions.** As different expert models and different versions contribute triples, conflicting relationship pairs emerge (`Drug A TREATS Disease X` vs. `Drug A CAUSES Disease X`). There is no automatic mechanism to clean them up.
 
-The **Compounding Knowledge Base** addresses both gaps with two complementary background mechanisms:
+The **Graph-basierte Wissensakkumulation** addresses both gaps with two complementary background mechanisms:
 
 | Mechanism | What it does | Trigger |
 |---|---|---|
@@ -292,7 +292,7 @@ This index is created automatically in `_create_schema()` on startup.
 
 ---
 
-## Querying the Compounding Knowledge Base
+## Querying the Graph-basierte Wissensakkumulation
 
 ### Find all Synthesis nodes for a domain
 

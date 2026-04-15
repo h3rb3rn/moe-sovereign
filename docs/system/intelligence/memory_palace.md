@@ -155,7 +155,7 @@ The Kafka consumer extracts `source_expert` and passes it to both ingest methods
 
 ### Updated Neo4j Schema
 
-See also [Compounding Knowledge Base — Neo4j Schema](compounding_knowledge.md#neo4j-schema-changes).
+See also [Graph-basierte Wissensakkumulation — Neo4j Schema](compounding_knowledge.md#neo4j-schema-changes).
 
 **`:Entity` nodes — new property:**
 

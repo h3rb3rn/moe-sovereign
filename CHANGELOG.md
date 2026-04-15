@@ -157,7 +157,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [1.1.0] - 2026-02-11
 
 ### Added
-- LangGraph Mixture-of-Experts-Orchestrierung (initiale Pipeline)
+- LangGraph Multi-Model LLM-Orchestrierung (initiale Pipeline)
 - Multi-Node GPU-Cluster-Support via Ollama
 - Redis-Checkpoint-Persistenz für Graph-State
 - ChromaDB Vektorspeicher für Knowledge-Caching

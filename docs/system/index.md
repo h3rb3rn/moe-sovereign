@@ -1,6 +1,6 @@
 # System Documentation
 
-This section contains the technical system documentation for **Sovereign MoE** — the fully self-hosted Mixture-of-Experts LLM system.
+This section contains the technical system documentation for **Sovereign MoE** — the fully self-hosted Multi-Model LLM-System.
 
 ---
 

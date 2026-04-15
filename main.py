@@ -425,8 +425,11 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             "enable_graphrag":     tmpl.get("enable_graphrag", True),
             "enable_web_research": tmpl.get("enable_web_research", True),
             # Context window budget: 0 = auto-compute from judge model's known context window.
-            # Set a positive integer in the template config to pin the char limit explicitly.
+            # Set a positive integer to pin the char limit; -1 = model-aware auto (same as 0).
             "graphrag_max_chars":  int(tmpl.get("graphrag_max_chars", 0)),
+            # When true: activate thinking_node (chain-of-thought) before routing, equivalent
+            # to mode="agent_orchestrated" — set in template config_json as force_think: true.
+            "force_think":         bool(tmpl.get("force_think", False)),
         }
     except Exception:
         return empty
@@ -4787,6 +4790,14 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _matched_tmpl = next((t for t in _all_tmpls if t.get("name") == request.model), None)
     _tmpl_override: Optional[str] = _matched_tmpl["id"] if _matched_tmpl else None
     mode = _MODEL_ID_TO_MODE.get(request.model, "default")
+
+    # If the matched template sets force_think=true and no explicit mode was requested,
+    # upgrade to agent_orchestrated so the thinking_node activates before routing.
+    # (Resolved after _tmpl_prompts is populated below; pre-read here to avoid circular dep.)
+    if _tmpl_override:
+        _early_tmpl = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
+        if _early_tmpl and _early_tmpl.get("force_think") and mode == "default":
+            mode = "agent_orchestrated"
 
     # Native LLM? check model_endpoint permission — only if no template and no MoE mode
     # Supports "model_name" (legacy) and "model_name@node" (new, OpenWebUI format)
