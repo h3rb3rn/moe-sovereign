@@ -237,24 +237,24 @@ The runner script: `benchmarks/run_all_parallel.sh`
 | Template | Precision | Compounding | Routing | Multi-Expert | **Average** |
 |---|---|---|---|---|---|
 | `ref-30b` | 9.6 | 4.5 | 8.4 | 5.7 | **7.6** |
-| `n04-rtx` | 7.6 | 4.5 | 5.9 | 4.9 | **6.0** |
+| `n04-rtx` | 7.0 | 0.0 | 4.6 | 6.1 | **4.5** |
 | `n07-n09` | 6.0 | 0.0 | 7.8 | 0.0 | **4.6** |
-| `n06-m10` | 0.0 | 0.0 | 0.0 | 0.0 | **0.0** |
-| `n11-m10` | 0.0 | 0.0 | 0.0 | 0.0 | **0.0** |
+| `n06-m10` | 1.9 | 4.2 | 5.3 | 0.0 | **3.3** |
+| `n11-m10` | 3.5 | 1.8 | 5.3 | 1.9 | **3.6** |
 
 #### Per-Test Detail
 
 | Test ID | Category | ref-30b | n04-rtx | n07-n09 | n06-m10 | n11-m10 |
-|---|---|---|---|---|---|---|
-| precision-mcp-subnet | precision | 8.8 | 8.8 | 8.8 | 0.0 | 0.0 |
-| precision-mcp-math | precision | 10.0 | 8.8 | 7.4 | 0.0 | 0.0 |
-| precision-mcp-date | precision | 10.0 | 5.2 | 1.8 | 0.0 | 0.0 |
-| compounding-memory-3turn | compounding | 9.0 | 9.0 | 0.0 | 0.0 | 0.0 |
-| compounding-memory-5turn | compounding | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| routing-legal | routing | 8.2 | 8.2 | 7.6 | 0.0 | 0.0 |
-| routing-medical | routing | 8.6 | 0.6 | 7.2 | 0.0 | 0.0 |
-| routing-code-review | routing | 8.4 | 8.9 | 8.7 | 0.0 | 0.0 |
-| multi-expert-synthesis | multi_expert | 5.7 | 4.9 | 0.0 | 0.0 | 0.0 |
+|---|---||---||---||---||---||---|
+| precision-mcp-subnet | precision | 8.8 | 8.8 | 8.8 | 0.0 | 1.2 |
+| precision-mcp-math | precision | 10.0 | 4.0 | 7.4 | 5.8 | 0.0 |
+| precision-mcp-date | precision | 10.0 | 8.2 | 1.8 | 0.0 | 9.4 |
+| compounding-memory-3turn | compounding | 9.0 | 0.0 | 0.0 | 7.4 | 3.6 |
+| compounding-memory-5turn | compounding | 0.0 | 0.0 | 0.0 | 0.9 | 0.0 |
+| routing-legal | routing | 8.2 | 3.2 | 7.6 | 4.8 | 7.0 |
+| routing-medical | routing | 8.6 | 7.2 | 7.2 | 2.7 | 1.1 |
+| routing-code-review | routing | 8.4 | 3.3 | 8.7 | 8.4 | 7.8 |
+| multi-expert-synthesis | multi_expert | 5.7 | 6.1 | 0.0 | 0.0 | 1.9 |
 
 ### Full Measurement Series (ref-30b template)
 
@@ -268,7 +268,7 @@ The runner script: `benchmarks/run_all_parallel.sh`
 ### Why Did the Score Change? Four Factors
 
 1. **Graph density (+2.4 pts, primary driver)** — Routing improved +3.4 pts, multi-expert synthesis +4.8 pts as GraphRAG context grows richer with more domain triples.
-2. **M10 hardware split (structural break)** — M10 nodes were split from 4×8 GB combined blocks into separate 8 GB Ollama instances. Old 30b/70b M10 templates no longer function; M10 benchmark templates timed out entirely under parallel load.
+2. **M10 hardware split (structural break)** — M10 nodes were split from 4×8 GB combined blocks into separate 8 GB Ollama instances. Old 30b/70b M10 templates no longer function; the new per-node M10 templates use hermes3:8b and completed all 9/9 tests (avg 3.3–3.6), confirming legacy hardware viability at reduced quality.
 3. **Evaluation methodology correction** — Earlier runs lacked deterministic scoring (det=0); from Apr 15 onward keyword-match and numeric-tolerance scores are computed. Explains routing-legal jump 4.8→8.2.
 4. **Concurrency effect** — n04-rtx scored 6.0 (vs. 7.6 for ref-30b) running simultaneously with 4 other templates (15 concurrent requests); isolated run would score higher.
 

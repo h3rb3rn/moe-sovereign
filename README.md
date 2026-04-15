@@ -2,7 +2,7 @@
 
 # MoE Sovereign
 
-**A Deterministically-Routed, Self-Hosted Mixture-of-Experts Framework<br>for Sovereign AI Infrastructure**
+**A Self-Hosted Multi-Model Orchestrator with Template-Based Expert Routing<br>for Sovereign AI Infrastructure**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Deployment](https://img.shields.io/badge/Deployment-Docker_%7C_LXC_%7C_Podman_%7C_Helm-2ea44f.svg)](#deployment-targets)
@@ -22,7 +22,7 @@
 
 Commercial AI APIs process every request on infrastructure the customer neither owns nor can inspect. Training-data extraction, prompt logging, and retroactive policy changes are documented incidents. The European regulatory framework --- in particular GDPR Articles 25 and 32 --- mandates data protection by design, a requirement difficult to discharge with an opaque black box in a foreign jurisdiction.
 
-**MoE Sovereign** is a fully self-hosted, deterministically-routed Mixture-of-Experts orchestrator that runs entirely on your own hardware. No data leaves your network. No cloud dependency. No vendor lock-in.
+**MoE Sovereign** is a fully self-hosted multi-model orchestrator with template-based expert routing that runs entirely on your own hardware. No data leaves your network. No cloud dependency. No vendor lock-in.
 
 ---
 

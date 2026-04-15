@@ -38,6 +38,8 @@ from chromadb.utils import embedding_functions
 from math_node import math_node
 # Import for GraphRAG
 from graph_rag import GraphRAGManager
+# Import context window budget helper
+from context_budget import graphrag_budget_chars
 
 # --- CONFIG & LOGGING ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -277,6 +279,10 @@ EXPERTS = json.loads(os.getenv("EXPERT_MODELS", "{}"))
 MCP_URL = os.getenv("MCP_URL", "http://mcp-precision:8003")
 # When True: graph_rag_node calls graph_query via MCP server instead of direct Neo4j
 GRAPH_VIA_MCP = os.getenv("GRAPH_VIA_MCP", "false").lower() in ("1", "true", "yes")
+# Maximum characters injected from the knowledge graph into planner/merger prompts.
+# Prevents context-window saturation on nodes with small LLMs (e.g. phi4:14b @ 8192 tokens).
+# Set to 0 to disable truncation.  Default: 6000 (~1500 tokens at 4 chars/token).
+MAX_GRAPH_CONTEXT_CHARS: int = int(os.getenv("MAX_GRAPH_CONTEXT_CHARS", "6000"))
 # Unified API Gateway: When set, all expert calls are routed through LiteLLM.
 # LiteLLM handles endpoint selection, retries (circuit breaker) and fallback chains.
 # Empty = direct access to Ollama nodes via _select_node() (fallback, backwards compatible).
@@ -374,7 +380,8 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
     empty = {"planner_prompt": "", "judge_prompt": "",
              "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
              "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
-             "enable_cache": True, "enable_graphrag": True, "enable_web_research": True}
+             "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
+             "graphrag_max_chars": 0}
     try:
         perms    = json.loads(permissions_json or "{}")
         tmpl_ids = perms.get("expert_template", [])
@@ -417,6 +424,9 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             "enable_cache":        tmpl.get("enable_cache", True),
             "enable_graphrag":     tmpl.get("enable_graphrag", True),
             "enable_web_research": tmpl.get("enable_web_research", True),
+            # Context window budget: 0 = auto-compute from judge model's known context window.
+            # Set a positive integer in the template config to pin the char limit explicitly.
+            "graphrag_max_chars":  int(tmpl.get("graphrag_max_chars", 0)),
         }
     except Exception:
         return empty
@@ -1521,6 +1531,7 @@ class AgentState(TypedDict):
     enable_cache: bool                                    # template toggle: use ChromaDB L1 cache
     enable_graphrag: bool                                 # template toggle: query Neo4j knowledge graph
     enable_web_research: bool                             # template toggle: allow web search via SearXNG
+    graphrag_max_chars: int                               # per-template GraphRAG char budget (0 = auto from judge model context window)
     planner_prompt: str                                   # custom planner LLM system prompt from template (empty = DEFAULT_PLANNER_ROLE)
     judge_prompt: str                                     # custom judge/merger system prompt from template (empty = mode_cfg["merger_prefix"])
     judge_model_override: str                             # per-template judge model (empty = global JUDGE_MODEL)
@@ -3327,7 +3338,22 @@ async def merger_node(state: AgentState):
     if reasoning:
         sections.append(f"REASONING ANALYSIS:\n{reasoning}")
     if graph_ctx:
-        sections.append(f"STRUCTURED KNOWLEDGE (Ontology/Knowledge Graph):\n{graph_ctx}")
+        _gctx = graph_ctx
+        # Compute per-template GraphRAG char budget: explicit override > auto from
+        # judge model context window > global MAX_GRAPH_CONTEXT_CHARS.
+        _judge_model = state.get("judge_model_override") or JUDGE_MODEL
+        _tpl_limit = state.get("graphrag_max_chars", 0)
+        _effective_limit = graphrag_budget_chars(
+            model=_judge_model,
+            query_chars=len(state.get("input", "")),
+            override_chars=_tpl_limit,
+        )
+        # Final safety net: never exceed the global hard cap if set.
+        if MAX_GRAPH_CONTEXT_CHARS > 0:
+            _effective_limit = min(_effective_limit, MAX_GRAPH_CONTEXT_CHARS)
+        if _effective_limit > 0 and len(_gctx) > _effective_limit:
+            _gctx = _gctx[:_effective_limit] + "\n[...graph context truncated]"
+        sections.append(f"STRUCTURED KNOWLEDGE (Ontology/Knowledge Graph):\n{_gctx}")
     if expert_results:
         # Truncate overly long expert outputs before merging to reduce
         # merger token consumption.  The first ~2000 chars typically contain
@@ -4929,6 +4955,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "enable_cache": _tmpl_prompts.get("enable_cache", True),
          "enable_graphrag": _tmpl_prompts.get("enable_graphrag", True),
          "enable_web_research": _tmpl_prompts.get("enable_web_research", True),
+         "graphrag_max_chars": _tmpl_prompts.get("graphrag_max_chars", 0),
          "planner_prompt": _tmpl_prompts["planner_prompt"],
          "judge_prompt":   _tmpl_prompts["judge_prompt"],
          "judge_model_override":   _tmpl_prompts["judge_model_override"],
