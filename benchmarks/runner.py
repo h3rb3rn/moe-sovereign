@@ -48,6 +48,10 @@ DATASET    = pathlib.Path(os.environ.get(
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Number of single_turn tests to run concurrently.
+# multi_turn tests always run sequentially (session-state dependency).
+PARALLEL_TESTS = int(os.environ.get("MOE_PARALLEL_TESTS", "3"))
+
 if not API_KEY:
     print("ERROR: MOE_API_KEY environment variable is required.", file=sys.stderr)
     print("  Create one via the Admin UI → Users → API Keys.", file=sys.stderr)
@@ -235,41 +239,79 @@ async def run_multi_turn(
 # Main
 # --------------------------------------------------------------------------
 
+def _print_result(r: TestCaseResult, prefix: str = "") -> None:
+    """Print a one-line summary for a completed test case."""
+    total_dt  = sum(t.wall_clock_s for t in r.turns)
+    total_tok = sum(t.completion_tokens for t in r.turns)
+    last_turn = r.turns[-1] if r.turns else None
+    status    = "✓" if last_turn and last_turn.http_status == 200 and not last_turn.error else "✗"
+    print(f"{prefix}{status} {r.test_id}  dt={total_dt:.1f}s  tokens={total_tok}", flush=True)
+
+
+async def _run_single_with_sem(
+    sem: asyncio.Semaphore,
+    client: httpx.AsyncClient,
+    tc: dict,
+    idx: int,
+    total: int,
+) -> TestCaseResult:
+    """Acquire semaphore, run a single-turn test, release, and return result."""
+    async with sem:
+        print(f"\n[{idx}/{total}] {tc['id']} — {tc['name']}  (parallel)", flush=True)
+        r = await run_single_turn(client, tc)
+        _print_result(r, prefix="  ")
+        return r
+
+
 async def main() -> int:
     dataset = json.loads(DATASET.read_text())
     test_cases = dataset["test_cases"]
 
     print(f"MoE-Eval Benchmark Runner", flush=True)
-    print(f"  Dataset:  {dataset['name']} v{dataset['version']}", flush=True)
-    print(f"  Template: {TEMPLATE}", flush=True)
-    print(f"  API:      {API_BASE}", flush=True)
-    print(f"  Tests:    {len(test_cases)}", flush=True)
+    print(f"  Dataset:      {dataset['name']} v{dataset['version']}", flush=True)
+    print(f"  Template:     {TEMPLATE}", flush=True)
+    print(f"  API:          {API_BASE}", flush=True)
+    print(f"  Tests:        {len(test_cases)}", flush=True)
+    print(f"  Parallelism:  {PARALLEL_TESTS} concurrent single_turn tests", flush=True)
     print(f"{'='*72}", flush=True)
+
+    single_turn_cases = [(i + 1, tc) for i, tc in enumerate(test_cases)
+                         if tc.get("type", "single_turn") == "single_turn"]
+    multi_turn_cases  = [(i + 1, tc) for i, tc in enumerate(test_cases)
+                         if tc.get("type", "single_turn") == "multi_turn"]
+    total = len(test_cases)
+
+    # Index map so we can restore dataset order after concurrent execution
+    order_index = {tc["id"]: i for i, tc in enumerate(test_cases)}
 
     results: list[TestCaseResult] = []
 
     async with httpx.AsyncClient() as client:
-        for i, tc in enumerate(test_cases, 1):
-            tc_type = tc.get("type", "single_turn")
-            print(f"\n[{i}/{len(test_cases)}] {tc['id']} — {tc['name']}", flush=True)
-            print(f"  category: {tc['category']}  type: {tc_type}", flush=True)
+        # --- Phase 1: single_turn tests in parallel --------------------------
+        if single_turn_cases:
+            sem = asyncio.Semaphore(PARALLEL_TESTS)
+            print(f"\n--- Phase 1: {len(single_turn_cases)} single_turn tests"
+                  f" (concurrency={PARALLEL_TESTS}) ---", flush=True)
+            tasks = [
+                _run_single_with_sem(sem, client, tc, idx, total)
+                for idx, tc in single_turn_cases
+            ]
+            single_results = await asyncio.gather(*tasks)
+            results.extend(single_results)
 
-            if tc_type == "single_turn":
-                r = await run_single_turn(client, tc)
-            elif tc_type == "multi_turn":
+        # --- Phase 2: multi_turn tests sequentially --------------------------
+        if multi_turn_cases:
+            print(f"\n--- Phase 2: {len(multi_turn_cases)} multi_turn tests"
+                  f" (sequential) ---", flush=True)
+            for idx, tc in multi_turn_cases:
+                print(f"\n[{idx}/{total}] {tc['id']} — {tc['name']}", flush=True)
+                print(f"  category: {tc['category']}  type: multi_turn", flush=True)
                 r = await run_multi_turn(client, tc)
-            else:
-                print(f"  [skip] unknown type: {tc_type}", flush=True)
-                continue
+                results.append(r)
+                _print_result(r, prefix="  ")
 
-            results.append(r)
-
-            # Print summary for the test case
-            total_dt = sum(t.wall_clock_s for t in r.turns)
-            total_tok = sum(t.completion_tokens for t in r.turns)
-            last_turn = r.turns[-1] if r.turns else None
-            status = "✓" if last_turn and last_turn.http_status == 200 and not last_turn.error else "✗"
-            print(f"  {status} total_dt={total_dt:.1f}s  total_tokens={total_tok}", flush=True)
+    # Restore dataset order
+    results.sort(key=lambda r: order_index.get(r.test_id, 9999))
 
     # Save results
     ts = time.strftime("%Y%m%d-%H%M%S")
