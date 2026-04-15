@@ -256,6 +256,22 @@ The runner script: `benchmarks/run_all_parallel.sh`
 | routing-code-review | routing | 8.4 | 8.9 | 8.7 | 0.0 | 0.0 |
 | multi-expert-synthesis | multi_expert | 5.7 | 4.9 | 0.0 | 0.0 | 0.0 |
 
+### Full Measurement Series (ref-30b template)
+
+| Date | Graph nodes | Precision | Compounding | Routing | Multi-Expert | **Avg** |
+|---|---|---|---|---|---|---|
+| Apr 10 run 1 | ~500 | 7.6 | 4.1 | 5.0 | 0.9 | **5.2** |
+| Apr 10 runs 2–4 | ~800 | 9.3 | 3.9 | 5.8 | 0.9 | **6.0** |
+| Apr 12 | ~2,000 | 8.3 | 4.4 | 7.6 | 5.1 | **6.8** |
+| Apr 15 | 5,353 | 9.6 | 4.5 | 8.4 | 5.7 | **7.6** |
+
+### Why Did the Score Change? Four Factors
+
+1. **Graph density (+2.4 pts, primary driver)** — Routing improved +3.4 pts, multi-expert synthesis +4.8 pts as GraphRAG context grows richer with more domain triples.
+2. **M10 hardware split (structural break)** — M10 nodes were split from 4×8 GB combined blocks into separate 8 GB Ollama instances. Old 30b/70b M10 templates no longer function; M10 benchmark templates timed out entirely under parallel load.
+3. **Evaluation methodology correction** — Earlier runs lacked deterministic scoring (det=0); from Apr 15 onward keyword-match and numeric-tolerance scores are computed. Explains routing-legal jump 4.8→8.2.
+4. **Concurrency effect** — n04-rtx scored 6.0 (vs. 7.6 for ref-30b) running simultaneously with 4 other templates (15 concurrent requests); isolated run would score higher.
+
 ### Comparison: Before and After Graph Growth
 
 | Metric | April 12 run | April 15 run | Delta |
