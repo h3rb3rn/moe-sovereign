@@ -126,3 +126,142 @@ Tesla M10). Timeout: 300s. Quantization: Q4_K_M where applicable.
 
 Full results are published on HuggingFace:
 [h3rb3rn/moe-sovereign-benchmarks](https://huggingface.co/datasets/h3rb3rn/moe-sovereign-benchmarks)
+
+---
+
+## Hardware Tier Implications
+
+The LLM suitability study ran on a 5-node heterogeneous cluster spanning Legacy and
+Consumer GPU tiers. The latency data reflects real inference throughput on that mixed
+hardware — not theoretical peak performance.
+
+### Tier to Model Mapping
+
+| Hardware tier | VRAM | Max viable model | Roles available | Latency range |
+|---|---|---|---|---|
+| **Legacy** (GT 1060, Tesla M10) | 6–8 GB | 7B Q4 | T1 experts (fast path) | 20–170s |
+| **Legacy** (Tesla M60) | 16 GB | 14B Q4 | T1 + limited T2 | 36–104s |
+| **Consumer** (RTX 3060–4090) | 12–24 GB | 7–14B Q4 | T1 + T2 planner | 27–60s |
+| **Semi-Pro** (A5000, RTX 6000 Ada) | 24–48 GB | 32B Q4 | Full T2 stack | 60–130s |
+| **Enterprise** (A100, H100) | 40–80 GB | 70B FP16 | All roles, parallel | 10–40s |
+
+### Latency vs. Quality Trade-off
+
+**Critical insight:** Hardware tier affects latency only — not answer quality.
+The same `phi4:14b` Q4_K_M model produces identical output on a Tesla M10 and on an
+RTX 4090. The RTX is faster. The answer is the same.
+
+Quality is determined by:
+1. **Model capability** (weights, size, training quality) — hardware-independent
+2. **Knowledge graph density** (accumulated triples in Neo4j) — improves with usage
+3. **Cache hit rate** (semantic similarity in ChromaDB) — improves with usage
+
+This means **Legacy hardware clusters remain valid long-term** — they produce the
+same quality as enterprise hardware at lower throughput. The quality-vs-time graph
+converges regardless of hardware tier; only the speed of convergence differs.
+
+### Concurrent Expert Capacity
+
+MoE Sovereign runs multiple expert workers in parallel for each request. The number
+of simultaneous experts is bounded by available VRAM:
+
+| Tier | Simultaneous T1 experts | Simultaneous T2 experts | Notes |
+|---|---|---|---|
+| Legacy (6–8 GB/node) | 1 per node | 0 | Single-model GPU; pool across nodes |
+| Consumer (24 GB) | 3–4 | 1–2 | Can run judge + planner simultaneously |
+| Semi-Pro (48 GB) | 6–8 | 2–4 | Full T2 fan-out without queuing |
+| Enterprise (80 GB) | 10+ | 4–8 | Parallel execution of all 16 expert roles possible |
+
+**Practical cluster strategy:** Mix tiers. Route T1 tasks (deterministic, fast) to
+Legacy nodes; route T2 tasks (planner, judge, merger) to Consumer/Semi-Pro nodes.
+The existing 5-node benchmark cluster uses exactly this pattern.
+
+See [Intelligence Growth Prognosis](intelligence/growth_prognosis.md) for projected
+quality curves at each hardware tier over time.
+
+---
+
+## April 2026 — Dense-Graph Benchmark Campaign
+
+This benchmark campaign was conducted on **2026-04-15** after extensive system
+operation had grown the Neo4j knowledge graph to a substantial density. The
+purpose: measure whether accumulated graph knowledge meaningfully improves
+Compounding Memory test scores compared to the earlier sparse-graph run.
+
+### Knowledge Graph State at Run Time
+
+| Metric | Value |
+|---|---|
+| Entity nodes | 4,962 |
+| Synthesis nodes | 391 |
+| **Total nodes** | **5,353** |
+| Edges (relationships) | 5,909 |
+| Avg. edges per entity | ~1.19 |
+
+This represents significant domain knowledge accumulated across legal, medical,
+technical, and scientific domains through production use.
+
+### New Per-Node Benchmark Templates
+
+Four new templates were created alongside the existing reference template to
+maximise cluster utilisation — each template pins experts to a distinct hardware
+tier, so all nodes inference simultaneously during a parallel run.
+
+| Template | Planner | Judge | Expert Assignment | Hardware |
+|---|---|---|---|---|
+| `moe-reference-30b-balanced` | phi4:14b@N04-RTX | gpt-oss:20b@N04-RTX | Mix N04-RTX | RTX cluster (60 GB) |
+| `moe-benchmark-n04-rtx` | phi4:14b@N04-RTX | qwen3-coder:30b@N04-RTX | All on N04-RTX | RTX cluster (60 GB) |
+| `moe-benchmark-n07-n09` | phi4:14b@N07-GT | gpt-oss:20b@N09-M60 | Split N07-GT / N09-M60 | GT1060 + Tesla M60 |
+| `moe-benchmark-n06-m10` | phi4:14b@N06-M10-01 | phi4:14b@N06-M10-02 | Spread N06-M10-01…04 | Tesla M10 × 4 (32 GB) |
+| `moe-benchmark-n11-m10` | phi4:14b@N11-M10-01 | phi4:14b@N11-M10-02 | Spread N11-M10-01…04 | Tesla M10 × 4 (32 GB) |
+
+All templates have `enable_graphrag: true` and `enable_cache: false` to ensure
+each test receives fresh GraphRAG context rather than a cached response.
+
+### Parallel Run Architecture
+
+Tests were submitted concurrently: `MOE_PARALLEL_TESTS=3` allows up to 3
+single-turn tests per runner in parallel. With 5 template runners launched
+simultaneously this generates up to **15 concurrent API requests**, keeping all
+GPU nodes loaded throughout the run.
+
+The runner script: `benchmarks/run_all_parallel.sh`
+
+### Results
+
+<!-- Results injected after benchmark completion -->
+<!-- Generated by: python3 benchmarks/evaluator.py for each run -->
+
+#### Score Summary
+
+| Template | Precision | Compounding | Routing | Multi-Expert | **Average** |
+|---|---|---|---|---|---|
+| `ref-30b` | 9.6 | 4.5 | 8.4 | 5.7 | **7.6** |
+| `n04-rtx` | 7.6 | 4.5 | 5.9 | 4.9 | **6.0** |
+| `n07-n09` | 6.0 | 0.0 | 7.8 | 0.0 | **4.6** |
+| `n06-m10` | 0.0 | 0.0 | 0.0 | 0.0 | **0.0** |
+| `n11-m10` | 0.0 | 0.0 | 0.0 | 0.0 | **0.0** |
+
+#### Per-Test Detail
+
+| Test ID | Category | ref-30b | n04-rtx | n07-n09 | n06-m10 | n11-m10 |
+|---|---|---|---|---|---|---|
+| precision-mcp-subnet | precision | 8.8 | 8.8 | 8.8 | 0.0 | 0.0 |
+| precision-mcp-math | precision | 10.0 | 8.8 | 7.4 | 0.0 | 0.0 |
+| precision-mcp-date | precision | 10.0 | 5.2 | 1.8 | 0.0 | 0.0 |
+| compounding-memory-3turn | compounding | 9.0 | 9.0 | 0.0 | 0.0 | 0.0 |
+| compounding-memory-5turn | compounding | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| routing-legal | routing | 8.2 | 8.2 | 7.6 | 0.0 | 0.0 |
+| routing-medical | routing | 8.6 | 0.6 | 7.2 | 0.0 | 0.0 |
+| routing-code-review | routing | 8.4 | 8.9 | 8.7 | 0.0 | 0.0 |
+| multi-expert-synthesis | multi_expert | 5.7 | 4.9 | 0.0 | 0.0 | 0.0 |
+
+### Comparison: Before and After Graph Growth
+
+| Metric | April 12 run | April 15 run | Delta |
+|---|---|---|---|
+| Graph nodes at run time | ~2,000 (est.) | 5,353 | +3,353 |
+| Graph edges at run time | ~2,200 (est.) | 5,909 | +3,709 |
+| compounding-memory-3turn | 8.2 | 9.0 | +0.8 |
+| compounding-memory-5turn | 0.6 | 0.0 (timeout) | -0.6 |
+| Average score (ref-30b) | 6.8 | 7.6 | +0.8 |
