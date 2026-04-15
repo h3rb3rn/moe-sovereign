@@ -3,6 +3,16 @@
 MoE Sovereign ships a modular Helm chart at `charts/moe-sovereign/` that targets
 vanilla Kubernetes, k3s, and Red Hat OpenShift from the same source tree.
 
+!!! warning "Community Validation Requested"
+    The MoE Sovereign Helm chart is architecturally prepared for Kubernetes and OpenShift
+    (OCI-compliant, non-root, read-only rootfs, NetworkPolicy, HPA, PDB). However, no
+    formal production validation has been completed on these targets. K3s/Kubernetes
+    is **Planned** and OpenShift is **Untested** in the deployment matrix.
+
+    If you successfully deploy on K8s/OpenShift, please share your experience via a
+    [GitHub Discussion](https://github.com/h3rb3rn/moe-sovereign/discussions) — your
+    feedback directly drives the validation milestone.
+
 ## Chart structure
 
 ```mermaid

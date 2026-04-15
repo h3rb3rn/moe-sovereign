@@ -97,6 +97,16 @@ If this system is deployed within the European Union and processes personal data
 
 This software does not include a user-facing privacy notice or consent mechanism — the operator must implement these according to their specific deployment context.
 
+### Automated Scrubbing Limitations
+
+The built-in [Privacy Scrubber](federation/trust.md#privacy-scrubber) handles pattern-identifiable data (IP addresses, email addresses, API keys, file paths). It does **not** constitute a complete GDPR compliance solution. Operators are responsible for:
+
+- Ensuring no conversation transcripts or user-linked entity data enter the federation pipeline.
+- Reviewing domain outbound policies so sensitive domains are set to `blocked` or `manual` in the Admin UI.
+- Understanding the **Mosaic Effect**: combinations of individually non-sensitive triples can indirectly identify individuals. This requires human judgment, not automation.
+
+MoE Sovereign is not a substitute for a Data Protection Impact Assessment (DPIA) when deploying in regulated environments. The responsibility for preventing contextual PII leaks remains with the human operator initiating a federation push.
+
 ---
 
 ## Medical & Legal Data

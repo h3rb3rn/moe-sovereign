@@ -99,12 +99,12 @@ flowchart TD
 | **1** | Deterministic Expert Routing | Versioned, auditable templates --- not a probabilistic black box |
 | **2** | Two-Tier Escalation | T1 screens fast; T2 engages only when needed |
 | **3** | Neo4j GraphRAG | Trust-score self-healing, contradiction detection, domain-scoped filters |
-| **4** | Community Knowledge Bundles | Export/import learned knowledge as JSON-LD with 3-layer privacy scrubbing |
+| **4** | Community Knowledge Bundles | Export/import learned knowledge as JSON-LD with regex-based privacy scrubbing (PII, secrets, hostnames) |
 | **5** | 27 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks |
 | **6** | VRAM-Aware Scheduling | Per-node VRAM limits, warm-model affinity, sticky sessions |
 | **7** | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |
-| **9** | Universal Deployment | One OCI image &rarr; LXC, Docker Compose, Podman, Helm |
+| **9** | Deployment Flexibility | One OCI image &rarr; LXC (tested), Docker Compose (tested), Podman (planned), Helm/K8s (architecturally prepared, community validation requested) |
 | **10** | 9.3&times; Compounding | 707 s &rarr; 76 s latency over 5 benchmark epochs |
 
 ---
@@ -133,7 +133,7 @@ flowchart LR
     style Bundle fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
 ```
 
-**Privacy protection:** Metadata stripping &bull; Regex detection of PII/secrets &bull; Sensitive relation-type filter<br>
+**Privacy protection:** Metadata stripping &bull; Regex detection of PII/secrets &bull; Sensitive relation-type filter &bull; &#9888; Human-in-the-loop responsible for contextual/structural PII (see [Privacy Scrubber limitations](https://docs.moe-sovereign.org/federation/trust/#privacy-scrubber))<br>
 **Import safety:** Entity MERGE (no duplicates) &bull; Trust ceiling (0.5) &bull; Contradiction detection via `moe.linting`
 
 > Every new installation enriches the collective knowledge graph. Every bundle import accelerates all participants. This is the **network effect** for open-source AI.
