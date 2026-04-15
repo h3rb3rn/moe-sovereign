@@ -66,5 +66,5 @@ This is the "compose → k8s bridge" that makes moving between tiers painless.
 `podman generate systemd` is deprecated as of Podman 4.4. Quadlet is the
 successor: you drop a `.container` file into
 `~/.config/containers/systemd/`, reload systemd, and a matching `.service`
-unit is auto-generated. See the [LXC page](lxc.md#the-quadlet-unit) for the
+unit is auto-generated. See the [LXC page](lxc.md#the-quadlet-unit-method-2) for the
 full unit file.
