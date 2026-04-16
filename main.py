@@ -17,6 +17,15 @@ from typing import List, Annotated, Dict, Any, TypedDict, Optional, Union
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+import telemetry as _telemetry
+from graph_rag.corrections import (
+    store_correction as _store_correction,
+    query_corrections as _query_corrections,
+    format_correction_context as _format_correction_context,
+    ensure_schema as _ensure_correction_schema,
+)
+
+CORRECTION_MEMORY_ENABLED = os.getenv("CORRECTION_MEMORY_ENABLED", "true").lower() in ("1", "true", "yes")
 import httpx
 import redis.asyncio as aioredis
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
@@ -381,7 +390,8 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
              "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
              "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
              "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
-             "graphrag_max_chars": 0}
+             "graphrag_max_chars": 0,
+             "history_max_turns": 0, "history_max_chars": 0}
     try:
         perms    = json.loads(permissions_json or "{}")
         tmpl_ids = perms.get("expert_template", [])
@@ -427,6 +437,9 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             # Context window budget: 0 = auto-compute from judge model's known context window.
             # Set a positive integer to pin the char limit; -1 = model-aware auto (same as 0).
             "graphrag_max_chars":  int(tmpl.get("graphrag_max_chars", 0)),
+            # Per-template history compression: 0 = global default, -1 = unlimited (no compression).
+            "history_max_turns":   int(tmpl.get("history_max_turns", 0)),
+            "history_max_chars":   int(tmpl.get("history_max_chars", 0)),
             # When true: activate thinking_node (chain-of-thought) before routing, equivalent
             # to mode="agent_orchestrated" — set in template config_json as force_think: true.
             "force_think":         bool(tmpl.get("force_think", False)),
@@ -1535,6 +1548,8 @@ class AgentState(TypedDict):
     enable_graphrag: bool                                 # template toggle: query Neo4j knowledge graph
     enable_web_research: bool                             # template toggle: allow web search via SearXNG
     graphrag_max_chars: int                               # per-template GraphRAG char budget (0 = auto from judge model context window)
+    history_max_turns: int                                # per-template history turn limit (0 = global default, -1 = unlimited)
+    history_max_chars: int                                # per-template history char limit (0 = global default, -1 = unlimited)
     planner_prompt: str                                   # custom planner LLM system prompt from template (empty = DEFAULT_PLANNER_ROLE)
     judge_prompt: str                                     # custom judge/merger system prompt from template (empty = mode_cfg["merger_prefix"])
     judge_model_override: str                             # per-template judge model (empty = global JUDGE_MODEL)
@@ -1858,9 +1873,21 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
     return best[0]
 
 
+THOMPSON_SAMPLING_ENABLED = os.getenv("THOMPSON_SAMPLING_ENABLED", "true").lower() in ("1", "true", "yes")
+
+PROM_THOMPSON = Histogram("moe_thompson_sample", "Thompson-sampled expert score",
+                          buckets=[.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0])
+
+
 async def _get_expert_score(model: str, category: str) -> float:
     """Performance score 0-1 for a model in a category.
-    Returns 0.5 if no data available yet (neutral)."""
+
+    When ``THOMPSON_SAMPLING_ENABLED`` is true, draws from Beta(α, β) instead
+    of the deterministic Laplace point estimate.  This provides natural
+    exploration: experts with fewer observations have wider variance and
+    occasionally score higher than their point estimate, giving them a chance
+    to prove themselves.
+    """
     if redis_client is None:
         return 0.5
     try:
@@ -1868,9 +1895,16 @@ async def _get_expert_score(model: str, category: str) -> float:
         data = await redis_client.hgetall(key)
         total = int(data.get("total", 0))
         if total < EXPERT_MIN_DATAPOINTS:
-            return 0.5  # zu wenig Daten → neutral
+            return 0.5
         positive = int(data.get("positive", 0))
-        return (positive + 1) / (total + 2)  # Laplace smoothing
+        if THOMPSON_SAMPLING_ENABLED:
+            import random
+            alpha = positive + 1
+            beta = (total - positive) + 1
+            score = random.betavariate(alpha, beta)
+            PROM_THOMPSON.observe(score)
+            return score
+        return (positive + 1) / (total + 2)  # Laplace fallback
     except Exception:
         return 0.5
 
@@ -1960,11 +1994,19 @@ def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: in
     """Truncates conversation history to the last N rounds and max. character count.
     Older assistant answers are compressed to [Answer…] instead of hard-truncated,
     so that user questions are preserved as conversation context.
+
+    Per-template overrides: 0 = use global default, -1 = unlimited (no truncation).
     """
     max_turns = max_turns if max_turns is not None else HISTORY_MAX_TURNS
     max_chars = max_chars if max_chars is not None else HISTORY_MAX_CHARS
     history = [m for m in messages if m.get("role") in ("user", "assistant")]
-    history = history[-(max_turns * 2):]
+    if max_turns == -1 and max_chars == -1:
+        return list(history)
+    if max_turns > 0:
+        history = history[-(max_turns * 2):]
+
+    if max_chars == -1:
+        return list(history)
 
     # Compress older assistant answers when total history length > 2/3 of the limit
     if sum(len(m["content"]) for m in history) > max_chars * 2 // 3:
@@ -2060,6 +2102,7 @@ async def _self_evaluate(response_id: str, question: str, answer: str, chroma_id
         PROM_SELF_EVAL.observe(score)
         if redis_client:
             await redis_client.hset(f"moe:response:{response_id}", "self_score", score)
+        asyncio.create_task(_telemetry.record_self_score(_userdb_pool, response_id, score))
         # Down-weight low-rated answers in the cache
         if score <= EVAL_CACHE_FLAG_THRESHOLD and chroma_id:
             await asyncio.to_thread(cache_collection.update, ids=[chroma_id], metadatas=[{"flagged": True, "self_score": score}])
@@ -3015,6 +3058,16 @@ async def expert_worker(state: AgentState):
             agent_ctx = state.get("system_prompt", "")
             if agent_ctx and mode in ("agent", "agent_orchestrated"):
                 sys_prompt += f"\n\n--- USER CODE CONTEXT ---\n{agent_ctx[:4000]}"
+            # Inject correction memory for this category (avoids repeat mistakes)
+            if CORRECTION_MEMORY_ENABLED and graph_manager is not None:
+                try:
+                    _driver = graph_manager.driver if hasattr(graph_manager, 'driver') else None
+                    _corr = await _query_corrections(_driver, state.get("input", ""), cat)
+                    _corr_ctx = _format_correction_context(_corr)
+                    if _corr_ctx:
+                        sys_prompt += f"\n\n{_corr_ctx}"
+                except Exception:
+                    pass
             # Embed conversation context before the current task
             messages: List[Dict] = [{"role": "system", "content": sys_prompt}]
             if chat_history:
@@ -3324,6 +3377,17 @@ async def merger_node(state: AgentState):
                         for r in new_expert_results
                     ]
                     any_improvement = True
+                    if CORRECTION_MEMORY_ENABLED and graph_manager is not None:
+                        asyncio.create_task(_store_correction(
+                            graph_manager.driver if hasattr(graph_manager, 'driver') else None,
+                            prompt=state.get("input", "")[:500],
+                            wrong=old_result[:500],
+                            correct=refined[:500],
+                            category=_cat,
+                            source_model=state.get("judge_model_override") or "",
+                            correction_source="judge_refinement",
+                            tenant_id=",".join(state.get("tenant_ids", [])),
+                        ))
             expert_results = new_expert_results
             if not any_improvement:
                 await _report(f"⏹️ Refinement stopped: no significant improvement "
@@ -3559,6 +3623,11 @@ async def merger_node(state: AgentState):
         # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)
         asyncio.create_task(_self_evaluate(
             state.get("response_id", ""), state["input"], res_content_clean, chroma_doc_id
+        ))
+        # Routing telemetry → PostgreSQL (async, fire-and-forget)
+        asyncio.create_task(_telemetry.record_routing_decision(
+            _userdb_pool, state.get("response_id", ""), state,
+            wall_clock_ms=int((time.time() - state.get("_start_time", time.time())) * 1000),
         ))
         # Request-Audit-Log → Kafka moe.requests
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
@@ -3846,6 +3915,8 @@ async def _init_graph_rag() -> None:
             mgr = GraphRAGManager(NEO4J_URI, NEO4J_USER, NEO4J_PASS)
             await mgr.setup()
             graph_manager = mgr
+            if CORRECTION_MEMORY_ENABLED:
+                await _ensure_correction_schema(mgr.driver)
             # Initiale Ontologie-Entity-Anzahl setzen
             try:
                 from graph_rag.ontology import _ENTITIES
@@ -4648,6 +4719,7 @@ async def submit_feedback(req: FeedbackRequest):
             if n:
                 logger.info(f"✅ {n} GraphRAG-Tripel als verified markiert")
 
+    asyncio.create_task(_telemetry.record_user_feedback(_userdb_pool, req.response_id, req.rating))
     asyncio.create_task(_kafka_publish(KAFKA_TOPIC_FEEDBACK, {
         "response_id": req.response_id,
         "rating":      req.rating,
@@ -4901,7 +4973,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         for m in request.messages
         if m.role in ("user", "assistant") and m != last_user
     ]
-    history = _truncate_history(raw_history)
+    _hist_turns = _tmpl_prompts.get("history_max_turns", 0) or None
+    _hist_chars = _tmpl_prompts.get("history_max_chars", 0) or None
+    history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
 
     # Native LLM: forward directly to endpoint, no MoE pipeline
     if _native_endpoint:
@@ -4967,6 +5041,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "enable_graphrag": _tmpl_prompts.get("enable_graphrag", True),
          "enable_web_research": _tmpl_prompts.get("enable_web_research", True),
          "graphrag_max_chars": _tmpl_prompts.get("graphrag_max_chars", 0),
+         "history_max_turns": _tmpl_prompts.get("history_max_turns", 0),
+         "history_max_chars": _tmpl_prompts.get("history_max_chars", 0),
          "planner_prompt": _tmpl_prompts["planner_prompt"],
          "judge_prompt":   _tmpl_prompts["judge_prompt"],
          "judge_model_override":   _tmpl_prompts["judge_model_override"],

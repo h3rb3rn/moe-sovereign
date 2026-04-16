@@ -93,6 +93,9 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-oss:20b":          32_768,
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
+    # ── AIHUB sovereign (H200 cloud) ─────────────────────────────────────────
+    "gpt-oss-120b-sovereign":   32_768,
+    "qwen-3.5-122b-sovereign":  32_768,
 }
 
 
