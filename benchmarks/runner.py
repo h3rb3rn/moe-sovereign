@@ -96,7 +96,7 @@ async def call_api(
     client: httpx.AsyncClient,
     messages: list[dict],
     session_id: str | None = None,
-    max_tokens: int = 1200,
+    max_tokens: int = 2048,
     timeout: int = 3600,
 ) -> dict:
     """Send a chat completion request to the MoE orchestrator."""

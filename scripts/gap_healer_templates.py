@@ -86,12 +86,14 @@ _STATIC_FALLBACK_POOL = [
 ]
 
 
-def _discover_pool() -> list[str]:
-    """Build the template pool dynamically from INFERENCE_SERVERS.
+ONTOLOGY_ENABLED_SERVERS_KEY = "moe:ontology:enabled_servers"
 
-    Any server with ``ontology_enabled: true`` contributes one template.
-    Falls back to the static pool if the env var is unparseable or empty.
-    Explicit override via TEMPLATE_POOL still wins for reproducibility.
+
+def _discover_pool_from_env() -> list[str]:
+    """Fallback: build pool from the INFERENCE_SERVERS env var at process start.
+
+    Stale after admin UI toggles until orchestrator is restarted — kept only as
+    a safety net. Prefer the Redis-backed discovery in `_discover_pool_async`.
     """
     override = os.environ.get("TEMPLATE_POOL", "").strip()
     if override:
@@ -115,7 +117,27 @@ def _discover_pool() -> list[str]:
     return pool or list(_STATIC_FALLBACK_POOL)
 
 
-TEMPLATE_POOL = _discover_pool()
+async def _discover_pool_async(redis_cli) -> list[str]:
+    """Pick the template pool live from Redis, written by the admin UI on every
+    ontology toggle. Falls back to env parsing if Redis is empty/unavailable.
+
+    TEMPLATE_POOL env override still wins for reproducibility.
+    """
+    override = os.environ.get("TEMPLATE_POOL", "").strip()
+    if override:
+        return [t.strip() for t in override.split(",") if t.strip()]
+
+    if redis_cli is not None:
+        try:
+            names = await redis_cli.smembers(ONTOLOGY_ENABLED_SERVERS_KEY)
+            if names:
+                return [f"moe-ontology-curator-{n.lower()}" for n in sorted(names)]
+        except Exception:
+            pass
+    return _discover_pool_from_env()
+
+
+TEMPLATE_POOL: list[str] = []  # populated in main() once Redis is reachable
 
 
 USER_PROMPT = """Classify this unknown term for our knowledge graph:
@@ -368,9 +390,6 @@ async def main() -> int:
     print("=" * 70, flush=True)
     print("Ontology Gap Healer — via MoE Expert Templates", flush=True)
     print(f"  API:           {MOE_API_BASE}", flush=True)
-    print(f"  Templates:     {len(TEMPLATE_POOL)} (round-robin)", flush=True)
-    for t in TEMPLATE_POOL:
-        print(f"    - {t}", flush=True)
     print(f"  Concurrency:   {CONCURRENCY}", flush=True)
     print(f"  Batch size:    {BATCH_SIZE}", flush=True)
     print(f"  Min confidence: {MIN_CONFIDENCE}", flush=True)
@@ -385,6 +404,14 @@ async def main() -> int:
         except Exception as e:
             print(f"  Valkey:         ⚠ not available ({e}) — gaps will not auto-clear", flush=True)
             redis_cli = None
+
+    global TEMPLATE_POOL
+    TEMPLATE_POOL = await _discover_pool_async(redis_cli)
+    if not TEMPLATE_POOL:
+        TEMPLATE_POOL = list(_STATIC_FALLBACK_POOL)
+    print(f"  Templates:     {len(TEMPLATE_POOL)} (round-robin)", flush=True)
+    for t in TEMPLATE_POOL:
+        print(f"    - {t}", flush=True)
     totals = {"processed": 0, "written": 0, "uncertain": 0, "failed": 0}
     iteration = 0
     t_start = time.time()

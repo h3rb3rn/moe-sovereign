@@ -77,6 +77,30 @@
 
   <!-- ── Tab 1: Aktive Prozesse ───────────────────────────────────────────── -->
   <div class="tab-pane fade show active" id="tab-active">
+
+    <!-- ── Background / Maintenance Jobs ──────────────────────────────────── -->
+    <div class="card mb-3 d-none" id="bg-jobs-card">
+      <div class="card-header bg-dark text-white d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-gear-wide-connected me-2"></i>{{ t(request, 'section.background_jobs') }}</span>
+        <small class="text-secondary">{{ t(request, 'info.maintenance_jobs') }}</small>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0" style="font-size:.85rem">
+          <thead class="table-light">
+            <tr>
+              <th>{{ t(request, 'table.job') }}</th>
+              <th>{{ t(request, 'table.status') }}</th>
+              <th>{{ t(request, 'table.started') }}</th>
+              <th>{{ t(request, 'table.duration') }}</th>
+              <th>{{ t(request, 'table.progress') }}</th>
+              <th>Run ID</th>
+            </tr>
+          </thead>
+          <tbody id="bg-jobs-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header bg-dark text-white d-flex align-items-center justify-content-between">
         <span><i class="bi bi-activity me-2"></i>{{ t(request, 'section.api_requests') }}</span>
@@ -398,6 +422,55 @@ async function fetchLLMInstances() {
   }
 }
 
+/* ── Background / Maintenance Jobs ─────────────────────────────────────────── */
+async function fetchBackgroundJobs() {
+  try {
+    const d = await fetch('/api/maintenance/ontology/status').then(r => r.json());
+    const status = d.status || 'idle';
+    const card = document.getElementById('bg-jobs-card');
+    const tbody = document.getElementById('bg-jobs-tbody');
+    if (!card || !tbody) return;
+
+    // Only show card when something is actively running or recently failed
+    const show = (status === 'running' || status === 'failed');
+    if (!show) { card.classList.add('d-none'); tbody.innerHTML = ''; return; }
+    card.classList.remove('d-none');
+
+    // Compute duration from started_at (epoch seconds string)
+    let duration = '–';
+    if (d.started_at) {
+      const start = parseFloat(d.started_at) * 1000;
+      if (!isNaN(start)) duration = fmtDuration((Date.now() - start) / 1000);
+    }
+    const started = d.started_at
+      ? new Date(parseFloat(d.started_at) * 1000).toLocaleTimeString('de-DE')
+      : '–';
+
+    const statusBadge = status === 'running'
+      ? `<span class="badge bg-success"><span class="live-badge" style="width:6px;height:6px"></span>running</span>`
+      : `<span class="badge bg-danger">${escHtml(status)}</span>`;
+
+    const processed = d.processed ?? '–';
+    const written   = d.written   ?? '–';
+    const failed    = d.failed    ?? '–';
+    const progress = `
+      <span class="metric-chip"><strong>${escHtml(processed)}</strong> processed</span>
+      <span class="metric-chip"><strong>${escHtml(written)}</strong> written</span>
+      <span class="metric-chip text-danger"><strong>${escHtml(failed)}</strong> failed</span>`;
+
+    tbody.innerHTML = `<tr>
+      <td><i class="bi bi-diagram-3 me-1 text-primary"></i>Ontology Gap Healer</td>
+      <td>${statusBadge}</td>
+      <td class="text-nowrap">${started}</td>
+      <td class="text-nowrap">${duration}</td>
+      <td>${progress}</td>
+      <td><code style="font-size:.75rem">${escHtml(d.run_id || '–')}</code></td>
+    </tr>`;
+  } catch(e) {
+    console.warn('background-jobs fetch failed:', e);
+  }
+}
+
 /* ── Prozess killen ────────────────────────────────────────────────────────── */
 async function killRequest(chatId) {
   if (!chatId) return;
@@ -485,7 +558,7 @@ function updateLastUpdateTime() {
 }
 
 function doRefresh() {
-  Promise.all([fetchActiveRequests(), fetchLLMInstances(), fetchCompletedRequests()])
+  Promise.all([fetchActiveRequests(), fetchLLMInstances(), fetchCompletedRequests(), fetchBackgroundJobs()])
     .then(() => updateLastUpdateTime());
 }
 
