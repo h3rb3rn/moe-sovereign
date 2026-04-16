@@ -140,6 +140,7 @@ nav:
     - Context Extension: system/intelligence/context_extension.md
     - Compounding Knowledge Base: system/intelligence/compounding_knowledge.md
     - Memory Palace: system/intelligence/memory_palace.md
+    - Reinforcement Learning Flywheel: system/intelligence/rl_flywheel.md
     - Autonomous Knowledge Healing: system/intelligence/autonomous_healing.md
     - Enterprise Features: system/intelligence/enterprise_features.md
     - Intelligence Growth Prognosis: system/intelligence/growth_prognosis.md
