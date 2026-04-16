@@ -24,14 +24,31 @@ except ImportError:
 PROVISION_REDIS_PREFIX = "moe:ontology:provision:"
 
 
+class CuratorModelUnresolved(ValueError):
+    """Raised when no curator model can be inferred for a server."""
+
+
 def pick_curator_model(server: dict) -> str:
-    """Return explicit override if set, otherwise map API type or VRAM → model."""
+    """Resolve the expert model for this server's curator template.
+
+    Precedence:
+      1. ``server['curator_model']`` — explicit admin override.
+      2. Ollama servers: VRAM-tier fallback to public community models.
+      3. OpenAI-compatible servers: no fallback — admin must set
+         ``curator_model`` (plus optional ``curator_planner_model``) in the
+         server entry, because the model catalog is provider-specific and
+         cannot be guessed. Raises ``CuratorModelUnresolved``.
+    """
     override = (server.get("curator_model") or "").strip()
     if override:
         return override
-    # OpenAI-compatible remote APIs: use cloud-native sovereign model, no local pull
-    if server.get("api_type") == "openai":
-        return "qwen-3.5-122b-sovereign"
+    api_type = server.get("api_type", "ollama")
+    if api_type == "openai":
+        raise CuratorModelUnresolved(
+            f"server {server.get('name','?')!r} is OpenAI-compatible but has no "
+            "'curator_model' configured — set it in the Admin UI server entry"
+        )
+    # Ollama: community-model VRAM tiers — safe baseline across any deployment.
     vram = int(server.get("vram_gb") or 0)
     if vram >= 20:
         return "mistral-nemo:latest"
@@ -219,11 +236,17 @@ async def provision_curator_for_server(
         await _set_redis_status(redis_cli, name, status, msg)
 
     await progress("pending", "starting")
-    model = pick_curator_model(server)
-    result["model"] = model
     is_openai = server.get("api_type") == "openai"
 
     try:
+        try:
+            model = pick_curator_model(server)
+        except CuratorModelUnresolved as e:
+            await progress("failed", str(e))
+            result["message"] = str(e)
+            return result
+        result["model"] = model
+
         if is_openai:
             # Remote OpenAI-compatible endpoints: models are always available, no pull needed.
             await progress("pulling", "remote API — skipping model pull")
@@ -240,12 +263,14 @@ async def provision_curator_for_server(
 
         tmpl = build_curator_template(parent, new_node=name, new_model=model)
 
-        # For OpenAI-compatible servers: upgrade planner/judge to the higher-quality
-        # sovereign model (gpt-oss-120b-sovereign) while keeping experts on qwen for speed.
-        if is_openai:
-            planner_model = server.get("curator_planner_model", "gpt-oss-120b-sovereign")
-            tmpl["planner_model"] = f"{planner_model}@{name}"
-            tmpl["judge_model"] = f"{planner_model}@{name}"
+        # Optional per-server planner/judge override (e.g. use a stronger
+        # reasoning model for routing while keeping experts on a cheaper one).
+        # If unset, the parent template's planner/judge models are used as-is
+        # after the node swap in build_curator_template.
+        planner_override = (server.get("curator_planner_model") or "").strip()
+        if planner_override:
+            tmpl["planner_model"] = f"{planner_override}@{name}"
+            tmpl["judge_model"] = f"{planner_override}@{name}"
 
         # Preserve existing template ID to avoid unique-name constraint violations:
         # build_curator_template may generate a new ID (tmpl-curator-*) but a template
