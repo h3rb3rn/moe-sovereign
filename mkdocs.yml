@@ -133,7 +133,6 @@ nav:
     - Docker Services: system/services.md
     - Webserver & Reverse Proxy: system/webserver.md
     - UI Screenshots: system/screenshots.md
-    - System Status: system/status.md
   - Intelligence & Learning:
     - system/intelligence/index.md
     - Causal Learning Loop: system/intelligence/causal_learning.md
