@@ -41,10 +41,9 @@ import httpx
 API_BASE   = os.environ.get("MOE_API_BASE", "http://localhost:8002")
 API_KEY    = os.environ.get("MOE_API_KEY", "")
 TEMPLATE   = os.environ.get("MOE_TEMPLATE", "moe-reference-30b-balanced")
-DATASET    = pathlib.Path(os.environ.get(
-    "MOE_EVAL_DATASET",
-    str(pathlib.Path(__file__).parent / "datasets" / "moe_eval_v1.json"),
-))
+_DATASET_FILE = os.environ.get("MOE_EVAL_DATASET", "moe_eval_v1.json")
+_DATASET_DIR  = pathlib.Path(__file__).parent / "datasets"
+DATASET = pathlib.Path(_DATASET_FILE) if pathlib.Path(_DATASET_FILE).is_absolute() else _DATASET_DIR / _DATASET_FILE
 RESULTS_DIR = pathlib.Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
