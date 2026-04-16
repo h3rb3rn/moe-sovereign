@@ -25,10 +25,13 @@ PROVISION_REDIS_PREFIX = "moe:ontology:provision:"
 
 
 def pick_curator_model(server: dict) -> str:
-    """Return explicit override if set, otherwise map VRAM → model."""
+    """Return explicit override if set, otherwise map API type or VRAM → model."""
     override = (server.get("curator_model") or "").strip()
     if override:
         return override
+    # OpenAI-compatible remote APIs: use cloud-native sovereign model, no local pull
+    if server.get("api_type") == "openai":
+        return "qwen-3.5-122b-sovereign"
     vram = int(server.get("vram_gb") or 0)
     if vram >= 20:
         return "mistral-nemo:latest"
@@ -116,10 +119,12 @@ def _pick_parent_template(all_templates: list[dict], server: dict) -> Optional[d
     Rough heuristic: if the server name contains the parent's node suffix
     (e.g. N11-M10-01 → parent N11-M10), use it. Otherwise fall back to
     the first aggregated ontology curator found.
+    Supports single-word node names like AIHUB (moe-ontology-curator-aihub).
     """
     by_name = {t["name"]: t for t in all_templates if "ontology-curator" in t.get("name", "")}
+    # Accept any number of hyphen-separated alphanumeric segments after the prefix
     agg = {n: t for n, t in by_name.items()
-           if re.match(r"^moe-ontology-curator-[a-z0-9]+-[a-z0-9]+$", n)}
+           if re.match(r"^moe-ontology-curator-[a-z0-9]+(-[a-z0-9]+)*$", n)}
     srv_name = server.get("name", "").upper()
     for name, tmpl in agg.items():
         suffix = name[len("moe-ontology-curator-"):].upper()
@@ -216,10 +221,15 @@ async def provision_curator_for_server(
     await progress("pending", "starting")
     model = pick_curator_model(server)
     result["model"] = model
+    is_openai = server.get("api_type") == "openai"
 
     try:
-        async with httpx.AsyncClient() as client:
-            await _ensure_model_available(client, server["url"], model, progress_cb=progress)
+        if is_openai:
+            # Remote OpenAI-compatible endpoints: models are always available, no pull needed.
+            await progress("pulling", "remote API — skipping model pull")
+        else:
+            async with httpx.AsyncClient() as client:
+                await _ensure_model_available(client, server["url"], model, progress_cb=progress)
 
         all_templates = await database.list_admin_templates()
         parent = _pick_parent_template(all_templates, server)
@@ -229,6 +239,23 @@ async def provision_curator_for_server(
             return result
 
         tmpl = build_curator_template(parent, new_node=name, new_model=model)
+
+        # For OpenAI-compatible servers: upgrade planner/judge to the higher-quality
+        # sovereign model (gpt-oss-120b-sovereign) while keeping experts on qwen for speed.
+        if is_openai:
+            planner_model = server.get("curator_planner_model", "gpt-oss-120b-sovereign")
+            tmpl["planner_model"] = f"{planner_model}@{name}"
+            tmpl["judge_model"] = f"{planner_model}@{name}"
+
+        # Preserve existing template ID to avoid unique-name constraint violations:
+        # build_curator_template may generate a new ID (tmpl-curator-*) but a template
+        # with the same name may already exist under a different ID.
+        existing = next(
+            (t for t in all_templates if t.get("name") == tmpl.get("name")), None
+        )
+        if existing:
+            tmpl["id"] = existing.get("id", tmpl["id"])
+
         await database.upsert_admin_template(tmpl)
         if refresh_cache_cb is not None:
             try:

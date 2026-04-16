@@ -2218,6 +2218,18 @@ async def api_ontology_toggle(server_name: str, request: Request):
         raise HTTPException(status_code=404, detail=f"server {server_name} not found")
 
     redis_cli = await _get_provision_redis()
+    # Keep the live pool — consumed by gap_healer_templates.py — in sync with
+    # the admin toggle. The orchestrator's INFERENCE_SERVERS env is frozen at
+    # container start, so the healer would otherwise miss UI changes.
+    if redis_cli is not None:
+        try:
+            if enabled:
+                await redis_cli.sadd("moe:ontology:enabled_servers", server_name)
+            else:
+                await redis_cli.srem("moe:ontology:enabled_servers", server_name)
+        except Exception as exc:
+            logger.warning("Ontology enabled_servers SET update failed: %s", exc)
+
     if enabled:
         async def _runner():
             await _curator_provisioner.provision_curator_for_server(

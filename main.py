@@ -6300,4 +6300,10 @@ async def get_tool_eval_log(limit: int = 50):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        timeout_keep_alive=600,      # 10 min — prevents proxy/load-balancer from dropping long-running non-streaming requests
+        timeout_graceful_shutdown=60,
+    )
