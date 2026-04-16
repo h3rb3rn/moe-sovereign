@@ -73,6 +73,18 @@ Every request from a coding agent carries conversation history. Without manageme
 
 This keeps history consumption bounded regardless of session length.
 
+**Per-template override (since April 2026):**
+
+Expert templates can now override the global limits via `history_max_turns` and
+`history_max_chars` in their config. Setting either to `-1` disables compression
+entirely for that template — useful for benchmarking or long-context models.
+
+| Config value | Behaviour |
+|---|---|
+| `0` (default) | Use global `HISTORY_MAX_TURNS` / `HISTORY_MAX_CHARS` |
+| `-1` | Unlimited — no compression, full history passed through |
+| `N > 0` | Override with custom limit |
+
 ---
 
 ## Mechanism 3 — Structured Graph Retrieval (GraphRAG)
@@ -192,6 +204,8 @@ For a codebase that would naively require 100k tokens in a single call, the MoE 
 |---|---|---|
 | `HISTORY_MAX_TURNS` | `4` | Conversation turns included per request |
 | `HISTORY_MAX_CHARS` | `3000` | Total history char limit |
+| `history_max_turns` (template) | `0` | Per-template override (`0` = global, `-1` = unlimited) |
+| `history_max_chars` (template) | `0` | Per-template override (`0` = global, `-1` = unlimited) |
 | `MAX_EXPERT_OUTPUT_CHARS` | `2400` | Per-expert output cap before merger |
 | `TOOL_MAX_TOKENS` | `8192` | Max tokens for MCP tool responses |
 | `REASONING_MAX_TOKENS` | `16384` | Max tokens for thinking node output |

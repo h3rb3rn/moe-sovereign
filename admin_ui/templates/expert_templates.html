@@ -215,6 +215,32 @@
             </div>
           </div>
         </div>
+        <hr class="my-2">
+        <div class="row g-2">
+          <div class="col-12"><small class="text-muted fw-bold">Pipeline Toggles</small></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_cache" checked><label class="form-check-label small" for="ct_enable_cache">Cache</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_graphrag" checked><label class="form-check-label small" for="ct_enable_graphrag">GraphRAG</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_web_research" checked><label class="form-check-label small" for="ct_enable_web_research">Web Research</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_force_think"><label class="form-check-label small" for="ct_force_think">{{ t(request, 'label.force_think') }}</label></div></div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
+          <div class="col-4">
+            <label class="form-label small mb-0" for="ct_graphrag_max_chars">{{ t(request, 'label.graphrag_max_chars') }}</label>
+            <input type="number" class="form-control form-control-sm" id="ct_graphrag_max_chars" value="0" min="-1" step="1000">
+            <div class="form-text" style="font-size:.7rem">0 = auto</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label small mb-0" for="ct_history_max_turns">{{ t(request, 'label.history_max_turns') }}</label>
+            <input type="number" class="form-control form-control-sm" id="ct_history_max_turns" value="0" min="-1" step="1">
+            <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label small mb-0" for="ct_history_max_chars">{{ t(request, 'label.history_max_chars') }}</label>
+            <input type="number" class="form-control form-control-sm" id="ct_history_max_chars" value="0" min="-1" step="500">
+            <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+          </div>
+        </div>
         <div id="ct_error" class="alert alert-danger mt-2 d-none py-2 small"></div>
       </div>
       <div class="modal-footer">
@@ -610,6 +636,13 @@ async function createTemplate() {
         planner_model:  getLlmValue('ct_planner_llm_select'),
         judge_model:    getLlmValue('ct_judge_llm_select'),
         experts:        collectExperts('ct'),
+        enable_cache:        document.getElementById('ct_enable_cache').checked,
+        enable_graphrag:     document.getElementById('ct_enable_graphrag').checked,
+        enable_web_research: document.getElementById('ct_enable_web_research').checked,
+        force_think:         document.getElementById('ct_force_think').checked,
+        graphrag_max_chars:  parseInt(document.getElementById('ct_graphrag_max_chars').value) || 0,
+        history_max_turns:   parseInt(document.getElementById('ct_history_max_turns').value) || 0,
+        history_max_chars:   parseInt(document.getElementById('ct_history_max_chars').value) || 0,
       })
     });
     const data = await res.json();
@@ -707,23 +740,53 @@ async function openEditModal(tmplId) {
     <hr class="my-2">
     <div class="row g-2 mt-1">
       <div class="col-12"><small class="text-muted fw-bold">Pipeline Toggles</small></div>
-      <div class="col-4">
+      <div class="col-3">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" id="et_enable_cache" ${tmpl.enable_cache !== false ? 'checked' : ''}>
           <label class="form-check-label small" for="et_enable_cache">Cache (ChromaDB)</label>
         </div>
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" id="et_enable_graphrag" ${tmpl.enable_graphrag !== false ? 'checked' : ''}>
           <label class="form-check-label small" for="et_enable_graphrag">GraphRAG (Neo4j)</label>
         </div>
       </div>
-      <div class="col-4">
+      <div class="col-3">
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" id="et_enable_web_research" ${tmpl.enable_web_research !== false ? 'checked' : ''}>
           <label class="form-check-label small" for="et_enable_web_research">Web Research</label>
         </div>
+      </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_force_think" ${tmpl.force_think ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_force_think">{{ t(request, 'label.force_think') }}</label>
+        </div>
+      </div>
+    </div>
+    <div class="row g-2 mt-1">
+      <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
+      <div class="col-4">
+        <label class="form-label small mb-0" for="et_graphrag_max_chars">{{ t(request, 'label.graphrag_max_chars') }}</label>
+        <input type="number" class="form-control form-control-sm" id="et_graphrag_max_chars"
+               value="${tmpl.graphrag_max_chars || 0}" min="-1" step="1000"
+               title="{{ t(request, 'tip.graphrag_max_chars') }}">
+        <div class="form-text" style="font-size:.7rem">0 = auto, -1 = auto, &gt;0 = {{ t(request, 'label.fixed_chars') }}</div>
+      </div>
+      <div class="col-4">
+        <label class="form-label small mb-0" for="et_history_max_turns">{{ t(request, 'label.history_max_turns') }}</label>
+        <input type="number" class="form-control form-control-sm" id="et_history_max_turns"
+               value="${tmpl.history_max_turns || 0}" min="-1" step="1"
+               title="{{ t(request, 'tip.history_max_turns') }}">
+        <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+      </div>
+      <div class="col-4">
+        <label class="form-label small mb-0" for="et_history_max_chars">{{ t(request, 'label.history_max_chars') }}</label>
+        <input type="number" class="form-control form-control-sm" id="et_history_max_chars"
+               value="${tmpl.history_max_chars || 0}" min="-1" step="500"
+               title="{{ t(request, 'tip.history_max_chars') }}">
+        <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
       </div>
     </div>
     <div id="et_error" class="alert alert-danger mt-2 d-none py-2 small"></div>`;
@@ -756,6 +819,10 @@ async function saveEditTemplate() {
         enable_cache:        document.getElementById('et_enable_cache').checked,
         enable_graphrag:     document.getElementById('et_enable_graphrag').checked,
         enable_web_research: document.getElementById('et_enable_web_research').checked,
+        force_think:         document.getElementById('et_force_think').checked,
+        graphrag_max_chars:  parseInt(document.getElementById('et_graphrag_max_chars').value) || 0,
+        history_max_turns:   parseInt(document.getElementById('et_history_max_turns').value) || 0,
+        history_max_chars:   parseInt(document.getElementById('et_history_max_chars').value) || 0,
       })
     });
     const data = await res.json();

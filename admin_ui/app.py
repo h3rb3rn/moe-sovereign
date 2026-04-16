@@ -1945,32 +1945,35 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
     """Returns all monitoring data from Prometheus for the dashboard."""
     import asyncio as _asyncio
 
+    # Use increase() over 90d for counters — survives container restarts.
+    # Raw counters reset to 0 on orchestrator restart; increase() sums across resets.
+    _W = "[90d]"
     results = await _asyncio.gather(
-        # Token usage per model (total)
-        _prom_query('sort_desc(sum by (model) (moe_tokens_total))'),
+        # Token usage per model (cumulative across restarts)
+        _prom_query(f'sort_desc(sum by (model) (increase(moe_tokens_total{_W})))'),
         # Prompt vs completion split
-        _prom_query('sort_desc(sum by (model, token_type) (moe_tokens_total))'),
+        _prom_query(f'sort_desc(sum by (model, token_type) (increase(moe_tokens_total{_W})))'),
         # Expert calls per category
-        _prom_query('sort_desc(sum by (category) (moe_expert_calls_total))'),
+        _prom_query(f'sort_desc(sum by (category) (increase(moe_expert_calls_total{_W})))'),
         # Expert calls per model
-        _prom_query('sort_desc(sum by (model) (moe_expert_calls_total))'),
+        _prom_query(f'sort_desc(sum by (model) (increase(moe_expert_calls_total{_W})))'),
         # Expert calls per model AND node
-        _prom_query('sort_desc(sum by (model, node) (moe_expert_calls_total))'),
+        _prom_query(f'sort_desc(sum by (model, node) (increase(moe_expert_calls_total{_W})))'),
         # Tokens per model AND node
-        _prom_query('sort_desc(sum by (model, node) (moe_tokens_total))'),
-        # Cache hit rate
-        _prom_query('moe_cache_hits_total / (moe_cache_hits_total + moe_cache_misses_total)'),
+        _prom_query(f'sort_desc(sum by (model, node) (increase(moe_tokens_total{_W})))'),
+        # Cache hit rate (use increase to survive restarts)
+        _prom_query(f'sum(increase(moe_cache_hits_total{_W})) / (sum(increase(moe_cache_hits_total{_W})) + sum(increase(moe_cache_misses_total{_W})))'),
         # Cache absolute counts
-        _prom_query('moe_cache_hits_total'),
-        _prom_query('moe_cache_misses_total'),
+        _prom_query(f'sum(increase(moe_cache_hits_total{_W}))'),
+        _prom_query(f'sum(increase(moe_cache_misses_total{_W}))'),
         # Requests per mode
-        _prom_query('sort_desc(sum by (mode) (moe_requests_total))'),
+        _prom_query(f'sort_desc(sum by (mode) (increase(moe_requests_total{_W})))'),
         # Response time p50 / p95 (last hour)
         _prom_query('histogram_quantile(0.50, rate(moe_response_duration_seconds_bucket[1h]))'),
         _prom_query('histogram_quantile(0.95, rate(moe_response_duration_seconds_bucket[1h]))'),
         # Confidence distribution
-        _prom_query('sort_desc(sum by (level) (moe_expert_confidence_total))'),
-        # System gauges
+        _prom_query(f'sort_desc(sum by (level) (increase(moe_expert_confidence_total{_W})))'),
+        # System gauges (not counters — current values)
         _prom_query('moe_chroma_documents_total'),
         _prom_query('moe_graph_entities_total'),
         _prom_query('moe_graph_relations_total'),
@@ -1978,9 +1981,17 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
         _prom_query('moe_planner_patterns_total'),
         _prom_query('moe_ontology_gaps_total'),
         # Self-evaluation distribution
-        _prom_query('sum by (le) (moe_self_eval_score_bucket)'),
+        _prom_query(f'sum by (le) (increase(moe_self_eval_score_bucket{_W}))'),
         # Feedback distribution
-        _prom_query('sum by (le) (moe_feedback_score_bucket)'),
+        _prom_query(f'sum by (le) (increase(moe_feedback_score_bucket{_W}))'),
+        # --- NEW: RL Flywheel & Context Window metrics ---
+        _prom_query(f'sum(increase(moe_history_compressed_total{_W}))'),          # 21
+        _prom_query(f'sum(increase(moe_history_unlimited_total{_W}))'),           # 22
+        _prom_query(f'sum by (source) (increase(moe_corrections_stored_total{_W}))'),  # 23
+        _prom_query(f'sum by (category) (increase(moe_corrections_injected_total{_W}))'),  # 24
+        _prom_query(f'sum by (outcome) (increase(moe_judge_refinement_total{_W}))'),  # 25
+        _prom_query(f'sum by (model, reason) (increase(moe_expert_failures_total{_W}))'),  # 26
+        _prom_query(f'histogram_quantile(0.50, rate(moe_thompson_sample_bucket[1h]))'),  # 27
     )
 
     def _extract_vec(data: dict) -> list:
@@ -2018,6 +2029,14 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
         },
         "self_eval_buckets":    _extract_vec(results[19]),
         "feedback_buckets":     _extract_vec(results[20]),
+        # RL Flywheel & Context Window
+        "history_compressed":     _scalar(results[21]),
+        "history_unlimited":      _scalar(results[22]),
+        "corrections_stored":     _extract_vec(results[23]),
+        "corrections_injected":   _extract_vec(results[24]),
+        "judge_refinements":      _extract_vec(results[25]),
+        "expert_failures":        _extract_vec(results[26]),
+        "thompson_p50":           _scalar(results[27]),
     }
 
 

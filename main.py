@@ -934,6 +934,13 @@ PROM_LINTING_CONFLICTS  = Counter('moe_linting_conflicts_resolved_total', 'Confl
 PROM_LINTING_DECAY      = Counter('moe_linting_decay_deleted_total', 'Relations deleted by confidence decay')
 PROM_QUARANTINE_ADDED   = Counter('moe_quarantine_added_total', 'Triples quarantined by blast-radius check')
 PROM_SYNTHESIS_CREATED  = Counter('moe_synthesis_persisted_total',     'Synthesis nodes persisted',               ['domain', 'insight_type'])
+# --- RL FLYWHEEL & CONTEXT WINDOW METRICS ---
+PROM_HISTORY_COMPRESSED = Counter('moe_history_compressed_total',      'History compression events (turns truncated)')
+PROM_HISTORY_UNLIMITED  = Counter('moe_history_unlimited_total',       'Requests with compression disabled (per-template)')
+PROM_CORRECTIONS_STORED = Counter('moe_corrections_stored_total',      'Correction memory entries written to Neo4j',   ['source'])
+PROM_CORRECTIONS_INJECTED = Counter('moe_corrections_injected_total',  'Correction memory entries injected into expert prompts', ['category'])
+PROM_JUDGE_REFINED      = Counter('moe_judge_refinement_total',        'Judge refinement rounds executed',             ['outcome'])
+PROM_EXPERT_FAILURES    = Counter('moe_expert_failures_total',         'Expert invocation failures (VRAM, timeout, error)', ['model', 'reason'])
 
 # --- USER AUTH & USAGE TRACKING ---
 
@@ -2001,6 +2008,7 @@ def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: in
     max_chars = max_chars if max_chars is not None else HISTORY_MAX_CHARS
     history = [m for m in messages if m.get("role") in ("user", "assistant")]
     if max_turns == -1 and max_chars == -1:
+        PROM_HISTORY_UNLIMITED.inc()
         return list(history)
     if max_turns > 0:
         history = history[-(max_turns * 2):]
@@ -2009,7 +2017,9 @@ def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: in
         return list(history)
 
     # Compress older assistant answers when total history length > 2/3 of the limit
-    if sum(len(m["content"]) for m in history) > max_chars * 2 // 3:
+    _total_chars = sum(len(m["content"]) for m in history)
+    if _total_chars > max_chars * 2 // 3:
+        PROM_HISTORY_COMPRESSED.inc()
         compressed = []
         for i, msg in enumerate(history):
             # Always keep the last 2 messages (current turn) in full
@@ -3065,6 +3075,7 @@ async def expert_worker(state: AgentState):
                     _corr = await _query_corrections(_driver, state.get("input", ""), cat)
                     _corr_ctx = _format_correction_context(_corr)
                     if _corr_ctx:
+                        PROM_CORRECTIONS_INJECTED.labels(category=cat).inc(len(_corr))
                         sys_prompt += f"\n\n{_corr_ctx}"
                 except Exception:
                     pass
@@ -3140,9 +3151,11 @@ async def expert_worker(state: AgentState):
                               ("cudamalloc", "out of memory", "oom", "transfer encoding",
                                "not enough data", "cuda error"))
                 if is_vram:
+                    PROM_EXPERT_FAILURES.labels(model=model_name, reason="vram").inc()
                     logger.error(f"❌ VRAM/HTTP error GPU#{gpu} {model_name}: {e}")
                     await _report(f"❌ Expert {model_name}: GPU/HTTP error")
                     return {"res": f"[{model_name} ERROR]: VRAM/HTTP", "model_cat": None}
+                PROM_EXPERT_FAILURES.labels(model=model_name, reason="error").inc()
                 logger.error(f"❌ Expert {model_name}: {e}")
                 await _report(f"❌ Expert {model_name}: error")
                 return {"res": f"[{model_name} ERROR]: {e}", "model_cat": None}
@@ -3377,7 +3390,9 @@ async def merger_node(state: AgentState):
                         for r in new_expert_results
                     ]
                     any_improvement = True
+                    PROM_JUDGE_REFINED.labels(outcome="improved").inc()
                     if CORRECTION_MEMORY_ENABLED and graph_manager is not None:
+                        PROM_CORRECTIONS_STORED.labels(source="judge_refinement").inc()
                         asyncio.create_task(_store_correction(
                             graph_manager.driver if hasattr(graph_manager, 'driver') else None,
                             prompt=state.get("input", "")[:500],
