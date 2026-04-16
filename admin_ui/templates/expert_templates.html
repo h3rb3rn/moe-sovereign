@@ -225,20 +225,30 @@
         </div>
         <div class="row g-2 mt-1">
           <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
-          <div class="col-4">
+          <div class="col-6">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="ct_compression_enabled" checked
+                     onchange="document.getElementById('ct_compression_details').style.display = this.checked ? '' : 'none'">
+              <label class="form-check-label small" for="ct_compression_enabled">{{ t(request, 'label.compression_enabled') }}</label>
+            </div>
+            <div class="form-text" style="font-size:.7rem">{{ t(request, 'tip.compression_toggle') }}</div>
+          </div>
+          <div class="col-6">
             <label class="form-label small mb-0" for="ct_graphrag_max_chars">{{ t(request, 'label.graphrag_max_chars') }}</label>
             <input type="number" class="form-control form-control-sm" id="ct_graphrag_max_chars" value="0" min="-1" step="1000">
             <div class="form-text" style="font-size:.7rem">0 = auto</div>
           </div>
-          <div class="col-4">
+        </div>
+        <div class="row g-2 mt-1" id="ct_compression_details">
+          <div class="col-6">
             <label class="form-label small mb-0" for="ct_history_max_turns">{{ t(request, 'label.history_max_turns') }}</label>
-            <input type="number" class="form-control form-control-sm" id="ct_history_max_turns" value="0" min="-1" step="1">
-            <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+            <input type="number" class="form-control form-control-sm" id="ct_history_max_turns" value="0" min="0" step="1">
+            <div class="form-text" style="font-size:.7rem">0 = {{ t(request, 'label.global_default') }}</div>
           </div>
-          <div class="col-4">
+          <div class="col-6">
             <label class="form-label small mb-0" for="ct_history_max_chars">{{ t(request, 'label.history_max_chars') }}</label>
-            <input type="number" class="form-control form-control-sm" id="ct_history_max_chars" value="0" min="-1" step="500">
-            <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+            <input type="number" class="form-control form-control-sm" id="ct_history_max_chars" value="0" min="0" step="500">
+            <div class="form-text" style="font-size:.7rem">0 = {{ t(request, 'label.global_default') }}</div>
           </div>
         </div>
         <div id="ct_error" class="alert alert-danger mt-2 d-none py-2 small"></div>
@@ -641,8 +651,12 @@ async function createTemplate() {
         enable_web_research: document.getElementById('ct_enable_web_research').checked,
         force_think:         document.getElementById('ct_force_think').checked,
         graphrag_max_chars:  parseInt(document.getElementById('ct_graphrag_max_chars').value) || 0,
-        history_max_turns:   parseInt(document.getElementById('ct_history_max_turns').value) || 0,
-        history_max_chars:   parseInt(document.getElementById('ct_history_max_chars').value) || 0,
+        history_max_turns:   document.getElementById('ct_compression_enabled').checked
+                               ? (parseInt(document.getElementById('ct_history_max_turns').value) || 0)
+                               : -1,
+        history_max_chars:   document.getElementById('ct_compression_enabled').checked
+                               ? (parseInt(document.getElementById('ct_history_max_chars').value) || 0)
+                               : -1,
       })
     });
     const data = await res.json();
@@ -767,26 +781,38 @@ async function openEditModal(tmplId) {
     </div>
     <div class="row g-2 mt-1">
       <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
-      <div class="col-4">
+      <div class="col-6">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_compression_enabled"
+                 ${(tmpl.history_max_turns === -1 && tmpl.history_max_chars === -1) ? '' : 'checked'}
+                 onchange="document.getElementById('et_compression_details').style.display = this.checked ? '' : 'none'">
+          <label class="form-check-label small" for="et_compression_enabled">{{ t(request, 'label.compression_enabled') }}</label>
+        </div>
+        <div class="form-text" style="font-size:.7rem">{{ t(request, 'tip.compression_toggle') }}</div>
+      </div>
+      <div class="col-6">
         <label class="form-label small mb-0" for="et_graphrag_max_chars">{{ t(request, 'label.graphrag_max_chars') }}</label>
         <input type="number" class="form-control form-control-sm" id="et_graphrag_max_chars"
                value="${tmpl.graphrag_max_chars || 0}" min="-1" step="1000"
                title="{{ t(request, 'tip.graphrag_max_chars') }}">
-        <div class="form-text" style="font-size:.7rem">0 = auto, -1 = auto, &gt;0 = {{ t(request, 'label.fixed_chars') }}</div>
+        <div class="form-text" style="font-size:.7rem">0 = auto, &gt;0 = {{ t(request, 'label.fixed_chars') }}</div>
       </div>
-      <div class="col-4">
+    </div>
+    <div class="row g-2 mt-1" id="et_compression_details"
+         style="${(tmpl.history_max_turns === -1 && tmpl.history_max_chars === -1) ? 'display:none' : ''}">
+      <div class="col-6">
         <label class="form-label small mb-0" for="et_history_max_turns">{{ t(request, 'label.history_max_turns') }}</label>
         <input type="number" class="form-control form-control-sm" id="et_history_max_turns"
-               value="${tmpl.history_max_turns || 0}" min="-1" step="1"
+               value="${tmpl.history_max_turns || 0}" min="0" step="1"
                title="{{ t(request, 'tip.history_max_turns') }}">
-        <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+        <div class="form-text" style="font-size:.7rem">0 = {{ t(request, 'label.global_default') }}</div>
       </div>
-      <div class="col-4">
+      <div class="col-6">
         <label class="form-label small mb-0" for="et_history_max_chars">{{ t(request, 'label.history_max_chars') }}</label>
         <input type="number" class="form-control form-control-sm" id="et_history_max_chars"
-               value="${tmpl.history_max_chars || 0}" min="-1" step="500"
+               value="${tmpl.history_max_chars || 0}" min="0" step="500"
                title="{{ t(request, 'tip.history_max_chars') }}">
-        <div class="form-text" style="font-size:.7rem">0 = global, -1 = {{ t(request, 'label.unlimited') }}</div>
+        <div class="form-text" style="font-size:.7rem">0 = {{ t(request, 'label.global_default') }}</div>
       </div>
     </div>
     <div id="et_error" class="alert alert-danger mt-2 d-none py-2 small"></div>`;
@@ -821,8 +847,12 @@ async function saveEditTemplate() {
         enable_web_research: document.getElementById('et_enable_web_research').checked,
         force_think:         document.getElementById('et_force_think').checked,
         graphrag_max_chars:  parseInt(document.getElementById('et_graphrag_max_chars').value) || 0,
-        history_max_turns:   parseInt(document.getElementById('et_history_max_turns').value) || 0,
-        history_max_chars:   parseInt(document.getElementById('et_history_max_chars').value) || 0,
+        history_max_turns:   document.getElementById('et_compression_enabled').checked
+                               ? (parseInt(document.getElementById('et_history_max_turns').value) || 0)
+                               : -1,
+        history_max_chars:   document.getElementById('et_compression_enabled').checked
+                               ? (parseInt(document.getElementById('et_history_max_chars').value) || 0)
+                               : -1,
       })
     });
     const data = await res.json();
