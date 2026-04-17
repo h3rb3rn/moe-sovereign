@@ -10,6 +10,22 @@ Screenshots of all MoE Sovereign web interfaces. Generated automatically via Pla
 
 ![Admin Login](../assets/screenshots/admin_login.png)
 
+### Dashboard — Full Overview (with Advanced Pipeline Settings)
+
+Full-page screenshot of the Admin UI dashboard including all configuration sections:
+server tiles, model routing, SMTP, OIDC, CORS, and the expanded Advanced Pipeline Settings block.
+All sensitive fields (URLs, credentials, API keys, server names) are privacy-blurred.
+
+![Admin Overview](../assets/screenshots/moe-admin-overview.png)
+
+### Live Monitoring
+
+Full-page screenshot of the monitoring view showing per-node GPU utilisation, inference
+throughput, memory occupancy, and the gap-healer slot counters. Server tiles wait for
+the background health-check to complete before capture.
+
+![Admin Monitoring](../assets/screenshots/moe-admin-monitoring.png)
+
 ### Dashboard — System Configuration
 
 ![Admin Dashboard](../assets/screenshots/admin_dashboard.jpg)
@@ -30,7 +46,7 @@ Screenshots of all MoE Sovereign web interfaces. Generated automatically via Pla
 
 ![Servers](../assets/screenshots/admin_servers.jpg)
 
-### System Monitoring
+### System Monitoring (legacy)
 
 ![Monitoring](../assets/screenshots/admin_monitoring.png)
 
@@ -92,9 +108,34 @@ Screenshots of all MoE Sovereign web interfaces. Generated automatically via Pla
 
 ---
 
+## Grafana — GPU & Inference Nodes
+
+Real-time GPU utilisation, VRAM occupancy, and per-model inference throughput across all
+heterogeneous nodes (RTX 4090, Tesla M60, Tesla M10, GT 1060). Captured in kiosk mode.
+
+![Grafana GPU & Inference Nodes](../assets/screenshots/grafana-gpu-nodes.png)
+
+## Grafana — Knowledge Base Health
+
+Neo4j entity count, relation count, gap-queue depth (`moe:ontology_gaps` ZCARD),
+and per-template healing throughput over the last 24 hours.
+
+![Grafana Knowledge Base Health](../assets/screenshots/grafana-knowledge.png)
+
 ## Dozzle — Log Viewer
 
-![Dozzle](../assets/screenshots/dozzle_home.jpg)
+Container log aggregation across all MoE Sovereign services, accessible without
+SSH access. Useful for real-time debugging during ontology gap healing runs.
+
+![Dozzle](../assets/screenshots/dozzle.png)
+
+## Neo4j — Knowledge Graph (500+ Entities)
+
+Neo4j Browser showing a 500-entity subgraph excerpt: entities (Framework, Concept,
+Protocol, Tool) and their typed relations (IS_A, USES, IMPLEMENTS, PART_OF). The
+graph is the product of autonomous healing over multiple sessions.
+
+![Neo4j Knowledge Graph](../assets/screenshots/neo4j-knowledge-graph.png)
 
 ---
 

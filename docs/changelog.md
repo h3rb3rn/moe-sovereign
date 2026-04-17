@@ -8,6 +8,78 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.2.0] - 2026-04-17
+
+### Added — Responsive Design & Visual Refresh
+
+#### Admin UI — Bootstrap 5 Offcanvas Navigation
+
+The Admin UI navbar (17 navigation links) has been restructured using the
+Bootstrap 5 Offcanvas pattern to prevent horizontal overflow on screens
+narrower than 1400 px.
+
+- **Desktop (≥1400px):** full horizontal link strip (`d-none d-xxl-flex`)
+- **Tablet/Phone (<1400px):** hamburger icon (`d-xxl-none`) opens a slide-in
+  drawer (`offcanvas offcanvas-end`) containing all 17 links as a vertical
+  list with grouped section dividers
+- Right-side controls (language selector, theme toggle, logout) remain always
+  visible in a compact form
+
+#### Public Websites — 3-Breakpoint CSS (moe-web, moe-web-int, moe-libris-web)
+
+`custom.css` now implements a 3-tier responsive grid system:
+
+| Breakpoint | Target | Key changes |
+|---|---|---|
+| ≤1024px (new) | Tablet | hw-grid, tools-grid, screenshots-grid → 2 columns |
+| ≤768px (extended) | Phone | All grids → 1 column; tab-bar scrollable; routing-flow stacks |
+| ≤480px (new) | Small Phone | Tab padding reduced; hero font clamp; cost-grid 1 column |
+
+Notable fixes:
+- `.screenshots-grid { minmax(420px) }` → breaks on 375px — corrected
+- `.view-tabs` gains `overflow-x: auto` + `-webkit-overflow-scrolling: touch` for swipe on mobile
+- `.routing-node { min-width: 160px }` → `unset` to prevent overflow on narrow phones
+
+#### User Portal — Mobile Layout
+
+`user_portal.html` sidebar layout switches to horizontal pill navigation on
+screens narrower than 768px (`flex-direction: column`, `list-group` →
+`flex-wrap: wrap`). Fixed-width sidebar containers converted to `max-width`
+to prevent overflow.
+
+#### Website Screenshots (6 new)
+
+Added to `moe-web/assets/screenshots/` and `moe-web-int/assets/screenshots/`:
+
+| File | Content |
+|---|---|
+| `moe-admin-overview.png` | Full-page Admin dashboard with Advanced Pipeline Settings expanded; all credentials privacy-blurred |
+| `moe-admin-monitoring.png` | Full-page monitoring view with server tiles |
+| `grafana-gpu-nodes.png` | GPU & Inference Nodes dashboard (kiosk mode) |
+| `grafana-knowledge.png` | Knowledge Base Health dashboard |
+| `dozzle.png` | Container log viewer |
+| `neo4j-knowledge-graph.png` | Knowledge graph — 500+ entity subgraph |
+
+### Changed — Gap Healer v2 (per-node Redis slots)
+
+`scripts/gap_healer_templates.py` replaces the v1 systemd-timer approach:
+
+- **Root cause fixed:** global `asyncio.Semaphore(4)` caused 300 hung tasks
+  piling onto one warm node. Replaced with per-node `moe:healer:active:{node}`
+  Redis counters and `ZPOPMAX` atomic gap claims.
+- **Hardware caps:** M60→1, M10→3, RTX→4, GT→2 concurrent slots
+- **Progressive unlock:** +1 slot per 5 successful runs up to hardware cap
+- **Launcher:** started from Admin UI → Monitoring panel (no systemd required)
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Admin UI, Public Websites, Gap Healer, Documentation |
+| `branch` | `feat/responsive-design-admin-websites` |
+
+---
+
 ## [2.1.1] - 2026-04-15
 
 ### Fixed — Fresh-Install Reliability (Debian 13 LXC)
