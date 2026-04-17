@@ -47,32 +47,81 @@ gap. The admin can see the top gaps in the Admin UI.
 
 ## How the gap healer works
 
-The script `scripts/close_ontology_gaps.py`:
+### Previous architecture (v1 — systemd timer)
+
+The original script `scripts/close_ontology_gaps.py` ran as a nightly systemd timer:
 
 1. **Reads** the top-N gaps from `/v1/admin/ontology-gaps`
-2. **Researches** each term by sending a structured prompt to the MoE
-   orchestrator: "Classify this term for our knowledge graph"
-3. **Parses** the JSON response (entity type, aliases, relations)
-4. **Writes** the entities into Neo4j via idempotent `MERGE` statements
+2. **Researches** each term via a single MoE orchestrator call
+3. **Parses** JSON response (entity type, aliases, relations)
+4. **Writes** entities into Neo4j via idempotent `MERGE`
 5. **Logs** every action for auditing
 
-## Installation
+This worked for small queues but collapsed under load: a global
+`asyncio.Semaphore(4)` caused all concurrent tasks to pile onto whichever
+inference node had a warm model cache, creating 300+ hung tasks and zero
+throughput on the remaining nodes.
+
+### Current architecture (v2 — per-node Redis slots)
+
+The rewrite `scripts/gap_healer_templates.py` replaces the single-process
+systemd timer with a **persistent async healer** that is launched from the
+Admin UI and manages per-node concurrency via Redis.
+
+**Core mechanism:**
+
+```
+Redis sorted set: moe:ontology_gaps   (term → ZINCRBY score)
+Redis string:     moe:healer:active:{node}   (current slot count)
+Redis string:     moe:healer:runs:{node}     (successful run counter)
+```
+
+On each cycle:
+
+1. `ZPOPMAX moe:ontology_gaps COUNT N` — atomic claim of top-N gaps
+2. Per gap: check `moe:healer:active:{node}` against hardware cap
+3. If slot available: `INCR active`, dispatch to node curator template
+4. On success: `INCR runs:{node}`, `DECR active:{node}`
+5. Progressive slot unlock: every 5 successful runs → `cap = min(cap+1, _NODE_MAX_SLOTS[node])`
+
+**Hardware caps (`_NODE_MAX_SLOTS`):**
+
+| Node class | Max concurrent slots |
+|---|---|
+| Tesla M60 (4×8 GB) | 1 |
+| Tesla M10 (1×8 GB) | 3 |
+| RTX 4090 (5×12 GB) | 4 |
+| GT 1060 (2×6 GB)   | 2 |
+
+Nodes start with 1 slot ("cold start") and unlock additional slots
+progressively as runs succeed. This prevents VRAM exhaustion on the first
+burst while eventually reaching full throughput on stable nodes.
+
+**Why ZPOPMAX instead of ZRANGEBYSCORE:**
+Atomic pop removes the gap from the queue at claim time, eliminating
+double-processing under concurrent healers and preserving the priority
+order (highest-frequency gaps first).
+
+### Starting the healer
+
+The gap healer is started from the **Admin UI → Monitoring → Gap Healer**
+panel. The admin can:
+
+- Start / Stop the healer process
+- Observe per-node slot counters and run totals in real time
+- Inspect the last 50 healed terms and their classification results
+
+There is no longer a systemd timer dependency. The healer runs as a
+long-lived async task inside the `moe-admin` container.
+
+### Manual invocation
 
 ```bash
-# Copy systemd units
-sudo cp scripts/ontology-gap-healer.service /etc/systemd/system/
-sudo cp scripts/ontology-gap-healer.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now ontology-gap-healer.timer
+# Inside the moe-admin container
+docker compose exec moe-admin python3 -m scripts.gap_healer_templates
 
-# Check schedule
-systemctl list-timers ontology-gap-healer.timer
-
-# Manual run (dry)
-MOE_API_KEY=moe-sk-... DRY_RUN=1 python3 scripts/close_ontology_gaps.py
-
-# Manual run (live)
-MOE_API_KEY=moe-sk-... python3 scripts/close_ontology_gaps.py
+# With dry-run (classify but do not write to Neo4j)
+DRY_RUN=1 docker compose exec moe-admin python3 -m scripts.gap_healer_templates
 ```
 
 ## Configuration
@@ -80,10 +129,15 @@ MOE_API_KEY=moe-sk-... python3 scripts/close_ontology_gaps.py
 | Variable | Default | Description |
 |---|---|---|
 | `MOE_API_KEY` | *(required)* | API key for the orchestrator |
-| `MOE_TEMPLATE` | `moe-reference-30b-balanced` | Template for research calls |
-| `NEO4J_URI` | `bolt://neo4j-knowledge:7687` | Neo4j connection |
-| `MAX_GAPS_PER_RUN` | `20` | Max gaps to close per invocation |
-| `DRY_RUN` | `0` | Set to `1` to preview without writing |
+| `NEO4J_URI` | `bolt://neo4j-knowledge:7687` | Neo4j connection string |
+| `REDIS_URL` | `redis://:password@valkey:6379` | Valkey/Redis connection |
+| `DRY_RUN` | `0` | `1` = classify without writing to Neo4j |
+| `HEALER_CYCLE_SLEEP` | `5` | Seconds between queue poll cycles |
+| `HEALER_MAX_BATCH` | `10` | Gaps claimed per ZPOPMAX call |
+
+The `_NODE_MAX_SLOTS` dict in `gap_healer_templates.py` maps node name
+prefixes to hardware concurrency caps. Adjust after adding or removing
+inference nodes.
 
 ## Ontology anatomy: entities, relations, gaps
 

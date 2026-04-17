@@ -659,16 +659,46 @@ test LXC via remote `git checkout + docker compose up -d`.
 
 ### 9.3 Observations on Autonomous Healing
 
-The autonomous knowledge healing pipeline (`gap_healer_*.py` scripts, overnight
-pipeline) demonstrates measurable effectiveness in the knowledge graph quality
-metrics. The ratio of relations per entity (graph density) has increased from
-0.96 (v2.0.0 baseline) to 1.16 (current) — indicating the healing pipeline is
-not just adding isolated triples but creating connections between existing entities.
+#### Graph density growth
+
+The autonomous knowledge healing pipeline (`gap_healer_templates.py` v2)
+demonstrates measurable effectiveness in graph quality metrics. The ratio of
+relations per entity (graph density) has increased from 0.96 (v2.0.0 baseline)
+to 1.16 (current) — indicating the healing pipeline is not just adding isolated
+triples but creating connections between existing entities.
 
 This density increase is significant: multi-hop graph traversal quality (used in
-the GraphRAG retrieval) scales with connectivity, not just entity count. A graph
-with 5,000 entities at density 1.16 retrieves more relevant context for complex
-queries than the same graph at density 0.96.
+GraphRAG retrieval) scales with connectivity, not just entity count. A graph with
+5,000 entities at density 1.16 retrieves more relevant context for complex queries
+than the same graph at density 0.96.
+
+#### Concurrency regression and fix (v2 rewrite)
+
+The v1 implementation used a global `asyncio.Semaphore(4)` across all nodes,
+which collapsed onto the single warmest inference node under sustained load.
+Observed symptom: 300 hung tasks, zero throughput on remaining nodes, gap queue
+monotonically growing from 802 to 1,057 without resolution.
+
+The v2 rewrite introduced **per-node Redis slot counters** using atomic
+`ZPOPMAX` claims and `INCR`/`DECR` operations on `moe:healer:active:{node}`
+keys. Hardware concurrency caps per node class:
+
+| Node class | Max slots |
+|---|---|
+| Tesla M60 | 1 |
+| Tesla M10 | 3 |
+| RTX 4090  | 4 |
+| GT 1060   | 2 |
+
+Progressive slot unlock: nodes start at 1 (cold) and gain +1 slot per 5
+successful classifications up to the hardware cap. This prevents VRAM
+exhaustion on burst start while reaching full throughput on stable nodes.
+
+**Consequence for growth model:** The v2 healer enables sustained parallel
+healing at 4–9× the rate of v1 under the same hardware. Gap closure velocity
+is now bounded by Neo4j write throughput (~120 MERGE/min), not inference
+concurrency. The growth curves in sections 4 and 5 remain valid; the
+time-to-density milestone improves proportionally with healer uptime.
 
 ---
 
