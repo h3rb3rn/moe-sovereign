@@ -1,0 +1,85 @@
+{
+  "name": "MoE RL Proof Benchmark",
+  "version": "1.0",
+  "description": "5-epoch reinforcement learning proof. Same 5 tests per epoch across all nodes. Measures: cache hit growth, graph accumulation (GraphRAG), correction memory persistence, Thompson Sampling routing stability, cross-domain synthesis retention. Target: 30-60 min total runtime.",
+  "author": "moe-infra",
+  "created_at": "2026-04-17",
+  "test_cases": [
+    {
+      "id": "rl-precision-cache",
+      "category": "precision",
+      "name": "Deterministic Baseline (Cache Probe)",
+      "description": "Identical MCP subnet calculation every epoch. Score is always 10/10; the learning signal is in Prometheus: moe_cache_hits_total should grow from epoch 2 onward as the exact response is cached.",
+      "type": "single_turn",
+      "prompt": "Berechne exakt: Netzwerk 192.168.42.0/26 — Subnetzmaske, Broadcast-Adresse, Anzahl nutzbarer Hosts. Zeige die Rechnung.",
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": ["255.255.255.192", "192.168.42.63", "62"],
+        "partial_credit": true
+      }
+    },
+    {
+      "id": "rl-causal-build",
+      "category": "causal_learning",
+      "name": "Causal Chain — Build & Retain",
+      "description": "Procedural causal chain. The MoE stores NECESSITATES_PRESENCE and ENABLES_ACTION relations in Neo4j after epoch 1. From epoch 2 onward, GraphRAG should provide these relations as context, improving answer completeness.",
+      "type": "single_turn",
+      "prompt": "Erkläre die kausale Abhängigkeitskette für den Start eines Kubernetes-Pods: Welche Schritte müssen in welcher Reihenfolge erfüllt sein (Node verfügbar → kubelet aktiv → Image gepullt → Container gestartet → Readiness-Probe)? Benenne explizit welche Bedingung welche ermöglicht.",
+      "scoring": {
+        "type": "llm_judge",
+        "criteria": "Bewertet die Vollständigkeit der kausalen Kette (Node→kubelet→Image→Container→Probe), ob Abhängigkeiten explizit benannt sind, und ob die Reihenfolge korrekt ist. Spätere Epochen sollten Relationen präziser benennen.",
+        "max_score": 10
+      }
+    },
+    {
+      "id": "rl-correction-memory",
+      "category": "correction_memory",
+      "name": "Correction Memory — Inject & Persist",
+      "description": "Turn 1 includes a subtle factual error (wrong TCP port for HTTPS). The judge corrects it in evaluation. From epoch 2, the correction should be injected into similar requests via the correction memory system.",
+      "type": "multi_turn",
+      "turns": [
+        {
+          "turn": 1,
+          "role": "query",
+          "prompt": "Unser Load Balancer terminiert HTTPS-Verbindungen. HTTPS nutzt standardmäßig TCP Port 8443. Erkläre wie TLS-Terminierung am Load Balancer funktioniert und welche Vorteile das gegenüber End-to-End-Verschlüsselung hat."
+        },
+        {
+          "turn": 2,
+          "role": "query",
+          "prompt": "Korrektur: HTTPS nutzt standardmäßig TCP Port 443, nicht 8443. Bitte passe deine Erklärung entsprechend an und bestätige den korrekten Port."
+        }
+      ],
+      "scoring": {
+        "type": "llm_judge",
+        "criteria": "Bewertet ob die Korrektur (Port 443 statt 8443) klar akzeptiert und integriert wird, ob die TLS-Terminierungserklärung technisch korrekt ist. Ab Epoche 2-3 sollte das System Port 443 von Anfang an korrekt nennen (Correction Memory).",
+        "max_score": 10
+      }
+    },
+    {
+      "id": "rl-routing-medical",
+      "category": "domain_routing",
+      "name": "Medical Domain Routing Stability",
+      "description": "Medical question targets the M60 specialty node. Thompson Sampling should stabilize routing to the correct expert by epoch 3. Routing confidence should increase each epoch.",
+      "type": "single_turn",
+      "prompt": "Erkläre den Unterschied zwischen systemischer und pulmonaler Hypertonie: Ursachen, typische Druckwerte (mmHg), Diagnostik und Erstlinientherapie. Wichtig: Nenne konkrete Zahlenwerte.",
+      "scoring": {
+        "type": "llm_judge",
+        "criteria": "Bewertet medizinische Korrektheit der Druckwerte (systemisch >140/90, pulmonal >25 mmHg Ruhe), Vollständigkeit der Diagnostik (Echokardiographie, Rechtsherzkatheter) und ob Erstlinientherapie korrekt benannt ist (Kalziumantagonisten, PDE-5-Hemmer für pulmonal). Spätere Epochen sollten durch stabileres Routing präzisere Antworten liefern.",
+        "max_score": 10
+      }
+    },
+    {
+      "id": "rl-synthesis-cross",
+      "category": "synthesis",
+      "name": "Cross-Domain Synthesis Retention",
+      "description": "Requires synthesis across tech, legal, and operational domains. The MoE stores synthesis blocks in Neo4j. From epoch 2, stored synthesis nodes should be retrieved as context, improving depth and consistency.",
+      "type": "single_turn",
+      "prompt": "Ein Unternehmen setzt ein KI-System zur automatisierten Kreditvergabe ein. Analysiere die Schnittstelle zwischen: (1) technischen Anforderungen an Modellerklärbarkeit, (2) rechtlichen Anforderungen der EU KI-Verordnung (Art. 13, 14) und (3) operativem Risikomanagement bei Fehlentscheidungen. Wo liegen die größten Konfliktpotenziale?",
+      "scoring": {
+        "type": "llm_judge",
+        "criteria": "Bewertet ob alle drei Dimensionen (technisch/rechtlich/operativ) konkret adressiert werden, ob die EU-KI-VO-Artikel korrekt referenziert sind, und ob die Konfliktanalyse substanziell ist (nicht nur oberflächlich). Ab Epoche 2-3 sollten gespeicherte Synthesen aus Vorläufer-Epochen zu präziseren Antworten führen.",
+        "max_score": 10
+      }
+    }
+  ]
+}

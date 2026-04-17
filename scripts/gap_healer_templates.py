@@ -222,10 +222,70 @@ def parse_entity(content: str) -> Optional[dict]:
     return None
 
 
+_TIMING_KEY_PREFIX = "moe:healer_timing:"
+_TIMING_EWMA_ALPHA  = 0.3   # Exponential smoothing factor (higher = more reactive)
+_TIMING_FALLBACK_S  = 120.0 # Assumed duration when no history available → concurrency=1 conservative
+
+
+async def _record_timing(redis_cli, template: str, duration_s: float) -> None:
+    """Update EWMA of successful request duration for a template in Redis."""
+    if redis_cli is None:
+        return
+    key = _TIMING_KEY_PREFIX + template
+    try:
+        raw = await redis_cli.get(key)
+        if raw is None:
+            new_avg = duration_s
+        else:
+            old_avg = float(raw)
+            new_avg = _TIMING_EWMA_ALPHA * duration_s + (1 - _TIMING_EWMA_ALPHA) * old_avg
+        await redis_cli.set(key, f"{new_avg:.2f}", ex=86400)
+    except Exception:
+        pass
+
+
+async def _get_avg_duration(redis_cli, template: str) -> float:
+    """Return the stored EWMA duration for a template, or the fallback."""
+    if redis_cli is None:
+        return _TIMING_FALLBACK_S
+    try:
+        raw = await redis_cli.get(_TIMING_KEY_PREFIX + template)
+        if raw is not None:
+            return float(raw)
+    except Exception:
+        pass
+    return _TIMING_FALLBACK_S
+
+
+async def _compute_safe_concurrency(redis_cli, templates: list[str]) -> int:
+    """Derive concurrency from timing data so tasks complete within the timeout window.
+
+    Uses the slowest template in the pool (worst case) to set the limit.
+    Applies a 0.75 safety margin so the system does not run right up to the deadline.
+    """
+    if not templates:
+        return 1
+    worst = 0.0
+    for tpl in templates:
+        avg = await _get_avg_duration(redis_cli, tpl)
+        worst = max(worst, avg)
+    if worst <= 0:
+        return 1
+    safe_budget = REQUEST_TIMEOUT * 0.75
+    computed = max(1, int(safe_budget / worst))
+    # Never exceed the user-configured ceiling
+    result = min(computed, CONCURRENCY)
+    return result
+
+
 async def classify_via_template(
     client: httpx.AsyncClient, template: str, term: str, context: str,
+    redis_cli=None,
 ) -> Optional[dict]:
-    """Send the term through the given MoE template and parse the result."""
+    """Send the term through the given MoE template and parse the result.
+
+    Records successful response duration in Redis for adaptive concurrency scaling.
+    """
     t0 = time.time()
     ctx_section = context if context else ""
     body = {
@@ -260,6 +320,8 @@ async def classify_via_template(
             print(f"  [{template[-10:]}] {marker} '{term}' → "
                   f"{entity.get('entity_type','?')} (conf={conf:.2f}) in {dt:.1f}s",
                   flush=True)
+            # Record timing only for successful calls (excludes timeouts/errors)
+            await _record_timing(redis_cli, template, dt)
             return entity
         print(f"  [{template[-10:]}] ✗ '{term}': could not parse JSON in {dt:.1f}s",
               flush=True)
@@ -342,7 +404,7 @@ async def process_gap(
 ) -> Optional[dict]:
     """Full pipeline for one gap: context lookup → classify → write → remove from queue."""
     ctx = await fetch_graph_context(driver, term)
-    entity = await classify_via_template(client, template, term, ctx)
+    entity = await classify_via_template(client, template, term, ctx, redis_cli=redis_cli)
     resolved = False
     if entity:
         entity["_template"] = template
@@ -361,8 +423,18 @@ async def process_gap(
 
 
 async def process_batch(gaps: list[str], client, driver, stats: dict, redis_cli):
-    """Run gaps through the template pool with semaphore-limited concurrency."""
-    semaphore = asyncio.Semaphore(CONCURRENCY)
+    """Run gaps through the template pool with adaptive semaphore-limited concurrency.
+
+    Concurrency is derived from EWMA timing data: the number of parallel tasks is
+    capped so all tasks can complete within 75% of REQUEST_TIMEOUT. Falls back to
+    concurrency=1 when no timing history exists (conservative cold-start behaviour).
+    """
+    effective_concurrency = await _compute_safe_concurrency(redis_cli, TEMPLATE_POOL)
+    if effective_concurrency < CONCURRENCY:
+        print(f"  [adaptive] Concurrency capped at {effective_concurrency} "
+              f"(configured: {CONCURRENCY}, timeout budget: {REQUEST_TIMEOUT * 0.75:.0f}s)",
+              flush=True)
+    semaphore = asyncio.Semaphore(effective_concurrency)
 
     async def _run(idx: int, term: str):
         template = TEMPLATE_POOL[(idx - 1) % len(TEMPLATE_POOL)]

@@ -2063,6 +2063,12 @@ async def servers_page(request: Request, _=Depends(require_login)):
     })
 
 
+@app.get("/api/servers/list", dependencies=[Depends(require_login)])
+async def api_servers_list():
+    """Return raw inference server config list (name, url, ontology_enabled, …)."""
+    return _get_inference_servers()
+
+
 @app.get("/api/servers/health")
 async def api_servers_health(request: Request, _=Depends(require_login)):
     """Return connectivity + model count for every registered inference server."""
@@ -2261,6 +2267,57 @@ async def api_ontology_toggle(server_name: str, request: Request):
     return {"ok": True, "status": "disabled", "server": server_name}
 
 
+@app.post("/api/servers/{server_name}/floating-toggle", dependencies=[Depends(require_login)])
+async def api_floating_toggle(server_name: str, request: Request):
+    """Enable/disable a server for floating (auto-discovery) routing."""
+    body = await request.json()
+    enabled = bool(body.get("enabled", True))
+    redis_cli = await _get_provision_redis()
+    if redis_cli is not None:
+        try:
+            if enabled:
+                await redis_cli.srem("moe:floating_disabled_servers", server_name)
+            else:
+                await redis_cli.sadd("moe:floating_disabled_servers", server_name)
+        except Exception as exc:
+            logger.warning("floating_disabled_servers SET update failed: %s", exc)
+    return {"ok": True, "server": server_name, "floating_enabled": enabled}
+
+
+@app.post("/api/servers/{server_name}/block-toggle", dependencies=[Depends(require_login)])
+async def api_server_block_toggle(server_name: str, request: Request):
+    """Hard-block or unblock a server from all routing (including pinned templates)."""
+    body = await request.json()
+    blocked = bool(body.get("blocked", False))
+    redis_cli = await _get_provision_redis()
+    if redis_cli is not None:
+        try:
+            if blocked:
+                await redis_cli.sadd("moe:blocked_servers", server_name)
+            else:
+                await redis_cli.srem("moe:blocked_servers", server_name)
+        except Exception as exc:
+            logger.warning("blocked_servers SET update failed: %s", exc)
+    return {"ok": True, "server": server_name, "blocked": blocked}
+
+
+@app.get("/api/servers/routing-state", dependencies=[Depends(require_login)])
+async def api_servers_routing_state():
+    """Return current floating-disabled and hard-blocked server sets from Redis."""
+    redis_cli = await _get_provision_redis()
+    if redis_cli is None:
+        return {"floating_disabled": [], "blocked": []}
+    try:
+        floating_disabled = list(await redis_cli.smembers("moe:floating_disabled_servers") or [])
+        blocked           = list(await redis_cli.smembers("moe:blocked_servers") or [])
+        return {
+            "floating_disabled": [v if isinstance(v, str) else v.decode() for v in floating_disabled],
+            "blocked":           [v if isinstance(v, str) else v.decode() for v in blocked],
+        }
+    except Exception as e:
+        return {"floating_disabled": [], "blocked": [], "error": str(e)}
+
+
 @app.get("/api/servers/{server_name}/ontology-status", dependencies=[Depends(require_login)])
 async def api_ontology_status(server_name: str):
     """Poll the provisioning status of a server. Frontend uses this for live updates."""
@@ -2349,6 +2406,63 @@ async def api_maintenance_ontology_trigger(request: Request):
 @app.get("/api/maintenance/ontology/status", dependencies=[Depends(require_login)])
 async def api_maintenance_ontology_status():
     return await _maintenance.get_ontology_healer_status()
+
+
+@app.delete("/api/maintenance/ontology/status", dependencies=[Depends(require_login)])
+async def api_maintenance_ontology_clear():
+    """Proxy: delete failed/stale healer run entry from Redis."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.delete(
+                f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/status",
+            )
+            return r.json()
+    except Exception as e:
+        return {"ok": False, "reason": "orchestrator_unreachable", "error": str(e)[:200]}
+
+
+@app.post("/api/maintenance/ontology/dedicated/start", dependencies=[Depends(require_login)])
+async def api_dedicated_healer_start(request: Request):
+    """Proxy: start a permanent dedicated gap-healer loop on one curator template."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/start",
+                json=body,
+            )
+            return r.json()
+    except Exception as e:
+        return {"ok": False, "reason": "orchestrator_unreachable", "error": str(e)[:200]}
+
+
+@app.post("/api/maintenance/ontology/dedicated/stop", dependencies=[Depends(require_login)])
+async def api_dedicated_healer_stop():
+    """Proxy: stop the dedicated gap-healer loop."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/stop",
+            )
+            return r.json()
+    except Exception as e:
+        return {"ok": False, "reason": "orchestrator_unreachable", "error": str(e)[:200]}
+
+
+@app.get("/api/maintenance/ontology/dedicated/status", dependencies=[Depends(require_login)])
+async def api_dedicated_healer_status():
+    """Proxy: return current state of the dedicated healer loop."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/status",
+            )
+            return r.json()
+    except Exception as e:
+        return {"status": "unknown", "error": str(e)[:200]}
 
 
 @app.get("/api/maintenance/templates/verify", dependencies=[Depends(require_login)])
@@ -5066,3 +5180,488 @@ async def api_live_llm_instances():
     }
     _append_log(_llm_inst_log, snapshot)
     return snapshot
+
+
+# ─── Benchmarks ───────────────────────────────────────────────────────────────
+
+BENCHMARKS_DIR     = Path("/app/benchmarks")
+BENCH_RESULTS_DIR  = BENCHMARKS_DIR / "results"
+BENCH_DATASETS_DIR = BENCHMARKS_DIR / "datasets"
+BENCH_LOCK_FILE    = BENCHMARKS_DIR / ".bench_running"
+BENCH_TRIGGER_FILE = BENCHMARKS_DIR / ".bench_trigger"
+
+# Held in memory so the UI can poll without re-spawning processes.
+_bench_proc: dict = {"pid": None, "cmd": None, "started_at": None}
+
+
+def _bench_is_running() -> bool:
+    """Return True when a benchmark process is active (lock file present + PID alive)."""
+    if not BENCH_LOCK_FILE.exists():
+        return False
+    try:
+        info = json.loads(BENCH_LOCK_FILE.read_text())
+        pid = info.get("pid")
+        if pid:
+            import signal
+            os.kill(pid, 0)  # Raises OSError if process is gone
+        return True
+    except (OSError, json.JSONDecodeError, TypeError):
+        # Stale lock — clean it up
+        try:
+            BENCH_LOCK_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def _bench_lock_info() -> dict:
+    """Return parsed lock file content or empty dict."""
+    try:
+        return json.loads(BENCH_LOCK_FILE.read_text()) if BENCH_LOCK_FILE.exists() else {}
+    except Exception:
+        return {}
+
+
+def _list_overnight_runs() -> list[dict]:
+    """Return summary dicts for all overnight (multi-epoch) run directories."""
+    runs: list[dict] = []
+    if not BENCH_RESULTS_DIR.exists():
+        return runs
+    for d in sorted(BENCH_RESULTS_DIR.iterdir(), reverse=True):
+        if not d.is_dir() or not d.name.startswith("overnight_"):
+            continue
+        summary_file = d / "summary.txt"
+        summary_text = summary_file.read_text() if summary_file.exists() else ""
+        # Count completed epochs from eval files
+        epoch_evals = sorted(d.glob("epoch_*_eval.json"))
+        epoch_results = sorted(d.glob("epoch_*_results.json"))
+        # Find latest epoch log for "is running" detection
+        log_files = sorted(d.glob("epoch_*_runner.log"), key=lambda p: p.stat().st_mtime)
+        latest_log = log_files[-1] if log_files else None
+        runs.append({
+            "run_id": d.name,
+            "type": "overnight",
+            "started_at": d.name.split("_", 1)[1] if "_" in d.name else d.name,
+            "epochs_done": len(epoch_evals),
+            "epochs_total": None,  # Unknown until run finishes
+            "summary": summary_text.strip(),
+            "latest_log": str(latest_log) if latest_log else None,
+            "has_report": (d / "overnight_report.json").exists(),
+        })
+    return runs
+
+
+def _list_single_runs() -> list[dict]:
+    """Return summary dicts for top-level run_* JSON files (non-overnight benchmarks)."""
+    if not BENCH_RESULTS_DIR.exists():
+        return []
+    seen_templates: set = set()
+    runs: list[dict] = []
+    for f in sorted(BENCH_RESULTS_DIR.glob("run_*.json"), reverse=True):
+        # Parse template name and timestamp from filename: run_<template>_<ts>.json
+        parts = f.stem.split("_", 1)
+        ts_part = ""
+        tmpl_part = f.stem
+        if len(parts) == 2:
+            # Find last timestamp segment (format YYYYMMDD-HHMMSS)
+            segs = parts[1].rsplit("_", 1)
+            if len(segs) == 2 and len(segs[1]) == 15 and "-" in segs[1]:
+                tmpl_part = segs[0]
+                ts_part = segs[1]
+            else:
+                tmpl_part = parts[1]
+        # Find matching eval file
+        eval_file = BENCH_RESULTS_DIR / f"eval_{ts_part}.json"
+        avg_score = None
+        if eval_file.exists():
+            try:
+                evd = json.loads(eval_file.read_text())
+                # Eval files are dicts {"results": [...]} or bare lists
+                items = evd.get("results", []) if isinstance(evd, dict) else evd
+                scores = [r.get("score", 0) for r in items if isinstance(r, dict) and "score" in r]
+                avg_score = round(sum(scores) / len(scores), 2) if scores else None
+            except Exception:
+                pass
+        runs.append({
+            "run_id": f.stem,
+            "type": "single",
+            "template": tmpl_part,
+            "timestamp": ts_part,
+            "filename": f.name,
+            "eval_file": eval_file.name if eval_file.exists() else None,
+            "avg_score": avg_score,
+        })
+    return runs
+
+
+@app.get("/benchmarks", response_class=HTMLResponse)
+async def benchmarks_page(request: Request, _=Depends(require_login)):
+    """Benchmark overview — list runs, live status, trigger, history."""
+    datasets: list[str] = []
+    if BENCH_DATASETS_DIR.exists():
+        datasets = [f.stem for f in sorted(BENCH_DATASETS_DIR.glob("*.json"))]
+    return TEMPLATES.TemplateResponse(request, "benchmarks.html", {
+        "request": request,
+        "datasets": datasets,
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/benchmarks/status")
+async def api_bench_status(request: Request, _=Depends(require_login)):
+    """Return whether a benchmark is currently running and its run info."""
+    running = _bench_is_running()
+    info = _bench_lock_info() if running else {}
+    # Find latest overnight run for live log pointer
+    latest_run: str | None = None
+    if BENCH_RESULTS_DIR.exists():
+        nights = sorted(
+            [d for d in BENCH_RESULTS_DIR.iterdir() if d.is_dir() and d.name.startswith("overnight_")],
+            key=lambda d: d.name
+        )
+        if nights:
+            latest_run = nights[-1].name
+    return {
+        "running": running,
+        "run_id": info.get("run_id"),
+        "template": info.get("template"),
+        "epochs": info.get("epochs"),
+        "started_at": info.get("started_at"),
+        "latest_overnight_run": latest_run,
+    }
+
+
+@app.get("/api/benchmarks/list")
+async def api_bench_list(request: Request, _=Depends(require_login)):
+    """Return structured list of all benchmark runs."""
+    return {
+        "overnight": _list_overnight_runs(),
+        "single": _list_single_runs()[:30],  # Cap to last 30
+    }
+
+
+@app.get("/api/benchmarks/datasets")
+async def api_bench_datasets(request: Request, _=Depends(require_login)):
+    """Return list of available benchmark dataset files."""
+    if not BENCH_DATASETS_DIR.exists():
+        return {"datasets": []}
+    result = []
+    for f in sorted(BENCH_DATASETS_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+            count = len(data) if isinstance(data, list) else 0
+        except Exception:
+            count = 0
+        result.append({"name": f.stem, "filename": f.name, "test_count": count})
+    return {"datasets": result}
+
+
+@app.get("/api/benchmarks/result/{run_id}")
+async def api_bench_result(run_id: str, request: Request, _=Depends(require_login)):
+    """Return detailed result JSON for a run_id (overnight dir name or run_* stem)."""
+    # Sanitize run_id — allow alphanumeric, dash, underscore only
+    import re as _re2
+    if not _re2.match(r'^[\w\-]+$', run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+
+    # Check overnight directory first
+    overnight_dir = BENCH_RESULTS_DIR / run_id
+    if overnight_dir.is_dir():
+        epochs = []
+        for ef in sorted(overnight_dir.glob("epoch_*_eval.json")):
+            try:
+                edata = json.loads(ef.read_text())
+                epoch_num = int(ef.name.split("_")[1])
+                # Extract average score
+                scores = [r.get("score", 0) for r in edata if isinstance(r, dict) and "score" in r]
+                avg = round(sum(scores) / len(scores), 2) if scores else None
+                epochs.append({"epoch": epoch_num, "avg_score": avg, "tests": len(edata)})
+            except Exception:
+                pass
+        report = None
+        report_file = overnight_dir / "overnight_report.json"
+        if report_file.exists():
+            try:
+                report = json.loads(report_file.read_text())
+            except Exception:
+                pass
+        summary = (overnight_dir / "summary.txt").read_text().strip() \
+            if (overnight_dir / "summary.txt").exists() else ""
+        return {"type": "overnight", "run_id": run_id, "epochs": epochs,
+                "report": report, "summary": summary}
+
+    # Single run file
+    run_file = BENCH_RESULTS_DIR / f"{run_id}.json"
+    if run_file.exists():
+        try:
+            raw = json.loads(run_file.read_text())
+            # Run files are dicts {"results": [...], "template": ..., ...} or bare lists
+            results = raw.get("results", []) if isinstance(raw, dict) else raw
+            meta = {k: v for k, v in raw.items() if k != "results"} if isinstance(raw, dict) else {}
+            # Find matching eval file via timestamp in run_id (format: run_<tmpl>_<ts>)
+            ts_part = run_id.rsplit("_", 1)[-1] if "_" in run_id else ""
+            eval_file = BENCH_RESULTS_DIR / f"eval_{ts_part}.json"
+            eval_data = None
+            if eval_file.exists():
+                try:
+                    evraw = json.loads(eval_file.read_text())
+                    eval_data = evraw.get("results", evraw) if isinstance(evraw, dict) else evraw
+                except Exception:
+                    pass
+            return {
+                "type": "single", "run_id": run_id,
+                "meta": meta, "results": results, "eval": eval_data,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    raise HTTPException(status_code=404, detail="Run not found")
+
+
+@app.get("/api/benchmarks/live-log")
+async def api_bench_live_log(request: Request, run_id: str = "", lines: int = 80,
+                              _=Depends(require_login)):
+    """Return last N lines of the active benchmark runner log."""
+    import re as _re3
+    if run_id and not _re3.match(r'^[\w\-]+$', run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+
+    target_dir: Path | None = None
+    if run_id:
+        candidate = BENCH_RESULTS_DIR / run_id
+        if candidate.is_dir():
+            target_dir = candidate
+    if target_dir is None and BENCH_RESULTS_DIR.exists():
+        # Auto-detect latest overnight run
+        nights = sorted(
+            [d for d in BENCH_RESULTS_DIR.iterdir() if d.is_dir() and d.name.startswith("overnight_")],
+            key=lambda d: d.name,
+        )
+        if nights:
+            target_dir = nights[-1]
+
+    if target_dir is None:
+        return {"lines": [], "log_file": None}
+
+    log_files = sorted(target_dir.glob("epoch_*_runner.log"), key=lambda p: p.stat().st_mtime)
+    if not log_files:
+        return {"lines": [], "log_file": None}
+
+    log_file = log_files[-1]
+    try:
+        text = log_file.read_text(errors="replace")
+        all_lines = text.splitlines()
+        tail = all_lines[-min(lines, len(all_lines)):]
+        return {"lines": tail, "log_file": log_file.name, "run_id": target_dir.name}
+    except Exception as exc:
+        return {"lines": [f"Error reading log: {exc}"], "log_file": log_file.name}
+
+
+@app.post("/api/benchmarks/preflight")
+async def api_bench_preflight(request: Request, _=Depends(require_login)):
+    """Pre-flight capacity check: orchestrator health + reachability of key endpoints."""
+    checks: list[dict] = []
+
+    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://langgraph-orchestrator:8000")
+    async with httpx.AsyncClient(timeout=10) as client:
+        # 1. Orchestrator health
+        try:
+            r = await client.get(f"{orchestrator_url}/health")
+            checks.append({"name": "Orchestrator /health", "ok": r.status_code == 200,
+                            "detail": f"HTTP {r.status_code}"})
+        except Exception as exc:
+            checks.append({"name": "Orchestrator /health", "ok": False, "detail": str(exc)})
+
+        # 2. Prometheus
+        prom_url = os.getenv("PROMETHEUS_URL", "http://moe-prometheus:9090")
+        try:
+            r = await client.get(f"{prom_url}/-/healthy")
+            checks.append({"name": "Prometheus", "ok": r.status_code == 200,
+                            "detail": f"HTTP {r.status_code}"})
+        except Exception as exc:
+            checks.append({"name": "Prometheus", "ok": False, "detail": str(exc)})
+
+        # 3. Read node URLs from env (set by the benchmark .env via docker env_file)
+        node_envs = [
+            ("BENCH_NODE_RTX_URL",  "Judge/Planner (RTX)"),
+            ("BENCH_NODE_M10A_URL", "Expert M10-A"),
+            ("BENCH_NODE_M10B_URL", "Expert M10-B"),
+            ("BENCH_NODE_M60_URL",  "Specialty (M60)"),
+            ("BENCH_NODE_GT_URL",   "Vision (GT)"),
+        ]
+        for env_key, label in node_envs:
+            url = os.getenv(env_key, "")
+            if not url:
+                checks.append({"name": label, "ok": None, "detail": f"{env_key} not set"})
+                continue
+            try:
+                r = await client.get(f"{url.rstrip('/')}/api/tags", timeout=8)
+                ok = r.status_code == 200
+                model_count = len(r.json().get("models", [])) if ok else 0
+                checks.append({"name": label, "ok": ok,
+                                "detail": f"HTTP {r.status_code} — {model_count} models"})
+            except Exception as exc:
+                checks.append({"name": label, "ok": False, "detail": str(exc)})
+
+    # 4. Disk space in results dir
+    try:
+        import shutil
+        du = shutil.disk_usage(str(BENCH_RESULTS_DIR) if BENCH_RESULTS_DIR.exists()
+                               else str(BENCHMARKS_DIR))
+        free_gb = round(du.free / 1e9, 1)
+        checks.append({"name": "Disk space (results)", "ok": free_gb > 1,
+                        "detail": f"{free_gb} GB free"})
+    except Exception as exc:
+        checks.append({"name": "Disk space (results)", "ok": None, "detail": str(exc)})
+
+    # 5. Already running?
+    if _bench_is_running():
+        checks.append({"name": "Benchmark lock", "ok": False,
+                        "detail": "A benchmark is already running — cannot start another"})
+    else:
+        checks.append({"name": "Benchmark lock", "ok": True, "detail": "No benchmark running"})
+
+    all_ok = all(c["ok"] is True for c in checks)
+    return {"checks": checks, "ready": all_ok}
+
+
+@app.post("/api/benchmarks/trigger")
+async def api_bench_trigger(request: Request, _=Depends(require_login)):
+    """
+    Write a trigger file that the host-side benchmark watcher will pick up,
+    then launch run_overnight.sh as a detached subprocess (host execution via
+    the mounted filesystem).
+
+    System lock: writes BENCH_LOCK_FILE with PID + config so other API users
+    can detect an active benchmark.
+    """
+    if _bench_is_running():
+        raise HTTPException(status_code=409, detail="A benchmark is already running")
+
+    body = await request.json()
+    template  = body.get("template", "moe-m10-gremium-deep")
+    dataset   = body.get("dataset", "moe_eval_overnight_v1")
+    epochs    = int(body.get("epochs", 10))
+
+    # Validate inputs
+    import re as _re4
+    if not _re4.match(r'^[\w\-]+$', template) or not _re4.match(r'^[\w\-]+$', dataset):
+        raise HTTPException(status_code=400, detail="Invalid template or dataset name")
+    if not (1 <= epochs <= 20):
+        raise HTTPException(status_code=400, detail="Epochs must be 1–20")
+
+    # Write trigger file with config
+    trigger_cfg = {
+        "template": template,
+        "dataset": f"{dataset}.json",
+        "epochs": epochs,
+        "triggered_by": request.session.get("user", "admin"),
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+    }
+    BENCH_TRIGGER_FILE.write_text(json.dumps(trigger_cfg, indent=2))
+
+    # Launch detached subprocess — only works when the container has host-path
+    # access to the run_overnight.sh script via the volume mount.
+    run_script = BENCHMARKS_DIR / "run_overnight.sh"
+    if run_script.exists():
+        env_override = {
+            **os.environ,
+            "MOE_TEMPLATE": template,
+            "MOE_EVAL_DATASET": f"{dataset}.json",
+            "MOE_EPOCHS": str(epochs),
+        }
+        import subprocess
+        proc = subprocess.Popen(
+            ["bash", str(run_script)],
+            cwd=str(BENCHMARKS_DIR),
+            env=env_override,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        # Write lock file
+        lock_info = {
+            "pid": proc.pid,
+            "run_id": None,  # Will be known once the script starts
+            "template": template,
+            "dataset": dataset,
+            "epochs": epochs,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        BENCH_LOCK_FILE.write_text(json.dumps(lock_info, indent=2))
+        return {"status": "started", "pid": proc.pid, "config": trigger_cfg}
+    else:
+        # Script not mounted — only trigger file written; host watcher must pick it up
+        return {
+            "status": "trigger_written",
+            "detail": "run_overnight.sh not found in /app/benchmarks — trigger file written for host watcher",
+            "config": trigger_cfg,
+        }
+
+
+@app.delete("/api/benchmarks/lock")
+async def api_bench_clear_lock(request: Request, _=Depends(require_login)):
+    """Manually clear a stale benchmark lock (admin safety valve)."""
+    if BENCH_LOCK_FILE.exists():
+        BENCH_LOCK_FILE.unlink()
+        return {"status": "cleared"}
+    return {"status": "no_lock"}
+
+
+@app.delete("/api/benchmarks/result/{run_id}")
+async def api_bench_delete(run_id: str, request: Request, _=Depends(require_login)):
+    """
+    Delete a benchmark run and all associated files.
+
+    Overnight run (directory): removes the entire directory tree.
+    Single run (file):         removes run_*.json + matching eval_*.json.
+                               Does NOT remove latest_*.json symlinks —
+                               they point to the newest surviving run.
+    """
+    import re as _re5
+    if not _re5.match(r'^[\w\-]+$', run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+
+    # Refuse to delete a currently-running benchmark
+    lock = _bench_lock_info()
+    if lock.get("run_id") == run_id and _bench_is_running():
+        raise HTTPException(status_code=409, detail="Cannot delete an active benchmark run")
+
+    deleted: list[str] = []
+
+    # ── Overnight directory ───────────────────────────────────────────────────
+    overnight_dir = BENCH_RESULTS_DIR / run_id
+    if overnight_dir.is_dir():
+        import shutil
+        shutil.rmtree(overnight_dir)
+        deleted.append(str(overnight_dir))
+        return {"status": "deleted", "deleted": deleted}
+
+    # ── Single run files ──────────────────────────────────────────────────────
+    run_file = BENCH_RESULTS_DIR / f"{run_id}.json"
+    if not run_file.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    run_file.unlink()
+    deleted.append(run_file.name)
+
+    # Remove matching eval file (timestamp suffix after last underscore)
+    ts_part = run_id.rsplit("_", 1)[-1] if "_" in run_id else ""
+    if ts_part:
+        eval_file = BENCH_RESULTS_DIR / f"eval_{ts_part}.json"
+        if eval_file.exists():
+            eval_file.unlink()
+            deleted.append(eval_file.name)
+
+    # Remove latest_*.json files whose content pointed at the deleted run
+    for latest in BENCH_RESULTS_DIR.glob("latest_*.json"):
+        try:
+            content = latest.read_text()
+            # The latest file either IS the run JSON or references the run filename
+            if run_id in content[:200]:  # Check only header, not full scan
+                latest.unlink()
+                deleted.append(latest.name)
+        except OSError:
+            pass
+
+    return {"status": "deleted", "deleted": deleted}

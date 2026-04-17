@@ -941,6 +941,7 @@ PROM_CORRECTIONS_STORED = Counter('moe_corrections_stored_total',      'Correcti
 PROM_CORRECTIONS_INJECTED = Counter('moe_corrections_injected_total',  'Correction memory entries injected into expert prompts', ['category'])
 PROM_JUDGE_REFINED      = Counter('moe_judge_refinement_total',        'Judge refinement rounds executed',             ['outcome'])
 PROM_EXPERT_FAILURES    = Counter('moe_expert_failures_total',         'Expert invocation failures (VRAM, timeout, error)', ['model', 'reason'])
+PROM_GRAPH_DENSITY      = Gauge('moe_graph_density_ratio',             'Relations per entity (graph connectivity measure)')
 
 # --- USER AUTH & USAGE TRACKING ---
 
@@ -1792,9 +1793,25 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
                             return srv
         except Exception:
             pass
-    candidates = [s for s in INFERENCE_SERVERS_LIST if s["name"] in allowed_endpoints]
+    # Dynamic server exclusions stored in Redis (survive container restarts without rebuild)
+    _blocked: set = set()
+    _float_disabled: set = set()
+    if redis_client is not None:
+        try:
+            _blocked       = {(v if isinstance(v, str) else v.decode()) for v in await redis_client.smembers("moe:blocked_servers")}
+            _float_disabled = {(v if isinstance(v, str) else v.decode()) for v in await redis_client.smembers("moe:floating_disabled_servers")}
+        except Exception:
+            pass
+    # Hard block: remove from every pool regardless of pinning
+    _effective = [ep for ep in allowed_endpoints if ep not in _blocked]
+    # Floating-disable: only applies when multiple endpoints are in the pool
+    # (single-endpoint = explicit @node pin — always honoured)
+    if len(_effective) > 1:
+        _effective = [ep for ep in _effective if ep not in _float_disabled]
+    candidates = [s for s in INFERENCE_SERVERS_LIST if s["name"] in _effective]
     if not candidates:
-        fallback_name = allowed_endpoints[0] if allowed_endpoints else ""
+        # Fall back to the first non-blocked endpoint (preserves liveness)
+        fallback_name = _effective[0] if _effective else (allowed_endpoints[0] if allowed_endpoints else "")
         return _server_info(fallback_name) or {"name": fallback_name, "url": URL_MAP.get(fallback_name, ""), "token": "ollama", "api_type": "ollama"}
 
     # Phase 0: VRAM filter — exclude nodes that cannot fit this model
@@ -4040,10 +4057,14 @@ async def _gauge_updater_loop():
             if graph_manager is not None:
                 try:
                     stats = await graph_manager.get_stats()
-                    PROM_GRAPH_ENTITIES.set(stats.get("entities", 0))
-                    PROM_GRAPH_RELATIONS.set(stats.get("relations", 0))
+                    _ents = stats.get("entities", 0)
+                    _rels = stats.get("relations", 0)
+                    PROM_GRAPH_ENTITIES.set(_ents)
+                    PROM_GRAPH_RELATIONS.set(_rels)
                     PROM_SYNTHESIS_NODES.set(stats.get("synthesis_nodes", 0))
                     PROM_FLAGGED_RELS.set(stats.get("flagged_relations", 0))
+                    if _ents > 0:
+                        PROM_GRAPH_DENSITY.set(round(_rels / _ents, 4))
                 except Exception:
                     pass
             # Valkey: planner patterns, ontology gaps, active request count
@@ -4102,14 +4123,20 @@ async def _gauge_updater_loop():
                                                 pass
                                         _last_loaded_models[_sname] = _current_names
                                         # Model Registry: register warm models in Valkey
-                                        # for floating node discovery
+                                        # for floating node discovery.
+                                        # Skip registration for blocked or floating-disabled servers.
                                         if redis_client and _current_names:
                                             try:
-                                                _now = time.time()
-                                                for _mn in _current_names:
-                                                    _reg_key = f"moe:model_registry:{_mn.split(':')[0]}"
-                                                    await redis_client.zadd(_reg_key, {_sname: _now})
-                                                    await redis_client.expire(_reg_key, 120)  # 2 min TTL
+                                                _skip = False
+                                                _blk = await redis_client.sismember("moe:blocked_servers", _sname)
+                                                _fld = await redis_client.sismember("moe:floating_disabled_servers", _sname)
+                                                _skip = bool(_blk or _fld)
+                                                if not _skip:
+                                                    _now = time.time()
+                                                    for _mn in _current_names:
+                                                        _reg_key = f"moe:model_registry:{_mn.split(':')[0]}"
+                                                        await redis_client.zadd(_reg_key, {_sname: _now})
+                                                        await redis_client.expire(_reg_key, 120)  # 2 min TTL
                                             except Exception:
                                                 pass
                                     else:
@@ -6284,6 +6311,197 @@ async def trigger_ontology_healer(body: dict = None):
     run_id = _uuid.uuid4().hex[:12]
     asyncio.create_task(_run_healer_task(concurrency, batch_size, run_id))
     return {"ok": True, "run_id": run_id}
+
+
+@app.delete("/v1/admin/ontology/status")
+async def clear_ontology_healer_status():
+    """Delete the healer run status from Redis (dismiss failed/stale entries)."""
+    if redis_client is None:
+        return {"ok": False, "reason": "no_redis"}
+    try:
+        cur = await redis_client.hgetall(_ONTOLOGY_RUN_KEY)
+        if cur and cur.get("status") == "running":
+            return {"ok": False, "reason": "still_running"}
+        await redis_client.delete(_ONTOLOGY_RUN_KEY)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "reason": str(e)[:100]}
+
+
+# ─── Dedicated Ontology Gap Healer (permanent loop, single node) ─────────────
+
+_DEDICATED_HEALER_KEY = "moe:ontology:dedicated"
+_dedicated_healer_proc: "asyncio.subprocess.Process | None" = None
+
+
+async def _stream_dedicated_healer(proc: "asyncio.subprocess.Process") -> None:
+    """Read stdout from the dedicated healer loop and update Redis counters."""
+    stats: dict = {"processed": 0, "written": 0, "failed": 0}
+    assert proc.stdout is not None
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace")
+            if "✓" in text and "→" in text:
+                stats["written"] += 1
+            elif "?" in text and "→" in text:
+                stats["processed"] += 1
+            elif "✗" in text:
+                stats["failed"] += 1
+            if any(stats.values()):
+                await _set_healer_status_dedicated(**stats)
+        rc = await proc.wait()
+    except Exception:
+        rc = -1
+    if redis_client is not None:
+        try:
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                "status": "stopped", "exit_code": str(rc),
+            })
+        except Exception:
+            pass
+
+
+async def _set_healer_status_dedicated(**fields) -> None:
+    if redis_client is None:
+        return
+    try:
+        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={k: str(v) for k, v in fields.items()})
+    except Exception:
+        pass
+
+
+@app.post("/v1/admin/ontology/dedicated/start")
+async def start_dedicated_healer(body: dict = None):
+    """Start a permanent gap-healer loop pinned to a single curator template."""
+    global _dedicated_healer_proc
+    import time as _t
+    body = body or {}
+    template = (body.get("template") or "").strip()
+    if not template:
+        return {"ok": False, "reason": "template_required"}
+
+    # Check if already running
+    if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+        return {"ok": False, "reason": "already_running"}
+
+    # Also check Redis for stale state from a previous container run
+    if redis_client is not None:
+        try:
+            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+            if cur and cur.get("status") == "running":
+                pid = int(cur.get("pid", 0))
+                if pid:
+                    try:
+                        os.kill(pid, 0)
+                        return {"ok": False, "reason": "already_running", "pid": pid}
+                    except OSError:
+                        pass  # Process dead — stale entry, proceed
+        except Exception:
+            pass
+
+    env = os.environ.copy()
+    env["TEMPLATE_POOL"] = template
+    env.setdefault("REQUEST_TIMEOUT", "900")
+    env.setdefault("MOE_API_BASE", "http://localhost:8000")
+    sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    if sys_key:
+        env["MOE_API_KEY"] = sys_key
+
+    proc = await asyncio.create_subprocess_exec(
+        "python3", "/app/scripts/gap_healer_templates.py",
+        # No --once → runs indefinitely
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    _dedicated_healer_proc = proc
+
+    if redis_client is not None:
+        try:
+            await redis_client.delete(_DEDICATED_HEALER_KEY)
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                "status": "running",
+                "template": template,
+                "pid": str(proc.pid),
+                "started_at": str(_t.time()),
+                "processed": "0",
+                "written": "0",
+                "failed": "0",
+            })
+        except Exception:
+            pass
+
+    asyncio.create_task(_stream_dedicated_healer(proc))
+    return {"ok": True, "pid": proc.pid, "template": template}
+
+
+@app.post("/v1/admin/ontology/dedicated/stop")
+async def stop_dedicated_healer():
+    """Stop the running dedicated healer loop."""
+    global _dedicated_healer_proc
+    import signal as _sig
+
+    stopped = False
+    # Try in-memory handle first
+    if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+        try:
+            _dedicated_healer_proc.terminate()
+            await asyncio.wait_for(_dedicated_healer_proc.wait(), timeout=5.0)
+        except Exception:
+            try:
+                _dedicated_healer_proc.kill()
+            except Exception:
+                pass
+        _dedicated_healer_proc = None
+        stopped = True
+
+    # Also kill by PID from Redis (handles cross-restart cases)
+    if redis_client is not None:
+        try:
+            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+            pid = int(cur.get("pid", 0))
+            if pid and not stopped:
+                try:
+                    os.kill(pid, _sig.SIGTERM)
+                    stopped = True
+                except OSError:
+                    pass
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "stopped"})
+        except Exception:
+            pass
+
+    return {"ok": True, "stopped": stopped}
+
+
+@app.get("/v1/admin/ontology/dedicated/status")
+async def get_dedicated_healer_status():
+    """Return the current state of the dedicated healer loop."""
+    if redis_client is None:
+        # Fallback to in-memory check
+        if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+            return {"status": "running", "pid": _dedicated_healer_proc.pid}
+        return {"status": "stopped"}
+    try:
+        data = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+        if not data:
+            return {"status": "stopped"}
+
+        # Verify the process is still alive
+        if data.get("status") == "running":
+            pid = int(data.get("pid", 0))
+            if pid:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    # Process gone — mark as stopped
+                    await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "stopped"})
+                    data["status"] = "stopped"
+        return dict(data)
+    except Exception as e:
+        return {"status": "unknown", "error": str(e)[:100]}
 
 
 @app.get("/v1/admin/knowledge-stats")

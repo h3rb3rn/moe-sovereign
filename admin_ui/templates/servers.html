@@ -53,7 +53,7 @@
             <div class="text-muted" style="font-size:.75rem">Faktor</div>
           </div>
         </div>
-        <div class="form-check form-switch mb-2">
+        <div class="form-check form-switch mb-1">
           <input class="form-check-input" type="checkbox" role="switch"
                  id="srv-onto-{{ loop.index0 }}"
                  data-server="{{ srv.name }}"
@@ -64,6 +64,24 @@
             {{ t(request, 'lbl.ontology_cronjob') }}
           </label>
           <span id="srv-onto-status-{{ loop.index0 }}" class="ms-2 small text-muted"></span>
+        </div>
+        <div class="form-check form-switch mb-1">
+          <input class="form-check-input" type="checkbox" role="switch" checked
+                 id="srv-floating-{{ loop.index0 }}"
+                 data-server="{{ srv.name }}"
+                 onchange="toggleFloating(this)">
+          <label class="form-check-label small" for="srv-floating-{{ loop.index0 }}">
+            {{ t(request, 'lbl.floating_routing') }}
+          </label>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input bg-danger border-danger" type="checkbox" role="switch"
+                 id="srv-blocked-{{ loop.index0 }}"
+                 data-server="{{ srv.name }}"
+                 onchange="toggleBlock(this)">
+          <label class="form-check-label small text-danger" for="srv-blocked-{{ loop.index0 }}">
+            {{ t(request, 'lbl.server_blocked') }}
+          </label>
         </div>
         <button class="btn btn-sm btn-outline-secondary w-100"
                 onclick="toggleModels({{ loop.index0 }}, '{{ srv.name }}')">
@@ -223,6 +241,63 @@ async function pollOntologyStatus(name, idx, input) {
   }
 }
 
+async function toggleFloating(input) {
+  const name = input.dataset.server;
+  const enabled = input.checked;
+  try {
+    const r = await fetch(`/api/servers/${encodeURIComponent(name)}/floating-toggle`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enabled}),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    alert('Floating-Toggle fehlgeschlagen: ' + e.message);
+    input.checked = !input.checked;
+  }
+}
+
+async function toggleBlock(input) {
+  const name = input.dataset.server;
+  const blocked = input.checked;
+  if (blocked && !confirm(`Server "${name}" vollständig blockieren?\n\nDer Server wird aus allen Routing-Pools entfernt. Keine LLMs werden mehr geladen.\nDer Block ist sofort wirksam und bleibt nach Container-Neustart erhalten.`)) {
+    input.checked = false;
+    return;
+  }
+  // Visual feedback: card border
+  const card = input.closest('.card');
+  if (card) card.style.borderColor = blocked ? '#dc3545' : '';
+  try {
+    const r = await fetch(`/api/servers/${encodeURIComponent(name)}/block-toggle`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({blocked}),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    alert('Block-Toggle fehlgeschlagen: ' + e.message);
+    input.checked = !input.checked;
+    if (card) card.style.borderColor = '';
+  }
+}
+
+async function loadRoutingState() {
+  try {
+    const d = await fetch('/api/servers/routing-state').then(r => r.json());
+    // Sync floating toggles
+    document.querySelectorAll('input[id^="srv-floating-"]').forEach(inp => {
+      const name = inp.dataset.server;
+      inp.checked = !(d.floating_disabled || []).includes(name);
+    });
+    // Sync block toggles + card border
+    document.querySelectorAll('input[id^="srv-blocked-"]').forEach(inp => {
+      const name = inp.dataset.server;
+      const isBlocked = (d.blocked || []).includes(name);
+      inp.checked = isBlocked;
+      const card = inp.closest('.card');
+      if (card) card.style.borderColor = isBlocked ? '#dc3545' : '';
+    });
+  } catch (e) { /* ignore */ }
+}
+
 async function generateDashboard() {
   const btn = document.getElementById('gen-dashboard-btn');
   const orig = btn.innerHTML;
@@ -246,6 +321,7 @@ async function generateDashboard() {
 
 document.addEventListener('DOMContentLoaded', () => {
   loadAll();
+  loadRoutingState();
   // On page load, start polling for any server that has ontology enabled
   document.querySelectorAll('input[id^="srv-onto-"]:checked').forEach(inp => {
     const name = inp.dataset.server, idx = inp.dataset.idx;
