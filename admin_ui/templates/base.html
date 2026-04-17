@@ -31,86 +31,221 @@
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-dark px-3 sticky-top">
-  <a class="navbar-brand d-flex align-items-center gap-2" href="/">
-    <i class="bi bi-diagram-3-fill" style="color:#6ea8fe;font-size:1.3rem"></i>
-    <span>MoE</span><span class="text-white fw-normal ms-1">Admin</span>
-  </a>
-  <div class="d-flex align-items-center gap-3">
+<nav class="navbar navbar-dark bg-dark sticky-top">
+  <div class="container-fluid px-3">
+
+    {# ── Brand ── #}
+    <a class="navbar-brand d-flex align-items-center gap-2 me-3" href="/">
+      <i class="bi bi-diagram-3-fill" style="color:#6ea8fe;font-size:1.3rem"></i>
+      <span>MoE</span><span class="text-white fw-normal ms-1">Admin</span>
+    </a>
+
     {% if request.session.get("authenticated") %}
-    <a href="/" class="btn btn-sm btn-outline-light {% if request.url.path == '/' %}active{% endif %}">
-      <i class="bi bi-sliders me-1"></i>{{ t(request, 'nav.config') }}
-    </a>
-    <a href="/monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/monitoring' %}active{% endif %}">
-      <i class="bi bi-graph-up me-1"></i>{{ t(request, 'nav.monitoring') }}
-    </a>
-    <a href="/live-monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/live-monitoring' %}active{% endif %}">
-      <i class="bi bi-activity me-1"></i>{{ t(request, 'nav.live') }}
-    </a>
-    <a href="/servers" class="btn btn-sm btn-outline-light {% if request.url.path == '/servers' %}active{% endif %}">
-      <i class="bi bi-hdd-stack me-1"></i>{{ t(request, 'nav.server') }}
-    </a>
-    <a href="/profiles" class="btn btn-sm btn-outline-light {% if request.url.path == '/profiles' %}active{% endif %}">
-      <i class="bi bi-person-badge me-1"></i>{{ t(request, 'nav.cc_profiles') }}{% if enabled_profiles_count is defined and enabled_profiles_count %} <span class="badge bg-success ms-1" style="font-size:.65rem">{{ enabled_profiles_count }}</span>{% endif %}
-    </a>
-    <a href="/skills" class="btn btn-sm btn-outline-light {% if request.url.path == '/skills' %}active{% endif %}">
-      <i class="bi bi-terminal me-1"></i>{{ t(request, 'nav.skills') }}
-    </a>
-    <a href="/mcp-tools" class="btn btn-sm btn-outline-light {% if request.url.path == '/mcp-tools' %}active{% endif %}">
-      <i class="bi bi-tools me-1"></i>{{ t(request, 'nav.mcp_tools') }}
-    </a>
-    <a href="/tool-eval" class="btn btn-sm btn-outline-light {% if request.url.path == '/tool-eval' %}active{% endif %}">
-      <i class="bi bi-clipboard-data me-1"></i>{{ t(request, 'nav.tool_eval') }}
-    </a>
-    <a href="/knowledge" class="btn btn-sm btn-outline-light {% if request.url.path == '/knowledge' %}active{% endif %}">
-      <i class="bi bi-database-gear me-1"></i>Knowledge
-    </a>
-    <a href="/federation" class="btn btn-sm btn-outline-light {% if request.url.path == '/federation' %}active{% endif %}">
-      <i class="bi bi-globe2 me-1"></i>Federation
-    </a>
-    <a href="/quarantine" class="btn btn-sm btn-outline-light {% if request.url.path == '/quarantine' %}active{% endif %}">
-      <i class="bi bi-shield-exclamation me-1"></i>{{ t(request, 'nav.quarantine') }}
-    </a>
-    <a href="/templates" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/templates') %}active{% endif %}">
-      <i class="bi bi-collection me-1"></i>{{ t(request, 'nav.templates') }}
-    </a>
-    <a href="/users" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/users') %}active{% endif %}">
-      <i class="bi bi-people me-1"></i>{{ t(request, 'nav.users') }}
-    </a>
-    <a href="/user-content" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/user-content') %}active{% endif %}">
-      <i class="bi bi-person-lines-fill me-1"></i>{{ t(request, 'nav.user_content') }}
-    </a>
-    <a href="/maintenance" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/maintenance') %}active{% endif %}">
-      <i class="bi bi-tools me-1"></i>{{ t(request, 'nav.maintenance') }}
-    </a>
-    <a href="/statistics" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/statistics') %}active{% endif %}">
-      <i class="bi bi-bar-chart-line me-1"></i>{{ t(request, 'nav.statistics') }}
-    </a>
-    <a href="/benchmarks" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/benchmarks') %}active{% endif %}">
-      <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'nav.benchmarks') }}
-    </a>
-    <span class="text-secondary small"><i class="bi bi-person-circle me-1"></i>{{ request.session.get("user","admin") }}</span>
-    <a href="/logout" class="btn btn-sm btn-outline-secondary">
-      <i class="bi bi-box-arrow-right me-1"></i>{{ t(request, 'nav.logout') }}
-    </a>
-    {# ── Dark / Light Mode Toggle ── #}
-    <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
-            onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
-      <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
-    </button>
-    {# ── Language Switcher ── #}
-    {% set cur_lang = get_lang(request) %}
-    <form method="POST" action="/set-language" id="admin-lang-form" class="d-flex align-items-center ms-1">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <select name="lang" class="form-select form-select-sm text-white bg-dark border-secondary"
-              style="width:auto;font-size:.8rem"
-              onchange="document.getElementById('admin-lang-form').submit()">
-        <option value="de_DE" {% if cur_lang == 'de_DE' %}selected{% endif %}>🇩🇪 DE</option>
-        <option value="en_EN" {% if cur_lang == 'en_EN' %}selected{% endif %}>🇬🇧 EN</option>
-        <option value="fr_FR" {% if cur_lang == 'fr_FR' %}selected{% endif %}>🇫🇷 FR</option>
-        <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳 ZH</option>
-      </select>
-    </form>
+
+    {# ── Desktop Nav: visible ≥1400px ── #}
+    <div class="d-none d-xxl-flex align-items-center gap-1 flex-grow-1 flex-wrap">
+      <a href="/" class="btn btn-sm btn-outline-light {% if request.url.path == '/' %}active{% endif %}">
+        <i class="bi bi-sliders me-1"></i>{{ t(request, 'nav.config') }}
+      </a>
+      <a href="/monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/monitoring' %}active{% endif %}">
+        <i class="bi bi-graph-up me-1"></i>{{ t(request, 'nav.monitoring') }}
+      </a>
+      <a href="/live-monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/live-monitoring' %}active{% endif %}">
+        <i class="bi bi-activity me-1"></i>{{ t(request, 'nav.live') }}
+      </a>
+      <a href="/servers" class="btn btn-sm btn-outline-light {% if request.url.path == '/servers' %}active{% endif %}">
+        <i class="bi bi-hdd-stack me-1"></i>{{ t(request, 'nav.server') }}
+      </a>
+      <a href="/profiles" class="btn btn-sm btn-outline-light {% if request.url.path == '/profiles' %}active{% endif %}">
+        <i class="bi bi-person-badge me-1"></i>{{ t(request, 'nav.cc_profiles') }}{% if enabled_profiles_count is defined and enabled_profiles_count %} <span class="badge bg-success ms-1" style="font-size:.65rem">{{ enabled_profiles_count }}</span>{% endif %}
+      </a>
+      <a href="/skills" class="btn btn-sm btn-outline-light {% if request.url.path == '/skills' %}active{% endif %}">
+        <i class="bi bi-terminal me-1"></i>{{ t(request, 'nav.skills') }}
+      </a>
+      <a href="/mcp-tools" class="btn btn-sm btn-outline-light {% if request.url.path == '/mcp-tools' %}active{% endif %}">
+        <i class="bi bi-tools me-1"></i>{{ t(request, 'nav.mcp_tools') }}
+      </a>
+      <a href="/tool-eval" class="btn btn-sm btn-outline-light {% if request.url.path == '/tool-eval' %}active{% endif %}">
+        <i class="bi bi-clipboard-data me-1"></i>{{ t(request, 'nav.tool_eval') }}
+      </a>
+      <a href="/knowledge" class="btn btn-sm btn-outline-light {% if request.url.path == '/knowledge' %}active{% endif %}">
+        <i class="bi bi-database-gear me-1"></i>Knowledge
+      </a>
+      <a href="/federation" class="btn btn-sm btn-outline-light {% if request.url.path == '/federation' %}active{% endif %}">
+        <i class="bi bi-globe2 me-1"></i>Federation
+      </a>
+      <a href="/quarantine" class="btn btn-sm btn-outline-light {% if request.url.path == '/quarantine' %}active{% endif %}">
+        <i class="bi bi-shield-exclamation me-1"></i>{{ t(request, 'nav.quarantine') }}
+      </a>
+      <a href="/templates" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/templates') %}active{% endif %}">
+        <i class="bi bi-collection me-1"></i>{{ t(request, 'nav.templates') }}
+      </a>
+      <a href="/users" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/users') %}active{% endif %}">
+        <i class="bi bi-people me-1"></i>{{ t(request, 'nav.users') }}
+      </a>
+      <a href="/user-content" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/user-content') %}active{% endif %}">
+        <i class="bi bi-person-lines-fill me-1"></i>{{ t(request, 'nav.user_content') }}
+      </a>
+      <a href="/maintenance" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/maintenance') %}active{% endif %}">
+        <i class="bi bi-wrench me-1"></i>{{ t(request, 'nav.maintenance') }}
+      </a>
+      <a href="/statistics" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/statistics') %}active{% endif %}">
+        <i class="bi bi-bar-chart-line me-1"></i>{{ t(request, 'nav.statistics') }}
+      </a>
+      <a href="/benchmarks" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/benchmarks') %}active{% endif %}">
+        <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'nav.benchmarks') }}
+      </a>
+    </div>
+
+    {# ── Right utilities: always visible ── #}
+    <div class="d-flex align-items-center gap-2 ms-auto">
+      <span class="text-secondary small d-none d-md-inline">
+        <i class="bi bi-person-circle me-1"></i>{{ request.session.get("user","admin") }}
+      </span>
+      {# Language Switcher #}
+      {% set cur_lang = get_lang(request) %}
+      <form method="POST" action="/set-language" id="admin-lang-form" class="d-flex align-items-center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <select name="lang" class="form-select form-select-sm text-white bg-dark border-secondary"
+                style="width:auto;font-size:.8rem"
+                onchange="document.getElementById('admin-lang-form').submit()">
+          <option value="de_DE" {% if cur_lang == 'de_DE' %}selected{% endif %}>🇩🇪</option>
+          <option value="en_EN" {% if cur_lang == 'en_EN' %}selected{% endif %}>🇬🇧</option>
+          <option value="fr_FR" {% if cur_lang == 'fr_FR' %}selected{% endif %}>🇫🇷</option>
+          <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳</option>
+        </select>
+      </form>
+      {# Theme Toggle #}
+      <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
+              onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
+        <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+      </button>
+      {# Logout #}
+      <a href="/logout" class="btn btn-sm btn-outline-secondary" title="{{ t(request, 'nav.logout') }}">
+        <i class="bi bi-box-arrow-right"></i><span class="d-none d-lg-inline ms-1">{{ t(request, 'nav.logout') }}</span>
+      </a>
+      {# Hamburger: visible <1400px #}
+      <button class="navbar-toggler d-xxl-none border-0 ps-1" type="button"
+              data-bs-toggle="offcanvas" data-bs-target="#moeNavOffcanvas"
+              aria-controls="moeNavOffcanvas" aria-label="Navigation öffnen">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+    </div>
+
+    {# ── Offcanvas: Mobile / Tablet Navigation ── #}
+    <div class="offcanvas offcanvas-end text-bg-dark" tabindex="-1" id="moeNavOffcanvas"
+         aria-labelledby="moeNavOffcanvasLabel" style="width:280px">
+      <div class="offcanvas-header border-bottom border-secondary pb-2">
+        <span class="offcanvas-title fw-bold" id="moeNavOffcanvasLabel">
+          <i class="bi bi-diagram-3-fill me-2" style="color:#6ea8fe"></i>MoE Admin
+        </span>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Schließen"></button>
+      </div>
+      <div class="offcanvas-body px-2 py-3">
+        <ul class="nav flex-column gap-1">
+          <li class="nav-item">
+            <a href="/" class="nav-link text-white {% if request.url.path == '/' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-sliders me-2 text-info"></i>{{ t(request, 'nav.config') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/monitoring" class="nav-link text-white {% if request.url.path == '/monitoring' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-graph-up me-2 text-info"></i>{{ t(request, 'nav.monitoring') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/live-monitoring" class="nav-link text-white {% if request.url.path == '/live-monitoring' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-activity me-2 text-info"></i>{{ t(request, 'nav.live') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/servers" class="nav-link text-white {% if request.url.path == '/servers' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-hdd-stack me-2 text-info"></i>{{ t(request, 'nav.server') }}
+            </a>
+          </li>
+          <li><hr class="border-secondary my-1"></li>
+          <li class="nav-item">
+            <a href="/profiles" class="nav-link text-white {% if request.url.path == '/profiles' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-person-badge me-2 text-warning"></i>{{ t(request, 'nav.cc_profiles') }}{% if enabled_profiles_count is defined and enabled_profiles_count %} <span class="badge bg-success ms-1">{{ enabled_profiles_count }}</span>{% endif %}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/skills" class="nav-link text-white {% if request.url.path == '/skills' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-terminal me-2 text-warning"></i>{{ t(request, 'nav.skills') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/mcp-tools" class="nav-link text-white {% if request.url.path == '/mcp-tools' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-tools me-2 text-warning"></i>{{ t(request, 'nav.mcp_tools') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/tool-eval" class="nav-link text-white {% if request.url.path == '/tool-eval' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-clipboard-data me-2 text-warning"></i>{{ t(request, 'nav.tool_eval') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/templates" class="nav-link text-white {% if request.url.path.startswith('/templates') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-collection me-2 text-warning"></i>{{ t(request, 'nav.templates') }}
+            </a>
+          </li>
+          <li><hr class="border-secondary my-1"></li>
+          <li class="nav-item">
+            <a href="/knowledge" class="nav-link text-white {% if request.url.path == '/knowledge' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-database-gear me-2 text-success"></i>Knowledge
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/federation" class="nav-link text-white {% if request.url.path == '/federation' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-globe2 me-2 text-success"></i>Federation
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/quarantine" class="nav-link text-white {% if request.url.path == '/quarantine' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-shield-exclamation me-2 text-danger"></i>{{ t(request, 'nav.quarantine') }}
+            </a>
+          </li>
+          <li><hr class="border-secondary my-1"></li>
+          <li class="nav-item">
+            <a href="/users" class="nav-link text-white {% if request.url.path.startswith('/users') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-people me-2 text-secondary"></i>{{ t(request, 'nav.users') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/user-content" class="nav-link text-white {% if request.url.path.startswith('/user-content') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-person-lines-fill me-2 text-secondary"></i>{{ t(request, 'nav.user_content') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/maintenance" class="nav-link text-white {% if request.url.path.startswith('/maintenance') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-wrench me-2 text-secondary"></i>{{ t(request, 'nav.maintenance') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/statistics" class="nav-link text-white {% if request.url.path.startswith('/statistics') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-bar-chart-line me-2 text-secondary"></i>{{ t(request, 'nav.statistics') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/benchmarks" class="nav-link text-white {% if request.url.path.startswith('/benchmarks') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
+            </a>
+          </li>
+          <li><hr class="border-secondary my-1"></li>
+          <li class="nav-item">
+            <span class="nav-link text-secondary px-2 py-1 small">
+              <i class="bi bi-person-circle me-1"></i>{{ request.session.get("user","admin") }}
+            </span>
+          </li>
+          <li class="nav-item">
+            <a href="/logout" class="nav-link text-danger px-2 py-2 rounded">
+              <i class="bi bi-box-arrow-right me-2"></i>{{ t(request, 'nav.logout') }}
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+
     {% endif %}
   </div>
 </nav>

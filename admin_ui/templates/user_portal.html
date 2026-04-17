@@ -26,6 +26,12 @@
     .sidebar-link { display: block; padding: .5rem .75rem; border-radius: 8px; text-decoration: none; color: #495057; font-size: .9rem; }
     .sidebar-link:hover { background: #e9ecef; color: #212529; }
     .sidebar-link.active { background: #0d6efd; color: #fff; }
+    @media (max-width: 767px) {
+      .portal-layout { flex-direction: column !important; }
+      .portal-sidebar { min-width: unset; width: 100%; }
+      .portal-sidebar .list-group { display: flex; flex-direction: row; flex-wrap: wrap; gap: .25rem; }
+      .portal-sidebar .list-group .sidebar-link { padding: .4rem .65rem; font-size: .82rem; }
+    }
     .budget-bar .progress { height: 10px; border-radius: 5px; }
     .key-mono { font-family: monospace; font-size: .82rem; word-break: break-all; }
     footer { font-size: .78rem; color: #adb5bd; }
@@ -92,7 +98,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
 {% if page == "login" %}
 <!-- ═══════════════════════════════════════════ LOGIN ═════════════════════════ -->
 <div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
-  <div class="card" style="width:380px">
+  <div class="card" style="max-width:380px;width:100%">
     <div class="card-header bg-dark text-white text-center py-3">
       <i class="bi bi-diagram-3-fill me-2" style="color:#6ea8fe"></i>{{ t(request, 'portal.login_header') }}
     </div>
@@ -139,7 +145,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
 {% elif page == "forgot_password" %}
 <!-- ══════════════════════════════ PASSWORT VERGESSEN ══════════════════════════ -->
 <div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
-  <div class="card" style="width:420px">
+  <div class="card" style="max-width:420px;width:100%">
     <div class="card-header bg-dark text-white text-center py-3">
       <i class="bi bi-envelope me-2" style="color:#6ea8fe"></i>{{ t(request, 'portal.forgot_header') }}
     </div>
@@ -181,7 +187,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
 {% elif page == "reset_password" %}
 <!-- ══════════════════════════════ PASSWORT RESET ═════════════════════════════ -->
 <div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
-  <div class="card" style="width:420px">
+  <div class="card" style="max-width:420px;width:100%">
     <div class="card-header bg-dark text-white text-center py-3">
       <i class="bi bi-key me-2" style="color:#6ea8fe"></i>{{ t(request, 'portal.reset_header') }}
     </div>
@@ -235,7 +241,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
 {% else %}
 <!-- ══════════════════════════════ AUTHENTICATED LAYOUT ══════════════════════ -->
 <div class="container py-4">
-  <div class="d-flex gap-4 align-items-start">
+  <div class="d-flex gap-4 align-items-start portal-layout">
 
     <!-- Sidebar -->
     <div class="portal-sidebar">
