@@ -94,6 +94,7 @@
               <th>{{ t(request, 'table.duration') }}</th>
               <th>{{ t(request, 'table.progress') }}</th>
               <th>Run ID</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="bg-jobs-tbody"></tbody>
@@ -104,7 +105,16 @@
     <div class="card">
       <div class="card-header bg-dark text-white d-flex align-items-center justify-content-between">
         <span><i class="bi bi-activity me-2"></i>{{ t(request, 'section.api_requests') }}</span>
-        <small class="text-secondary">{{ t(request, 'info.color_coding') }}</small>
+        <div class="d-flex align-items-center gap-3">
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" role="switch"
+                   id="filter-hide-healer" checked onchange="applyActiveFilter()">
+            <label class="form-check-label text-secondary small" for="filter-hide-healer">
+              Healer ausblenden
+            </label>
+          </div>
+          <small class="text-secondary">{{ t(request, 'info.color_coding') }}</small>
+        </div>
       </div>
       <div class="card-body p-0">
         <div id="active-requests-container">
@@ -141,6 +151,9 @@
         <div class="d-flex gap-2">
           <button class="btn btn-sm btn-outline-secondary" onclick="fetchCompletedRequests()">
             <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+          </button>
+          <button class="btn btn-sm btn-outline-success" onclick="exportHistory()">
+            <i class="bi bi-download me-1"></i>CSV
           </button>
           <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()">
             <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.history_clear') }}
@@ -227,24 +240,33 @@ function expiresIn(iso) {
 }
 
 /* ── Aktive Prozesse ───────────────────────────────────────────────────────── */
-async function fetchActiveRequests() {
-  try {
-    const data = await fetch('/api/live/active-requests').then(r => r.json());
-    const reqs = data.requests || [];
-    document.getElementById('badge-active').textContent = reqs.length;
+// Healer model pattern — filter these out of the API-requests table by default
+const HEALER_MODEL_PREFIX = 'moe-ontology-curator';
+let _activeReqs = [];
 
-    if (reqs.length === 0) {
-      document.getElementById('active-empty').classList.remove('d-none');
-      document.getElementById('active-table').classList.add('d-none');
-      return;
-    }
-    document.getElementById('active-empty').classList.add('d-none');
-    document.getElementById('active-table').classList.remove('d-none');
+function applyActiveFilter() {
+  const hideHealer = document.getElementById('filter-hide-healer')?.checked ?? true;
+  const filtered = hideHealer
+    ? _activeReqs.filter(r => !(r.model || '').startsWith(HEALER_MODEL_PREFIX))
+    : _activeReqs;
 
-    // Sort by duration descending (longest first)
-    reqs.sort((a, b) => (b.duration_s || 0) - (a.duration_s || 0));
+  // Update badge to show visible count / total
+  const badge = document.getElementById('badge-active');
+  if (badge) {
+    badge.textContent = hideHealer && filtered.length !== _activeReqs.length
+      ? `${filtered.length} (${_activeReqs.length})`
+      : String(_activeReqs.length);
+  }
 
-    const rows = reqs.map(r => `
+  if (filtered.length === 0) {
+    document.getElementById('active-empty').classList.remove('d-none');
+    document.getElementById('active-table').classList.add('d-none');
+    return;
+  }
+  document.getElementById('active-empty').classList.add('d-none');
+  document.getElementById('active-table').classList.remove('d-none');
+
+  const rows = filtered.map(r => `
       <tr>
         <td class="text-nowrap">${fmtDateTime(r.started_at)}</td>
         <td class="text-nowrap"><span class="${durationClass(r.duration_s)}">${fmtDuration(r.duration_s)}</span></td>
@@ -261,7 +283,18 @@ async function fetchActiveRequests() {
               <i class="bi bi-x-circle me-1"></i>Kill
             </button></td>
       </tr>`).join('');
-    document.getElementById('active-tbody').innerHTML = rows;
+  document.getElementById('active-tbody').innerHTML = rows;
+}
+
+async function fetchActiveRequests() {
+  try {
+    const data = await fetch('/api/live/active-requests').then(r => r.json());
+    _activeReqs = data.requests || [];
+
+    // Sort by duration descending (longest first)
+    _activeReqs.sort((a, b) => (b.duration_s || 0) - (a.duration_s || 0));
+
+    applyActiveFilter();
   } catch(e) {
     // Surface the error visibly instead of leaving a silent empty table.
     console.warn('active-requests fetch failed:', e);
@@ -271,8 +304,10 @@ async function fetchActiveRequests() {
         <i class="bi bi-exclamation-triangle me-1"></i>Render error: ${escHtml(e && e.message || e)}
       </td></tr>`;
     }
+    return;
   }
 }
+
 
 /* ── LLM Instanzen ─────────────────────────────────────────────────────────── */
 async function fetchLLMInstances() {
@@ -426,29 +461,40 @@ async function fetchLLMInstances() {
 async function fetchBackgroundJobs() {
   try {
     const d = await fetch('/api/maintenance/ontology/status').then(r => r.json());
-    const status = d.status || 'idle';
+    let status = d.status || 'idle';
     const card = document.getElementById('bg-jobs-card');
     const tbody = document.getElementById('bg-jobs-tbody');
     if (!card || !tbody) return;
 
-    // Only show card when something is actively running or recently failed
-    const show = (status === 'running' || status === 'failed');
+    // Staleness detection: if "running" for > 2 hours, the process is dead
+    const STALE_THRESHOLD_S = 7200;
+    let durationSec = 0;
+    if (d.started_at) {
+      const start = parseFloat(d.started_at) * 1000;
+      if (!isNaN(start)) durationSec = (Date.now() - start) / 1000;
+    }
+    if (status === 'running' && durationSec > STALE_THRESHOLD_S) {
+      status = 'stale';
+    }
+
+    // Only show card when something is actively running, failed, or stale
+    const show = (status === 'running' || status === 'failed' || status === 'stale');
     if (!show) { card.classList.add('d-none'); tbody.innerHTML = ''; return; }
     card.classList.remove('d-none');
 
-    // Compute duration from started_at (epoch seconds string)
-    let duration = '–';
-    if (d.started_at) {
-      const start = parseFloat(d.started_at) * 1000;
-      if (!isNaN(start)) duration = fmtDuration((Date.now() - start) / 1000);
-    }
+    const duration = durationSec > 0 ? fmtDuration(durationSec) : '–';
     const started = d.started_at
       ? new Date(parseFloat(d.started_at) * 1000).toLocaleTimeString('de-DE')
       : '–';
 
-    const statusBadge = status === 'running'
-      ? `<span class="badge bg-success"><span class="live-badge" style="width:6px;height:6px"></span>running</span>`
-      : `<span class="badge bg-danger">${escHtml(status)}</span>`;
+    let statusBadge;
+    if (status === 'running') {
+      statusBadge = `<span class="badge bg-success"><span class="live-badge" style="width:6px;height:6px"></span>running</span>`;
+    } else if (status === 'stale') {
+      statusBadge = `<span class="badge bg-warning text-dark" title="Process died without final status — running for ${fmtDuration(durationSec)}">stale (orphaned)</span>`;
+    } else {
+      statusBadge = `<span class="badge bg-danger">${escHtml(d.status || status)}</span>`;
+    }
 
     const processed = d.processed ?? '–';
     const written   = d.written   ?? '–';
@@ -458,6 +504,12 @@ async function fetchBackgroundJobs() {
       <span class="metric-chip"><strong>${escHtml(written)}</strong> written</span>
       <span class="metric-chip text-danger"><strong>${escHtml(failed)}</strong> failed</span>`;
 
+    const canClear = (status === 'failed' || status === 'stale');
+    const clearBtn = canClear
+      ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" title="Eintrag bereinigen" onclick="clearJobStatus()">
+           <i class="bi bi-x-lg"></i>
+         </button>`
+      : '';
     tbody.innerHTML = `<tr>
       <td><i class="bi bi-diagram-3 me-1 text-primary"></i>Ontology Gap Healer</td>
       <td>${statusBadge}</td>
@@ -465,9 +517,24 @@ async function fetchBackgroundJobs() {
       <td class="text-nowrap">${duration}</td>
       <td>${progress}</td>
       <td><code style="font-size:.75rem">${escHtml(d.run_id || '–')}</code></td>
+      <td>${clearBtn}</td>
     </tr>`;
   } catch(e) {
     console.warn('background-jobs fetch failed:', e);
+  }
+}
+
+async function clearJobStatus() {
+  try {
+    const r = await fetch('/api/maintenance/ontology/status', {method: 'DELETE'}).then(r => r.json());
+    if (r.ok) {
+      document.getElementById('bg-jobs-card').classList.add('d-none');
+      document.getElementById('bg-jobs-tbody').innerHTML = '';
+    } else {
+      alert('Bereinigung fehlgeschlagen: ' + (r.reason || JSON.stringify(r)));
+    }
+  } catch(e) {
+    alert('Fehler: ' + e.message);
   }
 }
 
@@ -532,6 +599,32 @@ async function fetchCompletedRequests() {
   } catch(e) {
     console.warn('completed-requests fetch failed:', e);
   }
+}
+
+function exportHistory() {
+  const table = document.getElementById('history-table');
+  if (!table || table.classList.contains('d-none')) {
+    alert('Keine Daten zum Exportieren. Bitte zuerst aktualisieren.');
+    return;
+  }
+  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Status'];
+  const rows = [headers];
+  document.querySelectorAll('#history-tbody tr').forEach(tr => {
+    const cells = [...tr.querySelectorAll('td')].map(td => {
+      // Strip HTML tags, normalise whitespace
+      return td.innerText.replace(/\s+/g, ' ').trim().replace(/"/g, '""');
+    });
+    rows.push(cells);
+  });
+  const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+  const ts   = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  const a    = document.createElement('a');
+  a.href = url; a.download = `moe-process-history-${ts}.csv`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function clearHistory() {

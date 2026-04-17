@@ -86,6 +86,9 @@
     <a href="/statistics" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/statistics') %}active{% endif %}">
       <i class="bi bi-bar-chart-line me-1"></i>{{ t(request, 'nav.statistics') }}
     </a>
+    <a href="/benchmarks" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/benchmarks') %}active{% endif %}">
+      <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'nav.benchmarks') }}
+    </a>
     <span class="text-secondary small"><i class="bi bi-person-circle me-1"></i>{{ request.session.get("user","admin") }}</span>
     <a href="/logout" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-box-arrow-right me-1"></i>{{ t(request, 'nav.logout') }}

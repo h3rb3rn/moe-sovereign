@@ -473,6 +473,9 @@ async def trigger_ontology_healer(concurrency: int = 4, batch_size: int = 20) ->
         return {"ok": False, "reason": "orchestrator_unreachable", "error": str(e)[:200]}
 
 
+_HEALER_STALE_THRESHOLD_S = 7200  # 2 hours — if still "running" after this, auto-fail
+
+
 async def get_ontology_healer_status() -> dict:
     redis_cli = await _get_redis()
     if redis_cli is None:
@@ -481,6 +484,20 @@ async def get_ontology_healer_status() -> dict:
         data = await redis_cli.hgetall(ONTOLOGY_RUN_STATUS_KEY)
         if not data:
             return {"status": "idle"}
+        # Auto-expire stale "running" entries whose process died without final status
+        if data.get("status") == "running" and data.get("started_at"):
+            import time as _t
+            try:
+                age = _t.time() - float(data["started_at"])
+                if age > _HEALER_STALE_THRESHOLD_S:
+                    data["status"] = "failed"
+                    data["message"] = f"orphaned — process unresponsive for {age/3600:.1f}h"
+                    await redis_cli.hset(
+                        ONTOLOGY_RUN_STATUS_KEY,
+                        mapping={"status": "failed", "message": data["message"]},
+                    )
+            except (ValueError, TypeError):
+                pass
         return data
     except Exception as e:
         return {"status": "error", "message": str(e)}

@@ -47,6 +47,53 @@
     </div>
   </div>
 
+  <!-- Card 1b: Dedicated Healer -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-danger bg-opacity-10">
+        <i class="bi bi-infinity me-2"></i><strong>{{ t(request, 'lbl.dedicated_healer') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.dedicated_healer_desc') }}</p>
+        <div class="mb-3">
+          <label class="form-label small mb-1">{{ t(request, 'lbl.dedicated_healer_template') }}</label>
+          <select id="dedicated-template" class="form-select form-select-sm">
+            <option value="">— {{ t(request, 'msg.dedicated_healer_loading') }} —</option>
+          </select>
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="dedicated-block-server" checked>
+          <label class="form-check-label small" for="dedicated-block-server">
+            {{ t(request, 'lbl.dedicated_healer_block') }}
+          </label>
+        </div>
+        <div class="d-flex gap-2 mb-3">
+          <button class="btn btn-success btn-sm flex-fill" id="btn-dedicated-start" onclick="startDedicatedHealer()">
+            <i class="bi bi-play-fill me-1"></i>{{ t(request, 'btn.dedicated_healer_start') }}
+          </button>
+          <button class="btn btn-danger btn-sm flex-fill" id="btn-dedicated-stop" disabled onclick="stopDedicatedHealer()">
+            <i class="bi bi-stop-fill me-1"></i>{{ t(request, 'btn.dedicated_healer_stop') }}
+          </button>
+        </div>
+        <hr class="my-3">
+        <div class="small">
+          <div class="d-flex justify-content-between"><span class="text-muted">Status:</span>
+            <span id="dedicated-status" class="fw-bold">—</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Template:</span>
+            <span id="dedicated-tmpl" class="font-monospace small text-truncate" style="max-width:180px">—</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">PID:</span>
+            <span id="dedicated-pid" class="font-monospace small">—</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Processed:</span>
+            <span id="dedicated-processed">0</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Written:</span>
+            <span id="dedicated-written" class="text-success">0</span></div>
+          <div class="d-flex justify-content-between"><span class="text-muted">Failed:</span>
+            <span id="dedicated-failed" class="text-danger">0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Card 2: Scan + Cleanup -->
   <div class="col-12 col-lg-6">
     <div class="card h-100">
@@ -123,6 +170,113 @@ function fmtStatus(s) {
   const map = {running: 'warning', ready: 'success', failed: 'danger', idle: 'secondary'};
   const cls = map[s] || 'secondary';
   return `<span class="badge bg-${cls}">${s}</span>`;
+}
+
+// ─── Dedicated Healer ────────────────────────────────────────────────────────
+
+async function loadDedicatedTemplates() {
+  try {
+    const servers = await fetch('/api/servers/list').then(r => r.json());
+    const sel = document.getElementById('dedicated-template');
+    sel.innerHTML = '';
+    const ontologyServers = (servers || []).filter(s => s.ontology_enabled);
+    if (ontologyServers.length === 0) {
+      sel.innerHTML = '<option value="">— Keine Ontology-Server konfiguriert —</option>';
+      return;
+    }
+    ontologyServers.forEach(s => {
+      const name = (s.name || '').toLowerCase();
+      const tpl = `moe-ontology-curator-${name}`;
+      const opt = document.createElement('option');
+      opt.value = tpl;
+      opt.textContent = `${tpl} (${s.url || s.name})`;
+      sel.appendChild(opt);
+    });
+    // Pre-select currently running template if any
+    pollDedicatedHealer();
+  } catch (e) {
+    document.getElementById('dedicated-template').innerHTML = '<option value="">— Fehler beim Laden —</option>';
+  }
+}
+
+async function pollDedicatedHealer() {
+  try {
+    const d = await fetch('/api/maintenance/ontology/dedicated/status').then(r => r.json());
+    const running = d.status === 'running';
+    document.getElementById('dedicated-status').innerHTML = fmtStatus(d.status || 'stopped');
+    document.getElementById('dedicated-tmpl').textContent = d.template || '—';
+    document.getElementById('dedicated-pid').textContent = d.pid || '—';
+    document.getElementById('dedicated-processed').textContent = d.processed || 0;
+    document.getElementById('dedicated-written').textContent = d.written || 0;
+    document.getElementById('dedicated-failed').textContent = d.failed || 0;
+    document.getElementById('btn-dedicated-start').disabled = running;
+    document.getElementById('btn-dedicated-stop').disabled = !running;
+    // Pre-select template in dropdown if running
+    if (running && d.template) {
+      const sel = document.getElementById('dedicated-template');
+      for (const opt of sel.options) {
+        if (opt.value === d.template) { sel.value = opt.value; break; }
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// Extract the node name from a curator template name
+// "moe-ontology-curator-n04-rtx" → "n04-rtx"
+function _tplToServerName(tpl) {
+  const prefix = 'moe-ontology-curator-';
+  return tpl.startsWith(prefix) ? tpl.slice(prefix.length) : tpl;
+}
+
+async function startDedicatedHealer() {
+  const template = document.getElementById('dedicated-template').value.trim();
+  if (!template) { alert('Bitte ein Template auswählen.'); return; }
+  const blockServer = document.getElementById('dedicated-block-server').checked;
+  document.getElementById('btn-dedicated-start').disabled = true;
+
+  // Optional: block the server for regular routing first
+  if (blockServer) {
+    const serverName = _tplToServerName(template);
+    try {
+      await fetch(`/api/servers/${encodeURIComponent(serverName)}/block-toggle`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({blocked: true}),
+      });
+    } catch (e) { /* non-fatal */ }
+  }
+
+  try {
+    const r = await fetch('/api/maintenance/ontology/dedicated/start', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({template, block_server: blockServer}),
+    }).then(r => r.json());
+    if (!r.ok) alert('Start fehlgeschlagen: ' + (r.reason || JSON.stringify(r)));
+  } catch (e) { alert('Fehler: ' + e.message); }
+  finally { pollDedicatedHealer(); }
+}
+
+async function stopDedicatedHealer() {
+  if (!confirm('Dedicated Healer stoppen?')) return;
+  document.getElementById('btn-dedicated-stop').disabled = true;
+  let template = '';
+  try {
+    // Get current template from status before stopping
+    const s = await fetch('/api/maintenance/ontology/dedicated/status').then(r => r.json());
+    template = s.template || '';
+    await fetch('/api/maintenance/ontology/dedicated/stop', {method: 'POST'});
+  } catch (e) { alert('Fehler: ' + e.message); }
+
+  // If block_server was set, unblock now
+  if (template) {
+    const serverName = _tplToServerName(template);
+    try {
+      await fetch(`/api/servers/${encodeURIComponent(serverName)}/block-toggle`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({blocked: false}),
+      });
+    } catch (e) { /* non-fatal */ }
+  }
+  setTimeout(pollDedicatedHealer, 800);
 }
 
 async function pollOntology() {
@@ -299,6 +453,8 @@ async function reloadPrometheus() {
 document.addEventListener('DOMContentLoaded', () => {
   pollOntology();
   setInterval(pollOntology, 3000);
+  loadDedicatedTemplates();
+  setInterval(pollDedicatedHealer, 5000);
 });
 </script>
 {% endblock %}

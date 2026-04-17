@@ -241,6 +241,7 @@ services:
       - ./grafana/dashboards:/app/grafana/dashboards:rw
       - ./prometheus/prometheus.yml:/app/prometheus/prometheus.yml:rw
       - ${MOE_DATA_ROOT}/gap-healer-stats:/app/gap-healer-stats:ro
+      - ./benchmarks:/app/benchmarks:rw
     depends_on:
       langgraph-app:
         condition: service_started

@@ -63,8 +63,12 @@ def find_latest_results() -> pathlib.Path:
 
 
 def load_dataset() -> dict:
-    """Load the evaluation dataset with expected answers."""
-    ds_path = DATASET_DIR / "moe_eval_v1.json"
+    """Load the evaluation dataset with expected answers.
+
+    Respects MOE_EVAL_DATASET env var so overnight/empirical datasets work.
+    """
+    ds_name = os.environ.get("MOE_EVAL_DATASET", "moe_eval_v1.json")
+    ds_path = DATASET_DIR / ds_name
     return json.loads(ds_path.read_text())
 
 

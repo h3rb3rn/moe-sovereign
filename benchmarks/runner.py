@@ -49,7 +49,16 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Number of single_turn tests to run concurrently.
 # multi_turn tests always run sequentially (session-state dependency).
-PARALLEL_TESTS = int(os.environ.get("MOE_PARALLEL_TESTS", "3"))
+PARALLEL_TESTS   = int(os.environ.get("MOE_PARALLEL_TESTS", "3"))
+MAX_RETRIES      = int(os.environ.get("MOE_MAX_RETRIES", "3"))
+RETRY_DELAY_S    = int(os.environ.get("MOE_RETRY_DELAY", "30"))
+# Base timeout per API call attempt. Each retry attempt gets extra time:
+#   attempt 1: BASE_TIMEOUT, attempt 2: BASE_TIMEOUT*1.5, attempt 3: BASE_TIMEOUT*2
+# Capped at MAX_TIMEOUT (hard upper bound, prevents infinite waits).
+BASE_TIMEOUT     = int(os.environ.get("MOE_TIMEOUT", "1200"))   # 20 min base
+MAX_TIMEOUT      = int(os.environ.get("MOE_MAX_TIMEOUT", "3600")) # 1 h ceiling
+# Max wait for API health-check before aborting (seconds).
+API_HEALTH_WAIT  = int(os.environ.get("MOE_HEALTH_WAIT", "600"))
 
 if not API_KEY:
     print("ERROR: MOE_API_KEY environment variable is required.", file=sys.stderr)
@@ -133,6 +142,87 @@ async def call_api(
                 "data": {"error": str(e)[:500]}}
 
 
+async def wait_for_api(client: httpx.AsyncClient) -> bool:
+    """Poll the API health endpoint until it responds or API_HEALTH_WAIT is exceeded.
+
+    Returns True if the API is healthy, False if it timed out.
+    This prevents tests from starting while models are still loading into VRAM
+    or the orchestrator is restarting.
+    """
+    deadline = time.monotonic() + API_HEALTH_WAIT
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            r = await client.get(f"{API_BASE}/health", timeout=10)
+            if r.status_code < 500:
+                if attempt > 1:
+                    print(f"    [health] API ready after {attempt} attempts", flush=True)
+                return True
+        except Exception:
+            pass
+        remaining = int(deadline - time.monotonic())
+        if remaining <= 0:
+            break
+        print(
+            f"    [health] API not ready (attempt {attempt}), retrying in 15s"
+            f" ({remaining}s left)...",
+            flush=True,
+        )
+        await asyncio.sleep(15)
+    print(f"    [health] API did not become ready within {API_HEALTH_WAIT}s", flush=True)
+    return False
+
+
+async def call_api_with_retry(
+    client: httpx.AsyncClient,
+    messages: list[dict],
+    session_id: str | None = None,
+    max_tokens: int = 2048,
+    label: str = "",
+) -> dict:
+    """Wrapper around call_api with up to MAX_RETRIES attempts on transient failures.
+
+    Each attempt receives more time (adaptive timeout) and waits longer before
+    the next retry (exponential backoff), accommodating extreme hardware delays
+    such as model loading or VRAM pressure:
+      attempt 1: timeout = BASE_TIMEOUT,       delay = RETRY_DELAY_S
+      attempt 2: timeout = BASE_TIMEOUT * 1.5, delay = RETRY_DELAY_S * 2
+      attempt 3: timeout = BASE_TIMEOUT * 2,   delay = RETRY_DELAY_S * 4
+    All values are capped at MAX_TIMEOUT / 300s respectively.
+
+    Retries on status=0 (timeout / network error) or HTTP 5xx.
+    Does not retry on HTTP 4xx (client error — bad request, auth failure).
+    """
+    res: dict = {"status": 0, "dt": 0.0, "data": {"error": "no_attempts"}}
+    for attempt in range(1, MAX_RETRIES + 1):
+        per_attempt_timeout = min(int(BASE_TIMEOUT * (1 + 0.5 * (attempt - 1))), MAX_TIMEOUT)
+        res = await call_api(client, messages, session_id, max_tokens, per_attempt_timeout)
+        status = res["status"]
+        if status == 200 or (400 <= status < 500):
+            return res
+
+        reason = res["data"].get("error", "") if status == 0 else f"HTTP {status}"
+        if attempt < MAX_RETRIES:
+            delay = min(RETRY_DELAY_S * (2 ** (attempt - 1)), 300)
+            next_timeout = min(int(BASE_TIMEOUT * (1 + 0.5 * attempt)), MAX_TIMEOUT)
+            print(
+                f"      [retry {attempt}/{MAX_RETRIES}] {label}failed ({reason}) "
+                f"after {res['dt']:.0f}s — waiting {delay}s, next timeout={next_timeout}s...",
+                flush=True,
+            )
+            # Before retrying, verify the API is actually alive so we don't burn
+            # the next timeout slot waiting on a down service.
+            await asyncio.sleep(delay)
+            await wait_for_api(client)
+        else:
+            print(
+                f"      [give up] {label}all {MAX_RETRIES} attempts exhausted ({reason})",
+                flush=True,
+            )
+    return res
+
+
 # --------------------------------------------------------------------------
 # Test case execution
 # --------------------------------------------------------------------------
@@ -150,7 +240,7 @@ async def run_single_turn(
     )
 
     messages = [{"role": "user", "content": tc["prompt"]}]
-    res = await call_api(client, messages)
+    res = await call_api_with_retry(client, messages, label=f"{tc['id']} ")
 
     data = res["data"]
     choices = data.get("choices", [])
@@ -201,7 +291,10 @@ async def run_multi_turn(
 
         print(f"    turn {turn_num}: {prompt[:60]}...", flush=True)
 
-        res = await call_api(client, messages, session_id=session_id)
+        res = await call_api_with_retry(
+            client, messages, session_id=session_id,
+            label=f"turn {turn_num} ",
+        )
 
         data = res["data"]
         choices = data.get("choices", [])
@@ -211,8 +304,10 @@ async def run_multi_turn(
         if isinstance(data.get("error"), dict):
             err = data["error"].get("message", "")
 
-        # Append assistant response to history for next turn
-        messages.append({"role": "assistant", "content": content})
+        # Append assistant response to history for next turn.
+        # On total failure, use a marker so subsequent turns are not misled by silence.
+        history_content = content if content else "[TURN FAILED — RETRIES EXHAUSTED]"
+        messages.append({"role": "assistant", "content": history_content})
 
         result.turns.append(TurnResult(
             turn=turn_num,
@@ -286,6 +381,14 @@ async def main() -> int:
     results: list[TestCaseResult] = []
 
     async with httpx.AsyncClient() as client:
+        # Wait for the orchestrator to be ready before starting any tests.
+        # This absorbs cold-start delays (model loading, container restart).
+        print(f"[pre-flight] Checking API health at {API_BASE} ...", flush=True)
+        if not await wait_for_api(client):
+            print("ERROR: API did not become healthy. Aborting run.", file=sys.stderr)
+            return 1
+        print(f"[pre-flight] API healthy. Starting tests.\n", flush=True)
+
         # --- Phase 1: single_turn tests in parallel --------------------------
         if single_turn_cases:
             sem = asyncio.Semaphore(PARALLEL_TESTS)
