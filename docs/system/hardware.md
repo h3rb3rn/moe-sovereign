@@ -44,22 +44,24 @@ graph TD
     Orchestrator <-->|Ollama37 API| N6
 ```
 
-## Ollama37 – Kepler Fork
+## Ollama37 – Kepler Fork (PoC)
 
 Node N6 uses the **Ollama37 fork**, which reactivates Tesla K80 GPUs (Kepler architecture, Compute Capability 3.7) that are unsupported by standard Ollama.
 
 | | Standard Ollama | Ollama37 |
 |-|----------------|---------|
 | Minimum Compute Capability | 5.0 (Maxwell) | 3.7 (Kepler) |
-| Tesla K80 | ❌ not supported | ✅ fully supported |
+| Tesla K80 | ❌ not supported | ⚗️ functional (Ollama37 fork) |
 | Tesla M10 | ✅ | ✅ |
 | Consumer GPUs (RTX etc.) | ✅ | ✅ |
 | API compatibility | Standard | Identical |
 
-!!! success "Key Innovation"
-    7× Tesla K80 = 168 GB VRAM on a single node.
-    These GPUs are treated as "End of Life" by official tools.
-    The Ollama37 fork makes them usable for full LLM inference.
+!!! info "Machbarkeitsstudie — nicht als Produktionsaussage verstehen"
+    Die Aktivierung der Tesla K80 durch den Ollama37-Fork ist ein **Proof of Concept**.
+    Es wurde gezeigt, dass 7× Tesla K80 = 168 GB VRAM für LLM-Inferenz mit 7B-Modellen
+    funktionieren. Ob das für Produktionsworkloads wirtschaftlich oder latenz-technisch
+    vertretbar ist, lässt sich erst nach dem ausstehenden Hardware-Latenzvergleich
+    (K80 vs. RTX vs. H100) beurteilen — siehe [Ausstehend: Hardware-Latenzvergleich](#ausstehend-hardware-latenzvergleich).
 
 ## VRAM Summary
 
@@ -94,4 +96,32 @@ The EXP node demonstrates absolute hardware minimalism:
 - **GPU**: Tesla M10 (4× 8 GB = 32 GB VRAM)
 - **Result**: `gpt-oss:20b` at 15 tokens/s ✅
 
-Proof: Even with $50 hardware, LLM inference is possible.
+**PoC-Fazit:** Das Experiment zeigt, dass LLM-Inferenz auch auf €50-Hardware prinzipiell
+funktioniert. Die Latenz ist für produktive Nutzung nicht untersucht worden — das Ziel war
+ausschließlich der Nachweis der technischen Machbarkeit.
+
+---
+
+## Ausstehend: Hardware-Latenzvergleich
+
+Ein vollständiger Latenzvergleich über die gesamte GPU-Leistungsspanne ist in Planung und
+wird die Grundlage für konkrete Hardware-Empfehlungen liefern:
+
+| Hardware-Klasse | VRAM | Beispiel | Inferenz-Modus | Status |
+|---|---|---|---|---|
+| CPU-only | — | x86 / ARM | llama.cpp CPU | ausstehend |
+| Embedded / Low-end | 4–6 GB | GT 1060, RPi-GPU | 7B quantisiert | ausstehend |
+| Legacy Enterprise | 8–32 GB | Tesla M10, M60 | 7–14B Q4 | **gemessen** (PoC) |
+| Legacy HPC | 12–24 GB/GPU | Tesla K80 (Ollama37) | 7B Q4 | **gemessen** (PoC) |
+| Consumer | 12–24 GB | RTX 3060–4090 | 7–32B Q4 | **gemessen** |
+| Semi-Pro / Workstation | 24–48 GB | RTX 6000 Ada, A5000 | 32–70B | ausstehend |
+| Enterprise | 40–80 GB | A100, H100, H200 | 70–120B FP16 | AIHUB gemessen |
+
+**Methodik (geplant):**
+
+- Lokale Hardware (RTX / Tesla M10 / M60 / K80): Ollama mit gemessenen Token/s und
+  End-to-End-Latenzen für 7B, 14B und 30B Modelle
+- Google Colab mit H100-Karten: Ollama mit 120B LLM, gleiche Testfälle
+- Zielmetrik: Token/s (Durchsatz), Time-to-first-token (TTFT), Latenz pro Benchmark-Testfall
+- Ergebnis: einheitliche Vergleichstabelle, die die wirtschaftliche Break-Even-Grenze zwischen
+  Legacy-Hardware und Consumer/Enterprise-GPUs sichtbar macht
