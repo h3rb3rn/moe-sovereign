@@ -73,6 +73,13 @@ was tested in two roles:
 Tests run on a 5-node heterogeneous GPU cluster (RTX 3060, GT 1060, Tesla M60,
 Tesla M10). Timeout: 300s. Quantization: Q4_K_M where applicable.
 
+!!! note "PoC-Hardware"
+    Die Tesla M10 und M60 Knoten sind **Proof-of-Concept-Hardware**. Die Latenzdaten
+    zeigen, dass diese GPUs funktionsfähige Antworten liefern — ein direkter
+    Latenzvergleich mit Consumer-GPUs (RTX) und Enterprise-GPUs (H100) steht noch aus
+    und ist in Planung. Aussagen zur Produktionstauglichkeit können erst nach diesem
+    Vergleich getroffen werden.
+
 ### Results
 
 | Model | Params | Planner | Judge | Both | Planner Latency | Judge Latency | Notes |
@@ -147,7 +154,7 @@ hardware — not theoretical peak performance.
 
 ### Latency vs. Quality Trade-off
 
-**Critical insight:** Hardware tier affects latency only — not answer quality.
+**Observation:** Hardware tier affects latency — not answer quality for the same model.
 The same `phi4:14b` Q4_K_M model produces identical output on a Tesla M10 and on an
 RTX 4090. The RTX is faster. The answer is the same.
 
@@ -156,9 +163,19 @@ Quality is determined by:
 2. **Knowledge graph density** (accumulated triples in Neo4j) — improves with usage
 3. **Cache hit rate** (semantic similarity in ChromaDB) — improves with usage
 
-This means **Legacy hardware clusters remain valid long-term** — they produce the
-same quality as enterprise hardware at lower throughput. The quality-vs-time graph
-converges regardless of hardware tier; only the speed of convergence differs.
+!!! warning "Einschränkung: Kein vollständiger Latenzvergleich vorhanden"
+    Die obige Beobachtung gilt für **Antwortqualität**, nicht für wirtschaftliche oder
+    praktische Produktionstauglichkeit. Der entscheidende Faktor — wie viel langsamer
+    Tesla M10/M60/K80 gegenüber RTX-Consumer-GPUs und H100/H200 Enterprise-Hardware ist
+    — ist **noch nicht systematisch gemessen**. Ein geplanter Vergleich
+    (K80 / RTX 3060–4090 / H100 via Google Colab mit 120B-Modell) wird diese Lücke
+    schließen. Bis dahin sind Legacy-GPU-Ergebnisse als **Machbarkeitsnachweis**
+    zu verstehen, nicht als Produktionsempfehlung.
+
+Die PoC-Messungen zeigen: Legacy-Cluster liefern korrekte Antworten bei deutlich höherer
+Latenz. Ob dieser Kompromiss für einen gegebenen Workload tragbar ist, hängt von
+Anforderungen (TTFT, Durchsatz, Betriebskosten) ab — dies wird der ausstehende Vergleich
+quantifizieren.
 
 ### Concurrent Expert Capacity
 
@@ -268,7 +285,7 @@ The runner script: `benchmarks/run_all_parallel.sh`
 ### Why Did the Score Change? Four Factors
 
 1. **Graph density (+2.4 pts, primary driver)** — Routing improved +3.4 pts, multi-expert synthesis +4.8 pts as GraphRAG context grows richer with more domain triples.
-2. **M10 hardware split (structural break)** — M10 nodes were split from 4×8 GB combined blocks into separate 8 GB Ollama instances. Old 30b/70b M10 templates no longer function; the new per-node M10 templates use hermes3:8b and completed all 9/9 tests (avg 3.3–3.6), confirming legacy hardware viability at reduced quality.
+2. **M10 hardware split (structural break)** — M10 nodes were split from 4×8 GB combined blocks into separate 8 GB Ollama instances. Old 30b/70b M10 templates no longer function; the new per-node M10 templates use hermes3:8b and completed all 9/9 tests (avg 3.3–3.6), demonstrating that legacy M10 hardware can achieve full functional coverage (PoC). Latency and throughput relative to consumer/enterprise GPUs remain to be quantified.
 3. **Evaluation methodology correction** — Earlier runs lacked deterministic scoring (det=0); from Apr 15 onward keyword-match and numeric-tolerance scores are computed. Explains routing-legal jump 4.8→8.2.
 4. **Concurrency effect** — n04-rtx scored 6.0 (vs. 7.6 for ref-30b) running simultaneously with 4 other templates (15 concurrent requests); isolated run would score higher.
 
@@ -344,12 +361,19 @@ The runner script: `benchmarks/run_all_parallel.sh`
 
 ---
 
-## April 2026 — moe-m10-8b-gremium: Full M10 Cluster Pass (9/9)
+## April 2026 — moe-m10-8b-gremium: Full M10 Cluster Pass (9/9) — PoC
 
-> **Run date:** 2026-04-16. First full pass on legacy Tesla M10 hardware.
+> **Run date:** 2026-04-16. Proof-of-concept: first full functional pass on Tesla M10 hardware.
 
 The `moe-m10-8b-gremium` template distributes 8 domain-specialist 7–9B models across
 Tesla M10 GPUs (8 GB VRAM each) with phi4:14b on N04-RTX as Planner/Judge.
+
+!!! info "Machbarkeitsnachweis"
+    Dieser Lauf zeigt, dass 8× Tesla M10 (je 8 GB VRAM) alle 9 Benchmark-Testfälle
+    funktional bestehen — **kein** Hinweis auf Produktionstauglichkeit. Die Gesamtlaufzeit
+    von 83 Minuten (vs. ~70 min auf H200) spiegelt noch keinen fairen Vergleich wider, da
+    der ausstehende Latenzvergleich (K80 / RTX / H100) die tatsächlichen Token/s und
+    TTFT-Werte für alle Tiers ermitteln wird.
 
 ### Results — MoE-Eval v1
 
@@ -367,14 +391,15 @@ Tesla M10 GPUs (8 GB VRAM each) with phi4:14b on N04-RTX as Planner/Judge.
 
 **Score: 9/9 (100%)** — Total duration: 4,955s (83 min). Total tokens: 44,928.
 
-This confirms that legacy M10 hardware achieves full functional coverage when Planner/Judge
-are hosted on a node with sufficient context window (N04-RTX, 16K tokens).
+Dies zeigt, dass Tesla M10-Hardware bei ausreichend großem Kontextfenster für Planner/Judge
+(N04-RTX, 16K Tokens) alle Benchmark-Testfälle funktional meistert — als **Machbarkeitsnachweis**,
+nicht als Produktionsaussage. Ein quantitativer Latenzvergleich mit RTX- und H100-Hardware steht aus.
 
 ---
 
-## April 2026 — moe-benchmark-n06-m10: Per-Node M10 Pass (9/9)
+## April 2026 — moe-benchmark-n06-m10: Per-Node M10 Pass (9/9) — PoC
 
-> **Run date:** 2026-04-16. N06-M10 cluster with phi4:14b Planner/Judge.
+> **Run date:** 2026-04-16. N06-M10 cluster with phi4:14b Planner/Judge. Machbarkeitsnachweis.
 
 | Test ID | Category | Duration | Tokens | Status |
 |---|---|---|---|---|
@@ -389,6 +414,10 @@ are hosted on a node with sufficient context window (N04-RTX, 16K tokens).
 | multi-expert-synthesis | multi_expert | 452s | 1,260 | **PASS** |
 
 **Score: 9/9 (100%)** — Total duration: 6,210s (104 min). Total tokens: 24,996.
+
+Die 104-Minuten-Gesamtlaufzeit (vs. 70 min auf H200, ~83 min auf M10-Gremium mit RTX-Planner)
+zeigt die Latenzunterschiede deutlich. Ein systematischer Token/s-Vergleich aller
+Hardware-Tiers folgt im geplanten Latenzvergleich.
 
 ---
 

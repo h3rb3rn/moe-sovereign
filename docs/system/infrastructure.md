@@ -2,7 +2,7 @@
 
 ## Overview
 
-The reference infrastructure consists of 7 GPU nodes running on repurposed enterprise and consumer hardware. It demonstrates that MoE Sovereign functions even under the most adverse hardware conditions.
+The reference infrastructure consists of 7 GPU nodes running on repurposed enterprise and consumer hardware. It demonstrates that MoE Sovereign functions across a wide spectrum of hardware — from CPU-only inference with 7B models up to high-end enterprise GPUs. The Tesla M10, M60 and K80 nodes are **Proof-of-Concept hardware**: they show what is technically feasible, not what is recommended for production deployments. A systematic latency comparison across all hardware tiers is planned.
 
 !!! note "Reference Implementation"
     The nodes shown are Ollama instances. In an enterprise environment,
@@ -135,10 +135,12 @@ graph TD
 - Same API as standard Ollama (drop-in)
 - Node N6: 7× Tesla K80 = 168 GB VRAM
 
-!!! tip "Key Innovation"
+!!! info "Machbarkeitsstudie"
     Tesla K80 GPUs are officially no longer supported by Ollama.
-    The Ollama37 fork reactivates these cards and enables full
-    inference on hardware that others treat as electronic waste.
+    The Ollama37 fork reactivates these cards and enables LLM inference
+    on hardware that others treat as electronic waste — demonstrated as a PoC.
+    How this compares in latency and throughput to consumer or enterprise GPUs
+    remains to be quantified in the planned hardware comparison study.
 
 ## VRAM Management
 
