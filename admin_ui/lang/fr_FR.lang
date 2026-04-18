@@ -29,6 +29,7 @@
   "msg.dedicated_healer_desc":  "Lance une boucle permanente du healer sur un seul nœud. S'exécute jusqu'à l'arrêt manuel — idéal pour un hôte dédié à la guérison.",
   "msg.dedicated_healer_loading": "Chargement serveurs",
   "lbl.cleanup":          "Nettoyage & orphelins",
+  "lbl.cleanup_manager":  "Gestionnaire de nettoyage système",
   "lbl.regeneration":     "Régénération auto",
   "btn.trigger_ontology": "Démarrer",
   "btn.cleanup_scan":     "Analyser",

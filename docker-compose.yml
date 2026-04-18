@@ -44,6 +44,7 @@ services:
       - NEO4J_server_memory_heap_initial__size=512m
       - NEO4J_server_memory_heap_max__size=1g
       - NEO4J_server_memory_pagecache_size=512m
+      - NEO4J_db_tx__log_rotation_retention__policy=2 files
     volumes:
       - ${MOE_DATA_ROOT}/neo4j-data:/data
       - ${MOE_DATA_ROOT}/neo4j-logs:/logs
@@ -148,7 +149,15 @@ services:
     image: valkey/valkey:8-alpine
     container_name: terra_cache
     restart: always
-    command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}", "--appendonly", "yes"]
+    command: [
+      "valkey-server",
+      "--requirepass", "${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}",
+      "--appendonly", "yes",
+      "--auto-aof-rewrite-percentage", "50",
+      "--auto-aof-rewrite-min-size", "32mb",
+      "--maxmemory", "400mb",
+      "--maxmemory-policy", "allkeys-lru"
+    ]
     volumes:
       - ${MOE_DATA_ROOT}/redis-data:/data
     deploy:
@@ -188,7 +197,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=90d'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_DAYS:-30}d'
       - '--web.enable-lifecycle'
     depends_on:
       - langgraph-app
@@ -242,6 +251,8 @@ services:
       - ./prometheus/prometheus.yml:/app/prometheus/prometheus.yml:rw
       - ${MOE_DATA_ROOT}/gap-healer-stats:/app/gap-healer-stats:ro
       - ./benchmarks:/app/benchmarks:rw
+      - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:rw
+      - ${MOE_DATA_ROOT}/cleanup-history.jsonl:/app/cleanup-history.jsonl:rw
     depends_on:
       langgraph-app:
         condition: service_started

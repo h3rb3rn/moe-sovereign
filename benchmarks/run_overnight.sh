@@ -82,11 +82,14 @@ mkdir -p "$RUN_DIR"
 # Admin UI lock file — lets the web UI detect this process as an active run
 # --------------------------------------------------------------------------
 LOCK_FILE="$SCRIPT_DIR/.bench_running"
+HEARTBEAT_FILE="$SCRIPT_DIR/.bench_heartbeat"
+_MAIN_PID=$$
 _write_lock() {
+    # Write the PID of the main shell ($$), not the python3 subprocess.
     python3 - <<PYEOF
-import json, os
+import json
 data = {
-    "pid":        os.getpid(),
+    "pid":        $_MAIN_PID,
     "run_id":     "$RUN_ID",
     "template":   "$TEMPLATE",
     "epochs":     $EPOCHS,
@@ -97,10 +100,26 @@ with open("$LOCK_FILE", "w") as f:
 PYEOF
 }
 _clear_lock() {
-    rm -f "$LOCK_FILE"
+    # Guard against the EXIT trap firing in subshells (command substitutions
+    # inherit traps). Only the main shell should remove the lock file.
+    if [[ "${BASH_SUBSHELL:-0}" -eq 0 ]]; then
+        rm -f "$LOCK_FILE" "$HEARTBEAT_FILE"
+        kill "${_HEARTBEAT_PID:-}" 2>/dev/null || true
+    fi
 }
 # Clear lock on exit, error or SIGINT/SIGTERM
 trap '_clear_lock' EXIT INT TERM
+
+# Background heartbeat — touched every 30 s so the admin UI can detect this
+# process even when running on the host (different PID namespace than container).
+_heartbeat_loop() {
+    while true; do
+        touch "$HEARTBEAT_FILE" 2>/dev/null
+        sleep 30
+    done
+}
+_heartbeat_loop &
+_HEARTBEAT_PID=$!
 
 _write_lock
 
@@ -270,6 +289,16 @@ diagnose_and_heal() {
         heal_node_ssh "$NODE_GT_SSH" "$NODE_GT_URL" "$NODE_GT_CONTAINERS" \
             "${NODE_GT_SSH}" 180 || true
 
+    # Verify orchestrator API is reachable — catches iptables disruptions
+    # caused by Docker container restarts on the same bridge network.
+    echo "[$(date +%H:%M:%S)] ── Orchestrator API reachability check ──"
+    if curl -sf --max-time 10 "${API_BASE}/health" > /dev/null 2>&1; then
+        echo "    [preflight] Orchestrator API reachable ✓"
+    else
+        echo "    [preflight] WARNING: Orchestrator API not reachable at ${API_BASE}"
+        echo "    [preflight] wait_for_api will retry — check Docker network/iptables if this persists"
+    fi
+
     echo "[$(date +%H:%M:%S)] ── Healing pass complete ──"
 }
 
@@ -421,6 +450,11 @@ printf "%-6s %-8s %-10s %-8s %-6s %-8s\n" \
 # --------------------------------------------------------------------------
 # Pre-flight: full node health check + API wait + model warm-up
 # --------------------------------------------------------------------------
+
+# Brief settle pause: Docker container restarts on the shared bridge network
+# temporarily flush iptables NAT rules, breaking port 8002. Waiting 10 s lets
+# the Docker daemon restore all DNAT rules before we start polling.
+sleep 10
 
 diagnose_and_heal
 

@@ -29,6 +29,7 @@
   "msg.dedicated_healer_desc":  "Startet einen permanenten Gap-Healer-Loop auf einem einzigen Node. Läuft bis zum manuellen Stopp — ideal für einen dediziert abgestellten Healing-Host.",
   "msg.dedicated_healer_loading": "Lade Server",
   "lbl.cleanup":          "Cleanup & Altlasten",
+  "lbl.cleanup_manager":  "System-Cleanup Manager",
   "lbl.regeneration":     "Auto-Regeneration",
   "btn.trigger_ontology": "Jetzt starten",
   "btn.cleanup_scan":     "Scannen",

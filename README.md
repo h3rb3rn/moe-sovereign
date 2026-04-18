@@ -106,6 +106,7 @@ flowchart TD
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |
 | **9** | Deployment Flexibility | One OCI image &rarr; LXC (tested), Docker Compose (tested), Podman (planned), Helm/K8s (architecturally prepared, community validation requested) |
 | **10** | 9.3&times; Akkumulations-Speedup | 707 s &rarr; 76 s latency over 5 benchmark epochs |
+| **11** | Autonomous Disk Management | System Cleanup Manager in Admin UI: configurable TTL per subsystem, daily cron automation, LangGraph checkpoint archiving, Docker build-cache pruning, history tracking with averages |
 
 ---
 
@@ -216,7 +217,7 @@ flowchart LR
 | Container | Port | Purpose |
 |---|:---:|---|
 | `langgraph-orchestrator` | 8002 | Core API (OpenAI + Anthropic compatible) |
-| `moe-admin-ui` | 8088 | Admin: experts, models, users, budgets, knowledge export |
+| `moe-admin-ui` | 8088 | Admin: experts, models, users, budgets, knowledge export, system cleanup manager |
 | `mcp-precision` | 8003 | 27 deterministic tools (math, date, subnet, law) |
 | `neo4j-knowledge` | 7474 | Knowledge graph (GraphRAG) |
 | `terra_cache` | 6379 | Valkey: state, sessions, performance scores |
@@ -262,7 +263,7 @@ flowchart LR
 | OS | Debian 11+ / Ubuntu 22.04+ | Debian 13 (trixie) |
 | RAM | 8 GB | 16 GB+ |
 | CPU | 4 cores | 8 cores+ |
-| Disk | 40 GB | 100 GB+ |
+| Disk | 60 GB | 200 GB+ |
 | GPU | None (API-only mode) | NVIDIA with CUDA, &ge; 8 GB VRAM |
 | Docker | CE 24+ | Docker CE 27+ |
 
@@ -284,6 +285,7 @@ Full documentation: **[docs.moe-sovereign.org](https://docs.moe-sovereign.org)**
 | [Import / Export](https://docs.moe-sovereign.org/reference/import-export/) | Templates, profiles, and knowledge bundles |
 | [Deployment](https://docs.moe-sovereign.org/deployment/) | LXC, Docker, Podman, Kubernetes, OpenShift |
 | [API Reference](https://docs.moe-sovereign.org/guide/api/) | Full endpoint documentation |
+| [Maintenance & Disk Management](https://docs.moe-sovereign.org/admin/maintenance/) | Cleanup Manager, TTL configuration, checkpoint archiving |
 
 Local preview: `pip install mkdocs-material && mkdocs serve`
 

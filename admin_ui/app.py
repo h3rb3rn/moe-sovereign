@@ -14,7 +14,7 @@ from typing import Optional
 
 import httpx
 import docker
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -2487,6 +2487,185 @@ async def api_maintenance_prometheus_reload():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
+# ─── System Cleanup Manager ───────────────────────────────────────────────────
+
+_CLEANUP_CONFIG_PATH  = Path("/app/cleanup-config.json")
+_CLEANUP_HISTORY_PATH = Path("/app/cleanup-history.jsonl")
+_CLEANUP_CRON_SCRIPTS = {
+    "docker_prune":        "/etc/cron.daily/moe-docker-prune",
+    "checkpoint_archive":  "/etc/cron.daily/moe-checkpoint-archive",
+}
+
+def _cleanup_paths() -> tuple[Path, Path]:
+    return _CLEANUP_CONFIG_PATH, _CLEANUP_HISTORY_PATH
+
+
+def _read_cleanup_config() -> dict:
+    cfg, _ = _cleanup_paths()
+    try:
+        return json.loads(cfg.read_text())
+    except Exception:
+        return {}
+
+
+def _write_cleanup_config(data: dict) -> None:
+    cfg, _ = _cleanup_paths()
+    cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _read_cleanup_history(max_lines: int = 500) -> list[dict]:
+    _, hist = _cleanup_paths()
+    records: list[dict] = []
+    try:
+        lines = hist.read_text().splitlines()
+        for line in lines[-max_lines:]:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    except Exception:
+        pass
+    return records
+
+
+def _compute_cleanup_stats(history: list[dict]) -> dict[str, dict]:
+    """Aggregates history per job: last run, average freed, run count."""
+    from collections import defaultdict
+    jobs: dict[str, list[dict]] = defaultdict(list)
+    for rec in history:
+        jobs[rec.get("job", "unknown")].append(rec)
+
+    result = {}
+    for job, runs in jobs.items():
+        runs.sort(key=lambda r: r.get("ts", ""))
+        last = runs[-1]
+        freed_vals = [r.get("freed_bytes", 0) for r in runs if r.get("freed_bytes", 0) > 0]
+        durations  = [r.get("duration_s", 0) for r in runs if r.get("duration_s", 0) > 0]
+        result[job] = {
+            "last_run_ts":      last.get("ts"),
+            "last_duration_s":  last.get("duration_s", 0),
+            "last_freed_bytes": last.get("freed_bytes", 0),
+            "last_details":     last.get("details", {}),
+            "run_count":        len(runs),
+            "avg_freed_bytes":  int(sum(freed_vals) / len(freed_vals)) if freed_vals else 0,
+            "avg_duration_s":   int(sum(durations) / len(durations)) if durations else 0,
+        }
+    return result
+
+
+@app.get("/api/cleanup/status", dependencies=[Depends(require_login)])
+async def api_cleanup_status():
+    """Returns last-run metadata, averages and config for all cleanup jobs."""
+    history = _read_cleanup_history()
+    stats   = _compute_cleanup_stats(history)
+    config  = _read_cleanup_config()
+    return {"jobs": stats, "config": config}
+
+
+@app.get("/api/cleanup/config", dependencies=[Depends(require_login)])
+async def api_cleanup_config_get():
+    return _read_cleanup_config()
+
+
+@app.post("/api/cleanup/config", dependencies=[Depends(require_login)])
+async def api_cleanup_config_save(request: Request):
+    """Saves cleanup configuration. Also propagates .env-backed settings."""
+    body = await request.json()
+
+    # Validate: only known top-level keys allowed
+    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus"}
+    unknown = set(body.keys()) - KNOWN
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown keys: {unknown}")
+
+    _write_cleanup_config(body)
+
+    # Propagate prometheus retention to .env so docker-compose picks it up
+    prom = body.get("prometheus", {})
+    if "retention_days" in prom:
+        _update_env_key("PROMETHEUS_RETENTION_DAYS", str(prom["retention_days"]))
+
+    # Propagate admin-log rotation limits to running process via env
+    alogs = body.get("admin_logs", {})
+    if "max_bytes" in alogs:
+        _update_env_key("LOG_MAX_BYTES", str(alogs["max_bytes"]))
+    if "backup_count" in alogs:
+        _update_env_key("LOG_BACKUP_COUNT", str(alogs["backup_count"]))
+
+    return {"ok": True}
+
+
+def _update_env_key(key: str, value: str) -> None:
+    """Updates a single key in /app/.env (mounted from host .env)."""
+    env_path = Path("/app/.env")
+    if not env_path.exists():
+        return
+    lines = env_path.read_text().splitlines(keepends=True)
+    found = False
+    new_lines = []
+    for line in lines:
+        if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
+            new_lines.append(f"{key}={value}\n")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append(f"{key}={value}\n")
+    env_path.write_text("".join(new_lines))
+
+
+@app.post("/api/cleanup/run/{job}", dependencies=[Depends(require_login)])
+async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
+    """Triggers a cleanup job immediately in the background."""
+    script = _CLEANUP_CRON_SCRIPTS.get(job)
+    if not script:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job}")
+
+    def _run_script(path: str) -> None:
+        import subprocess
+        try:
+            subprocess.run(["sudo", path], timeout=600, capture_output=True)
+        except Exception as exc:
+            logger.error("Cleanup job %s failed: %s", path, exc)
+
+    background_tasks.add_task(_run_script, script)
+    return {"ok": True, "job": job, "message": "Job gestartet — Status in Kürze in der History"}
+
+
+@app.get("/api/cleanup/history", dependencies=[Depends(require_login)])
+async def api_cleanup_history(job: str = "", limit: int = 30):
+    """Returns raw history entries, optionally filtered by job name."""
+    history = _read_cleanup_history(max_lines=500)
+    if job:
+        history = [r for r in history if r.get("job") == job]
+    return {"entries": history[-limit:]}
+
+
+_CRON_ENV_FILES = {
+    "checkpoint_archive": "/etc/cron.daily/moe-checkpoint-archive.env",
+}
+
+@app.post("/api/cleanup/write-cron-env", dependencies=[Depends(require_login)])
+async def api_cleanup_write_cron_env(request: Request):
+    """Writes the .env file for a cron script so the next run picks up config changes."""
+    body = await request.json()
+    job     = body.get("job", "")
+    content = body.get("content", "")
+    env_path = _CRON_ENV_FILES.get(job)
+    if not env_path:
+        raise HTTPException(status_code=404, detail=f"No cron env file for job: {job}")
+    import subprocess
+    result = subprocess.run(
+        ["sudo", "tee", env_path],
+        input=content.encode(),
+        capture_output=True,
+        timeout=5,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=result.stderr.decode())
+    return {"ok": True}
+
+
 GRAFANA_DASHBOARDS_DIR = Path(os.environ.get(
     "GRAFANA_DASHBOARDS_DIR", "/app/grafana/dashboards",
 ))
@@ -3375,7 +3554,9 @@ async def _user_portal_ctx(user_id: str) -> dict:
 
 @app.get("/teams", response_class=HTMLResponse)
 async def teams_page(request: Request, _=Depends(require_login)):
-    return TEMPLATES.TemplateResponse(request, "teams.html", {})
+    return TEMPLATES.TemplateResponse(request, "teams.html", {
+        "csrf_token": get_csrf_token(request),
+    })
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -4906,9 +5087,27 @@ _llm_inst_log   = LOG_DIR / "llm_instances.jsonl"
 HISTORY_MAX_ENTRIES = int(os.getenv("HISTORY_MAX_ENTRIES", "5000"))
 
 
+_LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", str(50 * 1024 * 1024)))  # 50 MB default
+_LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "2"))
+
+
+def _rotate_log(path: Path) -> None:
+    """Rotates path → path.1 → path.2, dropping anything beyond LOG_BACKUP_COUNT."""
+    for i in range(_LOG_BACKUP_COUNT - 1, 0, -1):
+        src = path.with_suffix(f".jsonl.{i}") if i > 1 else Path(str(path) + ".1")
+        dst = path.with_suffix(f".jsonl.{i + 1}")
+        if src.exists():
+            src.rename(dst)
+    backup = Path(str(path) + ".1")
+    if path.exists():
+        path.rename(backup)
+
+
 def _append_log(path: Path, record: dict) -> None:
-    """Writes a JSON record to a JSONL log file. Never raises exceptions."""
+    """Writes a JSON record to a JSONL log file, rotating at LOG_MAX_BYTES. Never raises."""
     try:
+        if path.exists() and path.stat().st_size >= _LOG_MAX_BYTES:
+            _rotate_log(path)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
     except Exception as exc:
@@ -5247,18 +5446,35 @@ _bench_proc: dict = {"pid": None, "cmd": None, "started_at": None}
 
 
 def _bench_is_running() -> bool:
-    """Return True when a benchmark process is active (lock file present + PID alive)."""
+    """Return True when a benchmark process is active (lock file present + PID alive).
+
+    When the benchmark runs on the HOST but the admin UI runs inside a Docker
+    container, os.kill() operates in a different PID namespace and always raises
+    OSError for host PIDs. In that case we fall back to a heartbeat file
+    (.bench_heartbeat) which the benchmark script touches every 30 s.
+    """
     if not BENCH_LOCK_FILE.exists():
         return False
     try:
         info = json.loads(BENCH_LOCK_FILE.read_text())
         pid = info.get("pid")
         if pid:
-            import signal
-            os.kill(pid, 0)  # Raises OSError if process is gone
+            try:
+                os.kill(pid, 0)  # works when script runs inside the same container
+                return True
+            except OSError:
+                # PID not found — likely a host process (different PID namespace).
+                # Fall back to heartbeat file: touched every 30 s by the script.
+                import time as _t
+                hb = BENCHMARKS_DIR / ".bench_heartbeat"
+                if hb.exists() and (_t.time() - hb.stat().st_mtime) < 90:
+                    return True
+                # Heartbeat stale or absent → genuinely dead process, clean up.
+                BENCH_LOCK_FILE.unlink(missing_ok=True)
+                hb.unlink(missing_ok=True)
+                return False
         return True
-    except (OSError, json.JSONDecodeError, TypeError):
-        # Stale lock — clean it up
+    except (json.JSONDecodeError, TypeError):
         try:
             BENCH_LOCK_FILE.unlink(missing_ok=True)
         except OSError:
@@ -5648,6 +5864,11 @@ async def api_bench_trigger(request: Request, _=Depends(require_login)):
             "MOE_TEMPLATE": template,
             "MOE_EVAL_DATASET": f"{dataset}.json",
             "MOE_EPOCHS": str(epochs),
+            # Override API/Prometheus URLs to Docker-internal addresses: the
+            # benchmarks/.env uses localhost:8002 (host address) which is
+            # unreachable from inside the moe-admin container network.
+            "MOE_API_BASE": "http://langgraph-orchestrator:8000",
+            "MOE_PROM_URL": "http://moe-prometheus:9090",
         }
         import subprocess
         proc = subprocess.Popen(
