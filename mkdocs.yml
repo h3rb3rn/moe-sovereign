@@ -88,6 +88,7 @@ nav:
   - Admin Backend:
     - admin/index.md
     - Users & Roles: admin/users.md
+    - Teams & Tenants: admin/teams.md
     - Permissions: admin/permissions.md
     - Token Budget & Costs: admin/budget.md
     - Expert Templates: admin/templates.md

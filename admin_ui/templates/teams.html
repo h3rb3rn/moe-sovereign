@@ -1,0 +1,533 @@
+{% extends "base.html" %}
+{% block title %}Teams & Mandanten – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-diagram-3 section-icon text-primary"></i>{{ t(request, 'nav.teams') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.teams_desc') }}</small>
+  </div>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="mainTabs" role="tablist">
+  <li class="nav-item">
+    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#teams-pane" type="button">
+      <i class="bi bi-people-fill me-1"></i>{{ t(request, 'tab.teams') }}
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tenants-pane" type="button" onclick="loadTenants()">
+      <i class="bi bi-building me-1"></i>{{ t(request, 'tab.tenants') }}
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#promote-pane" type="button">
+      <i class="bi bi-arrow-up-circle me-1"></i>{{ t(request, 'tab.promote_knowledge') }}
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  <!-- ── Teams Tab ──────────────────────────────────────────────────────── -->
+  <div class="tab-pane fade show active" id="teams-pane" role="tabpanel">
+    <div class="d-flex justify-content-end mb-2">
+      <button class="btn btn-primary btn-sm" onclick="openCreateTeamModal()">
+        <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.create_team') }}
+      </button>
+    </div>
+    <div id="teams-list">
+      <div class="text-center text-muted py-5">
+        <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'state.loading') }}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tenants Tab ────────────────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="tenants-pane" role="tabpanel">
+    <div class="d-flex justify-content-end mb-2">
+      <button class="btn btn-primary btn-sm" onclick="openCreateTenantModal()">
+        <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.create_tenant') }}
+      </button>
+    </div>
+    <div id="tenants-list">
+      <div class="text-center text-muted py-5">
+        <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'state.loading') }}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Promote Knowledge Tab ──────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="promote-pane" role="tabpanel">
+    <div class="alert alert-info py-2 small mb-3">
+      <i class="bi bi-info-circle me-1"></i>
+      {{ t(request, 'info.promote_desc') }}
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-5">
+            <label class="form-label fw-semibold">{{ t(request, 'label.from_namespace') }}</label>
+            <input type="text" id="promote-from" class="form-control"
+                   placeholder="user:abc123 / team:xyz">
+          </div>
+          <div class="col-md-1 d-flex align-items-end justify-content-center pb-1">
+            <i class="bi bi-arrow-right fs-4 text-muted"></i>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label fw-semibold">{{ t(request, 'label.to_namespace') }}</label>
+            <input type="text" id="promote-to" class="form-control"
+                   placeholder="team:xyz / tenant:abc / (leer = global)">
+          </div>
+        </div>
+        <div class="mt-3">
+          <label class="form-label fw-semibold">{{ t(request, 'label.entity_filter') }}
+            <small class="text-muted fw-normal">({{ t(request, 'hint.optional_comma_sep') }})</small>
+          </label>
+          <input type="text" id="promote-entities" class="form-control"
+                 placeholder="FastAPI, PostgreSQL, Redis …">
+        </div>
+        <!-- TODO(human): Implement submitPromotion() below.
+             This function should:
+             1. Read values from #promote-from, #promote-to, #promote-entities
+             2. Parse #promote-entities as comma-separated list (or null if empty)
+             3. POST to /api/knowledge/promote with {from_tenant_id, to_tenant_id, entity_names}
+             4. Show the returned {promoted} count in #promote-result
+             5. Handle 403 (not authorized) and 400 (missing fields) with flash messages
+        -->
+        <div class="mt-3">
+          <button class="btn btn-warning" onclick="submitPromotion()">
+            <i class="bi bi-arrow-up-circle me-1"></i>{{ t(request, 'btn.promote') }}
+          </button>
+        </div>
+        <div id="promote-result" class="mt-3 d-none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Create Team Modal ──────────────────────────────────────────────────── -->
+<div class="modal fade" id="createTeamModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-people-fill me-2"></i>{{ t(request, 'btn.create_team') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'label.team_name') }}</label>
+          <input type="text" id="new-team-name" class="form-control" placeholder="Engineering">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Slug</label>
+          <input type="text" id="new-team-slug" class="form-control" placeholder="engineering">
+          <small class="text-muted">{{ t(request, 'hint.slug') }}</small>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'label.tenant_optional') }}</label>
+          <select id="new-team-tenant" class="form-select">
+            <option value="">— {{ t(request, 'opt.no_tenant') }} —</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button class="btn btn-primary" onclick="createTeam()">{{ t(request, 'btn.create') }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Create Tenant Modal ────────────────────────────────────────────────── -->
+<div class="modal fade" id="createTenantModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-building me-2"></i>{{ t(request, 'btn.create_tenant') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'label.tenant_name') }}</label>
+          <input type="text" id="new-tenant-name" class="form-control" placeholder="adesso SE">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Slug</label>
+          <input type="text" id="new-tenant-slug" class="form-control" placeholder="adesso-se">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button class="btn btn-primary" onclick="createTenant()">{{ t(request, 'btn.create') }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Add Member Modal ───────────────────────────────────────────────────── -->
+<div class="modal fade" id="addMemberModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addMemberTitle"><i class="bi bi-person-plus me-2"></i>{{ t(request, 'btn.add_member') }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">User ID</label>
+          <input type="text" id="add-member-user-id" class="form-control" placeholder="usr_…">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">{{ t(request, 'label.role') }}</label>
+          <select id="add-member-role" class="form-select">
+            <option value="member">member</option>
+            <option value="lead">lead (Team) / admin (Mandant)</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button class="btn btn-primary" onclick="addMember()">{{ t(request, 'btn.add') }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _currentTeamId  = null;
+let _currentTenantId = null;
+let _addMemberMode  = null; // 'team' | 'tenant'
+const _users        = [];
+
+function flash(msg, type='success') {
+  const c = document.getElementById('flash-container');
+  c.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2" role="alert">
+    ${msg}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+}
+
+// ── Teams ──────────────────────────────────────────────────────────────────
+
+async function loadTeams() {
+  const r = await fetch('/api/teams');
+  const d = await r.json();
+  const el = document.getElementById('teams-list');
+  if (!d.teams || d.teams.length === 0) {
+    el.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>{{ t(request, "empty.no_teams") }}</div>';
+    return;
+  }
+  el.innerHTML = d.teams.map(team => `
+    <div class="card mb-3" id="team-card-${team.id}">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          <strong><i class="bi bi-people-fill me-2 text-primary"></i>${team.name}</strong>
+          <code class="ms-2 text-muted small">team:${team.id}</code>
+          ${team.tenant_id ? `<span class="badge bg-info ms-2">tenant:${team.tenant_id}</span>` : ''}
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-primary btn-sm" onclick="openAddMember('team','${team.id}')">
+            <i class="bi bi-person-plus me-1"></i>{{ t(request, 'btn.add_member') }}
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="manageBudget('${team.id}')">
+            <i class="bi bi-wallet2 me-1"></i>{{ t(request, 'btn.budget') }}
+          </button>
+          <button class="btn btn-outline-danger btn-sm" onclick="deleteTeam('${team.id}','${team.name}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-2" id="members-${team.id}">
+        <button class="btn btn-link btn-sm" onclick="loadTeamMembers('${team.id}')">
+          <i class="bi bi-chevron-down me-1"></i>{{ t(request, 'btn.show_members') }}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadTeamMembers(teamId) {
+  const r = await fetch(`/api/teams/${teamId}/members`);
+  const d = await r.json();
+  const el = document.getElementById(`members-${teamId}`);
+  if (!d.members || d.members.length === 0) {
+    el.innerHTML = '<span class="text-muted small px-2">{{ t(request, "empty.no_members") }}</span>';
+    return;
+  }
+  el.innerHTML = `<table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Username</th><th>{{ t(request, 'col.role') }}</th><th></th></tr></thead>
+    <tbody>${d.members.map(m => `
+      <tr>
+        <td><i class="bi bi-person me-1"></i>${m.display_name || m.username} <code class="text-muted small">${m.user_id}</code></td>
+        <td><span class="badge ${m.role==='lead'?'bg-warning text-dark':'bg-secondary'}">${m.role}</span></td>
+        <td><button class="btn btn-outline-danger btn-sm py-0" onclick="removeTeamMember('${teamId}','${m.user_id}','${m.username}')">
+          <i class="bi bi-person-x"></i></button></td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function deleteTeam(id, name) {
+  if (!confirm(`Team "${name}" wirklich löschen?`)) return;
+  const r = await fetch(`/api/teams/${id}`, {method:'DELETE'});
+  if (r.ok) { flash(`Team "${name}" gelöscht`); loadTeams(); }
+  else flash('Fehler beim Löschen', 'danger');
+}
+
+async function removeTeamMember(teamId, userId, username) {
+  if (!confirm(`${username} aus Team entfernen?`)) return;
+  const r = await fetch(`/api/teams/${teamId}/members/${userId}`, {method:'DELETE'});
+  if (r.ok) loadTeamMembers(teamId);
+}
+
+function openCreateTeamModal() {
+  loadTenantsForSelect();
+  new bootstrap.Modal(document.getElementById('createTeamModal')).show();
+}
+
+async function createTeam() {
+  const name = document.getElementById('new-team-name').value.trim();
+  const slug = document.getElementById('new-team-slug').value.trim();
+  const tenant_id = document.getElementById('new-team-tenant').value || null;
+  const r = await fetch('/api/teams', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, slug, tenant_id})
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('createTeamModal')).hide();
+    flash(`Team "${name}" erstellt`);
+    loadTeams();
+  } else {
+    const err = await r.json();
+    flash(`Fehler: ${err.detail || 'Unbekannt'}`, 'danger');
+  }
+}
+
+async function manageBudget(teamId) {
+  const r = await fetch(`/api/teams/${teamId}/budget`);
+  const b = await r.json();
+  const monthly = prompt('Monatliches Limit (Token, leer = kein Limit):', b.monthly_limit || '');
+  const daily   = prompt('Tägliches Limit (Token, leer = kein Limit):', b.daily_limit || '');
+  await fetch(`/api/teams/${teamId}/budget`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      monthly_limit: monthly ? parseInt(monthly) : null,
+      daily_limit:   daily   ? parseInt(daily)   : null,
+    })
+  });
+  flash('Budget gespeichert');
+}
+
+// ── Tenants ────────────────────────────────────────────────────────────────
+
+async function loadTenants() {
+  const r = await fetch('/api/tenants');
+  const d = await r.json();
+  const el = document.getElementById('tenants-list');
+  if (!d.tenants || d.tenants.length === 0) {
+    el.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-building fs-1 d-block mb-2"></i>{{ t(request, "empty.no_tenants") }}</div>';
+    return;
+  }
+  el.innerHTML = d.tenants.map(t => `
+    <div class="card mb-3" id="tenant-card-${t.id}">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+          <strong><i class="bi bi-building me-2 text-info"></i>${t.name}</strong>
+          <code class="ms-2 text-muted small">tenant:${t.id}</code>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-primary btn-sm" onclick="openAddMember('tenant','${t.id}')">
+            <i class="bi bi-person-plus me-1"></i>{{ t(request, 'btn.add_member') }}
+          </button>
+          <button class="btn btn-outline-danger btn-sm" onclick="deleteTenant('${t.id}','${t.name}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-2" id="tenant-members-${t.id}">
+        <button class="btn btn-link btn-sm" onclick="loadTenantMembers('${t.id}')">
+          <i class="bi bi-chevron-down me-1"></i>{{ t(request, 'btn.show_members') }}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadTenantMembers(tenantId) {
+  const r = await fetch(`/api/tenants/${tenantId}/members`);
+  const d = await r.json();
+  const el = document.getElementById(`tenant-members-${tenantId}`);
+  if (!d.members || d.members.length === 0) {
+    el.innerHTML = '<span class="text-muted small px-2">{{ t(request, "empty.no_members") }}</span>';
+    return;
+  }
+  el.innerHTML = `<table class="table table-sm table-hover mb-0">
+    <thead><tr><th>{{ t(request, 'col.member') }}</th><th>{{ t(request, 'col.role') }}</th><th></th></tr></thead>
+    <tbody>${d.members.map(m => `
+      <tr>
+        <td>${m.team_name ? `<i class="bi bi-people me-1 text-primary"></i>${m.team_name}` :
+             `<i class="bi bi-person me-1"></i>${m.display_name||m.user_name||m.user_id}`}</td>
+        <td><span class="badge ${m.role==='admin'?'bg-warning text-dark':'bg-secondary'}">${m.role}</span></td>
+        <td><button class="btn btn-outline-danger btn-sm py-0"
+          onclick="removeTenantMember('${tenantId}','${m.id}')"><i class="bi bi-x"></i></button></td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function deleteTenant(id, name) {
+  if (!confirm(`Mandant "${name}" wirklich löschen?`)) return;
+  const r = await fetch(`/api/tenants/${id}`, {method:'DELETE'});
+  if (r.ok) { flash(`Mandant "${name}" gelöscht`); loadTenants(); }
+  else flash('Fehler beim Löschen', 'danger');
+}
+
+async function removeTenantMember(tenantId, memberId) {
+  if (!confirm('Mitglied entfernen?')) return;
+  await fetch(`/api/tenants/${tenantId}/members/${memberId}`, {method:'DELETE'});
+  loadTenantMembers(tenantId);
+}
+
+function openCreateTenantModal() {
+  new bootstrap.Modal(document.getElementById('createTenantModal')).show();
+}
+
+async function createTenant() {
+  const name = document.getElementById('new-tenant-name').value.trim();
+  const slug = document.getElementById('new-tenant-slug').value.trim();
+  const r = await fetch('/api/tenants', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, slug})
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('createTenantModal')).hide();
+    flash(`Mandant "${name}" erstellt`);
+    loadTenants();
+  } else {
+    const err = await r.json();
+    flash(`Fehler: ${err.detail || 'Unbekannt'}`, 'danger');
+  }
+}
+
+async function loadTenantsForSelect() {
+  const r = await fetch('/api/tenants');
+  const d = await r.json();
+  const sel = document.getElementById('new-team-tenant');
+  sel.innerHTML = `<option value="">— {{ t(request, 'opt.no_tenant') }} —</option>` +
+    (d.tenants || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+}
+
+// ── Add Member ─────────────────────────────────────────────────────────────
+
+function openAddMember(mode, entityId) {
+  _addMemberMode = mode;
+  if (mode === 'team') _currentTeamId = entityId;
+  else _currentTenantId = entityId;
+  document.getElementById('addMemberTitle').innerHTML =
+    `<i class="bi bi-person-plus me-2"></i>{{ t(request, 'btn.add_member') }}`;
+  const sel = document.getElementById('add-member-role');
+  sel.options[1].text = mode === 'team' ? 'lead' : 'admin';
+  sel.options[1].value = mode === 'team' ? 'lead' : 'admin';
+  document.getElementById('add-member-user-id').value = '';
+  new bootstrap.Modal(document.getElementById('addMemberModal')).show();
+}
+
+async function addMember() {
+  const userId = document.getElementById('add-member-user-id').value.trim();
+  const role   = document.getElementById('add-member-role').value;
+  if (!userId) { flash('User ID eingeben', 'warning'); return; }
+  const url  = _addMemberMode === 'team'
+    ? `/api/teams/${_currentTeamId}/members`
+    : `/api/tenants/${_currentTenantId}/members`;
+  const body = _addMemberMode === 'team'
+    ? {user_id: userId, role}
+    : {user_id: userId, role};
+  const r = await fetch(url, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    bootstrap.Modal.getInstance(document.getElementById('addMemberModal')).hide();
+    flash('Mitglied hinzugefügt');
+    if (_addMemberMode === 'team') loadTeamMembers(_currentTeamId);
+    else loadTenantMembers(_currentTenantId);
+  } else {
+    const err = await r.json();
+    flash(`Fehler: ${err.detail || 'Unbekannt'}`, 'danger');
+  }
+}
+
+// ── Knowledge Promotion ────────────────────────────────────────────────────
+
+async function submitPromotion() {
+  const fromVal    = document.getElementById('promote-from').value.trim();
+  const toRaw      = document.getElementById('promote-to').value.trim();
+  const entitiesRaw = document.getElementById('promote-entities').value.trim();
+
+  if (!fromVal) { flash('Quell-Namespace eingeben', 'warning'); return; }
+
+  // Empty to-field means global (null), not an empty string
+  const toVal = toRaw === '' ? null : toRaw;
+
+  const entityNames = entitiesRaw
+    ? entitiesRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : null;
+
+  const scopeLabel = toVal ? `→ ${toVal}` : '→ Global (öffentlich)';
+  const entityHint = entityNames ? ` (${entityNames.length} Entitäten)` : ' (alle)';
+  if (!confirm(`Wissen promoten${entityHint}\n${fromVal} ${scopeLabel}\n\nFortfahren?`)) return;
+
+  const result = document.getElementById('promote-result');
+  result.className = 'mt-3';
+  result.innerHTML = '<div class="spinner-border spinner-border-sm me-2"></div>Wird promoted…';
+
+  try {
+    const r = await fetch('/api/knowledge/promote', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        from_tenant_id: fromVal,
+        to_tenant_id:   toVal,
+        entity_names:   entityNames,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      result.innerHTML = `<div class="alert alert-success py-2">
+        <i class="bi bi-check-circle me-2"></i>
+        <strong>${d.promoted}</strong> Entitäten promoted:
+        <code>${fromVal}</code> → <code>${toVal ?? 'Global'}</code>
+      </div>`;
+    } else if (r.status === 403) {
+      result.innerHTML = `<div class="alert alert-danger py-2">
+        <i class="bi bi-lock me-2"></i><strong>Keine Berechtigung:</strong> ${d.detail}
+      </div>`;
+    } else {
+      result.innerHTML = `<div class="alert alert-warning py-2">
+        <i class="bi bi-exclamation-triangle me-2"></i>${d.detail || 'Unbekannter Fehler'}
+      </div>`;
+    }
+  } catch (e) {
+    result.innerHTML = `<div class="alert alert-danger py-2">Netzwerkfehler: ${e}</div>`;
+  }
+}
+
+// ── Slug auto-fill ─────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadTeams();
+
+  ['new-team-name', 'new-tenant-name'].forEach(id => {
+    const inp = document.getElementById(id);
+    const slugId = id.includes('team') ? 'new-team-slug' : 'new-tenant-slug';
+    if (inp) inp.addEventListener('input', () => {
+      document.getElementById(slugId).value =
+        inp.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    });
+  });
+});
+</script>
+{% endblock %}

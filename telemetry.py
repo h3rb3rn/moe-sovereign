@@ -26,7 +26,9 @@ INSERT INTO routing_telemetry (
     planner_plan, experts_used, mcp_tools_used,
     cache_hit, fast_path,
     self_score, judge_refined, correction_applied,
-    total_tokens, wall_clock_ms, expert_scores
+    total_tokens, wall_clock_ms, expert_scores,
+    causal_path, graphrag_entities, judge_reason,
+    judge_before_after, expert_inputs
 ) VALUES (
     %s, %s, %s,
     %s, %s, %s,
@@ -34,8 +36,28 @@ INSERT INTO routing_telemetry (
     %s, %s, %s,
     %s, %s,
     %s, %s, %s,
-    %s, %s, %s
+    %s, %s, %s,
+    %s, %s, %s,
+    %s, %s
 )
+ON CONFLICT (response_id) DO NOTHING
+"""
+
+_ENSURE_CAUSAL_COLUMNS_SQL = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='routing_telemetry' AND column_name='causal_path'
+    ) THEN
+        ALTER TABLE routing_telemetry
+            ADD COLUMN causal_path       JSONB,
+            ADD COLUMN graphrag_entities JSONB,
+            ADD COLUMN judge_reason      TEXT,
+            ADD COLUMN judge_before_after JSONB,
+            ADD COLUMN expert_inputs     JSONB;
+    END IF;
+END$$;
 """
 
 _UPDATE_RATING_SQL = """
@@ -45,6 +67,20 @@ UPDATE routing_telemetry SET user_rating = %s WHERE response_id = %s
 _UPDATE_SELF_SCORE_SQL = """
 UPDATE routing_telemetry SET self_score = %s WHERE response_id = %s
 """
+
+
+async def ensure_causal_columns(pool) -> None:
+    """Adds causal-path columns to routing_telemetry if they do not exist.
+    Idempotent — safe to call on every startup.
+    """
+    if pool is None:
+        return
+    try:
+        async with pool.connection() as conn:
+            await conn.execute(_ENSURE_CAUSAL_COLUMNS_SQL)
+        logger.info("✅ Causal-path columns ensured in routing_telemetry")
+    except Exception as exc:
+        logger.warning("Causal-path column migration failed: %s", exc)
 
 
 def _detect_language(text: str) -> str:
@@ -66,7 +102,11 @@ async def record_routing_decision(
     expert_scores: Optional[dict] = None,
     wall_clock_ms: int = 0,
 ) -> None:
-    """Record a completed routing decision. Call after merger/response."""
+    """Record a completed routing decision. Call after merger/response.
+
+    Captures the full causal path: routing decision, per-expert stats,
+    GraphRAG entity usage, and judge intervention details.
+    """
     if pool is None:
         return
     try:
@@ -74,6 +114,22 @@ async def record_routing_decision(
         experts_used = state.get("expert_models_used", [])
         plan_raw = state.get("planner_plan") or state.get("planned_tasks") or []
         mcp_tools = state.get("mcp_tools_used", [])
+
+        # ── Causal Path: structured cognitive trace ──────────────────────────
+        causal_path = {
+            "routing_decision": "semantic_pre_router" if state.get("direct_expert") else "planner",
+            "direct_expert":    state.get("direct_expert"),
+            "experts":          experts_used,
+            "judge_intervened": bool(state.get("judge_refined")),
+            "judge_reason":     state.get("judge_reason"),
+            "cost_tier":        state.get("cost_tier"),
+            "correction_applied": bool(state.get("correction_applied")),
+        }
+
+        graphrag_entities  = state.get("graphrag_entities")   # list of entity dicts
+        judge_before_after = state.get("judge_before_after")  # {before, after, delta}
+        expert_inputs      = state.get("expert_inputs")       # {name: {tokens, latency_ms}}
+        judge_reason       = state.get("judge_reason")
 
         async with pool.connection() as conn:
             await conn.execute(
@@ -98,6 +154,12 @@ async def record_routing_decision(
                     state.get("prompt_tokens", 0) + state.get("completion_tokens", 0),
                     wall_clock_ms,
                     json.dumps(expert_scores, ensure_ascii=False) if expert_scores else None,
+                    # Causal-path columns
+                    json.dumps(causal_path, ensure_ascii=False),
+                    json.dumps(graphrag_entities, ensure_ascii=False) if graphrag_entities else None,
+                    judge_reason,
+                    json.dumps(judge_before_after, ensure_ascii=False) if judge_before_after else None,
+                    json.dumps(expert_inputs, ensure_ascii=False) if expert_inputs else None,
                 ),
             )
     except Exception as exc:

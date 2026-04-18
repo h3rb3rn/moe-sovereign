@@ -296,6 +296,12 @@ MAX_GRAPH_CONTEXT_CHARS: int = int(os.getenv("MAX_GRAPH_CONTEXT_CHARS", "6000"))
 # LiteLLM handles endpoint selection, retries (circuit breaker) and fallback chains.
 # Empty = direct access to Ollama nodes via _select_node() (fallback, backwards compatible).
 LITELLM_URL = os.getenv("LITELLM_URL", "").rstrip("/")
+# Shadow-Mode: sample production traffic against a candidate template for quality comparison.
+# Every BENCHMARK_SHADOW_RATE-th request is sent to BENCHMARK_SHADOW_TEMPLATE in parallel.
+# Responses are never shown to users — only stored for quality gate analysis.
+BENCHMARK_SHADOW_TEMPLATE: str = os.getenv("BENCHMARK_SHADOW_TEMPLATE", "")
+BENCHMARK_SHADOW_RATE: int     = int(os.getenv("BENCHMARK_SHADOW_RATE", "20"))
+_shadow_request_counter: int   = 0
 
 # ─── Default role instruction for the Planner LLM ─────────────────────────────
 # Can be overridden per Expert Template via planner_prompt field.
@@ -513,6 +519,9 @@ def _resolve_skill_invocation(text: str, allowed_skills: Optional[list] = None) 
     allowed_skills: None = all allowed (backwards compatible).
                     List = only listed skills or '*' for all allowed.
     Returns unchanged text if no matching skill found or not allowed.
+
+    NOTE: Do not call this directly from async request handlers.
+    Use _resolve_skill_secure() which enforces the ADMIN_APPROVED hard-lock.
     """
     if not text or not text.startswith("/"):
         return text
@@ -531,6 +540,167 @@ def _resolve_skill_invocation(text: str, allowed_skills: Optional[list] = None) 
     logging.getLogger(__name__).info(
         f"🎯 Skill resolved: /{skill_name} → {len(resolved)} chars"
     )
+    return resolved
+
+
+# ─── Skill Registry: Hard-Lock (ADMIN_APPROVED gate) ─────────────────────────
+
+async def _ensure_skill_registry_schema() -> None:
+    """Creates skill_registry and skill_audit_log tables if they do not exist."""
+    if _userdb_pool is None:
+        return
+    ddl = """
+        CREATE TABLE IF NOT EXISTS skill_registry (
+            skill_name      TEXT PRIMARY KEY,
+            admin_approved  BOOLEAN NOT NULL DEFAULT FALSE,
+            approved_by     TEXT,
+            approved_at     TIMESTAMPTZ,
+            audit_verdict   TEXT CHECK (audit_verdict IN ('safe', 'warning', 'blocked')),
+            audit_file      TEXT,
+            is_builtin      BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS skill_audit_log (
+            id              BIGSERIAL PRIMARY KEY,
+            skill_name      TEXT NOT NULL,
+            user_id         TEXT NOT NULL,
+            session_id      TEXT,
+            args_hash       TEXT,
+            executed_at     TIMESTAMPTZ DEFAULT NOW(),
+            outcome         TEXT CHECK (outcome IN ('executed', 'blocked', 'error'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_skill_audit_log_skill  ON skill_audit_log (skill_name);
+        CREATE INDEX IF NOT EXISTS idx_skill_audit_log_user   ON skill_audit_log (user_id);
+        CREATE INDEX IF NOT EXISTS idx_skill_audit_log_ts     ON skill_audit_log (executed_at);
+    """
+    try:
+        async with _userdb_pool.connection() as conn:
+            await conn.execute(ddl)
+        logger.info("✅ Skill registry schema ensured")
+    except Exception as e:
+        logger.warning(f"⚠️ Skill registry schema setup failed: {e}")
+
+
+async def _bootstrap_skill_registry() -> None:
+    """Populates skill_registry from filesystem on startup (idempotent).
+
+    Built-in skills get admin_approved=TRUE automatically.
+    Community skills are approved if their audit.json verdict is 'safe'.
+    """
+    if _userdb_pool is None:
+        return
+    import json as _json_mod
+    rows: list[tuple] = []
+    # Built-in skills — trusted by default
+    if _SKILLS_DIR.exists():
+        for f in _SKILLS_DIR.iterdir():
+            if f.suffix == ".md" and ".disabled" not in f.name and f.stem not in ("_SPEC", "README"):
+                rows.append((f.stem, True, None, True))
+    # Community skills — approved only if LLM audit passed with 'safe' verdict
+    if _COMMUNITY_SKILLS_DIR.exists():
+        for f in _COMMUNITY_SKILLS_DIR.iterdir():
+            if f.suffix == ".md" and ".disabled" not in f.name:
+                audit_path = _COMMUNITY_SKILLS_DIR / f"{f.stem}.audit.json"
+                approved = False
+                verdict = None
+                if audit_path.exists():
+                    try:
+                        audit = _json_mod.loads(audit_path.read_text())
+                        verdict = audit.get("verdict")
+                        approved = verdict == "safe"
+                    except Exception:
+                        pass
+                rows.append((f.stem, approved, verdict, False))
+    if not rows:
+        return
+    upsert_sql = """
+        INSERT INTO skill_registry (skill_name, admin_approved, audit_verdict, is_builtin)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (skill_name) DO NOTHING
+    """
+    try:
+        async with _userdb_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(upsert_sql, rows)
+            await conn.commit()
+        approved_count = sum(1 for r in rows if r[1])
+        logger.info(f"✅ Skill registry bootstrapped: {len(rows)} skills, {approved_count} approved")
+    except Exception as e:
+        logger.warning(f"⚠️ Skill registry bootstrap failed: {e}")
+
+
+async def _check_skill_approved(skill_name: str) -> bool:
+    """Returns True if skill_name has admin_approved=TRUE in the registry.
+
+    Fail-secure: if the DB is unavailable, returns False (deny by default).
+    """
+    if _userdb_pool is None:
+        logger.warning(f"⛔ Skill /{skill_name} blocked — DB unavailable (fail-secure)")
+        return False
+    try:
+        async with _userdb_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT admin_approved FROM skill_registry WHERE skill_name = %s",
+                    (skill_name,),
+                )
+                row = await cur.fetchone()
+        if row is None:
+            logger.warning(f"⛔ Skill /{skill_name} not in registry — blocked")
+            return False
+        return bool(row[0])
+    except Exception as e:
+        logger.warning(f"⛔ Skill /{skill_name} approval check failed ({e}) — fail-secure deny")
+        return False
+
+
+async def _log_skill_execution(
+    skill_name: str, user_id: str, session_id: Optional[str], args: str, outcome: str
+) -> None:
+    """Appends a structured audit record for each skill invocation attempt."""
+    if _userdb_pool is None:
+        return
+    args_hash = hashlib.sha256(args.encode()).hexdigest()[:16] if args else None
+    try:
+        async with _userdb_pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO skill_audit_log (skill_name, user_id, session_id, args_hash, outcome)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (skill_name, user_id, session_id, args_hash, outcome),
+            )
+    except Exception as e:
+        logger.debug(f"Skill audit log write failed: {e}")
+
+
+async def _resolve_skill_secure(
+    text: str,
+    allowed_skills: Optional[list],
+    user_id: str = "anon",
+    session_id: Optional[str] = None,
+) -> str:
+    """Secure async wrapper around _resolve_skill_invocation.
+
+    Enforces the ADMIN_APPROVED hard-lock: a skill is only resolved if it has
+    an explicit admin_approved=TRUE entry in skill_registry. All invocation
+    attempts are written to skill_audit_log for compliance auditing.
+    """
+    if not text or not text.startswith("/"):
+        return text
+    m = re.match(r"^/([a-zA-Z0-9][a-zA-Z0-9\-]*)(?:[ \t]+(.*))?$", text, re.DOTALL)
+    if not m:
+        return text
+    skill_name = m.group(1)
+    args = (m.group(2) or "").strip()
+
+    approved = await _check_skill_approved(skill_name)
+    if not approved:
+        await _log_skill_execution(skill_name, user_id, session_id, args, "blocked")
+        logger.warning(f"⛔ Skill /{skill_name} hard-locked — ADMIN_APPROVED missing (user={user_id})")
+        return text
+
+    resolved = _resolve_skill_invocation(text, allowed_skills=allowed_skills)
+    outcome = "executed" if resolved != text else "error"
+    await _log_skill_execution(skill_name, user_id, session_id, args, outcome)
     return resolved
 
 
@@ -1111,6 +1281,19 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
             if used >= int(data["budget_total"]):
                 PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="total").inc()
                 return {"error": "budget_exceeded", "limit_type": "total"}
+        # Team budget check — pre-emptive, uses estimated 0 tokens to gate access
+        if uid and _userdb_pool is not None:
+            try:
+                from admin_ui.database import get_user_teams as _get_user_teams
+                from admin_ui.database import check_team_budget as _check_team_budget
+                for _team_id in await _get_user_teams(uid):
+                    _ok, _reason = await _check_team_budget(_team_id, 0)
+                    if not _ok:
+                        PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="team").inc()
+                        return {"error": "budget_exceeded", "limit_type": "team",
+                                "team_id": _team_id, "message": _reason}
+            except Exception as _be:
+                logger.debug(f"Team budget check skipped: {_be}")
         return data
     except Exception as e:
         logger.warning(f"Auth error: {e}")
@@ -1324,6 +1507,15 @@ async def _increment_user_budget(user_id: str, tokens: int,
         await pipe.execute()
     except Exception as e:
         logger.warning(f"Budget counter failed: {e}")
+    # Deduct from all team budgets the user belongs to (fire-and-forget)
+    if _userdb_pool is not None:
+        try:
+            from admin_ui.database import get_user_teams as _get_user_teams
+            from admin_ui.database import deduct_team_budget as _deduct_team_budget
+            for _team_id in await _get_user_teams(user_id):
+                await _deduct_team_budget(_team_id, effective_tokens)
+        except Exception as _tbe:
+            logger.debug(f"Team budget deduct failed: {_tbe}")
 
 # --- CONCURRENCY CONTROL (per endpoint, dynamic from INFERENCE_SERVERS_LIST) ---
 _endpoint_semaphores: Dict[str, asyncio.Semaphore] = {}
@@ -1573,6 +1765,13 @@ class AgentState(TypedDict):
     pending_reports: List[str]                            # _report messages collected before pipeline start
     direct_expert: str                                    # Semantic pre-router: set → planner LM is skipped
     metadata_filters: Dict                               # optional domain filters extracted by planner; used for scoped ChromaDB retrieval
+    # ── Causal-path logging (Explainable AI / compliance audit) ──────────────
+    graphrag_entities: List[Dict]                        # Neo4j entities retrieved: [{name, type, confidence, relations_used}]
+    judge_reason: str                                    # why the judge intervened (gap_feedback summary)
+    judge_before_after: Dict                             # {before_score, after_score, delta} from refinement
+    expert_inputs: Dict                                  # {expert_name: {tokens_out, latency_ms}} per-expert stats
+    cost_tier: str                                       # "local_7b" | "mid_tier" | "full" (cost classifier)
+    force_tier1: bool                                    # True = skip T2 experts (cost saving for trivial tasks)
 
 # Zentrale Komponenten
 JUDGE_MODEL   = os.getenv("JUDGE_MODEL", "magistral:24b")
@@ -2095,6 +2294,7 @@ async def _store_response_metadata(
     expert_models_used: List[str],
     chroma_doc_id: str,
     plan: Optional[List[Dict]] = None,
+    cost_tier: str = "",
 ) -> None:
     """Stores response metadata for later feedback in Valkey (TTL 7 days)."""
     if redis_client is None:
@@ -2106,6 +2306,7 @@ async def _store_response_metadata(
             "chroma_doc_id":       chroma_doc_id,
             "ts":                  datetime.now().isoformat(),
             "plan_cats":           json.dumps([t.get("category", "") for t in (plan or [])]),
+            "cost_tier":           cost_tier,
         }
         key = f"moe:response:{response_id}"
         await redis_client.hset(key, mapping=meta)
@@ -2130,6 +2331,21 @@ async def _self_evaluate(response_id: str, question: str, answer: str, chroma_id
         if redis_client:
             await redis_client.hset(f"moe:response:{response_id}", "self_score", score)
         asyncio.create_task(_telemetry.record_self_score(_userdb_pool, response_id, score))
+        # Cost-tier learning loop: track low-quality responses routed as local_7b.
+        # If the downgrade rate > 20% for a category, it signals the tier is too low.
+        if redis_client and score <= 2:
+            try:
+                _meta = await redis_client.hgetall(f"moe:response:{response_id}")
+                _tier = _meta.get("cost_tier", "") if isinstance(_meta, dict) else ""
+                if _tier == "local_7b":
+                    _plan_cats = json.loads(_meta.get("plan_cats", "[]") if isinstance(_meta, dict) else "[]")
+                    for _cat in set(_plan_cats):
+                        if _cat:
+                            await redis_client.zincrby("moe:cost:downgrade", 1, f"local_7b:{_cat}")
+                            await redis_client.expire("moe:cost:downgrade", 60 * 60 * 24 * 180)
+                    logger.info(f"📉 Cost-tier downgrade recorded for local_7b (score={score})")
+            except Exception:
+                pass
         # Down-weight low-rated answers in the cache
         if score <= EVAL_CACHE_FLAG_THRESHOLD and chroma_id:
             await asyncio.to_thread(cache_collection.update, ids=[chroma_id], metadatas=[{"flagged": True, "self_score": score}])
@@ -2182,6 +2398,46 @@ async def _kafka_publish(topic: str, payload: dict) -> None:
         logger.warning(f"Kafka publish [{topic}] failed: {e}")
 
 
+async def _shadow_request(user_input: str, user_id: str, api_key: str) -> None:
+    """Sends a fire-and-forget shadow request to the BENCHMARK_SHADOW_TEMPLATE.
+
+    The response is discarded from the user perspective but stored in Kafka
+    (moe.requests) with shadow=True for quality gate analysis.
+    Called every BENCHMARK_SHADOW_RATE-th production request.
+    """
+    if not BENCHMARK_SHADOW_TEMPLATE or not api_key:
+        return
+    try:
+        payload = {
+            "model":    BENCHMARK_SHADOW_TEMPLATE,
+            "messages": [{"role": "user", "content": user_input[:1000]}],
+            "stream":   False,
+        }
+        timeout = httpx.Timeout(120.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                "http://localhost:8002/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            shadow_resp = ""
+            if r.status_code == 200:
+                data = r.json()
+                shadow_resp = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        # Log shadow result to Kafka for comparator analysis
+        asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
+            "shadow":          True,
+            "shadow_template": BENCHMARK_SHADOW_TEMPLATE,
+            "user_id":         user_id,
+            "input":           user_input[:300],
+            "answer":          shadow_resp[:500],
+            "ts":              datetime.now().isoformat(),
+        }))
+        logger.debug(f"🔬 Shadow request completed ({len(shadow_resp)} chars)")
+    except Exception as e:
+        logger.debug(f"Shadow request failed (non-critical): {e}")
+
+
 async def _kafka_consumer_loop() -> None:
     """
     Persistent consumer for moe.ingest, moe.requests, moe.feedback, and moe.linting.
@@ -2196,6 +2452,10 @@ async def _kafka_consumer_loop() -> None:
         group_id="moe-worker",
         auto_offset_reset="earliest",
         value_deserializer=lambda b: json.loads(b.decode()),
+        # Backpressure: cap poll batch size and fetch volume to prevent unbounded
+        # memory growth when downstream (Neo4j, LLMs) slows processing.
+        max_poll_records=50,
+        fetch_max_bytes=5_242_880,  # 5 MB per fetch
     )
     for attempt in range(12):
         try:
@@ -2215,6 +2475,18 @@ async def _kafka_consumer_loop() -> None:
             try:
                 if msg.topic == KAFKA_TOPIC_INGEST:
                     payload = msg.value
+                    # Determine curator status early — used to gate both ingest and gap detection.
+                    # Curator responses are direct Neo4j classifications, not raw knowledge
+                    # fragments. Running LLM-based extract_and_ingest on them is redundant
+                    # and would route expensive model calls to the global judge endpoint
+                    # instead of the curator's designated node.
+                    _src_model = str(payload.get("source_model", ""))
+                    _tmpl_nm   = str(payload.get("template_name", ""))
+                    _is_curator = (
+                        "ontology-curator" in _tmpl_nm
+                        or "ontology-curator" in _src_model
+                        or "ontology_gap_healer" in _src_model
+                    )
                     if graph_manager is not None:
                         _llm_for_ingest = ingest_llm if ingest_llm is not None else judge_llm
                         _source_expert  = payload.get("source_expert", "")
@@ -2238,30 +2510,27 @@ async def _kafka_consumer_loop() -> None:
                                         insight_type=_itype,
                                     ).inc()
                             asyncio.create_task(_ingest_synthesis_tracked())
-                        await graph_manager.extract_and_ingest(
-                            payload.get("input", ""),
-                            payload.get("answer", ""),
-                            _llm_for_ingest,
-                            domain=payload.get("domain"),
-                            source_model=payload.get("source_model", "unknown"),
-                            confidence=float(payload.get("confidence", 0.5)),
-                            knowledge_type=payload.get("knowledge_type", "factual"),
-                            expert_domain=_source_expert,
-                            tenant_id=payload.get("tenant_id"),
-                            redis_client=redis_client,
-                        )
+                        # Skip LLM-based entity extraction for curator responses:
+                        # they write entities directly to Neo4j via ingest_synthesis
+                        # and do not require a second extraction pass on the global judge.
+                        if not _is_curator:
+                            await graph_manager.extract_and_ingest(
+                                payload.get("input", ""),
+                                payload.get("answer", ""),
+                                _llm_for_ingest,
+                                domain=payload.get("domain"),
+                                source_model=payload.get("source_model", "unknown"),
+                                confidence=float(payload.get("confidence", 0.5)),
+                                knowledge_type=payload.get("knowledge_type", "factual"),
+                                expert_domain=_source_expert,
+                                tenant_id=payload.get("tenant_id"),
+                                redis_client=redis_client,
+                            )
                     # Detect ontology gaps: terms not present in Neo4j.
                     # Skip when the request came from an ontology curator template —
                     # those responses are classifications of existing gaps, not
                     # sources of new ones. Counting them would produce a self-
                     # replenishing loop (resolve one, add five).
-                    _src_model = str(payload.get("source_model", ""))
-                    _tmpl_nm   = str(payload.get("template_name", ""))
-                    _is_curator = (
-                        "ontology-curator" in _tmpl_nm
-                        or "ontology-curator" in _src_model
-                        or "ontology_gap_healer" in _src_model
-                    )
                     if redis_client is not None and graph_manager is not None and not _is_curator:
                         try:
                             terms = graph_manager._extract_terms(payload.get("answer", ""))
@@ -2303,9 +2572,16 @@ async def _kafka_consumer_loop() -> None:
                         _llm_for_lint = ingest_llm if ingest_llm is not None else judge_llm
                         async def _run_linting_tracked(_llm=_llm_for_lint):
                             PROM_LINTING_RUNS.inc()
-                            _result = await graph_manager.run_graph_linting(
-                                _llm, kafka_publish_fn=_kafka_publish,
-                            )
+                            try:
+                                _result = await asyncio.wait_for(
+                                    graph_manager.run_graph_linting(
+                                        _llm, kafka_publish_fn=_kafka_publish,
+                                    ),
+                                    timeout=600,  # 10-minute hard cap — prevents Kafka consumer stall
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning("⚠️ Graph-Linting timed out after 600s — task cancelled")
+                                return
                             PROM_LINTING_ORPHANS.inc(_result.get("orphans_deleted", 0))
                             PROM_LINTING_CONFLICTS.inc(_result.get("conflicts_resolved", 0))
                             PROM_LINTING_DECAY.inc(_result.get("decay_deleted", 0))
@@ -2393,22 +2669,17 @@ async def _seed_task_type_prototypes() -> None:
     Called once at startup.
     """
     try:
-        existing = await asyncio.to_thread(route_collection.get, include=[])
-        existing_ids: set = set(existing.get("ids", []))
+        # Use upsert (add-or-update) directly — eliminates the TOCTOU race between
+        # the existence check and the subsequent add when multiple instances start up.
         docs, ids, metas = [], [], []
         for category, queries in _ROUTE_PROTOTYPES.items():
             for i, query in enumerate(queries):
-                _id = f"proto_{category}_{i}"
-                if _id in existing_ids:
-                    continue
                 docs.append(query)
-                ids.append(_id)
+                ids.append(f"proto_{category}_{i}")
                 metas.append({"category": category})
         if docs:
-            await asyncio.to_thread(route_collection.add, documents=docs, ids=ids, metadatas=metas)
-            logger.info(f"🧭 Semantic Router: {len(docs)} prototypes stored in ChromaDB")
-        else:
-            logger.info("🧭 Semantic Router: prototypes already present")
+            await asyncio.to_thread(route_collection.upsert, documents=docs, ids=ids, metadatas=metas)
+            logger.info(f"🧭 Semantic Router: {len(docs)} prototypes upserted in ChromaDB")
     except Exception as e:
         logger.warning(f"⚠️ Semantic Router seeding failed: {e}")
 
@@ -2723,7 +2994,22 @@ async def graph_rag_node(state: AgentState):
             except Exception as _cf_exc:
                 logger.debug(f"Filtered ChromaDB lookup skipped: {_cf_exc}")
 
-        return {"graph_context": ctx}
+        # Extract entity metadata for causal-path logging.
+        # Neo4j results contain lines like: "Entity: <name> (<type>) confidence=<val>"
+        _entity_meta: list = []
+        if ctx:
+            _ent_re = re.compile(
+                r"Entity:\s*([^\(]+?)\s*\(([^)]+)\).*?confidence[=:]\s*([0-9.]+)",
+                re.IGNORECASE,
+            )
+            for _m in _ent_re.finditer(ctx[:4000]):
+                _entity_meta.append({
+                    "name": _m.group(1).strip(),
+                    "type": _m.group(2).strip(),
+                    "confidence": float(_m.group(3)),
+                })
+
+        return {"graph_context": ctx, "graphrag_entities": _entity_meta}
     except Exception as e:
         logger.warning(f"GraphRAG query_context error: {e}")
         return {"graph_context": ""}
@@ -2809,11 +3095,21 @@ async def planner_node(state: AgentState):
     _routing    = complexity_routing_hint(_complexity)
     PROM_COMPLEXITY.labels(level=_complexity).inc()
     logger.info(f"📊 Complexity: {_complexity} → {_routing}")
+    # Map complexity to cost tier for OpEx tracking and expert-tier enforcement.
+    # local_7b → trivial tasks: single T1 expert max, no research, no thinking node
+    # mid_tier  → moderate tasks: standard MoE, no thinking node
+    # full      → complex tasks: all capabilities active
+    _cost_tier_map = {"trivial": "local_7b", "moderate": "mid_tier", "complex": "full"}
+    _cost_tier = _cost_tier_map.get(_complexity, "mid_tier")
+    logger.info(f"💰 Cost-Tier: {_cost_tier} (complexity={_complexity})")
+
     # Store routing hints in state for downstream nodes
     _complexity_state_update = {
         "complexity_level":   _complexity,
         "skip_research":      _routing["skip_research"],
         "skip_thinking":      _routing["skip_thinking"],
+        "cost_tier":          _cost_tier,
+        "force_tier1":        _routing.get("force_tier1", False),
     }
 
     # Agent mode: force code_reviewer + technical_support directly, no LLM planner
@@ -3011,7 +3307,12 @@ JSON array:"""
             await _report("⚠️ Planner-Fallback: general")
             plan = [{"task": state["input"], "category": "general"}]
             _extracted_filters = {}
-    # Unload planner model — unless the same model is immediately needed as expert
+    # Unload planner model — unless the same model is immediately needed as expert.
+    # Use the template-specific planner model/URL when the template overrides them,
+    # so we unload from the correct node instead of always hitting the global default.
+    _actual_planner_model = (state.get("planner_model_override") or PLANNER_MODEL).strip()
+    _actual_planner_url   = (state.get("planner_url_override")   or PLANNER_URL or "").strip()
+    _actual_planner_base  = _actual_planner_url.rstrip("/").removesuffix("/v1")
     _upcoming_expert_models: set = set()
     for _task_item in plan:
         _cat = _task_item.get("category", "general")
@@ -3019,10 +3320,12 @@ JSON array:"""
         for _e in _experts_for_cat:
             if _e.get("model"):
                 _upcoming_expert_models.add(_e["model"])
-    if PLANNER_MODEL in _upcoming_expert_models:
-        logger.debug(f"⏭️ VRAM unload skipped: {PLANNER_MODEL} will be reused as expert")
-    else:
-        asyncio.create_task(_ollama_unload(PLANNER_MODEL, _PLANNER_BASE))
+    # Strip @endpoint suffix from expert model names for comparison
+    _upcoming_base_models = {m.split("@")[0] for m in _upcoming_expert_models}
+    if _actual_planner_model in _upcoming_base_models:
+        logger.debug(f"⏭️ VRAM unload skipped: {_actual_planner_model} will be reused as expert")
+    elif _actual_planner_base:
+        asyncio.create_task(_ollama_unload(_actual_planner_model, _actual_planner_base))
     # Cache plan in Valkey for reuse (fail-safe)
     if redis_client is not None and plan:
         asyncio.create_task(redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))
@@ -3203,6 +3506,12 @@ async def expert_worker(state: AgentState):
         if not tier1:
             tier1, tier2 = tier2, []
 
+        # Cost-tier enforcement: trivial tasks use at most one T1 expert — skips T2
+        # entirely and keeps only the best-scored T1 to reduce token consumption.
+        if state.get("force_tier1") and tier1:
+            tier1 = tier1[:1]  # only the top-scored T1 expert
+            tier2 = []         # T2 never runs for trivial cost-tier tasks
+
         task_results: List[dict] = []
 
         # Forced + T1 start in parallel in one batch
@@ -3312,6 +3621,98 @@ async def research_node(state: AgentState):
             await _report("🌐 Web search: no result (SearXNG unreachable)")
         return {"web_research": res}
 
+
+# ─── Context Compression Layer ────────────────────────────────────────────────
+
+# Env-configurable: compression is triggered when raw context exceeds budget × this factor.
+_GRAPH_COMPRESS_THRESHOLD_FACTOR = float(os.getenv("GRAPH_COMPRESS_THRESHOLD_FACTOR", "2.0"))
+_GRAPH_COMPRESS_LLM_MODEL        = os.getenv("GRAPH_COMPRESS_LLM", "")  # empty = skip LLM compress
+_GRAPH_COMPRESS_LLM_TIMEOUT      = float(os.getenv("GRAPH_COMPRESS_LLM_TIMEOUT", "3.0"))
+
+# Pattern to split graph context into per-entity blocks.
+# Blocks start with "Entity:" or the special section headers the manager emits.
+_ENTITY_BLOCK_RE = re.compile(r'(?=Entity:|(?:\n\s*\n))', re.MULTILINE)
+_CONFIDENCE_RE   = re.compile(r'confidence[=:]\s*([0-9.]+)', re.IGNORECASE)
+
+
+def _rerank_graph_context(ctx: str, budget: int) -> str:
+    """Reorders graph context blocks by confidence score before truncation.
+
+    Splits the raw graph string into entity blocks, sorts highest-confidence
+    first, then reassembles within the character budget — preserving complete
+    blocks rather than cutting mid-sentence.
+    """
+    if not ctx or budget <= 0:
+        return ctx
+
+    # Split into blocks; keep non-empty blocks only
+    blocks = [b.strip() for b in _ENTITY_BLOCK_RE.split(ctx) if b.strip()]
+    if len(blocks) <= 1:
+        # No entity structure detected — fall back to simple truncation
+        return ctx[:budget]
+
+    def _block_confidence(block: str) -> float:
+        m = _CONFIDENCE_RE.search(block[:200])
+        return float(m.group(1)) if m else 0.5
+
+    blocks.sort(key=_block_confidence, reverse=True)
+
+    # Reassemble within budget, preserving complete blocks
+    result_parts: list[str] = []
+    remaining = budget
+    for block in blocks:
+        if len(block) + 1 <= remaining:
+            result_parts.append(block)
+            remaining -= len(block) + 1
+        else:
+            break
+
+    if not result_parts:
+        # Budget too tight even for one block — truncate the highest-confidence block
+        return blocks[0][:budget]
+
+    truncated = len(blocks) - len(result_parts)
+    result = "\n".join(result_parts)
+    if truncated > 0:
+        result += f"\n[...{truncated} lower-confidence entity block(s) omitted]"
+    return result
+
+
+async def _compress_graph_context_llm(ctx: str, budget: int) -> Optional[str]:
+    """Summarises graph context to fit within budget using a small local LLM.
+
+    Returns compressed string on success, None on timeout/error (caller falls
+    back to reranking-based truncation).  Timeout is hard-capped to prevent
+    merger latency impact.
+    """
+    model = _GRAPH_COMPRESS_LLM_MODEL
+    if not model or judge_llm is None:
+        return None
+    try:
+        compress_prompt = (
+            f"Summarise the following Knowledge Graph context in at most {budget} characters. "
+            "Preserve entity names, types, relationships, and confidence values. "
+            "Prioritise high-confidence facts. Output plain text only — no JSON, no headers.\n\n"
+            f"{ctx[:6000]}"
+        )
+        _compress_llm = ChatOpenAI(
+            model=model,
+            base_url=judge_llm.openai_api_base,
+            api_key=judge_llm.openai_api_key,
+            timeout=_GRAPH_COMPRESS_LLM_TIMEOUT,
+        )
+        result = await asyncio.wait_for(
+            _compress_llm.ainvoke(compress_prompt),
+            timeout=_GRAPH_COMPRESS_LLM_TIMEOUT + 0.5,
+        )
+        compressed = result.content.strip()
+        if compressed and len(compressed) <= budget * 1.1:
+            return compressed
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.debug(f"Graph LLM compression skipped: {e}")
+    return None
+
+
 async def merger_node(state: AgentState):
     # Cache hit: direct answer, no LLM call needed
     if state.get("cache_hit"):
@@ -3377,6 +3778,9 @@ async def merger_node(state: AgentState):
                 await _report(f"🔄 Judge refinement prompt (round {_refine_round + 1}):\n{gap_prompt}")
                 _gap_res = await _invoke_judge_with_retry(state,gap_prompt)
                 gap_feedback_text = _gap_res.content.strip()
+                # Persist refinement reason in state for causal-path logging
+                state["judge_reason"] = gap_feedback_text[:500]
+                state["judge_refined"] = True
                 await _report(f"🔄 Judge refinement response (round {_refine_round + 1}):\n{gap_feedback_text}")
             except Exception as _ge:
                 logger.warning(f"⚠️ Refinement judge feedback round {_refine_round + 1}: {_ge}")
@@ -3450,8 +3854,29 @@ async def merger_node(state: AgentState):
         # Final safety net: never exceed the global hard cap if set.
         if MAX_GRAPH_CONTEXT_CHARS > 0:
             _effective_limit = min(_effective_limit, MAX_GRAPH_CONTEXT_CHARS)
-        if _effective_limit > 0 and len(_gctx) > _effective_limit:
-            _gctx = _gctx[:_effective_limit] + "\n[...graph context truncated]"
+        _graph_raw_chars = len(_gctx)
+        _compression_method = "none"
+        if _effective_limit > 0 and _graph_raw_chars > _effective_limit:
+            threshold = _effective_limit * _GRAPH_COMPRESS_THRESHOLD_FACTOR
+            if _graph_raw_chars > threshold and _GRAPH_COMPRESS_LLM_MODEL:
+                # Very large context: attempt LLM-based semantic compression first
+                _compressed = await _compress_graph_context_llm(_gctx, _effective_limit)
+                if _compressed:
+                    _gctx = _compressed
+                    _compression_method = "llm"
+                else:
+                    _gctx = _rerank_graph_context(_gctx, _effective_limit)
+                    _compression_method = "rerank"
+            else:
+                # Moderate overrun: reorder by confidence, preserve complete blocks
+                _gctx = _rerank_graph_context(_gctx, _effective_limit)
+                _compression_method = "rerank"
+        logger.info(
+            f"📊 GraphRAG compression: {_graph_raw_chars} → {len(_gctx)} chars "
+            f"(method={_compression_method}, budget={_effective_limit})"
+        )
+        # Store compression telemetry in state for causal-path logging
+        state["graphrag_entities"] = state.get("graphrag_entities") or []
         sections.append(f"STRUCTURED KNOWLEDGE (Ontology/Knowledge Graph):\n{_gctx}")
     if expert_results:
         # Truncate overly long expert outputs before merging to reduce
@@ -3549,9 +3974,11 @@ async def merger_node(state: AgentState):
         logger.info(f"⚡ Fast-Path: single high-confidence expert → direct response ({len(fast_resp)} chars)")
         await _report(f"⚡ Fast-Path: single high-confidence expert ({len(fast_resp)} chars)")
         if len(fast_resp) > CACHE_MIN_RESPONSE_LEN:
-            _fp_cid = str(uuid.uuid4())
+            # Deterministic ID (SHA-256 of content) prevents duplicate entries under
+            # concurrent writes — upsert is idempotent if same response races twice.
+            _fp_cid = hashlib.sha256(fast_resp.encode()).hexdigest()[:32]
             await asyncio.to_thread(
-                cache_collection.add,
+                cache_collection.upsert,
                 ids=[_fp_cid],
                 documents=[fast_resp],
                 metadatas=[{"ts": datetime.now().isoformat(), "input": state["input"][:200], "flagged": False, "expert_domain": _expert_domain}],
@@ -3567,7 +3994,8 @@ async def merger_node(state: AgentState):
                     pass
             asyncio.create_task(_store_response_metadata(
                 state.get("response_id", ""), state["input"],
-                state.get("expert_models_used", []), _fp_cid, plan=state.get("plan", [])))
+                state.get("expert_models_used", []), _fp_cid,
+                plan=state.get("plan", []), cost_tier=state.get("cost_tier", "")))
             asyncio.create_task(_self_evaluate(
                 state.get("response_id", ""), state["input"], fast_resp, _fp_cid))
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
@@ -3626,9 +4054,11 @@ async def merger_node(state: AgentState):
         res_content_clean = _REF_RE.sub('', res_content_clean).strip()
 
     if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN:
-        chroma_doc_id = str(uuid.uuid4())
+        # Deterministic ID (SHA-256 of content) prevents duplicate entries under
+        # concurrent writes — upsert is idempotent if same response races twice.
+        chroma_doc_id = hashlib.sha256(res_content_clean.encode()).hexdigest()[:32]
         await asyncio.to_thread(
-            cache_collection.add,
+            cache_collection.upsert,
             ids=[chroma_doc_id],
             documents=[res_content_clean],
             metadatas=[{"ts": datetime.now().isoformat(), "input": state["input"][:200], "flagged": False, "expert_domain": _expert_domain}],
@@ -3650,6 +4080,7 @@ async def merger_node(state: AgentState):
                 state.get("expert_models_used", []),
                 chroma_doc_id,
                 plan=state.get("plan", []),
+                cost_tier=state.get("cost_tier", ""),
             )
         )
         # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)
@@ -3694,6 +4125,9 @@ async def merger_node(state: AgentState):
             else "factual"
         )
         _tenant_ids = state.get("tenant_ids", [])
+        # Use personal namespace as ingest target so knowledge starts private.
+        # The first element is always user:{id} when a real user is logged in.
+        _ingest_tenant_id = _tenant_ids[0] if _tenant_ids else None
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_INGEST, {
             "response_id":      state.get("response_id", ""),
             "input":            state["input"],
@@ -3705,7 +4139,7 @@ async def merger_node(state: AgentState):
             "confidence":       round(_ingest_confidence, 2),
             "knowledge_type":   _knowledge_type,
             "synthesis_insight": _synthesis_payload,  # None if no synthesis was generated
-            "tenant_id":        _tenant_ids[0] if _tenant_ids else None,
+            "tenant_id":        _ingest_tenant_id,
         }))
 
         # Self-Correction Loop (OBJ 3): Numerical discrepancies → few-shot examples
@@ -4212,6 +4646,11 @@ async def lifespan(app_: FastAPI):
         logger.info(f"🧹 {len(_stale_keys)} orphaned moe:active:* keys deleted on startup")
     # Initialize semaphores in event loop context
     await _init_semaphores()
+    # Ensure skill registry schema and populate from filesystem
+    await _ensure_skill_registry_schema()
+    await _bootstrap_skill_registry()
+    # Ensure causal-path columns exist in routing_telemetry
+    await _telemetry.ensure_causal_columns(_userdb_pool)
     # Start init tasks in parallel
     await asyncio.gather(
         _load_mcp_tool_descriptions(),
@@ -4946,7 +5385,16 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _user_images = _extract_oai_images(last_user.content) if last_user else []
     allowed_skills = user_perms.get("skill")  # None = all allowed (backwards compatible)
     _raw_user_input = _oai_content_to_str(last_user.content) if last_user else ""
-    user_input = _resolve_skill_invocation(_raw_user_input, allowed_skills=allowed_skills)
+    user_input = await _resolve_skill_secure(_raw_user_input, allowed_skills, user_id=user_id, session_id=session_id)
+    # Shadow-Mode: sample every BENCHMARK_SHADOW_RATE-th request to the candidate template.
+    # Fire-and-forget — never blocks the production response.
+    global _shadow_request_counter
+    if BENCHMARK_SHADOW_TEMPLATE:
+        _shadow_request_counter += 1
+        if _shadow_request_counter % BENCHMARK_SHADOW_RATE == 0:
+            asyncio.create_task(_shadow_request(_raw_user_input, user_id, raw_key or ""))
+            logger.debug(f"🔬 Shadow request enqueued (counter={_shadow_request_counter})")
+
     _pending_reports: List[str] = []
     if user_input != _raw_user_input:
         _sm = re.match(r"^/([a-zA-Z0-9][a-zA-Z0-9\-]*)", _raw_user_input)
@@ -4960,7 +5408,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         _auto_skill = _detect_file_skill(request.files, _raw_user_input, allowed_skills)
         if _auto_skill:
             _auto_input = f"/{_auto_skill} {_raw_user_input}"
-            _resolved = _resolve_skill_invocation(_auto_input, allowed_skills=allowed_skills)
+            _resolved = await _resolve_skill_secure(_auto_input, allowed_skills, user_id=user_id, session_id=session_id)
             if _resolved != _auto_input:  # skill exists and was resolved
                 user_input = _resolved
                 _pending_reports.append(f"📎 File skill /{_auto_skill} triggered automatically")
@@ -5076,7 +5524,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "chat_history": history, "reasoning_trace": "", "system_prompt": system_prompt,
          "images": _user_images,
          "user_permissions": user_perms, "user_experts": user_experts,
-         "tenant_ids": user_perms.get("graph_tenant", []),
+         # Prepend personal namespace so user-created knowledge is private by default.
+         # graph_tenant permissions add team/tenant namespaces on top.
+         "tenant_ids": ([f"user:{user_id}"] if user_id and user_id != "anon" else [])
+                       + [t for t in user_perms.get("graph_tenant", [])
+                          if t != f"user:{user_id}"],
          "provenance_sources": [],
          "output_skill_body": "",
          "enable_cache": _tmpl_prompts.get("enable_cache", True),
@@ -5863,7 +6315,7 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
     last_user_content = last_user.get("content", "")
     allowed_skills = (user_permissions or {}).get("skill")
     _raw_cc_input = _anthropic_content_to_text(last_user_content)
-    user_input  = _resolve_skill_invocation(_raw_cc_input, allowed_skills=allowed_skills)
+    user_input  = await _resolve_skill_secure(_raw_cc_input, allowed_skills, user_id=user_id, session_id=session_id)
     _cc_pending_reports: List[str] = []
     if user_input != _raw_cc_input:
         _csm = re.match(r"^/([a-zA-Z0-9][a-zA-Z0-9\-]*)", _raw_cc_input)

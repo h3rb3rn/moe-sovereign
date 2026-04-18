@@ -2826,6 +2826,53 @@ async def api_community_deactivate(skill_name: str):
     raise HTTPException(status_code=404, detail="Skill is not currently active")
 
 
+# ─── Skill Registry: Hard-Lock management endpoints ──────────────────────────
+
+@app.get("/api/admin/skills/registry", dependencies=[Depends(require_login)])
+async def api_skill_registry_list():
+    """Returns the full skill registry with ADMIN_APPROVED status for each skill."""
+    skills = await db.list_skill_registry()
+    return {"skills": skills, "total": len(skills)}
+
+
+@app.post("/api/admin/skills/{skill_name}/approve", dependencies=[Depends(require_login)])
+async def api_skill_approve(skill_name: str, request: Request):
+    """Grants ADMIN_APPROVED=TRUE for the given skill. Records the approving admin."""
+    session = request.session
+    admin_username = session.get("user", {}).get("username", "unknown")
+    updated = await db.approve_skill(skill_name, approved_by=admin_username)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found in registry")
+    logger.info(f"✅ Skill '{skill_name}' approved by admin '{admin_username}'")
+    return {"ok": True, "skill_name": skill_name, "approved_by": admin_username}
+
+
+@app.post("/api/admin/skills/{skill_name}/revoke", dependencies=[Depends(require_login)])
+async def api_skill_revoke(skill_name: str, request: Request):
+    """Revokes ADMIN_APPROVED for the given skill — blocks all future invocations."""
+    session = request.session
+    admin_username = session.get("user", {}).get("username", "unknown")
+    updated = await db.revoke_skill(skill_name)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found in registry")
+    logger.warning(f"⛔ Skill '{skill_name}' revoked by admin '{admin_username}'")
+    return {"ok": True, "skill_name": skill_name, "revoked_by": admin_username}
+
+
+@app.get("/api/admin/skills/{skill_name}/audit-log", dependencies=[Depends(require_login)])
+async def api_skill_audit_log(skill_name: str, limit: int = 100):
+    """Returns the execution audit log for a specific skill (compliance view)."""
+    entries = await db.get_skill_audit_log(skill_name=skill_name, limit=limit)
+    return {"skill_name": skill_name, "entries": entries, "total": len(entries)}
+
+
+@app.get("/api/admin/skills/audit-log", dependencies=[Depends(require_login)])
+async def api_all_skills_audit_log(limit: int = 200):
+    """Returns the full skill execution audit log across all skills."""
+    entries = await db.get_skill_audit_log(limit=limit)
+    return {"entries": entries, "total": len(entries)}
+
+
 @app.post("/api/skills/upstream/import/{skill_name}", dependencies=[Depends(require_login)])
 async def api_upstream_import_early(skill_name: str):
     skills = {s["name"]: s for s in _list_upstream_skills()}
@@ -3324,6 +3371,11 @@ async def _user_portal_ctx(user_id: str) -> dict:
         "can_create_templates":   can_create_templates,
         "can_create_cc_profiles": can_create_cc_profiles,
     }
+
+
+@app.get("/teams", response_class=HTMLResponse)
+async def teams_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "teams.html", {})
 
 
 @app.get("/users", response_class=HTMLResponse)
@@ -5457,12 +5509,39 @@ async def api_bench_live_log(request: Request, run_id: str = "", lines: int = 80
         return {"lines": [f"Error reading log: {exc}"], "log_file": log_file.name}
 
 
+def _load_bench_env() -> dict[str, str]:
+    """Read benchmarks/.env as key=value pairs (comments and blanks ignored).
+
+    Used by the pre-flight check as a fallback when the BENCH_NODE_* variables
+    are not injected into the container environment (they live in benchmarks/.env
+    which is not listed in docker-compose env_file to keep fresh-install safe).
+    """
+    bench_env_path = BENCHMARKS_DIR / ".env"
+    result: dict[str, str] = {}
+    if not bench_env_path.exists():
+        return result
+    for line in bench_env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        result[key.strip()] = val.strip().strip('"').strip("'")
+    return result
+
+
 @app.post("/api/benchmarks/preflight")
 async def api_bench_preflight(request: Request, _=Depends(require_login)):
     """Pre-flight capacity check: orchestrator health + reachability of key endpoints."""
     checks: list[dict] = []
 
-    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://langgraph-orchestrator:8000")
+    # Merge container env with benchmarks/.env so node URLs are visible even
+    # when the file is not listed in docker-compose env_file.
+    bench_env = _load_bench_env()
+
+    def _get(key: str, default: str = "") -> str:
+        return os.getenv(key) or bench_env.get(key, default)
+
+    orchestrator_url = _get("ORCHESTRATOR_URL", "http://langgraph-orchestrator:8000")
     async with httpx.AsyncClient(timeout=10) as client:
         # 1. Orchestrator health
         try:
@@ -5473,7 +5552,7 @@ async def api_bench_preflight(request: Request, _=Depends(require_login)):
             checks.append({"name": "Orchestrator /health", "ok": False, "detail": str(exc)})
 
         # 2. Prometheus
-        prom_url = os.getenv("PROMETHEUS_URL", "http://moe-prometheus:9090")
+        prom_url = _get("PROMETHEUS_URL", "http://moe-prometheus:9090")
         try:
             r = await client.get(f"{prom_url}/-/healthy")
             checks.append({"name": "Prometheus", "ok": r.status_code == 200,
@@ -5481,7 +5560,7 @@ async def api_bench_preflight(request: Request, _=Depends(require_login)):
         except Exception as exc:
             checks.append({"name": "Prometheus", "ok": False, "detail": str(exc)})
 
-        # 3. Read node URLs from env (set by the benchmark .env via docker env_file)
+        # 3. Node URLs — read from container env first, fall back to benchmarks/.env
         node_envs = [
             ("BENCH_NODE_RTX_URL",  "Judge/Planner (RTX)"),
             ("BENCH_NODE_M10A_URL", "Expert M10-A"),
@@ -5490,7 +5569,7 @@ async def api_bench_preflight(request: Request, _=Depends(require_login)):
             ("BENCH_NODE_GT_URL",   "Vision (GT)"),
         ]
         for env_key, label in node_envs:
-            url = os.getenv(env_key, "")
+            url = _get(env_key)
             if not url:
                 checks.append({"name": label, "ok": None, "detail": f"{env_key} not set"})
                 continue
@@ -5610,14 +5689,7 @@ async def api_bench_clear_lock(request: Request, _=Depends(require_login)):
 
 @app.delete("/api/benchmarks/result/{run_id}")
 async def api_bench_delete(run_id: str, request: Request, _=Depends(require_login)):
-    """
-    Delete a benchmark run and all associated files.
-
-    Overnight run (directory): removes the entire directory tree.
-    Single run (file):         removes run_*.json + matching eval_*.json.
-                               Does NOT remove latest_*.json symlinks —
-                               they point to the newest surviving run.
-    """
+    """Delete a benchmark run and all associated files."""
     import re as _re5
     if not _re5.match(r'^[\w\-]+$', run_id):
         raise HTTPException(status_code=400, detail="Invalid run_id")
@@ -5665,3 +5737,197 @@ async def api_bench_delete(run_id: str, request: Request, _=Depends(require_logi
             pass
 
     return {"status": "deleted", "deleted": deleted}
+
+
+# ─── Teams API ────────────────────────────────────────────────────────────────
+
+@app.get("/api/teams", dependencies=[Depends(require_login)])
+async def api_list_teams():
+    """Returns all teams."""
+    teams = await db.list_teams()
+    return {"teams": teams, "total": len(teams)}
+
+
+@app.post("/api/teams", dependencies=[Depends(require_login)])
+async def api_create_team(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    slug = (body.get("slug") or "").strip()
+    tenant_id = body.get("tenant_id") or None
+    if not name or not slug:
+        raise HTTPException(status_code=400, detail="name and slug are required")
+    session = request.session
+    admin_id = session.get("user", {}).get("id", "unknown")
+    try:
+        team = await db.create_team(name, slug, created_by=admin_id, tenant_id=tenant_id)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return team
+
+
+@app.delete("/api/teams/{team_id}", dependencies=[Depends(require_login)])
+async def api_delete_team(team_id: str):
+    await db.delete_team(team_id)
+    return {"ok": True, "team_id": team_id}
+
+
+@app.get("/api/teams/{team_id}/members", dependencies=[Depends(require_login)])
+async def api_team_members(team_id: str):
+    members = await db.list_team_members(team_id)
+    return {"team_id": team_id, "members": members, "total": len(members)}
+
+
+@app.post("/api/teams/{team_id}/members", dependencies=[Depends(require_login)])
+async def api_add_team_member(team_id: str, request: Request):
+    body = await request.json()
+    user_id = (body.get("user_id") or "").strip()
+    role = body.get("role", "member")
+    if role not in ("member", "lead"):
+        raise HTTPException(status_code=400, detail="role must be 'member' or 'lead'")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    await db.add_team_member(team_id, user_id, role=role)
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "team_id": team_id, "user_id": user_id, "role": role}
+
+
+@app.delete("/api/teams/{team_id}/members/{user_id}", dependencies=[Depends(require_login)])
+async def api_remove_team_member(team_id: str, user_id: str):
+    await db.remove_team_member(team_id, user_id)
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "team_id": team_id, "user_id": user_id}
+
+
+@app.get("/api/teams/{team_id}/budget", dependencies=[Depends(require_login)])
+async def api_get_team_budget(team_id: str):
+    return await db.get_team_budget(team_id)
+
+
+@app.put("/api/teams/{team_id}/budget", dependencies=[Depends(require_login)])
+async def api_set_team_budget(team_id: str, request: Request):
+    body = await request.json()
+    monthly = body.get("monthly_limit")
+    daily = body.get("daily_limit")
+    await db.set_team_budget(team_id, monthly_limit=monthly, daily_limit=daily)
+    return {"ok": True, "team_id": team_id}
+
+
+# ─── Tenants (Mandanten) API ──────────────────────────────────────────────────
+
+@app.get("/api/tenants", dependencies=[Depends(require_login)])
+async def api_list_tenants():
+    """Returns all tenants (Mandanten)."""
+    tenants = await db.list_tenants()
+    return {"tenants": tenants, "total": len(tenants)}
+
+
+@app.post("/api/tenants", dependencies=[Depends(require_login)])
+async def api_create_tenant(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    slug = (body.get("slug") or "").strip()
+    if not name or not slug:
+        raise HTTPException(status_code=400, detail="name and slug are required")
+    session = request.session
+    admin_id = session.get("user", {}).get("id", "unknown")
+    try:
+        tenant = await db.create_tenant(name, slug, created_by=admin_id)
+    except Exception as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return tenant
+
+
+@app.delete("/api/tenants/{tenant_id}", dependencies=[Depends(require_login)])
+async def api_delete_tenant(tenant_id: str):
+    await db.delete_tenant(tenant_id)
+    return {"ok": True, "tenant_id": tenant_id}
+
+
+@app.get("/api/tenants/{tenant_id}/members", dependencies=[Depends(require_login)])
+async def api_tenant_members(tenant_id: str):
+    members = await db.list_tenant_members(tenant_id)
+    return {"tenant_id": tenant_id, "members": members, "total": len(members)}
+
+
+@app.post("/api/tenants/{tenant_id}/members", dependencies=[Depends(require_login)])
+async def api_add_tenant_member(tenant_id: str, request: Request):
+    """Adds a user or an entire team to a tenant."""
+    body = await request.json()
+    user_id = body.get("user_id") or None
+    team_id = body.get("team_id") or None
+    role = body.get("role", "member")
+    if role not in ("member", "admin"):
+        raise HTTPException(status_code=400, detail="role must be 'member' or 'admin'")
+    if not user_id and not team_id:
+        raise HTTPException(status_code=400, detail="user_id or team_id is required")
+    await db.add_tenant_member(tenant_id, role=role, user_id=user_id, team_id=team_id)
+    if user_id:
+        await db.sync_user_to_redis(user_id)
+    elif team_id:
+        for uid in await db.get_team_members_ids(team_id):
+            await db.sync_user_to_redis(uid)
+    return {"ok": True, "tenant_id": tenant_id, "user_id": user_id, "team_id": team_id}
+
+
+@app.delete("/api/tenants/{tenant_id}/members/{member_id}", dependencies=[Depends(require_login)])
+async def api_remove_tenant_member(tenant_id: str, member_id: str):
+    """Removes a tenant_membership row by its id."""
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM tenant_memberships WHERE id=%s AND tenant_id=%s",
+                (member_id, tenant_id),
+            )
+    return {"ok": True, "tenant_id": tenant_id, "member_id": member_id}
+
+
+# ─── Knowledge Promotion API ──────────────────────────────────────────────────
+
+@app.post("/api/knowledge/promote", dependencies=[Depends(require_login)])
+async def api_promote_knowledge(request: Request):
+    """Promotes entities from one knowledge namespace to another.
+
+    Authorization:
+        - team:* → tenant:*/global: requires team lead role
+        - tenant:* → global: requires tenant admin role
+        - user:{id} → team:*/tenant:*: any user may promote their own namespace
+        - Platform admins bypass all role checks
+    """
+    body = await request.json()
+    from_tenant = (body.get("from_tenant_id") or "").strip()
+    to_tenant = body.get("to_tenant_id")  # may be None (global)
+    entity_names = body.get("entity_names") or None
+    auth_team_id = body.get("team_id") or None
+    auth_tenant_id = body.get("tenant_id") or None
+
+    if not from_tenant:
+        raise HTTPException(status_code=400, detail="from_tenant_id is required")
+
+    session = request.session
+    caller = session.get("user", {})
+    caller_id = caller.get("id", "")
+    is_admin = caller.get("is_admin", False)
+
+    if not is_admin:
+        if auth_team_id:
+            role = await db.get_team_member_role(auth_team_id, caller_id)
+            if role != "lead":
+                raise HTTPException(status_code=403,
+                                    detail="Only team leads may promote team knowledge")
+        elif auth_tenant_id:
+            role = await db.get_tenant_member_role(auth_tenant_id, caller_id)
+            if role != "admin":
+                raise HTTPException(status_code=403,
+                                    detail="Only tenant admins may promote to global")
+        elif not from_tenant.startswith(f"user:{caller_id}"):
+            raise HTTPException(status_code=403,
+                                detail="You may only promote your own knowledge namespace")
+
+    import main as _main_mod
+    gm = _main_mod.graph_manager
+    promoted = await gm.promote_knowledge(from_tenant, to_tenant, entity_names)
+    logger.info(
+        f"🔼 Knowledge promoted by '{caller_id}': "
+        f"{promoted} entities {from_tenant!r} → {to_tenant!r}"
+    )
+    return {"ok": True, "promoted": promoted, "from": from_tenant, "to": to_tenant}
