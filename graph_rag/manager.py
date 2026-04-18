@@ -1417,6 +1417,49 @@ class GraphRAGManager:
         )
         return stats
 
+    # ─── KNOWLEDGE PROMOTION ─────────────────────────────────────────────────
+
+    async def promote_knowledge(
+        self,
+        from_tenant_id: str,
+        to_tenant_id: Optional[str],
+        entity_names: Optional[list] = None,
+    ) -> int:
+        """Moves entities from one knowledge namespace to another.
+
+        Used to promote user-private knowledge (user:{id}) up the hierarchy:
+        user:{id} → team:{team_id} → tenant:{tenant_id} → None (global).
+
+        Args:
+            from_tenant_id: Source namespace (e.g. "user:abc123").
+            to_tenant_id: Target namespace, or None for global (public).
+            entity_names: Restrict promotion to specific entity names; None = all.
+
+        Returns:
+            Number of entities updated.
+        """
+        names_filter = "AND e.name IN $names" if entity_names else ""
+        cypher = (
+            "MATCH (e:Entity) "
+            f"WHERE e.tenant_id = $from_tenant {names_filter} "
+            "SET e.tenant_id = $to_tenant "
+            "RETURN count(e) AS promoted"
+        )
+        async with self.driver.session() as session:
+            result = await session.run(
+                cypher,
+                from_tenant=from_tenant_id,
+                to_tenant=to_tenant_id,
+                names=entity_names or [],
+            )
+            record = await result.single()
+        count = record["promoted"] if record else 0
+        logger.info(
+            f"🔼 Knowledge promoted: {count} entities "
+            f"{from_tenant_id!r} → {to_tenant_id!r}"
+        )
+        return count
+
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
     async def close(self) -> None:

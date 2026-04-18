@@ -83,6 +83,9 @@
       <a href="/users" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/users') %}active{% endif %}">
         <i class="bi bi-people me-1"></i>{{ t(request, 'nav.users') }}
       </a>
+      <a href="/teams" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/teams') %}active{% endif %}">
+        <i class="bi bi-diagram-3 me-1"></i>{{ t(request, 'nav.teams') }}
+      </a>
       <a href="/user-content" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/user-content') %}active{% endif %}">
         <i class="bi bi-person-lines-fill me-1"></i>{{ t(request, 'nav.user_content') }}
       </a>

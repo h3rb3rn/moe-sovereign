@@ -195,6 +195,58 @@ CREATE TABLE IF NOT EXISTS federation_outbox (
 
 CREATE INDEX IF NOT EXISTS idx_fed_outbox_status ON federation_outbox(status);
 CREATE INDEX IF NOT EXISTS idx_fed_outbox_domain ON federation_outbox(domain);
+
+-- ── Teams & Tenants (knowledge hierarchy) ─────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS tenants (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    slug        TEXT UNIQUE NOT NULL,
+    created_by  TEXT REFERENCES users(id),
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    slug        TEXT UNIQUE NOT NULL,
+    tenant_id   TEXT REFERENCES tenants(id) ON DELETE SET NULL,
+    created_by  TEXT REFERENCES users(id),
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS team_memberships (
+    id        TEXT PRIMARY KEY,
+    team_id   TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role      TEXT NOT NULL DEFAULT 'member',
+    joined_at TEXT NOT NULL,
+    UNIQUE(team_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS tenant_memberships (
+    id        TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    team_id   TEXT REFERENCES teams(id) ON DELETE CASCADE,
+    user_id   TEXT REFERENCES users(id) ON DELETE CASCADE,
+    role      TEXT NOT NULL DEFAULT 'member',
+    joined_at TEXT NOT NULL,
+    CHECK (team_id IS NOT NULL OR user_id IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS team_budgets (
+    team_id       TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    monthly_limit BIGINT,
+    daily_limit   BIGINT,
+    monthly_used  BIGINT NOT NULL DEFAULT 0,
+    daily_used    BIGINT NOT NULL DEFAULT 0,
+    budget_type   TEXT NOT NULL DEFAULT 'shared',
+    updated_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_memberships_team ON team_memberships(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant ON tenant_memberships(tenant_id);
 """
 
 
@@ -1577,3 +1629,341 @@ async def update_outbox_status(entry_id: str, status: str,
                     (status, entry_id)
                 )
         await conn.commit()
+
+
+# ─── Skill Registry ───────────────────────────────────────────────────────────
+
+async def list_skill_registry() -> list[dict]:
+    """Returns all entries in the skill_registry table ordered by skill name."""
+    if _pool is None:
+        return []
+    async with _pool.connection() as conn:
+        conn.row_factory = dict_row
+        rows = await conn.execute(
+            "SELECT skill_name, admin_approved, approved_by, approved_at, "
+            "audit_verdict, is_builtin, created_at "
+            "FROM skill_registry ORDER BY skill_name"
+        )
+        return [dict(r) for r in await rows.fetchall()]
+
+
+async def approve_skill(skill_name: str, approved_by: str) -> bool:
+    """Sets admin_approved=TRUE for skill_name and records who approved it.
+
+    Returns True if the skill was found and updated, False otherwise.
+    """
+    if _pool is None:
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    async with _pool.connection() as conn:
+        result = await conn.execute(
+            "UPDATE skill_registry SET admin_approved=TRUE, approved_by=%s, approved_at=%s "
+            "WHERE skill_name=%s",
+            (approved_by, now, skill_name),
+        )
+        await conn.commit()
+        return result.rowcount > 0
+
+
+async def revoke_skill(skill_name: str) -> bool:
+    """Revokes approval for skill_name (admin_approved=FALSE, clears approver)."""
+    if _pool is None:
+        return False
+    async with _pool.connection() as conn:
+        result = await conn.execute(
+            "UPDATE skill_registry SET admin_approved=FALSE, approved_by=NULL, approved_at=NULL "
+            "WHERE skill_name=%s",
+            (skill_name,),
+        )
+        await conn.commit()
+        return result.rowcount > 0
+
+
+async def get_skill_audit_log(skill_name: Optional[str] = None, limit: int = 100) -> list[dict]:
+    """Returns recent skill execution audit log entries, optionally filtered by skill name."""
+    if _pool is None:
+        return []
+    async with _pool.connection() as conn:
+        conn.row_factory = dict_row
+        if skill_name:
+            rows = await conn.execute(
+                "SELECT id, skill_name, user_id, session_id, args_hash, executed_at, outcome "
+                "FROM skill_audit_log WHERE skill_name=%s "
+                "ORDER BY executed_at DESC LIMIT %s",
+                (skill_name, limit),
+            )
+        else:
+            rows = await conn.execute(
+                "SELECT id, skill_name, user_id, session_id, args_hash, executed_at, outcome "
+                "FROM skill_audit_log ORDER BY executed_at DESC LIMIT %s",
+                (limit,),
+            )
+        return [dict(r) for r in await rows.fetchall()]
+
+
+# ─── Teams CRUD ───────────────────────────────────────────────────────────────
+
+async def create_team(name: str, slug: str, created_by: str, tenant_id: Optional[str] = None) -> dict:
+    """Creates a new team and returns its record."""
+    tid = new_id()
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO teams (id, name, slug, tenant_id, created_by, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (tid, name, slug, tenant_id, created_by, now),
+            )
+    return {"id": tid, "name": name, "slug": slug, "tenant_id": tenant_id,
+            "created_by": created_by, "created_at": now}
+
+
+async def get_team(team_id: str) -> Optional[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM teams WHERE id=%s", (team_id,))
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_teams() -> list[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM teams ORDER BY name")
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_team(team_id: str) -> None:
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM teams WHERE id=%s", (team_id,))
+
+
+async def add_team_member(team_id: str, user_id: str, role: str = "member") -> None:
+    """Adds user to team and auto-grants graph_tenant permission for the team namespace."""
+    mid = new_id()
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute(
+                    "INSERT INTO team_memberships (id, team_id, user_id, role, joined_at) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (mid, team_id, user_id, role, now),
+                )
+            except Exception:
+                await cur.execute(
+                    "UPDATE team_memberships SET role=%s WHERE team_id=%s AND user_id=%s",
+                    (role, team_id, user_id),
+                )
+    await grant_permission(user_id, "graph_tenant", f"team:{team_id}")
+    team = await get_team(team_id)
+    if team and team.get("tenant_id"):
+        await grant_permission(user_id, "graph_tenant", f"tenant:{team['tenant_id']}")
+
+
+async def remove_team_member(team_id: str, user_id: str) -> None:
+    """Removes user from team and revokes the team graph_tenant permission."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM team_memberships WHERE team_id=%s AND user_id=%s",
+                (team_id, user_id),
+            )
+    await revoke_permission_by_resource(user_id, "graph_tenant", f"team:{team_id}")
+
+
+async def list_team_members(team_id: str) -> list[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT tm.*, u.username, u.display_name, u.email "
+                "FROM team_memberships tm JOIN users u ON u.id=tm.user_id "
+                "WHERE tm.team_id=%s ORDER BY tm.role DESC, u.username",
+                (team_id,),
+            )
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_user_teams(user_id: str) -> list[str]:
+    """Returns list of team_ids the user belongs to."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT team_id FROM team_memberships WHERE user_id=%s",
+                (user_id,),
+            )
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+async def get_team_member_role(team_id: str, user_id: str) -> Optional[str]:
+    """Returns the user's role in a team, or None if not a member."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT role FROM team_memberships WHERE team_id=%s AND user_id=%s",
+                (team_id, user_id),
+            )
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def get_team_members_ids(team_id: str) -> list[str]:
+    """Returns list of user_ids in a team."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT user_id FROM team_memberships WHERE team_id=%s",
+                (team_id,),
+            )
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+# ─── Tenants CRUD ─────────────────────────────────────────────────────────────
+
+async def create_tenant(name: str, slug: str, created_by: str) -> dict:
+    """Creates a new tenant (Mandant) and returns its record."""
+    tid = new_id()
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO tenants (id, name, slug, created_by, created_at) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (tid, name, slug, created_by, now),
+            )
+    return {"id": tid, "name": name, "slug": slug, "created_by": created_by, "created_at": now}
+
+
+async def get_tenant(tenant_id: str) -> Optional[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM tenants WHERE id=%s", (tenant_id,))
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def list_tenants() -> list[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM tenants ORDER BY name")
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def delete_tenant(tenant_id: str) -> None:
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM tenants WHERE id=%s", (tenant_id,))
+
+
+async def add_tenant_member(
+    tenant_id: str,
+    role: str = "member",
+    user_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+) -> None:
+    """Adds a user or entire team to a tenant and grants the tenant namespace."""
+    mid = new_id()
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO tenant_memberships (id, tenant_id, team_id, user_id, role, joined_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (mid, tenant_id, team_id, user_id, role, now),
+            )
+    if team_id:
+        for uid in await get_team_members_ids(team_id):
+            await grant_permission(uid, "graph_tenant", f"tenant:{tenant_id}")
+    elif user_id:
+        await grant_permission(user_id, "graph_tenant", f"tenant:{tenant_id}")
+
+
+async def list_tenant_members(tenant_id: str) -> list[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT tm.*, u.username AS user_name, u.display_name, t.name AS team_name "
+                "FROM tenant_memberships tm "
+                "LEFT JOIN users u ON u.id=tm.user_id "
+                "LEFT JOIN teams t ON t.id=tm.team_id "
+                "WHERE tm.tenant_id=%s ORDER BY tm.role DESC",
+                (tenant_id,),
+            )
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_tenant_member_role(tenant_id: str, user_id: str) -> Optional[str]:
+    """Returns user's role in a tenant via direct or team membership, or None."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT role FROM tenant_memberships WHERE tenant_id=%s AND user_id=%s",
+                (tenant_id, user_id),
+            )
+            row = await cur.fetchone()
+            if row:
+                return row[0]
+            await cur.execute(
+                "SELECT tm.role FROM tenant_memberships tm "
+                "JOIN team_memberships tmem ON tmem.team_id=tm.team_id "
+                "WHERE tm.tenant_id=%s AND tmem.user_id=%s LIMIT 1",
+                (tenant_id, user_id),
+            )
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
+# ─── Team Budgets ─────────────────────────────────────────────────────────────
+
+async def set_team_budget(team_id: str, monthly_limit: Optional[int],
+                          daily_limit: Optional[int]) -> None:
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO team_budgets (team_id, monthly_limit, daily_limit, updated_at) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT(team_id) DO UPDATE SET "
+                "monthly_limit=excluded.monthly_limit, daily_limit=excluded.daily_limit, "
+                "updated_at=excluded.updated_at",
+                (team_id, monthly_limit, daily_limit, now),
+            )
+
+
+async def get_team_budget(team_id: str) -> dict:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM team_budgets WHERE team_id=%s", (team_id,))
+            row = await cur.fetchone()
+    return dict(row) if row else {"team_id": team_id, "monthly_limit": None,
+                                   "daily_limit": None, "monthly_used": 0, "daily_used": 0}
+
+
+async def deduct_team_budget(team_id: str, tokens: int) -> None:
+    """Atomically increments token usage counters for a team."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE team_budgets SET monthly_used=monthly_used+%s, daily_used=daily_used+%s "
+                "WHERE team_id=%s",
+                (tokens, tokens, team_id),
+            )
+
+
+async def check_team_budget(team_id: str, tokens: int) -> tuple[bool, str]:
+    """Returns (allowed, reason). Checks if team has budget remaining for `tokens`."""
+    budget = await get_team_budget(team_id)
+    if budget.get("monthly_limit") and (budget["monthly_used"] + tokens) > budget["monthly_limit"]:
+        return False, f"Team monthly budget exhausted ({budget['monthly_used']}/{budget['monthly_limit']} tokens)"
+    if budget.get("daily_limit") and (budget["daily_used"] + tokens) > budget["daily_limit"]:
+        return False, f"Team daily budget exhausted ({budget['daily_used']}/{budget['daily_limit']} tokens)"
+    return True, ""

@@ -126,3 +126,16 @@ CREATE TABLE permissions (
 
 !!! note "Duplicates"
     A duplicate grant (same `user_id + resource_type + resource_id`) is ignored by the UNIQUE constraint and does not generate an error.
+
+## Knowledge Namespace Permissions (`graph_tenant`)
+
+The `graph_tenant` resource type is a special permission that controls which knowledge namespaces a user can read from Neo4j GraphRAG.
+
+| `resource_type` | Example `resource_id` | Meaning |
+|----------------|----------------------|---------|
+| `graph_tenant` | `user:{id}` | User's private knowledge (auto-assigned) |
+| `graph_tenant` | `team:{id}` | Team shared knowledge namespace |
+| `graph_tenant` | `tenant:{id}` | Tenant (Mandant) knowledge namespace |
+
+!!! tip "Automatic management via Teams & Tenants"
+    These permissions are managed automatically when you add users to teams or tenants via the [Teams & Tenants](/admin/teams) page. You do not need to grant them manually.
