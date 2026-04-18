@@ -84,6 +84,7 @@ nav:
     - Best Practices: guide/best-practices.md
     - Open WebUI: guide/open-webui.md
     - Continue / Cursor: guide/continue-dev.md
+    - CLI Agents — Best Of: guide/cli-agents-best-of.md
     - FAQ: faq.md
   - Admin Backend:
     - admin/index.md
@@ -94,6 +95,7 @@ nav:
     - Expert Templates: admin/templates.md
     - Claude Code Profiles: admin/profiles.md
     - Monitoring & Processes: admin/monitoring.md
+    - Maintenance & Disk Management: admin/maintenance.md
   - Federation:
     - federation/index.md
     - Setup Guide: federation/setup.md
@@ -144,6 +146,7 @@ nav:
     - Autonomous Knowledge Healing: system/intelligence/autonomous_healing.md
     - Enterprise Features: system/intelligence/enterprise_features.md
     - Intelligence Growth Prognosis: system/intelligence/growth_prognosis.md
+    - CLI Agent Integration: system/intelligence/cli_agent_integration.md
   - Reference:
     - Authentication: reference/auth.md
     - Import & Export (incl. Knowledge Bundles): reference/import-export.md

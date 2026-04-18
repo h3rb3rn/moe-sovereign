@@ -29,6 +29,7 @@
   "msg.dedicated_healer_desc":  "在单一节点上启动永久缺口愈合循环。运行直至手动停止——适合专门用于愈合的主机。",
   "msg.dedicated_healer_loading": "加载服务器",
   "lbl.cleanup":          "清理与孤儿",
+  "lbl.cleanup_manager":  "系统清理管理器",
   "lbl.regeneration":     "自动重生成",
   "btn.trigger_ontology": "立即开始",
   "btn.cleanup_scan":     "扫描",

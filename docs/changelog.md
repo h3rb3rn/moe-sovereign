@@ -8,6 +8,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.3.0] - 2026-04-19
+
+### Added — System Cleanup Manager & Autonomous Disk Management
+
+#### Admin UI — System Cleanup Manager (Maintenance page)
+
+A new **System Cleanup Manager** section on the Maintenance page gives operators
+full visibility and control over all automated disk-management jobs:
+
+- **Job cards** per subsystem: Docker Prune, LangGraph Checkpoint Archive,
+  Admin-Log Rotation, systemd Journal, Prometheus TSDB
+- Each card displays: last run timestamp (relative), duration (current + rolling
+  average), freed space (current + rolling average), run count, and
+  job-specific detail metrics
+- **Inline configuration panel** (collapsible) with TTL fields per job — changes
+  are persisted immediately to `/opt/moe-infra/cleanup-config.json` and
+  propagate to `.env` for environment-backed settings
+- **Manual trigger** for `docker_prune` and `checkpoint_archive` via
+  `POST /api/cleanup/run/{job}` — runs the cron script as a background task
+- Auto-refresh every 60 seconds; flash notifications on save / trigger
+
+#### New API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/cleanup/status` | All jobs: last run, averages, config |
+| `GET` | `/api/cleanup/config` | Current cleanup configuration |
+| `POST` | `/api/cleanup/config` | Persist configuration, propagate to `.env` |
+| `POST` | `/api/cleanup/run/{job}` | Trigger job immediately |
+| `GET` | `/api/cleanup/history` | Raw JSONL history, filterable by job |
+| `POST` | `/api/cleanup/write-cron-env` | Update cron `.env` files from UI |
+
+#### Autonomous Cleanup Infrastructure
+
+- **`/etc/cron.daily/moe-docker-prune`** — removes dangling images, stopped
+  containers, and entire build cache (`docker builder prune --all`); writes
+  structured JSON to `/opt/moe-infra/cleanup-history.jsonl`
+- **`/etc/cron.daily/moe-checkpoint-archive`** — daily `pg_dump --format=custom
+  -Z9` of the LangGraph checkpoint database (265 MB → 32 MB), followed by a
+  three-phase prune of `checkpoints`, `checkpoint_writes`, and orphaned
+  `checkpoint_blobs`; reads TTL from `cleanup-config.json`
+- **`/etc/logrotate.d/moe-admin-logs`** — daily logrotate for JSONL monitoring
+  logs (`size 50M`, `rotate 3`, `compress`)
+- **`_append_log()` rotation** in `app.py` — inline file-size check before every
+  write; rotates at `LOG_MAX_BYTES` (default 50 MB) with `LOG_BACKUP_COUNT`
+  backups
+
+#### Docker Subsystem Hardening
+
+- **Container log rotation** — `/etc/docker/daemon.json` now sets
+  `"max-size": "50m", "max-file": "3"` as global defaults
+- **Docker build cache** — `builder prune --all` clears 200+ GB of accumulated
+  build layers from nightly rebuilds (first-run reclaim: 48 GB images +
+  ~216 GB cache)
+- **Valkey AOF compaction** — `auto-aof-rewrite-percentage 50`,
+  `auto-aof-rewrite-min-size 32mb`, `maxmemory 400mb`,
+  `maxmemory-policy allkeys-lru`
+- **Neo4j TX-log retention** — `NEO4J_db_tx__log_rotation_retention__policy=2 files`
+- **Prometheus retention** now configurable via `PROMETHEUS_RETENTION_DAYS`
+  in `.env` (default: 30 d, previously hardcoded 90 d)
+- **systemd journal** capped at 512 MB / 30 days via
+  `/etc/systemd/journald.conf.d/size-limit.conf`
+
+### Fixed
+
+- **CSRF validation failure on Teams & Tenants page** — `teams_page` passed an
+  empty template context `{}`, leaving `CSRF_TOKEN = ""` in `base.html`. The
+  global `fetch()` monkey-patch therefore sent `X-CSRF-Token: ""`, rejected by
+  `CsrfApiMiddleware`. Fixed by passing `get_csrf_token(request)` in the context.
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Admin UI, Infrastructure, Disk Management, Security |
+
+---
+
 ## [2.2.0] - 2026-04-17
 
 ### Added — Responsive Design & Visual Refresh

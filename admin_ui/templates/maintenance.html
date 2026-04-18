@@ -6,6 +6,7 @@
   <h5 class="mb-0 fw-bold"><i class="bi bi-tools me-2 text-primary"></i>{{ t(request, 'nav.maintenance') }}</h5>
   <span class="text-muted small">{{ inference_servers|length }} aktive Server</span>
 </div>
+<div id="flash-container" class="mb-2"></div>
 
 <div class="row g-3">
 
@@ -140,6 +141,25 @@
     </div>
   </div>
 
+  <!-- ── Cleanup Manager ──────────────────────────────────────────────── -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-dark bg-opacity-10 d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-recycle me-2"></i><strong>{{ t(request, 'lbl.cleanup_manager') }}</strong></span>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadCleanupStatus()">
+          <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div id="cleanup-manager-body" class="p-3">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'state.loading') }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Card 3: Regeneration buttons -->
   <div class="col-12">
     <div class="card">
@@ -166,6 +186,13 @@
 
 {% block scripts %}
 <script>
+function flash(msg, type='success') {
+  const c = document.getElementById('flash-container');
+  c.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2" role="alert">
+    ${msg}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+  setTimeout(() => { if (c.firstChild) c.firstChild.remove(); }, 5000);
+}
+
 function fmtStatus(s) {
   const map = {running: 'warning', ready: 'success', failed: 'danger', idle: 'secondary'};
   const cls = map[s] || 'secondary';
@@ -450,11 +477,266 @@ async function reloadPrometheus() {
   } catch (e) { box.textContent = 'Fehler: ' + e.message; }
 }
 
+// ─── Cleanup Manager ─────────────────────────────────────────────────────────
+
+const JOB_META = {
+  docker_prune:       { icon: 'bi-layers',        label: 'Docker Prune',             color: 'primary',  canRun: true,  hasConfig: false },
+  checkpoint_archive: { icon: 'bi-database-down',  label: 'Checkpoint-Archiv',        color: 'info',     canRun: true,  hasConfig: true  },
+  admin_logs:         { icon: 'bi-file-earmark-text', label: 'Admin-Log Rotation',   color: 'warning',  canRun: false, hasConfig: true  },
+  journal:            { icon: 'bi-journal-text',   label: 'systemd Journal',          color: 'secondary',canRun: false, hasConfig: true  },
+  prometheus:         { icon: 'bi-graph-up',       label: 'Prometheus TSDB',          color: 'danger',   canRun: false, hasConfig: true  },
+};
+
+const ALL_JOB_KEYS = Object.keys(JOB_META);
+
+function fmtBytes(b) {
+  if (!b || b === 0) return '—';
+  if (b >= 1073741824) return (b/1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576)    return (b/1048576).toFixed(1) + ' MB';
+  if (b >= 1024)       return (b/1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
+
+function fmtDur(s) {
+  if (!s || s === 0) return '—';
+  if (s >= 60) return Math.round(s/60) + ' min';
+  return s + ' s';
+}
+
+function fmtRelTime(ts) {
+  if (!ts) return '—';
+  const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+  if (diff < 60)    return 'vor ' + Math.round(diff) + ' s';
+  if (diff < 3600)  return 'vor ' + Math.round(diff/60) + ' min';
+  if (diff < 86400) return 'vor ' + Math.round(diff/3600) + ' h';
+  return 'vor ' + Math.round(diff/86400) + ' d';
+}
+
+function buildConfigFields(key, cfg) {
+  const job = cfg[key] || {};
+  const fields = [];
+
+  if (key === 'checkpoint_archive') {
+    fields.push(`
+      <div class="row g-2 mt-1">
+        <div class="col-6">
+          <label class="form-label small mb-1">Live-DB Zeilen behalten</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-keep_rows"
+                 value="${job.keep_rows ?? 30000}" min="1000" step="1000">
+        </div>
+        <div class="col-6">
+          <label class="form-label small mb-1">Archiv-Retention (Tage)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-retain_days"
+                 value="${job.retain_days ?? 90}" min="7">
+        </div>
+      </div>`);
+  }
+  if (key === 'admin_logs') {
+    fields.push(`
+      <div class="row g-2 mt-1">
+        <div class="col-6">
+          <label class="form-label small mb-1">Max Dateigröße (MB)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-max_mb"
+                 value="${Math.round((job.max_bytes ?? 52428800)/1048576)}" min="5">
+        </div>
+        <div class="col-6">
+          <label class="form-label small mb-1">Backup-Dateien</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-backup_count"
+                 value="${job.backup_count ?? 2}" min="1" max="10">
+        </div>
+      </div>`);
+  }
+  if (key === 'journal') {
+    fields.push(`
+      <div class="row g-2 mt-1">
+        <div class="col-6">
+          <label class="form-label small mb-1">Max Speicher (MB)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-max_use_mb"
+                 value="${job.max_use_mb ?? 512}" min="64">
+        </div>
+        <div class="col-6">
+          <label class="form-label small mb-1">Retention (Tage)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-retain_days"
+                 value="${job.retain_days ?? 30}" min="7">
+        </div>
+      </div>`);
+  }
+  if (key === 'prometheus') {
+    fields.push(`
+      <div class="row g-2 mt-1">
+        <div class="col-6">
+          <label class="form-label small mb-1">Retention (Tage)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-retention_days"
+                 value="${job.retention_days ?? 30}" min="7">
+        </div>
+        <div class="col-12"><small class="text-muted">Prometheus-Neustart erforderlich nach Änderung.</small></div>
+      </div>`);
+  }
+
+  if (!fields.length) return '';
+  const enabled = job.enabled !== false;
+  return `
+    <div class="collapse mt-2" id="cfg-panel-${key}">
+      <div class="border rounded p-2 bg-light small">
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="cfg-${key}-enabled" ${enabled ? 'checked' : ''}>
+          <label class="form-check-label" for="cfg-${key}-enabled">Job aktiv</label>
+        </div>
+        ${fields.join('')}
+        <button class="btn btn-sm btn-outline-primary mt-2" onclick="saveJobConfig('${key}')">
+          <i class="bi bi-floppy me-1"></i>Speichern
+        </button>
+      </div>
+    </div>`;
+}
+
+function buildJobCard(key, stats, cfg) {
+  const meta  = JOB_META[key] || { icon: 'bi-gear', label: key, color: 'secondary', canRun: false, hasConfig: false };
+  const st    = stats[key] || {};
+  const jobCfg = cfg[key] || {};
+  const enabled = jobCfg.enabled !== false;
+
+  const lastRunBadge = st.last_run_ts
+    ? `<span class="badge bg-success bg-opacity-75">${fmtRelTime(st.last_run_ts)}</span>`
+    : `<span class="badge bg-secondary">Noch nie</span>`;
+
+  const runBtn = meta.canRun
+    ? `<button class="btn btn-sm btn-outline-${meta.color}" onclick="runJobNow('${key}')" id="run-btn-${key}">
+         <i class="bi bi-play-fill me-1"></i>Jetzt
+       </button>`
+    : '';
+
+  const cfgBtn = meta.hasConfig
+    ? `<button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#cfg-panel-${key}">
+         <i class="bi bi-sliders me-1"></i>Konfig
+       </button>`
+    : '';
+
+  const histRows = (st.last_details && Object.keys(st.last_details).length)
+    ? Object.entries(st.last_details).map(([k,v]) =>
+        `<div class="d-flex justify-content-between"><span class="text-muted">${escapeHtml(k)}:</span><span class="font-monospace">${escapeHtml(String(v))}</span></div>`
+      ).join('')
+    : '';
+
+  return `
+    <div class="col-12 col-lg-6 col-xl-4">
+      <div class="card h-100 ${enabled ? '' : 'opacity-50'}">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <span class="fw-semibold small"><i class="bi ${meta.icon} me-2 text-${meta.color}"></i>${meta.label}</span>
+          ${lastRunBadge}
+        </div>
+        <div class="card-body py-2 small">
+          <div class="d-flex justify-content-between mb-1">
+            <span class="text-muted">Letzter Lauf:</span>
+            <span>${st.last_run_ts ? new Date(st.last_run_ts).toLocaleString('de-DE') : '—'}</span>
+          </div>
+          <div class="d-flex justify-content-between mb-1">
+            <span class="text-muted">Dauer:</span>
+            <span>${fmtDur(st.last_duration_s)} <span class="text-muted">(Ø ${fmtDur(st.avg_duration_s)})</span></span>
+          </div>
+          <div class="d-flex justify-content-between mb-1">
+            <span class="text-muted">Freigegeben:</span>
+            <span>${fmtBytes(st.last_freed_bytes)} <span class="text-muted">(Ø ${fmtBytes(st.avg_freed_bytes)})</span></span>
+          </div>
+          <div class="d-flex justify-content-between mb-2">
+            <span class="text-muted">Läufe gesamt:</span>
+            <span>${st.run_count ?? '—'}</span>
+          </div>
+          ${histRows ? `<div class="border-top pt-2 mt-1">${histRows}</div>` : ''}
+          ${buildConfigFields(key, cfg)}
+        </div>
+        <div class="card-footer d-flex gap-2 py-2">
+          ${runBtn}${cfgBtn}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function loadCleanupStatus() {
+  const box = document.getElementById('cleanup-manager-body');
+  try {
+    const d = await fetch('/api/cleanup/status').then(r => r.json());
+    const { jobs, config } = d;
+
+    let html = '<div class="row g-3">';
+    for (const key of ALL_JOB_KEYS) {
+      html += buildJobCard(key, jobs, config);
+    }
+    html += '</div>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger p-3">Fehler: ${e.message}</div>`;
+  }
+}
+
+async function runJobNow(job) {
+  const btn = document.getElementById(`run-btn-${job}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+  try {
+    const r = await fetch(`/api/cleanup/run/${job}`, {method:'POST'}).then(r => r.json());
+    flash(r.message || 'Job gestartet', 'success');
+    setTimeout(loadCleanupStatus, 5000);
+  } catch (e) {
+    flash('Fehler: ' + e.message, 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Jetzt'; }
+  }
+}
+
+async function saveJobConfig(key) {
+  const cfg = await fetch('/api/cleanup/config').then(r => r.json());
+
+  const get = id => {
+    const el = document.getElementById(id);
+    return el ? el.value : null;
+  };
+  const getNum = id => { const v = get(id); return v !== null ? Number(v) : null; };
+  const getBool = id => { const el = document.getElementById(id); return el ? el.checked : null; };
+
+  if (!cfg[key]) cfg[key] = {};
+  cfg[key].enabled = getBool(`cfg-${key}-enabled`) ?? true;
+
+  if (key === 'checkpoint_archive') {
+    cfg[key].keep_rows   = getNum(`cfg-${key}-keep_rows`)   ?? cfg[key].keep_rows;
+    cfg[key].retain_days = getNum(`cfg-${key}-retain_days`) ?? cfg[key].retain_days;
+    // Update cron .env file as well
+    await fetch('/api/cleanup/config', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cfg)});
+    // Update moe-checkpoint-archive.env directly via a dedicated call
+    const envContent = `CHECKPOINT_KEEP_ROWS=${cfg[key].keep_rows}\nARCHIVE_RETAIN_DAYS=${cfg[key].retain_days}\n`;
+    await fetch('/api/cleanup/write-cron-env', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({job: key, content: envContent})});
+  } else if (key === 'admin_logs') {
+    const maxMb = getNum(`cfg-${key}-max_mb`);
+    cfg[key].max_bytes    = maxMb !== null ? maxMb * 1048576 : cfg[key].max_bytes;
+    cfg[key].backup_count = getNum(`cfg-${key}-backup_count`) ?? cfg[key].backup_count;
+  } else if (key === 'journal') {
+    cfg[key].max_use_mb  = getNum(`cfg-${key}-max_use_mb`)  ?? cfg[key].max_use_mb;
+    cfg[key].retain_days = getNum(`cfg-${key}-retain_days`) ?? cfg[key].retain_days;
+  } else if (key === 'prometheus') {
+    cfg[key].retention_days = getNum(`cfg-${key}-retention_days`) ?? cfg[key].retention_days;
+  }
+
+  const r = await fetch('/api/cleanup/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(cfg)
+  }).then(r => r.json());
+
+  if (r.ok) {
+    flash('Konfiguration gespeichert', 'success');
+    await loadCleanupStatus();
+  } else {
+    flash('Fehler: ' + (r.detail || JSON.stringify(r)), 'danger');
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   pollOntology();
   setInterval(pollOntology, 3000);
   loadDedicatedTemplates();
   setInterval(pollDedicatedHealer, 5000);
+  loadCleanupStatus();
+  setInterval(loadCleanupStatus, 60000);
 });
 </script>
 {% endblock %}

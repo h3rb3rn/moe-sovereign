@@ -29,6 +29,7 @@
   "msg.dedicated_healer_desc":  "Starts a permanent gap-healer loop pinned to a single node. Runs until manually stopped — ideal for a host dedicated exclusively to healing.",
   "msg.dedicated_healer_loading": "Loading servers",
   "lbl.cleanup":          "Cleanup & orphans",
+  "lbl.cleanup_manager":  "System Cleanup Manager",
   "lbl.regeneration":     "Auto-regeneration",
   "btn.trigger_ontology": "Start now",
   "btn.cleanup_scan":     "Scan",
