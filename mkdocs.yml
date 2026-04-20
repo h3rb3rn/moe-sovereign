@@ -145,6 +145,7 @@ nav:
     - Reinforcement Learning Flywheel: system/intelligence/rl_flywheel.md
     - Autonomous Knowledge Healing: system/intelligence/autonomous_healing.md
     - Enterprise Features: system/intelligence/enterprise_features.md
+    - 7B Ensemble Capability: system/intelligence/7b_ensemble_capability.md
     - Intelligence Growth Prognosis: system/intelligence/growth_prognosis.md
     - CLI Agent Integration: system/intelligence/cli_agent_integration.md
   - Reference:

@@ -284,3 +284,42 @@ Neo4j retains only the two most recent transaction log files, preventing unbound
 | Valkey AOF | < 400 MB | LRU eviction + AOF compaction |
 | Kafka data | < 512 MB | 7-day / 512 MB retention |
 | **Total estimated** | **~55 GB** | All automated |
+
+---
+
+## Ontology Gap Healer
+
+The **Ontology Gap Healer** processes unknown terms that accumulate in the `moe:ontology_gaps` Redis sorted set and writes classified entities to Neo4j.
+
+### One-shot run
+
+Navigate to **Admin → Maintenance → Ontology Gaps** and click **Einmalig starten**. The healer processes the current gap queue once and stops when the queue is empty or the maximum iteration limit is reached.
+
+### Dedicated (daemon) run
+
+Click **Dauerlauf starten** to launch the healer as a persistent daemon:
+
+- The healer runs continuously, picking up new gaps as they arrive.
+- An `auto_restart` flag in Redis ensures a new subprocess is spawned automatically ~30 seconds after each batch completes.
+- If the container restarts, `auto_restart` is preserved and the healer resumes on startup (after a 5-second ASGI warmup delay).
+- Click **Dauerlauf stoppen** to clear the `auto_restart` flag and terminate the daemon.
+
+#### Monitoring
+
+| Source | What to check |
+|---|---|
+| **Admin → Statistics → Healer-Historie** | All completed runs with type (Dauerlauf / Einmalig), duration, written, and failed counts |
+| **Admin → Live-Monitoring** | Active API requests — a healer run appears as a request on the curator template's node |
+| **Watchdog** | Every 60 s the internal watchdog verifies PID liveness and detects stalls (no output for 5 min); both trigger auto-restart |
+
+### Stall detection
+
+If the healer subprocess produces no output for **5 minutes**, the watchdog marks it as stalled (`stalled=1` in Redis) and triggers an auto-restart. The Statistics page shows stalled runs with a red badge.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `HEALER_NODES_JSON` | *(required for overnight script)* | JSON array of `[node_id, ollama_url, [models]]` for the standalone `gap_healer_overnight.py` |
+| `REQUEST_TIMEOUT` | `900` | Per-request timeout (seconds) for healer API calls |
+| `MOE_API_BASE` | `http://localhost:8000` | MoE orchestrator base URL used by the healer subprocess |

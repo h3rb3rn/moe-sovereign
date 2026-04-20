@@ -236,6 +236,25 @@ graph TD
 | Few-shot examples | `moe:few_shot:{category}` | permanent (max 20 LRU) | Valkey List |
 | Planner patterns | `moe:planner_success` (sorted set) | 180 days | Valkey ZSet |
 | Ontology gaps | `moe:ontology_gaps` (sorted set) | 90 days | Valkey ZSet |
+| Healer state | `moe:maintenance:ontology:dedicated` | permanent | Valkey Hash |
+| Healer run history | `moe:maintenance:ontology:runs` | max 200 entries | Valkey List |
+
+---
+
+## Ontology Gap Healer
+
+Unknown terms collected during inference are stored in the `moe:ontology_gaps` sorted set (score = Unix timestamp). The **Ontology Gap Healer** (`scripts/gap_healer_templates.py`) processes this queue using an MoE curator template and writes classified entities to Neo4j.
+
+Two modes are supported:
+
+- **One-shot** (`type=oneshot`): processes the current queue once, then exits.
+- **Dedicated daemon** (`type=dedicated`): runs continuously in a loop. The `auto_restart` flag in the `moe:maintenance:ontology:dedicated` Redis hash ensures a new subprocess is spawned ~30 s after each batch completes. On container restart, `_auto_resume_dedicated_healer()` detects `auto_restart=1` and resumes automatically after a 5-second ASGI warmup delay.
+
+An internal watchdog task (`_watchdog_dedicated_healer`) runs every 60 s and:
+1. Verifies PID liveness via `os.kill(pid, 0)` — triggers restart if the process is dead.
+2. Detects stalls (no Redis counter update for 5 min) and marks `stalled=1`.
+
+Completed runs (both modes) are appended to `moe:maintenance:ontology:runs` and visible under **Admin → Statistics → Healer-Historie**.
 
 ---
 

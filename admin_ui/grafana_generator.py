@@ -139,7 +139,7 @@ def _stat_panel(id_: int, title: str, gridPos: dict, expr: str, unit: str = "sho
 def build_overview_dashboard(servers: list[dict]) -> dict:
     """Build the full Grafana dashboard JSON for file provisioning."""
     node_names = [s.get("name") for s in servers if s.get("name")]
-    default_nodes = node_names[:5] if node_names else ["N04-RTX"]
+    default_nodes = node_names[:5] if node_names else []
 
     # Panels laid out in a 24-col grid
     panels: list[dict] = []

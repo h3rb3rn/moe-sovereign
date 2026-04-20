@@ -4,9 +4,12 @@
   "description": "Maximum quality Claude Code profile. No compromises — largest models on RTX, Qwen3-Coder-Next (70.6% SWE-bench) as planner AND judge, dedicated security analyst expert, parallel multi-domain synthesis. Target: 5-15 min per request.",
   "moe_mode": "moe_orchestrated",
   "tool_model": "hf.co/ubergarm/Qwen3-Coder-Next-GGUF:Q4_0",
-  "tool_endpoint": "N04-RTX",
+  "tool_endpoint": "",
   "expert_template_id": "cc-expert-deep",
-  "accepted_models": ["claude-sonnet-4-20250514", "claude-sonnet-4-6-20250725"],
+  "accepted_models": [
+    "claude-sonnet-4-20250514",
+    "claude-sonnet-4-6-20250725"
+  ],
   "system_prompt_prefix": "You are a principal-level software engineer delivering production-grade solutions. Every response must include: (1) security analysis of the code, (2) test coverage strategy, (3) architectural rationale for design decisions, (4) explicit verification steps. No shortcuts, no hand-waving, no TODO comments. Code must be complete, runnable, and secure.",
   "stream_think": true,
   "tool_max_tokens": 8192,
