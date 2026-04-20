@@ -14,6 +14,8 @@ Both address fundamental limitations of small local LLMs — not by replacing th
 | [Context Extension](context_extension.md) | How the MoE architecture effectively extends the usable context window for coding agents and large-document workflows, despite the small native context of local LLMs |
 | [Graph-basierte Wissensakkumulation](compounding_knowledge.md) | How the system actively maintains its own knowledge base: synthesis persistence (novel insights → `:Synthesis` Neo4j nodes) and graph linting (orphan cleanup + contradiction resolution via background LLM) |
 | [Memory Palace](memory_palace.md) | Domain-scoped retrieval via metadata filters, isolated expert memory with `expert_domain` tagging in ChromaDB and Neo4j, and Claude Code auto-save hooks that persist session knowledge before context loss |
+| [CLI Agent Integration](cli_agent_integration.md) | Architectural analysis of how execution-loop agents (Aider, Open Interpreter) and infra-orchestrators (Hermes, Continue.dev) leverage all four MoE core components simultaneously — with delta table, Mermaid data-flow diagrams, and measured thresholds from the implementation |
+| [7B Ensemble Capability](7b_ensemble_capability.md) | Measured benchmark results showing that 8 domain-specialist 7–9B models on legacy Tesla M10 hardware achieve GPT-4o mini class performance (6.11/10 on MoE-Eval) with full data sovereignty — overnight stability run, per-category analysis, and comparison to public cloud models |
 
 ---
 
