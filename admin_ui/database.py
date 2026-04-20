@@ -392,7 +392,7 @@ async def seed_initial_admin() -> None:
             if await cur.fetchone():
                 return
     admin_user  = os.getenv("ADMIN_USER",  "admin")
-    admin_pass  = os.getenv("ADMIN_PASSWORD", "changeme")
+    admin_pass  = os.getenv("ADMIN_PASSWORD", "")
     admin_email = os.getenv("ADMIN_EMAIL", f"{admin_user}@localhost")
     await create_user(admin_user, admin_email, admin_pass,
                       display_name="Administrator", is_admin=True, role="admin")

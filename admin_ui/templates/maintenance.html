@@ -193,10 +193,11 @@ function flash(msg, type='success') {
   setTimeout(() => { if (c.firstChild) c.firstChild.remove(); }, 5000);
 }
 
-function fmtStatus(s) {
-  const map = {running: 'warning', ready: 'success', failed: 'danger', idle: 'secondary'};
+function fmtStatus(s, extra) {
+  const map = {running: 'warning', ready: 'success', failed: 'danger', idle: 'secondary', starting: 'info', stalled: 'danger', stopped: 'secondary'};
   const cls = map[s] || 'secondary';
-  return `<span class="badge bg-${cls}">${s}</span>`;
+  const label = extra ? `${s} — ${extra}` : s;
+  return `<span class="badge bg-${cls}">${label}</span>`;
 }
 
 // ─── Dedicated Healer ────────────────────────────────────────────────────────
@@ -229,8 +230,10 @@ async function loadDedicatedTemplates() {
 async function pollDedicatedHealer() {
   try {
     const d = await fetch('/api/maintenance/ontology/dedicated/status').then(r => r.json());
-    const running = d.status === 'running';
-    document.getElementById('dedicated-status').innerHTML = fmtStatus(d.status || 'stopped');
+    const running = d.status === 'running' || d.status === 'starting';
+    const stalledExtra = d.stalled === '1' ? 'kein Output seit 5 min' : null;
+    const displayStatus = d.stalled === '1' ? 'stalled' : (d.status || 'stopped');
+    document.getElementById('dedicated-status').innerHTML = fmtStatus(displayStatus, stalledExtra);
     document.getElementById('dedicated-tmpl').textContent = d.template || '—';
     document.getElementById('dedicated-pid').textContent = d.pid || '—';
     document.getElementById('dedicated-processed').textContent = d.processed || 0;
@@ -259,9 +262,11 @@ async function startDedicatedHealer() {
   const template = document.getElementById('dedicated-template').value.trim();
   if (!template) { alert('Bitte ein Template auswählen.'); return; }
   const blockServer = document.getElementById('dedicated-block-server').checked;
-  document.getElementById('btn-dedicated-start').disabled = true;
+  const btnStart = document.getElementById('btn-dedicated-start');
+  const btnStop  = document.getElementById('btn-dedicated-stop');
+  btnStart.disabled = true;
 
-  // Optional: block the server for regular routing first
+  // 1. Block server for regular routing if requested.
   if (blockServer) {
     const serverName = _tplToServerName(template);
     try {
@@ -272,14 +277,54 @@ async function startDedicatedHealer() {
     } catch (e) { /* non-fatal */ }
   }
 
+  // 2. Clean stale Redis state from any previous run before starting.
+  try {
+    await fetch('/api/maintenance/ontology/dedicated/status', {method: 'DELETE'});
+  } catch (e) { /* non-fatal */ }
+
+  // 3. Start the healer.
+  let startOk = false;
   try {
     const r = await fetch('/api/maintenance/ontology/dedicated/start', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({template, block_server: blockServer}),
     }).then(r => r.json());
-    if (!r.ok) alert('Start fehlgeschlagen: ' + (r.reason || JSON.stringify(r)));
-  } catch (e) { alert('Fehler: ' + e.message); }
-  finally { pollDedicatedHealer(); }
+    if (!r.ok) {
+      alert('Start fehlgeschlagen: ' + (r.reason || JSON.stringify(r)));
+      btnStart.disabled = false;
+      return;
+    }
+    startOk = true;
+  } catch (e) {
+    alert('Fehler beim Starten: ' + e.message);
+    btnStart.disabled = false;
+    return;
+  }
+
+  // 4. Show "starting" state and poll verify endpoint until PID + active request confirmed.
+  document.getElementById('dedicated-status').innerHTML = fmtStatus('starting');
+  btnStop.disabled = false;
+
+  let verified = false;
+  for (let i = 0; i < 10; i++) {
+    await new Promise(res => setTimeout(res, 1500));
+    try {
+      const v = await fetch('/api/maintenance/ontology/dedicated/verify').then(r => r.json());
+      // Verified if: PID alive AND (active request visible OR healer produced output within 60 s)
+      if (v.pid_alive && v.is_active) { verified = true; break; }
+      // If PID died after 3 retries, no point waiting further.
+      if (!v.pid_alive && i >= 2) break;
+    } catch (e) { /* ignore network hiccup */ }
+  }
+
+  if (!verified) {
+    alert(
+      'Healer wurde gestartet, aber innerhalb von 15 s war kein aktiver Request im Live Monitoring sichtbar.\n' +
+      'Bitte prüfe die Logs des Orchestrators und ob das Template korrekt konfiguriert ist.'
+    );
+  }
+
+  pollDedicatedHealer();
 }
 
 async function stopDedicatedHealer() {

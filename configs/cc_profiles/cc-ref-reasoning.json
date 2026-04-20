@@ -4,8 +4,11 @@
   "description": "MoE pipeline with Thinking Node enabled for chain-of-thought reasoning. Deep analysis, architecture decisions, complex debugging. Moderate latency with self-correction.",
   "moe_mode": "moe_reasoning",
   "tool_model": "gemma4:31b",
-  "tool_endpoint": "N04-RTX",
-  "accepted_models": ["claude-sonnet-4-20250514", "claude-sonnet-4-6-20250725"],
+  "tool_endpoint": "",
+  "accepted_models": [
+    "claude-sonnet-4-20250514",
+    "claude-sonnet-4-6-20250725"
+  ],
   "system_prompt_prefix": "",
   "stream_think": true,
   "tool_max_tokens": 8192,

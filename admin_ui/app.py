@@ -56,7 +56,7 @@ TEMPLATES.env.globals["t"]        = _jinja_t
 TEMPLATES.env.globals["get_lang"] = _jinja_get_lang
 
 ADMIN_USER       = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "changeme")
+ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "")
 SECRET_KEY       = os.getenv("ADMIN_SECRET_KEY", secrets.token_hex(32))
 PROMETHEUS_URL   = os.getenv("PROMETHEUS_URL", "http://moe-prometheus:9090")
 SKILLS_DIR          = Path("/app/skills")
@@ -1434,7 +1434,7 @@ async def api_status(request: Request, _=Depends(require_login)):
     try:
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get("http://langgraph-orchestrator:8002/v1/provider-status")
+            r = await client.get(f"{ORCHESTRATOR_URL}/v1/provider-status")
             if r.status_code == 200:
                 status["provider_limits"] = r.json()
     except Exception:
@@ -2310,12 +2310,16 @@ async def api_servers_routing_state():
     try:
         floating_disabled = list(await redis_cli.smembers("moe:floating_disabled_servers") or [])
         blocked           = list(await redis_cli.smembers("moe:blocked_servers") or [])
+        bench_raw         = list(await redis_cli.smembers("moe:benchmark_reserved") or [])
+        bench_meta        = await redis_cli.hgetall("moe:benchmark_lock_meta") or {}
         return {
-            "floating_disabled": [v if isinstance(v, str) else v.decode() for v in floating_disabled],
-            "blocked":           [v if isinstance(v, str) else v.decode() for v in blocked],
+            "floating_disabled":  [v if isinstance(v, str) else v.decode() for v in floating_disabled],
+            "blocked":            [v if isinstance(v, str) else v.decode() for v in blocked],
+            "benchmark_reserved": sorted(v if isinstance(v, str) else v.decode() for v in bench_raw),
+            "benchmark_template": bench_meta.get("template", ""),
         }
     except Exception as e:
-        return {"floating_disabled": [], "blocked": [], "error": str(e)}
+        return {"floating_disabled": [], "blocked": [], "benchmark_reserved": [], "benchmark_template": "", "error": str(e)}
 
 
 @app.get("/api/servers/{server_name}/ontology-status", dependencies=[Depends(require_login)])
@@ -2463,6 +2467,19 @@ async def api_dedicated_healer_status():
             return r.json()
     except Exception as e:
         return {"status": "unknown", "error": str(e)[:200]}
+
+
+@app.get("/api/maintenance/ontology/dedicated/verify", dependencies=[Depends(require_login)])
+async def api_dedicated_healer_verify():
+    """Proxy: verify that the dedicated healer PID is alive and has an active request."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/ontology/dedicated/verify",
+            )
+            return r.json()
+    except Exception as e:
+        return {"pid_alive": False, "has_active_request": False, "status": "unknown", "error": str(e)[:200]}
 
 
 @app.get("/api/maintenance/templates/verify", dependencies=[Depends(require_login)])

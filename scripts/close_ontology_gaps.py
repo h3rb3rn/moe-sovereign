@@ -327,9 +327,15 @@ def write_to_neo4j(entities: list[dict]) -> int:
         return 0
 
     if not NEO4J_PASS:
-        # Try to read from .env
-        env_path = pathlib.Path("/opt/moe-sovereign/.env")
-        if env_path.exists():
+        # Try to read from .env — search relative to this script, then CWD
+        env_path = next(
+            (p for p in [
+                pathlib.Path(__file__).parent.parent / ".env",
+                pathlib.Path.cwd() / ".env",
+            ] if p.exists()),
+            None,
+        )
+        if env_path is not None:
             for line in env_path.read_text().splitlines():
                 if line.startswith("NEO4J_PASSWORD="):
                     neo4j_pass = line.split("=", 1)[1].strip().strip('"')

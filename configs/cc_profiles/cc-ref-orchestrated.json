@@ -4,8 +4,11 @@
   "description": "Full MoE pipeline: Planner decomposes tasks, parallel expert LLMs process them, Merger synthesizes, Judge evaluates, GraphRAG accumulates knowledge. Highest quality, highest latency.",
   "moe_mode": "moe_orchestrated",
   "tool_model": "gemma4:31b",
-  "tool_endpoint": "N04-RTX",
-  "accepted_models": ["claude-sonnet-4-20250514", "claude-sonnet-4-6-20250725"],
+  "tool_endpoint": "",
+  "accepted_models": [
+    "claude-sonnet-4-20250514",
+    "claude-sonnet-4-6-20250725"
+  ],
   "expert_template_id": "moe-reference-30b-balanced",
   "system_prompt_prefix": "",
   "stream_think": false,

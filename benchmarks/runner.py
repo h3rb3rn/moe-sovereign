@@ -59,6 +59,10 @@ BASE_TIMEOUT     = int(os.environ.get("MOE_TIMEOUT", "1200"))   # 20 min base
 MAX_TIMEOUT      = int(os.environ.get("MOE_MAX_TIMEOUT", "3600")) # 1 h ceiling
 # Max wait for API health-check before aborting (seconds).
 API_HEALTH_WAIT  = int(os.environ.get("MOE_HEALTH_WAIT", "600"))
+# Multi-turn: cap completion tokens per turn to limit context growth and VRAM pressure.
+MULTI_TURN_MAX_TOKENS = int(os.environ.get("MOE_MULTI_TURN_MAX_TOKENS", "1200"))
+# Pause between multi-turn steps (seconds) to allow VRAM to be freed before next call.
+TURN_PAUSE_S     = int(os.environ.get("MOE_TURN_PAUSE", "5"))
 
 if not API_KEY:
     print("ERROR: MOE_API_KEY environment variable is required.", file=sys.stderr)
@@ -293,6 +297,7 @@ async def run_multi_turn(
 
         res = await call_api_with_retry(
             client, messages, session_id=session_id,
+            max_tokens=MULTI_TURN_MAX_TOKENS,
             label=f"turn {turn_num} ",
         )
 
@@ -325,6 +330,10 @@ async def run_multi_turn(
         status = "✓" if res["status"] == 200 and not err else "✗"
         print(f"      {status} dt={res['dt']:.1f}s tok={usage.get('completion_tokens',0)} "
               f"→ {snippet}", flush=True)
+
+        # Brief pause between turns so GPU VRAM can be freed before next call.
+        if TURN_PAUSE_S > 0 and turn_num < len(tc["turns"]):
+            await asyncio.sleep(TURN_PAUSE_S)
 
     return result
 

@@ -281,6 +281,7 @@ GRAPH_INGEST_TOKEN    = TOKEN_MAP.get(_GRAPH_INGEST_EP_NAME, "ollama") if _GRAPH
 PLANNER_MODEL    = os.getenv("PLANNER_MODEL", "phi4:14b")
 PLANNER_ENDPOINT = os.getenv("PLANNER_ENDPOINT", os.getenv("JUDGE_ENDPOINT", ""))
 PLANNER_URL      = URL_MAP.get(PLANNER_ENDPOINT) if PLANNER_ENDPOINT else None
+PLANNER_TOKEN    = TOKEN_MAP.get(PLANNER_ENDPOINT, "ollama") if PLANNER_ENDPOINT else "ollama"
 # Native Ollama API base URLs (without /v1) for keep_alive=0 unload calls
 _JUDGE_BASE    = (JUDGE_URL   or "").rstrip("/").removesuffix("/v1")
 _PLANNER_BASE  = (PLANNER_URL or "").rstrip("/").removesuffix("/v1")
@@ -1775,8 +1776,8 @@ class AgentState(TypedDict):
 
 # Zentrale Komponenten
 JUDGE_MODEL   = os.getenv("JUDGE_MODEL", "magistral:24b")
-judge_llm     = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key="ollama", timeout=JUDGE_TIMEOUT)
-planner_llm   = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key="ollama", timeout=PLANNER_TIMEOUT)
+judge_llm     = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT)
+planner_llm   = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN, timeout=PLANNER_TIMEOUT)
 # Ingest LLM: dedicated model for background GraphRAG extraction.
 # Falls back to judge_llm when GRAPH_INGEST_MODEL is not configured.
 ingest_llm = (
@@ -4019,9 +4020,11 @@ async def merger_node(state: AgentState):
     _uid = state.get("user_id", "anon")
     PROM_TOKENS.labels(model=JUDGE_MODEL, token_type="prompt",      node="merger", user_id=_uid).inc(merger_usage.get("prompt_tokens", 0))
     PROM_TOKENS.labels(model=JUDGE_MODEL, token_type="completion",  node="merger", user_id=_uid).inc(merger_usage.get("completion_tokens", 0))
-    if not res.content.strip():
-        logger.error("❌ Merger: Judge LLM returned empty response (VRAM/OOM?)")
-        await _report("❌ Merger: empty answer from judge — possible VRAM exhaustion")
+    _judge_failed = (not res.content.strip() or
+                     res.content.startswith("[Judge unavailable"))
+    if _judge_failed:
+        logger.error("❌ Merger: Judge LLM returned empty/error response (VRAM/OOM?)")
+        await _report("❌ Merger: empty or failed answer from judge — possible VRAM exhaustion")
         # Best expert response as fallback
         best = next((r for r in expert_results if _parse_expert_confidence(r) == "high"), None) \
                or (expert_results[0] if expert_results else None)
@@ -4310,11 +4313,15 @@ async def critic_node(state: AgentState):
         "Check the following answer for factual errors, dangerous statements or misleading information.\n\n"
         f"REQUEST: {state['input']}\n\n"
         f"ANSWER TO CHECK:\n{final_response}\n\n"
-        "If you find factual errors or dangerous statements:\n"
-        "- Clearly identify the errors\n"
-        "- Return a fully corrected answer\n"
-        "- Add a brief note about the corrections at the end\n\n"
-        "If the answer is factually correct, answer ONLY with the word: CONFIRMED\n\n"
+        "RESPOND IN ONE OF EXACTLY TWO WAYS — no other format is acceptable:\n\n"
+        "1. If the answer is factually correct and safe:\n"
+        "   Respond with exactly the single word: CONFIRMED\n\n"
+        "2. If the answer contains factual errors or dangerous content:\n"
+        "   Write the fully corrected answer DIRECTLY — as if you were answering the user's request yourself.\n"
+        "   Do NOT begin with any preamble, error analysis, or meta-commentary such as "
+        "'Factual errors were found' or 'The answer contains mistakes'.\n"
+        "   Start immediately with the corrected content.\n"
+        "   You may append a brief [Correction-Note: ...] at the very end only.\n"
     )
 
     await _report(f"🔎 Critic-Prompt:\n{critic_prompt}")
@@ -4323,6 +4330,12 @@ async def critic_node(state: AgentState):
         usage        = _extract_usage(res)
         critic_out   = res.content.strip()
         await _report(f"🔎 Critic response:\n{critic_out}")
+
+        # Guard: if the judge refused (content filter / VRAM), keep the merger answer unchanged.
+        if critic_out.startswith("[Judge unavailable") or not critic_out:
+            logger.warning("⚠️ Critic: judge refused — preserving merger answer unchanged")
+            await _report("⚠️ Critic: judge refused (content filter?) — merger answer preserved")
+            return {"final_response": final_response}
 
         if critic_out.upper().startswith("CONFIRMED"):
             await _report("✅ Critic: answer confirmed correct")
@@ -4661,6 +4674,8 @@ async def lifespan(app_: FastAPI):
     # Kafka Consumer as persistent background task
     consumer_task  = asyncio.create_task(_kafka_consumer_loop())
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
+    asyncio.create_task(_auto_resume_dedicated_healer())
+    asyncio.create_task(_watchdog_dedicated_healer())
     async with AsyncPostgresSaver.from_conn_string(POSTGRES_CHECKPOINT_URL) as checkpointer:
         await checkpointer.setup()
         app_graph = builder.compile(checkpointer=checkpointer)
@@ -5344,6 +5359,40 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _tmpl_override: Optional[str] = _matched_tmpl["id"] if _matched_tmpl else None
     mode = _MODEL_ID_TO_MODE.get(request.model, "default")
 
+    # Benchmark node reservation: reject non-benchmark requests when nodes are locked.
+    # Fails open if Redis is unavailable so a Redis outage never blocks all traffic.
+    if redis_client is not None:
+        try:
+            _bench_reserved = await redis_client.smembers("moe:benchmark_reserved")
+            if _bench_reserved:
+                _bench_meta = await redis_client.hgetall("moe:benchmark_lock_meta") or {}
+                _bench_tmpl = _bench_meta.get("template", "")
+                if request.model != _bench_tmpl:
+                    # Allow templates whose experts run exclusively on non-reserved nodes.
+                    # Collect the endpoint names used by this template's experts.
+                    _tmpl_nodes: set = set()
+                    if _matched_tmpl:
+                        for _exp in (_matched_tmpl.get("experts") or {}).values():
+                            for _em in (_exp.get("models") or []):
+                                _ep = _em.get("endpoint", "")
+                                if _ep:
+                                    _tmpl_nodes.add(_ep)
+                    # Block only if the template uses reserved nodes, or has no node info
+                    # (unknown template — block by default for safety).
+                    if not _tmpl_nodes or _tmpl_nodes.intersection(_bench_reserved):
+                        return JSONResponse(status_code=503, content={"error": {
+                            "message": (
+                                f"Service temporarily unavailable: inference nodes are reserved "
+                                f"for benchmark run (template: {_bench_tmpl}). "
+                                "Please retry after the benchmark completes."
+                            ),
+                            "type": "service_unavailable",
+                            "code": "benchmark_lock_active",
+                            "benchmark_template": _bench_tmpl,
+                        }})
+        except Exception:
+            pass  # Fail open — never block traffic due to Redis errors
+
     # If the matched template sets force_think=true and no explicit mode was requested,
     # upgrade to agent_orchestrated so the thinking_node activates before routing.
     # (Resolved after _tmpl_prompts is populated below; pre-read here to avoid circular dep.)
@@ -5370,10 +5419,15 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 }
                 break
     _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
+    # When the model name exactly matches a template name, treat as admin override:
+    # the caller explicitly targeted this template by name, which is sufficient authorization.
+    _tmpl_by_name = _tmpl_override is not None and _matched_tmpl is not None
     user_experts  = _resolve_user_experts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
-                                           user_templates_json=_user_tmpls_json) or {}
+                                           user_templates_json=_user_tmpls_json,
+                                           admin_override=_tmpl_by_name) or {}
     _tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
-                                               user_templates_json=_user_tmpls_json)
+                                               user_templates_json=_user_tmpls_json,
+                                               admin_override=_tmpl_by_name)
 
     # Extract system message (coding agents send file/codebase context here)
     system_msgs   = [m for m in request.messages if m.role == "system"]
@@ -6737,7 +6791,8 @@ async def _run_healer_task(concurrency: int, batch_size: int, run_id: str) -> No
     if redis_client is not None:
         try:
             entry = json.dumps({
-                "run_id": run_id, "started_at": start, "finished_at": _t.time(),
+                "run_id": run_id, "type": "oneshot", "template": "",
+                "started_at": start, "finished_at": _t.time(),
                 "exit_code": rc, **stats,
             })
             await redis_client.lpush(_ONTOLOGY_RUNS_HISTORY_KEY, entry)
@@ -6786,34 +6841,365 @@ _DEDICATED_HEALER_KEY = "moe:ontology:dedicated"
 _dedicated_healer_proc: "asyncio.subprocess.Process | None" = None
 
 
-async def _stream_dedicated_healer(proc: "asyncio.subprocess.Process") -> None:
-    """Read stdout from the dedicated healer loop and update Redis counters."""
+async def _auto_resume_dedicated_healer() -> None:
+    """Resume the dedicated healer after a container restart if Redis shows it was running.
+
+    Called as a background task during startup. A short sleep lets the ASGI
+    server finish binding before the healer subprocess sends its first request
+    to the local API.
+    """
+    global _dedicated_healer_proc
+    import time as _t
+
+    await asyncio.sleep(5)  # wait for ASGI server to start serving
+
+    if redis_client is None:
+        return
+    try:
+        data = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+    except Exception:
+        return
+
+    if not data or data.get("status") != "running":
+        return
+
+    template = data.get("template", "").strip()
+    if not template:
+        return
+
+    # Confirm the previous PID is dead — if still alive, no restart needed.
+    pid = int(data.get("pid", 0))
+    if pid:
+        try:
+            os.kill(pid, 0)
+            logger.info("🔄 Dedicated healer PID %s still alive — skipping auto-resume", pid)
+            return
+        except OSError:
+            pass  # process dead; container was restarted
+
+    logger.info("🔄 Auto-resuming dedicated healer (template=%s, prev_pid=%s)", template, pid)
+
+    # Clean stale fields before resuming so the watchdog gets a fresh baseline.
+    try:
+        await redis_client.delete(_DEDICATED_HEALER_KEY)
+        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+            "status": "starting",
+            "template": template,
+            "processed": "0",
+            "written": "0",
+            "failed": "0",
+            "stalled": "0",
+            "started_at": str(_t.time()),
+            "auto_restart": "1",
+        })
+    except Exception:
+        pass
+
+    env = os.environ.copy()
+    env["TEMPLATE_POOL"] = template
+    env.setdefault("REQUEST_TIMEOUT", "900")
+    env.setdefault("MOE_API_BASE", "http://localhost:8000")
+    sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
+    if sys_key:
+        env["MOE_API_KEY"] = sys_key
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "python3", "/app/scripts/gap_healer_templates.py",
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        _dedicated_healer_proc = proc
+        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"pid": str(proc.pid)})
+
+        # Early-exit check: if the process dies within 3 s, mark as stopped.
+        first_line: "bytes | None" = None
+        try:
+            fl_task = asyncio.create_task(proc.stdout.readline())
+            wt_task = asyncio.create_task(proc.wait())
+            done, pending = await asyncio.wait({fl_task, wt_task}, timeout=3.0,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            if wt_task in done:
+                rc = wt_task.result()
+                for t in pending:
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+                await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                    "status": "stopped", "exit_code": str(rc),
+                })
+                _dedicated_healer_proc = None
+                logger.error("❌ Dedicated healer exited immediately on resume (rc=%s)", rc)
+                return
+            wt_task.cancel()
+            try:
+                await wt_task
+            except asyncio.CancelledError:
+                pass
+            if fl_task in done:
+                first_line = fl_task.result() or None
+            else:
+                fl_task.cancel()
+                try:
+                    await fl_task
+                except asyncio.CancelledError:
+                    pass
+        except Exception:
+            pass
+
+        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "running"})
+        asyncio.create_task(_stream_dedicated_healer(proc, first_line=first_line))
+        logger.info("✅ Dedicated healer auto-resumed — PID %s (template=%s)", proc.pid, template)
+    except Exception as e:
+        logger.error("❌ Failed to auto-resume dedicated healer: %s", e)
+        try:
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "stopped"})
+        except Exception:
+            pass
+
+
+async def _stream_dedicated_healer(
+    proc: "asyncio.subprocess.Process",
+    *,
+    first_line: "bytes | None" = None,
+) -> None:
+    """Read stdout from the dedicated healer loop and update Redis counters.
+
+    first_line: optional pre-read line from the early-exit detection in the
+    start endpoint — passed in to avoid dropping the first output token.
+    Writes a history entry to moe:maintenance:ontology:runs on completion.
+    """
+    import time as _t
+    import uuid as _uuid
     stats: dict = {"processed": 0, "written": 0, "failed": 0}
     assert proc.stdout is not None
+    start_ts = _t.time()
+
+    async def _handle(text: str) -> None:
+        if "✓" in text and "→" in text:
+            stats["written"] += 1
+        elif "?" in text and "→" in text:
+            stats["processed"] += 1
+        elif "✗" in text:
+            stats["failed"] += 1
+        await _set_healer_status_dedicated(last_activity_ts=str(_t.time()), **stats)
+
     try:
+        if first_line:
+            await _handle(first_line.decode(errors="replace"))
         while True:
             line = await proc.stdout.readline()
             if not line:
                 break
-            text = line.decode(errors="replace")
-            if "✓" in text and "→" in text:
-                stats["written"] += 1
-            elif "?" in text and "→" in text:
-                stats["processed"] += 1
-            elif "✗" in text:
-                stats["failed"] += 1
-            if any(stats.values()):
-                await _set_healer_status_dedicated(**stats)
+            await _handle(line.decode(errors="replace"))
         rc = await proc.wait()
     except Exception:
         rc = -1
     if redis_client is not None:
         try:
+            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
             await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
                 "status": "stopped", "exit_code": str(rc),
             })
+            # Persist run to the shared history list (same key as one-shot healer).
+            template = (cur or {}).get("template", "")
+            entry = json.dumps({
+                "run_id": str(_uuid.uuid4()),
+                "type": "dedicated",
+                "template": template,
+                "started_at": float((cur or {}).get("started_at", start_ts)),
+                "finished_at": _t.time(),
+                "exit_code": rc,
+                **stats,
+            })
+            await redis_client.lpush(_ONTOLOGY_RUNS_HISTORY_KEY, entry)
+            await redis_client.ltrim(_ONTOLOGY_RUNS_HISTORY_KEY, 0, 99)
         except Exception:
             pass
+
+    # Auto-restart: if the flag is set the user wants a permanent daemon loop.
+    # Re-spawn after a short pause so transient failures don't tight-loop.
+    await _dedicated_healer_auto_restart_if_needed(template_hint=(cur or {}).get("template", "") if redis_client else "")
+
+
+_HEALER_STALL_SECONDS = 300  # 5 minutes without output → stalled
+_HEALER_RESTART_DELAY_S = 30  # pause between auto-restarts
+
+
+async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> None:
+    """Re-spawn the dedicated healer if auto_restart=1 is set in Redis.
+
+    Called after a subprocess exits (clean or error). Waits HEALER_RESTART_DELAY_S
+    before spawning so rapid crash-loops don't thrash the system.
+    """
+    import time as _t
+    global _dedicated_healer_proc
+
+    if redis_client is None:
+        return
+    try:
+        cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+    except Exception:
+        return
+    if (cur or {}).get("auto_restart") != "1":
+        return
+
+    template = (cur or {}).get("template", "") or template_hint
+    if not template:
+        return
+
+    logger.info("🔄 Dedicated healer exited — auto-restart in %ds (template=%s)", _HEALER_RESTART_DELAY_S, template)
+    await asyncio.sleep(_HEALER_RESTART_DELAY_S)
+
+    # Bail if user stopped the healer while we were sleeping.
+    try:
+        cur2 = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+        if (cur2 or {}).get("auto_restart") != "1":
+            return
+    except Exception:
+        return
+
+    env = os.environ.copy()
+    env["TEMPLATE_POOL"] = template
+    env.setdefault("REQUEST_TIMEOUT", "900")
+    env.setdefault("MOE_API_BASE", "http://localhost:8000")
+    sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
+    if sys_key:
+        env["MOE_API_KEY"] = sys_key
+    try:
+        new_proc = await asyncio.create_subprocess_exec(
+            "python3", "/app/scripts/gap_healer_templates.py",
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        _dedicated_healer_proc = new_proc
+        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+            "status": "running",
+            "stalled": "0",
+            "pid": str(new_proc.pid),
+            "started_at": str(_t.time()),
+            "last_activity_ts": str(_t.time()),
+            "processed": "0",
+            "written": "0",
+            "failed": "0",
+            "auto_restart": "1",
+        })
+        asyncio.create_task(_stream_dedicated_healer(new_proc))
+        logger.info("✅ Dedicated healer auto-restarted — PID %s", new_proc.pid)
+    except Exception as exc:
+        logger.error("❌ Dedicated healer auto-restart failed: %s", exc)
+
+
+async def _watchdog_dedicated_healer() -> None:
+    """Periodic watchdog: escalate or auto-restart a stalled dedicated healer.
+
+    Runs every 60 s. If the healer reports 'running' in Redis but has not
+    produced any stdout output for HEALER_STALL_SECONDS, it is marked 'stalled'
+    and the subprocess is restarted automatically.
+    """
+    import time as _t
+    global _dedicated_healer_proc
+
+    while True:
+        await asyncio.sleep(60)
+        if redis_client is None:
+            continue
+        try:
+            data = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+        except Exception:
+            continue
+
+        if not data or data.get("status") not in ("running", "stalled"):
+            continue
+
+        # PID liveness check — catches clean exits that didn't update status.
+        pid = int(data.get("pid", 0))
+        pid_alive = False
+        if pid:
+            try:
+                os.kill(pid, 0)
+                pid_alive = True
+            except OSError:
+                pass
+        if not pid_alive:
+            logger.warning(
+                "⚠️  Dedicated healer PID %d is dead but status=%s — triggering auto-restart.",
+                pid, data.get("status", "?"),
+            )
+            asyncio.create_task(_dedicated_healer_auto_restart_if_needed(
+                template_hint=data.get("template", ""),
+            ))
+            continue
+
+        last_ts = float(data.get("last_activity_ts") or 0)
+        age = _t.time() - last_ts if last_ts else float("inf")
+
+        if age < _HEALER_STALL_SECONDS:
+            # Remove stalled flag if activity resumed.
+            if data.get("stalled") == "1":
+                try:
+                    await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"stalled": "0", "status": "running"})
+                except Exception:
+                    pass
+            continue
+
+        logger.warning(
+            "⚠️  Dedicated healer stalled — no output for %.0f s (template=%s). Auto-restarting.",
+            age, data.get("template", "?"),
+        )
+
+        # Mark as stalled so the UI can show a warning immediately.
+        try:
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"stalled": "1", "status": "stalled"})
+        except Exception:
+            pass
+
+        # Kill the stuck subprocess before restarting.
+        proc = _dedicated_healer_proc
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        # Re-use the same template to restart.
+        template = data.get("template", "").strip()
+        if not template:
+            continue
+        env = os.environ.copy()
+        env["TEMPLATE_POOL"] = template
+        env.setdefault("REQUEST_TIMEOUT", "900")
+        env.setdefault("MOE_API_BASE", "http://localhost:8000")
+        sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+        if sys_key:
+            env["MOE_API_KEY"] = sys_key
+        try:
+            new_proc = await asyncio.create_subprocess_exec(
+                "python3", "/app/scripts/gap_healer_templates.py",
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            _dedicated_healer_proc = new_proc
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                "status": "running",
+                "stalled": "0",
+                "pid": str(new_proc.pid),
+                "started_at": str(_t.time()),
+                "last_activity_ts": str(_t.time()),
+            })
+            asyncio.create_task(_stream_dedicated_healer(new_proc))
+            logger.info("✅ Dedicated healer auto-restarted after stall — PID %s", new_proc.pid)
+        except Exception as exc:
+            logger.error("❌ Dedicated healer restart failed: %s", exc)
 
 
 async def _set_healer_status_dedicated(**fields) -> None:
@@ -6827,7 +7213,13 @@ async def _set_healer_status_dedicated(**fields) -> None:
 
 @app.post("/v1/admin/ontology/dedicated/start")
 async def start_dedicated_healer(body: dict = None):
-    """Start a permanent gap-healer loop pinned to a single curator template."""
+    """Start a permanent gap-healer loop pinned to a single curator template.
+
+    Waits up to 3 s for the subprocess to emit its first output line. If the
+    process exits within those 3 s it is considered a start failure and the
+    endpoint returns ok=False with the exit code so the UI can show an error
+    instead of silently marking status as 'running'.
+    """
     global _dedicated_healer_proc
     import time as _t
     body = body or {}
@@ -6835,22 +7227,29 @@ async def start_dedicated_healer(body: dict = None):
     if not template:
         return {"ok": False, "reason": "template_required"}
 
-    # Check if already running
+    # Reject if an in-memory process is still alive.
     if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
         return {"ok": False, "reason": "already_running"}
 
-    # Also check Redis for stale state from a previous container run
+    # Also check Redis for a live process from a previous container run.
     if redis_client is not None:
         try:
             cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-            if cur and cur.get("status") == "running":
+            if cur and cur.get("status") in ("running", "starting"):
                 pid = int(cur.get("pid", 0))
                 if pid:
                     try:
                         os.kill(pid, 0)
                         return {"ok": False, "reason": "already_running", "pid": pid}
                     except OSError:
-                        pass  # Process dead — stale entry, proceed
+                        pass  # stale — fall through to clean start
+        except Exception:
+            pass
+
+    # Always wipe stale Redis state so the UI starts from a clean slate.
+    if redis_client is not None:
+        try:
+            await redis_client.delete(_DEDICATED_HEALER_KEY)
         except Exception:
             pass
 
@@ -6858,35 +7257,94 @@ async def start_dedicated_healer(body: dict = None):
     env["TEMPLATE_POOL"] = template
     env.setdefault("REQUEST_TIMEOUT", "900")
     env.setdefault("MOE_API_BASE", "http://localhost:8000")
-    sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    # Prefer SYSTEM_API_KEY, fall back to MOE_API_KEY — either way the subprocess needs one.
+    sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
     if sys_key:
         env["MOE_API_KEY"] = sys_key
 
-    proc = await asyncio.create_subprocess_exec(
-        "python3", "/app/scripts/gap_healer_templates.py",
-        # No --once → runs indefinitely
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "python3", "/app/scripts/gap_healer_templates.py",
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except Exception as exc:
+        return {"ok": False, "reason": "spawn_failed", "error": str(exc)[:200]}
+
     _dedicated_healer_proc = proc
 
+    # Write "starting" state immediately so the UI can show a spinner.
     if redis_client is not None:
         try:
-            await redis_client.delete(_DEDICATED_HEALER_KEY)
             await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "running",
+                "status": "starting",
                 "template": template,
                 "pid": str(proc.pid),
                 "started_at": str(_t.time()),
                 "processed": "0",
                 "written": "0",
                 "failed": "0",
+                "stalled": "0",
+                "auto_restart": "1",
             })
         except Exception:
             pass
 
-    asyncio.create_task(_stream_dedicated_healer(proc))
+    # Early-exit detection: race between first stdout line and process exit.
+    first_line: "bytes | None" = None
+    try:
+        first_line_task = asyncio.create_task(proc.stdout.readline())
+        wait_task = asyncio.create_task(proc.wait())
+        done, pending = await asyncio.wait(
+            {first_line_task, wait_task},
+            timeout=3.0,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if wait_task in done:
+            # Process died before producing any output — start failed.
+            rc = wait_task.result()
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+            _dedicated_healer_proc = None
+            if redis_client is not None:
+                try:
+                    await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                        "status": "stopped", "exit_code": str(rc),
+                    })
+                except Exception:
+                    pass
+            return {"ok": False, "reason": "process_exited_immediately", "exit_code": rc}
+
+        # Process is still alive — cancel wait_task, preserve first line if available.
+        wait_task.cancel()
+        try:
+            await wait_task
+        except asyncio.CancelledError:
+            pass
+        if first_line_task in done:
+            first_line = first_line_task.result() or None
+        else:
+            first_line_task.cancel()
+            try:
+                await first_line_task
+            except asyncio.CancelledError:
+                pass
+    except Exception:
+        pass  # Timeout or unexpected — continue anyway, process may be alive
+
+    # Confirmed running — update Redis and hand off to the streaming task.
+    if redis_client is not None:
+        try:
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "running"})
+        except Exception:
+            pass
+
+    asyncio.create_task(_stream_dedicated_healer(proc, first_line=first_line))
     return {"ok": True, "pid": proc.pid, "template": template}
 
 
@@ -6911,9 +7369,11 @@ async def stop_dedicated_healer():
         stopped = True
 
     # Also kill by PID from Redis (handles cross-restart cases)
+    template_name = ""
     if redis_client is not None:
         try:
             cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+            template_name = cur.get("template", "")
             pid = int(cur.get("pid", 0))
             if pid and not stopped:
                 try:
@@ -6921,7 +7381,14 @@ async def stop_dedicated_healer():
                     stopped = True
                 except OSError:
                     pass
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "stopped"})
+            # Full clean: delete all fields, keep only template + stopped status so the
+            # UI can display which template was last used without stale counters.
+            await redis_client.delete(_DEDICATED_HEALER_KEY)
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                "status": "stopped",
+                "template": template_name,
+                "auto_restart": "0",
+            })
         except Exception:
             pass
 
@@ -6942,7 +7409,8 @@ async def get_dedicated_healer_status():
             return {"status": "stopped"}
 
         # Verify the process is still alive
-        if data.get("status") == "running":
+        import time as _t
+        if data.get("status") in ("running", "stalled"):
             pid = int(data.get("pid", 0))
             if pid:
                 try:
@@ -6951,9 +7419,173 @@ async def get_dedicated_healer_status():
                     # Process gone — mark as stopped
                     await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "stopped"})
                     data["status"] = "stopped"
+
+        # Compute staleness for the caller.
+        last_ts = float(data.get("last_activity_ts") or 0)
+        age = round(_t.time() - last_ts) if last_ts else None
+        data["activity_age_seconds"] = str(age) if age is not None else ""
+        data["stalled"] = data.get("stalled", "0")
         return dict(data)
     except Exception as e:
         return {"status": "unknown", "error": str(e)[:100]}
+
+
+@app.get("/v1/admin/ontology/dedicated/verify")
+async def verify_dedicated_healer():
+    """Verify that the dedicated healer is genuinely running.
+
+    Returns whether the subprocess PID is alive AND whether the healer has
+    produced an active API request visible in the live-monitoring table
+    (moe:active:* keys with model prefix 'moe-ontology-curator').
+
+    The UI polls this endpoint after clicking 'Dauerlauf starten' to confirm
+    the process actually started before switching the button to 'running'.
+    """
+    import json as _json
+    data: dict = {}
+    if redis_client is not None:
+        try:
+            data = await redis_client.hgetall(_DEDICATED_HEALER_KEY) or {}
+        except Exception:
+            pass
+
+    pid = int(data.get("pid", 0))
+    pid_alive = False
+    if pid:
+        try:
+            os.kill(pid, 0)
+            pid_alive = True
+        except OSError:
+            pass
+    # Also trust the in-memory handle if PID lookup fails (same container).
+    if not pid_alive and _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+        pid_alive = True
+
+    # Scan moe:active:* for a live healer request.
+    active_chat_id = None
+    if redis_client is not None:
+        try:
+            async for key in redis_client.scan_iter("moe:active:*"):
+                try:
+                    raw = await redis_client.get(key)
+                    if raw:
+                        meta = _json.loads(raw)
+                        if (meta.get("model") or "").startswith("moe-ontology-curator"):
+                            active_chat_id = meta.get("chat_id")
+                            break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    import time as _t
+    last_ts = float(data.get("last_activity_ts") or 0)
+    activity_age = round(_t.time() - last_ts) if last_ts else None
+    # Consider the healer "active" if it has a live API request OR produced output within 60 s.
+    is_active = active_chat_id is not None or (activity_age is not None and activity_age < 60)
+
+    return {
+        "pid_alive": pid_alive,
+        "has_active_request": active_chat_id is not None,
+        "is_active": is_active,
+        "chat_id": active_chat_id,
+        "status": data.get("status", "stopped"),
+        "pid": pid,
+        "activity_age_seconds": activity_age,
+    }
+
+
+# ─── Benchmark Node Reservation ──────────────────────────────────────────────
+
+_BENCHMARK_RESERVED_KEY  = "moe:benchmark_reserved"
+_BENCHMARK_LOCK_META_KEY = "moe:benchmark_lock_meta"
+
+
+@app.post("/v1/admin/benchmark/lock")
+async def benchmark_lock(body: dict = None):
+    """Reserve all nodes used by a template exclusively for benchmark runs.
+
+    While the lock is active, any request whose model/template differs from the
+    reserved template receives HTTP 503. Fails open if Redis is unavailable.
+    """
+    body = body or {}
+    template_name = (body.get("template") or "").strip()
+    if not template_name:
+        return {"ok": False, "reason": "template_required"}
+
+    templates = _read_expert_templates()
+    tmpl = next((t for t in templates if t.get("name") == template_name or t.get("id") == template_name), None)
+    if not tmpl:
+        return {"ok": False, "reason": "template_not_found", "template": template_name}
+
+    # _read_expert_templates() returns the parsed config_json merged into tmpl,
+    # so tmpl itself is the config (keys: experts, planner_endpoint, name, id …).
+    cfg = tmpl
+
+    nodes: set = set()
+    for cat_cfg in cfg.get("experts", {}).values():
+        for m in cat_cfg.get("models", []):
+            ep = (m.get("endpoint") or "").strip()
+            if ep:
+                nodes.add(ep)
+    # Include top-level planner/judge endpoint overrides when present
+    for key in ("planner_endpoint", "judge_endpoint"):
+        ep = (cfg.get(key) or "").strip()
+        if ep:
+            nodes.add(ep)
+
+    if not nodes:
+        return {"ok": False, "reason": "no_nodes_found_in_template"}
+    if redis_client is None:
+        return {"ok": False, "reason": "redis_unavailable"}
+
+    import time as _t
+    await redis_client.delete(_BENCHMARK_RESERVED_KEY)
+    await redis_client.sadd(_BENCHMARK_RESERVED_KEY, *nodes)
+    await redis_client.hset(_BENCHMARK_LOCK_META_KEY, mapping={
+        "template":  template_name,
+        "nodes":     json.dumps(sorted(nodes)),
+        "locked_at": str(_t.time()),
+    })
+    logger.info(f"🔒 Benchmark lock acquired: template={template_name}, nodes={sorted(nodes)}")
+    return {"ok": True, "template": template_name, "reserved": sorted(nodes)}
+
+
+@app.delete("/v1/admin/benchmark/lock")
+async def benchmark_unlock():
+    """Release all benchmark node reservations."""
+    if redis_client is None:
+        return {"ok": False, "reason": "redis_unavailable"}
+    meta = await redis_client.hgetall(_BENCHMARK_LOCK_META_KEY) or {}
+    try:
+        released = json.loads(meta.get("nodes", "[]"))
+    except Exception:
+        released = []
+    await redis_client.delete(_BENCHMARK_RESERVED_KEY)
+    await redis_client.delete(_BENCHMARK_LOCK_META_KEY)
+    logger.info(f"🔓 Benchmark lock released: nodes={released}")
+    return {"ok": True, "released": released}
+
+
+@app.get("/v1/admin/benchmark/lock")
+async def benchmark_lock_status():
+    """Return the current benchmark node reservation status."""
+    if redis_client is None:
+        return {"active": False, "reason": "redis_unavailable"}
+    try:
+        raw = await redis_client.smembers(_BENCHMARK_RESERVED_KEY)
+        reserved = sorted(v if isinstance(v, str) else v.decode() for v in raw)
+        meta = await redis_client.hgetall(_BENCHMARK_LOCK_META_KEY) or {}
+        if not reserved:
+            return {"active": False}
+        return {
+            "active":     True,
+            "template":   meta.get("template", ""),
+            "nodes":      reserved,
+            "locked_at":  meta.get("locked_at", ""),
+        }
+    except Exception as e:
+        return {"active": False, "error": str(e)[:100]}
 
 
 @app.get("/v1/admin/knowledge-stats")

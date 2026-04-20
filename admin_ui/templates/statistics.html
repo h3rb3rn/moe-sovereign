@@ -119,7 +119,7 @@
         <div style="max-height:360px;overflow-y:auto">
           <table class="table table-sm mb-0">
             <thead class="sticky-top bg-white">
-              <tr><th>Start</th><th>Dauer</th><th>Processed</th><th class="text-success">Written</th><th class="text-danger">Failed</th></tr>
+              <tr><th>Typ</th><th>Start</th><th>Dauer</th><th>Processed</th><th class="text-success">Written</th><th class="text-danger">Failed</th></tr>
             </thead>
             <tbody id="healer-tbody">
               <tr><td colspan="5" class="text-muted text-center py-3">Lädt…</td></tr>
@@ -199,10 +199,15 @@ async function loadHealer() {
     }
     tbody.innerHTML = runs.map(r => {
       const ts = new Date(r.started_at * 1000);
-      const dur = r.finished_at ? Math.round(r.finished_at - r.started_at) : '–';
+      const dur = r.finished_at ? Math.round(r.finished_at - r.started_at) + 's' : '–';
+      const isDedicated = r.type === 'dedicated';
+      const typeBadge = isDedicated
+        ? `<span class="badge bg-warning text-dark" title="${r.template || ''}">Dauerlauf</span>`
+        : `<span class="badge bg-secondary">Einmalig</span>`;
       return `<tr>
+        <td>${typeBadge}</td>
         <td class="small">${ts.toLocaleString('de-DE')}</td>
-        <td>${dur}s</td>
+        <td>${dur}</td>
         <td>${r.processed || 0}</td>
         <td class="text-success">${r.written || 0}</td>
         <td class="text-danger">${r.failed || 0}</td>
