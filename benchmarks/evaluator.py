@@ -42,11 +42,15 @@ DATASET_DIR     = pathlib.Path(__file__).parent / "datasets"
 # The orchestrator pipeline transforms every prompt through planner→experts→
 # merger→judge, producing a full answer instead of a simple score. By calling
 # Ollama directly, we get exactly what we ask for: a JSON score object.
-JUDGE_OLLAMA_URL = os.environ.get("MOE_JUDGE_OLLAMA_URL", "http://localhost:11434")
+JUDGE_OLLAMA_URL = os.environ.get("MOE_JUDGE_OLLAMA_URL", "")
 JUDGE_MODEL      = os.environ.get("MOE_JUDGE_MODEL", "phi4:14b")
 
 if not API_KEY:
     print("ERROR: MOE_API_KEY required.", file=sys.stderr)
+    sys.exit(1)
+
+if not JUDGE_OLLAMA_URL:
+    print("ERROR: MOE_JUDGE_OLLAMA_URL required (e.g. http://<ollama-host>:11434).", file=sys.stderr)
     sys.exit(1)
 
 
@@ -205,17 +209,69 @@ def score_deterministic(response: str, scoring: dict) -> dict:
 # --------------------------------------------------------------------------
 
 JUDGE_SYSTEM_PROMPT = (
-    "Du bist ein strenger, fairer Evaluator für KI-Antworten. "
-    "Bewerte die folgende Antwort auf die gegebene Frage. "
-    "Bewertungsskala 0-10:\n"
-    "  0-2: Falsch, irreführend, oder komplett am Thema vorbei\n"
-    "  3-4: Teilweise korrekt, wesentliche Fehler oder Lücken\n"
-    "  5-6: Akzeptabel, Grundlagen richtig, Details fehlen\n"
-    "  7-8: Gut, alle Kernaspekte korrekt, kleine Schwächen\n"
-    "  9-10: Hervorragend, präzise, vollständig, professionell\n\n"
-    "Antworte NUR mit einem JSON-Objekt:\n"
-    '{"score": <0-10>, "reasoning": "<2-3 Sätze Begründung>"}'
+    "You are a strict, fair evaluator for AI-generated answers. "
+    "Score the following answer to the given question. "
+    "Scoring scale 0-10:\n"
+    "  0-2: Wrong, misleading, or completely off-topic\n"
+    "  3-4: Partially correct, significant errors or gaps\n"
+    "  5-6: Acceptable, fundamentals correct, details missing\n"
+    "  7-8: Good, all key aspects correct, minor weaknesses\n"
+    "  9-10: Excellent, precise, complete, professional\n\n"
+    "Reply ONLY with a JSON object:\n"
+    '{"score": <0-10>, "reasoning": "<2-3 sentence justification>"}'
 )
+
+# Sanitised prompt used when the primary judge refuses (e.g. medical/legal content filters).
+# Strips domain-specific framing and asks the model to assess structural quality only.
+JUDGE_SYSTEM_PROMPT_FALLBACK = (
+    "You are a quality assessor for text responses. "
+    "Assess whether the given answer structurally covers the expected key points. "
+    "Ignore domain-specific content — evaluate only: completeness, structure, precision.\n"
+    "Scoring scale 0-10 (0=empty/irrelevant, 5=partial, 10=complete).\n"
+    "Reply ONLY with: "
+    '{"score": <0-10>, "reasoning": "<1-2 sentences>"}'
+)
+
+
+def _parse_judge_content(content: str) -> dict | None:
+    """Extract score and reasoning from judge output. Returns None if unparseable."""
+    m = re.search(r"\{[^{}]*\"score\"[^{}]*\}", content, re.DOTALL)
+    if m:
+        try:
+            parsed = json.loads(m.group(0))
+            score = max(0.0, min(10.0, float(parsed.get("score", 0))))
+            return {"llm_score": score, "llm_reasoning": parsed.get("reasoning", "")[:500]}
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Fallback: bare number
+    m = re.search(r"\b(\d{1,2}(?:\.\d)?)\b", content)
+    if m:
+        score = max(0.0, min(10.0, float(m.group(1))))
+        return {"llm_score": score, "llm_reasoning": content[:300]}
+    return None
+
+
+async def _call_judge(
+    client: httpx.AsyncClient,
+    system_prompt: str,
+    user_content: str,
+) -> str:
+    """Single Ollama /v1/chat/completions call; returns raw content string."""
+    r = await client.post(
+        f"{JUDGE_OLLAMA_URL}/v1/chat/completions",
+        json={
+            "model": JUDGE_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "stream": False,
+            "max_tokens": 300,
+            "temperature": 0.1,
+        },
+        timeout=600,
+    )
+    return r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
 async def judge_response(
@@ -231,6 +287,11 @@ async def judge_response(
     instead of a clean scoring JSON.  By calling Ollama directly via its
     OpenAI-compatible /v1/chat/completions endpoint, we get exactly what the
     system prompt asks for: a {"score": N, "reasoning": "..."} JSON object.
+
+    Fallback chain when the primary judge refuses (empty response / content filter):
+      1. Sanitised prompt — strips domain framing, asks structural quality only.
+      2. det_only — judge unavailable; returns a sentinel so the caller can fall
+         back to the deterministic score exclusively (no LLM penalty applied).
     """
     user_content = (
         f"FRAGE:\n{question}\n\n"
@@ -238,49 +299,34 @@ async def judge_response(
         f"ZU BEWERTENDE ANTWORT:\n{answer[:3000]}"  # cap to avoid token overflow
     )
 
+    # --- Attempt 1: primary judge prompt ---
     try:
-        r = await client.post(
-            f"{JUDGE_OLLAMA_URL}/v1/chat/completions",
-            json={
-                "model": JUDGE_MODEL,
-                "messages": [
-                    {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                "stream": False,
-                "max_tokens": 300,
-                "temperature": 0.1,
-            },
-            timeout=600,
-        )
-        data = r.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        # Parse JSON from response
-        m = re.search(r"\{[^{}]*\"score\"[^{}]*\}", content, re.DOTALL)
-        if m:
-            try:
-                parsed = json.loads(m.group(0))
-                score = float(parsed.get("score", 0))
-                # Clamp to 0-10 range
-                score = max(0.0, min(10.0, score))
-                return {
-                    "llm_score": score,
-                    "llm_reasoning": parsed.get("reasoning", "")[:500],
-                }
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-        # Fallback: find a number 0-10 in the response
-        m = re.search(r"\b(\d{1,2}(?:\.\d)?)\b", content)
-        score = float(m.group(1)) if m else 0.0
-        score = max(0.0, min(10.0, score))
-        return {
-            "llm_score": score,
-            "llm_reasoning": content[:300],
-        }
+        content = await _call_judge(client, JUDGE_SYSTEM_PROMPT, user_content)
+        result = _parse_judge_content(content)
+        if result:
+            return result
+        print(f"      [judge] primary returned unparseable: {content[:80]!r}", flush=True)
     except Exception as e:
-        return {"llm_score": 0.0, "llm_reasoning": f"judge error: {e}"}
+        print(f"      [judge] primary error: {e}", flush=True)
+
+    # --- Attempt 2: sanitised fallback prompt (no domain context) ---
+    print(f"      [judge] retrying with sanitised fallback prompt...", flush=True)
+    fallback_content = (
+        f"ERWARTETE KERNPUNKTE:\n{expected_info}\n\n"
+        f"ANTWORT ZU PRÜFEN:\n{answer[:2000]}"
+    )
+    try:
+        content = await _call_judge(client, JUDGE_SYSTEM_PROMPT_FALLBACK, fallback_content)
+        result = _parse_judge_content(content)
+        if result:
+            result["llm_reasoning"] = "[fallback-prompt] " + result["llm_reasoning"]
+            return result
+        print(f"      [judge] fallback also unparseable: {content[:80]!r}", flush=True)
+    except Exception as e:
+        print(f"      [judge] fallback error: {e}", flush=True)
+
+    # --- Attempt 3: judge fully unavailable — signal det_only to caller ---
+    return {"llm_score": None, "llm_reasoning": "judge_refused: no score produced"}
 
 
 # --------------------------------------------------------------------------
@@ -327,6 +373,18 @@ async def main() -> int:
                 evaluated.append(r)
                 continue
 
+            _PIPELINE_ERROR_PREFIXES = (
+                "[Judge unavailable",
+                "[TURN FAILED",
+                "[Error:",
+            )
+            if any(response.startswith(p) for p in _PIPELINE_ERROR_PREFIXES):
+                print(f"    [skip] pipeline error: {response[:70]}", flush=True)
+                r["score"] = 0.0
+                r["score_details"] = {"error": "pipeline_error", "message": response[:200]}
+                evaluated.append(r)
+                continue
+
             # 1. Deterministic scoring
             scoring_def = None
             if tc.get("type") == "multi_turn":
@@ -354,19 +412,29 @@ async def main() -> int:
             print(f"    LLM judge: {llm_result['llm_score']}/10 — "
                   f"{llm_result['llm_reasoning'][:100]}", flush=True)
 
-            # 3. Combined score: 40% deterministic + 60% LLM judge
+            # 3. Combined score: 40% deterministic + 60% LLM judge.
+            # When the judge refused entirely (llm_score=None), fall back to
+            # det_score exclusively so a content-filter refusal does not zero
+            # out an otherwise correct response.
             det_score = det_result.get("score", 5.0) if det_result else 5.0
-            llm_score = llm_result.get("llm_score", 5.0)
-            combined = round(det_score * 0.4 + llm_score * 0.6, 1)
+            llm_score = llm_result.get("llm_score")  # may be None on refusal
+
+            if llm_score is None:
+                combined = round(det_score, 1)
+                formula = "det_only (judge refused)"
+                print(f"    ⚠ Judge refused — using det_only: {combined}/10", flush=True)
+            else:
+                combined = round(det_score * 0.4 + llm_score * 0.6, 1)
+                formula = "0.4 * deterministic + 0.6 * llm_judge"
+                print(f"    COMBINED: {combined}/10 "
+                      f"(det={det_score:.1f} × 0.4 + llm={llm_score:.1f} × 0.6)", flush=True)
 
             r["score"] = combined
             r["score_details"] = {
                 "deterministic": det_result,
                 "llm_judge": llm_result,
-                "combined_formula": "0.4 * deterministic + 0.6 * llm_judge",
+                "combined_formula": formula,
             }
-            print(f"    COMBINED: {combined}/10 "
-                  f"(det={det_score:.1f} × 0.4 + llm={llm_score:.1f} × 0.6)", flush=True)
 
             evaluated.append(r)
 

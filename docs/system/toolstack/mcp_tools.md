@@ -113,6 +113,7 @@ used by the orchestrator's output skill system to produce formatted deliverables
 |--------|-----------|---------|-------|
 | HTML | `.html` | Built-in | Content wrapped in a styled HTML template |
 | DOCX | `.docx` | python-docx | Headings (`#`, `##`, `###`) and paragraphs parsed from content |
+| PPTX | `.pptx` | python-pptx | `##` headings become slide titles; body lines become bullet points |
 | Markdown | `.md` | Built-in | Raw content written as-is |
 | Plain Text | `.txt` | Built-in | Raw content written as-is |
 

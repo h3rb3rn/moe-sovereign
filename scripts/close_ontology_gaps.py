@@ -94,31 +94,30 @@ if not API_KEY:
 # --------------------------------------------------------------------------
 
 RESEARCH_SYSTEM_PROMPT = (
-    "Du bist ein Wissensmanagement-Experte. Deine Aufgabe ist es, einen "
-    "unbekannten Fachbegriff für einen Wissensgraphen (Neo4j) zu "
-    "klassifizieren. Antworte NUR mit einem JSON-Objekt im folgenden "
-    "Format — keine Erklärungen, kein Markdown, nur das JSON:\n\n"
+    "You are a knowledge management expert. Your task is to classify an "
+    "unknown technical term for a knowledge graph (Neo4j). "
+    "Reply ONLY with a JSON object in the following format — "
+    "no explanations, no markdown, just the JSON:\n\n"
     '{\n'
-    '  "name": "<Kanonischer Name des Begriffs>",\n'
+    '  "name": "<Canonical name of the term>",\n'
     '  "entity_type": "<Entity|Concept|Law|Drug|Software|Protocol|'
     'Organization|Method|Standard>",\n'
-    '  "description_de": "<1 Satz Beschreibung auf Deutsch>",\n'
-    '  "description_en": "<1 Satz Beschreibung auf Englisch>",\n'
+    '  "description_de": "<1-sentence description in German>",\n'
+    '  "description_en": "<1-sentence description in English>",\n'
     '  "aliases": ["<Alias1>", "<Alias2>"],\n'
     '  "relations": [\n'
     '    {"type": "<RELATES_TO|PART_OF|REQUIRES|IMPLEMENTS|'
-    'USED_BY|REGULATES>", "target": "<Name des Ziel-Entity>"}\n'
+    'USED_BY|REGULATES>", "target": "<Name of target entity>"}\n'
     '  ]\n'
     '}'
 )
 
 RESEARCH_USER_TEMPLATE = (
-    "Klassifiziere den folgenden Fachbegriff für unseren Wissensgraphen. "
-    "Der Begriff wurde als Ontologie-Lücke erkannt — das heißt, er "
-    "taucht in LLM-Antworten auf, ist aber noch nicht im Graph "
-    "katalogisiert.\n\n"
-    "Begriff: \"{term}\"\n\n"
-    "Antworte NUR mit dem JSON-Objekt. Kein Markdown, keine Erklärung."
+    "Classify the following technical term for our knowledge graph. "
+    "The term was identified as an ontology gap — it appears in LLM responses "
+    "but has not yet been catalogued in the graph.\n\n"
+    'Term: "{term}"\n\n'
+    "Reply ONLY with the JSON object. No markdown, no explanation."
 )
 
 

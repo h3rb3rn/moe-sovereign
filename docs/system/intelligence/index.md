@@ -16,6 +16,7 @@ Both address fundamental limitations of small local LLMs — not by replacing th
 | [Memory Palace](memory_palace.md) | Domain-scoped retrieval via metadata filters, isolated expert memory with `expert_domain` tagging in ChromaDB and Neo4j, and Claude Code auto-save hooks that persist session knowledge before context loss |
 | [CLI Agent Integration](cli_agent_integration.md) | Architectural analysis of how execution-loop agents (Aider, Open Interpreter) and infra-orchestrators (Hermes, Continue.dev) leverage all four MoE core components simultaneously — with delta table, Mermaid data-flow diagrams, and measured thresholds from the implementation |
 | [7B Ensemble Capability](7b_ensemble_capability.md) | Measured benchmark results showing that 8 domain-specialist 7–9B models on legacy Tesla M10 hardware achieve GPT-4o mini class performance (6.11/10 on MoE-Eval) with full data sovereignty — overnight stability run, per-category analysis, and comparison to public cloud models |
+| [Agentic Re-Planning Loop](agentic_loop.md) | How MoE Sovereign autonomously detects knowledge gaps after synthesis and re-plans with targeted tool calls — enabling multi-step GAIA L3-class reasoning without manual prompt chaining |
 
 ---
 

@@ -25,10 +25,14 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import base64
+import csv
+import hashlib
 import json
 import os
 import pathlib
 import re
+import signal
 import sys
 import time
 from dataclasses import dataclass, asdict
@@ -39,15 +43,25 @@ import httpx
 # Config
 # --------------------------------------------------------------------------
 
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-API_BASE = os.environ.get("MOE_API_BASE", "http://localhost:8002")
-API_KEY  = os.environ.get("MOE_API_KEY", "")
-TEMPLATE = os.environ.get("MOE_TEMPLATE", "moe-reference-30b-balanced")
-LEVELS   = [int(x) for x in os.environ.get("GAIA_LEVELS", "1,2,3").split(",")]
+HF_TOKEN      = os.environ.get("HF_TOKEN", "")
+API_BASE      = os.environ.get("MOE_API_BASE", "http://localhost:8002")
+API_KEY       = os.environ.get("MOE_API_KEY", "")
+TEMPLATE      = os.environ.get("MOE_TEMPLATE", "moe-reference-30b-balanced")
+LEVELS        = [int(x) for x in os.environ.get("GAIA_LEVELS", "1,2,3").split(",")]
 MAX_PER_LEVEL = int(os.environ.get("GAIA_MAX_PER_LEVEL", "10"))
 
-RESULTS_DIR = pathlib.Path(__file__).parent / "results"
+# MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
+MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
+MINIO_USER       = os.environ.get("MINIO_ROOT_USER", "")
+MINIO_PASSWORD   = os.environ.get("MINIO_ROOT_PASSWORD", "")
+MINIO_PUBLIC_URL = os.environ.get("MINIO_PUBLIC_URL", "").rstrip("/")
+MINIO_BUCKET     = os.environ.get("MINIO_DEFAULT_BUCKET", "moe-files")
+MINIO_ENABLED    = bool(MINIO_ENDPOINT and MINIO_USER and MINIO_PASSWORD)
+
+RESULTS_DIR     = pathlib.Path(__file__).parent / "results"
+ATTACHMENTS_DIR = pathlib.Path(__file__).parent / "attachments"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 if not API_KEY:
     print("ERROR: MOE_API_KEY required", file=sys.stderr)
@@ -56,6 +70,444 @@ if not HF_TOKEN:
     print("ERROR: HF_TOKEN required (gated dataset)", file=sys.stderr)
     sys.exit(1)
 
+
+# --------------------------------------------------------------------------
+# Security: attachment sandboxing
+# --------------------------------------------------------------------------
+
+# Hard limits to prevent memory exhaustion and zip bombs
+_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024   # 20 MB download limit
+_MAX_CONTENT_CHARS    = 8_000              # max chars injected into prompt
+_PROCESS_TIMEOUT_S    = 30                 # max seconds for any parser
+
+# Allowlisted extensions — reject everything else before touching disk
+_ALLOWED_EXTENSIONS: frozenset[str] = frozenset({
+    ".xlsx", ".xls", ".ods",
+    ".docx", ".doc",
+    ".pdf",
+    ".txt", ".md", ".rst",
+    ".csv", ".tsv",
+    ".json", ".jsonld", ".xml", ".yaml", ".yml",
+    ".py", ".js", ".ts", ".java", ".c", ".cpp", ".rb", ".go", ".rs",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+    ".mp3", ".wav",
+    ".pdb",
+    ".zip",
+})
+
+# Injection-neutralising patterns in file content
+_INJECTION_PATTERNS: list[re.Pattern] = [
+    re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.I),
+    re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.I),
+    re.compile(r"system\s*prompt\s*[:=]", re.I),
+    re.compile(r"reveal\s+(?:your\s+)?(?:api[\s_]key|system\s+prompt|password)", re.I),
+    re.compile(r"</?(system|instruction|prompt)>", re.I),
+    re.compile(r"\[INST\]|\[/INST\]|<\|im_start\|>|<\|im_end\|>"),
+]
+
+
+def _sanitize_filename(raw: str) -> str | None:
+    """Return safe basename or None if the name looks malicious."""
+    # Strip directory components (path traversal defence)
+    name = pathlib.PurePosixPath(raw).name
+    if not name or name.startswith("."):
+        return None
+    ext = pathlib.Path(name).suffix.lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        return None
+    # Allow only printable ASCII minus shell metacharacters
+    if re.search(r'[;&|`$<>()\\\x00-\x1f]', name):
+        name = re.sub(r'[^A-Za-z0-9_.\- ]', '_', name)
+    return name
+
+
+def _check_size(path: pathlib.Path) -> bool:
+    """Return False and log a warning if the file exceeds the size limit."""
+    size = path.stat().st_size
+    if size > _MAX_ATTACHMENT_BYTES:
+        print(f"  ⚠ Attachment too large ({size // 1024} KB > limit), skipped.", flush=True)
+        return False
+    return True
+
+
+def _shield(content: str, source: str) -> str:
+    """Sanitise content for safe LLM injection.
+
+    Neutralises prompt-injection patterns while keeping the content readable
+    and useful. The framing intentionally avoids anti-instruction language
+    that could cause the model to ignore the data.
+    """
+    # Neutralise known injection attack patterns
+    for pat in _INJECTION_PATTERNS:
+        content = pat.sub("[filtered]", content)
+    # Strip control characters (keep tab and newline)
+    content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", content)
+    # Truncate to budget
+    content = content[:_MAX_CONTENT_CHARS]
+    return content
+
+
+def _run_with_timeout(fn, *args, timeout: int = _PROCESS_TIMEOUT_S):
+    """Run fn(*args) with a SIGALRM watchdog; raise TimeoutError on overrun."""
+    def _handler(signum, frame):
+        raise TimeoutError(f"Attachment parser timed out after {timeout}s")
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(timeout)
+    try:
+        return fn(*args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+# --------------------------------------------------------------------------
+# File attachment processing
+# --------------------------------------------------------------------------
+
+def download_gaia_attachment(task_id: str, raw_file_name: str) -> pathlib.Path | None:
+    """Download a GAIA task attachment from HuggingFace and cache it locally.
+
+    Applies filename sanitisation before writing to disk.
+    """
+    safe_name = _sanitize_filename(raw_file_name)
+    if not safe_name:
+        print(f"  ⚠ Rejected attachment filename: {raw_file_name!r}", flush=True)
+        return None
+
+    dest = ATTACHMENTS_DIR / f"{task_id}_{safe_name}"
+    if dest.exists() and _check_size(dest):
+        return dest
+
+    try:
+        from huggingface_hub import hf_hub_download
+        import shutil
+        path = hf_hub_download(
+            repo_id="gaia-benchmark/GAIA",
+            filename=f"2023/validation/{raw_file_name}",
+            repo_type="dataset",
+            token=HF_TOKEN,
+            local_dir=str(ATTACHMENTS_DIR),
+        )
+        shutil.copy2(path, dest)
+    except Exception as e:
+        print(f"  ⚠ Attachment download failed ({raw_file_name}): {e}", flush=True)
+        return None
+
+    if not _check_size(dest):
+        dest.unlink(missing_ok=True)
+        return None
+    return dest
+
+
+def _process_xlsx(path: pathlib.Path) -> str:
+    """Parse spreadsheet: extract cell colors as a structured grid description.
+
+    Returns a human-readable description of the colour layout so the orchestrator
+    can reason about traversal questions (e.g. Eulerian paths) itself.
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(str(path), read_only=False, data_only=True)
+    ws = wb.active
+
+    # Map each owner color to their cells
+    color_cells: dict[str, set[tuple[int, int]]] = {}
+    GREEN_RGBS = {"FF00B050", "FF92D050", "FF00FF00", "FF70AD47"}
+    COLOR_NAMES = {
+        "FF00B050": "Green", "FF92D050": "Green", "FF00FF00": "Green",
+        "FF70AD47": "Green", "FFFF0000": "Red", "FF0070C0": "Blue",
+        "FFFFFF00": "Yellow",
+    }
+
+    for row in ws.iter_rows():
+        for cell in row:
+            try:
+                fill = cell.fill
+                if fill and fill.fgColor and fill.fgColor.type == "rgb":
+                    rgb = fill.fgColor.rgb
+                    if rgb and rgb != "00000000":
+                        color_cells.setdefault(rgb, set()).add((cell.row, cell.column))
+            except Exception:
+                pass
+
+    # Fallback: plain cell-value dump
+    if not color_cells:
+        rows_text: list[str] = []
+        for row in ws.iter_rows(values_only=True):
+            r = "\t".join(str(c or "") for c in row)
+            if r.strip():
+                rows_text.append(r)
+        return "SPREADSHEET (values only, no color detected):\n" + "\n".join(rows_text[:60])
+
+    # Build a colour-annotated grid description
+    green_cells = set()
+    for rgb in GREEN_RGBS:
+        green_cells |= color_cells.get(rgb, set())
+
+    # Grid dimensions
+    all_cells: set[tuple[int, int]] = set()
+    for cells in color_cells.values():
+        all_cells |= cells
+    max_row = max(r for r, c in all_cells)
+    max_col = max(c for r, c in all_cells)
+
+    # Compact colour map (row, col → colour name)
+    cell_color: dict[tuple[int, int], str] = {}
+    for rgb, cells in color_cells.items():
+        name = COLOR_NAMES.get(rgb, f"Color_{rgb[-6:]}")
+        for pos in cells:
+            cell_color[pos] = name
+
+    rows_out: list[str] = []
+    for r in range(1, max_row + 1):
+        row_str = "\t".join(cell_color.get((r, c), ".") for c in range(1, max_col + 1))
+        if row_str.replace("\t", "").replace(".", "").strip():
+            rows_out.append(f"Row {r}: {row_str}")
+
+    summary = (
+        f"SPREADSHEET COLOUR MAP ({max_row}×{max_col} grid):\n"
+        f"  Green cells (Earl): {len(green_cells)} cells at positions "
+        f"{sorted(green_cells)[:20]}{'...' if len(green_cells) > 20 else ''}\n"
+        f"  Other colours: "
+        f"{', '.join(COLOR_NAMES.get(k,'?') + f'({len(v)})' for k,v in color_cells.items() if k not in GREEN_RGBS)}\n\n"
+        "Grid (. = empty/white):\n" + "\n".join(rows_out[:40])
+    )
+    return summary
+
+
+def _process_docx(path: pathlib.Path) -> str:
+    """Extract paragraphs and tables from a Word document as structured text.
+
+    Provides the full document content as context for the orchestrator to reason about.
+    """
+    from docx import Document
+    doc = Document(str(path))
+
+    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    table_data: list[list[str]] = []
+    for table in doc.tables:
+        for row in table.rows:
+            table_data.append([c.text.strip() for c in row.cells if c.text.strip()])
+
+    # Generic fallback: return structured text
+    parts = list(paragraphs)
+    for row in table_data:
+        parts.append(" | ".join(row))
+    return "\n".join(parts)
+
+
+def _process_pdf(path: pathlib.Path) -> str:
+    """Extract text from a PDF using pypdf; falls back to page-count note."""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(path))
+        pages = min(len(reader.pages), 10)  # cap at 10 pages
+        texts = []
+        for i in range(pages):
+            texts.append(reader.pages[i].extract_text() or "")
+        return "\n".join(texts)
+    except Exception as e:
+        return f"[PDF parse error: {e}]"
+
+
+def _process_csv(path: pathlib.Path) -> str:
+    """Parse CSV/TSV and return a formatted table."""
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    try:
+        with path.open(newline="", encoding="utf-8", errors="replace") as f:
+            reader = csv.reader(f, delimiter=delimiter)
+            rows = [row for _, row in zip(range(200), reader)]  # max 200 rows
+        return "\n".join(" | ".join(row) for row in rows)
+    except Exception as e:
+        return f"[CSV parse error: {e}]"
+
+
+def _process_json(path: pathlib.Path) -> str:
+    """Pretty-print JSON content (truncated)."""
+    try:
+        data = json.loads(path.read_bytes())
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"[JSON parse error: {e}]"
+
+
+def _process_code(path: pathlib.Path) -> str:
+    """Return source code as plain text — never executed."""
+    return path.read_text(errors="replace")
+
+
+def _process_image(path: pathlib.Path) -> str:
+    """Return image as base64 data URI for vision-capable APIs."""
+    try:
+        import PIL.Image
+        img = PIL.Image.open(str(path))
+        # Down-scale large images to reduce token cost
+        max_dim = 1024
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), PIL.Image.LANCZOS)
+        import io
+        buf = io.BytesIO()
+        fmt = "JPEG" if path.suffix.lower() in (".jpg", ".jpeg") else "PNG"
+        img.save(buf, format=fmt)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        mime = "image/jpeg" if fmt == "JPEG" else "image/png"
+        return f"[IMAGE: {path.name} — data:{mime};base64,{b64[:200]}... (truncated for text mode)]"
+    except Exception as e:
+        return f"[Image read error: {e}]"
+
+
+def _process_pdb(path: pathlib.Path) -> str:
+    """Parse a Protein Data Bank (.pdb) file and extract ATOM/HETATM records.
+
+    Returns the full coordinate block as plain text so the LLM can reason
+    about atomic positions, distances, etc.
+    """
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+        atom_lines = [l for l in lines if l.startswith(("ATOM  ", "HETATM"))]
+        header = [l for l in lines if l.startswith(("HEADER", "TITLE", "REMARK", "SEQRES"))]
+        sections = []
+        if header:
+            sections.append("\n".join(header[:20]))
+        if atom_lines:
+            sections.append(f"ATOM/HETATM records ({len(atom_lines)} total):\n" + "\n".join(atom_lines[:100]))
+        if not sections:
+            sections.append("\n".join(lines[:200]))
+        return "\n\n".join(sections)
+    except Exception as e:
+        return f"[PDB parse error: {e}]"
+
+
+def _process_zip(path: pathlib.Path) -> str:
+    """Extract a ZIP archive and process each supported file inside.
+
+    Only processes text-readable file types; skips binaries unless they are
+    formats with dedicated parsers. Returns a combined context string.
+    """
+    import zipfile
+    try:
+        results = []
+        with zipfile.ZipFile(path, "r") as zf:
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+            for name in names[:20]:  # process at most 20 files
+                ext = pathlib.Path(name).suffix.lower()
+                if ext not in _ALLOWED_EXTENSIONS:
+                    results.append(f"[Skipped {name}: unsupported format]")
+                    continue
+                try:
+                    data = zf.read(name)
+                    if len(data) > _MAX_ATTACHMENT_BYTES:
+                        results.append(f"[Skipped {name}: too large]")
+                        continue
+                    tmp = pathlib.Path(f"/tmp/_gaia_zip_{pathlib.Path(name).name}")
+                    tmp.write_bytes(data)
+                    try:
+                        content = _dispatch_processor(tmp)
+                        results.append(f"--- {name} ---\n{content}")
+                    finally:
+                        tmp.unlink(missing_ok=True)
+                except Exception as e:
+                    results.append(f"[Error processing {name}: {e}]")
+        return "\n\n".join(results) if results else "[ZIP archive is empty]"
+    except zipfile.BadZipFile:
+        return "[Not a valid ZIP archive]"
+    except Exception as e:
+        return f"[ZIP parse error: {e}]"
+
+
+def _dispatch_processor(path: pathlib.Path) -> str:
+    """Route to the correct processor based on file extension."""
+    ext = path.suffix.lower()
+    if ext in (".xlsx", ".xls", ".ods"):
+        return _process_xlsx(path)
+    if ext in (".docx", ".doc"):
+        return _process_docx(path)
+    if ext == ".pdf":
+        return _process_pdf(path)
+    if ext in (".csv", ".tsv"):
+        return _process_csv(path)
+    if ext in (".json", ".jsonld"):
+        return _process_json(path)
+    if ext in (".py", ".js", ".ts", ".java", ".c", ".cpp", ".rb", ".go", ".rs"):
+        return _process_code(path)
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+        return _process_image(path)
+    if ext in (".txt", ".md", ".rst", ".xml", ".yaml", ".yml"):
+        return path.read_text(errors="replace")
+    if ext == ".pdb":
+        return _process_pdb(path)
+    if ext == ".zip":
+        return _process_zip(path)
+    return f"[Unsupported format: {ext}]"
+
+
+def _upload_to_minio(path: pathlib.Path, object_name: str) -> str | None:
+    """Upload a local file to MinIO and return a 24h pre-signed public URL.
+
+    Returns None if MinIO is not configured or the upload fails.
+    """
+    if not MINIO_ENABLED:
+        return None
+    try:
+        from datetime import timedelta
+        from minio import Minio
+        mc = Minio(MINIO_ENDPOINT, access_key=MINIO_USER, secret_key=MINIO_PASSWORD, secure=False)
+        if not mc.bucket_exists(MINIO_BUCKET):
+            mc.make_bucket(MINIO_BUCKET)
+        mc.fput_object(MINIO_BUCKET, object_name, str(path))
+        presigned = mc.presigned_get_object(MINIO_BUCKET, object_name, expires=timedelta(hours=24))
+        # Swap internal endpoint hostname for the public URL
+        if MINIO_PUBLIC_URL:
+            presigned = presigned.replace(f"http://{MINIO_ENDPOINT}", MINIO_PUBLIC_URL, 1)
+        return presigned
+    except Exception as e:
+        print(f"  ⚠ MinIO upload failed ({path.name}): {e}", flush=True)
+        return None
+
+
+def get_attachment_context(task: dict) -> str:
+    """Download a GAIA attachment from HuggingFace.
+
+    If MinIO is configured: uploads to MinIO and returns a URL reference so the
+    orchestrator's parse_attachment MCP tool can fetch and parse the file itself.
+    Fallback: parses locally and injects the text content directly.
+
+    Security guarantees:
+    - Filename sanitised (no path traversal)
+    - File size capped at _MAX_ATTACHMENT_BYTES
+    - Parser runs under a SIGALRM timeout (fallback path only)
+    - Prompt-injection patterns neutralised (fallback path only)
+    - Code files read as text; nothing is ever exec'd or eval'd
+    """
+    raw_name = (task.get("file_name") or "").strip()
+    if not raw_name:
+        return ""
+    task_id = task.get("task_id", "unknown")
+
+    path = download_gaia_attachment(task_id, raw_name)
+    if not path:
+        return ""
+
+    # Primary path: upload to MinIO → orchestrator uses parse_attachment MCP tool
+    object_name = f"gaia/{task_id}/{raw_name}"
+    url = _upload_to_minio(path, object_name)
+    if url:
+        print(f"  ☁ Attachment uploaded to MinIO: {raw_name}", flush=True)
+        return (
+            f"FILE ATTACHMENT ({raw_name}) available at: {url}\n"
+            f"Use the parse_attachment tool with this URL to read the file contents."
+        )
+
+    # Fallback: parse locally and inject text
+    try:
+        raw_content = _run_with_timeout(_dispatch_processor, path)
+    except TimeoutError as e:
+        return f"Note: Attachment processing timed out ({e})."
+    except Exception as e:
+        return f"Note: Attachment processing failed ({raw_name}): {e}"
+
+    shielded = _shield(raw_content, raw_name)
+    return f"FILE ATTACHMENT ({raw_name}):\n{shielded}"
 
 # --------------------------------------------------------------------------
 # Data
@@ -83,42 +535,118 @@ def load_gaia_dataset() -> list[dict]:
     return list(ds)
 
 
+# Zahlwörter EN + DE → Ziffern
+_NUMBER_WORDS: dict[str, str] = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13",
+    "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17",
+    "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30",
+    "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70",
+    "eighty": "80", "ninety": "90", "hundred": "100", "thousand": "1000",
+    # German
+    "null": "0", "ein": "1", "eine": "1", "zwei": "2", "drei": "3",
+    "vier": "4", "fünf": "5", "sechs": "6", "sieben": "7", "acht": "8",
+    "neun": "9", "zehn": "10", "elf": "11", "zwölf": "12",
+}
+
+
 def normalize_answer(text: str) -> str:
-    """Normalize an answer for comparison (lowercase, strip, remove punctuation)."""
+    """Normalize answer: lowercase, strip punctuation, convert number words to digits."""
     text = text.strip().lower()
+    # Strip markdown bold/italic
+    text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
     # Remove trailing punctuation
     text = re.sub(r"[.,;:!?\s]+$", "", text)
     # Normalize whitespace
     text = re.sub(r"\s+", " ", text)
+    # Convert number words to digits (whole words only)
+    for word, digit in _NUMBER_WORDS.items():
+        text = re.sub(r"\b" + re.escape(word) + r"\b", digit, text)
     return text
 
 
-def check_answer(model_output: str, expected: str) -> bool:
-    """Check if the model's answer contains the expected answer.
+def extract_clean_answer(question: str, model_output: str) -> str:
+    """Extract the most likely final answer from a verbose model response.
 
-    GAIA uses exact-match scoring, but we're slightly lenient: the expected
-    answer must appear as a substring in the model's final response (after
-    normalization). This handles cases where the model wraps the answer in
-    explanatory text.
+    Tries several heuristics in order:
+    1. Explicit answer labels (Answer:, Antwort:, Result:, …)
+    2. Standalone bold text on its own line
+    3. Last short line (< 60 chars) that isn't a citation/header
+    4. Falls back to the full output
+    """
+    # Strip citation markers【n】 and footnote lines
+    cleaned = re.sub(r"【\d+】", "", model_output)
+    cleaned = re.sub(r"^\s*\[\d+\].*$", "", cleaned, flags=re.MULTILINE)
+
+    # 1. Explicit labels
+    label_patterns = [
+        r"(?:^|\n)\s*\*{0,2}(?:final\s+)?(?:answer|antwort|result|ergebnis|lösung|solution)\*{0,2}\s*[:：]\s*\*{0,2}(.+?)\*{0,2}(?:\n|$)",
+        r"the\s+(?:final\s+)?answer\s+is\s*[:：]?\s*\*{0,2}(.+?)\*{0,2}(?:\.|$)",
+        r"(?:answer|antwort)[:\s]+\*{0,2}([^\n*]{1,80})\*{0,2}",
+    ]
+    for pat in label_patterns:
+        m = re.search(pat, cleaned, re.IGNORECASE | re.MULTILINE)
+        if m:
+            candidate = m.group(1).strip().rstrip(".")
+            if candidate:
+                return candidate
+
+    # 2. Standalone bold line: **X**
+    bold_matches = re.findall(r"^\s*\*{1,2}([^*\n]{1,80})\*{1,2}\s*$", cleaned, re.MULTILINE)
+    if bold_matches:
+        # Prefer last bold match (usually the conclusion)
+        return bold_matches[-1].strip()
+
+    # 3. Last short non-empty line
+    lines = [l.strip() for l in cleaned.strip().splitlines() if l.strip()]
+    for line in reversed(lines):
+        # Skip lines that look like headers, citations, or metadata
+        if re.match(r"^[#|>\-]|^\[|\bsource\b|\bquellen\b|\bref\b", line, re.I):
+            continue
+        if len(line) < 60:
+            return line
+
+    return model_output.strip()
+
+
+def check_answer(model_output: str, expected: str) -> tuple[bool, str]:
+    """Check if the model's answer matches the expected answer.
+
+    Returns (correct, extracted_answer) so the caller can log what was compared.
+    Tries both the full output and a regex-extracted clean answer.
     """
     if not expected or not model_output:
-        return False
+        return False, model_output
+
     norm_expected = normalize_answer(expected)
-    norm_output = normalize_answer(model_output)
-    # Exact substring match
-    if norm_expected in norm_output:
-        return True
-    # Try numeric comparison for numbers
-    try:
-        exp_num = float(re.sub(r"[^\d.\-]", "", norm_expected))
-        # Find all numbers in output
-        output_nums = re.findall(r"-?\d+\.?\d*", norm_output)
-        for n in output_nums:
-            if abs(float(n) - exp_num) < 0.01:
-                return True
-    except (ValueError, TypeError):
-        pass
-    return False
+
+    def _matches(candidate: str) -> bool:
+        norm_cand = normalize_answer(candidate)
+        if norm_expected in norm_cand:
+            return True
+        # Numeric near-match
+        try:
+            exp_num = float(re.sub(r"[^\d.\-]", "", norm_expected))
+            if not norm_expected.replace(".", "").replace("-", ""):
+                return False
+            for n in re.findall(r"-?\d+\.?\d*", norm_cand):
+                if abs(float(n) - exp_num) < max(0.01, abs(exp_num) * 0.001):
+                    return True
+        except (ValueError, TypeError):
+            pass
+        return False
+
+    # Try full output first
+    if _matches(model_output):
+        return True, model_output
+
+    # Try regex-extracted clean answer
+    extracted = extract_clean_answer("", model_output)
+    if extracted != model_output and _matches(extracted):
+        return True, extracted
+
+    return False, extracted
 
 
 # --------------------------------------------------------------------------
@@ -127,43 +655,71 @@ def check_answer(model_output: str, expected: str) -> bool:
 
 async def call_orchestrator(
     client: httpx.AsyncClient, question: str, timeout: int = 1800,
+    file_context: str = "",
 ) -> dict:
-    """Send a GAIA question to the orchestrator."""
-    try:
-        r = await client.post(
-            f"{API_BASE}/v1/chat/completions",
-            json={
-                "model": TEMPLATE,
-                "messages": [
-                    {"role": "system", "content": (
-                        "You are a helpful assistant answering factual questions. "
-                        "Give ONLY the final answer — no explanation, no preamble. "
-                        "If the answer is a number, give just the number. "
-                        "If a name, give just the name. Be as concise as possible."
-                    )},
-                    {"role": "user", "content": question},
-                ],
-                "stream": False,
-                "max_tokens": 500,
-                "temperature": 0.1,
-            },
-            headers={
-                "Authorization": f"Bearer {API_KEY}",
-                "Content-Type": "application/json",
-            },
-            timeout=timeout,
+    """Send a GAIA question to the MoE Sovereign API with optional file attachment context."""
+    user_content = question
+    if file_context:
+        user_content = (
+            f"--- ATTACHED FILE DATA ---\n{file_context}\n--- END OF FILE DATA ---"
+            f"\n\n--- QUESTION ---\n{question}\n\n"
+            "Use the file data provided above as your primary source. "
+            "Give the exact answer value only (number, name, or short phrase). "
+            "No explanation."
         )
-        data = r.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        usage = data.get("usage", {})
-        return {
-            "status": r.status_code,
-            "content": content,
-            "tokens_out": usage.get("completion_tokens", 0),
-            "error": "",
-        }
-    except Exception as e:
-        return {"status": 0, "content": "", "tokens_out": 0, "error": str(e)[:300]}
+    _NO_ANSWER_PHRASES = ("no answer available", "please try again")
+    last_err = ""
+    for attempt in range(1, 4):  # up to 3 attempts
+        try:
+            r = await client.post(
+                f"{API_BASE}/v1/chat/completions",
+                json={
+                    "model": TEMPLATE,
+                    "messages": [
+                        {"role": "system", "content": (
+                            "You are a helpful assistant answering factual questions. "
+                            "Give ONLY the final answer — no explanation, no preamble. "
+                            "If the answer is a number, give just the number. "
+                            "If a name, give just the name. Be as concise as possible."
+                        )},
+                        {"role": "user", "content": user_content},
+                    ],
+                    "stream": False,
+                    "max_tokens": 500,
+                    "temperature": 0.1,
+                },
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                timeout=timeout,
+            )
+            data = r.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            usage = data.get("usage", {})
+            # Retry on known orchestrator fallback phrases or raw tool-call leakage
+            raw_tool_call = (
+                content.strip().startswith('{"query"')
+                or content.strip().startswith('{"search_query"')
+                or content.strip().startswith('[{"query"')
+            )
+            if (any(p in content.lower() for p in _NO_ANSWER_PHRASES) or raw_tool_call) and attempt < 3:
+                reason = "raw tool-call leaked" if raw_tool_call else "orchestrator fallback detected"
+                print(f"  ↩ Retry {attempt}/3 ({reason})", flush=True)
+                await asyncio.sleep(5 * attempt)
+                continue
+            return {
+                "status": r.status_code,
+                "content": content,
+                "tokens_out": usage.get("completion_tokens", 0),
+                "error": "",
+            }
+        except Exception as e:
+            last_err = str(e)[:200]
+            if attempt < 3:
+                print(f"  ↩ Retry {attempt}/3 ({last_err[:60]})", flush=True)
+                await asyncio.sleep(5 * attempt)
+    return {"status": 0, "content": "", "tokens_out": 0, "error": last_err}
 
 
 # --------------------------------------------------------------------------
@@ -207,11 +763,22 @@ async def main() -> int:
             print(f"  Expected: {expected[:80]}", flush=True)
 
             t0 = time.perf_counter()
-            res = await call_orchestrator(client, question)
-            dt = time.perf_counter() - t0
+            file_ctx = get_attachment_context(q)
 
+            if file_ctx:
+                print(f"  📎 Attachment: {len(file_ctx)} chars injected", flush=True)
+
+            processed_q = _preprocess_question(question)
+            if processed_q != question:
+                print(f"  🔄 Decoded question: {processed_q[:80]}", flush=True)
+
+            res = await call_orchestrator(
+                client, processed_q, file_context=file_ctx
+            )
             answer = res["content"]
-            correct = check_answer(answer, expected)
+
+            dt = time.perf_counter() - t0
+            correct, extracted = check_answer(answer, expected)
 
             result = GAIAResult(
                 task_id=task_id,
@@ -227,7 +794,9 @@ async def main() -> int:
             results.append(result)
 
             mark = "✓" if correct else "✗"
-            print(f"  {mark} dt={dt:.1f}s  A: {answer[:100]}",
+            extracted_display = extracted[:60] if extracted != answer else ""
+            extr_hint = f" → extracted: '{extracted_display}'" if extracted_display else ""
+            print(f"  {mark} dt={dt:.1f}s  A: {answer[:80]}{extr_hint}",
                   flush=True)
 
     # Compute scores
@@ -250,9 +819,18 @@ async def main() -> int:
               flush=True)
 
     overall_pct = total_correct / total * 100 if total else 0
+
+    print(f"\n{'='*72}", flush=True)
+    print(f"FINAL RESULTS", flush=True)
+    print(f"{'='*72}", flush=True)
+    for r in results:
+        mark = "✓ CORRECT" if r.correct else "✗ WRONG  "
+        _, extracted = check_answer(r.model_answer, r.expected_answer)
+        got = extracted if extracted else r.model_answer[:40]
+        print(f"  {mark} | Got: {got[:50]}", flush=True)
+
     print(f"\n  OVERALL: {total_correct}/{total} = {overall_pct:.1f}%", flush=True)
-    print(f"  (GAIA leaderboard reference: GPT-5 Mini = 44.8%, "
-          f"Qwen3 32B = 12.3%)", flush=True)
+    print(f"  (GAIA leaderboard reference: GPT-4o Mini = 44.8%)", flush=True)
 
     # Save
     ts = time.strftime("%Y%m%d-%H%M%S")

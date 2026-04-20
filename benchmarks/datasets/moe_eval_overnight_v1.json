@@ -5,7 +5,6 @@
   "author": "Philipp Horn <kontakt@philipp-horn.dev>",
   "created_at": "2026-04-17",
   "test_cases": [
-
     {
       "id": "overnight-precision-subnet",
       "category": "precision",
@@ -15,11 +14,14 @@
       "prompt": "Berechne exakt: Für das Netzwerk 10.200.64.0/18 — wie lautet die Subnetzmaske, die Broadcast-Adresse, und wie viele nutzbare Host-Adressen gibt es?",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["255.255.192.0", "10.200.127.255", "16382"],
+        "required_keywords": [
+          "255.255.192.0",
+          "10.200.127.255",
+          "16382"
+        ],
         "partial_credit": true
       }
     },
-
     {
       "id": "overnight-precision-math",
       "category": "precision",
@@ -30,12 +32,19 @@
       "scoring": {
         "type": "numeric_tolerance",
         "checks": [
-          {"field": "mwh", "expected": 416.1, "tolerance_pct": 1.0},
-          {"field": "cost", "expected": 130738.92, "tolerance_pct": 2.0}
+          {
+            "field": "mwh",
+            "expected": 416.1,
+            "tolerance_pct": 1.0
+          },
+          {
+            "field": "cost",
+            "expected": 130738.92,
+            "tolerance_pct": 2.0
+          }
         ]
       }
     },
-
     {
       "id": "overnight-causal-carwash",
       "category": "causal_learning",
@@ -45,12 +54,20 @@
       "prompt": "Ich möchte mein Auto waschen. Welche Schritte sind notwendig und welche Voraussetzungen muss ich erfüllen, bevor ich beginnen kann? Bitte berücksichtige auch den physischen Standort.",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["Waschanlage", "Wasser"],
-        "bonus_keywords": ["Standort", "vor Ort", "Schwamm", "Trockentuch", "Reinigungsmittel"],
+        "required_keywords": [
+          "Waschanlage",
+          "Wasser"
+        ],
+        "bonus_keywords": [
+          "Standort",
+          "vor Ort",
+          "Schwamm",
+          "Trockentuch",
+          "Reinigungsmittel"
+        ],
         "partial_credit": true
       }
     },
-
     {
       "id": "overnight-causal-surgery",
       "category": "causal_learning",
@@ -60,14 +77,38 @@
       "prompt": "Beschreibe die notwendigen Voraussetzungen und die korrekte Reihenfolge für eine geplante Kniearthroskopie. Welche Schritte müssen zwingend VOR dem Eingriff abgeschlossen sein?",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["Narkose", "Aufklärung"],
-        "bonus_keywords": ["Blutbild", "Einwilligung", "Nüchternheit", "MRT", "Desinfektion", "Arthroskopie"],
+        "required_keywords": [
+          "Narkose",
+          "Aufklärung"
+        ],
+        "bonus_keywords": [
+          "Blutbild",
+          "Einwilligung",
+          "Nüchternheit",
+          "MRT",
+          "Desinfektion",
+          "Arthroskopie"
+        ],
         "disclaimer_required": true,
-        "disclaimer_keywords": ["Arzt", "ärztlich", "medizinisch"],
+        "disclaimer_keywords": [
+          "Arzt",
+          "ärztlich",
+          "medizinisch"
+        ],
         "partial_credit": true
+      },
+      "expected_answer": {
+        "summary": "Präoperative Schritte vor einer Kniearthroskopie: Aufklärung, Narkose, Blutbild, Nüchternheit, Einwilligung.",
+        "required_points": [
+          "Aufklärungsgespräch durch Arzt über Risiken und Alternativen",
+          "Schriftliche Einwilligungserklärung des Patienten",
+          "Narkoseaufklärung (Allgemein- oder Regionalanästhesie)",
+          "Präoperative Nüchternheit (6h feste Nahrung, 2h klare Flüssigkeiten)",
+          "Blutbild, Gerinnung, ggf. EKG und Röntgen",
+          "Allergieanamnese, Medikamentenanamnese"
+        ]
       }
     },
-
     {
       "id": "overnight-memory-8turn",
       "category": "context_compression",
@@ -75,27 +116,83 @@
       "description": "Injects 7 facts, asks synthesis in turn 8. With HISTORY_MAX_TURNS=4 and HISTORY_MAX_CHARS=3000, early turns will be compressed. GraphRAG should preserve facts that history compression drops.",
       "type": "multi_turn",
       "turns": [
-        {"turn": 1, "role": "inject_fact", "prompt": "Merke dir: Das Projekt 'Quantum Forge' nutzt den gRPC-Dienst auf Port 50051 mit Mutual TLS."},
-        {"turn": 2, "role": "inject_fact", "prompt": "Der Projektleiter von Quantum Forge ist Dr. Elena Vasquez, E-Mail: elena.vasquez@qforge.internal."},
-        {"turn": 3, "role": "inject_fact", "prompt": "Quantum Forge verwendet als Datenbank CockroachDB v23.2 auf dem Cluster db-cluster.qforge.internal."},
-        {"turn": 4, "role": "inject_fact", "prompt": "Das SLA von Quantum Forge garantiert 99.99% Verfügbarkeit (Four Nines) mit max. 52 Minuten Downtime pro Jahr."},
-        {"turn": 5, "role": "inject_fact", "prompt": "Der Load Balancer von Quantum Forge läuft auf 10.88.0.1 und nutzt Weighted Round Robin mit Health Checks alle 5 Sekunden."},
-        {"turn": 6, "role": "inject_fact", "prompt": "Monitoring: Quantum Forge exportiert OpenTelemetry-Traces an Jaeger auf Port 14268, Alerting-Schwelle: P99 Latenz > 200ms."},
-        {"turn": 7, "role": "inject_fact", "prompt": "Deployment: Quantum Forge wird über Flux CD deployed, GitOps-Repository: git@gitlab.internal:platform/qforge-flux.git, Branch 'main'."},
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Merke dir: Das Projekt 'Quantum Forge' nutzt den gRPC-Dienst auf Port 50051 mit Mutual TLS."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Der Projektleiter von Quantum Forge ist Dr. Elena Vasquez, E-Mail: elena.vasquez@qforge.internal."
+        },
+        {
+          "turn": 3,
+          "role": "inject_fact",
+          "prompt": "Quantum Forge verwendet als Datenbank CockroachDB v23.2 auf dem Cluster db-cluster.qforge.internal."
+        },
+        {
+          "turn": 4,
+          "role": "inject_fact",
+          "prompt": "Das SLA von Quantum Forge garantiert 99.99% Verfügbarkeit (Four Nines) mit max. 52 Minuten Downtime pro Jahr."
+        },
+        {
+          "turn": 5,
+          "role": "inject_fact",
+          "prompt": "Der Load Balancer von Quantum Forge läuft auf 10.88.0.1 und nutzt Weighted Round Robin mit Health Checks alle 5 Sekunden."
+        },
+        {
+          "turn": 6,
+          "role": "inject_fact",
+          "prompt": "Monitoring: Quantum Forge exportiert OpenTelemetry-Traces an Jaeger auf Port 14268, Alerting-Schwelle: P99 Latenz > 200ms."
+        },
+        {
+          "turn": 7,
+          "role": "inject_fact",
+          "prompt": "Deployment: Quantum Forge wird über Flux CD deployed, GitOps-Repository: git@gitlab.internal:platform/qforge-flux.git, Branch 'main'."
+        },
         {
           "turn": 8,
           "role": "synthesis_query",
           "prompt": "Erstelle eine technische Übersicht des Projekts Quantum Forge mit allen Details: Dienst-Port und Authentifizierung, Projektleiterin mit E-Mail, Datenbank (Typ + Cluster), SLA (Verfügbarkeit + Downtime), Load-Balancer-IP und Algorithmus, Monitoring-Schwelle, und Deployment-Repository mit Branch.",
           "scoring": {
             "type": "keyword_match",
-            "required_keywords": ["50051", "Mutual TLS", "Dr. Elena Vasquez", "CockroachDB", "99.99%", "10.88.0.1", "200ms", "qforge-flux"],
-            "bonus_keywords": ["elena.vasquez@qforge.internal", "52 Minuten", "Weighted Round Robin", "Jaeger", "14268", "Flux CD", "OpenTelemetry"],
+            "required_keywords": [
+              "50051",
+              "Mutual TLS",
+              "Dr. Elena Vasquez",
+              "CockroachDB",
+              "99.99%",
+              "10.88.0.1",
+              "200ms",
+              "qforge-flux"
+            ],
+            "bonus_keywords": [
+              "elena.vasquez@qforge.internal",
+              "52 Minuten",
+              "Weighted Round Robin",
+              "Jaeger",
+              "14268",
+              "Flux CD",
+              "OpenTelemetry"
+            ],
             "partial_credit": true
+          },
+          "expected_answer": {
+            "summary": "Technische Übersicht Quantum Forge mit allen injizierten Fakten aus Turn 1-7.",
+            "required_facts": {
+              "gRPC_port": "Port 50051 mit Mutual TLS",
+              "project_lead": "Dr. Elena Vasquez, E-Mail: elena.vasquez@qforge.internal",
+              "database": "CockroachDB v23.2, Cluster: db-cluster.qforge.internal",
+              "sla": "99.99% Verfügbarkeit, max. 52 Minuten Downtime pro Jahr",
+              "load_balancer": "10.88.0.1, Weighted Round Robin, Health Checks alle 5s",
+              "monitoring": "OpenTelemetry-Traces an Jaeger Port 14268, P99 Latenz > 200ms Alerting",
+              "deployment": "Flux CD, Repository qforge-flux, Branch main"
+            }
           }
         }
       ]
     },
-
     {
       "id": "overnight-memory-10turn",
       "category": "context_compression",
@@ -103,15 +200,51 @@
       "description": "9 fact injections across legal, technical, medical, financial domains. Turn 10 requires cross-domain synthesis. Total conversation will exceed 3000 chars — compression MUST activate. Key test: do early-epoch facts survive via GraphRAG in later epochs?",
       "type": "multi_turn",
       "turns": [
-        {"turn": 1, "role": "inject_fact", "prompt": "Kunde 'Vanguard Robotics GmbH': Hauptsitz Berlin-Adlershof, 340 Mitarbeiter, gegründet 2019, CEO: Dr. Marcus Lehmann."},
-        {"turn": 2, "role": "inject_fact", "prompt": "Vanguard Robotics betreibt eine KI-gesteuerte Fertigungslinie mit 12 Roboterarmen (Modell: KUKA iiwa 14 R820). Produktionskapazität: 2.400 Einheiten pro Tag."},
-        {"turn": 3, "role": "inject_fact", "prompt": "Datenschutz: Vanguard Robotics verarbeitet biometrische Daten (Handvenenscanner) der Mitarbeiter für Zutrittskontrolle. Datenschutzbeauftragter: Dr. Sabine Werner. DSFA nach Art. 35 DSGVO abgeschlossen am 15.01.2026."},
-        {"turn": 4, "role": "inject_fact", "prompt": "Finanzierung: Serie-C Finanzierung über 45 Mio EUR abgeschlossen (Lead: Sequoia Capital Europe). Bewertung: 280 Mio EUR. Burn Rate: 3.2 Mio EUR/Monat."},
-        {"turn": 5, "role": "inject_fact", "prompt": "IT-Sicherheit: ISO 27001 zertifiziert seit März 2025. Penetrationstest durch CrowdStrike im Dezember 2025: 2 kritische Findings (behoben), 5 mittlere (3 offen)."},
-        {"turn": 6, "role": "inject_fact", "prompt": "Arbeitsrecht: Betriebsrat seit 2023 (7 Mitglieder, Vorsitzender: Thomas Becker). Aktuelle Verhandlung: Betriebsvereinbarung zur KI-gestützten Leistungsüberwachung nach § 87 Abs. 1 Nr. 6 BetrVG."},
-        {"turn": 7, "role": "inject_fact", "prompt": "Medizinische Compliance: Die Fertigungslinie produziert Endoprothesen (Klasse III Medizinprodukte nach MDR 2017/745). Benannte Stelle: TÜV SÜD Product Service GmbH."},
-        {"turn": 8, "role": "inject_fact", "prompt": "Supply Chain: Titanlegierung Ti-6Al-4V von Arconic (USA), Keramikkomponenten von CeramTec (Plochingen). Lieferzeit: 12 Wochen. Sicherheitsbestand: 8 Wochen."},
-        {"turn": 9, "role": "inject_fact", "prompt": "Patente: 14 aktive Patente im Bereich adaptive Greiftechnik. Jüngstes Patent: EP4123456 'Autonome Qualitätskontrolle mittels Computervision' (erteilt 2025)."},
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Kunde 'Vanguard Robotics GmbH': Hauptsitz Berlin-Adlershof, 340 Mitarbeiter, gegründet 2019, CEO: Dr. Marcus Lehmann."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Vanguard Robotics betreibt eine KI-gesteuerte Fertigungslinie mit 12 Roboterarmen (Modell: KUKA iiwa 14 R820). Produktionskapazität: 2.400 Einheiten pro Tag."
+        },
+        {
+          "turn": 3,
+          "role": "inject_fact",
+          "prompt": "Datenschutz: Vanguard Robotics verarbeitet biometrische Daten (Handvenenscanner) der Mitarbeiter für Zutrittskontrolle. Datenschutzbeauftragter: Dr. Sabine Werner. DSFA nach Art. 35 DSGVO abgeschlossen am 15.01.2026."
+        },
+        {
+          "turn": 4,
+          "role": "inject_fact",
+          "prompt": "Finanzierung: Serie-C Finanzierung über 45 Mio EUR abgeschlossen (Lead: Sequoia Capital Europe). Bewertung: 280 Mio EUR. Burn Rate: 3.2 Mio EUR/Monat."
+        },
+        {
+          "turn": 5,
+          "role": "inject_fact",
+          "prompt": "IT-Sicherheit: ISO 27001 zertifiziert seit März 2025. Penetrationstest durch CrowdStrike im Dezember 2025: 2 kritische Findings (behoben), 5 mittlere (3 offen)."
+        },
+        {
+          "turn": 6,
+          "role": "inject_fact",
+          "prompt": "Arbeitsrecht: Betriebsrat seit 2023 (7 Mitglieder, Vorsitzender: Thomas Becker). Aktuelle Verhandlung: Betriebsvereinbarung zur KI-gestützten Leistungsüberwachung nach § 87 Abs. 1 Nr. 6 BetrVG."
+        },
+        {
+          "turn": 7,
+          "role": "inject_fact",
+          "prompt": "Medizinische Compliance: Die Fertigungslinie produziert Endoprothesen (Klasse III Medizinprodukte nach MDR 2017/745). Benannte Stelle: TÜV SÜD Product Service GmbH."
+        },
+        {
+          "turn": 8,
+          "role": "inject_fact",
+          "prompt": "Supply Chain: Titanlegierung Ti-6Al-4V von Arconic (USA), Keramikkomponenten von CeramTec (Plochingen). Lieferzeit: 12 Wochen. Sicherheitsbestand: 8 Wochen."
+        },
+        {
+          "turn": 9,
+          "role": "inject_fact",
+          "prompt": "Patente: 14 aktive Patente im Bereich adaptive Greiftechnik. Jüngstes Patent: EP4123456 'Autonome Qualitätskontrolle mittels Computervision' (erteilt 2025)."
+        },
         {
           "turn": 10,
           "role": "synthesis_query",
@@ -119,21 +252,54 @@
           "scoring": {
             "type": "keyword_match",
             "required_keywords": [
-              "Berlin-Adlershof", "Dr. Marcus Lehmann", "KUKA", "2.400",
-              "Art. 35", "Dr. Sabine Werner", "280 Mio", "ISO 27001",
-              "§ 87", "Thomas Becker", "Klasse III", "MDR",
-              "Ti-6Al-4V", "14 Patente"
+              "Berlin-Adlershof",
+              "Dr. Marcus Lehmann",
+              "KUKA",
+              "2.400",
+              "Art. 35",
+              "Dr. Sabine Werner",
+              "280 Mio",
+              "ISO 27001",
+              "§ 87",
+              "Thomas Becker",
+              "Klasse III",
+              "MDR",
+              "Ti-6Al-4V",
+              "14 Patente"
             ],
             "bonus_keywords": [
-              "340 Mitarbeiter", "Serie-C", "Sequoia", "3.2 Mio", "CrowdStrike",
-              "TÜV SÜD", "CeramTec", "EP4123456", "Handvenenscanner", "12 Wochen"
+              "340 Mitarbeiter",
+              "Serie-C",
+              "Sequoia",
+              "3.2 Mio",
+              "CrowdStrike",
+              "TÜV SÜD",
+              "CeramTec",
+              "EP4123456",
+              "Handvenenscanner",
+              "12 Wochen"
             ],
             "partial_credit": true
+          },
+          "expected_answer": {
+            "summary": "Vollständiges Unternehmensprofil Vanguard Robotics mit allen injizierten Fakten.",
+            "required_facts": {
+              "location": "Berlin-Adlershof",
+              "ceo": "Dr. Marcus Lehmann",
+              "employees": "340 Mitarbeiter, 2.400 Roboter-Einheiten pro Jahr",
+              "financing": "Serie-C, 45 Mio EUR, Sequoia Capital",
+              "regulation": "Art. 35 DSGVO (DSFA), MDR Klasse III, Ti-6Al-4V von Arconic",
+              "patents": "14 aktive Patente",
+              "iso": "ISO 27001 zertifiziert",
+              "legal": "§ 87 BetrVG, works council co-determination",
+              "cfo": "Thomas Becker",
+              "medical_advisor": "Dr. Sabine Werner",
+              "revenue": "280 Mio EUR"
+            }
           }
         }
       ]
     },
-
     {
       "id": "overnight-routing-legal",
       "category": "domain_routing",
@@ -143,12 +309,31 @@
       "prompt": "Erläutere den Unterschied zwischen der ordentlichen Kündigung nach § 622 BGB und der außerordentlichen Kündigung nach § 626 BGB. Wann kann der Arbeitgeber welche Form nutzen?",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["§ 622", "§ 626", "Kündigungsfrist"],
-        "bonus_keywords": ["wichtiger Grund", "Abmahnung", "Sozialauswahl", "2 Wochen"],
+        "required_keywords": [
+          "§ 622",
+          "§ 626",
+          "Kündigungsfrist"
+        ],
+        "bonus_keywords": [
+          "wichtiger Grund",
+          "Abmahnung",
+          "Sozialauswahl",
+          "2 Wochen"
+        ],
         "partial_credit": true
+      },
+      "expected_answer": {
+        "summary": "Erläuterung der Unterschiede zwischen ordentlicher Kündigung (§ 622 BGB) und außerordentlicher Kündigung (§ 626 BGB).",
+        "required_points": [
+          "§ 622 BGB: ordentliche Kündigung mit Kündigungsfristen (4 Wochen zum 15. oder Monatsende als Mindestregelung)",
+          "§ 626 BGB: außerordentliche (fristlose) Kündigung nur bei wichtigem Grund",
+          "Wichtiger Grund: Unzumutbarkeit der Fortsetzung des Arbeitsverhältnisses bis zum Ablauf der ordentlichen Kündigungsfrist",
+          "Beispiele wichtiger Grund: Diebstahl, Betrug, grobe Beleidigung, beharrliche Arbeitsverweigerung",
+          "2-Wochen-Frist für außerordentliche Kündigung ab Kenntnis des Kündigungsgrundes (§ 626 Abs. 2 BGB)",
+          "Abmahnung vor außerordentlicher Kündigung bei weniger schwerwiegenden Pflichtverletzungen erforderlich"
+        ]
       }
     },
-
     {
       "id": "overnight-routing-medical",
       "category": "domain_routing",
@@ -158,14 +343,40 @@
       "prompt": "Welche Laborwerte sind bei Verdacht auf eine Schilddrüsenunterfunktion (Hypothyreose) relevant und wie werden sie interpretiert?",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["TSH", "T4"],
-        "bonus_keywords": ["T3", "fT4", "fT3", "Antikörper", "TPO", "Hashimoto", "Levothyroxin"],
+        "required_keywords": [
+          "TSH",
+          "T4"
+        ],
+        "bonus_keywords": [
+          "T3",
+          "fT4",
+          "fT3",
+          "Antikörper",
+          "TPO",
+          "Hashimoto",
+          "Levothyroxin"
+        ],
         "disclaimer_required": true,
-        "disclaimer_keywords": ["Arzt", "ärztlich", "Diagnose", "medizinisch"],
+        "disclaimer_keywords": [
+          "Arzt",
+          "ärztlich",
+          "Diagnose",
+          "medizinisch"
+        ],
         "partial_credit": true
+      },
+      "expected_answer": {
+        "summary": "Laborwerte bei Hypothyreose-Verdacht: TSH, fT4, fT3, TPOAb, TGAb und deren Interpretation.",
+        "required_points": [
+          "TSH erhöht bei primärer Hypothyreose (empfindlichster Marker, Screening-Test)",
+          "fT4 erniedrigt bei manifester primärer Hypothyreose",
+          "TSH erniedrigt/normal bei sekundärer Hypothyreose (hypophysäres Versagen)",
+          "TPOAb und TGAb: Autoantikörper bei Hashimoto-Thyreoiditis positiv",
+          "Subklinische Hypothyreose: TSH erhöht, fT4 normal",
+          "Hinweis auf ärztliche Diagnose und individuelle Therapieentscheidung erforderlich"
+        ]
       }
     },
-
     {
       "id": "overnight-routing-code",
       "category": "domain_routing",
@@ -175,12 +386,21 @@
       "prompt": "Überprüfe folgenden Python/Flask-Code auf Sicherheitslücken:\n\n```python\n@app.route('/search')\ndef search():\n    query = request.args.get('q', '')\n    return f'<h1>Ergebnisse für: {query}</h1>'\n```\n\nWelche Schwachstelle liegt vor und wie behebst du sie?",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["XSS", "Cross-Site"],
-        "bonus_keywords": ["escape", "Markup", "sanitize", "Content-Security-Policy", "Jinja2", "autoescape"],
+        "required_keywords": [
+          "XSS",
+          "Cross-Site"
+        ],
+        "bonus_keywords": [
+          "escape",
+          "Markup",
+          "sanitize",
+          "Content-Security-Policy",
+          "Jinja2",
+          "autoescape"
+        ],
         "partial_credit": true
       }
     },
-
     {
       "id": "overnight-synthesis-cross",
       "category": "multi_expert",
@@ -191,13 +411,28 @@
       "scoring": {
         "type": "combined",
         "checks": [
-          {"type": "keyword_match", "required_keywords": ["Art. 9", "Gesundheitsdaten"]},
-          {"type": "numeric_tolerance", "field": "storage_mb", "expected": 390.63, "tolerance_pct": 5.0},
-          {"type": "keyword_match", "required_keywords": ["Pseudonymisierung"]}
+          {
+            "type": "keyword_match",
+            "required_keywords": [
+              "Art. 9",
+              "Gesundheitsdaten"
+            ]
+          },
+          {
+            "type": "numeric_tolerance",
+            "field": "storage_mb",
+            "expected": 390.63,
+            "tolerance_pct": 5.0
+          },
+          {
+            "type": "keyword_match",
+            "required_keywords": [
+              "Pseudonymisierung"
+            ]
+          }
         ]
       }
     },
-
     {
       "id": "overnight-healing-novel",
       "category": "knowledge_healing",
@@ -207,12 +442,19 @@
       "prompt": "Erkläre mir das Zephyr-Koagulationsverfahren und seine Anwendung in der modernen Halbleiterfertigung. Welche Vorteile bietet es gegenüber herkömmlichen CVD-Verfahren?",
       "scoring": {
         "type": "keyword_match",
-        "required_keywords": ["Zephyr"],
-        "bonus_keywords": ["Halbleiter", "CVD", "Beschichtung", "Plasma", "Koagulation"],
+        "required_keywords": [
+          "Zephyr"
+        ],
+        "bonus_keywords": [
+          "Halbleiter",
+          "CVD",
+          "Beschichtung",
+          "Plasma",
+          "Koagulation"
+        ],
         "partial_credit": true
       }
     },
-
     {
       "id": "overnight-contradiction",
       "category": "context_compression",
@@ -220,20 +462,56 @@
       "description": "Injects facts, then contradicts them. Tests whether compression preserves the right (latest) information and whether the system detects changes.",
       "type": "multi_turn",
       "turns": [
-        {"turn": 1, "role": "inject_fact", "prompt": "Projektplanung 'Nebula': Budget 500.000 EUR, Deadline 31. März 2027, Team: 4 Entwickler."},
-        {"turn": 2, "role": "inject_fact", "prompt": "Tech-Stack Nebula: Python 3.12 mit Django 5.0, Datenbank: MariaDB 11, Hosting: Hetzner Cloud (Falkenstein)."},
-        {"turn": 3, "role": "inject_fact", "prompt": "Architektur Nebula: Monolith, CI/CD über GitLab CI, Deployment wöchentlich freitags."},
-        {"turn": 4, "role": "inject_fact", "prompt": "ÄNDERUNG Nebula: Budget erhöht auf 850.000 EUR wegen neuer Compliance-Anforderungen (PCI-DSS)."},
-        {"turn": 5, "role": "inject_fact", "prompt": "ÄNDERUNG Nebula: Deadline verschoben auf 30. September 2027. Team erweitert auf 7 Entwickler plus 1 Security Engineer."},
-        {"turn": 6, "role": "inject_fact", "prompt": "ÄNDERUNG Nebula: Migration von Monolith zu Event-Driven Architecture mit FastAPI + Apache Kafka. MariaDB ersetzt durch PostgreSQL 17. Hetzner bleibt."},
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Projektplanung 'Nebula': Budget 500.000 EUR, Deadline 31. März 2027, Team: 4 Entwickler."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Tech-Stack Nebula: Python 3.12 mit Django 5.0, Datenbank: MariaDB 11, Hosting: Hetzner Cloud (Falkenstein)."
+        },
+        {
+          "turn": 3,
+          "role": "inject_fact",
+          "prompt": "Architektur Nebula: Monolith, CI/CD über GitLab CI, Deployment wöchentlich freitags."
+        },
+        {
+          "turn": 4,
+          "role": "inject_fact",
+          "prompt": "ÄNDERUNG Nebula: Budget erhöht auf 850.000 EUR wegen neuer Compliance-Anforderungen (PCI-DSS)."
+        },
+        {
+          "turn": 5,
+          "role": "inject_fact",
+          "prompt": "ÄNDERUNG Nebula: Deadline verschoben auf 30. September 2027. Team erweitert auf 7 Entwickler plus 1 Security Engineer."
+        },
+        {
+          "turn": 6,
+          "role": "inject_fact",
+          "prompt": "ÄNDERUNG Nebula: Migration von Monolith zu Event-Driven Architecture mit FastAPI + Apache Kafka. MariaDB ersetzt durch PostgreSQL 17. Hetzner bleibt."
+        },
         {
           "turn": 7,
           "role": "synthesis_query",
           "prompt": "Was ist der aktuelle Stand des Projekts Nebula? Nenne: aktuelles Budget, Deadline, Teamgröße, Tech-Stack, Datenbank und Architektur.",
           "scoring": {
             "type": "keyword_match",
-            "required_keywords": ["850.000", "September 2027", "FastAPI", "PostgreSQL", "Event-Driven"],
-            "bonus_keywords": ["7 Entwickler", "Security Engineer", "Kafka", "PCI-DSS", "Hetzner"],
+            "required_keywords": [
+              "850.000",
+              "September 2027",
+              "FastAPI",
+              "PostgreSQL",
+              "Event-Driven"
+            ],
+            "bonus_keywords": [
+              "7 Entwickler",
+              "Security Engineer",
+              "Kafka",
+              "PCI-DSS",
+              "Hetzner"
+            ],
             "partial_credit": true
           }
         },
@@ -243,12 +521,39 @@
           "prompt": "Welche Änderungen gab es im Projekt Nebula seit der ursprünglichen Planung? Liste alle Änderungen mit alten und neuen Werten auf.",
           "scoring": {
             "type": "keyword_match",
-            "required_keywords": ["500.000", "850.000", "März 2027", "September 2027", "Django", "FastAPI", "MariaDB", "PostgreSQL"],
-            "bonus_keywords": ["Monolith", "Event-Driven", "4 Entwickler", "7 Entwickler", "PCI-DSS", "Kafka"],
+            "required_keywords": [
+              "500.000",
+              "850.000",
+              "März 2027",
+              "September 2027",
+              "Django",
+              "FastAPI",
+              "MariaDB",
+              "PostgreSQL"
+            ],
+            "bonus_keywords": [
+              "Monolith",
+              "Event-Driven",
+              "4 Entwickler",
+              "7 Entwickler",
+              "PCI-DSS",
+              "Kafka"
+            ],
             "partial_credit": true
           }
         }
-      ]
+      ],
+      "expected_answer": {
+        "summary": "Zusammenfassung der Änderungen im Projekt Nebula: Budget 500k→850k, Deadline März→September 2027, Tech-Stack Django→FastAPI, MariaDB→PostgreSQL.",
+        "required_points": [
+          "Budget erhöht von 500.000 EUR auf 850.000 EUR",
+          "Deadline verschoben von März 2027 auf September 2027",
+          "Tech-Stack-Wechsel: Django zu FastAPI (Event-Driven Architecture)",
+          "Datenbank-Wechsel: MariaDB zu PostgreSQL 17",
+          "Team von 4 auf 7 Entwickler vergrößert",
+          "Architektur-Wechsel von Monolith zu Event-Driven (Kafka)"
+        ]
+      }
     }
   ]
 }
