@@ -723,6 +723,21 @@ async def call_orchestrator(
 
 
 # --------------------------------------------------------------------------
+# Question preprocessing
+# --------------------------------------------------------------------------
+
+def _preprocess_question(question: str) -> str:
+    """Normalize a GAIA question string before sending to the orchestrator.
+
+    Strips leading/trailing whitespace and collapses internal runs of
+    whitespace to single spaces so the orchestrator receives a clean prompt.
+    Returns the original string unchanged if no normalization is needed.
+    """
+    normalized = " ".join(question.split())
+    return normalized
+
+
+# --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@
 | **Admin Backend** | [Overview](admin/index.md) | Manage users, budgets, templates, profiles |
 | **Federation** | [Overview](federation/index.md) | MoE Libris -- federated knowledge exchange between nodes |
 | **User Portal** | [Overview](portal/index.md) | Self-service for end users: usage, keys, billing |
+| **Intelligence** | [Agentic Loop](system/intelligence/agentic_loop.md) · [7B Ensemble](system/intelligence/7b_ensemble_capability.md) · [Causal Learning](system/intelligence/causal_learning.md) | Agentic re-planning, ensemble benchmarks, knowledge accumulation |
 | **Reference** | [Authentication](reference/auth.md) · [Expert Prompts](reference/expert-prompts.md) · [Import/Export](reference/import-export.md) | API reference, system prompts, schemas |
 | **FAQ** | [FAQ](faq.md) | Common questions about Claude Code, API, troubleshooting |
 | **Changelog** | [Changelog](changelog.md) | Version history of all releases |
@@ -51,6 +52,26 @@ leads SWE-bench in its class. Routing each sub-task to its specialist model comp
 advantages without requiring any single model to be large enough to cover all domains.
 
 → [Full benchmark report and LLM comparison](system/intelligence/7b_ensemble_capability.md)
+
+---
+
+## What's New in v2.4
+
+### Agentic Re-Planning Loop
+
+The orchestrator now autonomously detects gaps in its own synthesis and launches focused follow-up research rounds — without user intervention.
+
+After each Judge synthesis, a lightweight gap-detector LLM call evaluates `COMPLETION_STATUS: COMPLETE | NEEDS_MORE_INFO`. When incomplete, the **still-unresolved gap** and all previously established facts are injected back into the Planner as structured context. The Planner then routes exclusively the missing piece to `web_researcher` or `precision_tools` — not the full question again. Up to 3 agentic iterations per request.
+
+→ [Agentic Re-Planning Loop — full architecture](system/intelligence/agentic_loop.md)
+
+### PowerPoint Generation (MCP)
+
+A new `generate_pptx` MCP tool creates fully formatted `.pptx` presentations from structured content (title, slides, bullet points, notes). The file is uploaded to MinIO and delivered as a signed download link directly in the chat response.
+
+### Selective Template & Profile Export
+
+The Admin UI now supports checkbox selection on the Templates and CC Profiles pages. Export only the items you need — the API accepts an optional `?ids=a,b,c` parameter. Exporting everything still works as before.
 
 ---
 
