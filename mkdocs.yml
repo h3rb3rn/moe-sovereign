@@ -149,6 +149,7 @@ nav:
     - Intelligence Growth Prognosis: system/intelligence/growth_prognosis.md
     - CLI Agent Integration: system/intelligence/cli_agent_integration.md
     - Agentic Re-Planning Loop: system/intelligence/agentic_loop.md
+    - Self-Correction Journal: self_correction/journal.md
   - Reference:
     - Authentication: reference/auth.md
     - Import & Export (incl. Knowledge Bundles): reference/import-export.md
@@ -157,7 +158,7 @@ nav:
     - Expert Prompts: reference/expert-prompts.md
     - Expert Overview (Live): experts/index.md
     - User Management (Technical): reference/user-management.md
-  - Dokumentation (DE):
+  - Dokumentation (DE) — Teilübersetzung:
     - Agenten-Profile: guide/de/agent-profiles.md
     - Experten-Vorlagen & Profile: guide/de/templating-guide.md
     - Best Practices: guide/de/best-practices.md

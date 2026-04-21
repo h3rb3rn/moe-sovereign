@@ -35,22 +35,22 @@ TEMPLATES  = Jinja2Templates(directory="templates")
 def _jinja_t(request, key: str, **kw) -> str:
     """Global Jinja2 translation function: {{ t(request, 'key') }}"""
     try:
-        lang = request.session.get("lang", "de_DE")
+        lang = request.session.get("lang", "en_EN")
         if lang not in TRANSLATIONS:
-            lang = "de_DE"
+            lang = "en_EN"
     except Exception:
-        lang = "de_DE"
+        lang = "en_EN"
     s = (TRANSLATIONS.get(lang) or {}).get(key) \
-     or (TRANSLATIONS.get("de_DE") or {}).get(key) \
+     or (TRANSLATIONS.get("en_EN") or {}).get(key) \
      or key
     return s.format(**kw) if kw else s
 
 def _jinja_get_lang(request) -> str:
     try:
-        lang = request.session.get("lang", "de_DE")
-        return lang if lang in TRANSLATIONS else "de_DE"
+        lang = request.session.get("lang", "en_EN")
+        return lang if lang in TRANSLATIONS else "en_EN"
     except Exception:
-        return "de_DE"
+        return "en_EN"
 
 TEMPLATES.env.globals["t"]        = _jinja_t
 TEMPLATES.env.globals["get_lang"] = _jinja_get_lang
@@ -137,14 +137,14 @@ def _load_translations() -> None:
 _load_translations()
 
 def get_lang(request: Request) -> str:
-    lang = request.session.get("lang", "de_DE")
-    return lang if lang in TRANSLATIONS else "de_DE"
+    lang = request.session.get("lang", "en_EN")
+    return lang if lang in TRANSLATIONS else "en_EN"
 
 def make_t(lang: str):
     """Returns a t(key, **kwargs) function bound to the given language."""
     def t(key: str, **kw) -> str:
         s = (TRANSLATIONS.get(lang) or {}).get(key) \
-         or (TRANSLATIONS.get("de_DE") or {}).get(key) \
+         or (TRANSLATIONS.get("en_EN") or {}).get(key) \
          or key
         return s.format(**kw) if kw else s
     return t
@@ -1406,6 +1406,8 @@ async def save_config(request: Request, _=Depends(require_login)):
             for o in form.get("CORS_ORIGINS", "").replace("\n", ",").split(",")
             if o.strip()
         ),
+        # ── MinIO / Object Storage ──
+        "MINIO_PUBLIC_URL": form.get("MINIO_PUBLIC_URL", "").strip(),
     }
 
     # Validate JSON round-trips before writing
@@ -1531,8 +1533,11 @@ async def api_create_profile(request: Request):
 
 
 @app.get("/api/profiles/export", dependencies=[Depends(require_login)])
-async def api_export_profiles():
+async def api_export_profiles(ids: str = ""):
     profiles = load_profiles()
+    if ids:
+        id_set = {i.strip() for i in ids.split(",") if i.strip()}
+        profiles = [p for p in profiles if p.get("id") in id_set]
     items = [
         {
             "name":                 p.get("name", ""),
@@ -1746,8 +1751,11 @@ async def api_create_expert_template(request: Request):
 
 
 @app.get("/api/expert-templates/export", dependencies=[Depends(require_login)])
-async def api_export_expert_templates():
+async def api_export_expert_templates(ids: str = ""):
     templates = load_expert_templates()
+    if ids:
+        id_set = {i.strip() for i in ids.split(",") if i.strip()}
+        templates = [t for t in templates if t.get("id") in id_set]
     items = [
         {
             "name":           t.get("name", ""),
@@ -2646,7 +2654,7 @@ async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
             logger.error("Cleanup job %s failed: %s", path, exc)
 
     background_tasks.add_task(_run_script, script)
-    return {"ok": True, "job": job, "message": "Job gestartet — Status in Kürze in der History"}
+    return {"ok": True, "job": job, "message": "Job started — check History for status updates"}
 
 
 @app.get("/api/cleanup/history", dependencies=[Depends(require_login)])
@@ -5536,6 +5544,56 @@ def _list_overnight_runs() -> list[dict]:
     return runs
 
 
+def _list_longmemeval_runs() -> list[dict]:
+    """Return summary dicts for top-level longmemeval_<template>_<ts>.json result files."""
+    if not BENCH_RESULTS_DIR.exists():
+        return []
+    runs: list[dict] = []
+    for f in sorted(BENCH_RESULTS_DIR.glob("longmemeval_*.json"), reverse=True):
+        if f.name.startswith("longmemeval_latest_"):
+            continue
+        try:
+            data = json.loads(f.read_text())
+        except Exception:
+            continue
+        runs.append({
+            "filename": f.name,
+            "run_id": f.stem,
+            "template": data.get("template", ""),
+            "timestamp": data.get("timestamp", ""),
+            "total_questions": data.get("total_questions", 0),
+            "average_score_pct": data.get("average_score_pct", 0.0),
+            "by_type": data.get("by_type", {}),
+        })
+    return runs[:30]
+
+
+def _list_gaia_runs() -> list[dict]:
+    """Return summary dicts for top-level gaia_<template>_<ts>.json result files."""
+    if not BENCH_RESULTS_DIR.exists():
+        return []
+    runs: list[dict] = []
+    for f in sorted(BENCH_RESULTS_DIR.glob("gaia_*.json"), reverse=True):
+        if f.name.startswith("gaia_latest_"):
+            continue
+        try:
+            data = json.loads(f.read_text())
+        except Exception:
+            continue
+        runs.append({
+            "filename": f.name,
+            "run_id": f.stem,
+            "template": data.get("template", ""),
+            "timestamp": data.get("timestamp", ""),
+            "total_questions": data.get("total_questions", 0),
+            "total_correct": data.get("total_correct", 0),
+            "overall_pct": data.get("overall_pct", 0.0),
+            "levels_tested": data.get("levels_tested", []),
+            "by_level": data.get("by_level", {}),
+        })
+    return runs[:30]
+
+
 def _list_single_runs() -> list[dict]:
     """Return summary dicts for top-level run_* JSON files (non-overnight benchmarks)."""
     if not BENCH_RESULTS_DIR.exists():
@@ -5622,6 +5680,8 @@ async def api_bench_list(request: Request, _=Depends(require_login)):
     return {
         "overnight": _list_overnight_runs(),
         "single": _list_single_runs()[:30],  # Cap to last 30
+        "gaia": _list_gaia_runs(),
+        "longmemeval": _list_longmemeval_runs(),
     }
 
 
@@ -5975,6 +6035,166 @@ async def api_bench_delete(run_id: str, request: Request, _=Depends(require_logi
             pass
 
     return {"status": "deleted", "deleted": deleted}
+
+
+@app.get("/api/benchmarks/result-gaia/{filename}")
+async def api_gaia_result(filename: str, request: Request, _=Depends(require_login)):
+    """Return raw GAIA result JSON by filename (e.g. gaia_template_ts.json)."""
+    import re as _re6
+    if not _re6.match(r'^[\w\-]+\.json$', filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = BENCH_RESULTS_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="GAIA result not found")
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/benchmarks/result-longmemeval/{filename}")
+async def api_longmemeval_result(filename: str, request: Request, _=Depends(require_login)):
+    """Return raw LongMemEval result JSON by filename."""
+    import re as _re8
+    if not _re8.match(r'^[\w\-]+\.json$', filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = BENCH_RESULTS_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="LongMemEval result not found")
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/benchmarks/trigger-longmemeval")
+async def api_bench_trigger_longmemeval(request: Request, _=Depends(require_login)):
+    """Launch a LongMemEval benchmark run as a detached subprocess."""
+    if _bench_is_running():
+        raise HTTPException(status_code=409, detail="A benchmark is already running")
+
+    body = await request.json()
+    template  = body.get("template", "")
+    max_q     = int(body.get("max_q", 20))
+
+    import re as _re9
+    if not template or not _re9.match(r'^[\w\-]+$', template):
+        raise HTTPException(status_code=400, detail="Invalid template name")
+    if not (1 <= max_q <= 500):
+        raise HTTPException(status_code=400, detail="max_q must be 1-500")
+
+    lme_script = BENCHMARKS_DIR / "longmemeval_runner.py"
+    if not lme_script.exists():
+        raise HTTPException(status_code=500, detail="longmemeval_runner.py not found in benchmarks/")
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    log_path = BENCH_RESULTS_DIR / f"longmemeval_{template}_{ts}.log"
+
+    env_override = {
+        **os.environ,
+        "MOE_API_KEY": os.environ.get("SYSTEM_API_KEY", os.environ.get("MOE_API_KEY", "")),
+        "MOE_API_BASE": "http://langgraph-orchestrator:8000",
+        "MOE_TEMPLATE": template,
+        "LONGMEM_MAX": str(max_q),
+    }
+
+    import subprocess
+    with open(str(log_path), "w") as log_fh:
+        proc = subprocess.Popen(
+            ["python3", str(lme_script)],
+            cwd=str(BENCHMARKS_DIR),
+            env=env_override,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    lock_info = {
+        "pid": proc.pid,
+        "run_id": f"longmemeval_{template}_{ts}",
+        "template": template,
+        "benchmark_type": "longmemeval",
+        "max_q": max_q,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "log": str(log_path),
+    }
+    BENCH_LOCK_FILE.write_text(json.dumps(lock_info, indent=2))
+
+    return {"status": "started", "pid": proc.pid, "run_id": lock_info["run_id"], "log": str(log_path)}
+
+
+@app.post("/api/benchmarks/trigger-gaia")
+async def api_bench_trigger_gaia(request: Request, _=Depends(require_login)):
+    """Launch a GAIA benchmark run as a detached subprocess."""
+    if _bench_is_running():
+        raise HTTPException(status_code=409, detail="A benchmark is already running")
+
+    body = await request.json()
+    template      = body.get("template", "")
+    levels        = body.get("levels", [1])
+    max_per_level = int(body.get("max_per_level", 10))
+
+    import re as _re7
+    if not template or not _re7.match(r'^[\w\-]+$', template):
+        raise HTTPException(status_code=400, detail="Invalid template name")
+    if not isinstance(levels, list) or not all(isinstance(v, int) and 1 <= v <= 3 for v in levels):
+        raise HTTPException(status_code=400, detail="Levels must be a list of ints 1-3")
+    if not (1 <= max_per_level <= 165):
+        raise HTTPException(status_code=400, detail="max_per_level must be 1-165")
+
+    gaia_script = BENCHMARKS_DIR / "gaia_runner.py"
+    if not gaia_script.exists():
+        raise HTTPException(status_code=500, detail="gaia_runner.py not found in benchmarks/")
+
+    # Load HF_TOKEN from benchmarks/.env since the container doesn't have it in env
+    hf_token = ""
+    env_file = BENCHMARKS_DIR / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("HF_TOKEN="):
+                hf_token = line.split("=", 1)[1].strip()
+                break
+    if not hf_token:
+        raise HTTPException(status_code=500, detail="HF_TOKEN not found in benchmarks/.env")
+
+    levels_str = ",".join(str(l) for l in sorted(set(levels)))
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    log_path = BENCH_RESULTS_DIR / f"gaia_{template}_{ts}.log"
+
+    env_override = {
+        **os.environ,
+        "HF_TOKEN": hf_token,
+        "MOE_API_KEY": os.environ.get("SYSTEM_API_KEY", os.environ.get("MOE_API_KEY", "")),
+        "MOE_API_BASE": "http://langgraph-orchestrator:8000",
+        "MOE_TEMPLATE": template,
+        "GAIA_LEVELS": levels_str,
+        "GAIA_MAX_PER_LEVEL": str(max_per_level),
+    }
+
+    import subprocess
+    with open(str(log_path), "w") as log_fh:
+        proc = subprocess.Popen(
+            ["python3", str(gaia_script)],
+            cwd=str(BENCHMARKS_DIR),
+            env=env_override,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    lock_info = {
+        "pid": proc.pid,
+        "run_id": f"gaia_{template}_{ts}",
+        "template": template,
+        "benchmark_type": "gaia",
+        "levels": levels_str,
+        "max_per_level": max_per_level,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "log": str(log_path),
+    }
+    BENCH_LOCK_FILE.write_text(json.dumps(lock_info, indent=2))
+
+    return {"status": "started", "pid": proc.pid, "run_id": lock_info["run_id"], "log": str(log_path)}
 
 
 # ─── Teams API ────────────────────────────────────────────────────────────────

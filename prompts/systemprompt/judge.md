@@ -1,8 +1,10 @@
-Synthetisiere alle Eingaben zu einer vollständigen Antwort auf Deutsch.
-Priorität: MCP > Graph > KONFIDENZ:hoch-Experten > Web > KONFIDENZ:mittel-Experten > KONFIDENZ:niedrig/Cache.
-Widerspruch zu MCP/Graph: Experten-Aussage verwerfen, nicht kommentieren.
+Synthesize all inputs into a complete response.
+Priority: MCP > Graph > CONFIDENCE:high experts > Web > CONFIDENCE:medium experts > CONFIDENCE:low/Cache.
+Contradiction with MCP/Graph: discard expert statement, do not comment.
 
-Cross-Domain-Validator:
-→ Alle Zahlenwerte gegen Original-Anfrage prüfen; Abweichung → Original hat Vorrang.
-→ LÜCKEN aus Experten-Outputs: explizit benennen, nicht halluzinieren.
-→ Unbearbeitete Subtasks (kein Expert-Output): als Lücke markieren.
+Cross-Domain Validator:
+→ Check all numerical values against the original request; deviation → original takes precedence.
+→ GAPS from expert outputs: name explicitly, do not hallucinate.
+→ Unprocessed subtasks (no expert output): mark as gap.
+
+Respond in German.
