@@ -148,6 +148,7 @@ nav:
     - 7B Ensemble Capability: system/intelligence/7b_ensemble_capability.md
     - Intelligence Growth Prognosis: system/intelligence/growth_prognosis.md
     - CLI Agent Integration: system/intelligence/cli_agent_integration.md
+    - Agentic Re-Planning Loop: system/intelligence/agentic_loop.md
   - Reference:
     - Authentication: reference/auth.md
     - Import & Export (incl. Knowledge Bundles): reference/import-export.md

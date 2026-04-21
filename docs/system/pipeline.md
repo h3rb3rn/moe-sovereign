@@ -23,6 +23,10 @@ The pipeline state (`MoEState`) contains the following fields:
 | `cache_hit` | `bool` | Whether L1 cache was hit |
 | `thinking_output` | `str \| None` | Thinking node intermediate steps |
 | `feedback_score` | `float \| None` | Last user rating (1–5) |
+| `agentic_iteration` | `int` | Current agentic loop iteration (0 = first pass) |
+| `agentic_max_rounds` | `int` | Max re-plan rounds from template config (0 = disabled) |
+| `agentic_history` | `list` | Per-round history: `{iteration, plan_summary, findings, gap}` |
+| `agentic_gap` | `str` | Unresolved gap — output of the gap detection LLM call |
 
 ## Pipeline Flowchart
 
@@ -62,7 +66,13 @@ flowchart TD
     MergerNode["⚖️ Merger / Judge LLM"] --> ThinkingCheck{complex\nand Thinking\nactive?}
     ThinkingCheck -->|Yes| ThinkingNode["💭 Thinking Node\nIntermediate steps"]
     ThinkingNode --> MergerNode
-    ThinkingCheck -->|No| SaveResults
+    ThinkingCheck -->|No| GapCheck{Agentic Loop\nenabled?}
+
+    GapCheck -->|No| SaveResults
+    GapCheck -->|Yes| GapDetect["🔄 Gap Detection\nLLM call"]
+    GapDetect -->|COMPLETE\nor max rounds| SaveResults
+    GapDetect -->|NEEDS_MORE_INFO| AgenticReplan[Inject context block\nagentic_iteration++]
+    AgenticReplan --> PlannerNode
 
     DirectMerge --> SaveResults
     SaveResults --> SaveChroma[(ChromaDB\nL1 Cache)]
@@ -136,6 +146,13 @@ flowchart LR
 - Generates the final response (SSE stream or JSON)
 - Appends a `<SYNTHESIS_INSIGHT>` JSON block when the response constitutes a novel multi-source comparison or logical inference (see [Graph-basierte Wissensakkumulation](intelligence/compounding_knowledge.md))
 - The synthesis block is stripped from the user-facing response and persisted as a `:Synthesis` node in Neo4j via the `moe.ingest` Kafka topic
+- When `max_agentic_rounds > 0`: performs a gap detection LLM call after synthesis; if `NEEDS_MORE_INFO`, routes back to the planner via `_should_replan()` (see [Agentic Re-Planning Loop](intelligence/agentic_loop.md))
+
+### Agentic Loop (`_should_replan`)
+- Conditional edge function evaluated after every `merger` node execution
+- Returns `"planner"` if a gap was detected and iterations remain, otherwise `"critic"`
+- Token budget guard: if `prompt_tokens > 80 000`, forces `"critic"` regardless of gap status
+- Streaming status messages (`🔄 Agentic Loop — Iteration N/M`) emitted via `_report()`
 
 ---
 
@@ -191,6 +208,7 @@ sequenceDiagram
 | 🧠 | **Reasoning result** | Full CoT trace (decomposition → conclusion) |
 | 🔄 | **Judge refinement prompt** | Prompt for refinement round for low-confidence experts |
 | 🔄 | **Judge refinement response** | Judge feedback text + confidence delta per category |
+| 🔄 | **Agentic loop iteration** | Re-plan iteration N/M — shows the detected gap |
 | 🔀 | **Merger prompt** | Full synthesis prompt incl. all expert results |
 | 🔀 | **Merger response** | Full judge/merger output before critic review |
 | 🔎 | **Critic prompt** | Fact-check prompt for safety-critical domains |

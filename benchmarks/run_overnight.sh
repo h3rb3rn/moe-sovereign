@@ -42,7 +42,7 @@ EPOCHS="${MOE_EPOCHS:-10}"
 TEMPLATE="${MOE_TEMPLATE:-moe-m10-gremium-deep}"
 API_BASE="${MOE_API_BASE:-http://localhost:8002}"
 PROM_URL="${MOE_PROM_URL:-http://localhost:9090}"
-DATASET="moe_eval_overnight_v1.json"
+DATASET="${MOE_DATASET:-moe_eval_overnight_v1.json}"
 INGEST_PAUSE="${MOE_INGEST_PAUSE:-60}"
 EPOCH_MAX_RETRIES="${MOE_EPOCH_RETRIES:-3}"
 FAILURE_THRESHOLD="${MOE_FAILURE_THRESHOLD:-4}"
@@ -72,11 +72,16 @@ NODE_M60_CONTAINERS="${BENCH_NODE_M60_CONTAINERS:-ollama}"
 NODE_GT_CONTAINERS="${BENCH_NODE_GT_CONTAINERS:-ollama}"
 
 # Judge LLM endpoint (direct Ollama, bypasses orchestrator)
-JUDGE_OLLAMA_URL="${MOE_JUDGE_OLLAMA_URL:-http://localhost:11434}"
+# Must be set via MOE_JUDGE_OLLAMA_URL in the environment or .env file.
+JUDGE_OLLAMA_URL="${MOE_JUDGE_OLLAMA_URL:-}"
+if [ -z "$JUDGE_OLLAMA_URL" ]; then
+    echo "FATAL: MOE_JUDGE_OLLAMA_URL is not set. Set it to your Ollama endpoint, e.g. http://<host>:11434" >&2
+    exit 1
+fi
 
 RUN_ID="overnight_$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$SCRIPT_DIR/results/$RUN_ID"
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR" || { echo "FATAL: Cannot create run directory: $RUN_DIR" >&2; exit 1; }
 
 # --------------------------------------------------------------------------
 # Admin UI lock file — lets the web UI detect this process as an active run
@@ -105,6 +110,7 @@ _clear_lock() {
     if [[ "${BASH_SUBSHELL:-0}" -eq 0 ]]; then
         rm -f "$LOCK_FILE" "$HEARTBEAT_FILE"
         kill "${_HEARTBEAT_PID:-}" 2>/dev/null || true
+        unlock_benchmark_nodes 2>/dev/null || true
     fi
 }
 # Clear lock on exit, error or SIGINT/SIGTERM
@@ -344,6 +350,36 @@ warmup_model() {
 }
 
 # --------------------------------------------------------------------------
+# Benchmark node reservation — lock / unlock
+# --------------------------------------------------------------------------
+
+lock_benchmark_nodes() {
+    echo "[$(date +%H:%M:%S)] Reserving benchmark nodes for template '$TEMPLATE'..."
+    local result
+    result=$(curl -sf --max-time 15 \
+        -X POST "${API_BASE}/v1/admin/benchmark/lock" \
+        -H "Authorization: Bearer ${MOE_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "{\"template\": \"$TEMPLATE\"}" 2>/dev/null)
+    if echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+        local nodes
+        nodes=$(echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(', '.join(d.get('reserved', [])))" 2>/dev/null)
+        echo "    [lock] Nodes reserved: $nodes"
+    else
+        echo "    [lock] WARNING: Could not reserve nodes — $result"
+    fi
+}
+
+unlock_benchmark_nodes() {
+    echo "[$(date +%H:%M:%S)] Releasing benchmark node reservation..."
+    curl -sf --max-time 15 \
+        -X DELETE "${API_BASE}/v1/admin/benchmark/lock" \
+        -H "Authorization: Bearer ${MOE_API_KEY}" > /dev/null 2>&1 \
+        && echo "    [lock] Nodes released." \
+        || echo "    [lock] WARNING: Could not release node reservation."
+}
+
+# --------------------------------------------------------------------------
 # Failure counting (JSON-based, accurate)
 # --------------------------------------------------------------------------
 
@@ -371,8 +407,8 @@ run_epoch() {
     local epoch="$1"
     local attempt="$2"
     # Escalate timeouts with each retry attempt
-    local base_timeout=$(( 1200 + (attempt - 1) * 600 ))  # 1200 / 1800 / 2400
-    local max_timeout=3600
+    local base_timeout=$(( ${MOE_TIMEOUT:-1200} + (attempt - 1) * ${MOE_TIMEOUT_STEP:-600} ))
+    local max_timeout="${MOE_MAX_TIMEOUT:-3600}"
 
     local logfile="$RUN_DIR/epoch_${epoch}_runner.log"
     [ "$attempt" -gt 1 ] && logfile="$RUN_DIR/epoch_${epoch}_attempt${attempt}_runner.log"
@@ -386,11 +422,11 @@ run_epoch() {
     MOE_API_BASE="$API_BASE" \
     MOE_TEMPLATE="$TEMPLATE" \
     MOE_EVAL_DATASET="$DATASET" \
-    MOE_PARALLEL_TESTS="1" \
+    MOE_PARALLEL_TESTS="${MOE_PARALLEL_TESTS:-8}" \
     MOE_TIMEOUT="$base_timeout" \
     MOE_MAX_TIMEOUT="$max_timeout" \
-    MOE_RETRY_DELAY="30" \
-    MOE_MAX_RETRIES="3" \
+    MOE_RETRY_DELAY="${MOE_RETRY_DELAY:-30}" \
+    MOE_MAX_RETRIES="${MOE_MAX_RETRIES:-3}" \
     python3 "$SCRIPT_DIR/runner.py" > "$logfile" 2>&1
     local rc=$?
     local dur=$(( $(date +%s) - t0 ))
@@ -464,6 +500,7 @@ if ! wait_for_api 600; then
 fi
 
 warmup_model || true   # best effort; don't abort on warm-up failure
+lock_benchmark_nodes   # Reserve benchmark nodes — other requests will receive HTTP 503
 
 # --------------------------------------------------------------------------
 # Main epoch loop

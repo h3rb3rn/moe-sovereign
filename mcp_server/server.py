@@ -1226,6 +1226,108 @@ def lsp_query(file_path: str, action: str, symbol: str = "", line: int = 0, col:
 _GENERATED_DIR = Path("/app/generated")
 _GENERATED_DIR.mkdir(exist_ok=True)
 
+# ─── MinIO helpers ──────────────────────────────────────────────────────────
+
+def _minio_client():
+    """Return a configured Minio client, or None if credentials are missing."""
+    endpoint  = os.getenv("MINIO_ENDPOINT", "")
+    access    = os.getenv("MINIO_ROOT_USER", "")
+    secret    = os.getenv("MINIO_ROOT_PASSWORD", "")
+    if not (endpoint and access and secret):
+        return None
+    try:
+        from minio import Minio
+        return Minio(endpoint, access_key=access, secret_key=secret, secure=False)
+    except Exception:
+        return None
+
+
+def _minio_public_url() -> str:
+    """Return the admin-configured public base URL for MinIO, falling back to endpoint."""
+    # MINIO_PUBLIC_URL is writable via Admin Portal → Settings → Storage URL
+    url = os.getenv("MINIO_PUBLIC_URL", "").rstrip("/")
+    if not url:
+        endpoint = os.getenv("MINIO_ENDPOINT", "moe-storage:9000")
+        url = f"http://{endpoint}"
+    return url
+
+
+def _minio_ensure_bucket(client, bucket: str) -> None:
+    if not client.bucket_exists(bucket):
+        client.make_bucket(bucket)
+
+
+def _minio_upload_bytes(data: bytes, object_name: str, content_type: str,
+                        bucket: str | None = None) -> str:
+    """Upload bytes to MinIO and return a pre-signed download URL (24h expiry)."""
+    from datetime import timedelta
+    mc = _minio_client()
+    if mc is None:
+        raise RuntimeError("MinIO not configured (MINIO_ENDPOINT/MINIO_ROOT_USER/MINIO_ROOT_PASSWORD missing)")
+    bkt = bucket or os.getenv("MINIO_DEFAULT_BUCKET", "moe-files")
+    _minio_ensure_bucket(mc, bkt)
+    mc.put_object(bkt, object_name, io.BytesIO(data), length=len(data), content_type=content_type)
+    presigned = mc.presigned_get_object(bkt, object_name, expires=timedelta(hours=24))
+    # Replace internal hostname with public URL
+    public_base = _minio_public_url()
+    internal = os.getenv("MINIO_ENDPOINT", "moe-storage:9000")
+    presigned = presigned.replace(f"http://{internal}", public_base, 1)
+    return presigned
+
+
+def file_upload(content_base64: str, filename: str, content_type: str = "application/octet-stream",
+                bucket: str = "") -> str:
+    """Upload a file to MinIO object storage and return a 24h pre-signed download URL.
+
+    Args:
+        content_base64: Base64-encoded file content
+        filename: Target filename (e.g. 'report.pdf')
+        content_type: MIME type (default: application/octet-stream)
+        bucket: Bucket name (default: moe-files from env)
+    Returns:
+        Pre-signed download URL valid for 24 hours, or error message.
+    """
+    import uuid as _uuid
+    try:
+        data = base64.b64decode(content_base64)
+    except Exception as e:
+        return f"Error: invalid base64 content — {e}"
+    safe = re.sub(r'[^\w\-.]', '_', filename)[:120]
+    object_name = f"{_uuid.uuid4().hex[:8]}_{safe}"
+    try:
+        url = _minio_upload_bytes(data, object_name, content_type, bucket or None)
+        size_kb = len(data) / 1024
+        return f"Uploaded: {safe} ({size_kb:.1f} KB)\nDownload URL (24h): {url}"
+    except Exception as e:
+        return f"Upload failed: {e}"
+
+
+def file_download_url(object_name: str, bucket: str = "", expires_hours: int = 24) -> str:
+    """Generate a fresh pre-signed download URL for an existing MinIO object.
+
+    Args:
+        object_name: Full object path in the bucket
+        bucket: Bucket name (default: moe-files from env)
+        expires_hours: Link validity in hours (1–168, default: 24)
+    Returns:
+        Pre-signed download URL, or error message.
+    """
+    from datetime import timedelta
+    mc = _minio_client()
+    if mc is None:
+        return "Error: MinIO not configured."
+    bkt = bucket or os.getenv("MINIO_DEFAULT_BUCKET", "moe-files")
+    hours = max(1, min(168, expires_hours))
+    try:
+        presigned = mc.presigned_get_object(bkt, object_name, expires=timedelta(hours=hours))
+        public_base = _minio_public_url()
+        internal = os.getenv("MINIO_ENDPOINT", "moe-storage:9000")
+        presigned = presigned.replace(f"http://{internal}", public_base, 1)
+        return f"Download URL ({hours}h): {presigned}"
+    except Exception as e:
+        return f"Error generating URL: {e}"
+
+
 def generate_file(content: str, filename: str = "output", format: str = "html") -> str:
     """
     Generates a file from content and returns a download path.
@@ -1282,14 +1384,449 @@ def generate_file(content: str, filename: str = "output", format: str = "html") 
         out_path = _GENERATED_DIR / f"{_id}_{_safe_name}.{ext}"
         out_path.write_text(content, encoding="utf-8")
 
+    elif fmt in ("pptx", "ppt", "powerpoint"):
+        try:
+            from pptx import Presentation
+            from pptx.util import Inches, Pt
+            prs = Presentation()
+            # Parse slides from content: "## Slide Title\n- bullet\n- bullet\n\n## Next Slide..."
+            slide_blocks = re.split(r'\n(?=##?\s)', content.strip())
+            for block in slide_blocks:
+                block = block.strip()
+                if not block:
+                    continue
+                lines = block.splitlines()
+                title_line = lines[0].lstrip("#").strip()
+                body_lines = [l for l in lines[1:] if l.strip()]
+                layout = prs.slide_layouts[1]  # title + content
+                slide = prs.slides.add_slide(layout)
+                slide.shapes.title.text = title_line
+                if body_lines and slide.placeholders[1]:
+                    tf = slide.placeholders[1].text_frame
+                    tf.clear()
+                    for i, bl in enumerate(body_lines):
+                        bl = bl.lstrip("-*• ").strip()
+                        if not bl:
+                            continue
+                        p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
+                        p.text = bl
+                        p.level = 0
+            out_path = _GENERATED_DIR / f"{_id}_{_safe_name}.pptx"
+            prs.save(str(out_path))
+        except ImportError:
+            return "Error: python-pptx not available."
+
     else:
-        return f"Unsupported format: '{fmt}'. Use: html, docx, md, txt."
+        return f"Unsupported format: '{fmt}'. Use: html, docx, md, txt, pptx."
 
     size_kb = out_path.stat().st_size / 1024
-    return (
-        f"File generated: {out_path.name} ({size_kb:.1f} KB)\n"
-        f"Download: /downloads/{out_path.name}"
-    )
+    content_types = {
+        ".html": "text/html",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".md": "text/markdown",
+        ".txt": "text/plain",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
+    ct = content_types.get(out_path.suffix, "application/octet-stream")
+    # Upload to MinIO if configured — always delete local copy afterwards to
+    # prevent generated payloads from persisting on the host filesystem.
+    try:
+        url = _minio_upload_bytes(out_path.read_bytes(), out_path.name, ct)
+        out_path.unlink(missing_ok=True)
+        return f"File generated: {out_path.name} ({size_kb:.1f} KB)\nDownload URL (24h): {url}"
+    except Exception:
+        # MinIO unavailable — keep local copy for /downloads/ fallback but do NOT
+        # execute it: the /downloads/ endpoint serves files read-only via FileResponse.
+        return (
+            f"File generated: {out_path.name} ({size_kb:.1f} KB)\n"
+            f"Download: /downloads/{out_path.name}"
+        )
+
+
+# ─── Attachment Parser Tool ──────────────────────────────────────────────────
+
+# Security constants for parse_attachment
+_ATTACH_MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard limit
+_ATTACH_TIMEOUT   = 30.0              # seconds
+
+
+def _fetch_attachment_bytes(url: str) -> bytes:
+    """
+    Downloads a URL with a streaming size check (max 20 MB, 30 s timeout).
+    Raises ValueError on size violation, httpx exceptions on network errors.
+    """
+    collected: list[bytes] = []
+    total = 0
+    with httpx.stream("GET", url, timeout=_ATTACH_TIMEOUT, follow_redirects=True) as resp:
+        resp.raise_for_status()
+        for chunk in resp.iter_bytes(chunk_size=65536):
+            total += len(chunk)
+            if total > _ATTACH_MAX_BYTES:
+                raise ValueError(
+                    f"Attachment exceeds 20 MB size limit ({total} bytes downloaded so far)."
+                )
+            collected.append(chunk)
+    return b"".join(collected)
+
+
+def _parse_xlsx(data: bytes, max_chars: int) -> str:
+    """Converts an XLSX workbook to a CSV-style plain text table."""
+    try:
+        import openpyxl
+    except ImportError:
+        return "Error: openpyxl not installed — cannot parse XLSX files."
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    parts: list[str] = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        lines: list[str] = [f"=== Sheet: {sheet_name} ==="]
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            lines.append(",".join(cells))
+        parts.append("\n".join(lines))
+        if sum(len(p) for p in parts) >= max_chars:
+            break
+    return "\n\n".join(parts)[:max_chars]
+
+
+def _parse_docx(data: bytes, max_chars: int) -> str:
+    """Extracts plain text from a DOCX file (paragraphs only, no macros)."""
+    try:
+        from docx import Document as _DocxDocument
+    except ImportError:
+        return "Error: python-docx not installed — cannot parse DOCX files."
+    doc = _DocxDocument(io.BytesIO(data))
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    return "\n\n".join(paragraphs)[:max_chars]
+
+
+def _parse_pdf(data: bytes, max_chars: int) -> str:
+    """Extracts plain text from a PDF using pypdf (no subprocess, no code exec)."""
+    try:
+        import pypdf
+    except ImportError:
+        return "Error: pypdf not installed — cannot parse PDF files."
+    reader = pypdf.PdfReader(io.BytesIO(data))
+    parts: list[str] = []
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        parts.append(text)
+        if sum(len(p) for p in parts) >= max_chars:
+            break
+    return "\n\n".join(parts)[:max_chars]
+
+
+def _parse_csv(data: bytes, max_chars: int) -> str:
+    """Decodes a CSV file as UTF-8 (with latin-1 fallback) and returns its text."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = data.decode("latin-1", errors="replace")
+    return text[:max_chars]
+
+
+@mcp.tool()
+def parse_attachment(url: str, max_chars: int = 6000) -> str:
+    """
+    Downloads and parses a file attachment from a URL and returns its text content.
+
+    Supported formats:
+    - XLSX → CSV-style table (all sheets)
+    - DOCX → plain text (paragraphs)
+    - PDF  → extracted text (all pages up to max_chars)
+    - CSV / TXT → raw text
+
+    Security constraints:
+    - Maximum download size: 20 MB
+    - Request timeout: 30 seconds
+    - No code execution, no subprocess, no filesystem writes
+    - URL must be http/https; path traversal is not applicable (URL-only)
+
+    Args:
+        url: HTTP/HTTPS URL of the file to download and parse.
+        max_chars: Maximum number of characters to return (default 6000).
+
+    Returns:
+        Plain text content of the attachment, or an error string starting with 'Error:'.
+    """
+    # Validate URL scheme — only http/https allowed
+    if not re.match(r"^https?://", url.strip(), re.IGNORECASE):
+        return "Error: Only http:// and https:// URLs are supported."
+
+    # Cap max_chars to a sane upper bound
+    max_chars = max(100, min(max_chars, 50_000))
+
+    try:
+        raw = _fetch_attachment_bytes(url)
+    except ValueError as e:
+        return f"Error: {e}"
+    except httpx.TimeoutException:
+        return "Error: Download timed out (30 s limit)."
+    except httpx.HTTPStatusError as e:
+        return f"Error: HTTP {e.response.status_code} fetching attachment."
+    except Exception as e:
+        return f"Error downloading attachment: {e}"
+
+    # Detect file type from URL extension (lowercase, strip query strings)
+    url_path = url.split("?")[0].lower()
+    if url_path.endswith(".xlsx"):
+        return _parse_xlsx(raw, max_chars)
+    if url_path.endswith(".docx"):
+        return _parse_docx(raw, max_chars)
+    if url_path.endswith(".pdf"):
+        return _parse_pdf(raw, max_chars)
+    if url_path.endswith((".csv", ".txt", ".tsv")):
+        return _parse_csv(raw, max_chars)
+
+    # Fallback: sniff magic bytes for known formats
+    if raw[:4] == b"PK\x03\x04":
+        # ZIP-based: could be XLSX or DOCX — try XLSX first, then DOCX
+        try:
+            return _parse_xlsx(raw, max_chars)
+        except Exception:
+            try:
+                return _parse_docx(raw, max_chars)
+            except Exception as e:
+                return f"Error: ZIP-based file is neither XLSX nor DOCX: {e}"
+    if raw[:4] == b"%PDF":
+        return _parse_pdf(raw, max_chars)
+
+    # Last resort: treat as plain text
+    return _parse_csv(raw, max_chars)
+
+
+# ─── Graph Analyzer Tool ─────────────────────────────────────────────────────
+
+
+def _parse_graph_description(edges_description: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """
+    Parses a text description of a graph into a list of (source, target) edge tuples
+    and a deduplicated node list.
+
+    Accepted formats (auto-detected, not mutually exclusive):
+    - "nodes: A,B,C; edges: A-B, B-C"  — semicolon-separated header style
+    - "A-B, B-C, A-C"                   — bare edge list, dash separator
+    - "A→B; B→C"                        — arrow (directed) separator
+    - CSV/table: lines like "A,B" or "A;B" (two columns = edge list)
+
+    Direction is ignored for Eulerian analysis (treated as undirected graph).
+    Returns (edges, nodes) where nodes are ordered by first appearance.
+    """
+    text = edges_description.strip()
+    edges: list[tuple[str, str]] = []
+    node_order: list[str] = []
+    node_set: set[str] = set()
+
+    def add_node(n: str) -> None:
+        n = n.strip()
+        if n and n not in node_set:
+            node_set.add(n)
+            node_order.append(n)
+
+    # Normalize Unicode arrows to ASCII equivalents for easier parsing
+    text = text.replace("→", "->").replace("←", "<-").replace("↔", "<->")
+
+    # Attempt structured "nodes: ...; edges: ..." format
+    nodes_match  = re.search(r"nodes?\s*:\s*([^;]+)", text, re.IGNORECASE)
+    edges_match  = re.search(r"edges?\s*:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+
+    if nodes_match:
+        for n in re.split(r"[,\s]+", nodes_match.group(1)):
+            n = n.strip()
+            if n:
+                add_node(n)
+
+    edge_text = edges_match.group(1).strip() if edges_match else text
+
+    # Split edge text by comma or semicolon, then parse each token as an edge
+    separators = re.split(r"[,;\n]+", edge_text)
+    for token in separators:
+        token = token.strip()
+        if not token:
+            continue
+        # Try arrow formats: A->B, A<-B, A<->B
+        m = re.match(r"^(.+?)\s*(?:->|<->|--)\s*(.+)$", token)
+        if not m:
+            # Try reverse arrow A<-B (target → source)
+            m2 = re.match(r"^(.+?)\s*<-\s*(.+)$", token)
+            if m2:
+                src, tgt = m2.group(2).strip(), m2.group(1).strip()
+            else:
+                # Try dash: A-B (single dash, not --)
+                m3 = re.match(r"^([^-]+)-([^-].*)$", token)
+                if m3:
+                    src, tgt = m3.group(1).strip(), m3.group(2).strip()
+                else:
+                    # Try CSV two-column: "A,B" or "A;B"
+                    parts = re.split(r"[,;]", token, maxsplit=1)
+                    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                        src, tgt = parts[0].strip(), parts[1].strip()
+                    else:
+                        continue
+        else:
+            src, tgt = m.group(1).strip(), m.group(2).strip()
+
+        if src and tgt:
+            add_node(src)
+            add_node(tgt)
+            edges.append((src, tgt))
+
+    return edges, node_order
+
+
+def _analyze_eulerian(degree: dict[str, int], components: int) -> dict[str, Any]:
+    """
+    Determines Eulerian path/circuit existence for an undirected graph.
+
+    Eulerian circuit exists iff: graph is connected AND all vertices have even degree.
+    Eulerian path exists iff: graph is connected AND exactly two vertices have odd degree.
+
+    Returns a dict with keys: has_circuit, has_path, odd_degree_nodes, explanation.
+    """
+    odd_nodes = [n for n, d in degree.items() if d % 2 != 0]
+    if components > 1:
+        return {
+            "has_circuit": False,
+            "has_path": False,
+            "odd_degree_nodes": odd_nodes,
+            "explanation": (
+                f"Graph is disconnected ({components} components). "
+                "Eulerian path/circuit requires a single connected component."
+            ),
+        }
+    if len(odd_nodes) == 0:
+        return {
+            "has_circuit": True,
+            "has_path": True,  # A circuit is also a path
+            "odd_degree_nodes": [],
+            "explanation": "All vertices have even degree → Eulerian circuit exists (starts and ends at same vertex).",
+        }
+    if len(odd_nodes) == 2:
+        return {
+            "has_circuit": False,
+            "has_path": True,
+            "odd_degree_nodes": odd_nodes,
+            "explanation": (
+                f"Exactly 2 odd-degree vertices ({odd_nodes[0]}, {odd_nodes[1]}) → "
+                f"Eulerian path exists (from {odd_nodes[0]} to {odd_nodes[1]} or vice versa)."
+            ),
+        }
+    return {
+        "has_circuit": False,
+        "has_path": False,
+        "odd_degree_nodes": odd_nodes,
+        "explanation": (
+            f"{len(odd_nodes)} vertices have odd degree ({', '.join(odd_nodes[:10])}"
+            f"{'…' if len(odd_nodes) > 10 else ''}) → No Eulerian path or circuit."
+        ),
+    }
+
+
+def _connected_components(nodes: list[str], edges: list[tuple[str, str]]) -> list[list[str]]:
+    """
+    Computes connected components via iterative BFS (undirected interpretation of edges).
+    Returns a list of components, each component being a sorted list of node names.
+    """
+    adjacency: dict[str, set[str]] = {n: set() for n in nodes}
+    for src, tgt in edges:
+        adjacency.setdefault(src, set()).add(tgt)
+        adjacency.setdefault(tgt, set()).add(src)
+
+    visited: set[str] = set()
+    components: list[list[str]] = []
+
+    for start in nodes:
+        if start in visited:
+            continue
+        component: list[str] = []
+        queue = [start]
+        while queue:
+            node = queue.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            component.append(node)
+            queue.extend(adjacency.get(node, set()) - visited)
+        components.append(sorted(component))
+
+    return components
+
+
+@mcp.tool()
+def graph_analyze(edges_description: str) -> str:
+    """
+    Analyzes a graph described in plain text and returns structural findings as JSON.
+
+    Input format (flexible — any of these work):
+    - "nodes: A,B,C; edges: A-B, B-C, A-C"
+    - "A->B, B->C, C->A"          (directed arrows, treated as undirected for Euler)
+    - "A-B\\nB-C\\nC-D"           (one edge per line)
+    - CSV table where each row is "source,target"
+
+    Analysis results (JSON):
+    - node_count, edge_count
+    - degree_map: degree of each node
+    - connected_components: list of node groups
+    - is_connected: bool
+    - eulerian: {has_circuit, has_path, odd_degree_nodes, explanation}
+    - densitiy: edge_count / max_possible_edges (0..1)
+
+    Returns:
+        JSON string with analysis findings, or an error string starting with 'Error:'.
+
+    Example:
+        graph_analyze("nodes: A,B,C,D; edges: A-B, B-C, C-D, D-A")
+        → {"node_count": 4, "edge_count": 4, "is_connected": true,
+           "eulerian": {"has_circuit": true, ...}, ...}
+    """
+    if not edges_description.strip():
+        return "Error: edges_description must not be empty."
+
+    try:
+        edges, nodes = _parse_graph_description(edges_description)
+    except Exception as e:
+        return f"Error parsing graph description: {e}"
+
+    if not nodes:
+        return "Error: No nodes found in the description. Check the input format."
+
+    # Build degree map (undirected: each edge increments both endpoints)
+    degree: dict[str, int] = {n: 0 for n in nodes}
+    for src, tgt in edges:
+        degree[src] = degree.get(src, 0) + 1
+        if src != tgt:  # skip self-loops for degree count on other endpoint
+            degree[tgt] = degree.get(tgt, 0) + 1
+
+    # Self-loops count twice toward degree in undirected graphs
+    self_loops = [(s, t) for s, t in edges if s == t]
+    for s, _ in self_loops:
+        degree[s] += 1  # already counted once above; add the second increment
+
+    components = _connected_components(nodes, edges)
+    n = len(nodes)
+    e = len(edges)
+    max_edges = n * (n - 1) // 2 if n > 1 else 0
+    density = round(e / max_edges, 6) if max_edges > 0 else 0.0
+
+    eulerian_info = _analyze_eulerian(degree, len(components))
+
+    result = {
+        "node_count": n,
+        "edge_count": e,
+        "nodes": nodes,
+        "degree_map": degree,
+        "connected_components": components,
+        "component_count": len(components),
+        "is_connected": len(components) == 1,
+        "self_loops": [f"{s}-{t}" for s, t in self_loops],
+        "density": density,
+        "eulerian": eulerian_info,
+    }
+
+    try:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return f"Error serializing result: {e}"
 
 
 # ─── Tool registry for REST shim ────────────────────────────────────────────
@@ -1323,6 +1860,10 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "read_file_chunked": read_file_chunked,
     "lsp_query":         lsp_query,
     "generate_file":     generate_file,
+    "parse_attachment":  parse_attachment,
+    "graph_analyze":     graph_analyze,
+    "file_upload":       file_upload,
+    "file_download_url": file_download_url,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -1353,7 +1894,11 @@ _TOOL_DESCRIPTIONS = {
     "repo_map":          "AST/regex skeleton of a repo (file paths + classes/functions, no code)",
     "read_file_chunked": "Paginated file reading (start_line/end_line) — prevents context overflow",
     "lsp_query":         "Python LSP features: signature, find_references, completions (.py only)",
-    "generate_file":     "Generate downloadable files (HTML, DOCX, Markdown, TXT) from content",
+    "generate_file":     "Generate downloadable files (HTML, DOCX, PPTX, Markdown, TXT) from content — returns MinIO pre-signed URL",
+    "parse_attachment":  "Download and parse file attachments (XLSX→CSV, DOCX→text, PDF→text, CSV→text) — max 20 MB",
+    "graph_analyze":     "Analyze a graph (Eulerian path/circuit, connected components, degree map, density) from text description",
+    "file_upload":       "Upload a file (base64-encoded) to MinIO object storage and get a 24h pre-signed download URL",
+    "file_download_url": "Generate a fresh pre-signed download URL for an existing file in MinIO storage",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────

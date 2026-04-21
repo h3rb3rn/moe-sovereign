@@ -8,6 +8,80 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.4.0] - 2026-04-21
+
+> `impact: major` · `breaking: no` · `domain: pipeline, mcp-server, templates, docs`
+
+### Added — Agentic Re-Planning Loop
+
+MoE Sovereign can now autonomously perform multi-step reasoning by looping back through the pipeline when a knowledge gap is detected after synthesis. This enables GAIA Level 3 class questions that require chained tool calls (search → fetch → parse → calculate) to be answered correctly.
+
+**How it works:**
+
+After each Merger/Judge synthesis, a lightweight gap detection LLM call assesses whether the original question was fully answered. If `NEEDS_MORE_INFO` is returned, the pipeline routes back to the Planner with an injected context block describing what was established and what is still missing. The Planner generates a focused new plan, experts run again in parallel, and the Merger synthesizes the enriched results. This repeats up to `max_agentic_rounds` iterations.
+
+**Implementation:**
+
+- `AgentState` extended with four new fields: `agentic_iteration`, `agentic_max_rounds`, `agentic_history`, `agentic_gap`
+- `planner_node`: reads `max_agentic_rounds` from template config; injects agentic context block on re-plan iterations; bypasses Valkey plan cache
+- `merger_node`: performs gap detection LLM call after synthesis; appends per-round findings to `agentic_history`
+- New `_should_replan(state)` routing function: returns `"planner"` if gap detected and iterations remain, else `"critic"`
+- `add_edge("merger", "critic")` replaced by `add_conditional_edges("merger", _should_replan, ...)`
+- Streaming status messages (`🔄 Agentic Loop — Iteration N/M`) via existing `_report()` mechanism
+- Token budget guard: skips gap detection when `prompt_tokens > 80 000`
+
+**Template configuration:** `max_agentic_rounds: 0` (disabled, default) — fully opt-in, no breaking change.
+
+| Template | `max_agentic_rounds` |
+|---|---|
+| `tmpl-aihub-free-nextgen` | 3 |
+| All others | 0 (unchanged) |
+
+See [Agentic Re-Planning Loop](system/intelligence/agentic_loop.md) for full documentation.
+
+---
+
+### Added — PowerPoint Generation (MCP Server)
+
+The `generate_file` MCP tool now supports `.pptx` output via `python-pptx`.
+
+- `format: "pptx"` (aliases: `"ppt"`, `"powerpoint"`) generates a structured PowerPoint file
+- `##`-level headings become slide titles; body lines are added as bullet points
+- `python-pptx>=0.6.23` added to `mcp_server/requirements.txt`
+- Content-Type `application/vnd.openxmlformats-officedocument.presentationml.presentation` served via `/downloads/`
+- `skill_detector` expert in NextGen template routes PowerPoint requests to `generate_file`
+
+---
+
+### Added — NextGen Template (`tmpl-aihub-free-nextgen`)
+
+New expert template for the AIHUB free tier with 120B+ parameter models and a dedicated `skill_detector` expert:
+
+- `skill_detector` expert: detects file creation requests (PowerPoint, HTML, Word, Excel, CSV, PDF, scripts) and calls `generate_file` automatically
+- 12 expert domains: `skill_detector`, `code_reviewer`, `math`, `medical_consult`, `legal_advisor`, `reasoning`, `science`, `translation`, `technical_support`, `web_researcher`, `general`, `knowledge_healing`
+- `force_think: true`, `enable_graphrag: true`, `enable_web_research: true`
+- `max_agentic_rounds: 3` — agentic loop enabled by default
+
+---
+
+### Changed — All System Prompts Translated to English
+
+All LLM-facing prompts (planner, judge, expert system prompts) across the codebase and Postgres templates have been translated from German to English. German-specific idioms and phrasing artifacts have been removed.
+
+**Affected files/templates:**
+
+| Location | What changed |
+|---|---|
+| `main.py` | `_proc_markers` (German process words → English equivalents) |
+| `main.py` | Agentic loop status message `"📌 Noch offen:"` → `"📌 Still open:"` |
+| `main.py` | T1 insufficient marker `"(T1 nicht ausreichend)"` → `"(T1 insufficient)"` |
+| `benchmarks/evaluator.py` | `JUDGE_SYSTEM_PROMPT`, `JUDGE_SYSTEM_PROMPT_FALLBACK` |
+| `scripts/close_ontology_gaps.py` | `RESEARCH_SYSTEM_PROMPT`, `RESEARCH_USER_TEMPLATE` |
+| Postgres `tmpl-aihub-free-nextgen` | Planner prompt, judge prompt, all 12 expert system prompts |
+| Postgres `tmpl-m10-gremium-deep` | `legal_advisor` expert system prompt |
+
+---
+
 ## [2.3.0] - 2026-04-19
 
 ### Added — System Cleanup Manager & Autonomous Disk Management

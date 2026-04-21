@@ -398,7 +398,8 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
              "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
              "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
              "graphrag_max_chars": 0,
-             "history_max_turns": 0, "history_max_chars": 0}
+             "history_max_turns": 0, "history_max_chars": 0,
+             "max_agentic_rounds": 0}
     try:
         perms    = json.loads(permissions_json or "{}")
         tmpl_ids = perms.get("expert_template", [])
@@ -450,6 +451,8 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             # When true: activate thinking_node (chain-of-thought) before routing, equivalent
             # to mode="agent_orchestrated" — set in template config_json as force_think: true.
             "force_think":         bool(tmpl.get("force_think", False)),
+            # Agentic re-planning loop: 0 = disabled (single-pass), N = max re-plan iterations.
+            "max_agentic_rounds":  int(tmpl.get("max_agentic_rounds", 0)),
         }
     except Exception:
         return empty
@@ -1773,6 +1776,11 @@ class AgentState(TypedDict):
     expert_inputs: Dict                                  # {expert_name: {tokens_out, latency_ms}} per-expert stats
     cost_tier: str                                       # "local_7b" | "mid_tier" | "full" (cost classifier)
     force_tier1: bool                                    # True = skip T2 experts (cost saving for trivial tasks)
+    # ── Agentic re-planning loop ───────────────────────────────────────────────
+    agentic_iteration: int                               # current loop iteration (0 = first pass)
+    agentic_max_rounds: int                              # max iterations from template config (0 = disabled)
+    agentic_history: list                                # [{iteration, findings, gap}] accumulated per round
+    agentic_gap: str                                     # what's still missing — output of gap-detection LLM call
 
 # Zentrale Komponenten
 JUDGE_MODEL   = os.getenv("JUDGE_MODEL", "magistral:24b")
@@ -3076,10 +3084,16 @@ async def planner_node(state: AgentState):
     for _pr in (state.get("pending_reports") or []):
         await _report(_pr)
 
+    # ── Agentic loop: read config from template state ───────────────────────
+    _agentic_iteration  = state.get("agentic_iteration") or 0
+    _agentic_max_rounds = state.get("agentic_max_rounds") or 0
+    _is_agentic_replan  = _agentic_iteration > 0 and _agentic_max_rounds > 0
+
     # Planner result cache: same request → same plan (Valkey, TTL=30 min)
+    # Skip cache entirely during agentic re-planning — each iteration needs a fresh plan.
     import hashlib as _hashlib
     _plan_cache_key = f"moe:plan:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
-    if redis_client is not None:
+    if redis_client is not None and not _is_agentic_replan:
         try:
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
             if _cached_plan_raw:
@@ -3185,7 +3199,32 @@ async def planner_node(state: AgentState):
     ) if _inject_agentic and AGENTIC_CODE_TOOLS_DESCRIPTION else ""
 
     _planner_role = (state.get("planner_prompt") or "").strip() or DEFAULT_PLANNER_ROLE
-    prompt = f"""{_planner_role}
+
+    # ── Agentic re-plan: inject gap context and clear stale single-string results ──
+    _agentic_context_block = ""
+    _agentic_state_reset: dict = {}
+    if _is_agentic_replan:
+        _gap        = (state.get("agentic_gap") or "").strip()
+        _history    = state.get("agentic_history") or []
+        _prev_found = _history[-1].get("findings", "") if _history else ""
+        _agentic_context_block = (
+            f"\n=== AGENTIC ITERATION {_agentic_iteration}/{_agentic_max_rounds} ===\n"
+            f"Previously established facts:\n{_prev_found[:1500]}\n\n"
+            f"Still unresolved:\n{_gap[:800]}\n\n"
+            "Instructions: Focus ONLY on resolving the gap above. "
+            "Do NOT repeat subtasks already answered. "
+            "Use web_researcher or precision_tools to fetch missing data.\n"
+            "=== END AGENTIC CONTEXT ===\n"
+        )
+        await _report(
+            f"🔄 Agentic Loop — Iteration {_agentic_iteration}/{_agentic_max_rounds}\n"
+            f"📌 Still open: {_gap[:120]}"
+        )
+        # Clear single-string result fields so old results don't bleed into new iteration.
+        _agentic_state_reset = {"web_research": "", "mcp_result": "", "math_result": ""}
+        logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds}: gap={_gap[:80]}")
+
+    prompt = f"""{_planner_role}{_agentic_context_block}
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).
@@ -3333,7 +3372,8 @@ JSON array:"""
     if _extracted_filters:
         logger.info(f"📋 Planner metadata_filters: {_extracted_filters}")
     _skill_state = {"output_skill_body": _output_skill} if _output_skill else {}
-    return {"plan": plan, "metadata_filters": _extracted_filters, **total_usage, **_complexity_state_update, **_skill_state}
+    return {"plan": plan, "metadata_filters": _extracted_filters,
+            **total_usage, **_complexity_state_update, **_skill_state, **_agentic_state_reset}
 
 async def expert_worker(state: AgentState):
     if state.get("cache_hit"):
@@ -3551,7 +3591,7 @@ async def expert_worker(state: AgentState):
 
         if tier2:
             t2_names = ", ".join(e["model"] for _, e in tier2)
-            await _report(f"🔬 T2 [{cat}]: {t2_names} (T1 nicht ausreichend)")
+            await _report(f"🔬 T2 [{cat}]: {t2_names} (T1 insufficient)")
             t2_results = await asyncio.gather(
                 *[run_single(e, task, i + 1, len(forced_experts) + len(tier1) + j + 1)
                   for j, (_, e) in enumerate(tier2)]
@@ -4119,8 +4159,8 @@ async def merger_node(state: AgentState):
         _ingest_confidence = (sum(_expert_confs) / len(_expert_confs)) if _expert_confs else 0.5
         # Classify knowledge type: procedural if answer implies action→location requirements.
         _proc_markers = {
-            "requires", "muss", "notwendig", "Voraussetzung", "benötigt",
-            "Standort", "vor Ort", "physically", "on-site", "necessitates",
+            "requires", "must", "necessary", "prerequisite", "needed",
+            "location", "on-site", "on premises", "physically", "necessitates",
         }
         _knowledge_type = (
             "procedural"
@@ -4155,10 +4195,57 @@ async def merger_node(state: AgentState):
             redis_client=redis_client,
         ))
 
+    # ── Agentic gap detection: assess if another iteration is needed ─────────
+    _agentic_max  = state.get("agentic_max_rounds") or 0
+    _agentic_iter = state.get("agentic_iteration") or 0
+    _agentic_gap  = ""
+    _agentic_history = list(state.get("agentic_history") or [])
+    _agentic_extra: dict = {}
+
+    if _agentic_max > 0 and _agentic_iter < _agentic_max:
+        # Token-budget guard: skip gap detection if already close to limit
+        _used_tokens = state.get("prompt_tokens", 0) + merger_usage.get("prompt_tokens", 0)
+        if _used_tokens < 80_000:
+            _gap_prompt = (
+                "You are a completion assessor. Based on the original question and the current answer, "
+                "determine if the answer is complete.\n\n"
+                f"ORIGINAL QUESTION:\n{state['input'][:600]}\n\n"
+                f"CURRENT ANSWER:\n{res_content_clean[:800]}\n\n"
+                "Reply ONLY in this exact format (no extra text):\n"
+                "COMPLETION_STATUS: COMPLETE | NEEDS_MORE_INFO\n"
+                "GAP: <specific fact/calculation/document still missing, or 'none'>\n"
+                "NEXT_FOCUS: <one concrete action for the next search/calculation step>"
+            )
+            try:
+                _gap_res = await _invoke_judge_with_retry(state, _gap_prompt)
+                _gap_text = (_gap_res.content or "").strip()
+                _gap_match = re.search(r'GAP:\s*(.+?)(?:\n|$)', _gap_text, re.IGNORECASE)
+                _status_match = re.search(r'COMPLETION_STATUS:\s*(\w+)', _gap_text, re.IGNORECASE)
+                _status = (_status_match.group(1) if _status_match else "COMPLETE").upper()
+                _agentic_gap = (_gap_match.group(1).strip() if _gap_match else "").strip()
+                if _status == "COMPLETE" or not _agentic_gap or _agentic_gap.lower() in ("none", ""):
+                    _agentic_gap = "COMPLETE"
+                logger.info(f"🔍 Agentic gap check: status={_status}, gap={_agentic_gap[:80]}")
+            except Exception as _ge:
+                logger.warning(f"⚠️ Agentic gap detection failed: {_ge}")
+                _agentic_gap = "COMPLETE"
+        else:
+            logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
+            _agentic_gap = "COMPLETE"
+
+        # Record this iteration's findings for planner context in next round
+        _agentic_history.append({
+            "iteration": _agentic_iter,
+            "findings": res_content_clean[:1200],
+            "gap": _agentic_gap,
+        })
+        _agentic_extra = {"agentic_gap": _agentic_gap, "agentic_history": _agentic_history}
+
     return {
         "final_response": res_content_clean,
         "provenance_sources": _provenance_sources,
         **merger_usage,
+        **_agentic_extra,
     }
 
 
@@ -4287,6 +4374,23 @@ async def thinking_node(state: AgentState):
         return {"reasoning_trace": ""}
 
 
+def _should_replan(state: AgentState) -> str:
+    """Router: decides whether merger should loop back to planner or proceed to critic."""
+    _max   = state.get("agentic_max_rounds") or 0
+    _iter  = state.get("agentic_iteration") or 0
+    if _max <= 0:
+        return "critic"
+    if _iter >= _max:
+        return "critic"
+    _gap = (state.get("agentic_gap") or "").strip()
+    if not _gap or _gap.upper() == "COMPLETE" or _gap.lower() in ("none", ""):
+        return "critic"
+    # Increment iteration counter via state mutation (read by planner_node)
+    state["agentic_iteration"] = _iter + 1  # type: ignore[index]
+    logger.info(f"🔄 Agentic router: iteration {_iter + 1}/{_max}, gap='{_gap[:60]}'")
+    return "planner"
+
+
 async def critic_node(state: AgentState):
     """
     Fact-check for safety-critical domains (medical_consult, legal_advisor).
@@ -4380,7 +4484,11 @@ builder.add_edge("planner", "graph_rag")
 builder.add_edge(["workers", "research", "math", "mcp", "graph_rag"], "research_fallback")
 builder.add_edge("research_fallback", "thinking")
 builder.add_edge("thinking", "merger")
-builder.add_edge("merger", "critic")
+builder.add_conditional_edges(
+    "merger",
+    _should_replan,
+    {"planner": "planner", "critic": "critic"},
+)
 builder.add_edge("critic", END)
 
 # --- SERVER ---
@@ -5009,7 +5117,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                           model_name: str = "",
                           pending_reports: Optional[List[str]] = None,
                           images: Optional[List[Dict]] = None,
-                          session_id: str = None):
+                          session_id: str = None,
+                          max_agentic_rounds: int = 0):
     _deregistered = False
     config   = {"configurable": {"thread_id": str(uuid.uuid4())}}
     created  = int(time.time())
@@ -5056,7 +5165,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "planner_url_override":   planner_url_override or "",
                  "planner_token_override": planner_token_override or "",
                  "template_name":          model_name or "",
-                 "pending_reports": pending_reports or []},
+                 "pending_reports": pending_reports or [],
+                 "max_agentic_rounds": max_agentic_rounds,
+                 "agentic_iteration": 0,
+                 "agentic_history": [],
+                 "agentic_gap": ""},
                 config,
             )
         except Exception as e:
@@ -5568,7 +5681,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             model_name=request.model,
                             pending_reports=_pending_reports,
                             images=_user_images,
-                            session_id=session_id),
+                            session_id=session_id,
+                            max_agentic_rounds=_tmpl_prompts.get("max_agentic_rounds", 0)),
             media_type="text/event-stream",
         )
     result = await app_graph.ainvoke(
@@ -5600,7 +5714,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "planner_url_override":   _tmpl_prompts["planner_url_override"],
          "planner_token_override": _tmpl_prompts["planner_token_override"],
          "template_name":  _tmpl_name,
-         "pending_reports": _pending_reports},
+         "pending_reports": _pending_reports,
+         "max_agentic_rounds": _tmpl_prompts.get("max_agentic_rounds", 0),
+         "agentic_iteration": 0,
+         "agentic_history": [],
+         "agentic_gap": ""},
         {"configurable": {"thread_id": str(uuid.uuid4())}},
     )
     p_tok = result.get("prompt_tokens",     0)
@@ -6839,6 +6957,8 @@ async def clear_ontology_healer_status():
 
 _DEDICATED_HEALER_KEY = "moe:ontology:dedicated"
 _dedicated_healer_proc: "asyncio.subprocess.Process | None" = None
+# Mutex prevents concurrent auto-restart tasks (stream task + watchdog can both trigger).
+_dedicated_healer_restart_lock = asyncio.Lock()
 
 
 async def _auto_resume_dedicated_healer() -> None:
@@ -7034,64 +7154,71 @@ async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> N
 
     Called after a subprocess exits (clean or error). Waits HEALER_RESTART_DELAY_S
     before spawning so rapid crash-loops don't thrash the system.
+    The restart lock ensures only one concurrent restart attempt runs at a time —
+    both the stream task and the watchdog can call this; without the lock they
+    would produce a restart storm.
     """
     import time as _t
     global _dedicated_healer_proc
 
-    if redis_client is None:
+    # Non-blocking: if another restart is already in flight, skip.
+    if _dedicated_healer_restart_lock.locked():
         return
-    try:
-        cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-    except Exception:
-        return
-    if (cur or {}).get("auto_restart") != "1":
-        return
-
-    template = (cur or {}).get("template", "") or template_hint
-    if not template:
-        return
-
-    logger.info("🔄 Dedicated healer exited — auto-restart in %ds (template=%s)", _HEALER_RESTART_DELAY_S, template)
-    await asyncio.sleep(_HEALER_RESTART_DELAY_S)
-
-    # Bail if user stopped the healer while we were sleeping.
-    try:
-        cur2 = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-        if (cur2 or {}).get("auto_restart") != "1":
+    async with _dedicated_healer_restart_lock:
+        if redis_client is None:
             return
-    except Exception:
-        return
+        try:
+            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+        except Exception:
+            return
+        if (cur or {}).get("auto_restart") != "1":
+            return
 
-    env = os.environ.copy()
-    env["TEMPLATE_POOL"] = template
-    env.setdefault("REQUEST_TIMEOUT", "900")
-    env.setdefault("MOE_API_BASE", "http://localhost:8000")
-    sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
-    if sys_key:
-        env["MOE_API_KEY"] = sys_key
-    try:
-        new_proc = await asyncio.create_subprocess_exec(
-            "python3", "/app/scripts/gap_healer_templates.py",
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        _dedicated_healer_proc = new_proc
-        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-            "status": "running",
-            "stalled": "0",
-            "pid": str(new_proc.pid),
-            "started_at": str(_t.time()),
-            "last_activity_ts": str(_t.time()),
-            "processed": "0",
-            "written": "0",
-            "failed": "0",
-            "auto_restart": "1",
-        })
-        asyncio.create_task(_stream_dedicated_healer(new_proc))
-        logger.info("✅ Dedicated healer auto-restarted — PID %s", new_proc.pid)
-    except Exception as exc:
-        logger.error("❌ Dedicated healer auto-restart failed: %s", exc)
+        template = (cur or {}).get("template", "") or template_hint
+        if not template:
+            return
+
+        logger.info("🔄 Dedicated healer exited — auto-restart in %ds (template=%s)", _HEALER_RESTART_DELAY_S, template)
+        await asyncio.sleep(_HEALER_RESTART_DELAY_S)
+
+        # Bail if user stopped the healer while we were sleeping.
+        try:
+            cur2 = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
+            if (cur2 or {}).get("auto_restart") != "1":
+                return
+        except Exception:
+            return
+
+        env = os.environ.copy()
+        env["TEMPLATE_POOL"] = template
+        env.setdefault("REQUEST_TIMEOUT", "900")
+        env.setdefault("MOE_API_BASE", "http://localhost:8000")
+        sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
+        if sys_key:
+            env["MOE_API_KEY"] = sys_key
+        try:
+            new_proc = await asyncio.create_subprocess_exec(
+                "python3", "/app/scripts/gap_healer_templates.py",
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            _dedicated_healer_proc = new_proc
+            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
+                "status": "running",
+                "stalled": "0",
+                "pid": str(new_proc.pid),
+                "started_at": str(_t.time()),
+                "last_activity_ts": str(_t.time()),
+                "processed": "0",
+                "written": "0",
+                "failed": "0",
+                "auto_restart": "1",
+            })
+            asyncio.create_task(_stream_dedicated_healer(new_proc))
+            logger.info("✅ Dedicated healer auto-restarted — PID %s", new_proc.pid)
+        except Exception as exc:
+            logger.error("❌ Dedicated healer auto-restart failed: %s", exc)
 
 
 async def _watchdog_dedicated_healer() -> None:
