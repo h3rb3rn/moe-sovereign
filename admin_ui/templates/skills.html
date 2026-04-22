@@ -160,6 +160,9 @@ const _tskills = {
   refFiles:          "{{ t(request, 'info.ref_files') }}",
   gitPullFailed:     "{{ t(request, 'js.git_pull_failed') }}",
   error:             "{{ t(request, 'js.error') }}",
+  audit:             "{{ t(request, 'btn.audit') }}",
+  refreshExtAudits:  "{{ t(request, 'btn.refresh_ext_audits') }}",
+  auditRequired:     "{{ t(request, 'js.audit_required') }}",
 };
 
 function getModal() {
@@ -387,7 +390,7 @@ function renderUpstreamCard(s) {
           <i class="bi bi-shield-check me-1"></i>{{ t(request, 'btn.audit') }}
         </button>
         <button class="btn btn-sm ${importBtnCls}" onclick="importSkill('${escHtml(s.name)}', this)"
-                ${canImport ? '' : 'disabled title="{{ t(request, \'js.audit_required\') }}"'}>
+                ${canImport ? '' : `disabled title="${_tskills.auditRequired}"`}>
           ${importBtnTxt}
         </button>
       </div>
@@ -546,7 +549,7 @@ async function auditUpstreamSkill(name, btn) {
     showFlash(`Audit failed: ${e.message}`, 'danger');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-shield-check me-1"></i>{{ t(request, \'btn.audit\') }}';
+    btn.innerHTML = `<i class="bi bi-shield-check me-1"></i>${_tskills.audit}`;
   }
 }
 
@@ -564,7 +567,7 @@ async function refreshExtAudits(btn) {
     showFlash(`Refresh failed: ${e.message}`, 'danger');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-shield-exclamation me-1"></i>{{ t(request, \'btn.refresh_ext_audits\') }}';
+    btn.innerHTML = `<i class="bi bi-shield-exclamation me-1"></i>${_tskills.refreshExtAudits}`;
   }
 }
 
