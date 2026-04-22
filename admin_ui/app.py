@@ -2972,30 +2972,30 @@ async def _fetch_skillssh_audits() -> dict:
         logger.warning(f"skills.sh/audits fetch failed: {exc}")
         return _load_skillssh_cache_fallback()
 
-    # Parse HTML table rows — each row contains: rank, skill-name, repo, gen, socket, snyk
+    # skills.sh is a Next.js / RSC app — no HTML table.
+    # Audit data is embedded in the RSC payload as doubly-escaped JSON inside
+    # self.__next_f.push([N,"..."]) script tags.
+    # The initial page load delivers the first ~50 ranked entries (the rest are
+    # lazy-loaded client-side, invisible to a plain HTTP request).
+    # We split on \"rank\":N, to isolate each skill block and extract fields.
     audits: dict = {}
-    row_re = _re.compile(
-        r"<tr[^>]*>.*?</tr>", _re.DOTALL | _re.IGNORECASE
-    )
-    cell_re = _re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", _re.DOTALL | _re.IGNORECASE)
-    tag_re = _re.compile(r"<[^>]+>")
+    skill_id_re = _re.compile(r'\\"skillId\\":\\"([a-z0-9][a-z0-9_-]+)\\"')
+    gen_re      = _re.compile(r'\\"agentTrustHub\\".*?\\"gemini_analysis\\".*?\\"verdict\\":\\"([A-Z_]+)\\"', _re.DOTALL)
+    socket_re   = _re.compile(r'\\"alertCount\\":(\d+)')
+    snyk_re     = _re.compile(r'\\"overall_risk_level\\":\\"([A-Z]+)\\"')
 
-    for row in row_re.finditer(html):
-        cells = [tag_re.sub("", c.group(1)).strip() for c in cell_re.finditer(row.group())]
-        # Expect at least 6 columns: rank, name, repo, gen, socket, snyk
-        if len(cells) < 6:
+    for block in _re.split(r'\\"rank\\":\d+,', html)[1:]:
+        m_id = skill_id_re.search(block)
+        if not m_id:
             continue
-        _, name_raw, _repo, gen_raw, socket_raw, snyk_raw = cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
-        name = name_raw.strip().lower().replace("_", "-")
-        if not name or name == "skill":  # skip header row
-            continue
-        # Normalise socket count to int (e.g. "0 alerts" → 0)
-        socket_match = _re.search(r"\d+", socket_raw)
-        socket_alerts = int(socket_match.group()) if socket_match else None
-        audits[name] = {
-            "gen_verdict": gen_raw.strip() or None,
-            "socket_alerts": socket_alerts,
-            "snyk_risk": snyk_raw.strip() or None,
+        skill_id = m_id.group(1)
+        m_gen    = gen_re.search(block)
+        m_sock   = socket_re.search(block)
+        m_snyk   = snyk_re.search(block)
+        audits[skill_id] = {
+            "gen_verdict":   m_gen.group(1)  if m_gen  else None,
+            "socket_alerts": int(m_sock.group(1)) if m_sock else None,
+            "snyk_risk":     m_snyk.group(1) if m_snyk else None,
         }
 
     if audits:
