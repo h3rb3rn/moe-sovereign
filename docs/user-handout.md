@@ -7,13 +7,13 @@ Internal AI platform · Access documentation for API users
 
 ## Table of Contents
 
-1. [Access & First Login](#1-access--first-login)
-2. [User Portal — Overview](#2-user-portal--overview)
+1. [Access & First Login](#1-access-first-login)
+2. [User Portal — Overview](#2-user-portal-overview)
 3. [Managing API Keys](#3-managing-api-keys)
 4. [Using the API](#4-using-the-api)
-5. [Token Budget & Consumption](#5-token-budget--consumption)
-6. [Change Profile & Password](#6-change-profile--password)
-7. [Errors & FAQ](#7-errors--faq)
+5. [Token Budget & Consumption](#5-token-budget-consumption)
+6. [Change Profile & Password](#6-change-profile-password)
+7. [Errors & FAQ](#7-errors-faq)
 
 ---
 

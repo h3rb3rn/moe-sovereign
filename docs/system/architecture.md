@@ -111,6 +111,7 @@ graph LR
     subgraph Tools
         MCP[mcp-precision\nMCP Server :8003\n26 tools]
         SEARX[SearXNG\nexternal / self-hosted]
+        MINIO[(moe-storage\nMinIO :9000\nS3 object store)]
     end
 
     subgraph GPU_Inference
@@ -149,6 +150,8 @@ graph LR
     ORCH --> KAFKA
     ORCH --> MCP
     ORCH --> SEARX
+    MCP -->|"S3 PUT / presign"| MINIO
+    NGINX -->|"files.<domain>"| MINIO
     ORCH --> INF1
     ORCH -.-> INF2
 
@@ -179,9 +182,9 @@ graph LR
 
 The `knowledge_type` field on `moe.ingest` distinguishes **factual** (entities, measurements, definitions) from **procedural** (action→location requirements, causal chains) ingests. The Graph Ingest LLM adapts its extraction strategy accordingly.
 
-The optional `synthesis_insight` field carries a JSON object `{summary, entities, insight_type}` when the merger produced a novel multi-source synthesis. The consumer creates a `:Synthesis` node in Neo4j for it. See [Graph-basierte Wissensakkumulation](../intelligence/compounding_knowledge.md).
+The optional `synthesis_insight` field carries a JSON object `{summary, entities, insight_type}` when the merger produced a novel multi-source synthesis. The consumer creates a `:Synthesis` node in Neo4j for it. See [Graph-basierte Wissensakkumulation](intelligence/compounding_knowledge.md).
 
-The `source_expert` field carries the dominant expert category (e.g. `"medical_consult"`, `"code_reviewer"`) that produced the response. The consumer forwards it to `extract_and_ingest()` and `ingest_synthesis()` as `expert_domain`, tagging all resulting Neo4j nodes and relations. See [Memory Palace](../intelligence/memory_palace.md).
+The `source_expert` field carries the dominant expert category (e.g. `"medical_consult"`, `"code_reviewer"`) that produced the response. The consumer forwards it to `extract_and_ingest()` and `ingest_synthesis()` as `expert_domain`, tagging all resulting Neo4j nodes and relations. See [Memory Palace](intelligence/memory_palace.md).
 
 ---
 

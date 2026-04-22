@@ -37,36 +37,115 @@ EOF
 print_banner
 
 # =============================================================================
-#  SECTION 1b: Re-run detection
+#  SECTION 1b: Re-run detection — UPDATE MODE
 # =============================================================================
-# If .env and data volumes already exist, warn and offer the safe path.
-# Re-running without preservation would regenerate Postgres/Neo4j/Redis
-# passwords while the existing volumes keep the old credentials → every
-# dependent service (moe-admin, langgraph-app) dies with auth errors.
-# This early warning gives the operator a chance to abort.
+# If an existing .env and Docker volumes are found, this is an update run,
+# not a fresh install. We must NOT overwrite credentials: Postgres, Neo4j,
+# Redis and Grafana store their credentials inside their data volumes on
+# first init — regenerating .env would lock every service out of its data.
+#
+# Update mode: re-apply volume ownership, git pull, compose rebuild. Done.
+# No interactive prompts, no .env rewrite.
 if [[ -f "${MOE_ENV_FILE}" ]] && command -v docker >/dev/null 2>&1; then
   vol_count=$(docker volume ls -q 2>/dev/null | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
   if [[ "${vol_count:-0}" -gt 0 ]]; then
+
     echo ""
-    echo "  [!] RE-RUN DETECTED"
-    echo "      Found existing .env at ${MOE_ENV_FILE}"
-    echo "      and ${vol_count} data volume(s) from a previous install."
+    echo "  =================================================================="
+    echo "  UPDATE MODE — existing installation detected"
+    echo "  =================================================================="
+    echo "  Found .env at ${MOE_ENV_FILE}"
+    echo "  Found ${vol_count} data volume(s) from a previous install."
     echo ""
-    echo "      This installer will PRESERVE all infrastructure secrets"
-    echo "      (Postgres, Neo4j, Redis, Grafana) from your existing .env"
-    echo "      so that services stay compatible with their data volumes."
+    echo "  Credentials will NOT be changed. Running:"
+    echo "    1. Re-apply volume permissions (fixes container UID mismatches)"
+    echo "    2. git pull --ff-only"
+    echo "    3. docker compose build + up -d"
+    echo "  =================================================================="
     echo ""
-    echo "      Only admin user/password/domain will be re-prompted."
-    echo ""
-    if [[ -t 0 ]] || [[ -r /dev/tty ]]; then
-      read -rp "  Continue? [Y/n] " _rerun_ok < /dev/tty || _rerun_ok="y"
-      case "${_rerun_ok:-y}" in
-        [nN]|[nN][oO])
-          echo "  Aborted by user."
-          exit 0
-          ;;
-      esac
+
+    # Root is required for chown. The global root check (Section 2) comes
+    # later, so we do our own early check here for the update path.
+    if [[ $EUID -ne 0 ]]; then
+      echo "[ERROR] Update mode requires root. Re-run with: sudo bash install.sh"
+      exit 1
     fi
+
+    # Read data roots from existing .env (same logic as Section 6)
+    _renv() { grep -E "^${1}=" "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-; }
+    _upd_data=$(_renv MOE_DATA_ROOT);   _upd_data="${_upd_data:-/opt/moe-infra}"
+    _upd_graf=$(_renv GRAFANA_DATA_ROOT); _upd_graf="${_upd_graf:-/opt/grafana}"
+
+    # Ensure directories exist (they should, but guard against partial installs)
+    mkdir -p \
+      "${_upd_data}/kafka-data"       "${_upd_data}/neo4j-data"   \
+      "${_upd_data}/neo4j-logs"       "${_upd_data}/agent-logs"   \
+      "${_upd_data}/chroma-onnx-cache" "${_upd_data}/chroma-data" \
+      "${_upd_data}/redis-data"       "${_upd_data}/prometheus-data" \
+      "${_upd_data}/admin-logs"       "${_upd_data}/userdb"        \
+      "${_upd_data}/few-shot"         \
+      "${_upd_graf}/data"             "${_upd_graf}/dashboards"    \
+      2>/dev/null || true
+
+    # Re-apply container UID ownership. These must match the UIDs baked into
+    # the Docker images; a mismatch causes write-permission crashes on startup.
+    # kafka (confluentinc/cp-kafka): appuser uid=1000
+    chown -R 1000:1000   "${_upd_data}/kafka-data"                          2>/dev/null || true
+    # prometheus: runs as nobody uid=65534
+    chown -R 65534:65534 "${_upd_data}/prometheus-data"                     2>/dev/null || true
+    # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
+    chown -R 1001:0      "${_upd_data}/agent-logs"                          2>/dev/null || true
+    # grafana: uid=472
+    chown -R 472:472     "${_upd_graf}/data" "${_upd_graf}/dashboards"      2>/dev/null || true
+
+    echo "  [1/3] Volume permissions reset ✓"
+
+    # Pull latest code
+    if [[ -d "${INSTALL_DIR}/.git" ]]; then
+      echo "  [2/3] Pulling latest code..."
+      git -C "${INSTALL_DIR}" pull --ff-only \
+        || echo "  [!] git pull failed — continuing with current code."
+    else
+      echo "  [2/3] ${INSTALL_DIR} is not a git repo — skipping pull."
+    fi
+
+    # Rebuild images and restart containers
+    echo "  [3/3] Rebuilding containers..."
+    cd "${INSTALL_DIR}"
+    docker compose build --quiet
+    docker compose up -d
+    echo "        Containers started ✓"
+
+    # Health check (same as Section 12)
+    echo ""
+    echo "  Waiting for MoE Sovereign API to become ready..."
+    _health_url="http://localhost:8002/metrics"
+    _max_wait=120; _interval=5; _elapsed=0
+    while true; do
+      if curl -sf "${_health_url}" &>/dev/null; then
+        echo "  API ready ✓"
+        break
+      fi
+      if [[ ${_elapsed} -ge ${_max_wait} ]]; then
+        echo ""
+        echo "  [!] API did not respond within ${_max_wait}s."
+        echo "      Check logs: sudo docker compose -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+        break
+      fi
+      printf "."
+      sleep "${_interval}"
+      _elapsed=$(( _elapsed + _interval ))
+    done
+
+    echo ""
+    echo "  =================================================================="
+    echo "  MoE Sovereign updated successfully."
+    echo ""
+    echo "  Logs:    sudo docker compose logs -f"
+    echo "  Status:  sudo docker compose ps"
+    echo "  =================================================================="
+    echo ""
+    exit 0
   fi
 fi
 

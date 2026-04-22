@@ -91,7 +91,7 @@ flowchart TD
     P2B --> P2C["SET r.flagged=true,<br/>r.lint_note=..., r.lint_ts=..."]
 ```
 
-See [Graph-basierte Wissensakkumulation](../../intelligence/compounding_knowledge.md) for the full operational guide.
+See [Graph-basierte Wissensakkumulation](../intelligence/compounding_knowledge.md) for the full operational guide.
 
 ## Retrieval in the Pipeline Node
 

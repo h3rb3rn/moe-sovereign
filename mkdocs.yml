@@ -135,6 +135,7 @@ nav:
     - MoE-Eval Benchmarks: system/benchmarks.md
     - Kafka Event Streaming: system/kafka.md
     - Docker Services: system/services.md
+    - Object Storage (MinIO): system/storage.md
     - Webserver & Reverse Proxy: system/webserver.md
     - UI Screenshots: system/screenshots.md
   - Intelligence & Learning:

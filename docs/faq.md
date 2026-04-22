@@ -2,15 +2,15 @@
 
 ## Table of Contents
 
-1. [Claude Code & .bashrc Configuration](#1-claude-code--bashrc-configuration)
-2. [API Keys — Create & Use](#2-api-keys--create--use)
+1. [Claude Code & .bashrc Configuration](#1-claude-code-bashrc-configuration)
+2. [API Keys — Create & Use](#2-api-keys-create-use)
 3. [Authentication](#3-authentication)
 4. [Request Modes (Models)](#4-request-modes-models)
-5. [Token Budget & Costs](#5-token-budget--costs)
+5. [Token Budget & Costs](#5-token-budget-costs)
 6. [Expert Templates](#6-expert-templates)
 7. [Giving Feedback](#7-giving-feedback)
-8. [Admin UI — Key Functions](#8-admin-ui--key-functions)
-9. [MoE Portal & Web Interface](#9-moe-portal--web-interface)
+8. [Admin UI — Key Functions](#8-admin-ui-key-functions)
+9. [MoE Portal & Web Interface](#9-moe-portal-web-interface)
 10. [Best Practices](#10-best-practices)
 11. [Troubleshooting](#11-troubleshooting)
 

@@ -140,4 +140,4 @@ The `graph_tenant` resource type is a special permission that controls which kno
 | `graph_tenant` | `tenant:{id}` | Tenant (Mandant) knowledge namespace |
 
 !!! tip "Automatic management via Teams & Tenants"
-    These permissions are managed automatically when you add users to teams or tenants via the [Teams & Tenants](/admin/teams) page. You do not need to grant them manually.
+    These permissions are managed automatically when you add users to teams or tenants via the [Teams & Tenants](teams.md) page. You do not need to grant them manually.

@@ -42,7 +42,7 @@ LangGraph also controls **conditional CoT** (Chain-of-Thought): if an expert wor
 |---|---|---|
 | `cache_lookup` | Check ChromaDB semantic cache | Yes — hit: direct response |
 | `planner` | Judge LLM analyzes query, selects branches | No |
-| `workers` | Parallel expert LLM calls via LiteLLM | No |
+| `workers` | Parallel expert LLM calls via configured Ollama inference servers | No |
 | `research` | SearXNG web search, result summarization | No |
 | `math` | SymPy-based equation solving | No |
 | `mcp` | Deterministic tool call via MCP server | No |
@@ -87,4 +87,4 @@ workflow.set_entry_point("cache_lookup")
 app_graph = workflow.compile()
 ```
 
-For changes to the graph structure or new nodes, a **GitHub Issue** is required before submitting a PR (see [CONTRIBUTING.md](../../../../CONTRIBUTING.md)).
+For changes to the graph structure or new nodes, a **GitHub Issue** is required before submitting a PR.

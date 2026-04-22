@@ -152,7 +152,7 @@ Before the knowledge-type heuristic runs, the merger response is scanned for a `
 
 The consumer then calls `graph_manager.ingest_synthesis()` **in parallel** with the normal triple extraction. The two paths are independent — a synthesis can exist alongside extracted triples from the same response.
 
-See [Graph-basierte Wissensakkumulation](../intelligence/compounding_knowledge.md) for full details.
+See [Graph-basierte Wissensakkumulation](intelligence/compounding_knowledge.md) for full details.
 
 ---
 
@@ -327,4 +327,4 @@ sequenceDiagram
 The `expert_domain` is set to `"session"` for all hook-sourced ingests, keeping them
 in a dedicated namespace that can be queried or filtered independently from expert-generated knowledge.
 
-See [Memory Palace — Auto-Save Hooks](../intelligence/memory_palace.md#feature-3--claude-code-auto-save-hooks) for full setup and reference.
+See [Memory Palace — Auto-Save Hooks](intelligence/memory_palace.md) for full setup and reference.

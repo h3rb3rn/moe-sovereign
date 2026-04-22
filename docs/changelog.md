@@ -92,7 +92,7 @@ Native LLMs, Skills, MCP Tools) are now collapsible Bootstrap cards.
 ### Fixed — GAIA Benchmark Integration Findings
 
 Six infrastructure and configuration bugs discovered and resolved during the GAIA
-benchmark evaluation session. See [GAIA Benchmark section](system/benchmarks.md#april-2026--gaia-benchmark-compound-ai-system-evaluation-against-a-public-standard)
+benchmark evaluation session. See [GAIA Benchmark section](system/benchmarks.md#april-2026-gaia-benchmark-compound-ai-system-evaluation-against-a-public-standard)
 for the full trial & error report.
 
 #### `wikipedia_get_section` — `article=` parameter alias (MCP Server)

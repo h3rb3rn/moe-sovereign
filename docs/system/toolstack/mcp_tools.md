@@ -100,7 +100,7 @@ Afterwards:
 2. Add a description in the `/tools` endpoint
 3. Add an entry to this documentation page
 
-For PR process details: [CONTRIBUTING.md](../../../../CONTRIBUTING.md#2a-new-mcp-precision-tools)
+
 
 ## File Generation Tool
 
