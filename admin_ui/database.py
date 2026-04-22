@@ -16,10 +16,37 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+import base64
+
 import bcrypt as _bcrypt
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+from cryptography.fernet import Fernet
+
+_SECRET_KEY_RAW = os.getenv("ADMIN_SECRET_KEY", "")
+
+
+def _get_fernet() -> Fernet:
+    """Derive a stable Fernet key from ADMIN_SECRET_KEY via SHA-256."""
+    raw = hashlib.sha256(_SECRET_KEY_RAW.encode()).digest() if _SECRET_KEY_RAW else b"\x00" * 32
+    return Fernet(base64.urlsafe_b64encode(raw))
+
+
+def encrypt_api_key(plaintext: str) -> str:
+    """Fernet-encrypt an API key string. Returns empty string for empty input."""
+    return "" if not plaintext else _get_fernet().encrypt(plaintext.encode()).decode()
+
+
+def decrypt_api_key(ciphertext: str) -> str:
+    """Decrypt a Fernet-encrypted API key. Returns empty string on failure or empty input."""
+    if not ciphertext:
+        return ""
+    try:
+        return _get_fernet().decrypt(ciphertext.encode()).decode()
+    except Exception:
+        logger.warning("Failed to decrypt user API key — possible key rotation or data corruption")
+        return ""
 
 DATABASE_URL = os.getenv(
     "MOE_USERDB_URL",
@@ -140,13 +167,29 @@ CREATE TABLE IF NOT EXISTS user_cc_profiles (
     updated_at  TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_api_keys_hash       ON api_keys(key_hash);
-CREATE INDEX IF NOT EXISTS idx_api_keys_user       ON api_keys(user_id);
-CREATE INDEX IF NOT EXISTS idx_permissions_user    ON permissions(user_id);
-CREATE INDEX IF NOT EXISTS idx_usage_user_date     ON usage_log(user_id, requested_at);
-CREATE INDEX IF NOT EXISTS idx_usage_request       ON usage_log(request_id);
-CREATE INDEX IF NOT EXISTS idx_user_templates_user ON user_expert_templates(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_cc_profiles_user ON user_cc_profiles(user_id);
+CREATE TABLE IF NOT EXISTS user_api_connections (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    url          TEXT NOT NULL,
+    api_type     TEXT NOT NULL DEFAULT 'openai',
+    api_key_enc  TEXT NOT NULL DEFAULT '',
+    models_cache TEXT NOT NULL DEFAULT '[]',
+    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    UNIQUE(user_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash             ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user             ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_permissions_user          ON permissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_usage_user_date           ON usage_log(user_id, requested_at);
+CREATE INDEX IF NOT EXISTS idx_usage_request             ON usage_log(request_id);
+CREATE INDEX IF NOT EXISTS idx_user_templates_user       ON user_expert_templates(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_cc_profiles_user     ON user_cc_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_api_connections_user ON user_api_connections(user_id);
 
 CREATE TABLE IF NOT EXISTS admin_expert_templates (
     id          TEXT PRIMARY KEY,
@@ -1174,6 +1217,112 @@ async def admin_delete_user_cc_profile(profile_id: str) -> Optional[str]:
             return user_id if cur.rowcount > 0 else None
 
 
+# ─── User API Connections ─────────────────────────────────────────────────────
+
+
+async def create_user_connection(
+    user_id: str,
+    name: str,
+    display_name: str,
+    url: str,
+    api_type: str,
+    api_key_plain: str,
+) -> dict:
+    """Create a private API connection for an expert user. API key is encrypted at rest."""
+    conn_id = "uconn-" + uuid.uuid4().hex[:12]
+    now = datetime.now(timezone.utc).isoformat()
+    api_key_enc = encrypt_api_key(api_key_plain)
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute(
+                    "INSERT INTO user_api_connections "
+                    "(id, user_id, name, display_name, url, api_type, api_key_enc, "
+                    "models_cache, is_active, created_at, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'[]',TRUE,%s,%s)",
+                    (conn_id, user_id, name, display_name, url,
+                     api_type, api_key_enc, now, now),
+                )
+            except psycopg.errors.UniqueViolation:
+                raise ValueError(f"Connection name '{name}' already exists for this user")
+    return await get_user_connection(conn_id, user_id)
+
+
+async def get_user_connection(conn_id: str, user_id: str) -> Optional[dict]:
+    """Fetch a single connection by ID, scoped to the owner. Returns None if not found."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM user_api_connections WHERE id=%s AND user_id=%s",
+                (conn_id, user_id),
+            )
+            return await cur.fetchone()
+
+
+async def list_user_connections(user_id: str) -> list:
+    """Return all connections for a user. api_key_enc is NOT decrypted here."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM user_api_connections WHERE user_id=%s ORDER BY created_at DESC",
+                (user_id,),
+            )
+            return await cur.fetchall()
+
+
+async def update_user_connection(
+    conn_id: str,
+    user_id: str,
+    display_name: str,
+    url: str,
+    api_type: str,
+    api_key_plain: Optional[str] = None,
+) -> Optional[dict]:
+    """Update a connection. Pass api_key_plain=None to keep the existing key unchanged."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            if api_key_plain is not None:
+                await cur.execute(
+                    "UPDATE user_api_connections "
+                    "SET display_name=%s, url=%s, api_type=%s, api_key_enc=%s, updated_at=%s "
+                    "WHERE id=%s AND user_id=%s",
+                    (display_name, url, api_type, encrypt_api_key(api_key_plain), now,
+                     conn_id, user_id),
+                )
+            else:
+                await cur.execute(
+                    "UPDATE user_api_connections "
+                    "SET display_name=%s, url=%s, api_type=%s, updated_at=%s "
+                    "WHERE id=%s AND user_id=%s",
+                    (display_name, url, api_type, now, conn_id, user_id),
+                )
+    return await get_user_connection(conn_id, user_id)
+
+
+async def delete_user_connection(conn_id: str, user_id: str) -> bool:
+    """Delete a connection. Returns True if a row was deleted."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM user_api_connections WHERE id=%s AND user_id=%s",
+                (conn_id, user_id),
+            )
+            return cur.rowcount > 0
+
+
+async def update_connection_models_cache(conn_id: str, user_id: str, models: list) -> None:
+    """Persist a refreshed model list for a connection."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE user_api_connections SET models_cache=%s, updated_at=%s "
+                "WHERE id=%s AND user_id=%s",
+                (json.dumps(models), now, conn_id, user_id),
+            )
+
+
 # ─── Valkey Sync ──────────────────────────────────────────────────────────────
 
 async def _get_redis():
@@ -1237,6 +1386,20 @@ async def sync_user_to_redis(user_id: str) -> None:
     }
     user_cc_profiles_json = json.dumps(user_cc_map)
 
+    # User-eigene API-Verbindungen cachen (mit entschlüsseltem Key für Orchestrator)
+    user_conns_raw = await list_user_connections(user_id)
+    user_conns_map = {}
+    for c in user_conns_raw:
+        if c.get("is_active", True):
+            user_conns_map[c["name"]] = {
+                "id":           c["id"],
+                "url":          c["url"],
+                "api_type":     c.get("api_type", "openai"),
+                "api_key":      decrypt_api_key(c.get("api_key_enc", "")),
+                "models_cache": json.loads(c.get("models_cache", "[]")),
+            }
+    user_connections_json = json.dumps(user_conns_map)
+
     r = await _get_redis()
     if not r:
         return
@@ -1251,7 +1414,8 @@ async def sync_user_to_redis(user_id: str) -> None:
                     "is_active":              "1",
                     "permissions_json":       perms_json,
                     "user_templates_json":    user_templates_json,
-                    "user_cc_profiles_json":  user_cc_profiles_json,
+                    "user_cc_profiles_json":   user_cc_profiles_json,
+                    "user_connections_json":   user_connections_json,
                     "budget_daily":           str(budget.get("daily_limit") or ""),
                     "budget_monthly":         str(budget.get("monthly_limit") or ""),
                     "budget_total":           str(budget.get("total_limit") or ""),

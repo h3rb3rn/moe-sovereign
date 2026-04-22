@@ -5234,6 +5234,176 @@ async def api_admin_delete_cc_profile(profile_id: str):
     return {"ok": True}
 
 
+# ─── User API Connections ─────────────────────────────────────────────────────
+
+
+async def _require_connections_access(user_id: str) -> dict:
+    """Raise 403 if the user does not have role 'expert' or 'admin'."""
+    user = await db.get_user(user_id)
+    if not user or user.get("role") not in ("expert", "admin"):
+        raise HTTPException(status_code=403, detail="Role 'expert' or 'admin' required")
+    return user
+
+
+def _get_global_server_names() -> set:
+    """Return the set of global inference server names from the .env config."""
+    config = read_env()
+    try:
+        servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
+    except Exception:
+        servers = []
+    return {s["name"] for s in servers if s.get("name")}
+
+
+@app.get("/user/connections", response_class=HTMLResponse)
+async def user_connections_page(request: Request, user_id: str = Depends(require_user_login)):
+    await _require_connections_access(user_id)
+    user = await db.get_user(user_id)
+    conns_raw = await db.list_user_connections(user_id)
+    safe_conns = [{k: v for k, v in c.items() if k != "api_key_enc"} for c in conns_raw]
+    for c in safe_conns:
+        try:
+            c["models_cache"] = json.loads(c.get("models_cache", "[]"))
+        except Exception:
+            c["models_cache"] = []
+    return TEMPLATES.TemplateResponse(request, "user_portal.html", {
+        "page":               "connections",
+        "user":               user,
+        "can_create_templates": True,
+        "connections":        safe_conns,
+        "csrf_token":         get_csrf_token(request),
+    })
+
+
+@app.get("/user/api/connections")
+async def user_api_list_connections(user_id: str = Depends(require_user_login)):
+    """List the user's private API connections (no decrypted keys)."""
+    await _require_connections_access(user_id)
+    conns_raw = await db.list_user_connections(user_id)
+    result = []
+    for c in conns_raw:
+        entry = {k: v for k, v in c.items() if k != "api_key_enc"}
+        entry["has_key"] = bool(c.get("api_key_enc"))
+        try:
+            entry["models_cache"] = json.loads(c.get("models_cache", "[]"))
+        except Exception:
+            entry["models_cache"] = []
+        result.append(entry)
+    return result
+
+
+@app.post("/user/api/connections")
+async def user_api_create_connection(request: Request, user_id: str = Depends(require_user_login)):
+    """Create a new private API connection for an expert user."""
+    await _require_connections_access(user_id)
+    body         = await request.json()
+    name         = (body.get("name") or "").strip()
+    display_name = (body.get("display_name") or name).strip()
+    url          = (body.get("url") or "").strip().rstrip("/")
+    api_type     = (body.get("api_type") or "openai").strip()
+    api_key      = (body.get("api_key") or "").strip()
+
+    if not name or not url:
+        raise HTTPException(status_code=400, detail="name and url are required")
+    if not _re.fullmatch(r"[a-zA-Z0-9_-]{1,32}", name):
+        raise HTTPException(status_code=400, detail="name must be 1-32 chars: letters, digits, _ or -")
+    if api_type not in ("openai", "ollama"):
+        raise HTTPException(status_code=400, detail="api_type must be 'openai' or 'ollama'")
+    if name in _get_global_server_names():
+        raise HTTPException(status_code=409,
+                            detail=f"Name '{name}' conflicts with a global inference server name")
+
+    try:
+        conn = await db.create_user_connection(user_id, name, display_name, url, api_type, api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "connection": {k: v for k, v in conn.items() if k != "api_key_enc"}}
+
+
+@app.put("/user/api/connections/{conn_id}")
+async def user_api_update_connection(
+    conn_id: str, request: Request, user_id: str = Depends(require_user_login)
+):
+    """Update display_name, url, api_type, and optionally replace the API key."""
+    await _require_connections_access(user_id)
+    body         = await request.json()
+    display_name = (body.get("display_name") or "").strip()
+    url          = (body.get("url") or "").strip().rstrip("/")
+    api_type     = (body.get("api_type") or "openai").strip()
+    # api_key absent/null means keep existing; empty string means clear it
+    api_key_plain = body.get("api_key")  # None if key not in body
+
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    if api_type not in ("openai", "ollama"):
+        raise HTTPException(status_code=400, detail="api_type must be 'openai' or 'ollama'")
+
+    conn = await db.update_user_connection(conn_id, user_id, display_name, url, api_type,
+                                           api_key_plain=api_key_plain)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "connection": {k: v for k, v in conn.items() if k != "api_key_enc"}}
+
+
+@app.delete("/user/api/connections/{conn_id}")
+async def user_api_delete_connection(conn_id: str, user_id: str = Depends(require_user_login)):
+    """Delete a private API connection."""
+    await _require_connections_access(user_id)
+    deleted = await db.delete_user_connection(conn_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True}
+
+
+async def _probe_connection(conn: dict) -> dict:
+    """Test connectivity and fetch model list from a user API connection."""
+    api_key  = db.decrypt_api_key(conn.get("api_key_enc", ""))
+    api_type = conn.get("api_type", "openai")
+    base_url = conn["url"].rstrip("/")
+    headers  = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            if api_type == "ollama":
+                probe_url = base_url.removesuffix("/v1") + "/api/tags"
+                r = await client.get(probe_url, headers=headers)
+                models = [m["name"] for m in r.json().get("models", [])]
+            else:
+                r = await client.get(f"{base_url}/models", headers=headers)
+                models = [m["id"] for m in r.json().get("data", [])]
+        return {"ok": r.status_code == 200, "status_code": r.status_code, "models": models}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200], "models": []}
+
+
+@app.post("/user/api/connections/{conn_id}/test")
+async def user_api_test_connection(conn_id: str, user_id: str = Depends(require_user_login)):
+    """Test connectivity and return available model list (does not persist)."""
+    await _require_connections_access(user_id)
+    conn = await db.get_user_connection(conn_id, user_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return await _probe_connection(conn)
+
+
+@app.post("/user/api/connections/{conn_id}/refresh-models")
+async def user_api_refresh_connection_models(
+    conn_id: str, user_id: str = Depends(require_user_login)
+):
+    """Probe the connection, persist the model list to models_cache, and sync Redis."""
+    await _require_connections_access(user_id)
+    conn = await db.get_user_connection(conn_id, user_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    result = await _probe_connection(conn)
+    if result["ok"]:
+        await db.update_connection_models_cache(conn_id, user_id, result["models"])
+        await db.sync_user_to_redis(user_id)
+    return result
+
+
 # ─── Live Monitoring ──────────────────────────────────────────────────────────
 
 import time as _time_mod

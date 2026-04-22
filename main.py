@@ -352,7 +352,8 @@ DEFAULT_PLANNER_ROLE = (
 
 
 def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str] = None,
-                           user_templates_json: str = "{}", admin_override: bool = False) -> Optional[dict]:
+                           user_templates_json: str = "{}", admin_override: bool = False,
+                           user_connections_json: str = "{}") -> Optional[dict]:
     """Returns an EXPERTS-compatible dict from the assigned expert template.
     New template format: {cat: {system_prompt, models:[{model,endpoint,required}]}}
     Legacy format (migrated): {cat: {model, endpoint}} is also supported.
@@ -420,13 +421,25 @@ def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str]
                     "enabled":  True,
                     "_system_prompt": "",
                 }]
+        # Inject URL/token for experts referencing user-owned connections
+        user_conns = json.loads(user_connections_json or "{}")
+        if user_conns:
+            for _models_list in result.values():
+                for _entry in _models_list:
+                    _ep = _entry.get("endpoint", "")
+                    if _ep and _ep not in URL_MAP and _ep in user_conns:
+                        _conn = user_conns[_ep]
+                        _entry["_user_conn_url"]      = _conn["url"]
+                        _entry["_user_conn_token"]    = _conn.get("api_key") or "ollama"
+                        _entry["_user_conn_api_type"] = _conn.get("api_type", "openai")
         return result if result else None
     except Exception:
         return None
 
 
 def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[str] = None,
-                               user_templates_json: str = "{}", admin_override: bool = False) -> dict:
+                               user_templates_json: str = "{}", admin_override: bool = False,
+                               user_connections_json: str = "{}") -> dict:
     """Returns planner_prompt, judge_prompt and optional model overrides from the user's Expert Template.
     Model fields are stored as 'model@endpoint' strings; URL/token are resolved from INFERENCE_SERVERS.
     admin_override: If True, override_tmpl_id is loaded without permission check.
@@ -468,15 +481,27 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
 
         judge_m, judge_ep   = _split_model_ep(tmpl.get("judge_model", ""))
         planner_m, planner_ep = _split_model_ep(tmpl.get("planner_model", ""))
+
+        def _resolve_ep_url(ep: str) -> tuple:
+            """Resolve endpoint name to (url, token): global URL_MAP first, user connections second."""
+            if ep in URL_MAP:
+                return URL_MAP[ep], TOKEN_MAP.get(ep, "ollama")
+            _uc = json.loads(user_connections_json or "{}")
+            if ep in _uc:
+                return _uc[ep]["url"], _uc[ep].get("api_key") or "ollama"
+            return "", "ollama"
+
+        judge_url,   judge_tok   = _resolve_ep_url(judge_ep)   if judge_ep   else ("", "ollama")
+        planner_url, planner_tok = _resolve_ep_url(planner_ep) if planner_ep else ("", "ollama")
         return {
             "planner_prompt":        tmpl.get("planner_prompt", ""),
             "judge_prompt":          tmpl.get("judge_prompt", ""),
             "judge_model_override":  judge_m,
-            "judge_url_override":    URL_MAP.get(judge_ep, "") if judge_ep else "",
-            "judge_token_override":  TOKEN_MAP.get(judge_ep, "ollama") if judge_ep else "",
+            "judge_url_override":    judge_url,
+            "judge_token_override":  judge_tok,
             "planner_model_override": planner_m,
-            "planner_url_override":  URL_MAP.get(planner_ep, "") if planner_ep else "",
-            "planner_token_override": TOKEN_MAP.get(planner_ep, "ollama") if planner_ep else "",
+            "planner_url_override":  planner_url,
+            "planner_token_override": planner_tok,
             # Service toggles: allow templates to disable pipeline components
             "enable_cache":        tmpl.get("enable_cache", True),
             "enable_graphrag":     tmpl.get("enable_graphrag", True),
@@ -3404,7 +3429,14 @@ async def expert_worker(state: AgentState):
 
     async def run_single(model_cfg: dict, task_item: dict, t_idx: int, e_idx: int) -> dict:
         model_name = model_cfg["model"]
-        if LITELLM_URL:
+        if model_cfg.get("_user_conn_url"):
+            # User-owned API connection: URL/token pre-resolved, bypass node selection
+            url       = model_cfg["_user_conn_url"]
+            token     = model_cfg["_user_conn_token"]
+            api_type  = model_cfg.get("_user_conn_api_type", "openai")
+            endpoint  = model_cfg.get("endpoint", "user-conn")
+            semaphore = asyncio.Semaphore(4)
+        elif LITELLM_URL:
             # Flange: LiteLLM gateway handles endpoint selection, retries, circuit breaker
             url        = f"{LITELLM_URL}/v1"
             token      = "sk-litellm-internal"
@@ -5594,6 +5626,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Native LLM? check model_endpoint permission — only if no template and no MoE mode
     # Supports "model_name" (legacy) and "model_name@node" (new, OpenWebUI format)
     _native_endpoint: Optional[dict] = None
+    _user_conns_map: dict = {}
+    try:
+        _user_conns_map = json.loads(user_ctx.get("user_connections_json", "{}") or "{}")
+    except Exception:
+        pass
     if not _tmpl_override and request.model not in _MODEL_ID_TO_MODE:
         for _ep_entry in user_perms.get("model_endpoint", []):
             _ep_model, _, _ep_node = _ep_entry.partition("@")
@@ -5608,6 +5645,31 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                     "node":  _ep_node,
                 }
                 break
+        # Fallback: user-owned private connections (lower priority than global URL_MAP)
+        if not _native_endpoint and _user_conns_map:
+            if _req_node_hint and _req_node_hint in _user_conns_map:
+                _uc = _user_conns_map[_req_node_hint]
+                _native_endpoint = {
+                    "url":        _uc["url"],
+                    "token":      _uc.get("api_key") or "ollama",
+                    "model":      _req_model_base,
+                    "node":       _req_node_hint,
+                    "api_type":   _uc.get("api_type", "openai"),
+                    "_user_conn": True,
+                }
+            elif not _req_node_hint:
+                # Bare model name: check models_cache of each user connection
+                for _cname, _uc in _user_conns_map.items():
+                    if _req_model_base in _uc.get("models_cache", []):
+                        _native_endpoint = {
+                            "url":        _uc["url"],
+                            "token":      _uc.get("api_key") or "ollama",
+                            "model":      _req_model_base,
+                            "node":       _cname,
+                            "api_type":   _uc.get("api_type", "openai"),
+                            "_user_conn": True,
+                        }
+                        break
     _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
     # Template name match is NOT authorization — check expert_template permissions explicitly.
     if _tmpl_override:
@@ -5618,12 +5680,15 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "type": "permission_denied",
                 "code": "template_not_authorized",
             }})
+    _user_conns_json = user_ctx.get("user_connections_json", "{}")
     user_experts  = _resolve_user_experts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
                                            user_templates_json=_user_tmpls_json,
-                                           admin_override=False) or {}
+                                           admin_override=False,
+                                           user_connections_json=_user_conns_json) or {}
     _tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
                                                user_templates_json=_user_tmpls_json,
-                                               admin_override=False)
+                                               admin_override=False,
+                                               user_connections_json=_user_conns_json)
     # Ghost-template detection: template in permissions but absent from DB
     if _tmpl_override and not user_experts and not user_perms.get("expert_template") == []:
         _ghost_check = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
@@ -5683,7 +5748,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Model availability check: does the requested model actually exist on the target node?
     # Prevents hanging requests when a model is requested via wildcard permission,
     # but is not present on the host (e.g. gemma4:31b@AIHUB even though it is not installed).
-    if _native_endpoint:
+    # Skipped for user-owned connections — their models_cache already served that check.
+    if _native_endpoint and not _native_endpoint.get("_user_conn"):
         _avail_models = await _get_available_models(_native_endpoint["node"])
         if _avail_models is not None and _native_endpoint["model"] not in _avail_models:
             _avail_list = sorted(_avail_models)
@@ -6639,11 +6705,14 @@ async def anthropic_messages(request: Request):
     _user_id      = user_ctx.get("user_id", "anon")
     _api_key_id   = user_ctx.get("key_id", "")
     _user_perms   = json.loads(user_ctx.get("permissions_json", "{}"))
-    _user_tmpls_json2 = user_ctx.get("user_templates_json", "{}")
+    _user_tmpls_json2   = user_ctx.get("user_templates_json", "{}")
+    _user_conns_json2   = user_ctx.get("user_connections_json", "{}")
     _user_experts = _resolve_user_experts(user_ctx.get("permissions_json", ""),
-                                           user_templates_json=_user_tmpls_json2) or {}
+                                           user_templates_json=_user_tmpls_json2,
+                                           user_connections_json=_user_conns_json2) or {}
     _user_tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""),
-                                                    user_templates_json=_user_tmpls_json2)
+                                                    user_templates_json=_user_tmpls_json2,
+                                                    user_connections_json=_user_conns_json2)
 
     # ─── Resolve per-user CC profile ──────────────────────────────────────────
     # Priority: 1. key-specific profile  2. user default  3. first available
@@ -6689,12 +6758,14 @@ async def anthropic_messages(request: Request):
                     override_tmpl_id=_cc_tmpl_id,
                     user_templates_json=_user_tmpls_json2,
                     admin_override=True,
+                    user_connections_json=_user_conns_json2,
                 ) or {}
                 _user_tmpl_prompts = _resolve_template_prompts(
                     user_ctx.get("permissions_json", ""),
                     override_tmpl_id=_cc_tmpl_id,
                     user_templates_json=_user_tmpls_json2,
                     admin_override=True,
+                    user_connections_json=_user_conns_json2,
                 )
 
     # Detect whether request originates from Claude Code / Anthropic SDK
@@ -7893,12 +7964,15 @@ async def _ollama_internal_stream(
         return
 
     _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
+    _user_conns_json = user_ctx.get("user_connections_json", "{}")
     user_experts  = _resolve_user_experts(
         user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
-        user_templates_json=_user_tmpls_json, admin_override=False) or {}
+        user_templates_json=_user_tmpls_json, admin_override=False,
+        user_connections_json=_user_conns_json) or {}
     tmpl_prompts  = _resolve_template_prompts(
         user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
-        user_templates_json=_user_tmpls_json, admin_override=False)
+        user_templates_json=_user_tmpls_json, admin_override=False,
+        user_connections_json=_user_conns_json)
 
     mode = _MODEL_ID_TO_MODE.get(model_name, "default")
     if matched_tmpl and matched_tmpl.get("force_think") and mode == "default":
