@@ -218,7 +218,7 @@ async def math_node(state: AgentState) -> Dict[str, Any]:
     is_math_request = is_math_request or any(keyword in user_input.lower() for keyword in english_math_keywords)
     
     if not is_math_request:
-        return {"math_result": "Keine mathematische Anfrage erkannt."}
+        return {"math_result": "No mathematical request recognized."}
     
     try:
         result_str = ""
@@ -235,18 +235,18 @@ async def math_node(state: AgentState) -> Dict[str, Any]:
             equation = solve_equation_match.group(1).strip()
             result = solve_equation(equation)
             if result["success"]:
-                result_str += f"Gleichung '{result['equation']}' gelöst:\n"
-                result_str += f"Lösungen: {', '.join(result['solutions'])}\n\n"
+                result_str += f"Equation '{result['equation']}' solved:\n"
+                result_str += f"Solutions: {', '.join(result['solutions'])}\n\n"
             else:
-                result_str += f"Fehler beim Lösen der Gleichung '{result['equation']}': {result['error']}\n\n"
+                result_str += f"Error solving equation '{result['equation']}': {result['error']}\n\n"
         elif equations:
             for equation in equations:
                 result = solve_equation(equation.strip())
                 if result["success"]:
-                    result_str += f"Gleichung '{result['equation']}' gelöst:\n"
-                    result_str += f"Lösungen: {', '.join(result['solutions'])}\n\n"
+                    result_str += f"Equation '{result['equation']}' solved:\n"
+                    result_str += f"Solutions: {', '.join(result['solutions'])}\n\n"
                 else:
-                    result_str += f"Fehler beim Lösen der Gleichung '{result['equation']}': {result['error']}\n\n"
+                    result_str += f"Error solving equation '{result['equation']}': {result['error']}\n\n"
         
         # Search for expressions to simplify
         simplify_pattern = r'(?:vereinfache|simplify)\s+(.*)'
@@ -256,10 +256,10 @@ async def math_node(state: AgentState) -> Dict[str, Any]:
             expr = simplify_match.group(1).strip()
             result = simplify_expression(expr)
             if result["success"]:
-                result_str += f"Ausdruck '{result['original']}' vereinfacht zu: {result['simplified']}\n"
+                result_str += f"Expression '{result['original']}' simplified to: {result['simplified']}\n"
                 result_str += f"LaTeX: {result['latex']}\n\n"
             else:
-                result_str += f"Fehler beim Vereinfachen des Ausdrucks '{result['original']}': {result['error']}\n\n"
+                result_str += f"Error simplifying expression '{result['original']}': {result['error']}\n\n"
         
         # Search for derivatives
         derivative_pattern = r'(?:leite\s+(?:die\s+funktion\s+)?|ableiten|derive\s+(?:the\s+function\s+)?)?(.*)(?:\s+ab)?'
@@ -273,10 +273,10 @@ async def math_node(state: AgentState) -> Dict[str, Any]:
             expr_text = special_derivative_match.group(1).strip()
             result = calculate_derivative(expr_text)
             if result["success"]:
-                result_str += f"Ableitung von '{result['expression']}' nach {result['variable']}: {result['derivative']}\n"
+                result_str += f"Derivative of '{result['expression']}' with respect to {result['variable']}: {result['derivative']}\n"
                 result_str += f"LaTeX: {result['latex']}\n\n"
             else:
-                result_str += f"Fehler beim Ableiten von '{result['expression']}': {result['error']}\n\n"
+                result_str += f"Error computing derivative of '{result['expression']}': {result['error']}\n\n"
         elif derivative_match:
             # General case
             expr_text = derivative_match.group(1).strip()
@@ -284,15 +284,15 @@ async def math_node(state: AgentState) -> Dict[str, Any]:
             expr_text = re.sub(r'^(leite|ableiten|derive|the\s+function|die\s+Funktion)\s*', '', expr_text, flags=re.IGNORECASE)
             # Strip trailing "ab" if present
             expr_text = re.sub(r'\s+ab$', '', expr_text, flags=re.IGNORECASE)
-            
+
             # Only proceed if something remains after cleanup
             if expr_text:
                 result = calculate_derivative(expr_text)
                 if result["success"]:
-                    result_str += f"Ableitung von '{result['expression']}' nach {result['variable']}: {result['derivative']}\n"
+                    result_str += f"Derivative of '{result['expression']}' with respect to {result['variable']}: {result['derivative']}\n"
                     result_str += f"LaTeX: {result['latex']}\n\n"
                 else:
-                    result_str += f"Fehler beim Ableiten von '{result['expression']}': {result['error']}\n\n"
+                    result_str += f"Error computing derivative of '{result['expression']}': {result['error']}\n\n"
         
         # Search for integrals
         integral_pattern = r'(?:integrier.*?|integrate)\s+(.*)'
@@ -304,15 +304,15 @@ async def math_node(state: AgentState) -> Dict[str, Any]:
             expr_text = re.sub(r'die\s+funktion\s+', '', expr_text, flags=re.IGNORECASE)
             result = calculate_integral(expr_text)
             if result["success"]:
-                result_str += f"Integral von '{result['expression']}': {result['integral']}\n"
+                result_str += f"Integral of '{result['expression']}': {result['integral']}\n"
                 result_str += f"LaTeX: {result['latex']}\n\n"
             else:
-                result_str += f"Fehler beim Integrieren von '{result['expression']}': {result['error']}\n\n"
-        
+                result_str += f"Error computing integral of '{result['expression']}': {result['error']}\n\n"
+
         if result_str:
             return {"math_result": result_str.strip()}
         else:
-            return {"math_result": "Keine mathematische Operation erkannt oder ausgeführt."}
+            return {"math_result": "No mathematical operation recognized or executed."}
     
     except Exception as e:
         logger.error(f"Error in math node: {str(e)}")

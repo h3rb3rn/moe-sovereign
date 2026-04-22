@@ -139,3 +139,95 @@ the `test_cases` array. See the existing entries for the schema. Key fields:
 - `httpx` (async HTTP client)
 - Access to a running MoE Sovereign orchestrator with a valid API key
 - For multi-turn tests: a template with GraphRAG/Neo4j enabled
+
+## Shell Scripts & Automation
+
+### `run_overnight.sh` — Multi-Epoch Stability Benchmark
+
+Runs the overnight dataset N times (epochs) with full resilience features:
+API health-wait, model warm-up, per-epoch retry, and Ollama self-healing via SSH.
+
+```bash
+# Requires benchmarks/.env — copy from benchmarks/.env.example
+cp benchmarks/.env.example benchmarks/.env
+# Edit: MOE_API_KEY, node SSH addresses, GPU counts
+
+bash benchmarks/run_overnight.sh             # default epochs
+MOE_EPOCHS=5 bash benchmarks/run_overnight.sh   # override epoch count
+```
+
+Results land in `benchmarks/results/overnight_<timestamp>/`.
+
+---
+
+### `run_all_sequential.sh` — All Templates, One After Another
+
+Runs all configured benchmark templates sequentially to avoid GPU contention
+on N04-RTX (which hosts Planner/Judge). AIHUB (remote) runs first.
+
+```bash
+bash benchmarks/run_all_sequential.sh
+```
+
+---
+
+### `run_all_parallel.sh` — All Templates Simultaneously
+
+Pins each template to a different GPU node and fires all runs in parallel.
+Calls `evaluator.py` for every result file when done.
+
+```bash
+MOE_API_KEY=moe-sk-... bash benchmarks/run_all_parallel.sh
+```
+
+---
+
+### `watchdog_restart.sh` — Crash Recovery Monitor
+
+Monitors a **running** benchmark and restarts it only on crash (lock-file
+gone + process dead). Does **not** auto-start benchmarks — that is intentional
+to prevent unattended resource consumption.
+
+```bash
+# Typically invoked via /loop in Claude Code:
+bash benchmarks/watchdog_restart.sh
+```
+
+Log: `benchmarks/results/overnight_watchdog.log`
+
+---
+
+### `inject_results_into_docs.py` — Documentation Updater
+
+Reads the latest `eval_*.json` result file, computes per-category scores,
+and injects a formatted table into `docs/system/benchmarks.md` at the
+`<!-- Results injected after benchmark completion -->` marker.
+
+```bash
+python3 benchmarks/inject_results_into_docs.py              # auto-detect latest run
+python3 benchmarks/inject_results_into_docs.py --run-dir benchmarks/results/overnight_20260419-225041
+```
+
+## Results Directory Structure
+
+```
+benchmarks/results/
+├── overnight_<timestamp>/     # run_overnight.sh output
+│   ├── summary.txt            # epoch scores + aggregate stats
+│   ├── epoch_<N>_prompt_<id>.txt    # raw prompt sent
+│   ├── epoch_<N>_response_<id>.txt  # raw model response
+│   └── epoch_<N>_error_<id>.txt     # error detail (if failed)
+├── all_run_<timestamp>/       # run_all_sequential.sh output
+├── context_run_<timestamp>/   # context-focused runs
+└── overnight_watchdog.log     # watchdog restart log
+```
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `MOE_API_KEY missing` at start | `.env` not created | `cp benchmarks/.env.example benchmarks/.env` and fill in values |
+| All tests timeout (300s) | Model not loaded / Ollama not running | `curl http://localhost:8002/health` — check orchestrator logs |
+| `compounding-memory-5turn` fails | GraphRAG not enabled on template | Enable Neo4j + use a template with `graph_rag: true` |
+| Evaluator score unexpectedly 0 | Judge template not returning JSON | Check `MOE_JUDGE_TEMPLATE` — needs a model that reliably outputs JSON |
+| Watchdog loops without restarting | Lock file exists but process is hung | `rm benchmarks/.bench_running` then recheck process list |
