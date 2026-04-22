@@ -2948,10 +2948,13 @@ _SKILLSSH_CACHE_TTL_SECONDS = 86400  # 24 hours
 async def _fetch_skillssh_audits() -> dict:
     """Fetch and cache audit ratings from https://skills.sh/audits.
 
-    Returns a dict keyed by skill name with gen_verdict, socket_alerts, snyk_risk fields.
-    Falls back to cached data on network failure; returns empty dict if unavailable.
+    Paginates through GET /api/audits/{page} (JSON) until hasMore=False.
+    The SSR HTML only contains the first ~50 entries; the full dataset
+    (~1000 skills) is available via this undocumented client-side API.
+
+    Returns a dict keyed by skillId with gen_verdict, socket_alerts, snyk_risk.
+    Falls back to cached data on network failure; returns {} if unavailable.
     """
-    # Use cached data if still fresh
     if _SKILLSSH_AUDITS_CACHE.exists():
         age = datetime.now().timestamp() - _SKILLSSH_AUDITS_CACHE.stat().st_mtime
         if age < _SKILLSSH_CACHE_TTL_SECONDS:
@@ -2960,47 +2963,80 @@ async def _fetch_skillssh_audits() -> dict:
             except Exception:
                 pass
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            r = await client.get("https://skills.sh/audits",
-                                 headers={"User-Agent": "MoE-Sovereign/1.0"})
-            if r.status_code != 200:
-                logger.warning(f"skills.sh/audits returned HTTP {r.status_code}")
-                return _load_skillssh_cache_fallback()
-            html = r.text
-    except Exception as exc:
-        logger.warning(f"skills.sh/audits fetch failed: {exc}")
-        return _load_skillssh_cache_fallback()
+    _SKILLSSH_BASE = "https://skills.sh"
+    _SKILLSSH_HEADERS = {"User-Agent": "MoE-Sovereign/1.0 (skills-audit-snapshot)"}
+    _MAX_PAGES = 30
+    _RATE_DELAY = 0.4
 
-    # skills.sh is a Next.js / RSC app — no HTML table.
-    # Audit data is embedded in the RSC payload as doubly-escaped JSON inside
-    # self.__next_f.push([N,"..."]) script tags.
-    # The initial page load delivers the first ~50 ranked entries (the rest are
-    # lazy-loaded client-side, invisible to a plain HTTP request).
-    # We split on \"rank\":N, to isolate each skill block and extract fields.
     audits: dict = {}
-    skill_id_re = _re.compile(r'\\"skillId\\":\\"([a-z0-9][a-z0-9_-]+)\\"')
-    gen_re      = _re.compile(r'\\"agentTrustHub\\".*?\\"gemini_analysis\\".*?\\"verdict\\":\\"([A-Z_]+)\\"', _re.DOTALL)
-    socket_re   = _re.compile(r'\\"alertCount\\":(\d+)')
-    snyk_re     = _re.compile(r'\\"overall_risk_level\\":\\"([A-Z]+)\\"')
+    seen: set = set()
 
-    for block in _re.split(r'\\"rank\\":\d+,', html)[1:]:
-        m_id = skill_id_re.search(block)
-        if not m_id:
-            continue
-        skill_id = m_id.group(1)
-        m_gen    = gen_re.search(block)
-        m_sock   = socket_re.search(block)
-        m_snyk   = snyk_re.search(block)
-        audits[skill_id] = {
-            "gen_verdict":   m_gen.group(1)  if m_gen  else None,
-            "socket_alerts": int(m_sock.group(1)) if m_sock else None,
-            "snyk_risk":     m_snyk.group(1) if m_snyk else None,
+    def _normalise_api(entry: dict) -> dict:
+        ath    = entry.get("agentTrustHub") or {}
+        socket = entry.get("socket") or {}
+        snyk   = entry.get("snyk") or {}
+        gen_v  = (ath.get("result") or {}).get("gemini_analysis", {}).get("verdict")
+        alerts = (socket.get("result") or {}).get("alertCount")
+        risk   = (snyk.get("result") or {}).get("overall_risk_level")
+        return {
+            "gen_verdict":   gen_v,
+            "socket_alerts": int(alerts) if alerts is not None else None,
+            "snyk_risk":     risk,
         }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True,
+                                     headers=_SKILLSSH_HEADERS) as client:
+            # Page 0: extract initial batch from SSR RSC payload
+            r0 = await client.get(f"{_SKILLSSH_BASE}/audits")
+            if r0.status_code == 200:
+                html = r0.text
+                skill_id_re = _re.compile(r'\\"skillId\\":\\"([a-z0-9][a-z0-9_-]+)\\"')
+                gen_re      = _re.compile(
+                    r'\\"agentTrustHub\\".*?\\"gemini_analysis\\".*?\\"verdict\\":\\"([A-Z_]+)\\"',
+                    _re.DOTALL)
+                socket_re   = _re.compile(r'\\"alertCount\\":(\d+)')
+                snyk_re     = _re.compile(r'\\"overall_risk_level\\":\\"([A-Z]+)\\"')
+                for block in _re.split(r'\\"rank\\":\d+,', html)[1:]:
+                    m_id = skill_id_re.search(block)
+                    if not m_id:
+                        continue
+                    sid = m_id.group(1)
+                    if sid not in seen:
+                        m_g = gen_re.search(block)
+                        m_s = socket_re.search(block)
+                        m_n = snyk_re.search(block)
+                        audits[sid] = {
+                            "gen_verdict":   m_g.group(1)       if m_g else None,
+                            "socket_alerts": int(m_s.group(1))  if m_s else None,
+                            "snyk_risk":     m_n.group(1)       if m_n else None,
+                        }
+                        seen.add(sid)
+
+            # Pages 1…N: paginated JSON API
+            for page in range(1, _MAX_PAGES + 1):
+                await asyncio.sleep(_RATE_DELAY)
+                rp = await client.get(f"{_SKILLSSH_BASE}/api/audits/{page}")
+                if rp.status_code != 200:
+                    logger.warning(f"skills.sh/api/audits/{page} returned {rp.status_code}")
+                    break
+                data = rp.json()
+                for entry in data.get("skills", []):
+                    sid = entry.get("skillId") or entry.get("name", "")
+                    if sid and sid not in seen:
+                        audits[sid] = _normalise_api(entry)
+                        seen.add(sid)
+                if not data.get("hasMore", False):
+                    break
+
+    except Exception as exc:
+        logger.warning(f"skills.sh fetch failed: {exc}")
+        return _load_skillssh_cache_fallback()
 
     if audits:
         _SKILLSSH_AUDITS_CACHE.parent.mkdir(parents=True, exist_ok=True)
         _SKILLSSH_AUDITS_CACHE.write_text(json.dumps(audits, indent=2, ensure_ascii=False))
+        logger.info(f"skills.sh audit cache updated: {len(audits)} skills")
     return audits
 
 
