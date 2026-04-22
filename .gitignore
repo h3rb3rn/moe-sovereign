@@ -59,3 +59,9 @@ SYSTEM.md
 
 # Instance-specific Caddy config — copy Caddyfile.example → Caddyfile
 Caddyfile
+
+# Benchmark attachment uploads (runtime data)
+benchmarks/attachments/
+
+# skills.sh external audit cache (regenerated at runtime)
+skills/community/.skillssh_audits.json
