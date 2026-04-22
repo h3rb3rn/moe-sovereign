@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Monitoring — MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'page.monitoring') }} — MoE Admin{% endblock %}
 
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
@@ -293,7 +293,18 @@
 {% block scripts %}
 <script src="/static/js/chart.umd.min.js"></script>
 <script>
-// ─── Farb-Palette ──────────────────────────────────────────────────────────
+const _tmon = {
+  loading:         "{{ t(request, 'lbl.loading') }}",
+  total:           "{{ t(request, 'lbl.total') }}",
+  hits:            "{{ t(request, 'metric.hits') }}",
+  misses:          "{{ t(request, 'metric.misses') }}",
+  modelsAvail:     "{{ t(request, 'js.models_available') }}",
+  tokenRemaining:  "{{ t(request, 'table.quota') }}",
+  lastUpdate:      "{{ t(request, 'lbl.last_update') }}",
+  error:           "{{ t(request, 'js.load_error') }}",
+};
+
+// ─── Color palette ─────────────────────────────────────────────────────────
 const COLORS = [
   '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
   '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
@@ -301,7 +312,7 @@ const COLORS = [
 ];
 const ALPHA = (hex, a) => hex + Math.round(a*255).toString(16).padStart(2,'0');
 
-// ─── Chart-Instanzen ────────────────────────────────────────────────────────
+// ─── Chart instances ────────────────────────────────────────────────────────
 const charts = {};
 
 function destroyChart(id) {
@@ -352,7 +363,7 @@ function doughnutChart(canvasId, labels, data) {
   });
 }
 
-// ─── Daten laden ─────────────────────────────────────────────────────────────
+// ─── Data loading ────────────────────────────────────────────────────────────
 
 async function loadProviderLimits() {
   try {
@@ -373,7 +384,7 @@ async function loadProviderLimits() {
       const remStr = d.remaining_tokens !== undefined ? d.remaining_tokens : '–';
       const limStr = d.limit_tokens !== undefined ? d.limit_tokens : '–';
       return `<span class="badge bg-${color} me-2">${ep}</span>`
-           + `<span class="me-3 small">${remStr} / ${limStr} Token verbleibend`
+           + `<span class="me-3 small">${remStr} / ${limStr} ${_tmon.tokenRemaining}`
            + (pct !== null ? ` (${pct}%)` : '')
            + ` · Reset: ${resetStr}</span>`;
     }).join('<br>');
@@ -385,12 +396,12 @@ async function loadLLMStatus() {
     const data = await fetch('/api/live/llm-instances').then(r => r.json());
     const servers = data.servers || [];
     const timeEl = document.getElementById('llm-status-time');
-    if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('de-DE');
+    if (timeEl) timeEl.textContent = new Date().toLocaleTimeString();
 
     const body = document.getElementById('llm-status-body');
     if (!body) return;
     if (!servers.length) {
-      body.innerHTML = '<span class="text-muted small">Keine Server konfiguriert</span>';
+      body.innerHTML = `<span class="text-muted small">{{ t(request, 'empty.no_servers') }}</span>`;
       return;
     }
 
@@ -419,7 +430,7 @@ async function loadLLMStatus() {
         }
       } else {
         const cnt = srv.available_models_count || 0;
-        loadedHtml = `<span class="text-muted" style="font-size:.75rem">${cnt} Modelle verfügbar</span>`;
+        loadedHtml = `<span class="text-muted" style="font-size:.75rem">${cnt} ${_tmon.modelsAvail}</span>`;
       }
 
       const errorHtml = (!ok && srv.error)
@@ -467,14 +478,14 @@ async function loadLLMStatus() {
     }).join('') + `</div>`;
   } catch(e) {
     const body = document.getElementById('llm-status-body');
-    if (body) body.innerHTML = `<span class="text-muted small text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Fehler: ${escHtml(String(e))}</span>`;
+    if (body) body.innerHTML = `<span class="text-muted small text-danger"><i class="bi bi-exclamation-triangle me-1"></i>${_tmon.error}: ${escHtml(String(e))}</span>`;
   }
 }
 
 async function loadMetrics() {
   loadProviderLimits();
   loadLLMStatus();
-  document.getElementById('last-update').textContent = 'Lädt...';
+  document.getElementById('last-update').textContent = _tmon.loading;
   try {
     const r = await fetch('/api/monitoring');
     if (!r.ok) throw new Error(r.status);
@@ -492,7 +503,7 @@ async function loadMetrics() {
     // Token-Chart
     const tokModels = d.tokens_by_model || [];
     const totalTok  = tokModels.reduce((s, x) => s + x.value, 0);
-    document.getElementById('total-tokens-badge').textContent = fmtNum(totalTok) + ' gesamt';
+    document.getElementById('total-tokens-badge').textContent = fmtNum(totalTok) + ' ' + _tmon.total;
     barChart('chart-tokens',
       tokModels.map(x => x.labels.model || '?'),
       tokModels.map(x => x.value));
@@ -503,7 +514,7 @@ async function loadMetrics() {
     document.getElementById('cache-hits').textContent  = fmt(d.cache_hits);
     document.getElementById('cache-misses').textContent= fmt(d.cache_misses);
     doughnutChart('chart-cache',
-      ['Treffer', 'Fehlschläge'],
+      [_tmon.hits, _tmon.misses],
       [d.cache_hits || 0, d.cache_misses || 0]);
 
     // Kategorien
@@ -600,13 +611,13 @@ async function loadMetrics() {
     }
 
     document.getElementById('last-update').textContent =
-      'Stand: ' + new Date().toLocaleTimeString('de-DE');
+      _tmon.lastUpdate + ' ' + new Date().toLocaleTimeString();
   } catch (e) {
-    document.getElementById('last-update').textContent = 'Fehler: ' + e.message;
+    document.getElementById('last-update').textContent = _tmon.error + ': ' + e.message;
   }
 }
 
-function fmt(v)    { return v == null ? '–' : Math.round(v).toLocaleString('de-DE'); }
+function fmt(v)    { return v == null ? '–' : Math.round(v).toLocaleString(); }
 function fmtNum(v) { return v > 1e6 ? (v/1e6).toFixed(1)+'M' : v > 1e3 ? (v/1e3).toFixed(1)+'K' : Math.round(v).toString(); }
 
 function calcAvgFromBuckets(buckets) {

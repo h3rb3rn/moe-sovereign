@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Teams & Mandanten – MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'nav.teams') }} – MoE Admin{% endblock %}
 
 {% block flash %}
 <div id="flash-container"></div>
@@ -126,7 +126,7 @@
         <div class="mb-3">
           <label class="form-label">Slug</label>
           <input type="text" id="new-team-slug" class="form-control" placeholder="engineering">
-          <small class="text-muted">{{ t(request, 'hint.slug') }}</small>
+          <small class="text-muted">{{ t(request, 'hint.slug_format') }}</small>
         </div>
         <div class="mb-3">
           <label class="form-label">{{ t(request, 'label.tenant_optional') }}</label>
@@ -137,7 +137,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
-        <button class="btn btn-primary" onclick="createTeam()">{{ t(request, 'btn.create') }}</button>
+        <button class="btn btn-primary" onclick="createTeam()">{{ t(request, 'btn.create_team') }}</button>
       </div>
     </div>
   </div>
@@ -163,7 +163,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
-        <button class="btn btn-primary" onclick="createTenant()">{{ t(request, 'btn.create') }}</button>
+        <button class="btn btn-primary" onclick="createTenant()">{{ t(request, 'btn.create_tenant') }}</button>
       </div>
     </div>
   </div>
@@ -192,7 +192,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
-        <button class="btn btn-primary" onclick="addMember()">{{ t(request, 'btn.add') }}</button>
+        <button class="btn btn-primary" onclick="addMember()">{{ t(request, 'btn.add_member') }}</button>
       </div>
     </div>
   </div>
@@ -272,14 +272,14 @@ async function loadTeamMembers(teamId) {
 }
 
 async function deleteTeam(id, name) {
-  if (!confirm(`Team "${name}" wirklich löschen?`)) return;
+  if (!confirm(`{{ t(request, 'js.confirm_delete_team') }}`.replace('{name}', name))) return;
   const r = await fetch(`/api/teams/${id}`, {method:'DELETE'});
-  if (r.ok) { flash(`Team "${name}" gelöscht`); loadTeams(); }
-  else flash('Fehler beim Löschen', 'danger');
+  if (r.ok) { flash(`{{ t(request, 'js.team_deleted') }}`.replace('{name}', name)); loadTeams(); }
+  else flash('{{ t(request, "js.delete_error") }}', 'danger');
 }
 
 async function removeTeamMember(teamId, userId, username) {
-  if (!confirm(`${username} aus Team entfernen?`)) return;
+  if (!confirm(`${username} — {{ t(request, 'dialog.confirm_delete') }}`)) return;
   const r = await fetch(`/api/teams/${teamId}/members/${userId}`, {method:'DELETE'});
   if (r.ok) loadTeamMembers(teamId);
 }
@@ -299,19 +299,19 @@ async function createTeam() {
   });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('createTeamModal')).hide();
-    flash(`Team "${name}" erstellt`);
+    flash(`Team "${name}" — {{ t(request, 'js.config_saved') }}`);
     loadTeams();
   } else {
     const err = await r.json();
-    flash(`Fehler: ${err.detail || 'Unbekannt'}`, 'danger');
+    flash(`Error: ${err.detail || 'unknown'}`, 'danger');
   }
 }
 
 async function manageBudget(teamId) {
   const r = await fetch(`/api/teams/${teamId}/budget`);
   const b = await r.json();
-  const monthly = prompt('Monatliches Limit (Token, leer = kein Limit):', b.monthly_limit || '');
-  const daily   = prompt('Tägliches Limit (Token, leer = kein Limit):', b.daily_limit || '');
+  const monthly = prompt('{{ t(request, "lbl.monthly_limit") }}:', b.monthly_limit || '');
+  const daily   = prompt('{{ t(request, "lbl.daily_token_limit") }}:', b.daily_limit || '');
   await fetch(`/api/teams/${teamId}/budget`, {
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
@@ -319,7 +319,7 @@ async function manageBudget(teamId) {
       daily_limit:   daily   ? parseInt(daily)   : null,
     })
   });
-  flash('Budget gespeichert');
+  flash('{{ t(request, "js.config_saved") }}');
 }
 
 // ── Tenants ────────────────────────────────────────────────────────────────
@@ -379,14 +379,14 @@ async function loadTenantMembers(tenantId) {
 }
 
 async function deleteTenant(id, name) {
-  if (!confirm(`Mandant "${name}" wirklich löschen?`)) return;
+  if (!confirm(`{{ t(request, 'js.confirm_delete_tenant') }}`.replace('{name}', name))) return;
   const r = await fetch(`/api/tenants/${id}`, {method:'DELETE'});
-  if (r.ok) { flash(`Mandant "${name}" gelöscht`); loadTenants(); }
-  else flash('Fehler beim Löschen', 'danger');
+  if (r.ok) { flash(`{{ t(request, 'js.tenant_deleted') }}`.replace('{name}', name)); loadTenants(); }
+  else flash('{{ t(request, "js.delete_error") }}', 'danger');
 }
 
 async function removeTenantMember(tenantId, memberId) {
-  if (!confirm('Mitglied entfernen?')) return;
+  if (!confirm('{{ t(request, "dialog.confirm_delete") }}')) return;
   await fetch(`/api/tenants/${tenantId}/members/${memberId}`, {method:'DELETE'});
   loadTenantMembers(tenantId);
 }
@@ -404,11 +404,11 @@ async function createTenant() {
   });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('createTenantModal')).hide();
-    flash(`Mandant "${name}" erstellt`);
+    flash(`Tenant "${name}" — {{ t(request, 'js.config_saved') }}`);
     loadTenants();
   } else {
     const err = await r.json();
-    flash(`Fehler: ${err.detail || 'Unbekannt'}`, 'danger');
+    flash(`Error: ${err.detail || 'unknown'}`, 'danger');
   }
 }
 
@@ -438,7 +438,7 @@ function openAddMember(mode, entityId) {
 async function addMember() {
   const userId = document.getElementById('add-member-user-id').value.trim();
   const role   = document.getElementById('add-member-role').value;
-  if (!userId) { flash('User ID eingeben', 'warning'); return; }
+  if (!userId) { flash('{{ t(request, "js.give_name") }}', 'warning'); return; }
   const url  = _addMemberMode === 'team'
     ? `/api/teams/${_currentTeamId}/members`
     : `/api/tenants/${_currentTenantId}/members`;
@@ -451,12 +451,12 @@ async function addMember() {
   });
   if (r.ok) {
     bootstrap.Modal.getInstance(document.getElementById('addMemberModal')).hide();
-    flash('Mitglied hinzugefügt');
+    flash('{{ t(request, "js.member_added") }}');
     if (_addMemberMode === 'team') loadTeamMembers(_currentTeamId);
     else loadTenantMembers(_currentTenantId);
   } else {
     const err = await r.json();
-    flash(`Fehler: ${err.detail || 'Unbekannt'}`, 'danger');
+    flash(`Error: ${err.detail || 'unknown'}`, 'danger');
   }
 }
 
@@ -467,7 +467,7 @@ async function submitPromotion() {
   const toRaw      = document.getElementById('promote-to').value.trim();
   const entitiesRaw = document.getElementById('promote-entities').value.trim();
 
-  if (!fromVal) { flash('Quell-Namespace eingeben', 'warning'); return; }
+  if (!fromVal) { flash('{{ t(request, "label.from_namespace") }}', 'warning'); return; }
 
   // Empty to-field means global (null), not an empty string
   const toVal = toRaw === '' ? null : toRaw;
@@ -476,13 +476,13 @@ async function submitPromotion() {
     ? entitiesRaw.split(',').map(s => s.trim()).filter(Boolean)
     : null;
 
-  const scopeLabel = toVal ? `→ ${toVal}` : '→ Global (öffentlich)';
-  const entityHint = entityNames ? ` (${entityNames.length} Entitäten)` : ' (alle)';
-  if (!confirm(`Wissen promoten${entityHint}\n${fromVal} ${scopeLabel}\n\nFortfahren?`)) return;
+  const scopeLabel = toVal ? `→ ${toVal}` : '{{ t(request, "js.scope_global") }}';
+  const entityHint = entityNames ? ` (${entityNames.length} {{ t(request, "js.n_entities").replace("{n}", "") }}` + `)` : ` ({{ t(request, "js.entities_all") }})`;
+  if (!confirm(`{{ t(request, "tab.promote_knowledge") }}${entityHint}\n${fromVal} ${scopeLabel}\n\n{{ t(request, "btn.promote") }}?`)) return;
 
   const result = document.getElementById('promote-result');
   result.className = 'mt-3';
-  result.innerHTML = '<div class="spinner-border spinner-border-sm me-2"></div>Wird promoted…';
+  result.innerHTML = '<div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, "state.loading") }}';
 
   try {
     const r = await fetch('/api/knowledge/promote', {
@@ -498,20 +498,20 @@ async function submitPromotion() {
     if (r.ok) {
       result.innerHTML = `<div class="alert alert-success py-2">
         <i class="bi bi-check-circle me-2"></i>
-        <strong>${d.promoted}</strong> Entitäten promoted:
+        <strong>${d.promoted}</strong> {{ t(request, 'js.entities_promoted') }}
         <code>${fromVal}</code> → <code>${toVal ?? 'Global'}</code>
       </div>`;
     } else if (r.status === 403) {
       result.innerHTML = `<div class="alert alert-danger py-2">
-        <i class="bi bi-lock me-2"></i><strong>Keine Berechtigung:</strong> ${d.detail}
+        <i class="bi bi-lock me-2"></i><strong>Error:</strong> ${d.detail}
       </div>`;
     } else {
       result.innerHTML = `<div class="alert alert-warning py-2">
-        <i class="bi bi-exclamation-triangle me-2"></i>${d.detail || 'Unbekannter Fehler'}
+        <i class="bi bi-exclamation-triangle me-2"></i>${d.detail || '{{ t(request, "msg.unknown_error") }}'}
       </div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div class="alert alert-danger py-2">Netzwerkfehler: ${e}</div>`;
+    result.innerHTML = `<div class="alert alert-danger py-2">Network error: ${e}</div>`;
   }
 }
 

@@ -1,4 +1,4 @@
-import os, time, uuid, operator, uvicorn, logging, json, re, asyncio, contextvars, hashlib
+import os, time, uuid, operator, uvicorn, logging, json, re, asyncio, contextvars, hashlib, threading
 from pathlib import Path
 
 # Load .env at runtime so profile changes take effect after container restart
@@ -13,6 +13,28 @@ from prometheus_client import (
 )
 from datetime import datetime, timedelta, timezone
 from typing import List, Annotated, Dict, Any, TypedDict, Optional, Union
+from pipeline.state import AgentState
+from web_search import (
+    _domain_score,
+    _reliability_label,
+    _web_search_with_citations as _web_search_with_citations_impl,
+)
+from parsing import (
+    _extract_usage,
+    _extract_json,
+    _parse_expert_confidence,
+    _parse_expert_gaps,
+    _expert_category,
+    _dedup_by_category,
+    _truncate_history as _truncate_history_pure,
+    _improvement_ratio,
+    _oai_content_to_str,
+    _anthropic_content_to_text,
+    _extract_images,
+    _extract_oai_images,
+    _anthropic_to_openai_messages,
+    _anthropic_tools_to_openai,
+)
 
 import psycopg
 from psycopg.rows import dict_row
@@ -126,6 +148,19 @@ OIDC_ENABLED       = bool(AUTHENTIK_URL)
 
 # JWKS cache: (keys_dict, fetched_at)
 _jwks_cache: tuple = (None, 0.0)
+
+# ─── Global-state locks ────────────────────────────────────────────────────────
+# asyncio does not share a thread with other coroutines while awaiting, but
+# synchronous dict mutation (e.g. _endpoint_gpu_indices[k] = v) is NOT atomic
+# under concurrent asyncio tasks on CPython once the GIL is released between
+# byte-code instructions. threading.Lock is the correct primitive here because:
+#   (a) all writers run in the same event-loop thread — so Lock.acquire() never
+#       blocks the event loop longer than the locked section itself (a few ns);
+#   (b) asyncio.Lock would require async with, which is heavier and unnecessary
+#       for pure-synchronous dict updates.
+_gpu_lock   = threading.Lock()   # guards _endpoint_gpu_indices round-robin index
+_cache_lock = threading.Lock()   # guards _model_avail_cache, _ps_cache, _jwks_cache
+_shadow_lock = threading.Lock()  # guards _shadow_request_counter increment
 
 
 def _read_expert_templates() -> list:
@@ -871,6 +906,8 @@ def _check_rate_limit_exhausted(endpoint: str) -> bool:
 
 # MCP tool descriptions for the planner (loaded at startup)
 MCP_TOOLS_DESCRIPTION = ""
+# MCP tool schemas for pre-call arg validation: {tool_name: {required: [...], args: {...}}}
+MCP_TOOL_SCHEMAS: dict = {}
 
 # Code-navigation tools — not included in MCP_TOOLS_DESCRIPTION,
 # only injected into the planner prompt when agentic_coder is active.
@@ -1157,14 +1194,16 @@ async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
 async def _fetch_jwks() -> Optional[dict]:
     """Fetch and cache JWKS from Authentik (10 min TTL)."""
     global _jwks_cache
-    keys, fetched_at = _jwks_cache
+    with _cache_lock:
+        keys, fetched_at = _jwks_cache
     if keys and (time.time() - fetched_at) < 600:
         return keys
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(OIDC_JWKS_URL)
             if r.status_code == 200:
-                _jwks_cache = (r.json(), time.time())
+                with _cache_lock:
+                    _jwks_cache = (r.json(), time.time())
                 return r.json()
     except Exception as e:
         logger.warning("JWKS fetch failed: %s", e)
@@ -1440,10 +1479,11 @@ async def _get_available_models(node: str) -> Optional[frozenset]:
     """Queries available models of a node (60s cache).
     Returns None if the node is unreachable → request is not blocked."""
     now = time.monotonic()
-    if node in _model_avail_cache:
-        ts, models = _model_avail_cache[node]
-        if now - ts < _MODEL_AVAIL_TTL:
-            return models
+    with _cache_lock:
+        if node in _model_avail_cache:
+            ts, models = _model_avail_cache[node]
+            if now - ts < _MODEL_AVAIL_TTL:
+                return models
     url = URL_MAP.get(node, "").rstrip("/")
     token = TOKEN_MAP.get(node, "ollama")
     api_type = API_TYPE_MAP.get(node, "ollama")
@@ -1462,7 +1502,8 @@ async def _get_available_models(node: str) -> Optional[frozenset]:
                 models = frozenset(m["id"] for m in _r.json().get("data", [])) \
                          if _r.status_code == 200 else None
         if models is not None:
-            _model_avail_cache[node] = (now, models)
+            with _cache_lock:
+                _model_avail_cache[node] = (now, models)
         return models
     except Exception as _e:
         logger.debug(f"Model availability check failed for {node}: {_e}")
@@ -1538,8 +1579,9 @@ async def _init_semaphores():
 async def assign_gpu(endpoint: str = "") -> int:
     srv   = next((s for s in INFERENCE_SERVERS_LIST if s["name"] == endpoint), None)
     count = int(srv["gpu_count"]) if srv else 1
-    idx   = _endpoint_gpu_indices.get(endpoint, 0) % max(count, 1)
-    _endpoint_gpu_indices[endpoint] = idx + 1
+    with _gpu_lock:
+        idx = _endpoint_gpu_indices.get(endpoint, 0) % max(count, 1)
+        _endpoint_gpu_indices[endpoint] = idx + 1
     return idx
 
 # --- DB SETUP ---
@@ -1714,73 +1756,15 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = None
     stream_options: Optional[Dict] = None
     files: Optional[List[Any]] = None           # OpenWebUI file attachments [{type, id, name, ...}]
+    no_cache: bool = False                      # If True, skip L0 (Redis) and L1 (ChromaDB) cache reads and writes
 
 class FeedbackRequest(BaseModel):
     response_id: str           # chat_id from the response ("chatcmpl-...")
     rating: int                # 1-5  (1-2=negativ, 3=neutral, 4-5=positiv)
     correction: Optional[str] = None  # optional corrected response
 
-class AgentState(TypedDict):
-    input: str
-    response_id: str                                      # chat_id for feedback tracking
-    mode: str                                             # "default" | "code" | "concise" | "agent"
-    user_id: str                                          # authenticated user (or "anon")
-    api_key_id: str                                       # API key ID for usage logging
-    system_prompt: str                                    # System message from the client (coding-agent file context)
-    plan: List[Dict[str, str]]
-    expert_results: Annotated[list, operator.add]
-    expert_models_used: Annotated[list, operator.add]     # ["model::category", ...]
-    web_research: str
-    cached_facts: str
-    cache_hit: bool
-    math_result: str
-    mcp_result: str
-    graph_context: str
-    final_response: str
-    prompt_tokens: Annotated[int, operator.add]           # accumulated over all nodes
-    completion_tokens: Annotated[int, operator.add]
-    chat_history: List[Dict]                              # conversation context for experts
-    reasoning_trace: str                                  # CoT output from the thinking node
-    soft_cache_examples: str                              # similar previous Q&A pairs (few-shot context)
-    images: List[Dict]                                    # extracted image data for vision expert
-    user_permissions: dict                                # from permissions_json (Valkey) for permission checks
-    user_experts: dict                                    # per-user expert config from template
-    tenant_ids: List[str]                                 # graph_tenant IDs from permissions (RBAC)
-    provenance_sources: List[Dict]                        # [REF:entity] tags extracted from merger output
-    output_skill_body: str                                # resolved skill body for output formatting (planner suggestion)
-    enable_cache: bool                                    # template toggle: use ChromaDB L1 cache
-    enable_graphrag: bool                                 # template toggle: query Neo4j knowledge graph
-    enable_web_research: bool                             # template toggle: allow web search via SearXNG
-    graphrag_max_chars: int                               # per-template GraphRAG char budget (0 = auto from judge model context window)
-    history_max_turns: int                                # per-template history turn limit (0 = global default, -1 = unlimited)
-    history_max_chars: int                                # per-template history char limit (0 = global default, -1 = unlimited)
-    planner_prompt: str                                   # custom planner LLM system prompt from template (empty = DEFAULT_PLANNER_ROLE)
-    judge_prompt: str                                     # custom judge/merger system prompt from template (empty = mode_cfg["merger_prefix"])
-    judge_model_override: str                             # per-template judge model (empty = global JUDGE_MODEL)
-    judge_url_override: str                               # per-template judge URL
-    judge_token_override: str                             # per-template judge token
-    complexity_level: str                                 # "trivial" | "moderate" | "complex" (OBJ 4)
-    skip_research: bool                                   # True = skip research node (OBJ 4)
-    skip_thinking: bool                                   # True = skip thinking node (OBJ 4)
-    planner_model_override: str                           # per-template planner model (empty = global PLANNER_MODEL)
-    planner_url_override: str                             # per-template planner URL
-    planner_token_override: str                           # per-template planner token
-    template_name: str                                    # user-facing template name (e.g. "moe-ontology-curator-n04-rtx"); empty for native/mode requests
-    pending_reports: List[str]                            # _report messages collected before pipeline start
-    direct_expert: str                                    # Semantic pre-router: set → planner LM is skipped
-    metadata_filters: Dict                               # optional domain filters extracted by planner; used for scoped ChromaDB retrieval
-    # ── Causal-path logging (Explainable AI / compliance audit) ──────────────
-    graphrag_entities: List[Dict]                        # Neo4j entities retrieved: [{name, type, confidence, relations_used}]
-    judge_reason: str                                    # why the judge intervened (gap_feedback summary)
-    judge_before_after: Dict                             # {before_score, after_score, delta} from refinement
-    expert_inputs: Dict                                  # {expert_name: {tokens_out, latency_ms}} per-expert stats
-    cost_tier: str                                       # "local_7b" | "mid_tier" | "full" (cost classifier)
-    force_tier1: bool                                    # True = skip T2 experts (cost saving for trivial tasks)
-    # ── Agentic re-planning loop ───────────────────────────────────────────────
-    agentic_iteration: int                               # current loop iteration (0 = first pass)
-    agentic_max_rounds: int                              # max iterations from template config (0 = disabled)
-    agentic_history: list                                # [{iteration, findings, gap}] accumulated per round
-    agentic_gap: str                                     # what's still missing — output of gap-detection LLM call
+# AgentState is defined in pipeline/state.py and imported at the top of this file.
+# See that module for full field documentation grouped by purpose.
 
 # Zentrale Komponenten
 JUDGE_MODEL   = os.getenv("JUDGE_MODEL", "magistral:24b")
@@ -1834,15 +1818,22 @@ def _server_info(endpoint_name: str) -> dict:
     return next((s for s in INFERENCE_SERVERS_LIST if s["name"] == endpoint_name), {})
 
 
-async def _invoke_judge_with_retry(state: "AgentState", prompt: str, max_retries: int = 3):
+async def _invoke_judge_with_retry(
+    state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None
+):
     """Invoke the judge LLM with retry logic for empty/failed responses.
     On failure: waits 5s (model reload time), re-discovers the node, retries.
     This handles the Ollama TTL unloading issue where the judge model gets
-    evicted between expert inference calls."""
+    evicted between expert inference calls.
+
+    temperature: when set, overrides the default judge sampling temperature.
+    """
     last_error = None
     for attempt in range(max_retries):
         try:
             llm = await _get_judge_llm(state)
+            if temperature is not None:
+                llm = llm.bind(temperature=temperature)
             res = await llm.ainvoke(prompt)
             # Check for empty/useless response
             if res and hasattr(res, 'content') and res.content and len(res.content.strip()) > 10:
@@ -1860,7 +1851,8 @@ async def _invoke_judge_with_retry(state: "AgentState", prompt: str, max_retries
             logger.info(f"🔄 Judge retry in {wait}s (warming up model)...")
             await asyncio.sleep(wait)
             # Clear PS cache to force fresh node discovery
-            _ps_cache.clear()
+            with _cache_lock:
+                _ps_cache.clear()
 
     # All retries failed — return a minimal response
     logger.error(f"❌ Judge failed after {max_retries} attempts: {last_error}")
@@ -1906,10 +1898,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
     return planner_llm
 
 
-def _improvement_ratio(old: str, new: str) -> float:
-    """Returns 0..1: 0 = identical, 1 = completely different (text change rate)."""
-    from difflib import SequenceMatcher
-    return 1.0 - SequenceMatcher(None, old, new).ratio()
+# _improvement_ratio — see parsing.py
 
 
 async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentState") -> Optional[str]:
@@ -2049,7 +2038,8 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
         if srv.get("api_type", "ollama") != "ollama":
             return srv, [], False
         now = time.monotonic()
-        cached = _ps_cache.get(srv["name"])
+        with _cache_lock:
+            cached = _ps_cache.get(srv["name"])
         if cached and (now - cached[0]) < _PS_CACHE_TTL:
             running = cached[1]
         else:
@@ -2060,7 +2050,8 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
                     running = r.json().get("models", []) if r.status_code == 200 else []
             except Exception:
                 running = []
-            _ps_cache[srv["name"]] = (now, running)
+            with _cache_lock:
+                _ps_cache[srv["name"]] = (now, running)
         is_warm = any(
             m.get("name", "").split(":")[0] == model_name.split(":")[0]
             and (not model_name.count(":") or m.get("name") == model_name)
@@ -2156,47 +2147,8 @@ async def _record_expert_outcome(model: str, category: str, positive: bool) -> N
     except Exception as e:
         logger.warning(f"Expert score update failed: {e}")
 
-def _extract_usage(res) -> Dict[str, int]:
-    """Extract prompt_tokens + completion_tokens from a LangChain AIMessage.
-    Ollama provides usage_metadata; fallback to response_metadata['token_usage']."""
-    meta = getattr(res, "usage_metadata", None)
-    if meta:
-        return {
-            "prompt_tokens":     int(meta.get("input_tokens",  0)),
-            "completion_tokens": int(meta.get("output_tokens", 0)),
-        }
-    token_usage = getattr(res, "response_metadata", {}).get("token_usage", {})
-    return {
-        "prompt_tokens":     int(token_usage.get("prompt_tokens",     0)),
-        "completion_tokens": int(token_usage.get("completion_tokens", 0)),
-    }
-
-def _parse_expert_confidence(result: str) -> str:
-    """Extracts CONFIDENCE from structured expert output. Fallback: 'medium'."""
-    m = re.search(r'CONFIDENCE:\s*(high|medium|low)', result, re.I)
-    return m.group(1).lower() if m else "medium"
-
-def _parse_expert_gaps(result: str) -> tuple[str, str]:
-    """Extracts GAPS and REFERRAL from structured expert output.
-    Returns (gaps, referral) — each '' if not present."""
-    luecken = ""
-    verweis = ""
-    m = re.search(r'GAPS:\s*([^\n·]+)', result, re.I)
-    if m:
-        val = m.group(1).strip().rstrip("·").strip()
-        if val.lower() not in ("none", "—", "-", ""):
-            luecken = val
-    m = re.search(r'REFERRAL:\s*([^\n·]+)', result, re.I)
-    if m:
-        val = m.group(1).strip()
-        if val not in ("—", "-", ""):
-            verweis = val
-    return luecken, verweis
-
-def _expert_category(result: str) -> str:
-    """Extracts category from expert result header '[MODEL / category]:'."""
-    m = re.search(r'/\s*(\w+)\]:', result)
-    return m.group(1).lower() if m else ""
+# _extract_usage, _extract_json, _parse_expert_confidence,
+# _parse_expert_gaps, _expert_category — see parsing.py
 
 def _infer_tier(model_name: str) -> int:
     """Derives expert tier from model size in the name. T1 ≤20B, T2 >20B.
@@ -2207,95 +2159,23 @@ def _infer_tier(model_name: str) -> int:
         return 1
     return 1 if float(m.group(1)) <= EXPERT_TIER_BOUNDARY_B else 2
 
-def _dedup_by_category(expert_results: List[str]) -> List[str]:
-    """Keeps only the result with highest confidence per category."""
-    _CONF_RANK = {"high": 2, "medium": 1, "low": 0}
-    best: Dict[str, tuple] = {}
-    no_cat: List[str] = []
-    for r in expert_results:
-        cat = _expert_category(r)
-        if not cat:
-            no_cat.append(r)
-            continue
-        rank = _CONF_RANK.get(_parse_expert_confidence(r), 1)
-        if cat not in best or rank > best[cat][0]:
-            best[cat] = (rank, r)
-    return [v[1] for v in best.values()] + no_cat
+# _dedup_by_category — see parsing.py
 
 def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: int = None) -> List[Dict]:
-    """Truncates conversation history to the last N rounds and max. character count.
-    Older assistant answers are compressed to [Answer…] instead of hard-truncated,
-    so that user questions are preserved as conversation context.
+    """Wrapper: forwards to parsing._truncate_history_pure with app-level defaults and Prometheus counters."""
+    return _truncate_history_pure(
+        messages, max_turns, max_chars,
+        default_max_turns=HISTORY_MAX_TURNS,
+        default_max_chars=HISTORY_MAX_CHARS,
+        prom_unlimited=PROM_HISTORY_UNLIMITED,
+        prom_compressed=PROM_HISTORY_COMPRESSED,
+    )
 
-    Per-template overrides: 0 = use global default, -1 = unlimited (no truncation).
-    """
-    max_turns = max_turns if max_turns is not None else HISTORY_MAX_TURNS
-    max_chars = max_chars if max_chars is not None else HISTORY_MAX_CHARS
-    history = [m for m in messages if m.get("role") in ("user", "assistant")]
-    if max_turns == -1 and max_chars == -1:
-        PROM_HISTORY_UNLIMITED.inc()
-        return list(history)
-    if max_turns > 0:
-        history = history[-(max_turns * 2):]
-
-    if max_chars == -1:
-        return list(history)
-
-    # Compress older assistant answers when total history length > 2/3 of the limit
-    _total_chars = sum(len(m["content"]) for m in history)
-    if _total_chars > max_chars * 2 // 3:
-        PROM_HISTORY_COMPRESSED.inc()
-        compressed = []
-        for i, msg in enumerate(history):
-            # Always keep the last 2 messages (current turn) in full
-            if msg["role"] == "assistant" and i < len(history) - 2:
-                compressed.append({"role": "assistant", "content": "[…]"})
-            else:
-                compressed.append(msg)
-        history = compressed
-
-    total = 0
-    result: List[Dict] = []
-    for msg in reversed(history):
-        content = msg["content"]
-        if total + len(content) > max_chars:
-            remaining = max_chars - total
-            if remaining > 100:
-                result.insert(0, {"role": msg["role"], "content": content[:remaining] + "…"})
-            break
-        result.insert(0, {"role": msg["role"], "content": content})
-        total += len(content)
-    return result
+# _DOMAIN_SCORES, _domain_score, _reliability_label — see web_search.py
 
 async def _web_search_with_citations(query: str) -> str:
-    """Search via SearXNG and return result text with source citations.
-    Returns an empty string when SEARXNG_URL is unset (web search disabled)."""
-    if search is None:
-        return ""
-    try:
-        raw_results = await asyncio.to_thread(search.results, query, num_results=5)
-        if not raw_results:
-            return await asyncio.to_thread(search.run, query)
-        parts: List[str] = []
-        citations: List[str] = []
-        for i, r in enumerate(raw_results[:5], 1):
-            snippet = r.get("snippet", r.get("content", "")).strip()
-            title   = r.get("title", "").strip()
-            link    = r.get("link",   r.get("url", "")).strip()
-            if snippet:
-                parts.append(f"[{i}] {snippet}")
-            if link:
-                citations.append(f"[{i}] {title or link}: {link}")
-        text = "\n".join(parts)
-        if citations:
-            text += "\n\nSources:\n" + "\n".join(citations)
-        return text or await asyncio.to_thread(search.run, query)
-    except Exception as e:
-        logger.warning(f"search.results() failed ({e}) — fallback to search.run()")
-        try:
-            return await asyncio.to_thread(search.run, query)
-        except Exception:
-            return ""
+    """Wrapper: forwards to web_search._web_search_with_citations_impl with app-level search singleton."""
+    return await _web_search_with_citations_impl(query, search)
 
 async def _store_response_metadata(
     response_id: str,
@@ -2323,7 +2203,14 @@ async def _store_response_metadata(
     except Exception as e:
         logger.warning(f"Failed to save response metadata: {e}")
 
-async def _self_evaluate(response_id: str, question: str, answer: str, chroma_id: str) -> None:
+async def _self_evaluate(
+    response_id: str,
+    question: str,
+    answer: str,
+    chroma_id: str,
+    template_name: str = "",
+    complexity: str = "",
+) -> None:
     """Judge LLM evaluates its own response async — does not block the response to the user."""
     try:
         eval_prompt = (
@@ -2339,7 +2226,9 @@ async def _self_evaluate(response_id: str, question: str, answer: str, chroma_id
         PROM_SELF_EVAL.observe(score)
         if redis_client:
             await redis_client.hset(f"moe:response:{response_id}", "self_score", score)
-        asyncio.create_task(_telemetry.record_self_score(_userdb_pool, response_id, score))
+        asyncio.create_task(_telemetry.record_self_score(
+            _userdb_pool, response_id, score, template_name=template_name, complexity=complexity
+        ))
         # Cost-tier learning loop: track low-quality responses routed as local_7b.
         # If the downgrade rate > 20% for a category, it signals the tier is too low.
         if redis_client and score <= 2:
@@ -2709,7 +2598,9 @@ async def cache_lookup_node(state: AgentState):
     _cache_query = re.sub(r'\s+', ' ', state["input"].lower().strip().rstrip('?!.,;'))
 
     # L0: Exact query hash cache (Valkey, instant, before ChromaDB)
-    if redis_client:
+    if state.get("no_cache"):
+        pass  # skip L0 cache — no_cache flag set by client
+    elif redis_client:
         try:
             import hashlib as _hl
             _q_hash = _hl.sha256(_cache_query.encode()).hexdigest()[:24]
@@ -2729,7 +2620,7 @@ async def cache_lookup_node(state: AgentState):
     res = await asyncio.to_thread(cache_collection.query, query_texts=[_cache_query], n_results=3)
     cached = ""
     hit = False
-    if res['documents'] and res['documents'][0]:
+    if not state.get("no_cache") and res['documents'] and res['documents'][0]:
         docs  = res['documents'][0]
         dists = res.get('distances', [[1.0] * len(docs)])[0]
         metas = res.get('metadatas', [[{}]  * len(docs)])[0]
@@ -2810,6 +2701,16 @@ async def semantic_router_node(state: AgentState):
     return {"direct_expert": ""}
 
 
+def _validate_tool_result(result_str: str, tool: str) -> tuple[bool, str]:
+    """Sanity-check MCP tool output before it enters working memory."""
+    if not result_str or len(result_str.strip()) < 3:
+        return False, "empty_result"
+    lower = result_str.lower()
+    if lower.startswith("[") and "error" in lower[:30]:
+        return False, "error_prefix"
+    return True, ""
+
+
 async def mcp_node(state: AgentState):
     """Executes precision tool calls via MCP server — all in parallel."""
     if state.get("cache_hit"):
@@ -2834,6 +2735,12 @@ async def mcp_node(state: AgentState):
     await _report(f"⚙️ MCP Precision Tools: {', '.join(tool_names)}")
     logger.info(f"--- [NODE] MCP ({len(precision_tasks)} Tools parallel) ---")
 
+    # Working Memory accumulators — carry over facts from previous iterations
+    _wm: dict = dict(state.get("working_memory") or {})
+    _log: list = list(state.get("tool_calls_log") or [])
+    _failures: list = list(state.get("tool_failures") or [])
+    _ts_now = lambda: datetime.utcnow().isoformat() + "Z"
+
     async def call_tool(client: httpx.AsyncClient, task: dict) -> str:
         tool = task.get("mcp_tool")
         args = task.get("mcp_args", {})
@@ -2844,6 +2751,25 @@ async def mcp_node(state: AgentState):
             args["expression"] = args.pop("operation")
         if tool == "calculate" and "formula" in args and "expression" not in args:
             args["expression"] = args.pop("formula")
+        # Pre-call schema validation — catch missing required args before HTTP round-trip
+        _schema = MCP_TOOL_SCHEMAS.get(tool, {})
+        _missing = [f for f in _schema.get("required", []) if f not in args]
+        if _missing:
+            logger.info(f"🔧 MCP pre-validation: {tool} missing {_missing} — asking judge to fix")
+            _pre_fix_prompt = (
+                f"The MCP tool '{tool}' requires these arguments: {_schema.get('required', [])}\n"
+                f"Current args (missing {_missing}): {json.dumps(args)}\n"
+                f"Task context: {desc}\n"
+                f"Return ONLY a corrected JSON object with all required args filled. No explanation."
+            )
+            try:
+                _pre_fix_res = await _invoke_judge_with_retry(state, _pre_fix_prompt, max_retries=1, temperature=0.05)
+                _fixed = _extract_json(_pre_fix_res.content or "")
+                if isinstance(_fixed, dict) and all(f in _fixed for f in _missing):
+                    args = _fixed
+                    logger.info(f"🔧 MCP pre-validation: args corrected for {tool}")
+            except Exception as _pve:
+                logger.debug(f"MCP pre-validation fix failed for {tool}: {_pve}")
         await _report(f"⚙️ MCP-Call: {tool}\nArgs: {json.dumps(args, ensure_ascii=False, indent=2)}")
         _mcp_t0 = time.monotonic()
         try:
@@ -2855,56 +2781,75 @@ async def mcp_node(state: AgentState):
                 err_str = data['error']
                 await _report(f"⚙️ MCP error [{tool}]: {err_str}")
                 _log_tool_eval({
-                    "ts": datetime.utcnow().isoformat() + "Z",
-                    "source": "mcp_node",
-                    "chat_id": state.get("chat_id", ""),
-                    "user_id": state.get("user_id", ""),
-                    "tool": tool,
-                    "args": args,
-                    "task": desc,
-                    "result": None,
-                    "error": err_str,
-                    "latency_s": _mcp_dt,
-                    "caller": "orchestrator_pipeline",
-                    "template": state.get("template_name", ""),
+                    "ts": _ts_now(), "source": "mcp_node",
+                    "chat_id": state.get("chat_id", ""), "user_id": state.get("user_id", ""),
+                    "tool": tool, "args": args, "task": desc, "result": None,
+                    "error": err_str, "latency_s": _mcp_dt,
+                    "caller": "orchestrator_pipeline", "template": state.get("template_name", ""),
                 })
+                _entry = {"tool": tool, "args": args, "result": None, "status": "error", "error": err_str, "ts": _ts_now()}
+                _log.append(_entry)
+                _failures.append(_entry)
+                # Attempt arg-correction retry via judge LLM
+                fix_prompt = (
+                    f"The MCP tool '{tool}' returned an error: {err_str}\n"
+                    f"Original args: {json.dumps(args)}\n"
+                    f"Return ONLY a corrected JSON object for the args. No explanation."
+                )
+                try:
+                    fix_res = await _invoke_judge_with_retry(state, fix_prompt, max_retries=1)
+                    corrected_args = _extract_json(fix_res.content or "")
+                    if not isinstance(corrected_args, dict):
+                        raise ValueError("judge returned non-dict JSON")
+                    logger.info(f"🔄 MCP retry [{tool}] with corrected args: {corrected_args}")
+                    resp2 = await client.post(f"{MCP_URL}/invoke", json={"tool": tool, "args": corrected_args})
+                    resp2.raise_for_status()
+                    data2 = resp2.json()
+                    if "error" not in data2:
+                        result_str2 = data2.get("result", "")
+                        await _report(f"⚙️ MCP retry OK [{tool}]:\n{result_str2}")
+                        valid, _ = _validate_tool_result(result_str2, tool)
+                        if valid:
+                            wm_key = f"{tool}:{json.dumps(corrected_args)[:60]}"
+                            _wm[wm_key] = {"value": result_str2[:500], "source": "mcp_node", "confidence": 0.8, "ts": _ts_now()}
+                        _log.append({"tool": tool, "args": corrected_args, "result": result_str2[:200], "status": "ok_retry", "ts": _ts_now()})
+                        return f"[{desc}] {result_str2}"
+                except Exception as retry_exc:
+                    logger.debug(f"MCP arg-correction retry failed for {tool}: {retry_exc}")
                 return f"[{desc}] Error: {err_str}"
             result_str = data.get('result', '')
             await _report(f"⚙️ MCP result [{tool}]:\n{result_str}")
             logger.info(f"🔧 MCP: [{desc}] {result_str[:120]}")
             _log_tool_eval({
-                "ts": datetime.utcnow().isoformat() + "Z",
-                "source": "mcp_node",
-                "chat_id": state.get("chat_id", ""),
-                "user_id": state.get("user_id", ""),
-                "tool": tool,
-                "args": args,
-                "task": desc,
-                "result": result_str[:500],
-                "error": None,
-                "latency_s": _mcp_dt,
-                "caller": "orchestrator_pipeline",
-                "template": state.get("template_name", ""),
+                "ts": _ts_now(), "source": "mcp_node",
+                "chat_id": state.get("chat_id", ""), "user_id": state.get("user_id", ""),
+                "tool": tool, "args": args, "task": desc, "result": result_str[:500],
+                "error": None, "latency_s": _mcp_dt,
+                "caller": "orchestrator_pipeline", "template": state.get("template_name", ""),
             })
+            _log.append({"tool": tool, "args": args, "result": result_str[:200], "status": "ok", "ts": _ts_now()})
+            # Write validated results to working memory
+            valid, reason = _validate_tool_result(result_str, tool)
+            if valid:
+                wm_key = f"{tool}:{json.dumps(args)[:60]}"
+                _wm[wm_key] = {"value": result_str[:500], "source": "mcp_node", "confidence": 0.9, "ts": _ts_now()}
+            else:
+                logger.debug(f"MCP result for {tool} failed validation: {reason}")
             return f"[{desc}] {result_str}"
         except Exception as e:
             _mcp_dt = round(time.monotonic() - _mcp_t0, 3)
             logger.error(f"MCP Tool '{tool}' failed: {e}")
             await _report(f"⚙️ MCP exception [{tool}]: {e}")
             _log_tool_eval({
-                "ts": datetime.utcnow().isoformat() + "Z",
-                "source": "mcp_node",
-                "chat_id": state.get("chat_id", ""),
-                "user_id": state.get("user_id", ""),
-                "tool": tool,
-                "args": args,
-                "task": desc,
-                "result": None,
-                "error": str(e)[:300],
-                "latency_s": _mcp_dt,
-                "caller": "orchestrator_pipeline",
-                "template": state.get("template_name", ""),
+                "ts": _ts_now(), "source": "mcp_node",
+                "chat_id": state.get("chat_id", ""), "user_id": state.get("user_id", ""),
+                "tool": tool, "args": args, "task": desc, "result": None,
+                "error": str(e)[:300], "latency_s": _mcp_dt,
+                "caller": "orchestrator_pipeline", "template": state.get("template_name", ""),
             })
+            _entry = {"tool": tool, "args": args, "result": None, "status": "exception", "error": str(e)[:200], "ts": _ts_now()}
+            _log.append(_entry)
+            _failures.append(_entry)
             return f"[{desc}] MCP error: {e}"
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -2913,7 +2858,14 @@ async def mcp_node(state: AgentState):
     combined = "\n".join(results)
     await _report(f"⚙️ MCP: {len(results)} result(s) received")
     logger.info(f"🔧 MCP: {combined[:300]}")
-    return {"mcp_result": combined}
+    if _wm:
+        logger.info(f"📝 Working Memory: {len(_wm)} facts extracted")
+    return {
+        "mcp_result": combined,
+        "working_memory": _wm,
+        "tool_calls_log": _log,
+        "tool_failures": _failures,
+    }
 
 
 async def graph_rag_node(state: AgentState):
@@ -3069,6 +3021,33 @@ def _sanitize_plan(raw: list, fallback_input: str) -> list:
     return result
 
 
+_MATH_TEMP_PATTERN = re.compile(
+    r'\b(berechne?|berechnung|integral|ableitung|differentialgleichung|löse?|solve|'
+    r'calculate|calculation|subnet|cidr|bgp|ospf|hash|checksum|statistics|statistik|'
+    r'wie viel|how much|how many|wie viele|convert|umrechnen|prozent|percent)\b',
+    re.I,
+)
+_CREATIVE_TEMP_PATTERN = re.compile(
+    r'\b(entwirf|erstelle?|schreibe?|gestalte?|verfasse?|dichte?|erdichte?|'
+    r'create|write|generate|design|compose|brainstorm|ideen|kreativ|story|poem|'
+    r'imagine|vorstellen|erfinde?|invent)\b',
+    re.I,
+)
+
+
+def _detect_query_temperature(query: str) -> float:
+    """Infer optimal sampling temperature from query type.
+
+    Math/factual queries need deterministic output (low temp).
+    Creative queries benefit from variability (high temp).
+    """
+    if _MATH_TEMP_PATTERN.search(query):
+        return 0.05
+    if _CREATIVE_TEMP_PATTERN.search(query):
+        return 0.70
+    return 0.20  # factual / neutral default
+
+
 async def planner_node(state: AgentState):
     _output_skill = ""  # Initialize early to prevent UnboundLocalError
     # Cache hit: no LLM call needed
@@ -3119,12 +3098,15 @@ async def planner_node(state: AgentState):
     logger.info(f"💰 Cost-Tier: {_cost_tier} (complexity={_complexity})")
 
     # Store routing hints in state for downstream nodes
+    _query_temp = _detect_query_temperature(state["input"])
+    logger.info(f"🌡️ Adaptive temperature: {_query_temp} (input analysis)")
     _complexity_state_update = {
         "complexity_level":   _complexity,
         "skip_research":      _routing["skip_research"],
         "skip_thinking":      _routing["skip_thinking"],
         "cost_tier":          _cost_tier,
         "force_tier1":        _routing.get("force_tier1", False),
+        "query_temperature":  _query_temp,
     }
 
     # Agent mode: force code_reviewer + technical_support directly, no LLM planner
@@ -3159,6 +3141,18 @@ async def planner_node(state: AgentState):
         _img_hint = f"[BILD-EINGABE vorhanden] ({len(images)} Bild(er))"
         if "[BILD-EINGABE vorhanden]" not in state["input"]:
             state["input"] = f"{_img_hint} {state['input']}"
+
+    # SELF_EVAL quality hint — informs planner about historical performance
+    _quality_hint = ""
+    try:
+        from telemetry import get_quality_hint as _get_quality_hint
+        _quality_hint = await _get_quality_hint(
+            _userdb_pool, state.get("template_name", ""), _complexity
+        )
+        if _quality_hint:
+            _quality_hint = f"\n{_quality_hint}\n"
+    except Exception:
+        pass
 
     # Load proven plan patterns from positive user feedback
     success_hint = ""
@@ -3207,10 +3201,22 @@ async def planner_node(state: AgentState):
         _gap        = (state.get("agentic_gap") or "").strip()
         _history    = state.get("agentic_history") or []
         _prev_found = _history[-1].get("findings", "") if _history else ""
+        _wm         = state.get("working_memory") or {}
+        _failures   = state.get("tool_failures") or []
+        # Prefer structured working memory over truncated prose when available
+        if _wm:
+            _context_facts = "ESTABLISHED FACTS (structured):\n" + json.dumps(_wm)[:2000]
+        else:
+            _context_facts = f"Previously established facts:\n{_prev_found[:1500]}"
+        _fail_block = (
+            f"\nFAILED TOOL CALLS (do NOT retry with identical args):\n{json.dumps(_failures[-5:])}"
+            if _failures else ""
+        )
         _agentic_context_block = (
             f"\n=== AGENTIC ITERATION {_agentic_iteration}/{_agentic_max_rounds} ===\n"
-            f"Previously established facts:\n{_prev_found[:1500]}\n\n"
-            f"Still unresolved:\n{_gap[:800]}\n\n"
+            f"{_context_facts}\n\n"
+            f"Still unresolved:\n{_gap[:800]}\n"
+            f"{_fail_block}\n"
             "Instructions: Focus ONLY on resolving the gap above. "
             "Do NOT repeat subtasks already answered. "
             "Use web_researcher or precision_tools to fetch missing data.\n"
@@ -3221,6 +3227,7 @@ async def planner_node(state: AgentState):
             f"📌 Still open: {_gap[:120]}"
         )
         # Clear single-string result fields so old results don't bleed into new iteration.
+        # NOTE: working_memory / tool_calls_log / tool_failures are intentionally preserved.
         _agentic_state_reset = {"web_research": "", "mcp_result": "", "math_result": ""}
         logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds}: gap={_gap[:80]}")
 
@@ -3271,7 +3278,7 @@ RULES:
 - OPTIONAL: Add a "metadata_filters" key to the FIRST task object when the domain is unambiguous, to scope downstream memory retrieval. Use string values only. Omit when unsure.
   Example: {{"task": "...", "category": "code_reviewer", "metadata_filters": {{"expert_domain": "code_reviewer", "project": "frontend"}}}}
 {_build_skill_catalog()}
-{success_hint}{_few_shot_hint}
+{_quality_hint}{success_hint}{_few_shot_hint}
 EXAMPLE calculation:
 Request: "What subnet mask for 10.42.155.160/27 with 14 hosts?"
 Correct: [{{"task": "Subnet info for 10.42.155.160/27", "category": "precision_tools", "mcp_tool": "subnet_calc", "mcp_args": {{"cidr": "10.42.155.160/27"}}}}]
@@ -3298,7 +3305,8 @@ JSON array:"""
     total_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
     plan: Optional[list] = None
     for attempt in range(PLANNER_RETRIES):
-        res = await (await _get_planner_llm(state)).ainvoke(prompt)
+        _planner_llm_inst = (await _get_planner_llm(state)).bind(temperature=_query_temp)
+        res = await _planner_llm_inst.ainvoke(prompt)
         u = _extract_usage(res)
         total_usage["prompt_tokens"]     += u["prompt_tokens"]
         total_usage["completion_tokens"] += u["completion_tokens"]
@@ -4025,7 +4033,7 @@ async def merger_node(state: AgentState):
                 metadatas=[{"ts": datetime.now().isoformat(), "input": state["input"][:200], "flagged": False, "expert_domain": _expert_domain}],
             )
             # L0: Write to query-hash cache for instant hits on identical queries
-            if redis_client:
+            if not state.get("no_cache") and redis_client:
                 try:
                     import hashlib as _hl
                     _q_norm = re.sub(r'\s+', ' ', state["input"].lower().strip().rstrip('?!.,;'))
@@ -4038,7 +4046,10 @@ async def merger_node(state: AgentState):
                 state.get("expert_models_used", []), _fp_cid,
                 plan=state.get("plan", []), cost_tier=state.get("cost_tier", "")))
             asyncio.create_task(_self_evaluate(
-                state.get("response_id", ""), state["input"], fast_resp, _fp_cid))
+                state.get("response_id", ""), state["input"], fast_resp, _fp_cid,
+                template_name=state.get("template_name", ""),
+                complexity=state.get("complexity_level", ""),
+            ))
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
             "response_id": state.get("response_id", ""),
             "input":       state["input"][:300],
@@ -4049,7 +4060,7 @@ async def merger_node(state: AgentState):
 
     await _report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
     try:
-        res = await _invoke_judge_with_retry(state,prompt)
+        res = await _invoke_judge_with_retry(state, prompt, temperature=state.get("query_temperature"))
     except Exception as e:
         logger.error(f"❌ Merger Judge LLM error: {e}")
         await _report(f"❌ Merger: Judge LLM unreachable ({e})")
@@ -4096,6 +4107,25 @@ async def merger_node(state: AgentState):
         # Strip REF tags from content for clean output
         res_content_clean = _REF_RE.sub('', res_content_clean).strip()
 
+    # Strip internal merger format headers that should not reach the user
+    _INTERNAL_HEADERS_RE = re.compile(
+        r'^(Key findings from each expert role:|Expert consensus:|## Expert Analysis|'
+        r'\[EXPERT_[A-Z_]+\]|=== EXPERT ===).*?(?=\n\n|\Z)',
+        re.MULTILINE | re.DOTALL
+    )
+    res_content_clean = _INTERNAL_HEADERS_RE.sub('', res_content_clean).strip()
+
+    # Strip confidence annotations that leak from expert/judge nodes into the response.
+    # Covers: **LOW CONFIDENCE (30%)**, CONFIDENCE: low, Set CONFIDENCE: high, etc.
+    _CONFIDENCE_TAG_RE = re.compile(
+        r'(?:'
+        r'\*{1,2}(?:low|medium|high)\s+confidence\s*(?:\(\s*\d+\s*%\s*\))?\*{1,2}'
+        r'|(?:set\s+)?confidence\s*:\s*(?:low|medium|high|very\s+high|very\s+low)'
+        r')',
+        re.IGNORECASE,
+    )
+    res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
+
     if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN:
         # Deterministic ID (SHA-256 of content) prevents duplicate entries under
         # concurrent writes — upsert is idempotent if same response races twice.
@@ -4107,7 +4137,7 @@ async def merger_node(state: AgentState):
             metadatas=[{"ts": datetime.now().isoformat(), "input": state["input"][:200], "flagged": False, "expert_domain": _expert_domain}],
         )
         # L0: Write to query-hash cache (30 min TTL)
-        if redis_client:
+        if not state.get("no_cache") and redis_client:
             try:
                 import hashlib as _hl
                 _q_norm = re.sub(r'\s+', ' ', state["input"].lower().strip().rstrip('?!.,;'))
@@ -4128,7 +4158,9 @@ async def merger_node(state: AgentState):
         )
         # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)
         asyncio.create_task(_self_evaluate(
-            state.get("response_id", ""), state["input"], res_content_clean, chroma_doc_id
+            state.get("response_id", ""), state["input"], res_content_clean, chroma_doc_id,
+            template_name=state.get("template_name", ""),
+            complexity=state.get("complexity_level", ""),
         ))
         # Routing telemetry → PostgreSQL (async, fire-and-forget)
         asyncio.create_task(_telemetry.record_routing_decision(
@@ -4203,35 +4235,47 @@ async def merger_node(state: AgentState):
     _agentic_extra: dict = {}
 
     if _agentic_max > 0 and _agentic_iter < _agentic_max:
-        # Token-budget guard: skip gap detection if already close to limit
-        _used_tokens = state.get("prompt_tokens", 0) + merger_usage.get("prompt_tokens", 0)
-        if _used_tokens < 80_000:
-            _gap_prompt = (
-                "You are a completion assessor. Based on the original question and the current answer, "
-                "determine if the answer is complete.\n\n"
-                f"ORIGINAL QUESTION:\n{state['input'][:600]}\n\n"
-                f"CURRENT ANSWER:\n{res_content_clean[:800]}\n\n"
-                "Reply ONLY in this exact format (no extra text):\n"
-                "COMPLETION_STATUS: COMPLETE | NEEDS_MORE_INFO\n"
-                "GAP: <specific fact/calculation/document still missing, or 'none'>\n"
-                "NEXT_FOCUS: <one concrete action for the next search/calculation step>"
-            )
-            try:
-                _gap_res = await _invoke_judge_with_retry(state, _gap_prompt)
-                _gap_text = (_gap_res.content or "").strip()
-                _gap_match = re.search(r'GAP:\s*(.+?)(?:\n|$)', _gap_text, re.IGNORECASE)
-                _status_match = re.search(r'COMPLETION_STATUS:\s*(\w+)', _gap_text, re.IGNORECASE)
-                _status = (_status_match.group(1) if _status_match else "COMPLETE").upper()
-                _agentic_gap = (_gap_match.group(1).strip() if _gap_match else "").strip()
-                if _status == "COMPLETE" or not _agentic_gap or _agentic_gap.lower() in ("none", ""):
-                    _agentic_gap = "COMPLETE"
-                logger.info(f"🔍 Agentic gap check: status={_status}, gap={_agentic_gap[:80]}")
-            except Exception as _ge:
-                logger.warning(f"⚠️ Agentic gap detection failed: {_ge}")
-                _agentic_gap = "COMPLETE"
-        else:
-            logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
+        # Early exit: if a file was generated (SKILL_TRIGGER / download link), the answer is complete.
+        # Re-planning would cause skill_detector to run again and overwrite the generated file.
+        _is_skill_response = (
+            "SKILL_TRIGGER" in res_content_clean
+            or "/downloads/" in res_content_clean
+            or "DOWNLOAD_URL" in res_content_clean
+        )
+        if _is_skill_response:
+            # File already generated — no re-plan needed; skill_detector must not run again.
+            logger.info("⚡ Agentic gap skipped: skill response detected (file already generated)")
             _agentic_gap = "COMPLETE"
+        else:
+            # Token-budget guard: skip gap detection if already close to limit
+            _used_tokens = state.get("prompt_tokens", 0) + merger_usage.get("prompt_tokens", 0)
+            if _used_tokens < 80_000:
+                _gap_prompt = (
+                    "You are a completion assessor. Based on the original question and the current answer, "
+                    "determine if the answer is complete.\n\n"
+                    f"ORIGINAL QUESTION:\n{state['input'][:600]}\n\n"
+                    f"CURRENT ANSWER:\n{res_content_clean[:800]}\n\n"
+                    "Reply ONLY in this exact format (no extra text):\n"
+                    "COMPLETION_STATUS: COMPLETE | NEEDS_MORE_INFO\n"
+                    "GAP: <specific fact/calculation/document still missing, or 'none'>\n"
+                    "NEXT_FOCUS: <one concrete action for the next search/calculation step>"
+                )
+                try:
+                    _gap_res = await _invoke_judge_with_retry(state, _gap_prompt)
+                    _gap_text = (_gap_res.content or "").strip()
+                    _gap_match = re.search(r'GAP:\s*(.+?)(?:\n|$)', _gap_text, re.IGNORECASE)
+                    _status_match = re.search(r'COMPLETION_STATUS:\s*(\w+)', _gap_text, re.IGNORECASE)
+                    _status = (_status_match.group(1) if _status_match else "COMPLETE").upper()
+                    _agentic_gap = (_gap_match.group(1).strip() if _gap_match else "").strip()
+                    if _status == "COMPLETE" or not _agentic_gap or _agentic_gap.lower() in ("none", ""):
+                        _agentic_gap = "COMPLETE"
+                    logger.info(f"🔍 Agentic gap check: status={_status}, gap={_agentic_gap[:80]}")
+                except Exception as _ge:
+                    logger.warning(f"⚠️ Agentic gap detection failed: {_ge}")
+                    _agentic_gap = "COMPLETE"
+            else:
+                logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
+                _agentic_gap = "COMPLETE"
 
         # Record this iteration's findings for planner context in next round
         _agentic_history.append({
@@ -4239,7 +4283,38 @@ async def merger_node(state: AgentState):
             "findings": res_content_clean[:1200],
             "gap": _agentic_gap,
         })
-        _agentic_extra = {"agentic_gap": _agentic_gap, "agentic_history": _agentic_history}
+
+        # Working Memory: LLM-based fact extraction when gap still open and budget allows
+        _wm_merged: dict = dict(state.get("working_memory") or {})
+        if _agentic_gap != "COMPLETE" and state.get("prompt_tokens", 0) < 90_000:
+            _extract_prompt = (
+                "Extract the key facts from the text below as a flat JSON object "
+                "{\"key\": \"value\"}. Keys must be short snake_case. "
+                "Values must be concrete facts only (no opinions, no explanations). "
+                "Return ONLY valid JSON, no markdown, no extra text.\n\n"
+                f"TEXT:\n{res_content_clean[:500]}"
+            )
+            try:
+                _fact_res = await _invoke_judge_with_retry(state, _extract_prompt, max_retries=1)
+                _facts = _extract_json(_fact_res.content or "")
+                if isinstance(_facts, dict):
+                    _fact_ts = datetime.utcnow().isoformat() + "Z"
+                    for k, v in _facts.items():
+                        _wm_merged[f"merger:{_agentic_iter}:{k}"] = {
+                            "value": str(v)[:300],
+                            "source": "merger_node",
+                            "confidence": 0.7,
+                            "ts": _fact_ts,
+                        }
+                    logger.info(f"📝 Working Memory: {len(_facts)} facts extracted by merger (iter {_agentic_iter})")
+            except Exception as _fe:
+                logger.debug(f"Merger fact extraction failed: {_fe}")
+
+        _agentic_extra = {
+            "agentic_gap": _agentic_gap,
+            "agentic_history": _agentic_history,
+            "working_memory": _wm_merged,
+        }
 
     return {
         "final_response": res_content_clean,
@@ -4522,8 +4597,11 @@ async def _load_mcp_tool_descriptions():
     """Loads tool descriptions from the MCP server for the planner prompt.
     Code navigation tools (repo_map, read_file_chunked, lsp_query) are
     stored separately in AGENTIC_CODE_TOOLS_DESCRIPTION and NOT included
-    in the global MCP_TOOLS_DESCRIPTION block."""
-    global MCP_TOOLS_DESCRIPTION, AGENTIC_CODE_TOOLS_DESCRIPTION
+    in the global MCP_TOOLS_DESCRIPTION block.
+
+    Also populates MCP_TOOL_SCHEMAS for pre-call argument validation.
+    """
+    global MCP_TOOLS_DESCRIPTION, AGENTIC_CODE_TOOLS_DESCRIPTION, MCP_TOOL_SCHEMAS
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{MCP_URL}/tools")
@@ -4537,6 +4615,11 @@ async def _load_mcp_tool_descriptions():
                     agentic_lines.append(line)
                 else:
                     general_lines.append(line)
+                # Store schema for pre-call validation
+                MCP_TOOL_SCHEMAS[t["name"]] = {
+                    "required": t.get("required_args", t.get("required", [])),
+                    "args": t.get("args", t.get("parameters", {})),
+                }
             MCP_TOOLS_DESCRIPTION = "\n".join(general_lines)
             AGENTIC_CODE_TOOLS_DESCRIPTION = "\n".join(agentic_lines)
             logger.info(
@@ -5118,7 +5201,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                           pending_reports: Optional[List[str]] = None,
                           images: Optional[List[Dict]] = None,
                           session_id: str = None,
-                          max_agentic_rounds: int = 0):
+                          max_agentic_rounds: int = 0,
+                          no_cache: bool = False):
     _deregistered = False
     config   = {"configurable": {"thread_id": str(uuid.uuid4())}}
     created  = int(time.time())
@@ -5169,7 +5253,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "max_agentic_rounds": max_agentic_rounds,
                  "agentic_iteration": 0,
                  "agentic_history": [],
-                 "agentic_gap": ""},
+                 "agentic_gap": "",
+                 "no_cache": no_cache},
                 config,
             )
         except Exception as e:
@@ -5372,19 +5457,7 @@ async def memory_ingest(request: Request, body: MemoryIngestRequest):
     return {"status": "queued", "domain": body.domain, "length": len(combined_answer)}
 
 
-def _oai_content_to_str(content: Any) -> str:
-    """Extract plain text from OpenAI-format content (str or list of content parts)."""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for b in content:
-            if isinstance(b, dict) and b.get("type") == "text":
-                parts.append(b.get("text", ""))
-        return " ".join(parts)
-    return str(content)
+# _oai_content_to_str — see parsing.py
 
 
 def _is_openwebui_internal(messages: List[Message]) -> bool:
@@ -5557,8 +5630,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Fire-and-forget — never blocks the production response.
     global _shadow_request_counter
     if BENCHMARK_SHADOW_TEMPLATE:
-        _shadow_request_counter += 1
-        if _shadow_request_counter % BENCHMARK_SHADOW_RATE == 0:
+        with _shadow_lock:
+            _shadow_request_counter += 1
+            _fire_shadow = (_shadow_request_counter % BENCHMARK_SHADOW_RATE == 0)
+        if _fire_shadow:
             asyncio.create_task(_shadow_request(_raw_user_input, user_id, raw_key or ""))
             logger.debug(f"🔬 Shadow request enqueued (counter={_shadow_request_counter})")
 
@@ -5682,7 +5757,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             pending_reports=_pending_reports,
                             images=_user_images,
                             session_id=session_id,
-                            max_agentic_rounds=_tmpl_prompts.get("max_agentic_rounds", 0)),
+                            max_agentic_rounds=_tmpl_prompts.get("max_agentic_rounds", 0),
+                            no_cache=request.no_cache),
             media_type="text/event-stream",
         )
     result = await app_graph.ainvoke(
@@ -5718,7 +5794,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "max_agentic_rounds": _tmpl_prompts.get("max_agentic_rounds", 0),
          "agentic_iteration": 0,
          "agentic_history": [],
-         "agentic_gap": ""},
+         "agentic_gap": "",
+         "no_cache": request.no_cache},
         {"configurable": {"thread_id": str(uuid.uuid4())}},
     )
     p_tok = result.get("prompt_tokens",     0)
@@ -5761,151 +5838,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 #    - Pure text requests                 → MoE Agent-Pipeline (mode="agent")
 # ============================================================
 
-def _anthropic_content_to_text(content: Any) -> str:
-    """Extract plain text from Anthropic content (str or content block list).
-    Image blocks are annotated as [IMAGE INPUT present] so the planner recognizes them.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        has_image = False
-        for b in content:
-            if not isinstance(b, dict):
-                continue
-            if b.get("type") == "text":
-                parts.append(b.get("text", ""))
-            elif b.get("type") == "image":
-                has_image = True
-        if has_image:
-            parts.append("[Bild-Eingabe vorhanden]")
-        return " ".join(parts)
-    return str(content) if content else ""
-
-
-def _extract_images(content: Any) -> List[Dict]:
-    """Extracts image blocks (base64) from Anthropic content for the vision expert.
-    Returns list of {media_type, data}.
-    """
-    if not isinstance(content, list):
-        return []
-    images = []
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "image":
-            source = block.get("source", {})
-            if source.get("type") == "base64":
-                images.append({
-                    "media_type": source.get("media_type", "image/jpeg"),
-                    "data": source.get("data", ""),
-                })
-    return images
-
-
-def _extract_oai_images(content: Any) -> List[Dict]:
-    """Extracts images from OpenAI-format content (image_url with data-URI) for the vision expert.
-    Returns list of {media_type, data} (same structure as _extract_images).
-    """
-    if not isinstance(content, list):
-        return []
-    images = []
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "image_url":
-            continue
-        url = (block.get("image_url") or {}).get("url", "")
-        if url.startswith("data:"):
-            # data:<media_type>;base64,<data>
-            try:
-                header, data = url.split(",", 1)
-                media_type = header.split(":")[1].split(";")[0]
-                images.append({"media_type": media_type, "data": data})
-            except Exception:
-                pass
-    return images
-
-
-def _anthropic_to_openai_messages(messages: list, system: Optional[str]) -> list:
-    """Convert Anthropic message list → OpenAI format.
-    Handles text, tool_use and tool_result blocks correctly."""
-    result: list = []
-    if system:
-        result.append({"role": "system", "content": system})
-    for msg in messages:
-        role    = msg.get("role", "user")
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            result.append({"role": role, "content": content})
-            continue
-        if not isinstance(content, list):
-            result.append({"role": role, "content": str(content)})
-            continue
-        tool_calls   = [b for b in content if b.get("type") == "tool_use"]
-        tool_results = [b for b in content if b.get("type") == "tool_result"]
-        text_blocks  = [b for b in content if b.get("type") == "text"]
-        if tool_calls:
-            # Assistant message with tool calls
-            text_part = " ".join(b.get("text", "") for b in text_blocks) or None
-            oai_calls = [
-                {
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tc["name"],
-                        "arguments": json.dumps(tc.get("input", {}))
-                    }
-                }
-                for tc in tool_calls
-            ]
-            result.append({"role": "assistant", "content": text_part, "tool_calls": oai_calls})
-        elif tool_results:
-            # Tool results as separate tool messages
-            for tr in tool_results:
-                tr_content = tr.get("content", "")
-                if isinstance(tr_content, list):
-                    tr_content = " ".join(
-                        b.get("text", "") for b in tr_content if b.get("type") == "text"
-                    )
-                result.append({
-                    "role": "tool",
-                    "tool_call_id": tr.get("tool_use_id", ""),
-                    "content": tr_content or ""
-                })
-        else:
-            image_blocks = [b for b in content if b.get("type") == "image"]
-            parts: List[Dict] = []
-            for b in text_blocks:
-                parts.append({"type": "text", "text": b.get("text", "")})
-            for b in image_blocks:
-                src = b.get("source", {})
-                if src.get("type") == "base64":
-                    parts.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{src.get('media_type', 'image/jpeg')};base64,{src.get('data', '')}"
-                        }
-                    })
-            if len(parts) == 1 and parts[0]["type"] == "text":
-                result.append({"role": role, "content": parts[0]["text"]})
-            elif parts:
-                result.append({"role": role, "content": parts})
-            else:
-                result.append({"role": role, "content": ""})
-    return result
-
-
-def _anthropic_tools_to_openai(tools: list) -> list:
-    """Convert Anthropic tool schemas → OpenAI function calling format.
-    input_schema → parameters (same structure, different key)."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("input_schema", {"type": "object", "properties": {}})
-            }
-        }
-        for t in tools
-    ]
+# _anthropic_content_to_text, _extract_images, _extract_oai_images,
+# _anthropic_to_openai_messages, _anthropic_tools_to_openai — see parsing.py
 
 
 def _sse_event(event: str, data: dict) -> str:

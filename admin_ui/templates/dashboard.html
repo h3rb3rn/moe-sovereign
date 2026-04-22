@@ -82,6 +82,13 @@
             <input type="url" id="SEARXNG_URL" name="SEARXNG_URL" class="form-control font-monospace"
                    value="{{ config.get('SEARXNG_URL','') }}">
           </div>
+          <div class="mb-2">
+            <label class="form-label" for="MINIO_PUBLIC_URL">Storage URL (Datei-Downloads)</label>
+            <input type="url" id="MINIO_PUBLIC_URL" name="MINIO_PUBLIC_URL" class="form-control font-monospace"
+                   placeholder="https://files.moe-sovereign.org"
+                   value="{{ config.get('MINIO_PUBLIC_URL','') }}">
+            <div class="form-text text-muted">Öffentliche Basis-URL des MinIO S3-Speichers — wird in Download-Links für generierte Dateien verwendet.</div>
+          </div>
           <div class="mt-3">
             <div class="d-flex align-items-center mb-2 gap-2">
               <span class="form-label mb-0">{{ t(request, 'lbl.ollama_servers') }}</span>

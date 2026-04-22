@@ -28,7 +28,8 @@ INSERT INTO routing_telemetry (
     self_score, judge_refined, correction_applied,
     total_tokens, wall_clock_ms, expert_scores,
     causal_path, graphrag_entities, judge_reason,
-    judge_before_after, expert_inputs
+    judge_before_after, expert_inputs,
+    tool_calls_log, working_memory
 ) VALUES (
     %s, %s, %s,
     %s, %s, %s,
@@ -38,6 +39,7 @@ INSERT INTO routing_telemetry (
     %s, %s, %s,
     %s, %s, %s,
     %s, %s, %s,
+    %s, %s,
     %s, %s
 )
 ON CONFLICT (response_id) DO NOTHING
@@ -60,6 +62,46 @@ BEGIN
 END$$;
 """
 
+_ENSURE_TOOL_CALLS_COLUMN_SQL = """
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_name='routing_telemetry' AND column_name='tool_calls_log')
+    THEN
+        ALTER TABLE routing_telemetry
+            ADD COLUMN tool_calls_log JSONB,
+            ADD COLUMN working_memory JSONB;
+    END IF;
+END$$;
+"""
+
+_ENSURE_QUALITY_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS routing_quality_stats (
+    template_name  TEXT    NOT NULL,
+    complexity     TEXT    NOT NULL,
+    avg_score      FLOAT   NOT NULL DEFAULT 0,
+    sample_count   INT     NOT NULL DEFAULT 0,
+    updated_at     TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (template_name, complexity)
+);
+"""
+
+_UPDATE_QUALITY_STATS_SQL = """
+INSERT INTO routing_quality_stats (template_name, complexity, avg_score, sample_count, updated_at)
+    VALUES (%s, %s, %s, 1, now())
+ON CONFLICT (template_name, complexity) DO UPDATE SET
+    avg_score    = (routing_quality_stats.avg_score * routing_quality_stats.sample_count
+                    + EXCLUDED.avg_score)
+                   / (routing_quality_stats.sample_count + 1),
+    sample_count = routing_quality_stats.sample_count + 1,
+    updated_at   = now();
+"""
+
+_GET_QUALITY_HINT_SQL = """
+SELECT avg_score, sample_count
+FROM routing_quality_stats
+WHERE template_name = %s AND complexity = %s
+"""
+
 _UPDATE_RATING_SQL = """
 UPDATE routing_telemetry SET user_rating = %s WHERE response_id = %s
 """
@@ -70,7 +112,7 @@ UPDATE routing_telemetry SET self_score = %s WHERE response_id = %s
 
 
 async def ensure_causal_columns(pool) -> None:
-    """Adds causal-path columns to routing_telemetry if they do not exist.
+    """Adds causal-path, working-memory columns and quality stats table if missing.
     Idempotent — safe to call on every startup.
     """
     if pool is None:
@@ -78,7 +120,9 @@ async def ensure_causal_columns(pool) -> None:
     try:
         async with pool.connection() as conn:
             await conn.execute(_ENSURE_CAUSAL_COLUMNS_SQL)
-        logger.info("✅ Causal-path columns ensured in routing_telemetry")
+            await conn.execute(_ENSURE_TOOL_CALLS_COLUMN_SQL)
+            await conn.execute(_ENSURE_QUALITY_TABLE_SQL)
+        logger.info("✅ Causal-path, tool-calls columns and quality stats table ensured")
     except Exception as exc:
         logger.warning("Causal-path column migration failed: %s", exc)
 
@@ -130,6 +174,8 @@ async def record_routing_decision(
         judge_before_after = state.get("judge_before_after")  # {before, after, delta}
         expert_inputs      = state.get("expert_inputs")       # {name: {tokens, latency_ms}}
         judge_reason       = state.get("judge_reason")
+        tool_calls_log     = state.get("tool_calls_log")      # [{tool, args, result, status, ts}]
+        working_memory     = state.get("working_memory")      # {key: {value, source, confidence, ts}}
 
         async with pool.connection() as conn:
             await conn.execute(
@@ -160,6 +206,9 @@ async def record_routing_decision(
                     judge_reason,
                     json.dumps(judge_before_after, ensure_ascii=False) if judge_before_after else None,
                     json.dumps(expert_inputs, ensure_ascii=False) if expert_inputs else None,
+                    # Working Memory Hub columns
+                    json.dumps(tool_calls_log, ensure_ascii=False) if tool_calls_log else None,
+                    json.dumps(working_memory, ensure_ascii=False) if working_memory else None,
                 ),
             )
     except Exception as exc:
@@ -177,12 +226,40 @@ async def record_user_feedback(pool, response_id: str, rating: int) -> None:
         logger.debug("telemetry rating update failed: %s", exc)
 
 
-async def record_self_score(pool, response_id: str, score: int) -> None:
-    """Update the self_score column after async self-evaluation completes."""
+async def record_self_score(
+    pool,
+    response_id: str,
+    score: int,
+    template_name: str = "",
+    complexity: str = "",
+) -> None:
+    """Update the self_score column and accumulate quality stats for routing hints."""
     if pool is None:
         return
     try:
         async with pool.connection() as conn:
             await conn.execute(_UPDATE_SELF_SCORE_SQL, (score, response_id))
+            if template_name and complexity:
+                await conn.execute(_UPDATE_QUALITY_STATS_SQL, (template_name, complexity, float(score)))
     except Exception as exc:
         logger.debug("telemetry self_score update failed: %s", exc)
+
+
+async def get_quality_hint(pool, template_name: str, complexity: str) -> str:
+    """Return a short routing hint based on accumulated quality stats for this template/complexity.
+
+    Returns an empty string when no data is available yet or on error.
+    """
+    if pool is None or not template_name or not complexity:
+        return ""
+    try:
+        async with pool.connection() as conn:
+            cur = await conn.execute(_GET_QUALITY_HINT_SQL, (template_name, complexity))
+            row = await cur.fetchone()
+            if row and row[1] >= 3:  # row: (avg_score, sample_count)
+                avg = round(row[0], 1)
+                n   = row[1]
+                return f"Quality note: this template scored {avg}/5 on average for {complexity} queries ({n} samples)."
+    except Exception as exc:
+        logger.debug("quality hint query failed: %s", exc)
+    return ""

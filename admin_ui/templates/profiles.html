@@ -14,10 +14,22 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-4">
   <h5 class="mb-0"><i class="bi bi-person-badge me-2 text-primary"></i>{{ t(request, 'page.profiles') }}</h5>
-  <div class="d-flex gap-2">
-    <button class="btn btn-outline-secondary btn-sm" onclick="exportProfiles()" title="Alle Profile als JSON exportieren">
-      <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}
-    </button>
+  <div class="d-flex gap-2 align-items-center">
+    <div class="form-check mb-0 d-flex align-items-center" title="Alle auswählen">
+      <input class="form-check-input mt-0" type="checkbox" id="profile-select-all">
+      <label class="form-check-label ms-2 small text-muted" for="profile-select-all">Alle</label>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-outline-secondary btn-sm" onclick="exportProfiles()" title="Ausgewählte Profile exportieren">
+        <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}<span id="profile-export-count" class="ms-1 fw-bold"></span>
+      </button>
+      <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+        <span class="visually-hidden">Optionen</span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="#" onclick="exportProfiles(true); return false;"><i class="bi bi-download me-2"></i>Alle exportieren</a></li>
+      </ul>
+    </div>
     <label class="btn btn-outline-secondary btn-sm mb-0" title="Profile aus JSON-Datei importieren">
       <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
       <input type="file" id="import-profiles-file" accept=".json" style="display:none" onchange="importProfiles(this)">
@@ -43,7 +55,11 @@
   <div class="col-md-6 col-xl-4" id="card-{{ p.id }}">
     <div class="card h-100 {% if not is_enabled %}opacity-75{% endif %}">
       <div class="card-header d-flex align-items-center justify-content-between bg-light">
-        <span class="fw-semibold">{{ p.name }}</span>
+        <span class="d-flex align-items-center gap-2 fw-semibold">
+          <input type="checkbox" class="form-check-input profile-cb mt-0 flex-shrink-0" value="{{ p.id }}"
+                 onchange="updateProfileExportCount()" onclick="event.stopPropagation()" title="Für Export auswählen">
+          {{ p.name }}
+        </span>
         {% if is_enabled %}
         <span class="badge bg-success">{{ t(request, 'status.enabled') }}</span>
         {% else %}
@@ -428,14 +444,29 @@ async function toggleProfile(id, currentlyEnabled, btn) {
   }
 }
 
-async function exportProfiles() {
-  const res = await fetch('/api/profiles/export');
+function updateProfileExportCount() {
+  const n = document.querySelectorAll('.profile-cb:checked').length;
+  document.getElementById('profile-export-count').textContent = n > 0 ? `(${n})` : '';
+  const selectAll = document.getElementById('profile-select-all');
+  const total = document.querySelectorAll('.profile-cb').length;
+  selectAll.indeterminate = n > 0 && n < total;
+  selectAll.checked = total > 0 && n === total;
+}
+
+document.getElementById('profile-select-all').addEventListener('change', function() {
+  document.querySelectorAll('.profile-cb').forEach(cb => cb.checked = this.checked);
+  updateProfileExportCount();
+});
+
+async function exportProfiles(all = false) {
+  const checked = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
+  const params = (!all && checked.length > 0) ? `?ids=${checked.join(',')}` : '';
+  const fname = (checked.length > 0 && !all) ? 'cc_profiles_selected.json' : 'cc_profiles.json';
+  const res = await fetch(`/api/profiles/export${params}`);
   if (!res.ok) { alert('Export failed'); return; }
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'cc_profiles.json'; a.click();
-  URL.revokeObjectURL(url);
+  const a = Object.assign(document.createElement('a'), {href: URL.createObjectURL(blob), download: fname});
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
 async function importProfiles(input) {

@@ -90,11 +90,45 @@ flowchart TD
 | **1. Cache** | L0 query-hash (Valkey, 30 min TTL) and L1 semantic similarity (ChromaDB, cosine &lt; 0.25) |
 | **2. Planner** | Decomposes request into 1--4 subtasks with expert category assignment |
 | **3. Experts** | T1 models (&le;20B) screen with confidence gating; T2 (24--80B) engage only on low confidence |
-| **4. Tools** | 27 MCP precision tools (math, subnet, date, legal) via AST-whitelist --- zero hallucination |
+| **4. Tools** | 28 MCP precision tools (math, subnet, date, legal, PPTX) via AST-whitelist --- zero hallucination |
 | **5. GraphRAG** | Neo4j context enrichment with domain-scoped entity filters and trust-score decay |
 | **6. Judge** | Synthesises expert outputs, evaluates quality, retries on failure (up to 3 attempts) |
 | **7. Agentic Re-Plan** | Lightweight gap detector checks completeness; if unresolved, injects findings into a new planner round (up to 3 agentic iterations) |
 | **8. Ingest** | Validated knowledge flows back into Neo4j via Kafka for graph accumulation acceleration |
+
+### Module Structure
+
+The orchestrator codebase is organised into focused modules. `main.py` is the entry point; domain logic lives in dedicated packages:
+
+```
+moe-infra/
+├── main.py                    # FastAPI app, lifespan, graph wiring (~7 800 LOC, ongoing decomposition)
+├── pipeline/
+│   ├── __init__.py            # LangGraph graph builder — assembles nodes into the pipeline DAG
+│   └── state.py               # AgentState TypedDict (67 fields across 3 categories)
+├── parsing.py                 # Stateless parser helpers: JSON extraction, confidence, usage, dedup
+├── web_search.py              # SearXNG integration with domain-reliability scoring
+├── math_node.py               # SymPy-backed math node (solve, integrate, differentiate)
+├── graph_rag/
+│   ├── manager.py             # GraphRAG query, entity linking, trust-score application
+│   ├── ontology.py            # Domain ontology definitions and scope filters
+│   └── corrections.py        # Contradiction detection and graph self-healing
+├── federation/
+│   ├── client.py              # Push / pull to MoE Libris hubs
+│   ├── sync.py                # Background sync scheduler
+│   └── outbound_policy.py     # Privacy-scrubbing policy before bundle export
+├── mcp_server/
+│   └── server.py              # 28 MCP precision tools (AST-whitelisted)
+├── admin_ui/
+│   └── app.py                 # Admin backend: experts, users, budgets, cleanup manager
+├── prompts/systemprompt/      # 15 expert system prompts (English, "Respond in German.")
+├── tests/
+│   ├── test_parsing.py        # Unit tests for parsing.py
+│   ├── test_web_search.py     # Unit tests for web_search.py
+│   ├── test_routing.py        # LLM routing and node-selection tests
+│   └── test_mcp_validation.py # MCP AST-whitelist validation tests
+└── benchmarks/                # Overnight benchmark suite, GAIA runner, result injection
+```
 
 ---
 
@@ -106,7 +140,7 @@ flowchart TD
 | **2** | Two-Tier Escalation | T1 screens fast; T2 engages only when needed |
 | **3** | Neo4j GraphRAG | Trust-score self-healing, contradiction detection, domain-scoped filters |
 | **4** | Community Knowledge Bundles | Export/import learned knowledge as JSON-LD with regex-based privacy scrubbing (PII, secrets, hostnames) |
-| **5** | 27 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks |
+| **5** | 28 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks |
 | **6** | VRAM-Aware Scheduling | Per-node VRAM limits, warm-model affinity, sticky sessions |
 | **7** | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |

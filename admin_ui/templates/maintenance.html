@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Wartung — MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'title.maintenance') }}{% endblock %}
 
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h5 class="mb-0 fw-bold"><i class="bi bi-tools me-2 text-primary"></i>{{ t(request, 'nav.maintenance') }}</h5>
-  <span class="text-muted small">{{ inference_servers|length }} aktive Server</span>
+  <span class="text-muted small">{{ inference_servers|length }} {{ t(request, 'js.active_servers') }}</span>
 </div>
 <div id="flash-container" class="mb-2"></div>
 
@@ -186,6 +186,46 @@
 
 {% block scripts %}
 <script>
+const _t = {
+  noOntologyServers:     "{{ t(request, 'js.no_ontology_servers') }}",
+  loadingError:          "{{ t(request, 'js.loading_error') }}",
+  noOutputSince:         "{{ t(request, 'js.no_output_since') }}",
+  selectTemplateFirst:   "{{ t(request, 'js.select_template_first') }}",
+  startFailed:           "{{ t(request, 'js.start_failed') }}",
+  startError:            "{{ t(request, 'js.start_error') }}",
+  healerStartedUnverified: {{ t(request, 'js.healer_started_unverified') | tojson }},
+  confirmStopHealer:     "{{ t(request, 'js.confirm_stop_healer') }}",
+  couldNotStart:         "{{ t(request, 'js.could_not_start') }}",
+  noOrphansFound:        "{{ t(request, 'js.no_orphans_found') }}",
+  activeServersLabel:    "{{ t(request, 'js.active_servers_label') }}",
+  scanning:              "{{ t(request, 'js.scanning') }}",
+  cleaning:              "{{ t(request, 'js.cleaning') }}",
+  confirmCleanup:        "{{ t(request, 'js.confirm_cleanup') }}",
+  checking:              "{{ t(request, 'js.checking') }}",
+  regeneratingDashboard: "{{ t(request, 'js.regenerating_dashboard') }}",
+  btnSave:               "{{ t(request, 'btn.save_short') }}",
+  btnNow:                "{{ t(request, 'btn.now') }}",
+  never:                 "{{ t(request, 'js.never') }}",
+  checkpointArchive:     "{{ t(request, 'lbl.checkpoint_archive') }}",
+  lastRun:               "{{ t(request, 'lbl.last_run') }}",
+  duration:              "{{ t(request, 'lbl.duration') }}",
+  freed:                 "{{ t(request, 'lbl.freed') }}",
+  totalRuns:             "{{ t(request, 'lbl.total_runs') }}",
+  jobActive:             "{{ t(request, 'lbl.job_active') }}",
+  cfgSaved:              "{{ t(request, 'js.config_saved') }}",
+  liveDatabaseRows:      "{{ t(request, 'lbl.live_db_rows') }}",
+  archiveRetention:      "{{ t(request, 'lbl.archive_retention') }}",
+  maxFileSize:           "{{ t(request, 'lbl.max_file_size') }}",
+  backupFiles:           "{{ t(request, 'lbl.backup_files') }}",
+  maxStorage:            "{{ t(request, 'lbl.max_storage') }}",
+  retentionDays:         "{{ t(request, 'lbl.retention_days') }}",
+  prometheusRestartNote: "{{ t(request, 'msg.prometheus_restart_note') }}",
+  konfig:                "{{ t(request, 'btn.konfig') }}",
+  jobStarted:            "{{ t(request, 'js.job_started') }}",
+  prometheusReloading:   "{{ t(request, 'js.prometheus_reloading') }}",
+  prometheusReloaded:    "{{ t(request, 'js.prometheus_reloaded') }}",
+};
+
 function flash(msg, type='success') {
   const c = document.getElementById('flash-container');
   c.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show py-2" role="alert">
@@ -204,26 +244,24 @@ function fmtStatus(s, extra) {
 
 async function loadDedicatedTemplates() {
   try {
-    const servers = await fetch('/api/servers/list').then(r => r.json());
+    const templates = await fetch('/api/expert-templates').then(r => r.json());
     const sel = document.getElementById('dedicated-template');
     sel.innerHTML = '';
-    const ontologyServers = (servers || []).filter(s => s.ontology_enabled);
-    if (ontologyServers.length === 0) {
-      sel.innerHTML = '<option value="">— Keine Ontology-Server konfiguriert —</option>';
+    const curatorTpls = (templates || []).filter(t => (t.name || '').startsWith('moe-ontology-curator-'));
+    if (curatorTpls.length === 0) {
+      sel.innerHTML = `<option value="">— ${_t.noOntologyServers} —</option>`;
       return;
     }
-    ontologyServers.forEach(s => {
-      const name = (s.name || '').toLowerCase();
-      const tpl = `moe-ontology-curator-${name}`;
+    curatorTpls.forEach(t => {
       const opt = document.createElement('option');
-      opt.value = tpl;
-      opt.textContent = `${tpl} (${s.url || s.name})`;
+      opt.value = t.name;
+      opt.textContent = t.name;
       sel.appendChild(opt);
     });
     // Pre-select currently running template if any
     pollDedicatedHealer();
   } catch (e) {
-    document.getElementById('dedicated-template').innerHTML = '<option value="">— Fehler beim Laden —</option>';
+    document.getElementById('dedicated-template').innerHTML = `<option value="">— ${_t.loadingError} —</option>`;
   }
 }
 
@@ -231,7 +269,7 @@ async function pollDedicatedHealer() {
   try {
     const d = await fetch('/api/maintenance/ontology/dedicated/status').then(r => r.json());
     const running = d.status === 'running' || d.status === 'starting';
-    const stalledExtra = d.stalled === '1' ? 'kein Output seit 5 min' : null;
+    const stalledExtra = d.stalled === '1' ? _t.noOutputSince : null;
     const displayStatus = d.stalled === '1' ? 'stalled' : (d.status || 'stopped');
     document.getElementById('dedicated-status').innerHTML = fmtStatus(displayStatus, stalledExtra);
     document.getElementById('dedicated-tmpl').textContent = d.template || '—';
@@ -260,7 +298,7 @@ function _tplToServerName(tpl) {
 
 async function startDedicatedHealer() {
   const template = document.getElementById('dedicated-template').value.trim();
-  if (!template) { alert('Bitte ein Template auswählen.'); return; }
+  if (!template) { alert(_t.selectTemplateFirst); return; }
   const blockServer = document.getElementById('dedicated-block-server').checked;
   const btnStart = document.getElementById('btn-dedicated-start');
   const btnStop  = document.getElementById('btn-dedicated-stop');
@@ -290,13 +328,13 @@ async function startDedicatedHealer() {
       body: JSON.stringify({template, block_server: blockServer}),
     }).then(r => r.json());
     if (!r.ok) {
-      alert('Start fehlgeschlagen: ' + (r.reason || JSON.stringify(r)));
+      alert(_t.startFailed + ': ' + (r.reason || JSON.stringify(r)));
       btnStart.disabled = false;
       return;
     }
     startOk = true;
   } catch (e) {
-    alert('Fehler beim Starten: ' + e.message);
+    alert(_t.startError + ': ' + e.message);
     btnStart.disabled = false;
     return;
   }
@@ -318,17 +356,14 @@ async function startDedicatedHealer() {
   }
 
   if (!verified) {
-    alert(
-      'Healer wurde gestartet, aber innerhalb von 15 s war kein aktiver Request im Live Monitoring sichtbar.\n' +
-      'Bitte prüfe die Logs des Orchestrators und ob das Template korrekt konfiguriert ist.'
-    );
+    alert(_t.healerStartedUnverified);
   }
 
   pollDedicatedHealer();
 }
 
 async function stopDedicatedHealer() {
-  if (!confirm('Dedicated Healer stoppen?')) return;
+  if (!confirm(_t.confirmStopHealer)) return;
   document.getElementById('btn-dedicated-stop').disabled = true;
   let template = '';
   try {
@@ -336,7 +371,7 @@ async function stopDedicatedHealer() {
     const s = await fetch('/api/maintenance/ontology/dedicated/status').then(r => r.json());
     template = s.template || '';
     await fetch('/api/maintenance/ontology/dedicated/stop', {method: 'POST'});
-  } catch (e) { alert('Fehler: ' + e.message); }
+  } catch (e) { alert('Error: ' + e.message); }
 
   // If block_server was set, unblock now
   if (template) {
@@ -375,8 +410,8 @@ async function triggerOntology() {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify(body),
     }).then(r => r.json());
-    if (!r.ok) alert('Konnte nicht starten: ' + (r.reason || 'unbekannt'));
-  } catch (e) { alert('Fehler: ' + e.message); }
+    if (!r.ok) alert(_t.couldNotStart + ': ' + (r.reason || 'unknown'));
+  } catch (e) { alert('Error: ' + e.message); }
   finally { pollOntology(); }
 }
 
@@ -392,25 +427,25 @@ function renderScanReport(d) {
   const btn = document.getElementById('btn-cleanup-run');
   btn.disabled = total === 0;
   if (total === 0) {
-    return `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>Keine Altlasten gefunden. System sauber.</div>`;
+    return `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>${_t.noOrphansFound}</div>`;
   }
   const rows = [
-    ['Curator-Templates verwaist', o.templates_by_name.map(t => `${t.name} (${t.dead_node})`)],
-    ['Templates mit @DeadNode pin', o.templates_by_pin.map(t => `${t.name} → ${t.dead_nodes.join(',')}`)],
-    ['User-Templates mit DeadNode', o.user_templates_by_pin.map(t => `user=${t.user_id} → ${t.dead_nodes.join(',')}`)],
-    ['User-CC-Profiles mit DeadNode', o.user_cc_profiles_by_pin.map(t => `user=${t.user_id} → ${t.dead_nodes.join(',')}`)],
-    ['Valkey-Keys', o.redis_keys],
-    ['Neo4j Curator-Entities', [o.neo4j_curator_entities + ' Stück']],
-    ['Prometheus stale targets', o.prometheus_static_targets.map(t => `${t.job}: ${t.node} (${t.targets.join(',')})`)],
+    ['{{ t(request, "js.orphan_curator_templates") }}', o.templates_by_name.map(t => `${t.name} (${t.dead_node})`)],
+    ['{{ t(request, "js.templates_deadnode_pin") }}', o.templates_by_pin.map(t => `${t.name} → ${t.dead_nodes.join(',')}`)],
+    ['{{ t(request, "js.user_templates_deadnode") }}', o.user_templates_by_pin.map(t => `user=${t.user_id} → ${t.dead_nodes.join(',')}`)],
+    ['{{ t(request, "js.user_cc_profiles_deadnode") }}', o.user_cc_profiles_by_pin.map(t => `user=${t.user_id} → ${t.dead_nodes.join(',')}`)],
+    ['{{ t(request, "js.valkey_keys") }}', o.redis_keys],
+    ['{{ t(request, "js.neo4j_curator_entities") }}', [o.neo4j_curator_entities + ' {{ t(request, "js.pieces") }}']],
+    ['{{ t(request, "js.prometheus_stale_targets") }}', o.prometheus_static_targets.map(t => `${t.job}: ${t.node} (${t.targets.join(',')})`)],
   ].filter(r => r[1].length > 0);
-  let html = `<table class="table table-sm mb-0"><thead><tr><th>Kategorie</th><th>Einträge</th></tr></thead><tbody>`;
+  let html = `<table class="table table-sm mb-0"><thead><tr><th>{{ t(request, 'table.category') }}</th><th>{{ t(request, 'lbl.entries') }}</th></tr></thead><tbody>`;
   for (const [k, vs] of rows) {
     html += `<tr><td class="fw-bold">${k}</td><td>`;
     html += vs.map(v => `<div class="font-monospace" style="font-size:.78rem">${escapeHtml(String(v))}</div>`).join('');
     html += `</td></tr>`;
   }
   html += `</tbody></table>`;
-  html += `<div class="small text-muted mt-2">Aktive Server: ${d.active_servers.join(', ')}</div>`;
+  html += `<div class="small text-muted mt-2">${_t.activeServersLabel} ${d.active_servers.join(', ')}</div>`;
   return html;
 }
 
@@ -420,58 +455,58 @@ function escapeHtml(s) {
 
 async function scanOrphans() {
   const box = document.getElementById('cleanup-report');
-  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Scanne…</div>';
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.scanning}</div>`;
   try {
     const d = await fetch('/api/maintenance/scan').then(r => r.json());
     box.innerHTML = renderScanReport(d);
   } catch (e) {
-    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
   }
 }
 
 async function runCleanup(dryRun) {
   const box = document.getElementById('cleanup-report');
-  if (!dryRun && !confirm('Cleanup ausführen? Templates mit DeadNode-Pins werden auf Fallback-Node repinned, verwaiste Curator-Templates gelöscht, Neo4j-Entities als deprecated markiert.')) return;
-  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Bereinige…</div>';
+  if (!dryRun && !confirm(_t.confirmCleanup)) return;
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.cleaning}</div>`;
   try {
     const d = await fetch('/api/maintenance/cleanup', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({dry_run: dryRun}),
     }).then(r => r.json());
-    let html = `<div class="alert alert-success"><strong>Cleanup ${dryRun ? '(dry-run)' : ''} abgeschlossen:</strong><br>`;
+    let html = `<div class="alert alert-success"><strong>{{ t(request, 'js.cleanup_done') }} ${dryRun ? '(dry-run)' : ''}:</strong><br>`;
     for (const [k, v] of Object.entries(d.removed)) {
       html += `<div>${k}: <strong>${v}</strong></div>`;
     }
     html += `</div>`;
     if (d.errors && d.errors.length) {
-      html += `<div class="alert alert-warning small"><strong>Warnungen:</strong><ul class="mb-0">`;
+      html += `<div class="alert alert-warning small"><strong>{{ t(request, 'js.warnings') }}:</strong><ul class="mb-0">`;
       for (const e of d.errors) html += `<li>${escapeHtml(e)}</li>`;
       html += `</ul></div>`;
     }
     box.innerHTML = html;
     document.getElementById('btn-cleanup-run').disabled = true;
   } catch (e) {
-    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
   }
 }
 
 async function verifyTemplates() {
   const box = document.getElementById('verify-report');
-  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Prüfe…</div>';
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.checking}</div>`;
   try {
     const d = await fetch('/api/maintenance/templates/verify').then(r => r.json());
     const missing = d.issues.filter(t => t.issues.some(i => i.kind === 'model_missing')).length;
     document.getElementById('btn-pull-missing').disabled = missing === 0;
     if (d.issues.length === 0) {
-      box.innerHTML = `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>Alle ${d.checked} Templates ok — alle Modelle physisch verfügbar.</div>`;
+      box.innerHTML = `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>{{ t(request, 'js.all_templates_ok_prefix') }} ${d.checked} {{ t(request, 'js.all_templates_ok_suffix') }}</div>`;
       return;
     }
-    let html = `<div class="mb-2 text-muted">Geprüft: ${d.checked}, ok: ${d.clean.length}, mit Problemen: ${d.issues.length}</div>`;
-    html += `<table class="table table-sm mb-0"><thead><tr><th>Template</th><th>Problem</th></tr></thead><tbody>`;
+    let html = `<div class="mb-2 text-muted">{{ t(request, 'js.verified_prefix') }}: ${d.checked}, ok: ${d.clean.length}, {{ t(request, 'js.with_issues') }}: ${d.issues.length}</div>`;
+    html += `<table class="table table-sm mb-0"><thead><tr><th>Template</th><th>{{ t(request, 'js.problem') }}</th></tr></thead><tbody>`;
     for (const t of d.issues) {
       const details = t.issues.map(i => {
         const cls = i.kind === 'model_missing' ? 'text-warning' : i.kind === 'dead_node' ? 'text-danger' : 'text-muted';
-        const label = i.kind === 'model_missing' ? 'fehlt' : i.kind === 'dead_node' ? 'Node existiert nicht' : 'Node nicht erreichbar';
+        const label = i.kind === 'model_missing' ? '{{ t(request, "js.model_missing") }}' : i.kind === 'dead_node' ? '{{ t(request, "js.node_not_exist") }}' : '{{ t(request, "js.node_unreachable") }}';
         return `<div class="${cls}"><span class="font-monospace">${escapeHtml(i.model)}@${escapeHtml(i.node)}</span>: ${label}</div>`;
       }).join('');
       html += `<tr><td class="font-monospace" style="font-size:.82rem">${escapeHtml(t.name)}</td><td>${details}</td></tr>`;
@@ -479,18 +514,18 @@ async function verifyTemplates() {
     html += `</tbody></table>`;
     box.innerHTML = html;
   } catch (e) {
-    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
   }
 }
 
 async function pullMissing() {
   const box = document.getElementById('verify-report');
-  if (!confirm('Fehlende Modelle per Ollama pull nachladen? Das kann pro Modell mehrere Minuten dauern.')) return;
-  box.innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> Lade Modelle…</div>';
+  if (!confirm('{{ t(request, "js.confirm_pull_missing") }}')) return;
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> {{ t(request, 'js.loading_models') }}</div>`;
   try {
     const d = await fetch('/api/maintenance/templates/pull-missing', {method:'POST'}).then(r => r.json());
-    let html = `<div class="alert alert-info"><strong>Pull abgeschlossen:</strong> ${d.pulled.length} Einträge</div>`;
-    html += `<table class="table table-sm"><thead><tr><th>Modell</th><th>Node</th><th>Status</th></tr></thead><tbody>`;
+    let html = `<div class="alert alert-info"><strong>{{ t(request, 'js.pull_done') }}:</strong> ${d.pulled.length} {{ t(request, 'lbl.entries') }}</div>`;
+    html += `<table class="table table-sm"><thead><tr><th>{{ t(request, 'table.model') }}</th><th>Node</th><th>Status</th></tr></thead><tbody>`;
     for (const p of d.pulled) {
       const cls = p.ok ? 'text-success' : 'text-danger';
       html += `<tr><td class="font-monospace">${escapeHtml(p.model)}</td><td>${escapeHtml(p.node)}</td><td class="${cls}">${p.ok ? (p.last_status||'ok') : escapeHtml(p.error||'failed')}</td></tr>`;
@@ -499,38 +534,43 @@ async function pullMissing() {
     box.innerHTML = html;
     document.getElementById('btn-pull-missing').disabled = true;
   } catch (e) {
-    box.innerHTML = `<div class="text-danger">Fehler: ${e.message}</div>`;
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
   }
 }
 
 async function regenDashboard() {
   const box = document.getElementById('regen-result');
-  box.textContent = 'Regeneriere Dashboard…';
+  box.textContent = _t.regeneratingDashboard;
   try {
     const d = await fetch('/api/dashboards/regenerate', {method:'POST'}).then(r => r.json());
-    box.innerHTML = `Dashboard aktualisiert. Probed: ${d.probed.length} Server. Prometheus reloaded: ${d.prometheus_reloaded}.`;
+    box.innerHTML = `{{ t(request, 'js.dashboard_updated') }} Probed: ${d.probed.length} Server. Prometheus reloaded: ${d.prometheus_reloaded}.`;
     if (d.dashboard_url) window.open(d.dashboard_url, '_blank');
-  } catch (e) { box.textContent = 'Fehler: ' + e.message; }
+  } catch (e) { box.textContent = 'Error: ' + e.message; }
 }
 
 async function reloadPrometheus() {
   const box = document.getElementById('regen-result');
-  box.textContent = 'Prometheus reload…';
+  box.textContent = _t.prometheusReloading;
   try {
     const d = await fetch('/api/maintenance/prometheus/reload', {method:'POST'}).then(r => r.json());
-    box.textContent = d.ok ? 'Prometheus reloaded.' : 'Fehler: ' + (d.error || d.status_code);
-  } catch (e) { box.textContent = 'Fehler: ' + e.message; }
+    box.textContent = d.ok ? _t.prometheusReloaded : 'Error: ' + (d.error || d.status_code);
+  } catch (e) { box.textContent = 'Error: ' + e.message; }
 }
 
 // ─── Cleanup Manager ─────────────────────────────────────────────────────────
 
-const JOB_META = {
-  docker_prune:       { icon: 'bi-layers',        label: 'Docker Prune',             color: 'primary',  canRun: true,  hasConfig: false },
-  checkpoint_archive: { icon: 'bi-database-down',  label: 'Checkpoint-Archiv',        color: 'info',     canRun: true,  hasConfig: true  },
-  admin_logs:         { icon: 'bi-file-earmark-text', label: 'Admin-Log Rotation',   color: 'warning',  canRun: false, hasConfig: true  },
-  journal:            { icon: 'bi-journal-text',   label: 'systemd Journal',          color: 'secondary',canRun: false, hasConfig: true  },
-  prometheus:         { icon: 'bi-graph-up',       label: 'Prometheus TSDB',          color: 'danger',   canRun: false, hasConfig: true  },
+// JOB_META labels are resolved at runtime via _t to support i18n
+const JOB_META_RAW = {
+  docker_prune:       { icon: 'bi-layers',             labelKey: null, label: 'Docker Prune',    color: 'primary',  canRun: true,  hasConfig: false },
+  checkpoint_archive: { icon: 'bi-database-down',      labelKey: 'checkpointArchive',            color: 'info',     canRun: true,  hasConfig: true  },
+  admin_logs:         { icon: 'bi-file-earmark-text',  label: 'Admin-Log Rotation',              color: 'warning',  canRun: false, hasConfig: true  },
+  journal:            { icon: 'bi-journal-text',       label: 'systemd Journal',                 color: 'secondary',canRun: false, hasConfig: true  },
+  prometheus:         { icon: 'bi-graph-up',           label: 'Prometheus TSDB',                 color: 'danger',   canRun: false, hasConfig: true  },
 };
+// Resolve translated labels
+const JOB_META = Object.fromEntries(
+  Object.entries(JOB_META_RAW).map(([k, v]) => [k, {...v, label: v.labelKey ? _t[v.labelKey] : v.label}])
+);
 
 const ALL_JOB_KEYS = Object.keys(JOB_META);
 
@@ -551,10 +591,10 @@ function fmtDur(s) {
 function fmtRelTime(ts) {
   if (!ts) return '—';
   const diff = (Date.now() - new Date(ts).getTime()) / 1000;
-  if (diff < 60)    return 'vor ' + Math.round(diff) + ' s';
-  if (diff < 3600)  return 'vor ' + Math.round(diff/60) + ' min';
-  if (diff < 86400) return 'vor ' + Math.round(diff/3600) + ' h';
-  return 'vor ' + Math.round(diff/86400) + ' d';
+  if (diff < 60)    return Math.round(diff) + ' s ago';
+  if (diff < 3600)  return Math.round(diff/60) + ' min ago';
+  if (diff < 86400) return Math.round(diff/3600) + ' h ago';
+  return Math.round(diff/86400) + ' d ago';
 }
 
 function buildConfigFields(key, cfg) {
@@ -565,12 +605,12 @@ function buildConfigFields(key, cfg) {
     fields.push(`
       <div class="row g-2 mt-1">
         <div class="col-6">
-          <label class="form-label small mb-1">Live-DB Zeilen behalten</label>
+          <label class="form-label small mb-1">${_t.liveDatabaseRows}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-keep_rows"
                  value="${job.keep_rows ?? 30000}" min="1000" step="1000">
         </div>
         <div class="col-6">
-          <label class="form-label small mb-1">Archiv-Retention (Tage)</label>
+          <label class="form-label small mb-1">${_t.archiveRetention}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-retain_days"
                  value="${job.retain_days ?? 90}" min="7">
         </div>
@@ -580,12 +620,12 @@ function buildConfigFields(key, cfg) {
     fields.push(`
       <div class="row g-2 mt-1">
         <div class="col-6">
-          <label class="form-label small mb-1">Max Dateigröße (MB)</label>
+          <label class="form-label small mb-1">${_t.maxFileSize}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-max_mb"
                  value="${Math.round((job.max_bytes ?? 52428800)/1048576)}" min="5">
         </div>
         <div class="col-6">
-          <label class="form-label small mb-1">Backup-Dateien</label>
+          <label class="form-label small mb-1">${_t.backupFiles}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-backup_count"
                  value="${job.backup_count ?? 2}" min="1" max="10">
         </div>
@@ -595,12 +635,12 @@ function buildConfigFields(key, cfg) {
     fields.push(`
       <div class="row g-2 mt-1">
         <div class="col-6">
-          <label class="form-label small mb-1">Max Speicher (MB)</label>
+          <label class="form-label small mb-1">${_t.maxStorage}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-max_use_mb"
                  value="${job.max_use_mb ?? 512}" min="64">
         </div>
         <div class="col-6">
-          <label class="form-label small mb-1">Retention (Tage)</label>
+          <label class="form-label small mb-1">${_t.retentionDays}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-retain_days"
                  value="${job.retain_days ?? 30}" min="7">
         </div>
@@ -610,11 +650,11 @@ function buildConfigFields(key, cfg) {
     fields.push(`
       <div class="row g-2 mt-1">
         <div class="col-6">
-          <label class="form-label small mb-1">Retention (Tage)</label>
+          <label class="form-label small mb-1">${_t.retentionDays}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-retention_days"
                  value="${job.retention_days ?? 30}" min="7">
         </div>
-        <div class="col-12"><small class="text-muted">Prometheus-Neustart erforderlich nach Änderung.</small></div>
+        <div class="col-12"><small class="text-muted">${_t.prometheusRestartNote}</small></div>
       </div>`);
   }
 
@@ -625,11 +665,11 @@ function buildConfigFields(key, cfg) {
       <div class="border rounded p-2 bg-light small">
         <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" id="cfg-${key}-enabled" ${enabled ? 'checked' : ''}>
-          <label class="form-check-label" for="cfg-${key}-enabled">Job aktiv</label>
+          <label class="form-check-label" for="cfg-${key}-enabled">${_t.jobActive}</label>
         </div>
         ${fields.join('')}
         <button class="btn btn-sm btn-outline-primary mt-2" onclick="saveJobConfig('${key}')">
-          <i class="bi bi-floppy me-1"></i>Speichern
+          <i class="bi bi-floppy me-1"></i>${_t.btnSave}
         </button>
       </div>
     </div>`;
@@ -643,17 +683,17 @@ function buildJobCard(key, stats, cfg) {
 
   const lastRunBadge = st.last_run_ts
     ? `<span class="badge bg-success bg-opacity-75">${fmtRelTime(st.last_run_ts)}</span>`
-    : `<span class="badge bg-secondary">Noch nie</span>`;
+    : `<span class="badge bg-secondary">${_t.never}</span>`;
 
   const runBtn = meta.canRun
     ? `<button class="btn btn-sm btn-outline-${meta.color}" onclick="runJobNow('${key}')" id="run-btn-${key}">
-         <i class="bi bi-play-fill me-1"></i>Jetzt
+         <i class="bi bi-play-fill me-1"></i>${_t.btnNow}
        </button>`
     : '';
 
   const cfgBtn = meta.hasConfig
     ? `<button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#cfg-panel-${key}">
-         <i class="bi bi-sliders me-1"></i>Konfig
+         <i class="bi bi-sliders me-1"></i>${_t.konfig}
        </button>`
     : '';
 
@@ -672,19 +712,19 @@ function buildJobCard(key, stats, cfg) {
         </div>
         <div class="card-body py-2 small">
           <div class="d-flex justify-content-between mb-1">
-            <span class="text-muted">Letzter Lauf:</span>
-            <span>${st.last_run_ts ? new Date(st.last_run_ts).toLocaleString('de-DE') : '—'}</span>
+            <span class="text-muted">${_t.lastRun}:</span>
+            <span>${st.last_run_ts ? new Date(st.last_run_ts).toLocaleString() : '—'}</span>
           </div>
           <div class="d-flex justify-content-between mb-1">
-            <span class="text-muted">Dauer:</span>
+            <span class="text-muted">${_t.duration}:</span>
             <span>${fmtDur(st.last_duration_s)} <span class="text-muted">(Ø ${fmtDur(st.avg_duration_s)})</span></span>
           </div>
           <div class="d-flex justify-content-between mb-1">
-            <span class="text-muted">Freigegeben:</span>
+            <span class="text-muted">${_t.freed}:</span>
             <span>${fmtBytes(st.last_freed_bytes)} <span class="text-muted">(Ø ${fmtBytes(st.avg_freed_bytes)})</span></span>
           </div>
           <div class="d-flex justify-content-between mb-2">
-            <span class="text-muted">Läufe gesamt:</span>
+            <span class="text-muted">${_t.totalRuns}:</span>
             <span>${st.run_count ?? '—'}</span>
           </div>
           ${histRows ? `<div class="border-top pt-2 mt-1">${histRows}</div>` : ''}
@@ -710,7 +750,7 @@ async function loadCleanupStatus() {
     html += '</div>';
     box.innerHTML = html;
   } catch (e) {
-    box.innerHTML = `<div class="text-danger p-3">Fehler: ${e.message}</div>`;
+    box.innerHTML = `<div class="text-danger p-3">Error: ${e.message}</div>`;
   }
 }
 
@@ -719,12 +759,12 @@ async function runJobNow(job) {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
   try {
     const r = await fetch(`/api/cleanup/run/${job}`, {method:'POST'}).then(r => r.json());
-    flash(r.message || 'Job gestartet', 'success');
+    flash(r.message || _t.jobStarted, 'success');
     setTimeout(loadCleanupStatus, 5000);
   } catch (e) {
-    flash('Fehler: ' + e.message, 'danger');
+    flash('Error: ' + e.message, 'danger');
   } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Jetzt'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = `<i class="bi bi-play-fill me-1"></i>${_t.btnNow}`; }
   }
 }
 
@@ -768,10 +808,10 @@ async function saveJobConfig(key) {
   }).then(r => r.json());
 
   if (r.ok) {
-    flash('Konfiguration gespeichert', 'success');
+    flash(_t.cfgSaved, 'success');
     await loadCleanupStatus();
   } else {
-    flash('Fehler: ' + (r.detail || JSON.stringify(r)), 'danger');
+    flash('Error: ' + (r.detail || JSON.stringify(r)), 'danger');
   }
 }
 

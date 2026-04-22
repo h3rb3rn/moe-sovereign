@@ -16,3 +16,15 @@ logs.moe-sovereign.org {
     tls internal
     reverse_proxy moe-dozzle:8080
 }
+
+# MinIO S3 API (file upload/download, pre-signed URLs)
+files.moe-sovereign.org {
+    tls internal
+    reverse_proxy moe-storage:9000
+}
+
+# MinIO Web Console (admin)
+storage.moe-sovereign.org {
+    tls internal
+    reverse_proxy moe-storage:9001
+}

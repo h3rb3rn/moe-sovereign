@@ -1496,6 +1496,77 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </div>
           </div>
 
+          <!-- Pipeline Toggles -->
+          <div class="card mb-3">
+            <div class="card-header py-1 px-3" style="background:#f8f9fa">
+              <small class="fw-bold"><i class="bi bi-toggles me-1 text-primary"></i>{{ t(request, 'section.pipeline_toggles') if t(request,'section.pipeline_toggles') != 'section.pipeline_toggles' else 'Pipeline Toggles' }}</small>
+            </div>
+            <div class="card-body py-2">
+              <div class="row g-2">
+                <div class="col-6 col-md-3">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="tmpl-enable-cache" checked>
+                    <label class="form-check-label small" for="tmpl-enable-cache">Cache (ChromaDB)</label>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="tmpl-enable-graphrag" checked>
+                    <label class="form-check-label small" for="tmpl-enable-graphrag">GraphRAG (Neo4j)</label>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="tmpl-enable-web-research" checked>
+                    <label class="form-check-label small" for="tmpl-enable-web-research">Web Research</label>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="tmpl-force-think">
+                    <label class="form-check-label small" for="tmpl-force-think">{{ t(request, 'label.force_think') if t(request,'label.force_think') != 'label.force_think' else 'Force Think' }}</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Context Window / Compression -->
+          <div class="card mb-3">
+            <div class="card-header py-1 px-3" style="background:#f8f9fa">
+              <small class="fw-bold"><i class="bi bi-window-stack me-1 text-info"></i>{{ t(request, 'section.context_window') if t(request,'section.context_window') != 'section.context_window' else 'Context Window' }}</small>
+            </div>
+            <div class="card-body py-2">
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="tmpl-compression-enabled" checked
+                           onchange="document.getElementById('tmpl-compression-details').style.display=this.checked?'':'none'">
+                    <label class="form-check-label small" for="tmpl-compression-enabled">{{ t(request, 'label.compression_enabled') if t(request,'label.compression_enabled') != 'label.compression_enabled' else 'Context Compression' }}</label>
+                  </div>
+                  <div class="form-text" style="font-size:.7rem">{{ t(request, 'tip.compression_toggle') if t(request,'tip.compression_toggle') != 'tip.compression_toggle' else 'Limits context size to prevent token overflow.' }}</div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-0" for="tmpl-graphrag-max-chars">{{ t(request, 'label.graphrag_max_chars') if t(request,'label.graphrag_max_chars') != 'label.graphrag_max_chars' else 'GraphRAG max chars' }}</label>
+                  <input type="number" class="form-control form-control-sm" id="tmpl-graphrag-max-chars" value="0" min="-1" step="1000">
+                  <div class="form-text" style="font-size:.7rem">0 = auto</div>
+                </div>
+              </div>
+              <div class="row g-2 mt-1" id="tmpl-compression-details">
+                <div class="col-md-6">
+                  <label class="form-label small mb-0" for="tmpl-history-max-turns">{{ t(request, 'label.history_max_turns') if t(request,'label.history_max_turns') != 'label.history_max_turns' else 'Max history turns' }}</label>
+                  <input type="number" class="form-control form-control-sm" id="tmpl-history-max-turns" value="0" min="0" step="1">
+                  <div class="form-text" style="font-size:.7rem">0 = {{ t(request, 'label.global_default') if t(request,'label.global_default') != 'label.global_default' else 'global default' }}</div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-0" for="tmpl-history-max-chars">{{ t(request, 'label.history_max_chars') if t(request,'label.history_max_chars') != 'label.history_max_chars' else 'Max history chars' }}</label>
+                  <input type="number" class="form-control form-control-sm" id="tmpl-history-max-chars" value="0" min="0" step="500">
+                  <div class="form-text" style="font-size:.7rem">0 = {{ t(request, 'label.global_default') if t(request,'label.global_default') != 'label.global_default' else 'global default' }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Expert Categories -->
           <div class="d-flex justify-content-between align-items-center mb-2">
             <small class="fw-bold">{{ t(request, 'portal.tmpl_expert_cats') }}</small>
@@ -1545,6 +1616,20 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-editor').classList.add('d-none');
       }
 
+      function _resetPipelineFields(cfg) {
+        cfg = cfg || {};
+        document.getElementById('tmpl-enable-cache').checked         = cfg.enable_cache !== false;
+        document.getElementById('tmpl-enable-graphrag').checked      = cfg.enable_graphrag !== false;
+        document.getElementById('tmpl-enable-web-research').checked  = cfg.enable_web_research !== false;
+        document.getElementById('tmpl-force-think').checked          = !!cfg.force_think;
+        const compressionOn = !(cfg.history_max_turns === -1 && cfg.history_max_chars === -1);
+        document.getElementById('tmpl-compression-enabled').checked  = compressionOn;
+        document.getElementById('tmpl-compression-details').style.display = compressionOn ? '' : 'none';
+        document.getElementById('tmpl-graphrag-max-chars').value     = cfg.graphrag_max_chars ?? 0;
+        document.getElementById('tmpl-history-max-turns').value      = (cfg.history_max_turns && cfg.history_max_turns > 0) ? cfg.history_max_turns : 0;
+        document.getElementById('tmpl-history-max-chars').value      = (cfg.history_max_chars && cfg.history_max_chars > 0) ? cfg.history_max_chars : 0;
+      }
+
       function openNewTemplate() {
         document.getElementById('tmpl-editing-id').value = '';
         document.getElementById('tmpl-editor-title').innerHTML = '<i class="bi bi-diagram-3 me-2"></i>{{ t(request, 'btn.new_template') }}';
@@ -1556,6 +1641,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-planner-prompt').value = '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
         document.getElementById('tmpl-error').classList.add('d-none');
+        _resetPipelineFields({});
         document.getElementById('tmpl-editor').classList.remove('d-none');
         document.getElementById('tmpl-editor').scrollIntoView({behavior:'smooth'});
       }
@@ -1577,6 +1663,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-experts-container').innerHTML = '';
         const experts = cfg.experts || {};
         Object.entries(experts).forEach(([cat, catCfg]) => renderExpertCategory(cat, catCfg));
+        _resetPipelineFields(cfg);
         document.getElementById('tmpl-error').classList.add('d-none');
         document.getElementById('tmpl-editor').classList.remove('d-none');
         document.getElementById('tmpl-editor').scrollIntoView({behavior:'smooth'});
@@ -1738,12 +1825,20 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           });
           experts[cat] = {system_prompt: prompt, models};
         });
+        const compressionEnabled = document.getElementById('tmpl-compression-enabled').checked;
         return {
           experts,
-          judge_model: document.getElementById('tmpl-judge-model').value.trim(),
-          planner_model: document.getElementById('tmpl-planner-model').value.trim(),
-          judge_prompt: document.getElementById('tmpl-judge-prompt').value.trim(),
-          planner_prompt: document.getElementById('tmpl-planner-prompt').value.trim(),
+          judge_model:         document.getElementById('tmpl-judge-model').value.trim(),
+          planner_model:       document.getElementById('tmpl-planner-model').value.trim(),
+          judge_prompt:        document.getElementById('tmpl-judge-prompt').value.trim(),
+          planner_prompt:      document.getElementById('tmpl-planner-prompt').value.trim(),
+          enable_cache:        document.getElementById('tmpl-enable-cache').checked,
+          enable_graphrag:     document.getElementById('tmpl-enable-graphrag').checked,
+          enable_web_research: document.getElementById('tmpl-enable-web-research').checked,
+          force_think:         document.getElementById('tmpl-force-think').checked,
+          graphrag_max_chars:  parseInt(document.getElementById('tmpl-graphrag-max-chars').value) || 0,
+          history_max_turns:   compressionEnabled ? (parseInt(document.getElementById('tmpl-history-max-turns').value) || 0) : -1,
+          history_max_chars:   compressionEnabled ? (parseInt(document.getElementById('tmpl-history-max-chars').value) || 0) : -1,
         };
       }
 

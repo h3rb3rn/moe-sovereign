@@ -1,7 +1,0 @@
-{
-  "template": "moe-m10-gremium-deep",
-  "dataset": "moe_eval_overnight_v1.json",
-  "epochs": 10,
-  "triggered_by": "philipp",
-  "triggered_at": "2026-04-17T18:00:29.183778+00:00"
-}

@@ -9,17 +9,20 @@ Level 1: Simple tool-use and factual recall (53 questions)
 Level 2: Multi-step reasoning with tool chains (86 questions)
 Level 3: Complex multi-tool, multi-step tasks (26 questions)
 
-Configuration:
-  HF_TOKEN         HuggingFace token with GAIA access (required)
-  MOE_API_BASE     Orchestrator URL (default: http://localhost:8002)
-  MOE_API_KEY      API key (required)
-  MOE_TEMPLATE     Template to use (default: moe-reference-30b-balanced)
-  GAIA_LEVELS      Comma-separated levels to run (default: 1,2,3)
-  GAIA_MAX_PER_LEVEL  Max questions per level (default: 10 — use 0 for all)
+Configuration (env vars, overridable via CLI args):
+  HF_TOKEN              HuggingFace token with GAIA access (required)
+  MOE_API_BASE          Orchestrator URL (default: http://localhost:8002)
+  MOE_API_KEY           API key (required)
+  MOE_TEMPLATE          Template to use (default: moe-reference-30b-balanced)
+  GAIA_LEVELS           Comma-separated levels to run (default: 1,2,3)
+  GAIA_MAX_PER_LEVEL    Max questions per level (default: 10 — use 0 for all)
+  GAIA_TEMPERATURE      Sampling temperature (default: 0.0 — deterministic)
+  GAIA_LANGUAGE         Response language: 'en' force English, 'auto' match question (default: en)
 
 Usage:
   HF_TOKEN=hf_... MOE_API_KEY=moe-sk-... python benchmarks/gaia_runner.py
-  GAIA_LEVELS=1 GAIA_MAX_PER_LEVEL=5 python benchmarks/gaia_runner.py  # quick test
+  python benchmarks/gaia_runner.py --template tmpl-aihub-free-nextgen --levels 1 2 --max-per-level 10
+  python benchmarks/gaia_runner.py --temperature 0.3 --language auto
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ from dataclasses import dataclass, asdict
 import httpx
 
 # --------------------------------------------------------------------------
-# Config
+# Config — env vars are defaults; CLI args (parsed in __main__) take precedence
 # --------------------------------------------------------------------------
 
 HF_TOKEN      = os.environ.get("HF_TOKEN", "")
@@ -49,6 +52,8 @@ API_KEY       = os.environ.get("MOE_API_KEY", "")
 TEMPLATE      = os.environ.get("MOE_TEMPLATE", "moe-reference-30b-balanced")
 LEVELS        = [int(x) for x in os.environ.get("GAIA_LEVELS", "1,2,3").split(",")]
 MAX_PER_LEVEL = int(os.environ.get("GAIA_MAX_PER_LEVEL", "10"))
+TEMPERATURE   = float(os.environ.get("GAIA_TEMPERATURE", "0.0"))
+LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
 
 # MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
@@ -507,7 +512,13 @@ def get_attachment_context(task: dict) -> str:
         return f"Note: Attachment processing failed ({raw_name}): {e}"
 
     shielded = _shield(raw_content, raw_name)
-    return f"FILE ATTACHMENT ({raw_name}):\n{shielded}"
+    # Strip file extension from label — prevents planner from routing .docx/.xlsx to skill_detector
+    label = raw_name.rsplit(".", 1)[0] if "." in raw_name else raw_name
+    return (
+        f"ATTACHED DATA ({label}):\n{shielded}\n"
+        f"[ROUTING: Use reasoning or general expert to answer the question. "
+        f"Do NOT use skill_detector. Do NOT create any files or documents.]"
+    )
 
 # --------------------------------------------------------------------------
 # Data
@@ -650,6 +661,150 @@ def check_answer(model_output: str, expected: str) -> tuple[bool, str]:
 
 
 # --------------------------------------------------------------------------
+# GAIA answer extraction
+# --------------------------------------------------------------------------
+
+def _extract_gaia_answer(full_answer: str, question: str) -> str:  # noqa: ARG001
+    """Extract a short, exact answer from a verbose orchestrator response.
+
+    GAIA expects concise answers — a number, a name, or a short phrase.
+    When the orchestrator produces a long explanation this function strips the
+    surrounding prose and returns only the conclusive value.
+
+    Strategy (in order):
+    1. If the response is already short (< 200 chars), return it unchanged.
+    2. Scan lines for common answer-introducing patterns and return the value
+       that follows the keyword.
+    3. Look for a bold number or term near the end of the text (Markdown **…**).
+    4. Look for a bare number (optionally with a unit) near the end of the text.
+    5. Fallback: return the first 500 characters of the original answer.
+
+    Args:
+        full_answer: The raw content string returned by the orchestrator.
+        question:    The original GAIA question (reserved for future heuristics).
+
+    Returns:
+        A string that is as short and exact as possible.
+    """
+    if len(full_answer) < 200:
+        return full_answer
+
+    # --- Pattern 1: explicit answer-introducing labels -----------------------
+    # Match lines that begin with well-known conclusion phrases and extract the
+    # value that follows the colon / "is" keyword.
+    label_pattern = re.compile(
+        r"(?:^|\n)"
+        r"(?:answer\s*:|final\s+answer\s*:|the\s+answer\s+is\s*[:\-]?|result\s*:)"
+        r"\s*(.+)",
+        re.IGNORECASE,
+    )
+    label_matches = label_pattern.findall(full_answer)
+    if label_matches:
+        # Prefer the last match — it is most likely the conclusive statement.
+        candidate = label_matches[-1].strip().rstrip(".")
+        if candidate:
+            return candidate
+
+    # --- Pattern 2: bold Markdown value near the end of the text -------------
+    # Prefer short numeric or named values; skip section headers and placeholders.
+    _INVALID_CANDIDATES = {"none", "n/a", "unknown", "undefined", "tbd", ""}
+    _HEADER_WORDS = {"check", "method", "step", "note", "analysis", "approach",
+                     "summary", "conclusion", "result", "findings", "example",
+                     "alternative", "cross", "verification", "verify", "confidence"}
+    # Regex to reject judge-node meta-annotations like "LOW CONFIDENCE (30 %)" or "CONFIDENCE: low"
+    _META_ANNOTATION_RE = re.compile(
+        r"(?:low|high|medium|very\s+(?:low|high))\s+confidence"
+        r"|confidence\s*[:(]"
+        r"|\d+\s*%\s*\)"
+        r"|^(?:set\s+)?confidence\s*:",
+        re.IGNORECASE,
+    )
+    # Common words that are never standalone answers (prepositions, conjunctions, etc.)
+    _NON_ANSWER_WORDS = {
+        "outside", "inside", "between", "through", "during", "within", "beyond",
+        "above", "below", "under", "over", "into", "onto", "upon", "along",
+        "toward", "against", "without", "despite", "because", "although",
+        "however", "therefore", "moreover", "furthermore", "additionally",
+        "including", "excluding", "regarding", "concerning", "following",
+        "according", "based", "given", "since", "while", "after", "before",
+        "this", "that", "these", "those", "which", "where", "when", "what",
+        "each", "both", "all", "any", "some", "other", "another",
+    }
+    # Spelled-out number words (high-priority candidates for count questions)
+    _NUMBER_WORDS = {
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+        "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+        "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
+        "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred",
+        "thousand", "million", "billion",
+    }
+    # Strip leading copula/aux verbs that sneak in from inline sentences
+    _LEADING_VERBS_RE = re.compile(
+        r"^(?:is|are|was|were|has|have|had|be|been|being|contains?|includes?)\s+",
+        re.IGNORECASE,
+    )
+    bold_pattern = re.compile(r"\*\*([^*]{1,80})\*\*")
+    bold_matches = bold_pattern.findall(full_answer)
+
+    def _clean_bold(raw: str) -> str:
+        c = raw.strip().rstrip(".")
+        c = _LEADING_VERBS_RE.sub("", c).strip()
+        return c
+
+    def _is_answer_like(c: str) -> bool:
+        """Return True if this candidate looks like a factual answer value."""
+        low = c.lower()
+        words = set(low.split())
+        if words & _HEADER_WORDS:
+            return False
+        if low in _NON_ANSWER_WORDS:
+            return False
+        if _META_ANNOTATION_RE.search(c):
+            return False
+        return True
+
+    # Priority 0: numeric digits or spelled-out number word (most reliable)
+    for candidate in reversed(bold_matches):
+        c = _clean_bold(candidate)
+        if c.lower() in _INVALID_CANDIDATES:
+            continue
+        low = c.lower()
+        has_digit = bool(re.search(r"\d", c))
+        is_number_word = low in _NUMBER_WORDS
+        if (has_digit or is_number_word) and _is_answer_like(c):
+            return c
+    # First pass: any short (≤20 char) answer-like bold value
+    for candidate in reversed(bold_matches):
+        c = _clean_bold(candidate)
+        if c.lower() in _INVALID_CANDIDATES:
+            continue
+        if len(c) <= 20 and _is_answer_like(c):
+            return c
+    # Second pass: any non-placeholder, non-header bold value
+    for candidate in reversed(bold_matches):
+        c = _clean_bold(candidate)
+        if c.lower() in _INVALID_CANDIDATES:
+            continue
+        if _is_answer_like(c):
+            return c
+
+    # --- Pattern 3: bare number (with optional unit) near end ----------------
+    # e.g. "0.1777", "42 km", "3.14"
+    number_pattern = re.compile(
+        r"(?<!\w)([-+]?\d[\d,]*\.?\d*(?:\s*[a-zA-Z%°]+)?)\s*[.!]?\s*$",
+        re.MULTILINE,
+    )
+    number_matches = number_pattern.findall(full_answer.strip())
+    if number_matches:
+        candidate = number_matches[-1].strip()
+        if candidate:
+            return candidate
+
+    # --- Fallback: first 500 characters --------------------------------------
+    return full_answer[:500]
+
+
+# --------------------------------------------------------------------------
 # API call
 # --------------------------------------------------------------------------
 
@@ -661,11 +816,10 @@ async def call_orchestrator(
     user_content = question
     if file_context:
         user_content = (
-            f"--- ATTACHED FILE DATA ---\n{file_context}\n--- END OF FILE DATA ---"
-            f"\n\n--- QUESTION ---\n{question}\n\n"
-            "Use the file data provided above as your primary source. "
-            "Give the exact answer value only (number, name, or short phrase). "
-            "No explanation."
+            "[ROUTE TO: reasoning OR general — NOT skill_detector]\n"
+            "Analyze the attached data and answer the question with the exact value only.\n\n"
+            f"{file_context}"
+            f"\n\n--- QUESTION ---\n{question}"
         )
     _NO_ANSWER_PHRASES = ("no answer available", "please try again")
     last_err = ""
@@ -680,13 +834,20 @@ async def call_orchestrator(
                             "You are a helpful assistant answering factual questions. "
                             "Give ONLY the final answer — no explanation, no preamble. "
                             "If the answer is a number, give just the number. "
-                            "If a name, give just the name. Be as concise as possible."
+                            "If a name, give just the name. Be as concise as possible. "
+                            + (
+                                "ALWAYS answer in English, regardless of the question language. "
+                                if LANGUAGE == "en" else
+                                "Answer in the same language as the question. "
+                            ) +
+                            "Provide only the final answer value — no step-by-step explanation."
                         )},
                         {"role": "user", "content": user_content},
                     ],
                     "stream": False,
                     "max_tokens": 500,
-                    "temperature": 0.1,
+                    "temperature": TEMPERATURE,
+                    "no_cache": True,
                 },
                 headers={
                     "Authorization": f"Bearer {API_KEY}",
@@ -791,16 +952,19 @@ async def main() -> int:
                 client, processed_q, file_context=file_ctx
             )
             answer = res["content"]
+            # Extract a concise answer for scoring; keep the full response as
+            # model_answer so the raw orchestrator output is preserved in results.
+            answer_for_eval = _extract_gaia_answer(answer, processed_q)
 
             dt = time.perf_counter() - t0
-            correct, extracted = check_answer(answer, expected)
+            correct, extracted = check_answer(answer_for_eval, expected)
 
             result = GAIAResult(
                 task_id=task_id,
                 level=level,
                 question=question[:200],
                 expected_answer=expected,
-                model_answer=answer[:500],
+                model_answer=answer[:500],  # raw orchestrator output, unextracted
                 correct=correct,
                 wall_clock_s=dt,
                 tokens_out=res["tokens_out"],
@@ -878,4 +1042,26 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="GAIA Benchmark Runner for MoE Sovereign")
+    parser.add_argument("--template", default=None, help="Template ID (overrides MOE_TEMPLATE env)")
+    parser.add_argument("--levels", nargs="+", type=int, default=None, help="Levels to run (overrides GAIA_LEVELS env)")
+    parser.add_argument("--max-per-level", type=int, default=None, dest="max_per_level", help="Max questions per level (overrides GAIA_MAX_PER_LEVEL env)")
+    parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature (overrides GAIA_TEMPERATURE env, default 0.0)")
+    parser.add_argument("--language", default=None, choices=["en", "auto"], help="Response language: 'en'=force English, 'auto'=match question (overrides GAIA_LANGUAGE env)")
+    args = parser.parse_args()
+
+    # CLI args override module-level globals set from env vars
+    if args.template is not None:
+        TEMPLATE = args.template
+    if args.levels is not None:
+        LEVELS = args.levels
+    if args.max_per_level is not None:
+        MAX_PER_LEVEL = args.max_per_level
+    if args.temperature is not None:
+        TEMPERATURE = args.temperature
+    if args.language is not None:
+        LANGUAGE = args.language
+
     sys.exit(asyncio.run(main()))

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Live Monitoring – MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'page.live') }} – MoE Admin{% endblock %}
 
 {% block content %}
 <style>
@@ -50,7 +50,7 @@
   <div class="d-flex align-items-center gap-3">
     <span id="last-update">{{ t(request, 'info.updating') }}</span>
     <button class="btn btn-sm btn-outline-secondary" onclick="forceRefresh()">
-      <i class="bi bi-arrow-clockwise me-1"></i>Jetzt aktualisieren
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
     </button>
     <div class="form-check form-switch mb-0 d-flex align-items-center gap-2">
       <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
@@ -110,7 +110,7 @@
             <input class="form-check-input" type="checkbox" role="switch"
                    id="filter-hide-healer" checked onchange="applyActiveFilter()">
             <label class="form-check-label text-secondary small" for="filter-hide-healer">
-              Healer ausblenden
+              {{ t(request, 'lbl.hide_healer') }}
             </label>
           </div>
           <small class="text-secondary">{{ t(request, 'info.color_coding') }}</small>
@@ -189,7 +189,7 @@
   <div class="tab-pane fade" id="tab-llm">
     <div id="llm-instances-container">
       <div class="text-center text-muted py-5" id="llm-loading">
-        <div class="spinner-border spinner-border-sm me-2"></div>Lade Instanz-Daten…
+        <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'js.loading') }}
       </div>
       <div class="row" id="llm-cards"></div>
     </div>
@@ -202,7 +202,24 @@
 <script>
 let _refreshTimer = null;
 
-/* ── Hilfsfunktionen ───────────────────────────────────────────────────────── */
+const _tlive = {
+  noModelIdle:       "{{ t(request, 'metric.no_model') }}",
+  ollama_metrics:    "{{ t(request, 'metric.ollama_metrics') }}",
+  in_work:           "{{ t(request, 'metric.in_work') }}",
+  waiting:           "{{ t(request, 'metric.waiting') }}",
+  loaded:            "{{ t(request, 'metric.loaded') }}",
+  total_reqs:        "{{ t(request, 'metric.total_reqs') }}",
+  avg_req:           "{{ t(request, 'metric.avg_req') }}",
+  in:                "{{ t(request, 'metric.in') }}",
+  out:               "{{ t(request, 'metric.out') }}",
+  models_available:  "{{ t(request, 'js.models_available') }}",
+  lastUpdate:        "{{ t(request, 'lbl.last_update') }}",
+  clearFailed:       "{{ t(request, 'msg.load_error') }}",
+  killFailed:        "{{ t(request, 'msg.kill_failed') }}",
+  noExportData:      "{{ t(request, 'empty.no_requests') }}",
+};
+
+/* ── Helper functions ─────────────────────────────────────────────────────── */
 function fmtDateTime(iso) {
   if (!iso) return '–';
   const d = new Date(iso);
@@ -233,7 +250,7 @@ function expiresIn(iso) {
   if (!iso) return '–';
   try {
     const diff = (new Date(iso) - Date.now()) / 1000;
-    if (diff <= 0) return '<span class="text-danger">abgelaufen</span>';
+    if (diff <= 0) return `<span class="text-danger">{{ t(request, 'table.expires') }}</span>`;
     if (diff < 60) return `<span class="text-warning">${diff.toFixed(0)}s</span>`;
     return `${(diff/60).toFixed(0)}min`;
   } catch { return '–'; }
@@ -358,7 +375,7 @@ async function fetchLLMInstances() {
               </table>
             </div>`;
         } else {
-          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>Kein Modell geladen (Idle)</div>`;
+          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>${_tlive.noModelIdle}</div>`;
         }
       }
 
@@ -381,16 +398,16 @@ async function fetchLLMInstances() {
         metricsSection = `
           <div class="mt-3">
             <div class="fw-semibold mb-2" style="font-size:.85rem">
-              <i class="bi bi-bar-chart-line me-1 text-primary"></i>Ollama Metriken
+              <i class="bi bi-bar-chart-line me-1 text-primary"></i>${_tlive.ollama_metrics}
             </div>
             <div class="d-flex flex-wrap gap-1">
-              <span class="metric-chip"><strong class="${inProgColor}">${inProgress}</strong> in Arbeit</span>
-              <span class="metric-chip"><strong class="${pendColor}">${pending}</strong> wartend</span>
-              <span class="metric-chip"><strong>${loadedCnt}</strong> geladen</span>
-              <span class="metric-chip"><strong>${totalReqs}</strong> Anfragen gesamt</span>
-              <span class="metric-chip">Ø <strong>${avgDur}</strong> / Anfrage</span>
-              <span class="metric-chip">↑ <strong>${reqSize}</strong> Eingabe</span>
-              <span class="metric-chip">↓ <strong>${respSize}</strong> Ausgabe</span>
+              <span class="metric-chip"><strong class="${inProgColor}">${inProgress}</strong> ${_tlive.in_work}</span>
+              <span class="metric-chip"><strong class="${pendColor}">${pending}</strong> ${_tlive.waiting}</span>
+              <span class="metric-chip"><strong>${loadedCnt}</strong> ${_tlive.loaded}</span>
+              <span class="metric-chip"><strong>${totalReqs}</strong> ${_tlive.total_reqs}</span>
+              <span class="metric-chip">Ø <strong>${avgDur}</strong> ${_tlive.avg_req}</span>
+              <span class="metric-chip">${_tlive.in} <strong>${reqSize}</strong></span>
+              <span class="metric-chip">${_tlive.out} <strong>${respSize}</strong></span>
             </div>
           </div>`;
       }
@@ -506,7 +523,7 @@ async function fetchBackgroundJobs() {
 
     const canClear = (status === 'failed' || status === 'stale');
     const clearBtn = canClear
-      ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" title="Eintrag bereinigen" onclick="clearJobStatus()">
+      ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" title="{{ t(request, 'btn.cleanup_run') }}" onclick="clearJobStatus()">
            <i class="bi bi-x-lg"></i>
          </button>`
       : '';
@@ -531,17 +548,17 @@ async function clearJobStatus() {
       document.getElementById('bg-jobs-card').classList.add('d-none');
       document.getElementById('bg-jobs-tbody').innerHTML = '';
     } else {
-      alert('Bereinigung fehlgeschlagen: ' + (r.reason || JSON.stringify(r)));
+      alert(_tlive.clearFailed + ': ' + (r.reason || JSON.stringify(r)));
     }
   } catch(e) {
-    alert('Fehler: ' + e.message);
+    alert(_tlive.clearFailed + ': ' + e.message);
   }
 }
 
 /* ── Prozess killen ────────────────────────────────────────────────────────── */
 async function killRequest(chatId) {
   if (!chatId) return;
-  if (!confirm(`Prozess ${chatId.slice(-12)} aus dem Live-Monitoring entfernen?`)) return;
+  if (!confirm(`{{ t(request, 'dialog.confirm_kill') }}`.replace('{pid}', chatId.slice(-12)))) return;
   try {
     const r = await fetch(`/api/live/kill-request/${encodeURIComponent(chatId)}`, {method: 'POST'});
     const d = await r.json();
@@ -549,10 +566,10 @@ async function killRequest(chatId) {
       await fetchActiveRequests();
       await fetchCompletedRequests();
     } else {
-      alert('Kill fehlgeschlagen: ' + (d.error || 'Unbekannt'));
+      alert(_tlive.killFailed + ': ' + (d.error || ''));
     }
   } catch(e) {
-    console.warn('Kill fehlgeschlagen:', e);
+    console.warn('kill request failed:', e);
   }
 }
 
@@ -604,7 +621,7 @@ async function fetchCompletedRequests() {
 function exportHistory() {
   const table = document.getElementById('history-table');
   if (!table || table.classList.contains('d-none')) {
-    alert('Keine Daten zum Exportieren. Bitte zuerst aktualisieren.');
+    alert(_tlive.noExportData);
     return;
   }
   const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Status'];
@@ -647,7 +664,7 @@ async function clearHistory() {
 /* ── Auto-Refresh ──────────────────────────────────────────────────────────── */
 function updateLastUpdateTime() {
   document.getElementById('last-update').textContent =
-    'Zuletzt: ' + new Date().toLocaleTimeString('de-DE');
+    _tlive.lastUpdate + ' ' + new Date().toLocaleTimeString();
 }
 
 function doRefresh() {
@@ -672,7 +689,7 @@ document.getElementById('autoRefreshToggle').addEventListener('change', function
   if (this.checked) { startAutoRefresh(); } else { stopAutoRefresh(); }
 });
 
-// Initial laden und Refresh starten
+// Initial load and start refresh
 doRefresh();
 fetchCompletedRequests();
 startAutoRefresh();

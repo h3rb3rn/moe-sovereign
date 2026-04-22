@@ -1829,6 +1829,287 @@ def graph_analyze(edges_description: str) -> str:
         return f"Error serializing result: {e}"
 
 
+# ─── Web / Document fetch helpers ───────────────────────────────────────────
+
+def fetch_pdf_text(url: str, max_chars: int = 8000) -> str:
+    """Download a PDF from a URL and extract its text content.
+
+    Handles arXiv abstract pages (arxiv.org/abs/...) by automatically converting
+    them to the direct PDF URL (arxiv.org/pdf/...). Falls back to fetching the
+    HTML abstract if the PDF itself is inaccessible.
+
+    url: URL to the PDF or arXiv abstract page
+    max_chars: Maximum characters to return (default 8000)
+    """
+    import re as _re
+    import pypdf
+
+    # Normalise arXiv URLs: abs/ → pdf/ with .pdf suffix
+    arxiv_abs = _re.match(r'https?://arxiv\.org/abs/(\d{4}\.\d+(?:v\d+)?)', url)
+    if arxiv_abs:
+        arxiv_id = arxiv_abs.group(1)
+        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+        html_url = url  # keep original for fallback
+    else:
+        pdf_url = url
+        html_url = None
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; research-bot/1.0; +https://example.com/bot)"
+        )
+    }
+
+    def _try_pdf(target_url: str) -> str | None:
+        try:
+            resp = httpx.get(target_url, follow_redirects=True, timeout=45, headers=headers)
+        except Exception as exc:
+            return f"Download failed: {exc}"
+        if resp.status_code != 200:
+            return f"Download failed: HTTP {resp.status_code} for {target_url}"
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(resp.content))
+        except Exception as exc:
+            return f"Not a valid PDF or could not parse: {exc}"
+        pages_text: list[str] = []
+        for page in reader.pages:
+            try:
+                pages_text.append(page.extract_text() or "")
+            except Exception:
+                continue
+        full_text = "\n".join(pages_text).strip()
+        if not full_text:
+            return None  # Signal: try fallback
+        return full_text[:max_chars]
+
+    result = _try_pdf(pdf_url)
+    if result and not result.startswith(("Download failed", "Not a valid")):
+        return result
+
+    # Fallback: fetch HTML abstract page (arXiv) or original URL as HTML
+    fallback_url = html_url or url
+    if fallback_url != pdf_url:
+        try:
+            resp = httpx.get(fallback_url, follow_redirects=True, timeout=20, headers=headers)
+            if resp.status_code == 200:
+                # Strip HTML tags for a plain-text abstract
+                text = _re.sub(r'<[^>]+>', ' ', resp.text)
+                text = _re.sub(r'\s+', ' ', text).strip()
+                return f"[Abstract page fallback]\n{text[:max_chars]}"
+        except Exception:
+            pass
+
+    return result or "No extractable text found (PDF may be image-only or behind a paywall)."
+
+
+def python_sandbox(code: str) -> str:
+    """Execute a small, self-contained Python snippet and return its output.
+
+    Designed for numerical calculations, probability trees, Markov chains,
+    combinatorics, and any logic that is too complex for the calculate tool.
+    The snippet runs in a restricted environment: only the standard library
+    modules math, fractions, itertools, collections, decimal, and statistics
+    are available. No file I/O, no network, no subprocesses.
+
+    code: Python source code. Use print() to produce output — the return value
+          of the last expression is also captured automatically.
+
+    Examples:
+      - Recursive probability: from fractions import Fraction\\nP1=Fraction(1,3)\\n...
+      - Combinatorics: import math; print(math.comb(10, 3))
+      - Simulation: import random; random.seed(0); wins=[...]; print(sum(wins)/len(wins))
+    """
+    import builtins
+    import io
+    import contextlib
+
+    _ALLOWED_MODULES = {
+        "math", "fractions", "itertools", "collections",
+        "decimal", "statistics", "random", "re",
+    }
+
+    def _restricted_import(name, *args, **kwargs):
+        if name.split(".")[0] not in _ALLOWED_MODULES:
+            raise ImportError(f"Module '{name}' is not allowed in sandbox (allowed: {sorted(_ALLOWED_MODULES)})")
+        return original_import(name, *args, **kwargs)
+
+    original_import = builtins.__import__
+    stdout_capture = io.StringIO()
+
+    safe_globals = {
+        "__builtins__": {
+            k: getattr(builtins, k)
+            for k in dir(builtins)
+            if not k.startswith("_") and k not in {"open", "exec", "eval", "compile",
+                                                     "input", "breakpoint", "__import__"}
+        },
+        "__import__": _restricted_import,
+    }
+    safe_globals["__builtins__"]["__import__"] = _restricted_import  # type: ignore[index]
+
+    try:
+        with contextlib.redirect_stdout(stdout_capture):
+            exec(code, safe_globals)  # noqa: S102
+        output = stdout_capture.getvalue().strip()
+        return output if output else "(no output — use print() to show results)"
+    except Exception as exc:
+        partial = stdout_capture.getvalue().strip()
+        partial_note = f"\nPartial output before crash:\n{partial}" if partial else ""
+        return (
+            f"[EXECUTION_ERROR] {type(exc).__name__}: {exc}{partial_note}\n"
+            f"Fix the code and retry. Check for: index bounds, division by zero, "
+            f"undefined variables, or disallowed modules."
+        )
+
+
+def wikipedia_get_section(title: str = "", section: str = "", lang: str = "en", article: str = "") -> str:
+    """Fetch a section of a Wikipedia article via the MediaWiki API.
+
+    Returns the full plain-text content of the requested section (or the
+    entire article intro if section is empty). Useful for counting items in
+    discography, filmography, bibliography, or any other list sections.
+
+    title:   Wikipedia article title (e.g. 'Mercedes Sosa'). Also accepts 'article' as alias.
+    section: Section name to fetch (e.g. 'Studio albums'). Empty = article intro.
+    lang:    Language code (default 'en'; use 'de' for German Wikipedia)
+    """
+    import re as _re
+
+    # Accept 'article' as alias for 'title' — LLMs sometimes use this parameter name
+    if not title and article:
+        title = article
+
+    base = f"https://{lang}.wikipedia.org/w/api.php"
+    _headers = {"User-Agent": "MoE-Sovereign/1.0 (research-bot; contact@moe.local) python-httpx"}
+    # First get the section index by fetching the table of contents
+    try:
+        toc_resp = httpx.get(
+            base,
+            params={
+                "action": "parse", "page": title, "prop": "sections",
+                "format": "json", "redirects": "1",
+            },
+            headers=_headers,
+            timeout=15,
+        )
+    except Exception as exc:
+        return f"Wikipedia API request failed: {exc}"
+
+    if toc_resp.status_code != 200:
+        return f"Wikipedia API error: HTTP {toc_resp.status_code}"
+
+    toc_data = toc_resp.json()
+    if "error" in toc_data:
+        return f"Wikipedia API error: {toc_data['error'].get('info', toc_data['error'])}"
+
+    sections = toc_data.get("parse", {}).get("sections", [])
+    section_index = "0"  # 0 = lead section
+    if section:
+        low_target = section.lower()
+        for s in sections:
+            if low_target in s.get("line", "").lower() or low_target in s.get("anchor", "").lower():
+                section_index = s["index"]
+                break
+
+    # Fetch the section content as plain text (wikitext → strip markup)
+    try:
+        content_resp = httpx.get(
+            base,
+            params={
+                "action": "parse", "page": title, "prop": "wikitext",
+                "section": section_index, "format": "json", "redirects": "1",
+            },
+            headers=_headers,
+            timeout=15,
+        )
+    except Exception as exc:
+        return f"Wikipedia section fetch failed: {exc}"
+
+    if content_resp.status_code != 200:
+        return f"Wikipedia section error: HTTP {content_resp.status_code}"
+
+    wikitext = content_resp.json().get("parse", {}).get("wikitext", {}).get("*", "")
+
+    # For discography/table sections: extract structured rows (Year | Entry) before stripping markup
+    table_rows = []
+    if _re.search(r'\{\|.*wikitable', wikitext, _re.DOTALL):
+        current_year = None
+        for line in wikitext.split('\n'):
+            year_m = _re.match(r'^\|(\d{4})\s*$', line.strip())
+            if year_m:
+                current_year = year_m.group(1)
+            elif line.startswith("|''") and current_year:
+                title_clean = _re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', line)
+                title_clean = _re.sub(r"[|'{}]", '', title_clean).strip()
+                title_clean = _re.sub(r'\{\{[^}]*\}\}', '', title_clean).strip()
+                if title_clean:
+                    table_rows.append(f"{current_year}: {title_clean}")
+
+    # Strip wiki markup for a readable plain-text result
+    text = _re.sub(r'\[\[(?:[^|\]]*\|)?([^\]]+)\]\]', r'\1', wikitext)  # links
+    text = _re.sub(r'\{\{[^}]*\}\}', '', text)   # templates
+    text = _re.sub(r"'''?", '', text)             # bold/italic
+    text = _re.sub(r'<[^>]+>', ' ', text)         # HTML tags
+    text = _re.sub(r'\n{3,}', '\n\n', text).strip()
+
+    if not text:
+        return f"Section '{section}' not found in article '{title}'. Available sections: {[s.get('line') for s in sections[:20]]}"
+
+    # Prepend structured table summary if available
+    prefix = ""
+    if table_rows:
+        prefix = f"STRUCTURED TABLE ({len(table_rows)} entries):\n" + "\n".join(table_rows) + "\n\n---\nRAW TEXT:\n"
+
+    return f"Wikipedia — {title} [{section or 'intro'}]:\n\n{prefix}{text[:5000]}"
+
+
+def github_get_issue(repo: str, issue_number: int) -> str:
+    """Fetch a GitHub issue by repository and issue number via the public API.
+
+    repo: Repository in 'owner/repo' format (e.g. 'torvalds/linux')
+    issue_number: The issue number to fetch
+    """
+    api_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    try:
+        response = httpx.get(
+            api_url,
+            headers={"Accept": "application/vnd.github.v3+json"},
+            timeout=15,
+        )
+    except Exception as exc:
+        return f"Request failed: {exc}"
+
+    if response.status_code == 404:
+        return f"Issue #{issue_number} not found in '{repo}' (or repository is private)."
+    if response.status_code != 200:
+        return f"GitHub API error: HTTP {response.status_code}"
+
+    try:
+        data = response.json()
+    except Exception as exc:
+        return f"Failed to parse GitHub response: {exc}"
+
+    title = data.get("title", "(no title)")
+    state = data.get("state", "unknown")
+    created_at = data.get("created_at", "unknown")
+    body = (data.get("body") or "")[:2000]
+    labels = [lbl.get("name", "") for lbl in data.get("labels", [])]
+    comments = data.get("comments", 0)
+
+    return json.dumps(
+        {
+            "title": title,
+            "state": state,
+            "created_at": created_at,
+            "body": body,
+            "labels": labels,
+            "comments_count": comments,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -1864,6 +2145,10 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "graph_analyze":     graph_analyze,
     "file_upload":       file_upload,
     "file_download_url": file_download_url,
+    "fetch_pdf_text":        fetch_pdf_text,
+    "github_get_issue":      github_get_issue,
+    "wikipedia_get_section": wikipedia_get_section,
+    "python_sandbox":        python_sandbox,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -1899,6 +2184,10 @@ _TOOL_DESCRIPTIONS = {
     "graph_analyze":     "Analyze a graph (Eulerian path/circuit, connected components, degree map, density) from text description",
     "file_upload":       "Upload a file (base64-encoded) to MinIO object storage and get a 24h pre-signed download URL",
     "file_download_url": "Generate a fresh pre-signed download URL for an existing file in MinIO storage",
+    "fetch_pdf_text":        "Download a PDF from a URL and extract its text (up to 8 000 chars by default); auto-handles arXiv URLs",
+    "github_get_issue":      "Fetch a GitHub issue (title, state, body, labels, comment count) via the public API",
+    "wikipedia_get_section": "Fetch a specific section of a Wikipedia article as plain text (e.g. 'Discography', 'Filmography'). Use this whenever a question references a Wikipedia article.",
+    "python_sandbox":        "Run a small Python snippet for exact numerical calculations: probability trees (use Fraction!), Markov chains, combinatorics. Use print() for output. NEVER write simulation/Monte Carlo code — always use exact Fraction arithmetic. Allowed modules: math, fractions, itertools, collections, decimal, statistics, random.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────
