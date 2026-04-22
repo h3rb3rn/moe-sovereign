@@ -631,116 +631,141 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
       </tbody>
     </table>
 
-    <!-- Section 1: Expert Template -->
+    <!-- Section 1: Expert Template (collapsible) -->
     <div class="card mb-2">
-      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e8f5e9">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#e8f5e9;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_tmpl_collapse_${uid}" aria-expanded="false">
         <i class="bi bi-collection-fill text-success"></i>
         <span class="small fw-bold">Expert Template</span>
         <span class="text-muted small ms-1">— Assign expert configuration package</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
       </div>
-      <div class="card-body py-2 px-3">
-        <div class="row g-2 align-items-center">
-          <div class="col-10" id="perm_tmpl_wrap">
-            <span class="text-muted small">Loading…</span>
-          </div>
-          <div class="col-2">
-            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','expert_template','perm_tmpl_wrap')">
-              <i class="bi bi-plus"></i>
-            </button>
+      <div class="collapse" id="perm_tmpl_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-center">
+            <div class="col-10" id="perm_tmpl_wrap">
+              <span class="text-muted small">Loading…</span>
+            </div>
+            <div class="col-2">
+              <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','expert_template','perm_tmpl_wrap')">
+                <i class="bi bi-plus"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Section 2: Claude Code Profile -->
+    <!-- Section 2: Claude Code Profile (collapsible) -->
     <div class="card mb-2">
-      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e3f2fd">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#e3f2fd;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_cc_collapse_${uid}" aria-expanded="false">
         <i class="bi bi-person-badge-fill text-primary"></i>
         <span class="small fw-bold">Claude Code Profile</span>
         <span class="text-muted small ms-1">— CC profile via Anthropic Messages API</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
       </div>
-      <div class="card-body py-2 px-3">
-        <div class="row g-2 align-items-center">
-          <div class="col-10" id="perm_cc_wrap">
-            <span class="text-muted small">Loading…</span>
-          </div>
-          <div class="col-2">
-            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','cc_profile','perm_cc_wrap')">
-              <i class="bi bi-plus"></i>
-            </button>
+      <div class="collapse" id="perm_cc_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-center">
+            <div class="col-10" id="perm_cc_wrap">
+              <span class="text-muted small">Loading…</span>
+            </div>
+            <div class="col-2">
+              <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','cc_profile','perm_cc_wrap')">
+                <i class="bi bi-plus"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Section 3: Native LLMs (OpenAI API) -->
+    <!-- Section 3: Native LLMs (collapsible) -->
     <div class="card mb-2">
-      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e1f5fe">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#e1f5fe;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_llm_collapse_${uid}" aria-expanded="false">
         <i class="bi bi-cpu-fill text-info"></i>
         <span class="small fw-bold">Native LLMs</span>
         <span class="text-muted small ms-1">— OpenAI API model access</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
       </div>
-      <div class="card-body py-2 px-3">
-        <div class="row g-2 align-items-center">
-          <div class="col-10" id="perm_llm_wrap">
-            <span class="text-muted small">Loading…</span>
-          </div>
-          <div class="col-2">
-            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','model_endpoint','perm_llm_wrap')">
-              <i class="bi bi-plus"></i>
-            </button>
+      <div class="collapse" id="perm_llm_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-center">
+            <div class="col-10" id="perm_llm_wrap">
+              <span class="text-muted small">Loading…</span>
+            </div>
+            <div class="col-2">
+              <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','model_endpoint','perm_llm_wrap')">
+                <i class="bi bi-plus"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Section 4: Skills -->
+    <!-- Section 4: Skills (collapsible) -->
     <div class="card mb-2">
-      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#f3e5f5">
-        <i class="bi bi-magic text-purple" style="color:#7b1fa2"></i>
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#f3e5f5;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_skill_collapse_${uid}" aria-expanded="false">
+        <i class="bi bi-magic" style="color:#7b1fa2"></i>
         <span class="small fw-bold">Skills</span>
         <span class="text-muted small ms-1">— Server-side slash commands (/skill-name)</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
       </div>
-      <div class="card-body py-2 px-3">
-        <div class="row g-2 align-items-center mb-1">
-          <div class="col-10" id="perm_skill_wrap">
-            <span class="text-muted small">Loading…</span>
+      <div class="collapse" id="perm_skill_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-center mb-1">
+            <div class="col-10" id="perm_skill_wrap">
+              <span class="text-muted small">Loading…</span>
+            </div>
+            <div class="col-2">
+              <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','skill','perm_skill_wrap')" title="Grant selected skills">
+                <i class="bi bi-plus"></i>
+              </button>
+            </div>
           </div>
-          <div class="col-2">
-            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','skill','perm_skill_wrap')" title="Grant selected skills">
-              <i class="bi bi-plus"></i>
-            </button>
-          </div>
+          <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.15rem .5rem"
+                  onclick="grantWildcard('${uid}','skill')" title="Grant all skills">
+            <i class="bi bi-check-all me-1"></i>Grant all skills
+          </button>
         </div>
-        <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.15rem .5rem"
-                onclick="grantWildcard('${uid}','skill')" title="Grant all skills">
-          <i class="bi bi-check-all me-1"></i>Grant all skills
-        </button>
       </div>
     </div>
 
-    <!-- Section 5: MCP Tools -->
+    <!-- Section 5: MCP Tools (collapsible) -->
     <div class="card mb-2">
-      <div class="card-header py-1 px-3 d-flex align-items-center gap-2" style="background:#e8eaf6">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#e8eaf6;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_mcp_collapse_${uid}" aria-expanded="false">
         <i class="bi bi-tools" style="color:#283593"></i>
         <span class="small fw-bold">MCP Tools</span>
         <span class="text-muted small ms-1">— Precision Tools (Math, Subnet, Date, Legal…)</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
       </div>
-      <div class="card-body py-2 px-3">
-        <div class="row g-2 align-items-center mb-1">
-          <div class="col-10" id="perm_mcp_wrap">
-            <span class="text-muted small">Loading…</span>
+      <div class="collapse" id="perm_mcp_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-center mb-1">
+            <div class="col-10" id="perm_mcp_wrap">
+              <span class="text-muted small">Loading…</span>
+            </div>
+            <div class="col-2">
+              <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','mcp_tool','perm_mcp_wrap')" title="Grant selected MCP tools">
+                <i class="bi bi-plus"></i>
+              </button>
+            </div>
           </div>
-          <div class="col-2">
-            <button class="btn btn-sm btn-success w-100" onclick="grantSection('${uid}','mcp_tool','perm_mcp_wrap')" title="Grant selected MCP tools">
-              <i class="bi bi-plus"></i>
-            </button>
-          </div>
+          <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.15rem .5rem"
+                  onclick="grantWildcard('${uid}','mcp_tool')" title="Grant all MCP tools">
+            <i class="bi bi-check-all me-1"></i>Grant all MCP tools
+          </button>
         </div>
-        <button class="btn btn-xs btn-outline-secondary" style="font-size:.75rem;padding:.15rem .5rem"
-                onclick="grantWildcard('${uid}','mcp_tool')" title="Grant all MCP tools">
-          <i class="bi bi-check-all me-1"></i>Grant all MCP tools
-        </button>
       </div>
     </div>
 

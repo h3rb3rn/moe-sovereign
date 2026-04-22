@@ -67,9 +67,6 @@
       <button class="btn btn-outline-secondary btn-sm" onclick="pullUpstream(this)" style="white-space:nowrap">
         <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.git_pull') }}
       </button>
-      <button class="btn btn-outline-primary btn-sm ms-2" onclick="pullCommunity(this)" style="white-space:nowrap">
-        <i class="bi bi-cloud-download me-1"></i>Pull Community Skills
-      </button>
     </div>
     <div id="upstream-grid" class="row g-3">
       <div class="col-12 text-center text-muted py-5" id="upstream-loading">
@@ -85,7 +82,11 @@
         <i class="bi bi-cloud-download me-1"></i>
         305+ community skills from <a href="https://github.com/alirezarezvani/claude-skills" target="_blank" class="alert-link">alirezarezvani/claude-skills</a>.
         Skills require a security audit before activation.
+        External ratings from <a href="https://skills.sh/audits" target="_blank" class="alert-link">skills.sh/audits</a> are shown on each tile.
       </div>
+      <button class="btn btn-outline-secondary btn-sm" onclick="refreshExtAudits(this)" style="white-space:nowrap">
+        <i class="bi bi-shield-exclamation me-1"></i>{{ t(request, 'btn.refresh_ext_audits') }}
+      </button>
       <button class="btn btn-outline-primary btn-sm" onclick="pullCommunity(this)" style="white-space:nowrap">
         <i class="bi bi-cloud-download me-1"></i>Pull Community Skills
       </button>
@@ -343,6 +344,13 @@ function renderUpstreamGrid(skills) {
   grid.innerHTML = skills.map(renderUpstreamCard).join('');
 }
 
+function renderAuditBadge(status) {
+  if (status === 'safe')    return '<span class="badge bg-success" style="font-size:.6rem">Audited: Safe</span>';
+  if (status === 'warning') return '<span class="badge bg-warning text-dark" style="font-size:.6rem">Audited: Warning</span>';
+  if (status === 'blocked') return '<span class="badge bg-danger" style="font-size:.6rem">Blocked</span>';
+  return '<span class="badge bg-secondary" style="font-size:.6rem">Unaudited</span>';
+}
+
 function renderUpstreamCard(s) {
   const existsBadge = s.local_exists
     ? `<span class="badge bg-success ms-1">${_tskills.importedBadge}</span>`
@@ -353,6 +361,10 @@ function renderUpstreamCard(s) {
   const desc = s.description
     ? `<p class="card-text text-muted small mb-2" style="max-height:3.5em;overflow:hidden">${escHtml(s.description.substring(0,180))}${s.description.length>180?'…':''}</p>`
     : `<p class="text-muted small fst-italic mb-2">${_tskills.noDesc}</p>`;
+
+  const auditStatus = s.audit_status || 'unaudited';
+  const auditBadge = renderAuditBadge(auditStatus);
+  const canImport = auditStatus === 'safe' || auditStatus === 'warning';
   const importBtnTxt = s.local_exists
     ? `<i class="bi bi-arrow-clockwise me-1"></i>${_tskills.update}`
     : `<i class="bi bi-download me-1"></i>${_tskills.import}`;
@@ -362,7 +374,7 @@ function renderUpstreamCard(s) {
     <div class="card h-100">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <span class="font-monospace">/${escHtml(s.name)}</span>
-        <span>${existsBadge}</span>
+        <span>${existsBadge}${auditBadge}</span>
       </div>
       <div class="card-body pb-2">
         ${desc}
@@ -370,8 +382,12 @@ function renderUpstreamCard(s) {
           <code class="small text-muted">${escHtml(s.dir)}/SKILL.md</code>${refs}
         </div>
       </div>
-      <div class="card-footer bg-transparent">
-        <button class="btn btn-sm ${importBtnCls}" onclick="importSkill('${escHtml(s.name)}', this)">
+      <div class="card-footer bg-transparent d-flex gap-2 flex-wrap">
+        <button class="btn btn-sm btn-outline-info" onclick="auditUpstreamSkill('${escHtml(s.name)}', this)">
+          <i class="bi bi-shield-check me-1"></i>{{ t(request, 'btn.audit') }}
+        </button>
+        <button class="btn btn-sm ${importBtnCls}" onclick="importSkill('${escHtml(s.name)}', this)"
+                ${canImport ? '' : 'disabled title="{{ t(request, \'js.audit_required\') }}"'}>
           ${importBtnTxt}
         </button>
       </div>
@@ -411,13 +427,27 @@ async function loadCommunity() {
       return;
     }
     grid.innerHTML = skills.map(s => {
-      const auditBadge = s.audit_status === 'safe'
-        ? '<span class="badge bg-success" style="font-size:.6rem">Audited: Safe</span>'
-        : s.audit_status === 'warning'
-        ? '<span class="badge bg-warning text-dark" style="font-size:.6rem">Audited: Warning</span>'
-        : s.audit_status === 'blocked'
-        ? '<span class="badge bg-danger" style="font-size:.6rem">Blocked</span>'
-        : '<span class="badge bg-secondary" style="font-size:.6rem">Unaudited</span>';
+      const auditBadge = renderAuditBadge(s.audit_status);
+
+      // skills.sh external audit badges
+      let extBadges = '';
+      if (s.skillssh) {
+        const sh = s.skillssh;
+        if (sh.gen_verdict) {
+          const genCls = sh.gen_verdict.toLowerCase().includes('safe') ? 'bg-success' : 'bg-danger';
+          extBadges += `<span class="badge ${genCls}" style="font-size:.55rem" title="Gen Agent Trust Hub">Gen: ${escHtml(sh.gen_verdict)}</span> `;
+        }
+        if (sh.socket_alerts !== null && sh.socket_alerts !== undefined) {
+          const sockCls = sh.socket_alerts === 0 ? 'bg-success' : 'bg-warning text-dark';
+          extBadges += `<span class="badge ${sockCls}" style="font-size:.55rem" title="Socket.dev alerts">Socket: ${sh.socket_alerts}</span> `;
+        }
+        if (sh.snyk_risk) {
+          const snykMap = {'critical':'bg-danger','high risk':'bg-danger','med risk':'bg-warning text-dark','medium risk':'bg-warning text-dark','low risk':'bg-success'};
+          const snykCls = snykMap[sh.snyk_risk.toLowerCase()] || 'bg-secondary';
+          extBadges += `<span class="badge ${snykCls}" style="font-size:.55rem" title="Snyk risk">Snyk: ${escHtml(sh.snyk_risk)}</span>`;
+        }
+      }
+
       return `<div class="col-12 col-md-6 col-lg-4">
         <div class="card h-100">
           <div class="card-body py-2 px-3">
@@ -425,6 +455,7 @@ async function loadCommunity() {
               <strong style="font-size:.85rem">/${escHtml(s.name)}</strong>
               ${auditBadge}
             </div>
+            ${extBadges ? `<div class="mb-1">${extBadges}</div>` : ''}
             <p class="text-muted small mb-1" style="font-size:.75rem">${escHtml(s.description || '—')}</p>
             <div class="d-flex gap-1">
               <button class="btn btn-xs btn-outline-info" style="font-size:.7rem" onclick="auditSkill('${escHtml(s.name)}', this)">
@@ -493,6 +524,47 @@ async function activateSkill(name, btn) {
     showFlash(`Activation failed: ${e.message}`, 'danger');
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-play-circle me-1"></i>Activate';
+  }
+}
+
+async function auditUpstreamSkill(name, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Auditing…';
+  try {
+    const r = await fetch(`${UPSTREAM_URL}/${encodeURIComponent(name)}/audit`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'phi4:14b', node: ''}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    const verdict = data.verdict || 'unknown';
+    showFlash(`<strong>Audit /${name}:</strong> ${verdict}<br><small>${escHtml((data.summary || '').slice(0, 200))}</small>`);
+    _upstreamLoaded = false;
+    loadUpstream();
+  } catch(e) {
+    showFlash(`Audit failed: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-shield-check me-1"></i>{{ t(request, \'btn.audit\') }}';
+  }
+}
+
+async function refreshExtAudits(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Refreshing…';
+  try {
+    const r = await fetch('/api/skills/community/refresh-external-audits', {method: 'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    showFlash(`External audits refreshed — ${data.total} skills from skills.sh loaded.`);
+    _communityLoaded = false;
+    loadCommunity();
+  } catch(e) {
+    showFlash(`Refresh failed: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-shield-exclamation me-1"></i>{{ t(request, \'btn.refresh_ext_audits\') }}';
   }
 }
 

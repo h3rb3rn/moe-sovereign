@@ -14,17 +14,50 @@ Administrators can authenticate via local credentials or via SSO (Authentik). Th
 
 ## Navigation
 
+The navbar groups all sections into dropdown menus, visible from ≥992 px screen width.
+On smaller screens a hamburger menu opens the full offcanvas sidebar.
+
+### Direct links
+
 | Menu Item | Path | Function |
 |-----------|------|---------|
-| Dashboard | `/` | System configuration, container status |
-| Users | `/users` | User CRUD, budgets, permissions, API keys |
-| Expert Templates | `/templates` | Manage expert configurations |
-| Profiles | `/profiles` | Claude Code profiles |
+| Config | `/` | System configuration, container status |
+
+### Monitoring (dropdown)
+
+| Menu Item | Path | Function |
+|-----------|------|---------|
 | Monitoring | `/monitoring` | Prometheus metrics, server status |
 | Live Monitoring | `/live-monitoring` | Active processes, process kill, LLM instances |
+| Statistics | `/statistics` | Token and cost statistics |
+| Benchmarks | `/benchmarks` | GAIA / LongMemEval benchmark runs |
+
+### Infra (dropdown)
+
+| Menu Item | Path | Function |
+|-----------|------|---------|
+| Servers | `/servers` | Configure inference servers |
+| Knowledge | `/knowledge` | Neo4j knowledge graph management |
+| Federation | `/federation` | Multi-tenant cluster federation |
+| Quarantine | `/quarantine` | Blocked content review |
+| Maintenance | `/maintenance` | System maintenance tasks |
+
+### Tools (dropdown)
+
+| Menu Item | Path | Function |
+|-----------|------|---------|
+| CC Profiles | `/profiles` | Claude Code profiles |
 | Skills | `/skills` | Manage slash commands |
 | MCP Tools | `/mcp-tools` | Enable/disable precision tools |
-| Servers | `/servers` | Configure inference servers |
+| Tool Eval | `/tool-eval` | Tool usage evaluation log |
+| Templates | `/templates` | Manage expert configurations |
+
+### Users (dropdown)
+
+| Menu Item | Path | Function |
+|-----------|------|---------|
+| Users | `/users` | User CRUD, budgets, permissions, API keys |
+| Teams | `/teams` | Team and tenant management |
 | User Content | `/user-content` | All user templates and profiles |
 
 ## Dashboard – Global Configuration

@@ -59,8 +59,10 @@ ADMIN_USER       = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "")
 SECRET_KEY       = os.getenv("ADMIN_SECRET_KEY", secrets.token_hex(32))
 PROMETHEUS_URL   = os.getenv("PROMETHEUS_URL", "http://moe-prometheus:9090")
-SKILLS_DIR          = Path("/app/skills")
-SKILLS_UPSTREAM_DIR = Path("/app/skills-upstream/skills")
+SKILLS_DIR                = Path("/app/skills")
+SKILLS_UPSTREAM_DIR       = Path("/app/skills-upstream/skills")
+SKILLS_UPSTREAM_AUDITS_DIR = Path("/app/skills-upstream/audits")
+ANTHROPIC_SKILLS_REPO     = "https://github.com/anthropics/skills.git"
 MCP_URL          = os.getenv("MCP_URL", "http://mcp-precision:8003")
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://langgraph-orchestrator:8000")
 
@@ -2909,20 +2911,116 @@ async def api_upstream_list():
 
 @app.post("/api/skills/upstream/pull", dependencies=[Depends(require_login)])
 async def api_upstream_pull():
+    """Clone (first run) or pull (subsequent runs) the Anthropic skills repository."""
     import subprocess
     upstream_root = SKILLS_UPSTREAM_DIR.parent  # /app/skills-upstream
-    if not (upstream_root / ".git").exists():
-        raise HTTPException(status_code=400, detail="Kein Git-Repo gefunden")
+    upstream_root.mkdir(parents=True, exist_ok=True)
+
     try:
-        result = subprocess.run(
-            ["git", "-c", "safe.directory=/app/skills-upstream", "-C", str(upstream_root), "pull", "--ff-only"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=result.stderr.strip() or "git pull failed")
-        return {"ok": True, "output": result.stdout.strip()}
+        if not (upstream_root / ".git").exists():
+            # Fresh installation: clone the repository
+            result = subprocess.run(
+                ["git", "clone", "--depth=1", "--quiet",
+                 ANTHROPIC_SKILLS_REPO, str(upstream_root)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                raise HTTPException(status_code=502, detail=f"git clone failed: {result.stderr[:300]}")
+            return {"ok": True, "output": "Repository cloned successfully from " + ANTHROPIC_SKILLS_REPO}
+        else:
+            # Existing repository: fast-forward pull
+            result = subprocess.run(
+                ["git", "-c", f"safe.directory={upstream_root}",
+                 "-C", str(upstream_root), "pull", "--ff-only"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                raise HTTPException(status_code=500, detail=result.stderr.strip() or "git pull failed")
+            return {"ok": True, "output": result.stdout.strip() or "Already up to date."}
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="git pull Timeout")
+        raise HTTPException(status_code=504, detail="git operation timed out")
+
+
+_SKILLSSH_AUDITS_CACHE = Path("/app/skills/community/.skillssh_audits.json")
+_SKILLSSH_CACHE_TTL_SECONDS = 86400  # 24 hours
+
+
+async def _fetch_skillssh_audits() -> dict:
+    """Fetch and cache audit ratings from https://skills.sh/audits.
+
+    Returns a dict keyed by skill name with gen_verdict, socket_alerts, snyk_risk fields.
+    Falls back to cached data on network failure; returns empty dict if unavailable.
+    """
+    # Use cached data if still fresh
+    if _SKILLSSH_AUDITS_CACHE.exists():
+        age = datetime.now().timestamp() - _SKILLSSH_AUDITS_CACHE.stat().st_mtime
+        if age < _SKILLSSH_CACHE_TTL_SECONDS:
+            try:
+                return json.loads(_SKILLSSH_AUDITS_CACHE.read_text())
+            except Exception:
+                pass
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            r = await client.get("https://skills.sh/audits",
+                                 headers={"User-Agent": "MoE-Sovereign/1.0"})
+            if r.status_code != 200:
+                logger.warning(f"skills.sh/audits returned HTTP {r.status_code}")
+                return _load_skillssh_cache_fallback()
+            html = r.text
+    except Exception as exc:
+        logger.warning(f"skills.sh/audits fetch failed: {exc}")
+        return _load_skillssh_cache_fallback()
+
+    # Parse HTML table rows — each row contains: rank, skill-name, repo, gen, socket, snyk
+    audits: dict = {}
+    row_re = _re.compile(
+        r"<tr[^>]*>.*?</tr>", _re.DOTALL | _re.IGNORECASE
+    )
+    cell_re = _re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", _re.DOTALL | _re.IGNORECASE)
+    tag_re = _re.compile(r"<[^>]+>")
+
+    for row in row_re.finditer(html):
+        cells = [tag_re.sub("", c.group(1)).strip() for c in cell_re.finditer(row.group())]
+        # Expect at least 6 columns: rank, name, repo, gen, socket, snyk
+        if len(cells) < 6:
+            continue
+        _, name_raw, _repo, gen_raw, socket_raw, snyk_raw = cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]
+        name = name_raw.strip().lower().replace("_", "-")
+        if not name or name == "skill":  # skip header row
+            continue
+        # Normalise socket count to int (e.g. "0 alerts" → 0)
+        socket_match = _re.search(r"\d+", socket_raw)
+        socket_alerts = int(socket_match.group()) if socket_match else None
+        audits[name] = {
+            "gen_verdict": gen_raw.strip() or None,
+            "socket_alerts": socket_alerts,
+            "snyk_risk": snyk_raw.strip() or None,
+        }
+
+    if audits:
+        _SKILLSSH_AUDITS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _SKILLSSH_AUDITS_CACHE.write_text(json.dumps(audits, indent=2, ensure_ascii=False))
+    return audits
+
+
+def _load_skillssh_cache_fallback() -> dict:
+    """Return stale cache data if available, else empty dict."""
+    if _SKILLSSH_AUDITS_CACHE.exists():
+        try:
+            return json.loads(_SKILLSSH_AUDITS_CACHE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+@app.post("/api/skills/community/refresh-external-audits", dependencies=[Depends(require_login)])
+async def api_refresh_external_audits():
+    """Force-refresh the skills.sh audit cache and return the updated data."""
+    if _SKILLSSH_AUDITS_CACHE.exists():
+        _SKILLSSH_AUDITS_CACHE.unlink(missing_ok=True)
+    audits = await _fetch_skillssh_audits()
+    return {"ok": True, "total": len(audits)}
 
 
 @app.post("/api/skills/community/pull", dependencies=[Depends(require_login)])
@@ -2981,20 +3079,12 @@ async def api_community_pull():
     return {"ok": True, "output": "\n".join(output_lines)}
 
 
-@app.post("/api/skills/community/{skill_name}/audit", dependencies=[Depends(require_login)])
-async def api_skill_audit(skill_name: str, request: Request):
-    """Run a security audit on a community skill using a designated LLM."""
-    body = await request.json()
-    audit_model = body.get("model", "phi4:14b")
-    audit_node = body.get("node", "")  # empty = floating
+async def _run_llm_audit(skill_content: str, model: str, node: str) -> dict:
+    """Run an LLM security audit on the given skill content.
 
-    community_dir = Path("/app/skills/community")
-    skill_path = community_dir / f"{skill_name}.md"
-    if not skill_path.exists():
-        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
-
-    skill_content = skill_path.read_text(encoding="utf-8", errors="replace")
-
+    Returns a dict with keys: verdict, findings, summary.
+    Raises HTTPException on infrastructure errors.
+    """
     audit_prompt = (
         "You are a senior application security engineer. Analyze the following "
         "Claude Code skill definition for security risks.\n\n"
@@ -3015,15 +3105,13 @@ async def api_skill_audit(skill_name: str, request: Request):
         f"```\n{skill_content[:8000]}\n```"
     )
 
-    # Call the LLM for audit
     servers = _get_inference_servers()
-    if audit_node:
-        srv = next((s for s in servers if s["name"] == audit_node), None)
+    if node:
+        srv = next((s for s in servers if s["name"] == node), None)
         if not srv:
-            raise HTTPException(status_code=400, detail=f"Node '{audit_node}' not found")
+            raise HTTPException(status_code=400, detail=f"Node '{node}' not found")
         base_url = srv["url"].rstrip("/").removesuffix("/v1")
     else:
-        # Floating: try each node
         base_url = None
         for srv in servers:
             if srv.get("api_type", "ollama") == "ollama":
@@ -3037,7 +3125,7 @@ async def api_skill_audit(skill_name: str, request: Request):
             r = await client.post(
                 f"{base_url}/v1/chat/completions",
                 json={
-                    "model": audit_model,
+                    "model": model,
                     "messages": [{"role": "user", "content": audit_prompt}],
                     "max_tokens": 2048,
                     "temperature": 0.1,
@@ -3046,24 +3134,37 @@ async def api_skill_audit(skill_name: str, request: Request):
             if r.status_code != 200:
                 raise HTTPException(status_code=502, detail=f"LLM returned HTTP {r.status_code}")
 
-            content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-
-            # Parse JSON from response
-            import re as _re
-            clean = _re.sub(r'^```\w*\n?', '', content.strip())
+            llm_content = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            clean = _re.sub(r'^```\w*\n?', '', llm_content.strip())
             clean = _re.sub(r'\n?```$', '', clean).strip()
             match = _re.search(r'\{.*\}', clean, _re.S)
             if match:
-                audit_result = json.loads(match.group())
-            else:
-                audit_result = {"verdict": "warning", "findings": [], "summary": content[:500]}
+                return json.loads(match.group())
+            return {"verdict": "warning", "findings": [], "summary": llm_content[:500]}
 
     except json.JSONDecodeError:
-        audit_result = {"verdict": "warning", "findings": [], "summary": "Could not parse LLM response as JSON"}
+        return {"verdict": "warning", "findings": [], "summary": "Could not parse LLM response as JSON"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Audit LLM error: {e}")
 
-    # Save audit report
+
+@app.post("/api/skills/community/{skill_name}/audit", dependencies=[Depends(require_login)])
+async def api_skill_audit(skill_name: str, request: Request):
+    """Run a security audit on a community skill using a designated LLM."""
+    body = await request.json()
+    audit_model = body.get("model", "phi4:14b")
+    audit_node = body.get("node", "")
+
+    community_dir = Path("/app/skills/community")
+    skill_path = community_dir / f"{skill_name}.md"
+    if not skill_path.exists():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+    skill_content = skill_path.read_text(encoding="utf-8", errors="replace")
+    audit_result = await _run_llm_audit(skill_content, audit_model, audit_node)
+
     report = {
         "skill": skill_name,
         "model": audit_model,
@@ -3073,16 +3174,19 @@ async def api_skill_audit(skill_name: str, request: Request):
     }
     report_path = community_dir / f"{skill_name}.audit.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-
     return report
 
 
 @app.get("/api/skills/community", dependencies=[Depends(require_login)])
 async def api_community_list():
-    """Lists all community skills."""
+    """Lists all community skills including internal and skills.sh audit data."""
     community_dir = Path("/app/skills/community")
     if not community_dir.exists():
         return []
+
+    # Load skills.sh external audit cache (non-blocking; stale or missing = {})
+    external_audits = _load_skillssh_cache_fallback()
+
     skills = []
     _desc_re = _re.compile(r"description:\s*(.+?)(?:\n|$)")
     for f in sorted(community_dir.iterdir()):
@@ -3090,7 +3194,6 @@ async def api_community_list():
             try:
                 header = f.read_text(encoding="utf-8")[:500]
                 m = _desc_re.search(header)
-                # Check for audit report
                 audit_path = community_dir / f"{f.stem}.audit.json"
                 audit_status = "unaudited"
                 if audit_path.exists():
@@ -3104,6 +3207,7 @@ async def api_community_list():
                     "description": m.group(1).strip()[:120] if m else "",
                     "source": "community",
                     "audit_status": audit_status,
+                    "skillssh": external_audits.get(f.stem),
                 })
             except OSError:
                 pass
@@ -3204,12 +3308,25 @@ async def api_upstream_import_early(skill_name: str):
     skills = {s["name"]: s for s in _list_upstream_skills()}
     if skill_name not in skills:
         raise HTTPException(status_code=404, detail=f"Upstream skill '{skill_name}' not found")
+
+    # Require a passing internal audit before import
+    audit_path = SKILLS_UPSTREAM_AUDITS_DIR / f"{skill_name}.audit.json"
+    if not audit_path.exists():
+        raise HTTPException(status_code=400, detail="Skill has not been audited yet. Run audit first.")
+    try:
+        audit_data = json.loads(audit_path.read_text())
+        verdict = audit_data.get("verdict", "unaudited")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read audit report")
+    if verdict == "blocked":
+        raise HTTPException(status_code=403, detail="Skill was blocked by audit — cannot import")
+
     s = skills[skill_name]
     safe_name = _re.sub(r"[^a-z0-9\-]", "-", skill_name.lower())
     dest = SKILLS_DIR / f"{safe_name}.md"
     fm = f"---\ndescription: {s['description']}\n---\n\n"
     dest.write_text(fm + s["body"], encoding="utf-8")
-    logger.info(f"Upstream-Skill '{skill_name}' importiert → {dest}")
+    logger.info(f"Upstream skill '{skill_name}' imported → {dest}")
     return {"ok": True, "name": safe_name, "overwritten": s["local_exists"]}
 
 
@@ -3323,10 +3440,48 @@ def _list_upstream_skills() -> list:
         if d.is_dir():
             s = _parse_upstream_skill(d)
             if s:
+                # Attach internal audit status if available
+                audit_path = SKILLS_UPSTREAM_AUDITS_DIR / f"{s['name']}.audit.json"
+                audit_status = "unaudited"
+                if audit_path.exists():
+                    try:
+                        audit_data = json.loads(audit_path.read_text())
+                        audit_status = audit_data.get("verdict", "unaudited")
+                    except Exception:
+                        pass
+                s["audit_status"] = audit_status
                 skills.append(s)
     return skills
 
 
+@app.post("/api/skills/upstream/{skill_name}/audit", dependencies=[Depends(require_login)])
+async def api_upstream_skill_audit(skill_name: str, request: Request):
+    """Run a security audit on an upstream (Anthropic) skill using a designated LLM."""
+    body = await request.json()
+    audit_model = body.get("model", "phi4:14b")
+    audit_node = body.get("node", "")
+
+    # Locate skill in upstream directory
+    skills = {s["name"]: s for s in _list_upstream_skills()}
+    if skill_name not in skills:
+        raise HTTPException(status_code=404, detail=f"Upstream skill '{skill_name}' not found")
+
+    skill_dir = SKILLS_UPSTREAM_DIR / skills[skill_name]["dir"]
+    skill_content = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
+
+    audit_result = await _run_llm_audit(skill_content, audit_model, audit_node)
+
+    SKILLS_UPSTREAM_AUDITS_DIR.mkdir(parents=True, exist_ok=True)
+    report = {
+        "skill": skill_name,
+        "model": audit_model,
+        "node": audit_node or "floating",
+        "timestamp": datetime.now().isoformat(),
+        **audit_result,
+    }
+    report_path = SKILLS_UPSTREAM_AUDITS_DIR / f"{skill_name}.audit.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    return report
 
 
 # ─── MCP Tools Proxy Routes ───────────────────────────────────────────────────
