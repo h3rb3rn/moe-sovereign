@@ -886,4 +886,9 @@
   ,"js.bench_type_longmemeval":"LongMemEval (Gedächtnis)"
   ,"js.longmemeval_max_q":    "Max. Fragen"
 
+  ,"lbl.sa_benchmarks":       "Service Account — Benchmarks & Gap Healer"
+  ,"msg.sa_benchmarks_desc":  "Template-Permissions des API-Keys aus"
+  ,"msg.sa_benchmarks_note":  "Nur hier gelistete Templates können von GAIA-Runner und Gap Healer verwendet werden."
+  ,"lbl.sa_add_template":     "— Template hinzufügen —"
+
 }

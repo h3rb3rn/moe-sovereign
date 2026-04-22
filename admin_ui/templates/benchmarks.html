@@ -58,6 +58,33 @@
   </div>
 </div>
 
+{# ── Service Account Card ── #}
+<div class="card mb-4">
+  <div class="card-header bg-warning bg-opacity-10">
+    <i class="bi bi-key-fill me-2"></i>
+    <strong>{{ t(request, 'lbl.sa_benchmarks') }}</strong>
+    <span class="text-muted small ms-2" id="sa-key-prefix">—</span>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      {{ t(request, 'msg.sa_benchmarks_desc') }}
+      (<code>benchmarks/.env</code>). {{ t(request, 'msg.sa_benchmarks_note') }}
+    </p>
+    <div class="row g-2" id="sa-template-list">
+      <div class="text-muted small">{{ t(request, 'js.loading') }}…</div>
+    </div>
+    <div class="mt-3 d-flex gap-2">
+      <select id="sa-add-select" class="form-select form-select-sm" style="max-width:320px">
+        <option value="">{{ t(request, 'lbl.sa_add_template') }}</option>
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="saGrantTemplate()">
+        <i class="bi bi-plus-lg me-1"></i>{{ t(request, 'btn.add') }}
+      </button>
+    </div>
+    <div id="sa-msg" class="mt-2 small"></div>
+  </div>
+</div>
+
 {# ── Tabs ── #}
 <ul class="nav nav-tabs mb-3" id="benchTabs">
   <li class="nav-item">
@@ -1099,9 +1126,76 @@ async function refreshAll() {
   ]);
 }
 
+// ── Service Account ──────────────────────────────────────────────────────────
+
+let _saData = null;
+
+async function loadServiceAccount() {
+  const msgEl = document.getElementById('sa-msg');
+  const r = await fetch('/api/service-accounts/benchmarks');
+  if (!r.ok) {
+    if (msgEl) msgEl.textContent = 'Service Account nicht gefunden.';
+    return;
+  }
+  _saData = await r.json();
+  const prefixEl = document.getElementById('sa-key-prefix');
+  if (prefixEl) prefixEl.textContent = _saData.key_prefix;
+
+  const list = document.getElementById('sa-template-list');
+  if (list) {
+    list.innerHTML = _saData.granted_templates.length
+      ? ''
+      : '<span class="text-muted small">Keine Templates zugewiesen.</span>';
+    for (const tmplId of _saData.granted_templates) {
+      const name = _saData.all_templates.find(t => t.id === tmplId)?.name || tmplId;
+      list.insertAdjacentHTML('beforeend', `
+        <div class="col-auto">
+          <span class="badge bg-secondary d-flex align-items-center gap-1" style="font-size:.8rem">
+            ${name}
+            <button class="btn-close btn-close-white btn-sm ms-1" style="font-size:.6rem"
+              onclick="saRevokeTemplate('${tmplId}')" title="Entfernen"></button>
+          </span>
+        </div>`);
+    }
+  }
+
+  const sel = document.getElementById('sa-add-select');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Template hinzufügen —</option>';
+    for (const t of _saData.all_templates) {
+      if (!_saData.granted_templates.includes(t.id)) {
+        sel.insertAdjacentHTML('beforeend', `<option value="${t.id}">${t.name}</option>`);
+      }
+    }
+  }
+}
+
+async function saGrantTemplate() {
+  const tmplId = document.getElementById('sa-add-select')?.value;
+  if (!tmplId) return;
+  const r = await fetch('/api/service-accounts/benchmarks/templates', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({template_id: tmplId}),
+  });
+  const d = await r.json();
+  const msgEl = document.getElementById('sa-msg');
+  if (msgEl) msgEl.textContent = d.ok ? `✓ ${tmplId} hinzugefügt` : `Fehler: ${d.detail}`;
+  loadServiceAccount();
+}
+
+async function saRevokeTemplate(tmplId) {
+  const r = await fetch(`/api/service-accounts/benchmarks/templates/${encodeURIComponent(tmplId)}`, {method: 'DELETE'});
+  const d = await r.json();
+  const msgEl = document.getElementById('sa-msg');
+  if (msgEl) msgEl.textContent = d.ok ? `✓ ${tmplId} entfernt` : `Fehler: ${d.detail}`;
+  loadServiceAccount();
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 refreshAll();
+loadServiceAccount();
 
 // Auto-refresh every 15 seconds for live tab
 setInterval(async () => {

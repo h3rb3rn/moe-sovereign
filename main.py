@@ -377,8 +377,12 @@ def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str]
             return None
         elif override_tmpl_id and override_tmpl_id in tmpl_ids:
             tmpl = _find_tmpl(override_tmpl_id)
+            if tmpl is None:
+                logger.warning("Ghost template in _resolve_user_experts: %s in perms but not in DB/cache", override_tmpl_id)
         else:
             tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
+            if tmpl is None:
+                logger.warning("Ghost templates: all permitted templates missing from DB: %s", tmpl_ids)
         if not tmpl:
             return None
         result: dict = {}
@@ -5605,15 +5609,31 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 }
                 break
     _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
-    # When the model name exactly matches a template name, treat as admin override:
-    # the caller explicitly targeted this template by name, which is sufficient authorization.
-    _tmpl_by_name = _tmpl_override is not None and _matched_tmpl is not None
+    # Template name match is NOT authorization — check expert_template permissions explicitly.
+    if _tmpl_override:
+        _allowed_tmpls = user_perms.get("expert_template", [])
+        if _tmpl_override not in _allowed_tmpls:
+            return JSONResponse(status_code=403, content={"error": {
+                "message": f"Template '{request.model}' is not authorized for this API key",
+                "type": "permission_denied",
+                "code": "template_not_authorized",
+            }})
     user_experts  = _resolve_user_experts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
                                            user_templates_json=_user_tmpls_json,
-                                           admin_override=_tmpl_by_name) or {}
+                                           admin_override=False) or {}
     _tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
                                                user_templates_json=_user_tmpls_json,
-                                               admin_override=_tmpl_by_name)
+                                               admin_override=False)
+    # Ghost-template detection: template in permissions but absent from DB
+    if _tmpl_override and not user_experts and not user_perms.get("expert_template") == []:
+        _ghost_check = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
+        if _ghost_check is None:
+            logger.error("Ghost template detected: %s in permissions but not in DB", _tmpl_override)
+            return JSONResponse(status_code=422, content={"error": {
+                "message": f"Template '{_tmpl_override}' is configured but no longer exists in the database",
+                "type": "template_not_found",
+                "code": "ghost_template",
+            }})
 
     # Extract system message (coding agents send file/codebase context here)
     system_msgs   = [m for m in request.messages if m.role == "system"]
@@ -5740,6 +5760,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         _nj["id"] = chat_id
         return _nj
 
+    _moe_resp_headers = {}
+    if _tmpl_override:
+        _moe_resp_headers["X-MoE-Template-Id"]   = _tmpl_override
+        _moe_resp_headers["X-MoE-Template-Name"]  = _tmpl_name or request.model
+
     if request.stream:
         return StreamingResponse(
             stream_response(user_input, chat_id, mode, chat_history=history,
@@ -5760,6 +5785,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             max_agentic_rounds=_tmpl_prompts.get("max_agentic_rounds", 0),
                             no_cache=request.no_cache),
             media_type="text/event-stream",
+            headers=_moe_resp_headers or None,
         )
     result = await app_graph.ainvoke(
         {"input": user_input, "response_id": chat_id, "mode": mode,
@@ -5825,6 +5851,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _prov = result.get("provenance_sources")
     if _prov:
         resp["metadata"] = {"sources": _prov}
+    if _moe_resp_headers:
+        return JSONResponse(content=resp, headers=_moe_resp_headers)
     return resp
 
 # ============================================================
@@ -7751,6 +7779,480 @@ async def get_tool_eval_log(limit: int = 50):
         return {"records": records, "total_lines": len(lines)}
     except FileNotFoundError:
         return {"records": [], "total_lines": 0}
+
+
+# ─── OLLAMA COMPATIBILITY API (/api/*) ───────────────────────────────────────
+#
+# Translates the Ollama wire-protocol to the MoE pipeline and back.
+# Auth: same Bearer-Token (moe-sk-*) as /v1/.
+# Streaming: NDJSON (one JSON object per line, \n-separated) — not SSE.
+#
+# Supported:
+#   GET  /api/version   – version stub
+#   GET  /api/tags      – model list in Ollama format (auth required)
+#   GET  /api/ps        – templates as "loaded" models
+#   POST /api/show      – template details
+#   POST /api/chat      – main chat endpoint (streaming NDJSON or single JSON)
+#   POST /api/generate  – single-turn prompt (routes through /api/chat logic)
+#   POST /api/pull      – fake pull-progress stream
+#   DELETE /api/delete  – 400 stub (managed via Admin UI)
+#   POST /api/copy|push|embed – 400 stubs
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _ollama_now() -> str:
+    """Return current UTC time in Ollama's nanosecond ISO8601 format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
+
+
+def _ollama_model_entry(tmpl: dict, *, now_iso: str) -> dict:
+    """Convert an admin template dict to an Ollama /api/tags model entry."""
+    return {
+        "name":        tmpl.get("name", tmpl["id"]),
+        "model":       tmpl.get("name", tmpl["id"]),
+        "modified_at": now_iso,
+        "size":        0,
+        "digest":      hashlib.sha256(tmpl["id"].encode()).hexdigest(),
+        "details": {
+            "parent_model":       "",
+            "format":             "gguf",
+            "family":             "moe",
+            "families":           ["moe"],
+            "parameter_size":     tmpl.get("description", ""),
+            "quantization_level": "MoE",
+        },
+    }
+
+
+def _ollama_messages_to_oai(messages: list) -> list:
+    """Translate Ollama messages (with optional base64 images) to OpenAI format."""
+    out = []
+    for m in messages:
+        content = m.get("content", "")
+        images  = m.get("images", [])
+        if images:
+            parts = [{"type": "text", "text": content}]
+            for img in images:
+                parts.append({
+                    "type":      "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{img}"},
+                })
+            content = parts
+        out.append({"role": m.get("role", "user"), "content": content})
+    return out
+
+
+def _ollama_options_to_oai(options: dict) -> dict:
+    """Map Ollama generation options to OpenAI-compatible parameters."""
+    result = {}
+    if "temperature" in options:
+        result["temperature"] = options["temperature"]
+    if "num_predict" in options:
+        result["max_tokens"] = options["num_predict"]
+    if "top_p" in options:
+        result["top_p"] = options["top_p"]
+    if "seed" in options:
+        result["seed"] = options["seed"]
+    return result
+
+
+async def _ollama_resolve_template(model_name: str, user_perms: dict):
+    """Return (tmpl_id, tmpl_dict | None, error_response | None) for an Ollama model name."""
+    all_tmpls   = _read_expert_templates()
+    matched     = next((t for t in all_tmpls if t.get("name") == model_name or t.get("id") == model_name), None)
+    if not matched:
+        return None, None, None  # No template match — will fall through to default MoE mode
+    tmpl_id      = matched["id"]
+    allowed      = user_perms.get("expert_template", [])
+    if tmpl_id not in allowed:
+        return tmpl_id, matched, JSONResponse(status_code=403, content={
+            "error": f"Template '{model_name}' is not authorized for this API key"
+        })
+    return tmpl_id, matched, None
+
+
+async def _ollama_internal_stream(
+    user_ctx: dict,
+    model_name: str,
+    oai_messages: list,
+    extra_params: dict,
+):
+    """Async generator: yields raw SSE lines from the MoE pipeline for an Ollama request.
+
+    Performs full template resolution and calls stream_response() directly,
+    identical to /v1/chat/completions after auth, so no pipeline logic is duplicated.
+    """
+    chat_id   = f"chatcmpl-{uuid.uuid4()}"
+    user_id   = user_ctx.get("user_id", "anon")
+    api_key_id = user_ctx.get("key_id", "")
+    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
+
+    tmpl_id, matched_tmpl, err = await _ollama_resolve_template(model_name, user_perms)
+    if err is not None:
+        yield f"data: {json.dumps({'error': 'template_not_authorized'})}\n\n"
+        return
+
+    _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
+    user_experts  = _resolve_user_experts(
+        user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
+        user_templates_json=_user_tmpls_json, admin_override=False) or {}
+    tmpl_prompts  = _resolve_template_prompts(
+        user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
+        user_templates_json=_user_tmpls_json, admin_override=False)
+
+    mode = _MODEL_ID_TO_MODE.get(model_name, "default")
+    if matched_tmpl and matched_tmpl.get("force_think") and mode == "default":
+        mode = "agent_orchestrated"
+
+    system_msgs   = [m for m in oai_messages if m.get("role") == "system"]
+    system_prompt = system_msgs[0]["content"] if system_msgs else ""
+
+    user_msgs = [m for m in oai_messages if m.get("role") in ("user", "assistant")]
+    last_user = next((m for m in reversed(oai_messages) if m.get("role") == "user"), None)
+    user_input = last_user["content"] if last_user else ""
+    if isinstance(user_input, list):
+        user_input = " ".join(p.get("text", "") for p in user_input if isinstance(p, dict))
+
+    _user_images: list = []
+    if last_user:
+        raw_content = last_user.get("content", "")
+        if isinstance(raw_content, list):
+            _user_images = _extract_oai_images(raw_content)
+
+    raw_history = [
+        {"role": m.get("role"), "content": m.get("content", "") if isinstance(m.get("content"), str) else ""}
+        for m in oai_messages
+        if m.get("role") in ("user", "assistant") and m is not last_user
+    ]
+    _hist_turns = tmpl_prompts.get("history_max_turns", 0) or None
+    _hist_chars = tmpl_prompts.get("history_max_chars", 0) or None
+    history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
+
+    asyncio.create_task(_register_active_request(
+        chat_id=chat_id, user_id=user_id, model=model_name,
+        moe_mode=mode, req_type="streaming", template_name=model_name,
+        client_ip="", backend_model="", backend_host="", api_key_id=api_key_id,
+    ))
+
+    async for sse_line in stream_response(
+        user_input, chat_id, mode,
+        chat_history=history,
+        system_prompt=system_prompt,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        user_permissions=user_perms,
+        user_experts=user_experts,
+        planner_prompt=tmpl_prompts["planner_prompt"],
+        judge_prompt=tmpl_prompts["judge_prompt"],
+        judge_model_override=tmpl_prompts["judge_model_override"],
+        judge_url_override=tmpl_prompts["judge_url_override"],
+        judge_token_override=tmpl_prompts["judge_token_override"],
+        planner_model_override=tmpl_prompts["planner_model_override"],
+        planner_url_override=tmpl_prompts["planner_url_override"],
+        planner_token_override=tmpl_prompts["planner_token_override"],
+        model_name=model_name,
+        pending_reports=[],
+        images=_user_images,
+        session_id=None,
+        max_agentic_rounds=tmpl_prompts.get("max_agentic_rounds", 0),
+        no_cache=False,
+    ):
+        yield sse_line
+
+
+@app.get("/api/version")
+async def ollama_version():
+    """Ollama version stub — clients use this to detect Ollama compatibility."""
+    return {"version": "0.6.0"}
+
+
+@app.get("/api/tags")
+async def ollama_tags(raw_request: Request):
+    """Return templates visible to this API key in Ollama model-list format."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
+    templates  = _read_expert_templates()
+    allowed    = user_perms.get("expert_template")
+    now        = _ollama_now()
+
+    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
+
+
+@app.get("/api/ps")
+async def ollama_ps(raw_request: Request):
+    """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
+    templates  = _read_expert_templates()
+    allowed    = user_perms.get("expert_template")
+    now        = _ollama_now()
+    expires    = (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
+
+    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    models = []
+    for t in visible:
+        entry = _ollama_model_entry(t, now_iso=now)
+        entry["expires_at"] = expires
+        entry["size_vram"]  = 0
+        models.append(entry)
+    return {"models": models}
+
+
+@app.post("/api/show")
+async def ollama_show(raw_request: Request):
+    """Return template details in Ollama modelinfo format (no auth required for show)."""
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+    model_name = body.get("model", body.get("name", ""))
+    templates  = _read_expert_templates()
+    tmpl = next(
+        (t for t in templates if t.get("name") == model_name or t.get("id") == model_name),
+        None,
+    )
+    if not tmpl:
+        return JSONResponse(status_code=404, content={"error": f"model '{model_name}' not found"})
+    return {
+        "modelfile":  f"# MoE Sovereign Template: {tmpl.get('name', '')}",
+        "parameters": "",
+        "template":   "{{ .Prompt }}",
+        "details": {
+            "family":             "moe",
+            "parameter_size":     tmpl.get("description", ""),
+            "quantization_level": "MoE",
+        },
+        "model_info": {
+            "general.name":        tmpl.get("name", ""),
+            "general.description": tmpl.get("description", ""),
+        },
+    }
+
+
+@app.post("/api/chat")
+async def ollama_chat(raw_request: Request):
+    """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+
+    model    = body.get("model", "")
+    stream   = body.get("stream", True)
+    options  = body.get("options", {})
+    oai_msgs = _ollama_messages_to_oai(body.get("messages", []))
+
+    async def _ndjson_stream():
+        total_tokens = 0
+        async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+            sse_line = sse_line.strip()
+            if not sse_line or sse_line.startswith(":"):
+                continue  # skip SSE keep-alives and empty lines
+            if sse_line.startswith("data: "):
+                payload = sse_line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    total_tokens += 1
+                yield json.dumps({
+                    "model":      model,
+                    "created_at": _ollama_now(),
+                    "message":    {"role": "assistant", "content": content},
+                    "done":       False,
+                }) + "\n"
+        yield json.dumps({
+            "model":           model,
+            "created_at":      _ollama_now(),
+            "message":         {"role": "assistant", "content": ""},
+            "done":            True,
+            "done_reason":     "stop",
+            "total_duration":  0,
+            "eval_count":      total_tokens,
+        }) + "\n"
+
+    if stream:
+        return StreamingResponse(_ndjson_stream(), media_type="application/x-ndjson")
+
+    # Non-streaming: collect all content, return single response object
+    content_parts = []
+    async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+        sse_line = sse_line.strip()
+        if not sse_line or sse_line.startswith(":"):
+            continue
+        if sse_line.startswith("data: "):
+            payload = sse_line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+            content_parts.append(delta.get("content", ""))
+    return {
+        "model":       model,
+        "created_at":  _ollama_now(),
+        "message":     {"role": "assistant", "content": "".join(content_parts)},
+        "done":        True,
+        "done_reason": "stop",
+    }
+
+
+@app.post("/api/generate")
+async def ollama_generate(raw_request: Request):
+    """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
+
+    Response uses key 'response' (not 'message.content') per Ollama spec.
+    """
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+
+    model   = body.get("model", "")
+    prompt  = body.get("prompt", "")
+    system  = body.get("system", "")
+    stream  = body.get("stream", True)
+    options = body.get("options", {})
+
+    oai_msgs = []
+    if system:
+        oai_msgs.append({"role": "system", "content": system})
+    oai_msgs.append({"role": "user", "content": prompt})
+
+    async def _gen_stream():
+        total_tokens = 0
+        async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+            sse_line = sse_line.strip()
+            if not sse_line or sse_line.startswith(":"):
+                continue
+            if sse_line.startswith("data: "):
+                payload = sse_line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    total_tokens += 1
+                yield json.dumps({
+                    "model":      model,
+                    "created_at": _ollama_now(),
+                    "response":   content,
+                    "done":       False,
+                }) + "\n"
+        yield json.dumps({
+            "model":           model,
+            "created_at":      _ollama_now(),
+            "response":        "",
+            "done":            True,
+            "done_reason":     "stop",
+            "total_duration":  0,
+            "eval_count":      total_tokens,
+        }) + "\n"
+
+    if stream:
+        return StreamingResponse(_gen_stream(), media_type="application/x-ndjson")
+
+    content_parts = []
+    async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+        sse_line = sse_line.strip()
+        if not sse_line or sse_line.startswith(":"):
+            continue
+        if sse_line.startswith("data: "):
+            payload = sse_line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+            content_parts.append(delta.get("content", ""))
+    return {
+        "model":       model,
+        "created_at":  _ollama_now(),
+        "response":    "".join(content_parts),
+        "done":        True,
+        "done_reason": "stop",
+    }
+
+
+@app.post("/api/pull")
+async def ollama_pull(raw_request: Request):
+    """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
+    try:
+        body = await raw_request.json()
+    except Exception:
+        body = {}
+    do_stream = body.get("stream", True)
+    if not do_stream:
+        return {"status": "success"}
+
+    async def _progress():
+        for status in ["pulling manifest", "verifying sha256 digest", "writing manifest", "success"]:
+            yield json.dumps({"status": status}) + "\n"
+            await asyncio.sleep(0.05)
+
+    return StreamingResponse(_progress(), media_type="application/x-ndjson")
+
+
+@app.delete("/api/delete")
+async def ollama_delete():
+    """Model deletion is not supported — managed via Admin UI."""
+    return JSONResponse(status_code=400, content={
+        "error": "Model deletion is managed via Admin UI"
+    })
+
+
+@app.post("/api/copy")
+@app.post("/api/push")
+@app.post("/api/embed")
+@app.post("/api/embeddings")
+async def ollama_not_supported():
+    """Stub for Ollama endpoints not supported by MoE Sovereign."""
+    return JSONResponse(status_code=400, content={
+        "error": "Not supported by MoE Sovereign"
+    })
+
+
+# ─── End of OLLAMA COMPATIBILITY API ─────────────────────────────────────────
 
 
 if __name__ == "__main__":

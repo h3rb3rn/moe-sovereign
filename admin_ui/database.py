@@ -784,6 +784,18 @@ async def get_active_key_hashes(user_id: str) -> list[dict]:
             return await cur.fetchall()
 
 
+async def get_user_id_by_key_hash(key_hash: str) -> str | None:
+    """Return user_id for an active API key by its SHA256 hash, or None."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT user_id FROM api_keys WHERE key_hash=%s AND is_active=TRUE",
+                (key_hash,),
+            )
+            row = await cur.fetchone()
+    return row["user_id"] if row else None
+
+
 async def update_api_key_label(key_id: str, label: str, user_id: Optional[str] = None) -> bool:
     """Updates the label of an API key. user_id restricts to own keys."""
     async with _get_pool().connection() as conn:
