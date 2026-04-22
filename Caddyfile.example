@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Caddyfile.example — Copy this file to "Caddyfile" and replace every
+#  <PLACEHOLDER> with your own hostnames before starting Caddy.
+#
+#  cp Caddyfile.example Caddyfile
+#
+#  "Caddyfile" is listed in .gitignore so your local customisations will
+#  never cause git-pull conflicts.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Documentation site
+docs.<YOUR-DOMAIN> {
+    tls internal
+    reverse_proxy moe-docs:8000
+}
+
+# Main entry — redirect to docs (adjust or remove as needed)
+<YOUR-DOMAIN> {
+    tls internal
+    handle /install.sh {
+        root * /srv
+        file_server
+    }
+    redir * https://docs.<YOUR-DOMAIN>{uri} 302
+}
+
+# Log viewer (Dozzle)
+logs.<YOUR-DOMAIN> {
+    tls internal
+    reverse_proxy moe-dozzle:8080
+}
+
+# MinIO S3 API (file upload / download, pre-signed URLs)
+files.<YOUR-DOMAIN> {
+    tls internal
+    reverse_proxy moe-storage:9000
+}
+
+# MinIO Web Console (admin)
+storage.<YOUR-DOMAIN> {
+    tls internal
+    reverse_proxy moe-storage:9001
+}
