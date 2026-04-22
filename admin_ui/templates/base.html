@@ -27,6 +27,9 @@
     .form-control, .form-select { font-size: .9rem; }
     .flash-bar { border-radius: 0; position: sticky; top: 56px; z-index: 999; }
     footer { font-size: .78rem; color: #adb5bd; }
+    /* Collapse chevron rotation */
+    [data-bs-toggle="collapse"] .bi-chevron-down { transition: transform .2s ease; }
+    [data-bs-toggle="collapse"][aria-expanded="true"] .bi-chevron-down { transform: rotate(-180deg); }
   </style>
 </head>
 <body>
@@ -42,62 +45,113 @@
 
     {% if request.session.get("authenticated") %}
 
-    {# ── Desktop Nav: visible ≥1400px ── #}
-    <div class="d-none d-xxl-flex align-items-center gap-1 flex-grow-1 flex-wrap">
-      <a href="/" class="btn btn-sm btn-outline-light {% if request.url.path == '/' %}active{% endif %}">
+    {# ── Desktop Nav: visible ≥992px — grouped dropdowns ── #}
+    {# Active-state helpers for dropdown highlight #}
+    {% set _p = request.url.path %}
+    {% set _monitoring_active = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks'] %}
+    {% set _infra_active      = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
+    {% set _tools_active      = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
+    {% set _users_active      = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
+
+    <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
+      {# Config – direct link #}
+      <a href="/" class="btn btn-sm btn-outline-light {% if _p == '/' %}active{% endif %}">
         <i class="bi bi-sliders me-1"></i>{{ t(request, 'nav.config') }}
       </a>
-      <a href="/monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/monitoring' %}active{% endif %}">
-        <i class="bi bi-graph-up me-1"></i>{{ t(request, 'nav.monitoring') }}
-      </a>
-      <a href="/live-monitoring" class="btn btn-sm btn-outline-light {% if request.url.path == '/live-monitoring' %}active{% endif %}">
-        <i class="bi bi-activity me-1"></i>{{ t(request, 'nav.live') }}
-      </a>
-      <a href="/servers" class="btn btn-sm btn-outline-light {% if request.url.path == '/servers' %}active{% endif %}">
-        <i class="bi bi-hdd-stack me-1"></i>{{ t(request, 'nav.server') }}
-      </a>
-      <a href="/profiles" class="btn btn-sm btn-outline-light {% if request.url.path == '/profiles' %}active{% endif %}">
-        <i class="bi bi-person-badge me-1"></i>{{ t(request, 'nav.cc_profiles') }}{% if enabled_profiles_count is defined and enabled_profiles_count %} <span class="badge bg-success ms-1" style="font-size:.65rem">{{ enabled_profiles_count }}</span>{% endif %}
-      </a>
-      <a href="/skills" class="btn btn-sm btn-outline-light {% if request.url.path == '/skills' %}active{% endif %}">
-        <i class="bi bi-terminal me-1"></i>{{ t(request, 'nav.skills') }}
-      </a>
-      <a href="/mcp-tools" class="btn btn-sm btn-outline-light {% if request.url.path == '/mcp-tools' %}active{% endif %}">
-        <i class="bi bi-tools me-1"></i>{{ t(request, 'nav.mcp_tools') }}
-      </a>
-      <a href="/tool-eval" class="btn btn-sm btn-outline-light {% if request.url.path == '/tool-eval' %}active{% endif %}">
-        <i class="bi bi-clipboard-data me-1"></i>{{ t(request, 'nav.tool_eval') }}
-      </a>
-      <a href="/knowledge" class="btn btn-sm btn-outline-light {% if request.url.path == '/knowledge' %}active{% endif %}">
-        <i class="bi bi-database-gear me-1"></i>Knowledge
-      </a>
-      <a href="/federation" class="btn btn-sm btn-outline-light {% if request.url.path == '/federation' %}active{% endif %}">
-        <i class="bi bi-globe2 me-1"></i>Federation
-      </a>
-      <a href="/quarantine" class="btn btn-sm btn-outline-light {% if request.url.path == '/quarantine' %}active{% endif %}">
-        <i class="bi bi-shield-exclamation me-1"></i>{{ t(request, 'nav.quarantine') }}
-      </a>
-      <a href="/templates" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/templates') %}active{% endif %}">
-        <i class="bi bi-collection me-1"></i>{{ t(request, 'nav.templates') }}
-      </a>
-      <a href="/users" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/users') %}active{% endif %}">
-        <i class="bi bi-people me-1"></i>{{ t(request, 'nav.users') }}
-      </a>
-      <a href="/teams" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/teams') %}active{% endif %}">
-        <i class="bi bi-diagram-3 me-1"></i>{{ t(request, 'nav.teams') }}
-      </a>
-      <a href="/user-content" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/user-content') %}active{% endif %}">
-        <i class="bi bi-person-lines-fill me-1"></i>{{ t(request, 'nav.user_content') }}
-      </a>
-      <a href="/maintenance" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/maintenance') %}active{% endif %}">
-        <i class="bi bi-wrench me-1"></i>{{ t(request, 'nav.maintenance') }}
-      </a>
-      <a href="/statistics" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/statistics') %}active{% endif %}">
-        <i class="bi bi-bar-chart-line me-1"></i>{{ t(request, 'nav.statistics') }}
-      </a>
-      <a href="/benchmarks" class="btn btn-sm btn-outline-light {% if request.url.path.startswith('/benchmarks') %}active{% endif %}">
-        <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'nav.benchmarks') }}
-      </a>
+
+      {# Monitoring dropdown #}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _monitoring_active %}active{% endif %}"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-graph-up me-1"></i>{{ t(request, 'nav.monitoring') }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          <li><a class="dropdown-item {% if _p == '/monitoring' %}active{% endif %}" href="/monitoring">
+            <i class="bi bi-graph-up me-2 text-info"></i>{{ t(request, 'nav.monitoring') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/live-monitoring' %}active{% endif %}" href="/live-monitoring">
+            <i class="bi bi-activity me-2 text-info"></i>{{ t(request, 'nav.live') }}
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p.startswith('/statistics') %}active{% endif %}" href="/statistics">
+            <i class="bi bi-bar-chart-line me-2 text-secondary"></i>{{ t(request, 'nav.statistics') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/benchmarks') %}active{% endif %}" href="/benchmarks">
+            <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
+          </a></li>
+        </ul>
+      </div>
+
+      {# Infrastruktur dropdown #}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _infra_active %}active{% endif %}"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-hdd-stack me-1"></i>Infra
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          <li><a class="dropdown-item {% if _p == '/servers' %}active{% endif %}" href="/servers">
+            <i class="bi bi-hdd-stack me-2 text-info"></i>{{ t(request, 'nav.server') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/knowledge' %}active{% endif %}" href="/knowledge">
+            <i class="bi bi-database-gear me-2 text-success"></i>Knowledge
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/federation' %}active{% endif %}" href="/federation">
+            <i class="bi bi-globe2 me-2 text-success"></i>Federation
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/quarantine' %}active{% endif %}" href="/quarantine">
+            <i class="bi bi-shield-exclamation me-2 text-danger"></i>{{ t(request, 'nav.quarantine') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/maintenance') %}active{% endif %}" href="/maintenance">
+            <i class="bi bi-wrench me-2 text-secondary"></i>{{ t(request, 'nav.maintenance') }}
+          </a></li>
+        </ul>
+      </div>
+
+      {# Tools dropdown #}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _tools_active %}active{% endif %}"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-tools me-1"></i>Tools
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          <li><a class="dropdown-item {% if _p == '/profiles' %}active{% endif %}" href="/profiles">
+            <i class="bi bi-person-badge me-2 text-warning"></i>{{ t(request, 'nav.cc_profiles') }}{% if enabled_profiles_count is defined and enabled_profiles_count %}<span class="badge bg-success ms-2" style="font-size:.6rem">{{ enabled_profiles_count }}</span>{% endif %}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/skills' %}active{% endif %}" href="/skills">
+            <i class="bi bi-terminal me-2 text-warning"></i>{{ t(request, 'nav.skills') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/mcp-tools' %}active{% endif %}" href="/mcp-tools">
+            <i class="bi bi-puzzle me-2 text-warning"></i>{{ t(request, 'nav.mcp_tools') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/tool-eval' %}active{% endif %}" href="/tool-eval">
+            <i class="bi bi-clipboard-data me-2 text-warning"></i>{{ t(request, 'nav.tool_eval') }}
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p.startswith('/templates') %}active{% endif %}" href="/templates">
+            <i class="bi bi-collection me-2 text-warning"></i>{{ t(request, 'nav.templates') }}
+          </a></li>
+        </ul>
+      </div>
+
+      {# Verwaltung dropdown #}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _users_active %}active{% endif %}"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-people me-1"></i>{{ t(request, 'nav.users') }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          <li><a class="dropdown-item {% if _p.startswith('/users') %}active{% endif %}" href="/users">
+            <i class="bi bi-people me-2 text-secondary"></i>{{ t(request, 'nav.users') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/teams') %}active{% endif %}" href="/teams">
+            <i class="bi bi-diagram-3 me-2 text-secondary"></i>{{ t(request, 'nav.teams') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/user-content') %}active{% endif %}" href="/user-content">
+            <i class="bi bi-person-lines-fill me-2 text-secondary"></i>{{ t(request, 'nav.user_content') }}
+          </a></li>
+        </ul>
+      </div>
     </div>
 
     {# ── Right utilities: always visible ── #}
@@ -128,7 +182,7 @@
         <i class="bi bi-box-arrow-right"></i><span class="d-none d-lg-inline ms-1">{{ t(request, 'nav.logout') }}</span>
       </a>
       {# Hamburger: visible <1400px #}
-      <button class="navbar-toggler d-xxl-none border-0 ps-1" type="button"
+      <button class="navbar-toggler d-lg-none border-0 ps-1" type="button"
               data-bs-toggle="offcanvas" data-bs-target="#moeNavOffcanvas"
               aria-controls="moeNavOffcanvas" aria-label="Navigation öffnen">
         <span class="navbar-toggler-icon"></span>

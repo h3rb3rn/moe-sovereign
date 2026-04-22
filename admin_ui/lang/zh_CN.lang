@@ -913,5 +913,10 @@
   ,"portal.conn_test_fail":            "连接失败"
   ,"portal.conn_name_conflict":        "名称与全局服务器名称冲突"
   ,"js.confirm_delete_connection":     "确认删除此连接？"
+  ,"btn.audit":                        "审计"
+  ,"btn.refresh_ext_audits":           "刷新外部审计"
+  ,"info.skillssh_audit":              "skills.sh 评分"
+  ,"js.audit_complete":                "审计完成：{verdict}"
+  ,"js.audit_required":                "请先执行审计"
 
 }

@@ -94,6 +94,7 @@ nav:
     - Token Budget & Costs: admin/budget.md
     - Expert Templates: admin/templates.md
     - Claude Code Profiles: admin/profiles.md
+    - Skills: admin/skills.md
     - Monitoring & Processes: admin/monitoring.md
     - Maintenance & Disk Management: admin/maintenance.md
   - Federation:

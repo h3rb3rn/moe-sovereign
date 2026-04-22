@@ -913,5 +913,10 @@
   ,"portal.conn_test_fail":            "Verbindung fehlgeschlagen"
   ,"portal.conn_name_conflict":        "Name kollidiert mit einem globalen Servernamen"
   ,"js.confirm_delete_connection":     "Verbindung wirklich löschen?"
+  ,"btn.audit":                        "Audit"
+  ,"btn.refresh_ext_audits":           "Ext. Audits aktualisieren"
+  ,"info.skillssh_audit":              "skills.sh Bewertung"
+  ,"js.audit_complete":                "Audit abgeschlossen: {verdict}"
+  ,"js.audit_required":                "Bitte zuerst ein Audit durchführen"
 
 }

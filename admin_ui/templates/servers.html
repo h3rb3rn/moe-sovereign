@@ -20,7 +20,7 @@
     <div class="card h-100">
       <div class="card-header d-flex align-items-center justify-content-between">
         <span class="fw-bold"><i class="bi bi-cpu me-2 text-primary"></i>{{ srv.name }}</span>
-        <span class="badge bg-secondary" id="srv-badge-{{ loop.index0 }}">–</span>
+        <span class="badge bg-secondary" id="srv-badge-{{ loop.index0 }}" data-server-name="{{ srv.name }}">–</span>
       </div>
       <div class="card-body">
         <div class="text-muted small font-monospace mb-1">{{ srv.url }}</div>
@@ -37,11 +37,11 @@
         </div>
         <div class="d-flex gap-3 mb-3">
           <div class="text-center">
-            <div class="fs-4 fw-bold" id="srv-latency-{{ loop.index0 }}">–</div>
+            <div class="fs-4 fw-bold" id="srv-latency-{{ loop.index0 }}" data-server-name="{{ srv.name }}">–</div>
             <div class="text-muted" style="font-size:.75rem">{{ t(request, 'table.latency') }}</div>
           </div>
           <div class="text-center">
-            <div class="fs-4 fw-bold" id="srv-models-count-{{ loop.index0 }}">–</div>
+            <div class="fs-4 fw-bold" id="srv-models-count-{{ loop.index0 }}" data-server-name="{{ srv.name }}">–</div>
             <div class="text-muted" style="font-size:.75rem">{{ t(request, 'lbl.models') }}</div>
           </div>
           <div class="text-center">
@@ -125,28 +125,34 @@ const _tservers = {
 };
 
 async function loadAll() {
-  const badges     = document.querySelectorAll('[id^="srv-badge-"]');
-  const latencies  = document.querySelectorAll('[id^="srv-latency-"]');
-  const modelCnts  = document.querySelectorAll('[id^="srv-models-count-"]');
-  badges.forEach(b => { b.className = 'badge bg-secondary'; b.textContent = '...'; });
+  // Reset all badges to loading state
+  document.querySelectorAll('[data-server-name][id^="srv-badge-"]').forEach(b => {
+    b.className = 'badge bg-secondary'; b.textContent = '...';
+  });
 
   let data;
   try {
-    data = await fetch('/api/servers/health').then(r => r.json());
-  } catch {
-    badges.forEach(b => { b.className = 'badge bg-danger'; b.textContent = _tservers.error; });
+    const r = await fetch('/api/servers/health');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+  } catch(e) {
+    document.querySelectorAll('[data-server-name][id^="srv-badge-"]').forEach(b => {
+      b.className = 'badge bg-danger'; b.textContent = _tservers.error;
+    });
     return;
   }
 
-  data.forEach((srv, i) => {
-    const badge  = document.getElementById(`srv-badge-${i}`);
-    const lat    = document.getElementById(`srv-latency-${i}`);
-    const mCnt   = document.getElementById(`srv-models-count-${i}`);
+  // Match by server name (robust against ordering differences)
+  data.forEach(srv => {
+    const name  = srv.name;
+    const badge = document.querySelector(`[id^="srv-badge-"][data-server-name="${CSS.escape(name)}"]`);
+    const lat   = document.querySelector(`[id^="srv-latency-"][data-server-name="${CSS.escape(name)}"]`);
+    const mCnt  = document.querySelector(`[id^="srv-models-count-"][data-server-name="${CSS.escape(name)}"]`);
     if (!badge) return;
     if (srv.ok) {
       badge.className   = 'badge bg-success';
       badge.textContent = 'online';
-      if (lat)  lat.textContent  = srv.latency_ms;
+      if (lat)  lat.textContent  = `${srv.latency_ms} ms`;
       if (mCnt) mCnt.textContent = srv.models_count;
     } else {
       badge.className   = 'badge bg-danger';

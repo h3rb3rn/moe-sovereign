@@ -52,7 +52,9 @@ The upper table shows all currently valid permissions for the user:
 
 ### Adding Permissions
 
-Five section cards allow targeted addition of permissions:
+Five section cards allow targeted addition of permissions. Each card is **collapsed by
+default** — click the card header (or the chevron icon) to expand it. This keeps the
+dialog compact even when many servers and models are configured.
 
 === "Expert Template"
     - Dropdown with all admin templates (name + ID)

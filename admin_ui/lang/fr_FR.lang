@@ -913,5 +913,10 @@
   ,"portal.conn_test_fail":            "Connexion échouée"
   ,"portal.conn_name_conflict":        "Ce nom entre en conflit avec un serveur global"
   ,"js.confirm_delete_connection":     "Supprimer cette connexion ?"
+  ,"btn.audit":                        "Audit"
+  ,"btn.refresh_ext_audits":           "Actualiser les audits externes"
+  ,"info.skillssh_audit":              "Évaluation skills.sh"
+  ,"js.audit_complete":                "Audit terminé : {verdict}"
+  ,"js.audit_required":                "Veuillez d'abord effectuer un audit"
 
 }

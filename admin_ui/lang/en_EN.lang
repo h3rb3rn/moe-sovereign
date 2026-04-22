@@ -913,5 +913,10 @@
   ,"portal.conn_test_fail":            "Connection failed"
   ,"portal.conn_name_conflict":        "Name conflicts with a global server name"
   ,"js.confirm_delete_connection":     "Really delete this connection?"
+  ,"btn.audit":                        "Audit"
+  ,"btn.refresh_ext_audits":           "Refresh External Audits"
+  ,"info.skillssh_audit":              "skills.sh Rating"
+  ,"js.audit_complete":                "Audit complete: {verdict}"
+  ,"js.audit_required":                "Please run an audit first"
 
 }

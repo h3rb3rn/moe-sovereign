@@ -8,6 +8,83 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.5.0] - 2026-04-22
+
+> `impact: minor` · `breaking: no` · `domain: admin-ui, skills, servers, users`
+
+### Added — skills.sh External Audit Integration
+
+The Community Skills tab now fetches and caches audit ratings from
+[skills.sh/audits](https://skills.sh/audits) and displays them on each skill tile alongside
+the existing internal LLM audit badge.
+
+- Three external badges per tile: **Gen Agent Trust Hub** (Safe/unsafe), **Socket.dev** (alert count), **Snyk** (risk level)
+- Results cached at `/app/skills/community/.skillssh_audits.json` with 24-hour TTL
+- New button **"Ext. Audits aktualisieren"** in the Community tab forces a cache refresh
+- New API endpoint `POST /api/skills/community/refresh-external-audits`
+
+### Added — Mandatory Internal Audit for Upstream (Anthropic) Skills
+
+Anthropic upstream skills now require the same internal LLM security audit as community
+skills before they can be imported into the active skills directory.
+
+- New endpoint `POST /api/skills/upstream/{skill_name}/audit` — runs identical LLM checklist
+- Audit results stored in `/app/skills-upstream/audits/{name}.audit.json`
+- `GET /api/skills/upstream` response now includes `audit_status` per skill
+- `POST /api/skills/upstream/import/{name}` returns HTTP 400 if no audit exists, 403 if blocked
+- Upstream skill tiles show audit badge + Audit button; Import button disabled until audited
+
+### Added — Refactored `_run_llm_audit()` helper
+
+Shared async helper function used by both community and upstream audit endpoints.
+Eliminates duplicate audit logic.
+
+### Fixed — Upstream repository clone on fresh installations
+
+`POST /api/skills/upstream/pull` previously returned **"Kein Git-Repo gefunden"** on
+fresh installations where `/app/skills-upstream/.git` did not yet exist.
+
+- Endpoint now auto-clones `https://github.com/anthropics/skills.git` if `.git` is absent
+- Subsequent calls perform the usual `git pull --ff-only`
+- Misplaced "Pull Community Skills" button removed from the Upstream tab (belonged in Community tab)
+
+### Fixed — Server tiles not updating in Admin > Servers
+
+`loadAll()` matched DOM elements by array index (`srv-badge-${i}`) which broke when the
+API response order differed from the Jinja2 template render order.
+
+- Template elements now carry `data-server-name` attributes
+- `loadAll()` uses `querySelector('[data-server-name="..."]')` — order-independent
+- Latency display now includes unit (`ms`)
+
+### Changed — Navbar restructured with dropdown groups
+
+The desktop navigation bar previously showed 18 flat buttons that overflowed on most screens.
+
+| Before | After |
+|--------|-------|
+| 18 flat `btn-outline-light` buttons | 1 direct link + 4 dropdown menus |
+| Visible only at ≥1400px (`d-xxl-flex`) | Visible from ≥992px (`d-lg-flex`) |
+
+Dropdown groups:
+- **Monitoring**: Monitoring, Live Monitoring, Statistics, Benchmarks
+- **Infra**: Servers, Knowledge, Federation, Quarantine, Maintenance
+- **Tools**: CC Profiles, Skills, MCP Tools, Tool Eval, Templates
+- **Users**: Users, Teams, User Content
+
+Active state propagates to the dropdown toggle when any child page is active.
+
+### Changed — Permissions UI: collapsible sections
+
+The five resource sections in the User Permissions tab (Expert Template, CC Profile,
+Native LLMs, Skills, MCP Tools) are now collapsible Bootstrap cards.
+
+- All sections start collapsed — reduces scroll length proportional to server count
+- Chevron icon rotates on expand/collapse
+- Collapse IDs include `${uid}` to avoid DOM collisions when switching between users
+
+---
+
 ## [2.4.1] - 2026-04-21
 
 > `impact: patch` · `breaking: no` · `domain: mcp-server, templates, benchmarks, database, observability`
