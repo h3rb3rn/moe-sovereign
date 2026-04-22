@@ -361,16 +361,19 @@ function buildLLMGroupedDropdown(wrapperId, uid, models) {
 
   let html = '<div class="llm-group-container">';
   for (const [node, items] of Object.entries(groups)) {
-    const groupId = `llmg_${node.replace(/[^a-z0-9]/gi,'_')}`;
-    const nodeE   = escHtml(node);
-    const uidE    = escHtml(uid);
+    const safeNode = node.replace(/[^a-z0-9]/gi,'_');
+    const colId  = `llmg_${safeNode}_${uid.replace(/[^a-z0-9]/gi,'_')}`;
+    const nodeE  = escHtml(node);
+    const uidE   = escHtml(uid);
     html += `
-    <div class="border rounded mb-1" style="background:#f8f9fa">
-      <div class="d-flex align-items-center px-2 py-1 gap-2" style="background:#e1f5fe;border-radius:4px 4px 0 0">
+    <div class="border rounded mb-1">
+      <div class="d-flex align-items-center px-2 py-1 gap-2 user-select-none"
+           style="background:#e1f5fe;border-radius:4px 4px 0 0;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#${colId}" aria-expanded="false">
         <i class="bi bi-hdd-rack-fill text-info" style="font-size:.8rem"></i>
         <span class="small fw-bold text-info">${nodeE}</span>
-        <span class="text-muted small ms-1">(${escHtml(items.length)} models)</span>
-        <div class="ms-auto d-flex gap-1">
+        <span class="badge bg-info text-dark ms-1" style="font-size:.6rem">${items.length}</span>
+        <div class="ms-auto d-flex gap-1" onclick="event.stopPropagation()">
           <button class="btn btn-xs btn-outline-primary" style="font-size:.7rem;padding:.1rem .4rem"
                   onclick="grantNodeAll('${uidE}','${nodeE}',[${items.map(i=>`'${escHtml(i.full)}'`).join(',')}])"
                   title="Grant all currently available models on ${nodeE}">
@@ -382,13 +385,16 @@ function buildLLMGroupedDropdown(wrapperId, uid, models) {
             <i class="bi bi-infinity me-1"></i>All (incl. future)
           </button>
         </div>
+        <i class="bi bi-chevron-down small text-muted"></i>
       </div>
-      <div class="px-2 py-1" id="${escHtml(groupId)}">
-        ${items.map(i => `
-        <label class="d-flex gap-2 align-items-center py-0 mb-0 small" style="cursor:pointer">
-          <input type="checkbox" class="perm-opt-cb form-check-input mt-0" value="${escHtml(i.full)}">
-          <span class="text-truncate">${escHtml(i.model)}</span>
-        </label>`).join('')}
+      <div class="collapse" id="${colId}">
+        <div class="px-2 py-1">
+          ${items.map(i => `
+          <label class="d-flex gap-2 align-items-center py-0 mb-0 small" style="cursor:pointer">
+            <input type="checkbox" class="perm-opt-cb form-check-input mt-0" value="${escHtml(i.full)}">
+            <span class="text-truncate">${escHtml(i.model)}</span>
+          </label>`).join('')}
+        </div>
       </div>
     </div>`;
   }
@@ -596,40 +602,67 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
   <div class="tab-pane" id="tab-perms">
     <p class="small text-muted mb-2"><i class="bi bi-info-circle me-1"></i>By default all access is blocked. Grant explicitly here.</p>
 
-    <!-- Active permissions -->
-    <div class="d-flex justify-content-between align-items-center mb-1">
-      <span class="small fw-bold">Active Permissions</span>
+    <!-- Active permissions — grouped by resource type, each group collapsible -->
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <span class="small fw-bold">Active Permissions <span class="badge bg-secondary ms-1">${perms.length}</span></span>
       <button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:.15rem .5rem" onclick="revokeSelectedPerms('${uid}')">
         <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.revoke_selected') }}
       </button>
     </div>
-    <table class="table table-sm mb-3">
-      <thead class="table-light"><tr>
-        <th style="width:2rem"><input type="checkbox" id="revoke-all-cb" title="Select all"></th>
-        <th>Typ</th><th>Ressource</th><th></th>
-      </tr></thead>
-      <tbody id="perms-body">
-        ${perms.map(p => {
-          const badgeColor = {expert_template:'success',cc_profile:'primary',model_endpoint:'info',moe_mode:'warning',skill:'secondary',mcp_tool:'dark'}[p.resource_type] || 'secondary';
-          // Resolve human-readable name for named resource types
-          let displayName = p.resource_id;
+    ${(()=>{
+      if (perms.length === 0) return '<p class="text-muted small text-center mb-3">No permissions assigned.</p>';
+      const TYPE_ORDER = ['expert_template','cc_profile','model_endpoint','skill','mcp_tool','moe_mode'];
+      const TYPE_COLOR = {expert_template:'success',cc_profile:'primary',model_endpoint:'info',moe_mode:'warning',skill:'secondary',mcp_tool:'dark'};
+      const TYPE_BG    = {expert_template:'#e8f5e9',cc_profile:'#e3f2fd',model_endpoint:'#e1f5fe',skill:'#f3e5f5',mcp_tool:'#e8eaf6',moe_mode:'#fff8e1'};
+      const TYPE_ICON  = {expert_template:'bi-collection-fill',cc_profile:'bi-person-badge-fill',model_endpoint:'bi-cpu-fill',skill:'bi-magic',mcp_tool:'bi-tools',moe_mode:'bi-gear'};
+      // Group perms by type
+      const byType = {};
+      for (const p of perms) {
+        if (!byType[p.resource_type]) byType[p.resource_type] = [];
+        byType[p.resource_type].push(p);
+      }
+      const types = TYPE_ORDER.filter(t => byType[t]);
+      return types.map(type => {
+        const items = byType[type];
+        const color = TYPE_COLOR[type] || 'secondary';
+        const bg    = TYPE_BG[type]    || '#f8f9fa';
+        const icon  = TYPE_ICON[type]  || 'bi-tag';
+        const colId = `perm_active_${type}_${uid}`;
+        const rows  = items.map(p => {
+          let displayName = escHtml(p.resource_id);
           if (p.resource_type === 'expert_template') {
             const found = (resources.expert_template || []).find(t => t.id === p.resource_id);
-            if (found) displayName = `${found.name} <span class="text-muted" style="font-size:.7rem">(${p.resource_id})</span>`;
+            if (found) displayName = `${escHtml(found.name)} <span class="text-muted" style="font-size:.7rem">(${escHtml(p.resource_id)})</span>`;
           } else if (p.resource_type === 'cc_profile') {
             const found = (resources.cc_profile || []).find(t => t.id === p.resource_id);
-            if (found) displayName = `${found.name} <span class="text-muted" style="font-size:.7rem">(${p.resource_id})</span>`;
+            if (found) displayName = `${escHtml(found.name)} <span class="text-muted" style="font-size:.7rem">(${escHtml(p.resource_id)})</span>`;
           }
           return `<tr>
             <td><input type="checkbox" class="revoke-cb" value="${p.id}"></td>
-            <td><span class="badge bg-${badgeColor}" style="font-size:.7rem">${p.resource_type}</span></td>
-            <td style="font-size:.85rem">${displayName}</td>
+            <td style="font-size:.82rem">${displayName}</td>
             <td><button class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .4rem" onclick="revokePerm('${uid}','${p.id}')"><i class="bi bi-trash"></i></button></td>
           </tr>`;
-        }).join('')}
-        ${perms.length===0 ? '<tr><td colspan="4" class="text-muted text-center small">No permissions</td></tr>' : ''}
-      </tbody>
-    </table>
+        }).join('');
+        return `<div class="card mb-1">
+          <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+               style="background:${bg};cursor:pointer;font-size:.82rem"
+               data-bs-toggle="collapse" data-bs-target="#${colId}" aria-expanded="false">
+            <i class="bi ${icon} text-${color}"></i>
+            <span class="fw-bold">${type}</span>
+            <span class="badge bg-${color} ms-1" style="font-size:.6rem">${items.length}</span>
+            <i class="bi bi-chevron-down ms-auto small text-muted"></i>
+          </div>
+          <div class="collapse" id="${colId}">
+            <div class="px-2 py-1">
+              <table class="table table-sm mb-0">
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    })()}
+    <div class="mb-3"></div>
 
     <!-- Section 1: Expert Template (collapsible) -->
     <div class="card mb-2">
