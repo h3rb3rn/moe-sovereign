@@ -56,3 +56,6 @@ node_modules/
 docs/TODO.md
 SECURITY_TASKS.md
 SYSTEM.md
+
+# Instance-specific Caddy config — copy Caddyfile.example → Caddyfile
+Caddyfile
