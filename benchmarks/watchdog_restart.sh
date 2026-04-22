@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Watchdog: prüft ob Benchmark läuft, startet neu bei Absturz
+# Watchdog: monitors a RUNNING benchmark and restarts it only on crash.
+# Does NOT auto-start — benchmarks must be triggered manually.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_DIR="$(dirname "$SCRIPT_DIR")"
@@ -9,44 +10,26 @@ HEARTBEAT="$SCRIPT_DIR/.bench_heartbeat"
 
 echo "[watchdog $(date +%H:%M:%S)] Prüfe Benchmark-Status..."
 
-# Lock-Datei vorhanden?
+# No lock file → benchmark is not running. Do NOT start it automatically.
 if [ ! -f "$LOCK" ]; then
-    echo "[watchdog] Kein Lock-File — Benchmark nicht aktiv."
-    
-    # Läuft tmux-Session?
+    echo "[watchdog] Kein Lock-File — kein laufender Benchmark. Kein Auto-Start."
+    # Clean up a stale tmux session if one somehow exists without a lock
     if tmux has-session -t benchmark 2>/dev/null; then
-        pane_output=$(tmux capture-pane -t benchmark -p 2>/dev/null | tail -3)
-        echo "[watchdog] tmux-Session vorhanden. Output: $pane_output"
-        # Session ist da aber kein Lock — vermutlich fertig oder gecrasht
-        # Warte kurz und prüfe nochmals
-        sleep 30
-        if [ ! -f "$LOCK" ]; then
-            echo "[watchdog] Immer noch kein Lock nach 30s — starte Benchmark neu."
-            tmux kill-session -t benchmark 2>/dev/null || true
-            sleep 5
-            tmux new-session -d -s benchmark -c "$BENCH_DIR" \
-                "bash benchmarks/run_overnight.sh 2>&1 | tee -a $LOG"
-            echo "[watchdog] Benchmark-Session neu gestartet."
-        fi
-    else
-        echo "[watchdog] Keine tmux-Session — starte Benchmark."
-        tmux new-session -d -s benchmark -c "$BENCH_DIR" \
-            "bash benchmarks/run_overnight.sh 2>&1 | tee -a $LOG"
-        echo "[watchdog] Benchmark-Session gestartet."
+        echo "[watchdog] Verwaiste tmux-Session gefunden — wird bereinigt."
+        tmux kill-session -t benchmark 2>/dev/null || true
     fi
     exit 0
 fi
 
-# Lock vorhanden — prüfe Heartbeat (sollte max 90s alt sein)
+# Lock present → benchmark was started manually. Check if it's still alive.
 if [ -f "$HEARTBEAT" ]; then
     heartbeat_age=$(( $(date +%s) - $(stat -c %Y "$HEARTBEAT") ))
     echo "[watchdog] Heartbeat Alter: ${heartbeat_age}s"
     if [ "$heartbeat_age" -gt 120 ]; then
         echo "[watchdog] WARNUNG: Heartbeat ${heartbeat_age}s alt — Benchmark hängt?"
-        # Prüfe ob PID noch läuft
         pid=$(python3 -c "import json; d=json.load(open('$LOCK')); print(d['pid'])" 2>/dev/null || echo 0)
         if [ "$pid" -gt 0 ] && ! kill -0 "$pid" 2>/dev/null; then
-            echo "[watchdog] PID $pid nicht mehr aktiv — starte neu."
+            echo "[watchdog] PID $pid nicht mehr aktiv — starte abgestürzten Benchmark neu."
             rm -f "$LOCK" "$HEARTBEAT"
             tmux kill-session -t benchmark 2>/dev/null || true
             sleep 5
@@ -66,7 +49,7 @@ else
     if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
         echo "[watchdog] PID $pid läuft — warte auf Heartbeat."
     else
-        echo "[watchdog] PID $pid tot — starte neu."
+        echo "[watchdog] PID $pid tot — starte abgestürzten Benchmark neu."
         rm -f "$LOCK" "$HEARTBEAT"
         tmux kill-session -t benchmark 2>/dev/null || true
         sleep 5

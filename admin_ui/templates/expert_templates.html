@@ -11,10 +11,22 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h5 class="mb-0"><i class="bi bi-collection-fill me-2 text-primary"></i>{{ t(request, 'page.templates') }}</h5>
-  <div class="d-flex gap-2">
-    <button class="btn btn-outline-secondary btn-sm" onclick="exportTemplates()" title="Alle Templates als JSON exportieren">
-      <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}
-    </button>
+  <div class="d-flex gap-2 align-items-center">
+    <div class="form-check mb-0 d-flex align-items-center" title="Alle auswählen">
+      <input class="form-check-input mt-0" type="checkbox" id="tmpl-select-all">
+      <label class="form-check-label ms-2 small text-muted" for="tmpl-select-all">Alle</label>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-outline-secondary btn-sm" onclick="exportTemplates()" title="Ausgewählte Templates exportieren">
+        <i class="bi bi-download me-1"></i>{{ t(request, 'btn.export_json') }}<span id="tmpl-export-count" class="ms-1 fw-bold"></span>
+      </button>
+      <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+        <span class="visually-hidden">Optionen</span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="#" onclick="exportTemplates(true); return false;"><i class="bi bi-download me-2"></i>Alle exportieren</a></li>
+      </ul>
+    </div>
     <label class="btn btn-outline-secondary btn-sm mb-0" title="Templates aus JSON-Datei importieren">
       <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
       <input type="file" id="import-templates-file" accept=".json" style="display:none" onchange="importTemplates(this)">
@@ -42,7 +54,11 @@
   <div class="col-12">
     <div class="card">
       <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-collection me-2"></i>{{ tmpl.name }}</span>
+        <span class="d-flex align-items-center gap-2">
+          <input type="checkbox" class="form-check-input tmpl-cb mt-0 flex-shrink-0" value="{{ tmpl.id }}"
+                 onchange="updateTmplExportCount()" onclick="event.stopPropagation()" title="Für Export auswählen">
+          <i class="bi bi-collection me-1"></i>{{ tmpl.name }}
+        </span>
         <div class="d-flex gap-2 align-items-center">
           {% if tmpl._privacy_level == 'local_only' %}
           <span class="badge bg-success" style="font-size:.72rem" title="All models run on local infrastructure — no data leaves your network"><i class="bi bi-shield-check me-1"></i>Local Only</span>
@@ -868,14 +884,29 @@ async function deleteTemplate(tmplId, name) {
   if (res.ok) window.location.reload();
 }
 
-async function exportTemplates() {
-  const res = await fetch('/api/expert-templates/export');
+function updateTmplExportCount() {
+  const n = document.querySelectorAll('.tmpl-cb:checked').length;
+  document.getElementById('tmpl-export-count').textContent = n > 0 ? `(${n})` : '';
+  const selectAll = document.getElementById('tmpl-select-all');
+  const total = document.querySelectorAll('.tmpl-cb').length;
+  selectAll.indeterminate = n > 0 && n < total;
+  selectAll.checked = total > 0 && n === total;
+}
+
+document.getElementById('tmpl-select-all').addEventListener('change', function() {
+  document.querySelectorAll('.tmpl-cb').forEach(cb => cb.checked = this.checked);
+  updateTmplExportCount();
+});
+
+async function exportTemplates(all = false) {
+  const checked = [...document.querySelectorAll('.tmpl-cb:checked')].map(cb => cb.value);
+  const params = (!all && checked.length > 0) ? `?ids=${checked.join(',')}` : '';
+  const fname = (checked.length > 0 && !all) ? 'expert_templates_selected.json' : 'expert_templates.json';
+  const res = await fetch(`/api/expert-templates/export${params}`);
   if (!res.ok) { alert('Export failed'); return; }
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'expert_templates.json'; a.click();
-  URL.revokeObjectURL(url);
+  const a = Object.assign(document.createElement('a'), {href: URL.createObjectURL(blob), download: fname});
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
 async function importTemplates(input) {

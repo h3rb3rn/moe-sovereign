@@ -335,6 +335,7 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   EXISTING_GRAFANA_PASS=$(read_env GF_SECURITY_ADMIN_PASSWORD)
   EXISTING_PG_LANGGRAPH_PASS=$(read_env POSTGRES_CHECKPOINT_PASSWORD)
   EXISTING_PG_USERDB_PASS=$(read_env MOE_USERDB_PASSWORD)
+  EXISTING_LIBRIS_DB_PASS=$(read_env LIBRIS_DB_PASSWORD)
   EXISTING_ADMIN_USER=$(read_env ADMIN_USER)
   EXISTING_ADMIN_PASSWORD=$(read_env ADMIN_PASSWORD)
   EXISTING_DOMAIN=$(read_env DOMAIN)
@@ -347,6 +348,7 @@ GEN_NEO4J_PASS="${EXISTING_NEO4J_PASS:-$(openssl rand -hex 16)}"
 GEN_GRAFANA_PASS="${EXISTING_GRAFANA_PASS:-$(openssl rand -hex 12)}"
 GEN_PG_LANGGRAPH_PASS="${EXISTING_PG_LANGGRAPH_PASS:-$(openssl rand -hex 16)}"
 GEN_PG_USERDB_PASS="${EXISTING_PG_USERDB_PASS:-$(openssl rand -hex 16)}"
+GEN_LIBRIS_DB_PASS="${EXISTING_LIBRIS_DB_PASS:-$(openssl rand -hex 16)}"
 
 echo "  --- Admin Account ---"
 prompt_input ADMIN_USER     "Admin username"   "${EXISTING_ADMIN_USER:-admin}"
@@ -443,6 +445,7 @@ fi
   printf 'POSTGRES_CHECKPOINT_URL=postgresql://langgraph:%s@terra_checkpoints:5432/langgraph\n' "${GEN_PG_LANGGRAPH_PASS}"
   printf 'MOE_USERDB_URL=postgresql://moe_admin:%s@terra_checkpoints:5432/moe_userdb\n' "${GEN_PG_USERDB_PASS}"
   printf 'MOE_USERDB_PASSWORD=%s\n' "${GEN_PG_USERDB_PASS}"
+  printf 'LIBRIS_DB_PASSWORD=%s\n' "${GEN_LIBRIS_DB_PASS}"
   echo ""
   echo "# --- Grafana ---"
   printf 'GF_SECURITY_ADMIN_USER=%s\n'   "${ADMIN_USER}"

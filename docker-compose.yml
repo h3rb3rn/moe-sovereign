@@ -66,7 +66,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ${MOE_DATA_ROOT}/generated:/app/generated:rw
+      - ${MOE_DATA_ROOT}/generated:/app/generated:rw,noexec,nosuid
     environment:
       - NEO4J_URI=bolt://neo4j-knowledge:7687
       - NEO4J_USER=neo4j
@@ -127,6 +127,8 @@ services:
       - POSTGRES_DB=langgraph
       # Consumed by scripts/postgres-init/01-moe_admin.sh on first init only
       - MOE_USERDB_PASSWORD=${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
+      # Consumed by scripts/postgres-init/02-libris.sh on first init only (moe-libris federation DB)
+      - LIBRIS_DB_PASSWORD=${LIBRIS_DB_PASSWORD:-}
     volumes:
       - ${MOE_DATA_ROOT}/langgraph-checkpoints:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -221,6 +223,8 @@ services:
       PING: 1         # GET /_ping
       POST: 1         # POST /containers/*/restart
       ALLOW_RESTARTS: 1  # required so moe-docs-sync can reload mkdocs serve after updating docs
+      IMAGES: 1       # POST /images/prune (required by System Cleanup Manager)
+      BUILD: 1        # POST /build/prune  (required by System Cleanup Manager)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -242,6 +246,7 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_cache:6379
       - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_checkpoints:5432/moe_userdb
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      - POSTGRES_CHECKPOINT_URL=postgresql://langgraph:${POSTGRES_CHECKPOINT_PASSWORD:?}@terra_checkpoints:5432/langgraph
     volumes:
       - ./.env:/app/.env:rw
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
@@ -253,6 +258,7 @@ services:
       - ./benchmarks:/app/benchmarks:rw
       - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:rw
       - ${MOE_DATA_ROOT}/cleanup-history.jsonl:/app/cleanup-history.jsonl:rw
+      - ${MOE_DATA_ROOT}/checkpoint-archives:/app/checkpoint-archives:rw
     depends_on:
       langgraph-app:
         condition: service_started
@@ -424,6 +430,30 @@ services:
           cpus: "0.3"
           memory: 128M
 
+  # --- MinIO Object Storage ---
+  moe-storage:
+    image: quay.io/minio/minio:latest
+    container_name: moe-storage
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?missing MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?missing MINIO_ROOT_PASSWORD}
+    volumes:
+      - moe_storage_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
   # --- Caddy Reverse Proxy (TLS für docs.moe-sovereign.org) ---
   moe-caddy:
     image: caddy:2-alpine
@@ -450,6 +480,7 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  moe_storage_data:
 
 
 networks:

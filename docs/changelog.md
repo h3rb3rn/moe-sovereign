@@ -8,6 +8,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.4.1] - 2026-04-21
+
+> `impact: patch` · `breaking: no` · `domain: mcp-server, templates, benchmarks, database, observability`
+
+### Fixed — GAIA Benchmark Integration Findings
+
+Six infrastructure and configuration bugs discovered and resolved during the GAIA
+benchmark evaluation session. See [GAIA Benchmark section](system/benchmarks.md#april-2026--gaia-benchmark-compound-ai-system-evaluation-against-a-public-standard)
+for the full trial & error report.
+
+#### `wikipedia_get_section` — `article=` parameter alias (MCP Server)
+
+The LLM planner consistently calls `wikipedia_get_section(article="...", section="...")`
+but the MCP function only accepted `title=`. Every Wikipedia tool call raised
+`got an unexpected keyword argument 'article'` — silently recovered as an empty result.
+
+- Added `article: str = ""` as a second parameter alias; resolved to `title` at entry
+- Added a structured wikitext table parser: extracts `Year | Album` rows from MediaWiki
+  table markup before stripping all markup; returns `STRUCTURED TABLE (N entries):` prefix
+
+#### `tmpl-aihub-free-nextgen` — Wikipedia authority rules (Template, Postgres)
+
+The judge LLM consistently overrode authoritative Wikipedia data with AllMusic/Discogs
+results when multiple sources were present.
+
+- Rule 4a updated: `title=` (not `article=`), `section='Studio albums'` (not `'Discography'`)
+- Judge prompt prepended: Wikipedia tool result is AUTHORITATIVE when the question specifies "use Wikipedia"
+
+#### Attachment routing guard (benchmark context builder)
+
+`.docx` and `.xlsx` filenames in context strings triggered the `skill_detector` expert
+(file-generation mode) instead of the reasoning/general expert. Two GAIA questions
+(Q8 Secret Santa, Q10 Spreadsheet) now answer correctly.
+
+- File extension stripped from attachment label in `get_attachment_context()`
+- Explicit `[ROUTING: Use reasoning or general expert. Do NOT use skill_detector.]` appended to attachment context
+
+#### `routing_telemetry` UNIQUE constraint (Database)
+
+Live Monitoring showed zero routing entries since 2026-04-17 despite hundreds of daily
+requests. Root cause: `telemetry.py` uses `ON CONFLICT (response_id) DO NOTHING` which
+requires a `UNIQUE` index on `response_id`. Only a plain B-tree index existed; every
+INSERT failed with `InvalidColumnReference`, swallowed at `logger.debug` level.
+
+- `CREATE UNIQUE INDEX idx_telemetry_response_unique ON routing_telemetry (response_id)`
+- No code change, no container restart; telemetry recording restored immediately
+
+#### `gaia_runner.py` — argparse block (Benchmark Runner)
+
+All CLI arguments were silently ignored because no `argparse` block existed. The runner
+always used hardcoded defaults (`moe-reference-30b-balanced`, levels 1–3, 30 questions),
+making all template-targeted validation runs invalid.
+
+- Added full argparse: `--template`, `--levels`, `--max-per-level`, `--temperature`, `--language`
+- Added `TEMPERATURE` and `LANGUAGE` module-level globals with env var and CLI override
+- Established benchmark governance rule: only template / MCP / skill / cache changes between runs
+
+---
+
 ## [2.4.0] - 2026-04-21
 
 > `impact: major` · `breaking: no` · `domain: pipeline, mcp-server, templates, docs`

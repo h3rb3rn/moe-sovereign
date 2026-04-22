@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Benchmarks – MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'title.benchmarks') }}{% endblock %}
 
 {% block content %}
 <style>
@@ -39,21 +39,21 @@
 {# ── System-lock banner (shown when a benchmark is running) ── #}
 <div id="bench-lock-banner" class="alert alert-warning align-items-center gap-2 mb-3 py-2" role="alert" style="display:none">
   <span class="bench-live-dot"></span>
-  <strong>Benchmark läuft</strong> — Das System ist für reguläre API-Nutzer gesperrt.
+  <strong>{{ t(request, 'js.bench_running') }}</strong> — {{ t(request, 'js.bench_system_locked') }}
   <span id="bench-lock-detail" class="ms-2 small text-muted"></span>
 </div>
 
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h4 class="mb-0 fw-bold">
-    <i class="bi bi-speedometer2 me-2" style="color:#6ea8fe"></i>Benchmarks
+    <i class="bi bi-speedometer2 me-2" style="color:#6ea8fe"></i>{{ t(request, 'nav.benchmarks') }}
   </h4>
   <div class="d-flex gap-2">
     <button class="btn btn-sm btn-outline-secondary" onclick="refreshAll()">
-      <i class="bi bi-arrow-clockwise me-1"></i>Aktualisieren
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
     </button>
     <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#triggerModal"
             id="btn-trigger-bench">
-      <i class="bi bi-play-fill me-1"></i>Benchmark starten
+      <i class="bi bi-play-fill me-1"></i>{{ t(request, 'js.bench_start') }}
     </button>
   </div>
 </div>
@@ -67,12 +67,22 @@
   </li>
   <li class="nav-item">
     <a class="nav-link" data-bs-toggle="tab" href="#tab-overnight">
-      <i class="bi bi-moon-stars me-1"></i>Overnight-Läufe
+      <i class="bi bi-moon-stars me-1"></i>{{ t(request, 'js.overnight_runs') }}
     </a>
   </li>
   <li class="nav-item">
     <a class="nav-link" data-bs-toggle="tab" href="#tab-single">
-      <i class="bi bi-file-earmark-bar-graph me-1"></i>Einzel-Läufe
+      <i class="bi bi-file-earmark-bar-graph me-1"></i>{{ t(request, 'js.single_runs') }}
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-gaia" onclick="refreshGaiaList()">
+      <i class="bi bi-robot me-1"></i>{{ t(request, 'js.gaia_runs') }}
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" data-bs-toggle="tab" href="#tab-longmemeval" onclick="refreshLongMemEvalList()">
+      <i class="bi bi-journal-text me-1"></i>{{ t(request, 'js.longmemeval_runs') }}
     </a>
   </li>
 </ul>
@@ -89,7 +99,7 @@
           </div>
           <div class="card-body p-3">
             <div id="live-status-content">
-              <div class="text-muted small">Lade…</div>
+              <div class="text-muted small">{{ t(request, 'js.loading') }}</div>
             </div>
           </div>
         </div>
@@ -97,7 +107,7 @@
       <div class="col-md-8">
         <div class="card h-100">
           <div class="card-header bg-dark text-light d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-terminal me-1"></i>Runner-Log
+            <span><i class="bi bi-terminal me-1"></i>{{ t(request, 'js.runner_log') }}
               <span id="live-log-file" class="text-secondary small ms-2"></span>
             </span>
             <div class="form-check form-switch mb-0 d-flex align-items-center gap-2">
@@ -107,7 +117,7 @@
           </div>
           <div class="card-body p-0">
             <div class="log-box" id="live-log-box">
-              <span class="text-muted">Warte auf Log-Daten…</span>
+              <span class="text-muted">{{ t(request, 'js.waiting_for_log') }}</span>
             </div>
           </div>
         </div>
@@ -115,17 +125,31 @@
     </div>
   </div>
 
-  {# ── Tab: Overnight-Läufe ── #}
+  {# ── Tab: Overnight runs ── #}
   <div class="tab-pane fade" id="tab-overnight">
     <div id="overnight-list-content">
-      <div class="text-muted small">Lade…</div>
+      <div class="text-muted small">{{ t(request, 'js.loading') }}</div>
     </div>
   </div>
 
-  {# ── Tab: Einzel-Läufe ── #}
+  {# ── Tab: Single runs ── #}
   <div class="tab-pane fade" id="tab-single">
     <div id="single-list-content">
-      <div class="text-muted small">Lade…</div>
+      <div class="text-muted small">{{ t(request, 'js.loading') }}</div>
+    </div>
+  </div>
+
+  {# ── Tab: GAIA runs ── #}
+  <div class="tab-pane fade" id="tab-gaia">
+    <div id="gaia-list-content">
+      <div class="text-muted small">{{ t(request, 'js.loading') }}</div>
+    </div>
+  </div>
+
+  {# ── Tab: LongMemEval runs ── #}
+  <div class="tab-pane fade" id="tab-longmemeval">
+    <div id="longmemeval-list-content">
+      <div class="text-muted small">{{ t(request, 'js.loading') }}</div>
     </div>
   </div>
 
@@ -137,11 +161,11 @@
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-bar-chart-line me-2"></i><span id="result-modal-title">Ergebnis</span></h5>
+        <h5 class="modal-title"><i class="bi bi-bar-chart-line me-2"></i><span id="result-modal-title">{{ t(request, 'js.result') }}</span></h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" id="result-modal-body">
-        <div class="text-muted">Lade…</div>
+        <div class="text-muted">{{ t(request, 'js.loading') }}</div>
       </div>
     </div>
   </div>
@@ -153,50 +177,113 @@
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-play-circle me-2"></i>Benchmark starten</h5>
+        <h5 class="modal-title"><i class="bi bi-play-circle me-2"></i>{{ t(request, 'js.bench_start') }}</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
 
-        {# Pre-flight check section #}
+        {# Benchmark type selector #}
         <div class="mb-3">
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <strong><i class="bi bi-clipboard-check me-1"></i>Pre-Flight Check</strong>
-            <button class="btn btn-sm btn-outline-secondary" onclick="runPreflight()">
-              <i class="bi bi-arrow-clockwise me-1"></i>Prüfen
-            </button>
-          </div>
-          <div id="preflight-result" class="text-muted small">Noch nicht geprüft. Klicke „Prüfen" vor dem Start.</div>
+          <label class="form-label fw-semibold">{{ t(request, 'js.bench_type') }}</label>
+          <select class="form-select" id="trigger-bench-type" onchange="onBenchTypeChange()">
+            <option value="overnight">{{ t(request, 'js.bench_type_overnight') }}</option>
+            <option value="gaia">{{ t(request, 'js.bench_type_gaia') }}</option>
+            <option value="longmemeval">{{ t(request, 'js.bench_type_longmemeval') }}</option>
+          </select>
         </div>
         <hr>
 
-        <div class="mb-3">
-          <label class="form-label fw-semibold">Template</label>
-          <input type="text" class="form-control" id="trigger-template" value="moe-m10-gremium-deep"
-                 placeholder="z.B. moe-m10-gremium-deep">
+        {# ── Overnight fields ── #}
+        <div id="trigger-overnight-fields">
+          <div class="mb-3">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <strong><i class="bi bi-clipboard-check me-1"></i>Pre-Flight Check</strong>
+              <button class="btn btn-sm btn-outline-secondary" onclick="runPreflight()">
+                <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.template_verify') }}
+              </button>
+            </div>
+            <div id="preflight-result" class="text-muted small">{{ t(request, 'js.preflight_not_checked') }}</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Template</label>
+            <input type="text" class="form-control" id="trigger-template" value="moe-m10-gremium-deep"
+                   placeholder="{{ t(request, 'js.bench_template_placeholder') }}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Dataset</label>
+            <select class="form-select" id="trigger-dataset">
+              {% for ds in datasets %}
+              <option value="{{ ds }}" {% if 'overnight' in ds %}selected{% endif %}>{{ ds }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">{{ t(request, 'js.epochs') }}</label>
+            <input type="number" class="form-control" id="trigger-epochs" value="10" min="1" max="20">
+          </div>
+          <div class="alert alert-info small mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            {{ t(request, 'js.bench_info') }}
+          </div>
         </div>
-        <div class="mb-3">
-          <label class="form-label fw-semibold">Dataset</label>
-          <select class="form-select" id="trigger-dataset">
-            {% for ds in datasets %}
-            <option value="{{ ds }}" {% if 'overnight' in ds %}selected{% endif %}>{{ ds }}</option>
-            {% endfor %}
-          </select>
+
+        {# ── LongMemEval fields ── #}
+        <div id="trigger-longmemeval-fields" style="display:none">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Template</label>
+            <input type="text" class="form-control" id="trigger-lme-template" value="moe-m10-gremium-deep"
+                   placeholder="{{ t(request, 'js.bench_template_placeholder') }}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">{{ t(request, 'js.longmemeval_max_q') }}</label>
+            <input type="number" class="form-control" id="trigger-lme-max" value="20" min="1" max="500">
+            <div class="form-text">500 = full dataset (hours)</div>
+          </div>
+          <div class="alert alert-info small mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            {{ t(request, 'js.bench_type_longmemeval') }} — 7 memory types, multi-turn sessions
+          </div>
         </div>
-        <div class="mb-3">
-          <label class="form-label fw-semibold">Epochen</label>
-          <input type="number" class="form-control" id="trigger-epochs" value="10" min="1" max="20">
-        </div>
-        <div class="alert alert-info small mb-0">
-          <i class="bi bi-info-circle me-1"></i>
-          Der Benchmark läuft als Hintergrundprozess. Während er läuft, ist das System für
-          reguläre API-Nutzer gesperrt. Bitte Pre-Flight-Check vor dem Start durchführen.
+
+        {# ── GAIA fields ── #}
+        <div id="trigger-gaia-fields" style="display:none">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Template</label>
+            <input type="text" class="form-control" id="trigger-gaia-template" value="moe-m10-gremium-deep"
+                   placeholder="{{ t(request, 'js.bench_template_placeholder') }}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">{{ t(request, 'js.gaia_levels') }}</label>
+            <div class="d-flex gap-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="gaia-lvl1" value="1" checked>
+                <label class="form-check-label" for="gaia-lvl1">Level 1 <small class="text-muted">(53 Q)</small></label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="gaia-lvl2" value="2">
+                <label class="form-check-label" for="gaia-lvl2">Level 2 <small class="text-muted">(86 Q)</small></label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="gaia-lvl3" value="3">
+                <label class="form-check-label" for="gaia-lvl3">Level 3 <small class="text-muted">(26 Q)</small></label>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">{{ t(request, 'js.gaia_max_per_level') }}</label>
+            <input type="number" class="form-control" id="trigger-gaia-max" value="10" min="1" max="165">
+            <div class="form-text">0 = all questions in level</div>
+          </div>
+          <div class="alert alert-info small mb-0">
+            <i class="bi bi-info-circle me-1"></i>
+            {{ t(request, 'js.bench_type_gaia') }} — requires HF_TOKEN in benchmarks/.env
+          </div>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
-        <button class="btn btn-primary" id="btn-confirm-trigger" onclick="triggerBenchmark()" disabled>
-          <i class="bi bi-play-fill me-1"></i>Jetzt starten
+        <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button class="btn btn-primary" id="btn-confirm-trigger" onclick="triggerAny()" disabled>
+          <i class="bi bi-play-fill me-1"></i>{{ t(request, 'js.start_now') }}
         </button>
       </div>
     </div>
@@ -211,6 +298,73 @@
 const CSRF = {{ csrf_token | tojson }};
 let _autoRefresh = true;
 let _logRunId    = null;
+
+const _t = {
+  loading:             "{{ t(request, 'js.loading') }}",
+  template:            "{{ t(request, 'table.template') }}",
+  started:             "{{ t(request, 'table.started') }}",
+  noLog:               "{{ t(request, 'js.no_log_available') }}",
+  loadError:           "{{ t(request, 'js.load_error') }}",
+  noOvernightRuns:     "{{ t(request, 'js.no_overnight_runs') }}",
+  noSingleRuns:        "{{ t(request, 'js.no_single_runs') }}",
+  noBenchActive:       "{{ t(request, 'js.no_bench_active') }}",
+  lastOvernightRun:    "{{ t(request, 'js.last_overnight_run') }}",
+  running:             "{{ t(request, 'js.bench_is_running') }}",
+  clearLockManual:     "{{ t(request, 'js.clear_lock_manual') }}",
+  epochsLabel:         "{{ t(request, 'js.epochs') }}",
+  epochsSummary:       "{{ t(request, 'js.epochs_summary') }}",
+  noEvalData:          "{{ t(request, 'js.no_eval_data') }}",
+  noData:              "{{ t(request, 'js.no_data') }}",
+  noTestEntries:       "{{ t(request, 'js.no_test_entries') }}",
+  totalDuration:       "{{ t(request, 'js.total_duration') }}",
+  tests:               "{{ t(request, 'js.tests') }}",
+  avgScore:            "{{ t(request, 'js.avg_score') }}",
+  testId:              "{{ t(request, 'js.test_id') }}",
+  category:            "{{ t(request, 'table.category') }}",
+  typeLabel:           "{{ t(request, 'table.type') }}",
+  score:               "{{ t(request, 'js.score') }}",
+  tokens:              "{{ t(request, 'table.tokens') }}",
+  duration:            "{{ t(request, 'lbl.duration') }}",
+  statusLabel:         "{{ t(request, 'table.status') }}",
+  statusError:         "{{ t(request, 'js.status_error') }}",
+  statusTimeout:       "{{ t(request, 'js.status_timeout') }}",
+  runId:               "{{ t(request, 'js.run_id') }}",
+  timestamp:           "{{ t(request, 'portal.col_timestamp') }}",
+  evalFile:            "{{ t(request, 'js.eval_file') }}",
+  deleteLabel:         "{{ t(request, 'btn.delete') }}",
+  confirmDeleteRun:    "{{ t(request, 'js.confirm_delete_run') }}",
+  deleted:             "{{ t(request, 'js.deleted') }}",
+  confirmClearLock:    "{{ t(request, 'js.confirm_clear_lock') }}",
+  lockCleared:         "{{ t(request, 'js.lock_cleared') }}",
+  benchStarted:        "{{ t(request, 'js.bench_started') }}",
+  triggerWritten:      "{{ t(request, 'js.trigger_written') }}",
+  fillAllFields:       "{{ t(request, 'js.fill_all_fields') }}",
+  starting:            "{{ t(request, 'js.starting') }}",
+  startNow:            "{{ t(request, 'js.start_now') }}",
+  checking:            "{{ t(request, 'js.checking') }}",
+  prefightReady:       "{{ t(request, 'js.preflight_ready') }}",
+  preflightFail:       "{{ t(request, 'js.preflight_fail') }}",
+  scoreDetails:        "{{ t(request, 'js.score_details') }}",
+  turn:                "{{ t(request, 'js.turn') }}",
+  report:              "{{ t(request, 'js.report') }}",
+  epoche:              "{{ t(request, 'js.epoch') }}",
+  epochsOverview:      "{{ t(request, 'js.epochs_overview') }}",
+  graphEntitiesDelta:  "{{ t(request, 'js.graph_entities_delta') }}",
+  cacheHitRate:        "{{ t(request, 'js.cache_hit_rate') }}",
+  compressions:        "{{ t(request, 'js.compressions') }}",
+  lockDetail:          "{{ t(request, 'js.lock_detail') }}",
+  noGaiaRuns:          "{{ t(request, 'js.no_gaia_runs') }}",
+  gaiaStarted:         "{{ t(request, 'js.gaia_started') }}",
+  gaiaQuestion:        "{{ t(request, 'js.gaia_question') }}",
+  gaiaExpected:        "{{ t(request, 'js.gaia_expected') }}",
+  gaiaAnswer:          "{{ t(request, 'js.gaia_answer') }}",
+  gaiaCorrect:         "{{ t(request, 'js.gaia_correct') }}",
+  gaiaLevel:           "{{ t(request, 'js.gaia_level') }}",
+  overall:             "{{ t(request, 'js.overall') }}",
+  correctOf:           "{{ t(request, 'js.correct_of') }}",
+  noLmeRuns:           "{{ t(request, 'js.no_longmemeval_runs') }}",
+  lmeStarted:          "{{ t(request, 'js.longmemeval_started') }}",
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -245,17 +399,17 @@ async function refreshStatus() {
     if (s.running) {
       document.getElementById('bench-lock-banner').style.display = 'flex'; // inline style beats !important
       document.getElementById('bench-lock-detail').textContent =
-        `Template: ${s.template || '?'} | Gestartet: ${s.started_at ? new Date(s.started_at).toLocaleTimeString() : '?'}`;
+        `${_t.template}: ${s.template || '?'} | ${_t.started}: ${s.started_at ? new Date(s.started_at).toLocaleTimeString() : '?'}`;
       el.innerHTML = `
         <div class="d-flex align-items-center mb-2">
           <span class="bench-live-dot"></span>
-          <strong class="text-success">Läuft</strong>
+          <strong class="text-success">${_t.running}</strong>
         </div>
-        <div class="small mb-1"><i class="bi bi-collection me-1"></i><strong>Template:</strong> ${s.template || '–'}</div>
-        <div class="small mb-1"><i class="bi bi-database me-1"></i><strong>Run-ID:</strong> ${s.run_id || '–'}</div>
-        <div class="small mb-2"><i class="bi bi-clock me-1"></i><strong>Gestartet:</strong> ${s.started_at ? new Date(s.started_at).toLocaleString() : '–'}</div>
+        <div class="small mb-1"><i class="bi bi-collection me-1"></i><strong>${_t.template}:</strong> ${s.template || '–'}</div>
+        <div class="small mb-1"><i class="bi bi-database me-1"></i><strong>${_t.runId}:</strong> ${s.run_id || '–'}</div>
+        <div class="small mb-2"><i class="bi bi-clock me-1"></i><strong>${_t.started}:</strong> ${s.started_at ? new Date(s.started_at).toLocaleString() : '–'}</div>
         <button class="btn btn-sm btn-outline-danger mt-1" onclick="clearLock()">
-          <i class="bi bi-x-circle me-1"></i>Lock manuell löschen
+          <i class="bi bi-x-circle me-1"></i>${_t.clearLockManual}
         </button>`;
       _logRunId = s.latest_overnight_run;
     } else {
@@ -263,9 +417,9 @@ async function refreshStatus() {
       el.innerHTML = `
         <div class="d-flex align-items-center mb-2">
           <i class="bi bi-circle me-2 text-secondary"></i>
-          <strong class="text-secondary">Kein aktiver Benchmark</strong>
+          <strong class="text-secondary">${_t.noBenchActive}</strong>
         </div>
-        <div class="small text-muted">Letzter Overnight-Lauf:<br><code>${s.latest_overnight_run || '–'}</code></div>`;
+        <div class="small text-muted">${_t.lastOvernightRun}:<br><code>${s.latest_overnight_run || '–'}</code></div>`;
       _logRunId = s.latest_overnight_run;
     }
   } catch (e) {
@@ -285,7 +439,7 @@ async function refreshLiveLog() {
     const fileEl = document.getElementById('live-log-file');
     if (fileEl) fileEl.textContent = d.log_file ? `(${d.log_file})` : '';
     if (!d.lines || d.lines.length === 0) {
-      box.innerHTML = '<span class="text-muted">Kein Log verfügbar.</span>';
+      box.innerHTML = `<span class="text-muted">${_t.noLog}</span>`;
       return;
     }
     box.innerHTML = d.lines.map(l => {
@@ -299,7 +453,7 @@ async function refreshLiveLog() {
     if (auto && auto.checked) box.scrollTop = box.scrollHeight;
   } catch (e) {
     document.getElementById('live-log-box').innerHTML =
-      `<div class="log-line-fail">Fehler: ${escHtml(e.message)}</div>`;
+      `<div class="log-line-fail">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -315,12 +469,12 @@ async function refreshOvernightList() {
     const d = await apiFetch('/api/benchmarks/list');
     const runs = d.overnight;
     if (!runs || runs.length === 0) {
-      el.innerHTML = '<div class="text-muted small">Keine Overnight-Läufe gefunden.</div>';
+      el.innerHTML = `<div class="text-muted small">${_t.noOvernightRuns}</div>`;
       return;
     }
     let rows = runs.map(r => {
       const ts = fmtTs(r.started_at);
-      const epochs = r.epochs_done > 0 ? `${r.epochs_done} Epochen` : '–';
+      const epochs = r.epochs_done > 0 ? `${r.epochs_done} ${_t.epochsLabel}` : '–';
       const report = r.has_report ? `<span class="badge bg-success">Report</span>` : '';
       const isEmpty = r.epochs_done === 0 && !r.has_report;
       return `<tr class="${isEmpty ? 'table-warning' : ''}">
@@ -334,7 +488,7 @@ async function refreshOvernightList() {
         <td>
           <button class="btn btn-sm btn-outline-danger py-0 px-1"
                   onclick="deleteRun('${escHtml(r.run_id)}', 'overnight')"
-                  title="Löschen">
+                  title="${_t.deleteLabel}">
             <i class="bi bi-trash3"></i>
           </button>
         </td>
@@ -342,12 +496,12 @@ async function refreshOvernightList() {
     }).join('');
     el.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover align-middle">
       <thead><tr>
-        <th>Run-ID</th><th>Gestartet</th><th>Epochen</th><th>Report</th><th>Summary</th><th></th>
+        <th>${_t.runId}</th><th>${_t.started}</th><th>${_t.epochsLabel}</th><th>${_t.report}</th><th>Summary</th><th></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
   } catch (e) {
-    el.innerHTML = `<div class="text-danger small">${escHtml(e.message)}</div>`;
+    el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -359,7 +513,7 @@ async function refreshSingleList() {
     const d = await apiFetch('/api/benchmarks/list');
     const runs = d.single;
     if (!runs || runs.length === 0) {
-      el.innerHTML = '<div class="text-muted small">Keine Einzel-Läufe gefunden.</div>';
+      el.innerHTML = `<div class="text-muted small">${_t.noSingleRuns}</div>`;
       return;
     }
     let rows = runs.map(r => {
@@ -375,7 +529,7 @@ async function refreshSingleList() {
         <td>
           <button class="btn btn-sm btn-outline-danger py-0 px-1"
                   onclick="deleteRun('${escHtml(r.run_id)}', 'single')"
-                  title="Löschen">
+                  title="${_t.deleteLabel}">
             <i class="bi bi-trash3"></i>
           </button>
         </td>
@@ -383,12 +537,12 @@ async function refreshSingleList() {
     }).join('');
     el.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover align-middle">
       <thead><tr>
-        <th>Template</th><th>Zeitpunkt</th><th>Ø Score</th><th>Eval-Datei</th><th></th>
+        <th>${_t.template}</th><th>${_t.timestamp}</th><th>Ø ${_t.score}</th><th>${_t.evalFile}</th><th></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
   } catch (e) {
-    el.innerHTML = `<div class="text-danger small">${escHtml(e.message)}</div>`;
+    el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -396,7 +550,7 @@ async function refreshSingleList() {
 
 async function showResult(runId) {
   document.getElementById('result-modal-title').textContent = runId;
-  document.getElementById('result-modal-body').innerHTML = '<div class="text-muted">Lade…</div>';
+  document.getElementById('result-modal-body').innerHTML = `<div class="text-muted">${_t.loading}</div>`;
   const modal = new bootstrap.Modal(document.getElementById('resultModal'));
   modal.show();
   try {
@@ -407,11 +561,11 @@ async function showResult(runId) {
         html += `<pre class="bg-light p-2 rounded small mb-3">${escHtml(d.summary)}</pre>`;
       }
       if (d.report && d.report.per_epoch) {
-        html += '<h6>Epochen-Übersicht</h6>';
+        html += `<h6>${_t.epochsOverview}</h6>`;
         html += `<div class="table-responsive"><table class="table table-sm table-bordered align-middle">
           <thead><tr>
-            <th>Epoche</th><th>Ø Score</th><th>Tokens</th><th>Dauer (s)</th>
-            <th>Graph-Entities Δ</th><th>Cache Hit Rate</th><th>Compressions</th>
+            <th>${_t.epoche}</th><th>Ø ${_t.score}</th><th>${_t.tokens}</th><th>${_t.duration} (s)</th>
+            <th>${_t.graphEntitiesDelta}</th><th>${_t.cacheHitRate}</th><th>${_t.compressions}</th>
           </tr></thead><tbody>`;
         for (const ep of d.report.per_epoch) {
           html += `<tr>
@@ -426,15 +580,15 @@ async function showResult(runId) {
         }
         html += '</tbody></table></div>';
       } else if (d.epochs && d.epochs.length > 0) {
-        html += '<h6>Epochen (Eval-Daten)</h6>';
+        html += `<h6>${_t.epochsSummary}</h6>`;
         html += `<div class="table-responsive"><table class="table table-sm table-bordered align-middle">
-          <thead><tr><th>Epoche</th><th>Ø Score</th><th>Tests</th></tr></thead><tbody>`;
+          <thead><tr><th>${_t.epoche}</th><th>Ø ${_t.score}</th><th>${_t.tests}</th></tr></thead><tbody>`;
         for (const ep of d.epochs) {
           html += `<tr><td>${ep.epoch}</td><td>${scoreBadge(ep.avg_score)}</td><td>${ep.tests}</td></tr>`;
         }
         html += '</tbody></table></div>';
       } else {
-        html += '<div class="text-muted small">Noch keine Eval-Daten verfügbar.</div>';
+        html += `<div class="text-muted small">${_t.noEvalData}</div>`;
       }
     } else if (d.type === 'single') {
       // Meta info
@@ -456,7 +610,7 @@ async function showResult(runId) {
       }
 
       if (runResults.length === 0) {
-        html += '<div class="text-muted small">Keine Test-Einträge gefunden.</div>';
+        html += `<div class="text-muted small">${_t.noTestEntries}</div>`;
       } else {
         // Summary stats
         const evalScores = Object.values(evalMap).map(e => e.score).filter(s => s != null);
@@ -470,26 +624,26 @@ async function showResult(runId) {
         html += `<div class="row g-2 mb-3">
           <div class="col-auto"><div class="border rounded px-3 py-2 text-center">
             <div class="fw-bold">${avgScore != null ? scoreBadge(avgScore) : '–'}</div>
-            <div class="small text-muted">Ø Score</div>
+            <div class="small text-muted">Ø ${_t.score}</div>
           </div></div>
           <div class="col-auto"><div class="border rounded px-3 py-2 text-center">
             <div class="fw-bold">${runResults.length}</div>
-            <div class="small text-muted">Tests</div>
+            <div class="small text-muted">${_t.tests}</div>
           </div></div>
           <div class="col-auto"><div class="border rounded px-3 py-2 text-center">
             <div class="fw-bold">${totalTokens.toLocaleString()}</div>
-            <div class="small text-muted">Tokens</div>
+            <div class="small text-muted">${_t.tokens}</div>
           </div></div>
           <div class="col-auto"><div class="border rounded px-3 py-2 text-center">
             <div class="fw-bold">${Math.round(totalDur)}s</div>
-            <div class="small text-muted">Dauer gesamt</div>
+            <div class="small text-muted">${_t.totalDuration}</div>
           </div></div>
         </div>`;
 
         html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.83rem">
           <thead><tr>
-            <th>Test-ID</th><th>Kategorie</th><th>Typ</th>
-            <th>Score</th><th>Tokens</th><th>Dauer</th><th>Status</th>
+            <th>${_t.testId}</th><th>${_t.category}</th><th>${_t.typeLabel}</th>
+            <th>${_t.score}</th><th>${_t.tokens}</th><th>${_t.duration}</th><th>${_t.statusLabel}</th>
           </tr></thead><tbody>`;
 
         for (const r of runResults) {
@@ -499,9 +653,9 @@ async function showResult(runId) {
           const dur = r.turns.reduce((s, t) => s + (t.wall_clock_s || 0), 0);
           const hasError = r.turns.some(t => t.error);
           const statusBadge = hasError
-            ? '<span class="badge bg-danger">Fehler</span>'
+            ? `<span class="badge bg-danger">${_t.statusError}</span>`
             : tokens === 0
-              ? '<span class="badge bg-warning text-dark">Timeout</span>'
+              ? `<span class="badge bg-warning text-dark">${_t.statusTimeout}</span>`
               : '<span class="badge bg-success">OK</span>';
 
           // Score detail tooltip
@@ -527,10 +681,10 @@ async function showResult(runId) {
           <tr class="collapse" id="detail-${escHtml(r.test_id).replace(/[^a-z0-9]/gi,'_')}">
             <td colspan="7" class="p-0">
               <div class="bg-light p-3" style="font-size:.8rem">
-                ${ev.score_details ? `<div class="mb-2"><strong>Score-Details:</strong> <code>${escHtml(JSON.stringify(ev.score_details, null, 1).substring(0,300))}</code></div>` : ''}
+                ${ev.score_details ? `<div class="mb-2"><strong>${_t.scoreDetails}:</strong> <code>${escHtml(JSON.stringify(ev.score_details, null, 1).substring(0,300))}</code></div>` : ''}
                 ${r.turns.map(t => `
                   <div class="mb-2 border-start border-2 ps-2 ${t.error ? 'border-danger' : 'border-success'}">
-                    <div class="fw-semibold text-muted">Turn ${t.turn} — ${Math.round(t.wall_clock_s || 0)}s — ${(t.completion_tokens||0)} Tokens</div>
+                    <div class="fw-semibold text-muted">${_t.turn} ${t.turn} — ${Math.round(t.wall_clock_s || 0)}s — ${(t.completion_tokens||0)} ${_t.tokens}</div>
                     ${t.error ? `<div class="text-danger small">Error: ${escHtml(t.error)}</div>` : ''}
                     <div class="small mt-1" style="white-space:pre-wrap;max-height:120px;overflow:auto">${escHtml((t.response||'').substring(0,400))}${(t.response||'').length > 400 ? '…' : ''}</div>
                   </div>`).join('')}
@@ -541,10 +695,10 @@ async function showResult(runId) {
         html += '</tbody></table></div>';
       }
     }
-    document.getElementById('result-modal-body').innerHTML = html || '<div class="text-muted">Keine Daten.</div>';
+    document.getElementById('result-modal-body').innerHTML = html || `<div class="text-muted">${_t.noData}</div>`;
   } catch (e) {
     document.getElementById('result-modal-body').innerHTML =
-      `<div class="text-danger">Fehler: ${escHtml(e.message)}</div>`;
+      `<div class="text-danger">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -552,7 +706,7 @@ async function showResult(runId) {
 
 async function runPreflight() {
   const el = document.getElementById('preflight-result');
-  el.innerHTML = '<span class="text-muted">Prüfe…</span>';
+  el.innerHTML = `<span class="text-muted">${_t.checking}…</span>`;
   try {
     const d = await apiFetch('/api/benchmarks/preflight', { method: 'POST', body: '{}' });
     const rows = d.checks.map(c => {
@@ -571,10 +725,10 @@ async function runPreflight() {
     const trigger = document.getElementById('btn-confirm-trigger');
     if (trigger) trigger.disabled = !ready;
     el.innerHTML = rows + (ready
-      ? '<div class="alert alert-success mt-2 mb-0 py-1 small">✓ System bereit — Benchmark kann gestartet werden.</div>'
-      : '<div class="alert alert-warning mt-2 mb-0 py-1 small">⚠ Nicht alle Checks erfolgreich. Bitte prüfen.</div>');
+      ? `<div class="alert alert-success mt-2 mb-0 py-1 small">✓ ${_t.prefightReady}</div>`
+      : `<div class="alert alert-warning mt-2 mb-0 py-1 small">⚠ ${_t.preflightFail}</div>`);
   } catch (e) {
-    el.innerHTML = `<div class="text-danger small">Fehler: ${escHtml(e.message)}</div>`;
+    el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -585,12 +739,12 @@ async function triggerBenchmark() {
   const dataset  = document.getElementById('trigger-dataset').value;
   const epochs   = parseInt(document.getElementById('trigger-epochs').value, 10);
   if (!template || !dataset || isNaN(epochs)) {
-    alert('Bitte alle Felder ausfüllen.');
+    alert(_t.fillAllFields);
     return;
   }
   const btn = document.getElementById('btn-confirm-trigger');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Starte…';
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${_t.starting}…`;
   try {
     const d = await apiFetch('/api/benchmarks/trigger', {
       method: 'POST',
@@ -598,44 +752,315 @@ async function triggerBenchmark() {
     });
     bootstrap.Modal.getInstance(document.getElementById('triggerModal')).hide();
     if (d.status === 'started') {
-      showToast(`Benchmark gestartet (PID ${d.pid})`, 'success');
+      showToast(`${_t.benchStarted} (PID ${d.pid})`, 'success');
     } else {
-      showToast('Trigger-Datei geschrieben — Host-Watcher wird den Benchmark starten.', 'info');
+      showToast(_t.triggerWritten, 'info');
     }
     await refreshAll();
   } catch (e) {
-    showToast(`Fehler: ${e.message}`, 'danger');
+    showToast(`Error: ${e.message}`, 'danger');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Jetzt starten';
+    btn.innerHTML = `<i class="bi bi-play-fill me-1"></i>${_t.startNow}`;
+  }
+}
+
+// ── Bench type toggle ────────────────────────────────────────────────────────
+
+function onBenchTypeChange() {
+  const t = document.getElementById('trigger-bench-type').value;
+  document.getElementById('trigger-overnight-fields').style.display    = t === 'overnight'    ? '' : 'none';
+  document.getElementById('trigger-gaia-fields').style.display         = t === 'gaia'         ? '' : 'none';
+  document.getElementById('trigger-longmemeval-fields').style.display  = t === 'longmemeval'  ? '' : 'none';
+  const btn = document.getElementById('btn-confirm-trigger');
+  btn.disabled = (t === 'overnight');  // overnight requires preflight; others can start directly
+}
+
+// ── Unified trigger ──────────────────────────────────────────────────────────
+
+async function triggerAny() {
+  const type = document.getElementById('trigger-bench-type').value;
+  if (type === 'gaia') await triggerGaia();
+  else if (type === 'longmemeval') await triggerLongMemEval();
+  else await triggerBenchmark();
+}
+
+// ── GAIA trigger ─────────────────────────────────────────────────────────────
+
+async function triggerGaia() {
+  const template = document.getElementById('trigger-gaia-template').value.trim();
+  const maxPerLvl = parseInt(document.getElementById('trigger-gaia-max').value, 10);
+  const levels = [1,2,3].filter(n => document.getElementById(`gaia-lvl${n}`)?.checked);
+  if (!template || !levels.length || isNaN(maxPerLvl)) {
+    alert(_t.fillAllFields);
+    return;
+  }
+  const btn = document.getElementById('btn-confirm-trigger');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${_t.starting}…`;
+  try {
+    const d = await apiFetch('/api/benchmarks/trigger-gaia', {
+      method: 'POST',
+      body: JSON.stringify({ template, levels, max_per_level: maxPerLvl }),
+    });
+    bootstrap.Modal.getInstance(document.getElementById('triggerModal')).hide();
+    showToast(`${_t.gaiaStarted} (PID ${d.pid})`, 'success');
+    await refreshAll();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, 'danger');
+    btn.disabled = false;
+  } finally {
+    btn.innerHTML = `<i class="bi bi-play-fill me-1"></i>${_t.startNow}`;
+  }
+}
+
+// ── GAIA list ────────────────────────────────────────────────────────────────
+
+async function refreshGaiaList() {
+  const el = document.getElementById('gaia-list-content');
+  if (!el) return;
+  try {
+    const data = await apiFetch('/api/benchmarks/list');
+    const runs = data.gaia || [];
+    if (!runs.length) {
+      el.innerHTML = `<div class="text-muted small">${_t.noGaiaRuns}</div>`;
+      return;
+    }
+    const rows = runs.map(r => {
+      const pct = r.overall_pct ?? 0;
+      const cls = pct >= 50 ? 'score-high' : pct >= 25 ? 'score-mid' : 'score-low';
+      const lvls = Object.entries(r.by_level || {}).map(([l, s]) =>
+        `<span class="badge bg-secondary me-1">L${l}: ${s.correct}/${s.total}</span>`
+      ).join('');
+      return `<tr>
+        <td><code class="small">${escHtml(r.timestamp || '–')}</code></td>
+        <td><span class="badge bg-dark text-light">${escHtml(r.template)}</span></td>
+        <td>${lvls}</td>
+        <td><span class="score-badge ${cls}">${pct.toFixed(1)}%</span>
+            <small class="text-muted ms-1">${r.total_correct} ${_t.correctOf} ${r.total_questions}</small></td>
+        <td>
+          <button class="btn btn-sm btn-outline-secondary" onclick="showGaiaResult('${escHtml(r.filename)}')">
+            <i class="bi bi-eye me-1"></i>${_t.scoreDetails}
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `
+      <table class="table table-sm table-hover align-middle">
+        <thead><tr>
+          <th>${_t.timestamp}</th>
+          <th>Template</th>
+          <th>${_t.gaiaLevel}</th>
+          <th>${_t.overall}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── GAIA result detail ───────────────────────────────────────────────────────
+
+async function showGaiaResult(filename) {
+  document.getElementById('result-modal-title').textContent = filename;
+  document.getElementById('result-modal-body').innerHTML = `<div class="text-muted">${_t.loading}</div>`;
+  const modal = new bootstrap.Modal(document.getElementById('resultModal'));
+  modal.show();
+  try {
+    const d = await apiFetch(`/api/benchmarks/result-gaia/${encodeURIComponent(filename)}`);
+    const results = d.results || [];
+    const rows = results.map(r => {
+      const icon = r.correct
+        ? '<i class="bi bi-check-circle-fill check-ok"></i>'
+        : '<i class="bi bi-x-circle-fill check-fail"></i>';
+      const q = (r.question || '').substring(0, 120) + ((r.question || '').length > 120 ? '…' : '');
+      return `<tr>
+        <td class="text-center">${icon}</td>
+        <td class="text-center"><span class="badge bg-secondary">L${r.level}</span></td>
+        <td class="small">${escHtml(q)}</td>
+        <td class="small text-success">${escHtml(r.expected_answer || '–')}</td>
+        <td class="small text-muted">${escHtml((r.model_answer || '').substring(0, 100))}${(r.model_answer || '').length > 100 ? '…' : ''}</td>
+        <td class="text-muted small">${r.duration_s ? r.duration_s.toFixed(1)+'s' : '–'}</td>
+      </tr>`;
+    }).join('');
+    const lvlSummary = Object.entries(d.by_level || {}).map(([l,s]) =>
+      `<span class="badge bg-dark me-2">Level ${l}: ${s.correct}/${s.total} = ${s.pct}%</span>`
+    ).join('');
+    document.getElementById('result-modal-body').innerHTML = `
+      <div class="mb-3">
+        <strong>${_t.overall}:</strong>
+        <span class="score-badge ${d.overall_pct >= 50 ? 'score-high' : d.overall_pct >= 25 ? 'score-mid' : 'score-low'} ms-2">
+          ${d.overall_pct}%
+        </span>
+        <span class="text-muted ms-2 small">${d.total_correct} ${_t.correctOf} ${d.total_questions}</span>
+      </div>
+      <div class="mb-3">${lvlSummary}</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead><tr>
+            <th>${_t.gaiaCorrect}</th>
+            <th>${_t.gaiaLevel}</th>
+            <th>${_t.gaiaQuestion}</th>
+            <th>${_t.gaiaExpected}</th>
+            <th>${_t.gaiaAnswer}</th>
+            <th>${_t.duration}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    document.getElementById('result-modal-body').innerHTML =
+      `<div class="text-danger">${_t.loadError}: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── LongMemEval trigger ──────────────────────────────────────────────────────
+
+async function triggerLongMemEval() {
+  const template = document.getElementById('trigger-lme-template').value.trim();
+  const maxQ = parseInt(document.getElementById('trigger-lme-max').value, 10);
+  if (!template || isNaN(maxQ)) { alert(_t.fillAllFields); return; }
+  const btn = document.getElementById('btn-confirm-trigger');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${_t.starting}…`;
+  try {
+    const d = await apiFetch('/api/benchmarks/trigger-longmemeval', {
+      method: 'POST',
+      body: JSON.stringify({ template, max_q: maxQ }),
+    });
+    bootstrap.Modal.getInstance(document.getElementById('triggerModal')).hide();
+    showToast(`${_t.lmeStarted} (PID ${d.pid})`, 'success');
+    await refreshAll();
+  } catch (e) {
+    showToast(`Error: ${e.message}`, 'danger');
+    btn.disabled = false;
+  } finally {
+    btn.innerHTML = `<i class="bi bi-play-fill me-1"></i>${_t.startNow}`;
+  }
+}
+
+// ── LongMemEval list ─────────────────────────────────────────────────────────
+
+async function refreshLongMemEvalList() {
+  const el = document.getElementById('longmemeval-list-content');
+  if (!el) return;
+  try {
+    const data = await apiFetch('/api/benchmarks/list');
+    const runs = data.longmemeval || [];
+    if (!runs.length) {
+      el.innerHTML = `<div class="text-muted small">${_t.noLmeRuns}</div>`;
+      return;
+    }
+    const rows = runs.map(r => {
+      const pct = r.average_score_pct ?? 0;
+      const cls = pct >= 50 ? 'score-high' : pct >= 25 ? 'score-mid' : 'score-low';
+      const types = Object.entries(r.by_type || {}).map(([tp, s]) =>
+        `<span class="badge bg-secondary me-1" title="${escHtml(tp)}">${escHtml(tp.substring(0,12))}: ${s.passed}/${Object.keys(s).length > 0 ? (s.avg_pct+'%') : '?'}</span>`
+      ).join('');
+      return `<tr>
+        <td><code class="small">${escHtml(r.timestamp || '–')}</code></td>
+        <td><span class="badge bg-dark text-light">${escHtml(r.template)}</span></td>
+        <td>${r.total_questions}</td>
+        <td><span class="score-badge ${cls}">${pct.toFixed(1)}%</span></td>
+        <td>
+          <button class="btn btn-sm btn-outline-secondary" onclick="showLmeResult('${escHtml(r.filename)}')">
+            <i class="bi bi-eye me-1"></i>${_t.scoreDetails}
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `
+      <table class="table table-sm table-hover align-middle">
+        <thead><tr>
+          <th>${_t.timestamp}</th>
+          <th>Template</th>
+          <th>${_t.tests}</th>
+          <th>${_t.avgScore}</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── LongMemEval result detail ─────────────────────────────────────────────────
+
+async function showLmeResult(filename) {
+  document.getElementById('result-modal-title').textContent = filename;
+  document.getElementById('result-modal-body').innerHTML = `<div class="text-muted">${_t.loading}</div>`;
+  const modal = new bootstrap.Modal(document.getElementById('resultModal'));
+  modal.show();
+  try {
+    const d = await apiFetch(`/api/benchmarks/result-longmemeval/${encodeURIComponent(filename)}`);
+    const results = d.results || [];
+    const rows = results.map(r => {
+      const cls = r.score_pct >= 50 ? 'check-ok' : 'check-fail';
+      const icon = r.score_pct >= 50
+        ? '<i class="bi bi-check-circle-fill check-ok"></i>'
+        : '<i class="bi bi-x-circle-fill check-fail"></i>';
+      return `<tr>
+        <td class="text-center">${icon}</td>
+        <td class="small"><span class="badge bg-secondary">${escHtml(r.type || '–')}</span></td>
+        <td class="text-center small">${r.num_turns || '–'}</td>
+        <td class="small text-success">${escHtml((r.expected || []).join(', ').substring(0, 80))}</td>
+        <td class="text-center"><span class="score-badge ${r.score_pct >= 50 ? 'score-high' : 'score-low'}">${r.score_pct}%</span></td>
+        <td class="text-muted small">${r.wall_clock_s ? r.wall_clock_s.toFixed(1)+'s' : '–'}</td>
+      </tr>`;
+    }).join('');
+    const typeSummary = Object.entries(d.by_type || {}).map(([tp, s]) =>
+      `<span class="badge bg-dark me-2">${escHtml(tp)}: ${s.avg_pct}% avg (${s.passed} passed)</span>`
+    ).join('');
+    document.getElementById('result-modal-body').innerHTML = `
+      <div class="mb-3">
+        <strong>${_t.avgScore}:</strong>
+        <span class="score-badge ${d.average_score_pct >= 50 ? 'score-high' : d.average_score_pct >= 25 ? 'score-mid' : 'score-low'} ms-2">
+          ${d.average_score_pct}%
+        </span>
+        <span class="text-muted ms-2 small">${d.total_questions} ${_t.tests}</span>
+      </div>
+      <div class="mb-3">${typeSummary}</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead><tr>
+            <th>OK</th><th>Type</th><th>Turns</th><th>${_t.gaiaExpected}</th><th>${_t.score}</th><th>${_t.duration}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    document.getElementById('result-modal-body').innerHTML =
+      `<div class="text-danger">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
 }
 
 // ── Delete run ───────────────────────────────────────────────────────────────
 
 async function deleteRun(runId, runType) {
-  const label = runType === 'overnight' ? `Overnight-Lauf "${runId}"` : `Lauf "${runId}"`;
-  if (!confirm(`${label} wirklich löschen?\nDie zugehörigen Dateien werden unwiderruflich entfernt.`)) return;
+  if (!confirm(`${_t.confirmDeleteRun} "${runId}"?`)) return;
   try {
     const d = await apiFetch(`/api/benchmarks/result/${encodeURIComponent(runId)}`, { method: 'DELETE' });
-    showToast(`Gelöscht: ${d.deleted.join(', ')}`, 'success');
+    showToast(`${_t.deleted}: ${d.deleted.join(', ')}`, 'success');
     await refreshOvernightList();
     await refreshSingleList();
   } catch (e) {
-    showToast(`Fehler: ${e.message}`, 'danger');
+    showToast(`Error: ${e.message}`, 'danger');
   }
 }
 
 // ── Lock clear ───────────────────────────────────────────────────────────────
 
 async function clearLock() {
-  if (!confirm('Lock wirklich manuell löschen? Nur wenn der Prozess bereits beendet ist.')) return;
+  if (!confirm(_t.confirmClearLock)) return;
   try {
     await apiFetch('/api/benchmarks/lock', { method: 'DELETE' });
-    showToast('Lock gelöscht.', 'success');
+    showToast(_t.lockCleared, 'success');
     await refreshStatus();
   } catch (e) {
-    showToast(`Fehler: ${e.message}`, 'danger');
+    showToast(`Error: ${e.message}`, 'danger');
   }
 }
 
@@ -669,6 +1094,8 @@ async function refreshAll() {
     refreshLiveLog(),
     refreshOvernightList(),
     refreshSingleList(),
+    refreshGaiaList(),
+    refreshLongMemEvalList(),
   ]);
 }
 

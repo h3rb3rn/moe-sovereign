@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Server — MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'page.servers') }} — MoE Admin{% endblock %}
 
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
-  <h5 class="mb-0 fw-bold"><i class="bi bi-hdd-stack me-2 text-primary"></i>Inference-Server</h5>
+  <h5 class="mb-0 fw-bold"><i class="bi bi-hdd-stack me-2 text-primary"></i>{{ t(request, 'page.servers') }}</h5>
   <div class="d-flex gap-2">
     <button class="btn btn-sm btn-outline-primary" onclick="loadAll()">
       <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
@@ -50,7 +50,7 @@
           </div>
           <div class="text-center">
             <div class="fs-4 fw-bold">{{ srv.get('cost_factor', 1.0) }}</div>
-            <div class="text-muted" style="font-size:.75rem">Faktor</div>
+            <div class="text-muted" style="font-size:.75rem">{{ t(request, 'table.factor') }}</div>
           </div>
         </div>
         <div class="form-check form-switch mb-1">
@@ -85,7 +85,7 @@
         </div>
         <button class="btn btn-sm btn-outline-secondary w-100"
                 onclick="toggleModels({{ loop.index0 }}, '{{ srv.name }}')">
-          <i class="bi bi-list-ul me-1"></i>Modelle anzeigen
+          <i class="bi bi-list-ul me-1"></i>{{ t(request, 'lbl.models') }}
         </button>
         <div id="srv-models-{{ loop.index0 }}" class="mt-2" style="display:none">
           <div class="text-center text-muted small py-2" id="srv-models-loading-{{ loop.index0 }}">
@@ -95,9 +95,9 @@
             <table class="table table-sm mb-0" id="srv-models-table-{{ loop.index0 }}" style="display:none">
               <thead class="sticky-top bg-white">
                 <tr>
-                  <th>Modell</th>
+                  <th>{{ t(request, 'table.model') }}</th>
                   <th style="width:65px" class="text-end">GB</th>
-                  <th style="width:80px">Quant.</th>
+                  <th style="width:80px">{{ t(request, 'table.quant') }}</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -116,6 +116,14 @@
 const _modelsLoaded = {};
 const _modelsVisible = {};
 
+const _tservers = {
+  error:             "{{ t(request, 'js.load_error') }}",
+  confirmBlock:      "{{ t(request, 'js.confirm_block_server') }}",
+  floatingFail:      "{{ t(request, 'js.load_error') }}",
+  blockFail:         "{{ t(request, 'js.load_error') }}",
+  dashboardUpdated:  "{{ t(request, 'js.dashboard_updated') }}",
+};
+
 async function loadAll() {
   const badges     = document.querySelectorAll('[id^="srv-badge-"]');
   const latencies  = document.querySelectorAll('[id^="srv-latency-"]');
@@ -126,7 +134,7 @@ async function loadAll() {
   try {
     data = await fetch('/api/servers/health').then(r => r.json());
   } catch {
-    badges.forEach(b => { b.className = 'badge bg-danger'; b.textContent = 'Fehler'; });
+    badges.forEach(b => { b.className = 'badge bg-danger'; b.textContent = _tservers.error; });
     return;
   }
 
@@ -182,7 +190,7 @@ async function loadModels(idx, serverName) {
     }
     _modelsLoaded[idx] = true;
   } catch (e) {
-    if (loading) { loading.innerHTML = `<span class="text-danger">Fehler: ${e.message}</span>`; }
+    if (loading) { loading.innerHTML = `<span class="text-danger">${_tservers.error}: ${e.message}</span>`; }
   }
 }
 
@@ -204,7 +212,7 @@ async function toggleOntology(input) {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   } catch (e) {
-    statusEl.textContent = 'Fehler: ' + e.message;
+    statusEl.textContent = _tservers.error + ': ' + e.message;
     statusEl.className = 'ms-2 small text-danger';
     input.checked = !input.checked;
     return;
@@ -251,7 +259,7 @@ async function toggleFloating(input) {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   } catch (e) {
-    alert('Floating-Toggle fehlgeschlagen: ' + e.message);
+    alert(_tservers.floatingFail + ': ' + e.message);
     input.checked = !input.checked;
   }
 }
@@ -259,7 +267,7 @@ async function toggleFloating(input) {
 async function toggleBlock(input) {
   const name = input.dataset.server;
   const blocked = input.checked;
-  if (blocked && !confirm(`Server "${name}" vollständig blockieren?\n\nDer Server wird aus allen Routing-Pools entfernt. Keine LLMs werden mehr geladen.\nDer Block ist sofort wirksam und bleibt nach Container-Neustart erhalten.`)) {
+  if (blocked && !confirm(`{{ t(request, 'js.confirm_block_server') }}`.replace('{name}', name))) {
     input.checked = false;
     return;
   }
@@ -273,7 +281,7 @@ async function toggleBlock(input) {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   } catch (e) {
-    alert('Block-Toggle fehlgeschlagen: ' + e.message);
+    alert(_tservers.blockFail + ': ' + e.message);
     input.checked = !input.checked;
     if (card) card.style.borderColor = '';
   }
@@ -308,11 +316,11 @@ async function generateDashboard() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     });
-    const msg = `Dashboard erzeugt.\nProbed: ${res.probed.length}\nPrometheus reloaded: ${res.prometheus_reloaded}\n${res.prometheus_error ? 'Warning: ' + res.prometheus_error : ''}`;
+    const msg = `${_tservers.dashboardUpdated}\nProbed: ${res.probed.length}\nPrometheus reloaded: ${res.prometheus_reloaded}\n${res.prometheus_error ? 'Warning: ' + res.prometheus_error : ''}`;
     alert(msg);
     if (res.dashboard_url) window.open(res.dashboard_url, '_blank');
   } catch (e) {
-    alert('Fehler: ' + e.message);
+    alert(_tservers.error + ': ' + e.message);
   } finally {
     btn.disabled = false;
     btn.innerHTML = orig;

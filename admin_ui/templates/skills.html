@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Skills – MoE Admin{% endblock %}
+{% block title %}{{ t(request, 'page.skills') }} – MoE Admin{% endblock %}
 
 {% block flash %}
 <div id="flash-container"></div>
@@ -51,7 +51,7 @@
     </div>
     <div id="skills-grid" class="row g-3">
       <div class="col-12 text-center text-muted py-5" id="loading-state">
-        <div class="spinner-border spinner-border-sm me-2" role="status"></div>Skills werden geladen…
+        <div class="spinner-border spinner-border-sm me-2" role="status"></div>{{ t(request, 'js.loading') }}
       </div>
     </div>
   </div>
@@ -141,6 +141,26 @@ let _modal = null;
 let _editName = null;
 let _upstreamLoaded = false;
 
+const _tskills = {
+  active:            "{{ t(request, 'status.active') }}",
+  deactivated:       "{{ t(request, 'status.disabled') }}",
+  deactivate:        "{{ t(request, 'btn.deactivate') }}",
+  activate:          "{{ t(request, 'btn.activate') }}",
+  noSkills:          "{{ t(request, 'empty.no_skills') }}",
+  noUpstream:        "{{ t(request, 'empty.no_upstream') }}",
+  update:            "{{ t(request, 'btn.git_pull') }}",
+  import:            "{{ t(request, 'btn.import') }}",
+  nameRequired:      "{{ t(request, 'js.give_skill_name') }}",
+  invalidName:       "{{ t(request, 'js.invalid_json') }}",
+  saved:             "{{ t(request, 'js.skill_updated') }}",
+  loadingUpstream:   "{{ t(request, 'js.loading_models') }}",
+  importedBadge:     "{{ t(request, 'status.imported') }}",
+  noDesc:            "{{ t(request, 'info.no_desc') }}",
+  refFiles:          "{{ t(request, 'info.ref_files') }}",
+  gitPullFailed:     "{{ t(request, 'js.git_pull_failed') }}",
+  error:             "{{ t(request, 'js.error') }}",
+};
+
 function getModal() {
   if (!_modal) _modal = new bootstrap.Modal(document.getElementById('skillModal'));
   return _modal;
@@ -175,7 +195,7 @@ function renderGrid(skills) {
   const grid = document.getElementById('skills-grid');
   if (!skills.length) {
     grid.innerHTML = `<div class="col-12"><div class="alert alert-info">
-      <i class="bi bi-info-circle me-2"></i>Noch keine Skills. Erstelle den ersten oder importiere aus dem Upstream-Tab.
+      <i class="bi bi-info-circle me-2"></i>${_tskills.noSkills}
     </div></div>`;
     return;
   }
@@ -185,12 +205,12 @@ function renderGrid(skills) {
 function renderCard(s) {
   const enabled  = s.enabled;
   const badgeCls = enabled ? 'bg-success' : 'bg-secondary';
-  const badgeTxt = enabled ? 'Aktiv' : 'Deaktiviert';
+  const badgeTxt = enabled ? _tskills.active : _tskills.deactivated;
   const cardCls  = enabled ? '' : 'border-secondary border-opacity-25';
   const hdrCls   = enabled ? 'bg-light' : 'bg-secondary bg-opacity-10 text-muted';
   const toggleTxt = enabled
-    ? '<i class="bi bi-pause-circle me-1"></i>Deaktivieren'
-    : '<i class="bi bi-play-circle me-1"></i>Aktivieren';
+    ? `<i class="bi bi-pause-circle me-1"></i>${_tskills.deactivate}`
+    : `<i class="bi bi-play-circle me-1"></i>${_tskills.activate}`;
   const toggleCls = enabled ? 'btn-outline-warning' : 'btn-outline-success';
   const desc = s.description ? `<p class="card-text text-muted small mb-2">${escHtml(s.description)}</p>` : '';
 
@@ -250,9 +270,9 @@ async function saveSkill() {
   const name = document.getElementById('sk-name').value.trim().toLowerCase();
   const description = document.getElementById('sk-description').value.trim();
   const body = document.getElementById('sk-body').value.trim();
-  if (!_editName && !name) return showFlash('Name ist erforderlich.', 'warning');
+  if (!_editName && !name) return showFlash(_tskills.nameRequired, 'warning');
   if (!_editName && !/^[a-z0-9][a-z0-9\-]*$/.test(name))
-    return showFlash('Name darf nur Kleinbuchstaben, Ziffern und Bindestriche enthalten.', 'warning');
+    return showFlash(_tskills.nameRequired, 'warning');
   try {
     const r = _editName
       ? await fetch(`${SKILLS_URL}/${_editName}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({description,body})})
@@ -260,7 +280,7 @@ async function saveSkill() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
     getModal().hide();
-    showFlash('Skill gespeichert.');
+    showFlash(_tskills.saved.replace('{name}', _editName || name));
     loadSkills();
   } catch(e) {
     showFlash(`Error: ${e.message}`, 'danger');
@@ -287,11 +307,11 @@ async function toggleSkill(name, btn) {
     const r = await fetch(`${SKILLS_URL}/${name}/toggle`, {method:'POST'});
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
-    showFlash(`Skill '/${name}' ${data.enabled ? 'aktiviert' : 'deaktiviert'}.`);
+    showFlash(data.enabled ? `{{ t(request, 'js.skill_activated') }}`.replace('{name}', name) : `{{ t(request, 'js.skill_deactivated') }}`.replace('{name}', name));
     loadSkills();
   } catch(e) {
     btn.disabled = false;
-    showFlash(`Fehler: ${e.message}`, 'danger');
+    showFlash(`${_tskills.error}: ${e.message}`, 'danger');
   }
 }
 
@@ -302,7 +322,7 @@ async function loadUpstream() {
   _upstreamLoaded = true;
   const grid = document.getElementById('upstream-grid');
   grid.innerHTML = `<div class="col-12 text-center text-muted py-4">
-    <div class="spinner-border spinner-border-sm me-2"></div>Lade Upstream-Skills…</div>`;
+    <div class="spinner-border spinner-border-sm me-2"></div>${_tskills.loadingUpstream}</div>`;
   try {
     const r = await fetch(UPSTREAM_URL);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -317,7 +337,7 @@ async function loadUpstream() {
 function renderUpstreamGrid(skills) {
   const grid = document.getElementById('upstream-grid');
   if (!skills.length) {
-    grid.innerHTML = `<div class="col-12"><div class="alert alert-info">Keine Upstream-Skills gefunden.</div></div>`;
+    grid.innerHTML = `<div class="col-12"><div class="alert alert-info">${_tskills.noUpstream}</div></div>`;
     return;
   }
   grid.innerHTML = skills.map(renderUpstreamCard).join('');
@@ -325,17 +345,17 @@ function renderUpstreamGrid(skills) {
 
 function renderUpstreamCard(s) {
   const existsBadge = s.local_exists
-    ? `<span class="badge bg-success ms-1" title="Lokal vorhanden">✓ Importiert</span>`
+    ? `<span class="badge bg-success ms-1">${_tskills.importedBadge}</span>`
     : '';
   const refs = s.ref_count > 0
-    ? `<span class="text-muted small ms-2"><i class="bi bi-files me-1"></i>${s.ref_count} Referenz-Datei${s.ref_count>1?'en':''}</span>`
+    ? `<span class="text-muted small ms-2"><i class="bi bi-files me-1"></i>${s.ref_count} ${_tskills.refFiles}</span>`
     : '';
   const desc = s.description
     ? `<p class="card-text text-muted small mb-2" style="max-height:3.5em;overflow:hidden">${escHtml(s.description.substring(0,180))}${s.description.length>180?'…':''}</p>`
-    : '<p class="text-muted small fst-italic mb-2">Keine Beschreibung</p>';
+    : `<p class="text-muted small fst-italic mb-2">${_tskills.noDesc}</p>`;
   const importBtnTxt = s.local_exists
-    ? '<i class="bi bi-arrow-clockwise me-1"></i>Aktualisieren'
-    : '<i class="bi bi-download me-1"></i>Importieren';
+    ? `<i class="bi bi-arrow-clockwise me-1"></i>${_tskills.update}`
+    : `<i class="bi bi-download me-1"></i>${_tskills.import}`;
   const importBtnCls = s.local_exists ? 'btn-outline-warning' : 'btn-outline-success';
 
   return `<div class="col-md-6 col-xl-4">
@@ -372,8 +392,8 @@ async function importSkill(name, btn) {
     loadSkills();
   } catch(e) {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-download me-1"></i>Importieren';
-    showFlash(`Fehler: ${e.message}`, 'danger');
+    btn.innerHTML = `<i class="bi bi-download me-1"></i>${_tskills.import}`;
+    showFlash(`${_tskills.error}: ${e.message}`, 'danger');
   }
 }
 
@@ -507,7 +527,7 @@ async function pullUpstream(btn) {
     _upstreamLoaded = false;
     loadUpstream();
   } catch(e) {
-    showFlash(`git pull fehlgeschlagen: ${e.message}`, 'danger');
+    showFlash(`{{ t(request, 'js.git_pull_failed') }}: ${e.message}`, 'danger');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Git Pull';

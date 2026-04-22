@@ -2517,10 +2517,9 @@ async def api_maintenance_prometheus_reload():
 
 _CLEANUP_CONFIG_PATH  = Path("/app/cleanup-config.json")
 _CLEANUP_HISTORY_PATH = Path("/app/cleanup-history.jsonl")
-_CLEANUP_CRON_SCRIPTS = {
-    "docker_prune":        "/etc/cron.daily/moe-docker-prune",
-    "checkpoint_archive":  "/etc/cron.daily/moe-checkpoint-archive",
-}
+_CHECKPOINT_ARCHIVE_DIR = Path("/app/checkpoint-archives")
+
+_KNOWN_JOBS = {"docker_prune", "checkpoint_archive"}
 
 def _cleanup_paths() -> tuple[Path, Path]:
     return _CLEANUP_CONFIG_PATH, _CLEANUP_HISTORY_PATH
@@ -2639,21 +2638,144 @@ def _update_env_key(key: str, value: str) -> None:
     env_path.write_text("".join(new_lines))
 
 
+def _write_cleanup_record(record: dict) -> None:
+    with open(_CLEANUP_HISTORY_PATH, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _run_docker_prune() -> None:
+    import time
+    import datetime
+    import docker as docker_sdk
+
+    start = time.time()
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        client = docker_sdk.from_env()
+        img = client.images.prune(filters={"dangling": True})
+        img_freed = img.get("SpaceReclaimed", 0)
+        client.containers.prune()
+        try:
+            build = client.api.prune_builds()
+            build_freed = build.get("SpaceReclaimed", 0)
+        except Exception:
+            build_freed = 0
+        total = img_freed + build_freed
+        _write_cleanup_record({
+            "job": "docker_prune",
+            "ts": ts,
+            "duration_s": int(time.time() - start),
+            "freed_bytes": total,
+            "details": {
+                "images_freed": f"{img_freed} B",
+                "build_cache_freed": f"{build_freed} B",
+            },
+        })
+    except Exception as exc:
+        logger.error("docker_prune failed: %s", exc)
+
+
+def _run_checkpoint_archive() -> None:
+    import time
+    import datetime
+    import subprocess
+    import os
+
+    start = time.time()
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    cfg = _read_cleanup_config().get("checkpoint_archive", {})
+    keep_rows = int(cfg.get("keep_rows", 30000))
+    retain_days = int(cfg.get("retain_days", 90))
+
+    pg_url = os.environ.get("POSTGRES_CHECKPOINT_URL", "")
+    if not pg_url:
+        logger.error("checkpoint_archive: POSTGRES_CHECKPOINT_URL not set")
+        return
+
+    _CHECKPOINT_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    archive = _CHECKPOINT_ARCHIVE_DIR / f"{datetime.datetime.utcnow().strftime('%Y-%m-%d')}.pgdump"
+
+    # Dump
+    dump_bytes = 0
+    try:
+        result = subprocess.run(
+            ["pg_dump", "--format=custom", "-Z9", pg_url],
+            capture_output=True,
+            timeout=300,
+        )
+        if result.returncode == 0 and result.stdout:
+            archive.write_bytes(result.stdout)
+            dump_bytes = archive.stat().st_size
+        else:
+            logger.error("pg_dump failed: %s", result.stderr.decode()[:500])
+    except Exception as exc:
+        logger.error("pg_dump error: %s", exc)
+
+    # Prune via psycopg3
+    rows_deleted = 0
+    try:
+        import psycopg
+        with psycopg.connect(pg_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    WITH del AS (
+                        DELETE FROM checkpoints
+                        WHERE checkpoint_id IN (
+                            SELECT checkpoint_id FROM checkpoints
+                            ORDER BY checkpoint_id DESC OFFSET %s
+                        ) RETURNING checkpoint_id
+                    ) SELECT COUNT(*) FROM del
+                """, (keep_rows,))
+                rows_deleted = cur.fetchone()[0] or 0
+                cur.execute("""
+                    DELETE FROM checkpoint_blobs
+                    WHERE thread_id NOT IN (SELECT DISTINCT thread_id FROM checkpoints)
+                """)
+                cur.execute("""
+                    DELETE FROM checkpoint_writes
+                    WHERE checkpoint_id NOT IN (SELECT checkpoint_id FROM checkpoints)
+                """)
+            conn.commit()
+    except Exception as exc:
+        logger.error("checkpoint prune failed: %s", exc)
+
+    # Rotate old archives
+    rotated = 0
+    try:
+        cutoff = time.time() - retain_days * 86400
+        for f in _CHECKPOINT_ARCHIVE_DIR.glob("*.pgdump"):
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                rotated += 1
+    except Exception as exc:
+        logger.error("archive rotation failed: %s", exc)
+
+    _write_cleanup_record({
+        "job": "checkpoint_archive",
+        "ts": ts,
+        "duration_s": int(time.time() - start),
+        "freed_bytes": 0,
+        "details": {
+            "dump_size_bytes": dump_bytes,
+            "rows_deleted": rows_deleted,
+            "archives_rotated": rotated,
+            "keep_rows": keep_rows,
+            "retain_days": retain_days,
+        },
+    })
+
+
 @app.post("/api/cleanup/run/{job}", dependencies=[Depends(require_login)])
 async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
     """Triggers a cleanup job immediately in the background."""
-    script = _CLEANUP_CRON_SCRIPTS.get(job)
-    if not script:
+    if job not in _KNOWN_JOBS:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job}")
 
-    def _run_script(path: str) -> None:
-        import subprocess
-        try:
-            subprocess.run(["sudo", path], timeout=600, capture_output=True)
-        except Exception as exc:
-            logger.error("Cleanup job %s failed: %s", path, exc)
+    if job == "docker_prune":
+        background_tasks.add_task(_run_docker_prune)
+    elif job == "checkpoint_archive":
+        background_tasks.add_task(_run_checkpoint_archive)
 
-    background_tasks.add_task(_run_script, script)
     return {"ok": True, "job": job, "message": "Job started — check History for status updates"}
 
 
