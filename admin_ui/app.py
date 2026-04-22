@@ -6331,6 +6331,72 @@ async def api_bench_trigger_gaia(request: Request, _=Depends(require_login)):
     return {"status": "started", "pid": proc.pid, "run_id": lock_info["run_id"], "log": str(log_path)}
 
 
+# ─── Service Account: Benchmarks & Gap Healer ─────────────────────────────────
+
+def _read_bench_api_key() -> str:
+    """Read MOE_API_KEY from benchmarks/.env."""
+    env_file = BENCHMARKS_DIR / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("MOE_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return os.environ.get("SYSTEM_API_KEY", "")
+
+
+@app.get("/api/service-accounts/benchmarks", dependencies=[Depends(require_login)])
+async def api_sa_benchmarks_get():
+    """Return the benchmark service account user and their expert_template permissions."""
+    import hashlib
+    raw_key = _read_bench_api_key()
+    if not raw_key:
+        raise HTTPException(status_code=404, detail="MOE_API_KEY not found in benchmarks/.env")
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    user_id = await db.get_user_id_by_key_hash(key_hash)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="API key not found in DB")
+    perms = await db.get_permissions_map(user_id)
+    all_templates = [{"id": t["id"], "name": t.get("name") or t["id"]}
+                     for t in await db.list_admin_templates()]
+    return {
+        "user_id": user_id,
+        "key_prefix": raw_key[:14] + "...",
+        "granted_templates": perms.get("expert_template", []),
+        "all_templates": all_templates,
+    }
+
+
+@app.post("/api/service-accounts/benchmarks/templates", dependencies=[Depends(require_login)])
+async def api_sa_benchmarks_grant(request: Request):
+    """Grant an expert_template permission to the benchmark service account."""
+    import hashlib
+    body = await request.json()
+    tmpl_id = (body.get("template_id") or "").strip()
+    if not tmpl_id:
+        raise HTTPException(status_code=400, detail="template_id required")
+    raw_key = _read_bench_api_key()
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    user_id = await db.get_user_id_by_key_hash(key_hash)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="API key not found in DB")
+    await db.grant_permission(user_id, "expert_template", tmpl_id)
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "granted": tmpl_id}
+
+
+@app.delete("/api/service-accounts/benchmarks/templates/{tmpl_id}", dependencies=[Depends(require_login)])
+async def api_sa_benchmarks_revoke(tmpl_id: str):
+    """Revoke an expert_template permission from the benchmark service account."""
+    import hashlib
+    raw_key = _read_bench_api_key()
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    user_id = await db.get_user_id_by_key_hash(key_hash)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="API key not found in DB")
+    await db.revoke_permission_by_resource(user_id, "expert_template", tmpl_id)
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "revoked": tmpl_id}
+
+
 # ─── Teams API ────────────────────────────────────────────────────────────────
 
 @app.get("/api/teams", dependencies=[Depends(require_login)])

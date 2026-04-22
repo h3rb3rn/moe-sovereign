@@ -377,8 +377,12 @@ def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str]
             return None
         elif override_tmpl_id and override_tmpl_id in tmpl_ids:
             tmpl = _find_tmpl(override_tmpl_id)
+            if tmpl is None:
+                logger.warning("Ghost template in _resolve_user_experts: %s in perms but not in DB/cache", override_tmpl_id)
         else:
             tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
+            if tmpl is None:
+                logger.warning("Ghost templates: all permitted templates missing from DB: %s", tmpl_ids)
         if not tmpl:
             return None
         result: dict = {}
@@ -5605,15 +5609,31 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 }
                 break
     _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
-    # When the model name exactly matches a template name, treat as admin override:
-    # the caller explicitly targeted this template by name, which is sufficient authorization.
-    _tmpl_by_name = _tmpl_override is not None and _matched_tmpl is not None
+    # Template name match is NOT authorization — check expert_template permissions explicitly.
+    if _tmpl_override:
+        _allowed_tmpls = user_perms.get("expert_template", [])
+        if _tmpl_override not in _allowed_tmpls:
+            return JSONResponse(status_code=403, content={"error": {
+                "message": f"Template '{request.model}' is not authorized for this API key",
+                "type": "permission_denied",
+                "code": "template_not_authorized",
+            }})
     user_experts  = _resolve_user_experts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
                                            user_templates_json=_user_tmpls_json,
-                                           admin_override=_tmpl_by_name) or {}
+                                           admin_override=False) or {}
     _tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
                                                user_templates_json=_user_tmpls_json,
-                                               admin_override=_tmpl_by_name)
+                                               admin_override=False)
+    # Ghost-template detection: template in permissions but absent from DB
+    if _tmpl_override and not user_experts and not user_perms.get("expert_template") == []:
+        _ghost_check = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
+        if _ghost_check is None:
+            logger.error("Ghost template detected: %s in permissions but not in DB", _tmpl_override)
+            return JSONResponse(status_code=422, content={"error": {
+                "message": f"Template '{_tmpl_override}' is configured but no longer exists in the database",
+                "type": "template_not_found",
+                "code": "ghost_template",
+            }})
 
     # Extract system message (coding agents send file/codebase context here)
     system_msgs   = [m for m in request.messages if m.role == "system"]
@@ -5740,6 +5760,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         _nj["id"] = chat_id
         return _nj
 
+    _moe_resp_headers = {}
+    if _tmpl_override:
+        _moe_resp_headers["X-MoE-Template-Id"]   = _tmpl_override
+        _moe_resp_headers["X-MoE-Template-Name"]  = _tmpl_name or request.model
+
     if request.stream:
         return StreamingResponse(
             stream_response(user_input, chat_id, mode, chat_history=history,
@@ -5760,6 +5785,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             max_agentic_rounds=_tmpl_prompts.get("max_agentic_rounds", 0),
                             no_cache=request.no_cache),
             media_type="text/event-stream",
+            headers=_moe_resp_headers or None,
         )
     result = await app_graph.ainvoke(
         {"input": user_input, "response_id": chat_id, "mode": mode,
@@ -5825,6 +5851,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _prov = result.get("provenance_sources")
     if _prov:
         resp["metadata"] = {"sources": _prov}
+    if _moe_resp_headers:
+        return JSONResponse(content=resp, headers=_moe_resp_headers)
     return resp
 
 # ============================================================
