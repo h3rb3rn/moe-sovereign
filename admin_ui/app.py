@@ -4892,7 +4892,17 @@ async def user_cc_profiles_page(request: Request, user_id: str = Depends(require
             })
     permitted_servers = _get_permitted_servers_for_user(perms)
     tmpl_ids = set(perms.get("expert_template", []))
+    # Admin-granted templates
     permitted_expert_templates = [t for t in load_expert_templates() if t["id"] in tmpl_ids]
+    # User's own templates (stored in user_expert_templates, never in perms)
+    own_user_templates = await db.list_user_templates(user_id)
+    own_tmpl_ids = {t["id"] for t in permitted_expert_templates}
+    for ut in own_user_templates:
+        if ut["id"] not in own_tmpl_ids:
+            permitted_expert_templates.append({
+                "id":   ut["id"],
+                "name": ut["name"],
+            })
     return TEMPLATES.TemplateResponse(request, "user_portal.html", {
         "page":                   "cc_profiles",
         "user":                   user,
@@ -4958,7 +4968,8 @@ async def user_api_create_cc_profile(request: Request, user_id: str = Depends(re
     expert_template_id = (body.get("expert_template_id") or "").strip()
     if expert_template_id:
         allowed_tmpl_ids = set(perms.get("expert_template", []))
-        if expert_template_id not in allowed_tmpl_ids:
+        own_tmpl_ids = {t["id"] for t in await db.list_user_templates(user_id)}
+        if expert_template_id not in allowed_tmpl_ids and expert_template_id not in own_tmpl_ids:
             raise HTTPException(status_code=403, detail="Expert Template nicht freigeschaltet")
     config = {
         "tool_model":           (body.get("tool_model") or "").strip(),
@@ -5086,7 +5097,8 @@ async def user_api_update_cc_profile(profile_id: str, request: Request, user_id:
     expert_template_id = (body.get("expert_template_id") or "").strip()
     if expert_template_id:
         allowed_tmpl_ids = set(perms.get("expert_template", []))
-        if expert_template_id not in allowed_tmpl_ids:
+        own_tmpl_ids = {t["id"] for t in await db.list_user_templates(user_id)}
+        if expert_template_id not in allowed_tmpl_ids and expert_template_id not in own_tmpl_ids:
             raise HTTPException(status_code=403, detail="Expert Template nicht freigeschaltet")
     config = {
         "tool_model":           (body.get("tool_model") or old_cfg.get("tool_model", "")).strip(),
