@@ -30,6 +30,7 @@ The diagram below shows the full internal container dependency graph. See [Webse
 | `cadvisor` | `gcr.io/cadvisor/cadvisor` (pinned SHA) | `9338` | `8080` | Container resource metrics |
 | `moe-docs` | `squidfunk/mkdocs-material` (pinned SHA) | `8098` | `8000` | MkDocs documentation server |
 | `moe-docs-sync` | custom Python image | — | — | Background sync agent (every 15 min: status, experts) |
+| `moe-storage` | `quay.io/minio/minio:latest` | — (internal) | `9000` S3 API · `9001` Console | S3-compatible object store for generated files & pre-signed download links |
 | `moe-dozzle-init` | `python:3.12-alpine` | — | — | One-shot init: generates bcrypt `users.yml` for Dozzle |
 | `moe-dozzle` | `amir20/dozzle` (pinned SHA) | `9999` | `8080` | Container log viewer with authentication |
 | `moe-caddy` | `caddy` (pinned SHA) | `80`, `443` | `80`, `443` | Internal reverse proxy with TLS for docs/dozzle |

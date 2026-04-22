@@ -51,7 +51,7 @@ When a team is assigned to a tenant, all members of that team automatically rece
 Click **Mitglied hinzufügen** on a team card. Enter the **User ID** (e.g. `usr_abc123`) and select a role.
 
 !!! tip "Finding User IDs"
-    User IDs are shown on the [Users page](/users) next to each user's name.
+    User IDs are shown on the [Users page](users.md) next to each user's name.
 
 When a member is added:
 - A `graph_tenant: team:{id}` permission is granted automatically
@@ -124,7 +124,7 @@ The **Wissen promoten** tab transfers entities from one namespace to the next le
 The number of updated Neo4j entities is shown in the result.
 
 !!! danger "Promotion is not reversible via the UI"
-    Once entities are promoted to a wider namespace, they are visible to all members of that namespace immediately. To revert, use the [Knowledge Management](/knowledge) page or the Neo4j browser directly.
+    Once entities are promoted to a wider namespace, they are visible to all members of that namespace immediately. To revert, use the Knowledge Management (Admin → Knowledge) page or the Neo4j browser directly.
 
 ---
 

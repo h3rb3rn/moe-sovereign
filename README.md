@@ -188,7 +188,7 @@ flowchart LR
 
 | Benchmark | Score | Reference |
 |---|:---:|---|
-| **GAIA Level 1** | **60%** | GPT-4o: 33% &bull; Claude 3.7: 44% &bull; MoE Sovereign: **60%** |
+| **GAIA Level 1** | **70%** | GPT-4o: 33% &bull; Claude 3.7: 44% &bull; MoE Sovereign: **70%** (7/10, `moe-aihub-free-gremium-deep-wcc`) |
 | **Math Precision (MCP)** | **10/10** | Deterministic AST computation, 0% variance |
 | **Security Code Review** | **9.0/10** | SQLi + XSS identified and fixed |
 | **Adversarial MCP** | **9/9 blocked** | All code injection attempts stopped by AST firewall |

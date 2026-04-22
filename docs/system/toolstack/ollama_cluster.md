@@ -4,7 +4,7 @@
 
 Ollama is a local LLM inference server that loads models in GGUF format and exposes an OpenAI-compatible REST API. It manages model loading, VRAM allocation, and parallel requests internally.
 
-Sovereign MoE runs Ollama on **multiple inference nodes with heterogeneous GPU hardware**, coordinated through LiteLLM as a gateway.
+Sovereign MoE runs Ollama on **multiple inference nodes with heterogeneous GPU hardware**. The orchestrator communicates directly with each node via the `INFERENCE_SERVERS` configuration — no gateway layer is required.
 
 ## Why Multi-Node on Heterogeneous Hardware?
 
@@ -44,32 +44,21 @@ Ollama activates Flash Attention automatically when the hardware supports it. No
 ```bash
 # .env
 # INFERENCE_SERVERS — JSON array of configured inference endpoints
-# Configure via Admin UI → Configuration
-
-# CLUSTER_HARDWARE — JSON object for generate_litellm_config.py
-CLUSTER_HARDWARE='{
-  "primary_node": {
-    "url": "http://<inference-node-1>:11434",
-    "priority": 10,
-    "models": ["qwen2.5:72b", "deepseek-r1:70b", "mistral-nemo:12b"]
-  },
-  "secondary_node": {
-    "url": "http://<inference-node-2>:11434",
-    "priority": 40,
-    "models": ["qwen2.5:14b", "mistral-nemo:12b"]
-  }
-}'
+# Configure via Admin UI → Configuration → Inference Servers
+# Example:
+# INFERENCE_SERVERS='[{"url":"http://<node1>:11434","name":"N04-RTX"},{"url":"http://<node2>:11434","name":"N06-M10"}]'
 ```
 
-**Priority:** Lower number = higher preference by LiteLLM. The primary node (10) is selected significantly more often than secondary nodes (40).
+Inference servers are registered and managed in the **Admin UI → Configuration** panel.
+No static config file is needed — the orchestrator reads the list at startup from `.env`.
 
 ## Dynamic VRAM Management
 
-VRAM management is **no longer** handled via static semaphores (`asyncio.Semaphore(GPU_COUNT)`). Instead, the orchestrator delegates resource allocation entirely to LiteLLM and Ollama:
+VRAM management is handled entirely by Ollama on each node:
 
-- **Ollama** manages VRAM per node internally and queues requests when needed
-- **LiteLLM** distributes via `least-busy` routing — nodes under load receive fewer new requests
-- **Priority routing** via `weight` values in `config.yml` (generated from `CLUSTER_HARDWARE`)
+- **Ollama** manages VRAM per node internally and queues requests when the GPU is saturated
+- **Expert routing** in MoE Sovereign selects the appropriate node by matching the expert template's configured inference server
+- **Priority routing** is achieved through template assignment — high-priority workloads bind to dedicated nodes via the Admin UI
 
 This design scales to any number of GPU nodes without changing the orchestrator code.
 

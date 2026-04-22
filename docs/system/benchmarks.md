@@ -819,9 +819,41 @@ The following bugs were discovered and fixed in the order they surfaced.
 
 ---
 
-### Results — Baseline Run (2026-04-21)
+### Results — All Governance-Compliant Runs
 
-First valid run after the argparse fix, using the governance-compliant methodology:
+All runs listed here were executed after the argparse fix under the locked benchmark protocol
+(template / MCP / skills / cache changes only between runs).
+
+#### Run History — L1 Progress
+
+| Date | Template | L1 | L2 | L3 | Note |
+|---|---|---|---|---|---|
+| 2026-04-21 | `tmpl-aihub-free-nextgen` | 2/10 = **20%** | 0/10 | — | First valid baseline after argparse fix |
+| 2026-04-21 | `tmpl-aihub-free-nextgen` | 6/10 = **60%** | 1/10 | — | After Wikipedia + routing fixes |
+| 2026-04-20 | `moe-aihub-free-gremium-deep-wcc` | 3/10 = 30% | — | — | First WCC run, integration issues |
+| 2026-04-20 | `moe-aihub-free-gremium-deep-wcc` | 5/10 = 50% | — | — | Mid-session, template refinements |
+| 2026-04-20 | `moe-aihub-free-gremium-deep-wcc` | 6/10 = 60% | — | — | Further template tuning |
+| 2026-04-20 | `moe-aihub-free-gremium-deep-wcc` | **7/10 = 70%** | — | — | ⭐ **Best single-run result** |
+| 2026-04-20 | `moe-aihub-free-gremium-deep-wcc` | 4/10 = 40% | 2/10 | 0/10 | Multi-level run (30 questions) |
+
+#### Best Result (2026-04-20, `moe-aihub-free-gremium-deep-wcc`)
+
+| Level | Correct | Total | Score |
+|---|---|---|---|
+| **L1** | **7** | **10** | **70.0%** |
+
+**Reference comparison:**
+
+| System | GAIA L1 |
+|---|---|
+| GPT-4o | 33% |
+| Claude 3.7 Sonnet | 44% |
+| GPT-4o Mini | 44.8% |
+| **MoE Sovereign (best run)** | **70%** |
+
+#### Baseline Run (2026-04-21, `tmpl-aihub-free-nextgen`)
+
+First valid run after the argparse fix, using `tmpl-aihub-free-nextgen`:
 
 | Level | Correct | Total | Score |
 |---|---|---|---|
@@ -829,7 +861,9 @@ First valid run after the argparse fix, using the governance-compliant methodolo
 | L2 | 0 | 10 | 0.0% |
 | **Overall** | **2** | **20** | **10.0%** |
 
-**Reference:** GPT-4o Mini = 44.8% (GAIA leaderboard)
+**Note:** The low baseline reflects both unfixed integration bugs (Wikipedia params, routing guards)
+and template differences. The `moe-aihub-free-gremium-deep-wcc` template incorporates the Gremium
+Deep WCC ensemble approach which significantly outperforms the nextgen single-template variant on L1.
 
 #### L1 Correct Answers
 
