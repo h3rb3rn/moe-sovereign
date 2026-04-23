@@ -98,7 +98,7 @@ services:
       # - LITELLM_URL=http://litellm-proxy:4000
     volumes:
       - ${MOE_DATA_ROOT}/agent-logs:/app/logs
-      - ${MOE_DATA_ROOT}/chroma-onnx-cache:/root/.cache/chroma
+      - ${MOE_DATA_ROOT}/chroma-onnx-cache:/app/.cache/chroma
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
     depends_on:

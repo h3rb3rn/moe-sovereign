@@ -3227,38 +3227,88 @@ async def planner_node(state: AgentState):
     _agentic_context_block = ""
     _agentic_state_reset: dict = {}
     if _is_agentic_replan:
-        _gap        = (state.get("agentic_gap") or "").strip()
-        _history    = state.get("agentic_history") or []
-        _prev_found = _history[-1].get("findings", "") if _history else ""
-        _wm         = state.get("working_memory") or {}
-        _failures   = state.get("tool_failures") or []
+        _gap            = (state.get("agentic_gap") or "").strip()
+        _history        = state.get("agentic_history") or []
+        _prev_found     = _history[-1].get("findings", "") if _history else ""
+        _wm             = state.get("working_memory") or {}
+        _failures       = state.get("tool_failures") or []
+        _tried_queries  = state.get("attempted_queries") or []
+        _strategy_hint  = (state.get("search_strategy_hint") or "").strip()
+
         # Prefer structured working memory over truncated prose when available
         if _wm:
             _context_facts = "ESTABLISHED FACTS (structured):\n" + json.dumps(_wm)[:2000]
         else:
             _context_facts = f"Previously established facts:\n{_prev_found[:1500]}"
+
+        # Build search-history block to prevent query repetition
+        if _tried_queries:
+            _query_lines = "\n".join(
+                f"  • [{q.get('quality','?')}] {q.get('query','?')[:120]}"
+                for q in _tried_queries[-10:]  # last 10 queries max
+            )
+            _search_history_block = (
+                f"\nSEARCH QUERIES ALREADY TRIED (do NOT repeat these or near-identical variants):\n"
+                f"{_query_lines}\n"
+            )
+        else:
+            _search_history_block = ""
+
         _fail_block = (
             f"\nFAILED TOOL CALLS (do NOT retry with identical args):\n{json.dumps(_failures[-5:])}"
             if _failures else ""
         )
+
+        # Progressive depth hints based on iteration number
+        _depth = _agentic_iteration
+        if _depth == 1:
+            _depth_hint = (
+                "SEARCH STRATEGY (Depth 1 — be more specific):\n"
+                "  • Use domain-restricted queries: add 'site:wikipedia.org', 'site:github.com', 'site:arxiv.org', 'site:pubchem.ncbi.nlm.nih.gov'\n"
+                "  • Try the exact title/name in quotes for precise matches\n"
+                "  • Use wikipedia_get_section MCP tool for Wikipedia data with exact section names\n"
+                "  • Use github_search_issues MCP tool if querying GitHub repositories\n"
+            )
+        elif _depth == 2:
+            _depth_hint = (
+                "SEARCH STRATEGY (Depth 2 — use specialized tools directly):\n"
+                "  • Use youtube_transcript MCP tool for video content\n"
+                "  • Use pubchem_compound_search MCP tool for chemical/compound data\n"
+                "  • Use orcid_works_count MCP tool for academic publication counts\n"
+                "  • Use fetch_pdf_text MCP tool with a direct DOI or PDF URL\n"
+                "  • Use python_sandbox MCP tool to run calculations if needed\n"
+            )
+        else:
+            _depth_hint = (
+                "SEARCH STRATEGY (Depth 3 — alternative angles):\n"
+                "  • Try synonyms, abbreviations, or alternative spellings of the key term\n"
+                "  • Search for the source publication/author directly\n"
+                "  • Use fetch_pdf_text with any relevant paper URL found\n"
+            )
+
+        if _strategy_hint:
+            _depth_hint += f"  • Suggested approach from gap analysis: {_strategy_hint}\n"
+
         _agentic_context_block = (
             f"\n=== AGENTIC ITERATION {_agentic_iteration}/{_agentic_max_rounds} ===\n"
             f"{_context_facts}\n\n"
             f"Still unresolved:\n{_gap[:800]}\n"
+            f"{_search_history_block}"
             f"{_fail_block}\n"
+            f"{_depth_hint}\n"
             "Instructions: Focus ONLY on resolving the gap above. "
             "Do NOT repeat subtasks already answered. "
-            "Use web_researcher or precision_tools to fetch missing data.\n"
+            "Generate DIFFERENT search queries or use specialized MCP tools instead of repeating web search.\n"
             "=== END AGENTIC CONTEXT ===\n"
         )
         await _report(
-            f"🔄 Agentic Loop — Iteration {_agentic_iteration}/{_agentic_max_rounds}\n"
+            f"🔄 Agentic Loop — Iteration {_agentic_iteration}/{_agentic_max_rounds} (Depth {_depth})\n"
             f"📌 Still open: {_gap[:120]}"
         )
         # Clear single-string result fields so old results don't bleed into new iteration.
-        # NOTE: working_memory / tool_calls_log / tool_failures are intentionally preserved.
+        # NOTE: working_memory / tool_calls_log / tool_failures / attempted_queries are intentionally preserved.
         _agentic_state_reset = {"web_research": "", "mcp_result": "", "math_result": ""}
-        logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds}: gap={_gap[:80]}")
+        logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds} depth={_depth}: gap={_gap[:80]}")
 
     prompt = f"""{_planner_role}{_agentic_context_block}
 
@@ -3672,39 +3722,51 @@ async def research_node(state: AgentState):
         return {"web_research": ""}
 
     mode = state.get("mode", "default")
+    _is_agentic_replan = state.get("agentic_iteration", 0) > 0 and state.get("agentic_max_rounds", 0) > 0
+    _prev_queries: list = list(state.get("attempted_queries") or [])
 
-    if mode in ("research", "plan"):
-        # Deep research / plan: run all tasks in parallel
-        logger.info(f"--- [NODE] WEB RESEARCH (DEEP — {len(research_tasks)} queries) ---")
-        await _report(f"🌐 Deep research: {len(research_tasks)} parallel web search(es)...")
+    async def _fetch_one(task: dict, idx: int, total: int) -> tuple[str, str, str]:
+        """Execute a single search. Returns (result_text, query, quality)."""
+        query = task.get("search_query", state["input"])
+        await _report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
+        raw = await _web_search_with_citations(query)
+        quality = "ok" if raw and len(raw) > 200 else "empty"
+        if raw:
+            await _report(f"🌐 Search [{idx+1}] result ({len(raw)} chars)")
+            return raw, query, quality
+        await _report(f"🌐 Search [{idx+1}]: no result (SearXNG unreachable or empty)")
+        return "", query, "empty"
 
-        async def _fetch_one(task: dict, idx: int) -> str:
-            query = task.get("search_query", state["input"])
-            await _report(f"🌐 Research [{idx+1}/{len(research_tasks)}]: '{query[:60]}'...")
-            raw = await _web_search_with_citations(query)
-            if raw:
-                await _report(f"🌐 Research [{idx+1}] result ({len(raw)} chars):\n{raw}")
-                return f"[Research {idx+1} / {query[:60]}]:\n{raw}"
-            return ""
+    if mode in ("research", "plan") or _is_agentic_replan:
+        # Deep research mode OR agentic re-plan: run ALL tasks in parallel for maximum coverage.
+        # In agentic re-plan we need every available search result to resolve the gap.
+        logger.info(f"--- [NODE] WEB RESEARCH (MULTI — {len(research_tasks)} queries, agentic={_is_agentic_replan}) ---")
+        await _report(f"🌐 {'Agentic re-search' if _is_agentic_replan else 'Deep research'}: {len(research_tasks)} parallel search(es)...")
 
-        results = await asyncio.gather(*[_fetch_one(t, i) for i, t in enumerate(research_tasks)])
-        combined = "\n\n".join(r for r in results if r)
+        raw_results = await asyncio.gather(*[
+            _fetch_one(t, i, len(research_tasks)) for i, t in enumerate(research_tasks)
+        ])
+        combined_parts = [f"[Search {i+1}: {q}]:\n{r}" for i, (r, q, _) in enumerate(raw_results) if r]
+        combined = "\n\n".join(combined_parts)
+        new_query_records = [{"query": q, "quality": qlt} for _, q, qlt in raw_results]
+
         await _report(
-            f"🌐 Deep research: {len(combined)} chars total" if combined
-            else "🌐 Deep research: no results"
+            f"🌐 Multi-search complete: {len(combined)} chars total ({sum(1 for r, _, _ in raw_results if r)} hits)"
+            if combined else "🌐 Multi-search: no results"
         )
-        return {"web_research": combined}
+        return {
+            "web_research": combined,
+            "attempted_queries": _prev_queries + new_query_records,
+        }
     else:
-        # Standard (default/code/concise/agent/report): only first task
+        # Standard single-search mode
         query = research_tasks[0].get("search_query", state["input"])
         logger.info(f"--- [NODE] WEB RESEARCH: '{query[:80]}' ---")
-        await _report(f"🌐 Web search: '{query[:70]}'...")
-        res = await _web_search_with_citations(query)
-        if res:
-            await _report(f"🌐 Web result ({len(res)} chars):\n{res}")
-        else:
-            await _report("🌐 Web search: no result (SearXNG unreachable)")
-        return {"web_research": res}
+        raw, q, quality = await _fetch_one(research_tasks[0], 0, 1)
+        return {
+            "web_research": raw,
+            "attempted_queries": _prev_queries + [{"query": q, "quality": quality}],
+        }
 
 
 # ─── Context Compression Layer ────────────────────────────────────────────────
@@ -4288,27 +4350,32 @@ async def merger_node(state: AgentState):
             if _used_tokens < 80_000:
                 _gap_prompt = (
                     "You are a completion assessor. Based on the original question and the current answer, "
-                    "determine if the answer is complete.\n\n"
+                    "determine if the answer is complete and what specific data is still missing.\n\n"
                     f"ORIGINAL QUESTION:\n{state['input'][:600]}\n\n"
                     f"CURRENT ANSWER:\n{res_content_clean[:800]}\n\n"
                     "Reply ONLY in this exact format (no extra text):\n"
                     "COMPLETION_STATUS: COMPLETE | NEEDS_MORE_INFO\n"
                     "GAP: <specific fact/calculation/document still missing, or 'none'>\n"
-                    "NEXT_FOCUS: <one concrete action for the next search/calculation step>"
+                    "SEARCH_STRATEGY: <concrete next search approach — e.g. 'search site:github.com numpy polynomial issues', "
+                    "'use youtube_transcript for video', 'use pubchem_compound_search', 'search exact paper title in quotes'>"
                 )
                 try:
                     _gap_res = await _invoke_judge_with_retry(state, _gap_prompt)
                     _gap_text = (_gap_res.content or "").strip()
                     _gap_match = re.search(r'GAP:\s*(.+?)(?:\n|$)', _gap_text, re.IGNORECASE)
                     _status_match = re.search(r'COMPLETION_STATUS:\s*(\w+)', _gap_text, re.IGNORECASE)
+                    _strategy_match = re.search(r'SEARCH_STRATEGY:\s*(.+?)(?:\n|$)', _gap_text, re.IGNORECASE)
                     _status = (_status_match.group(1) if _status_match else "COMPLETE").upper()
                     _agentic_gap = (_gap_match.group(1).strip() if _gap_match else "").strip()
+                    _strategy_hint = (_strategy_match.group(1).strip() if _strategy_match else "").strip()
                     if _status == "COMPLETE" or not _agentic_gap or _agentic_gap.lower() in ("none", ""):
                         _agentic_gap = "COMPLETE"
-                    logger.info(f"🔍 Agentic gap check: status={_status}, gap={_agentic_gap[:80]}")
+                        _strategy_hint = ""
+                    logger.info(f"🔍 Agentic gap check: status={_status}, gap={_agentic_gap[:80]}, strategy={_strategy_hint[:60]}")
                 except Exception as _ge:
                     logger.warning(f"⚠️ Agentic gap detection failed: {_ge}")
                     _agentic_gap = "COMPLETE"
+                    _strategy_hint = ""
             else:
                 logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
                 _agentic_gap = "COMPLETE"
@@ -4350,6 +4417,7 @@ async def merger_node(state: AgentState):
             "agentic_gap": _agentic_gap,
             "agentic_history": _agentic_history,
             "working_memory": _wm_merged,
+            "search_strategy_hint": _strategy_hint,
         }
 
     return {
@@ -5290,6 +5358,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "agentic_iteration": 0,
                  "agentic_history": [],
                  "agentic_gap": "",
+                 "attempted_queries": [],
+                 "search_strategy_hint": "",
                  "no_cache": no_cache},
                 config,
             )
@@ -5731,8 +5801,18 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             f"🎯 Skill /{_sname} resolved (args: '{_sargs}', {len(user_input)} chars):\n{user_input}"
         )
     else:
-        # No manual skill command → auto-detect whether a known file is attached
-        _auto_skill = _detect_file_skill(request.files, _raw_user_input, allowed_skills)
+        # No manual skill command → auto-detect whether a known file is attached.
+        # Skip file-skill detection when the message already contains an explicit routing
+        # directive (e.g. from the GAIA benchmark runner or structured data injection).
+        # The directive "[ROUTE TO: reasoning OR general" signals that the caller has
+        # already classified the content and no automatic skill dispatch should occur.
+        _routing_bypass = (
+            "[ROUTE TO: reasoning OR general" in _raw_user_input
+            or "[ROUTING: Use reasoning or general expert" in _raw_user_input
+        )
+        _auto_skill = None if _routing_bypass else _detect_file_skill(
+            request.files, _raw_user_input, allowed_skills
+        )
         if _auto_skill:
             _auto_input = f"/{_auto_skill} {_raw_user_input}"
             _resolved = await _resolve_skill_secure(_auto_input, allowed_skills, user_id=user_id, session_id=session_id)
@@ -5900,6 +5980,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "agentic_iteration": 0,
          "agentic_history": [],
          "agentic_gap": "",
+         "attempted_queries": [],
+         "search_strategy_hint": "",
          "no_cache": request.no_cache},
         {"configurable": {"thread_id": str(uuid.uuid4())}},
     )

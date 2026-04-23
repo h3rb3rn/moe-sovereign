@@ -2110,6 +2110,343 @@ def github_get_issue(repo: str, issue_number: int) -> str:
     )
 
 
+# ─── External Data Sources ───────────────────────────────────────────────────
+
+_SEARXNG_URL = os.environ.get("SEARXNG_URL", "").rstrip("/")
+
+
+@mcp.tool()
+def web_search_domain(query: str, domain: str = "", max_results: int = 5) -> str:
+    """Domain-restricted web search via SearXNG.
+
+    Adds a site: restriction to focus results on a specific website.
+    Use when general search fails and you need data from a known source.
+
+    query:       Search query (without site: — that is added automatically)
+    domain:      Target domain, e.g. 'github.com', 'arxiv.org', 'wikipedia.org',
+                 'pubchem.ncbi.nlm.nih.gov', 'orcid.org'. Leave empty for unrestricted search.
+    max_results: Max search results to return (1-10, default 5)
+    """
+    if not _SEARXNG_URL:
+        return "[web_search_domain: SEARXNG_URL not configured]"
+    full_query = f"site:{domain} {query}" if domain else query
+    try:
+        resp = httpx.get(
+            f"{_SEARXNG_URL}/search",
+            params={"q": full_query, "format": "json", "engines": "google,bing,duckduckgo"},
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = data.get("results", [])[:max_results]
+        if not results:
+            return f"[No results for: {full_query}]"
+        parts = []
+        for r in results:
+            title = r.get("title", "")
+            url   = r.get("url", "")
+            snippet = r.get("content", "")[:300]
+            parts.append(f"**{title}**\n{url}\n{snippet}")
+        return "\n\n---\n\n".join(parts)
+    except Exception as e:
+        return f"[web_search_domain error: {e}]"
+
+
+@mcp.tool()
+def youtube_transcript(video_url: str, max_chars: int = 4000) -> str:
+    """Fetch the transcript/captions of a YouTube video.
+
+    Works with most public videos that have auto-generated or manual captions.
+    Useful for questions about video content, interviews, documentaries, tutorials.
+
+    video_url: Full YouTube URL (https://www.youtube.com/watch?v=...) or video ID
+    max_chars: Maximum characters to return (default 4000)
+    """
+    # Extract video ID from URL or treat input as ID directly
+    _id_match = re.search(
+        r'(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_\-]{11})',
+        video_url,
+    )
+    video_id = _id_match.group(1) if _id_match else video_url.strip()
+    if len(video_id) != 11 or not re.match(r'^[A-Za-z0-9_\-]+$', video_id):
+        return f"[youtube_transcript: Could not extract valid video ID from: {video_url!r}]"
+
+    # Primary: youtube-transcript-api (no API key required, version >= 0.6)
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        api = YouTubeTranscriptApi()
+        # List available transcripts and pick English or German
+        transcript_list = api.list(video_id)
+        chosen = None
+        for lang in ("en", "en-US", "en-GB", "de"):
+            try:
+                chosen = transcript_list.find_transcript([lang])
+                break
+            except Exception:
+                pass
+        if chosen is None:
+            # Fall back to first available
+            chosen = next(iter(transcript_list), None)
+        if chosen is not None:
+            entries = list(chosen.fetch())
+            text = " ".join(getattr(e, "text", str(e)) for e in entries)
+            return text[:max_chars] if len(text) > max_chars else text
+    except ImportError:
+        pass  # library not installed, fall through to HTTP fallback
+    except Exception as e:
+        err_str = str(e)
+        if "Subtitles are disabled" in err_str or "Could not retrieve" in err_str or "TranscriptsDisabled" in err_str:
+            return f"[youtube_transcript: Captions not available for video {video_id}]"
+        # Other errors: fall through to HTTP fallback
+
+    # Fallback: fetch YouTube page and extract caption track URL
+    try:
+        page = httpx.get(
+            f"https://www.youtube.com/watch?v={video_id}",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; MoE-Research/1.0)"},
+            timeout=15,
+            follow_redirects=True,
+        )
+        # Extract timedtext URL from page source
+        m = re.search(r'"captionTracks":\[.*?"baseUrl":"([^"]+)"', page.text)
+        if not m:
+            return f"[youtube_transcript: No caption track found for {video_id}]"
+        caption_url = m.group(1).replace("\\u0026", "&")
+        cap_resp = httpx.get(caption_url, timeout=15)
+        # Parse XML caption format
+        texts = re.findall(r'<text[^>]*>(.*?)</text>', cap_resp.text, re.DOTALL)
+        import html
+        clean = " ".join(html.unescape(t).replace("\n", " ") for t in texts)
+        return clean[:max_chars] if len(clean) > max_chars else clean
+    except Exception as e:
+        return f"[youtube_transcript fallback error: {e}]"
+
+
+@mcp.tool()
+def github_search_issues(
+    repo: str,
+    labels: str = "",
+    state: str = "open",
+    sort: str = "created",
+    order: str = "asc",
+    max_results: int = 5,
+    query: str = "",
+) -> str:
+    """Search GitHub issues in a repository using the GitHub Search API.
+
+    Finds issues matching labels, state, and optional text query — unlike
+    github_get_issue which requires a known issue number.
+
+    repo:        Repository in 'owner/repo' format (e.g. 'numpy/numpy')
+    labels:      Comma-separated label names (e.g. 'Regression,Bug')
+    state:       'open', 'closed', or 'all'
+    sort:        'created', 'updated', 'comments'
+    order:       'asc' (oldest first) or 'desc' (newest first)
+    max_results: Max issues to return (1-10)
+    query:       Additional text to search in issue title/body
+    """
+    q_parts = [f"repo:{repo}"]
+    if state and state != "all":
+        q_parts.append(f"is:{state}")
+    for label in (labels.split(",") if labels else []):
+        label = label.strip()
+        if label:
+            q_parts.append(f'label:"{label}"')
+    if query:
+        q_parts.append(query)
+    q_parts.append("is:issue")
+    search_q = " ".join(q_parts)
+
+    try:
+        resp = httpx.get(
+            "https://api.github.com/search/issues",
+            params={"q": search_q, "sort": sort, "order": order, "per_page": max_results},
+            headers={
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "MoE-Sovereign/1.0",
+            },
+            timeout=20,
+        )
+    except Exception as e:
+        return f"[github_search_issues request failed: {e}]"
+
+    if resp.status_code == 422:
+        return f"[github_search_issues: Invalid search query: {search_q}]"
+    if resp.status_code != 200:
+        return f"[github_search_issues: HTTP {resp.status_code}]"
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return f"[github_search_issues: parse error: {e}]"
+
+    items = data.get("items", [])
+    total = data.get("total_count", 0)
+    if not items:
+        return f"No issues found (total={total}) for query: {search_q}"
+
+    results = []
+    for issue in items[:max_results]:
+        results.append({
+            "number":     issue.get("number"),
+            "title":      issue.get("title"),
+            "state":      issue.get("state"),
+            "created_at": issue.get("created_at"),
+            "updated_at": issue.get("updated_at"),
+            "labels":     [lbl["name"] for lbl in issue.get("labels", [])],
+            "url":        issue.get("html_url"),
+        })
+    return json.dumps({"total_count": total, "query": search_q, "issues": results}, indent=2)
+
+
+@mcp.tool()
+def pubchem_compound_search(
+    name: str = "",
+    cid: int = 0,
+    mw_min: float = 0,
+    mw_max: float = 0,
+    classification: str = "",
+) -> str:
+    """Search the PubChem compound database for chemical compound data.
+
+    Can search by name, CID, or molecular weight range.
+    Returns: CID, molecular weight, molecular formula, IUPAC name, and synonyms.
+
+    name:           Compound name or IUPAC name to search (e.g. 'acetic acid')
+    cid:            PubChem Compound ID (direct lookup, overrides name)
+    mw_min/mw_max:  Molecular weight range filter (Da) — used with classification
+    classification: FDA/GRAS classification filter (e.g. 'food additive')
+    """
+    base = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
+
+    def _get_properties(cid_val: int) -> dict:
+        prop_url = f"{base}/compound/cid/{cid_val}/property/MolecularWeight,MolecularFormula,IUPACName/JSON"
+        r = httpx.get(prop_url, timeout=15)
+        r.raise_for_status()
+        props = r.json().get("PropertyTable", {}).get("Properties", [{}])[0]
+        return props
+
+    try:
+        if cid:
+            props = _get_properties(cid)
+            props["CID"] = cid
+            return json.dumps(props, indent=2)
+
+        if name:
+            # Name → CID lookup
+            search_url = f"{base}/compound/name/{httpx.URL(name).path}/cids/JSON"
+            r = httpx.get(search_url, timeout=15)
+            if r.status_code == 404:
+                return f"[pubchem: compound '{name}' not found]"
+            r.raise_for_status()
+            cids = r.json().get("IdentifierList", {}).get("CID", [])
+            if not cids:
+                return f"[pubchem: no results for '{name}']"
+            results = []
+            for c in cids[:5]:
+                try:
+                    props = _get_properties(c)
+                    props["CID"] = c
+                    results.append(props)
+                except Exception:
+                    pass
+            return json.dumps(results, indent=2)
+
+        if mw_min > 0 or mw_max > 0:
+            # Molecular weight range search via PubChem PUG-REST
+            mw_q = f"{mw_min:.1f}:{mw_max:.1f}" if mw_max > 0 else f"{mw_min:.1f}:10000"
+            # Use FastSearch with MW filter
+            fast_url = f"{base}/compound/fastformula/C/cids/JSON?MolecularWeight={mw_q}"
+            r = httpx.get(fast_url, timeout=20)
+            if r.status_code != 200:
+                return f"[pubchem MW search: HTTP {r.status_code}]"
+            cids = r.json().get("IdentifierList", {}).get("CID", [])[:5]
+            results = []
+            for c in cids:
+                try:
+                    props = _get_properties(c)
+                    props["CID"] = c
+                    results.append(props)
+                except Exception:
+                    pass
+            return json.dumps(results, indent=2)
+
+        return "[pubchem_compound_search: provide name, cid, or mw_min/mw_max]"
+    except Exception as e:
+        return f"[pubchem_compound_search error: {e}]"
+
+
+@mcp.tool()
+def orcid_works_count(orcid_id: str, before_year: int = 0, after_year: int = 0) -> str:
+    """Count and list publications on an ORCID researcher profile.
+
+    Uses the public ORCID API (no authentication required for public profiles).
+    Returns total work count and year distribution.
+
+    orcid_id:    ORCID iD in format XXXX-XXXX-XXXX-XXXX
+    before_year: Count only works published before this year (e.g. 2020 → pre-2020)
+    after_year:  Count only works published after this year
+    """
+    # Normalise ORCID format
+    orcid_clean = orcid_id.strip().replace("https://orcid.org/", "")
+    if not re.match(r'^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$', orcid_clean):
+        return f"[orcid_works_count: invalid ORCID format: {orcid_id!r}. Expected XXXX-XXXX-XXXX-XXXX]"
+
+    url = f"https://pub.orcid.org/v3.0/{orcid_clean}/works"
+    try:
+        resp = httpx.get(
+            url,
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+    except Exception as e:
+        return f"[orcid_works_count request failed: {e}]"
+
+    if resp.status_code == 404:
+        return f"[orcid_works_count: ORCID {orcid_clean} not found or profile is private]"
+    if resp.status_code != 200:
+        return f"[orcid_works_count: HTTP {resp.status_code}]"
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return f"[orcid_works_count: parse error: {e}]"
+
+    groups = data.get("group", [])
+    years: list[int] = []
+    for grp in groups:
+        for ws in grp.get("work-summary", []):
+            pub_date = ws.get("publication-date") or {}
+            year_val = (pub_date.get("year") or {}).get("value")
+            if year_val:
+                try:
+                    years.append(int(year_val))
+                except ValueError:
+                    pass
+
+    # Apply year filters
+    filtered = years
+    if before_year > 0:
+        filtered = [y for y in filtered if y < before_year]
+    if after_year > 0:
+        filtered = [y for y in filtered if y > after_year]
+
+    from collections import Counter
+    year_dist = dict(sorted(Counter(filtered).items()))
+    result = {
+        "orcid": orcid_clean,
+        "total_works": len(groups),
+        "works_in_filter": len(filtered),
+        "filter": {
+            "before_year": before_year or None,
+            "after_year": after_year or None,
+        },
+        "year_distribution": year_dist,
+    }
+    return json.dumps(result, indent=2)
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -2149,6 +2486,12 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "github_get_issue":      github_get_issue,
     "wikipedia_get_section": wikipedia_get_section,
     "python_sandbox":        python_sandbox,
+    # External data sources (added for adaptive deep research)
+    "web_search_domain":       web_search_domain,
+    "youtube_transcript":      youtube_transcript,
+    "github_search_issues":    github_search_issues,
+    "pubchem_compound_search": pubchem_compound_search,
+    "orcid_works_count":       orcid_works_count,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -2188,6 +2531,12 @@ _TOOL_DESCRIPTIONS = {
     "github_get_issue":      "Fetch a GitHub issue (title, state, body, labels, comment count) via the public API",
     "wikipedia_get_section": "Fetch a specific section of a Wikipedia article as plain text (e.g. 'Discography', 'Filmography'). Use this whenever a question references a Wikipedia article.",
     "python_sandbox":        "Run a small Python snippet for exact numerical calculations: probability trees (use Fraction!), Markov chains, combinatorics. Use print() for output. NEVER write simulation/Monte Carlo code — always use exact Fraction arithmetic. Allowed modules: math, fractions, itertools, collections, decimal, statistics, random.",
+    # External data sources
+    "web_search_domain":       "Domain-restricted web search via SearXNG (site:github.com, site:arxiv.org, site:wikipedia.org, etc.). Use when general search fails and you need data from a specific known website.",
+    "youtube_transcript":      "Fetch captions/transcript of a YouTube video by URL or video ID. Use for questions about video content, interviews, documentaries, lectures.",
+    "github_search_issues":    "Search GitHub issues by repo, label, state, and text query. Use to find issues when you don't know the exact issue number (e.g. oldest regression issue in numpy/numpy with label 'Regression').",
+    "pubchem_compound_search": "Search PubChem compound database by name, CID, or molecular weight range. Returns CID, molecular weight, formula, IUPAC name. Use for chemistry/pharmacology/food-science questions.",
+    "orcid_works_count":       "Count publications on an ORCID researcher profile. Optionally filter by year (e.g. before_year=2020 for pre-2020 works). Use for academic publication count questions.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────
