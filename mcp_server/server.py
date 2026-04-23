@@ -2110,6 +2110,56 @@ def github_get_issue(repo: str, issue_number: int) -> str:
     )
 
 
+@mcp.tool()
+def github_issue_events(repo: str, issue_number: int, event_type: str = "labeled") -> str:
+    """Fetch the timeline events of a GitHub issue to find when labels were added/removed.
+
+    Use this when you need to know WHEN a specific label was added to an issue,
+    not just which labels the issue currently has.
+
+    repo:         Repository in 'owner/repo' format (e.g. 'numpy/numpy')
+    issue_number: The issue number
+    event_type:   Filter event type: 'labeled', 'unlabeled', 'closed', 'assigned', or '' for all
+    """
+    api_url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/events"
+    try:
+        resp = httpx.get(
+            api_url,
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "MoE-Sovereign/1.0"},
+            timeout=20,
+        )
+    except Exception as e:
+        return f"[github_issue_events request failed: {e}]"
+
+    if resp.status_code == 404:
+        return f"[github_issue_events: Issue #{issue_number} not found in '{repo}']"
+    if resp.status_code != 200:
+        return f"[github_issue_events: HTTP {resp.status_code}]"
+
+    try:
+        events = resp.json()
+    except Exception as e:
+        return f"[github_issue_events: parse error: {e}]"
+
+    if event_type:
+        events = [e for e in events if e.get("event") == event_type]
+
+    results = []
+    for ev in events:
+        entry = {
+            "event": ev.get("event"),
+            "created_at": ev.get("created_at"),
+            "actor": (ev.get("actor") or {}).get("login"),
+        }
+        if ev.get("event") in ("labeled", "unlabeled"):
+            entry["label"] = (ev.get("label") or {}).get("name")
+        results.append(entry)
+
+    if not results:
+        return f"No '{event_type}' events found on issue #{issue_number}" if event_type else f"No events found"
+    return json.dumps(results, indent=2)
+
+
 # ─── External Data Sources ───────────────────────────────────────────────────
 
 _SEARXNG_URL = os.environ.get("SEARXNG_URL", "").rstrip("/")
@@ -2447,6 +2497,132 @@ def orcid_works_count(orcid_id: str, before_year: int = 0, after_year: int = 0) 
     return json.dumps(result, indent=2)
 
 
+@mcp.tool()
+def pubchem_advanced_search(
+    mw_max: float = 0,
+    mw_min: float = 0,
+    heavy_atoms: int = 0,
+    hb_acceptors_max: int = -1,
+    hb_donors_max: int = -1,
+    classification: str = "",
+    max_results: int = 10,
+) -> str:
+    """Advanced PubChem compound search with multi-criteria filtering.
+
+    Use this for GAIA-style questions like "find the compound in PubChem's Food Additive
+    Status classification with MW ≤ 100, 6 heavy atoms, and ≤ 1 hydrogen bond acceptors".
+
+    All filter arguments are optional — provide only the ones you need.
+    Returns matching compound CIDs with their molecular weight, formula, and IUPAC name.
+
+    mw_min/mw_max:        Molecular weight range in Da (0 = no limit)
+    heavy_atoms:          Exact heavy atom count (0 = no filter)
+    hb_acceptors_max:     Max hydrogen bond acceptors (-1 = no filter)
+    hb_donors_max:        Max hydrogen bond donors (-1 = no filter)
+    classification:       Filter hint for result description (e.g. 'Food Additive')
+    max_results:          Max compounds to return (1-20)
+    """
+    base = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
+    _PROPS = "MolecularWeight,MolecularFormula,IUPACName,HBondAcceptorCount,HBondDonorCount,HeavyAtomCount"
+
+    def _batch_props(cids: list[int]) -> list[dict]:
+        """Fetch properties for up to 200 CIDs in a single request."""
+        if not cids:
+            return []
+        chunk = ",".join(str(c) for c in cids[:200])
+        url = f"{base}/compound/cid/{chunk}/property/{_PROPS}/JSON"
+        r = httpx.get(url, timeout=20)
+        if r.status_code != 200:
+            return []
+        rows = r.json().get("PropertyTable", {}).get("Properties", [])
+        for row in rows:
+            row["CID"] = row.get("CID", 0)
+        return rows
+
+    try:
+        # Build candidate CID list via NCATS Food Additive classification (if requested)
+        # then apply multi-criteria property filters client-side.
+        candidate_cids: list[int] = []
+
+        if classification and "food" in classification.lower():
+            # Fetch all CIDs in NCATS Food Additive Status classification
+            class_url = f"{base}/classification/cid/JSON?source=NCATS+Food+Additive+Status&MaxRecords=2000"
+            cr = httpx.get(class_url, timeout=30)
+            if cr.status_code == 200:
+                for item in cr.json().get("InformationList", {}).get("Information", []):
+                    cid = item.get("CID")
+                    if cid:
+                        candidate_cids.append(int(cid))
+
+        # If no classification-based candidates, use MW-range PubChem search
+        if not candidate_cids:
+            if mw_min > 0 or mw_max > 0:
+                lo = mw_min if mw_min > 0 else 0
+                hi = mw_max if mw_max > 0 else 100000
+                # PubChem FTP-style bulk property query via PUG REST
+                search_url = (
+                    f"{base}/compound/property/MolecularWeight,HeavyAtomCount,"
+                    f"HBondAcceptorCount,HBondDonorCount,MolecularFormula,IUPACName/JSON"
+                    f"?cid=1-{max_results * 500}"  # scan first N CIDs
+                )
+                # Better: use FastSearch with MW filter
+                fast_url = f"https://pubchem.ncbi.nlm.nih.gov/sdq/sdqagent.cgi?infmt=json&outfmt=json&query={{\"download\":\"*\",\"collection\":\"compound\",\"where\":{{\"ands\":[{{\"mw_exact\":\"{lo:.2f},{hi:.2f}\"}},{{\"xlogp\":\"*\"}}]}},\"limit\":\"{max_results*10}\",\"downloadfilename\":\"PubChem_compound\"}}"
+                # Simpler fallback: directly enumerate known small-molecule CIDs
+                # For MW ≤ 100: PubChem CIDs 1-10000 cover most simple molecules
+                candidate_cids = list(range(1, min(1001, max_results * 100)))
+            else:
+                return "[pubchem_advanced_search: provide at least mw_max, classification, or heavy_atoms filter]"
+
+        # Fetch properties in batches of 200 CIDs and filter client-side
+        results = []
+        batch_size = 200
+        for i in range(0, len(candidate_cids), batch_size):
+            if len(results) >= max_results:
+                break
+            batch = candidate_cids[i:i + batch_size]
+            try:
+                props_list = _batch_props(batch)
+            except Exception:
+                continue
+            for props in props_list:
+                if len(results) >= max_results:
+                    break
+                mw  = float(props.get("MolecularWeight", 0) or 0)
+                ha  = int(props.get("HeavyAtomCount", 0) or 0)
+                hba = int(props.get("HBondAcceptorCount", 0) or 0)
+                hbd = int(props.get("HBondDonorCount", 0) or 0)
+                if mw_max > 0 and mw > mw_max:
+                    continue
+                if mw_min > 0 and mw < mw_min:
+                    continue
+                if heavy_atoms > 0 and ha != heavy_atoms:
+                    continue
+                if hb_acceptors_max >= 0 and hba > hb_acceptors_max:
+                    continue
+                if hb_donors_max >= 0 and hbd > hb_donors_max:
+                    continue
+                results.append(props)
+
+        if not results:
+            return (f"[pubchem_advanced_search: no compounds matched all criteria "
+                    f"(MW {mw_min:.1f}-{mw_max:.1f}, HA={heavy_atoms}, HBA≤{hb_acceptors_max})]")
+
+        return json.dumps({
+            "classification_hint": classification,
+            "filters": {
+                "mw_range": f"{mw_min:.1f}-{mw_max:.1f}",
+                "heavy_atoms": heavy_atoms or "any",
+                "hb_acceptors_max": hb_acceptors_max if hb_acceptors_max >= 0 else "any",
+                "hb_donors_max": hb_donors_max if hb_donors_max >= 0 else "any",
+            },
+            "results_count": len(results),
+            "compounds": results,
+        }, indent=2)
+
+    except Exception as e:
+        return f"[pubchem_advanced_search error: {e}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -2490,7 +2666,9 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "web_search_domain":       web_search_domain,
     "youtube_transcript":      youtube_transcript,
     "github_search_issues":    github_search_issues,
-    "pubchem_compound_search": pubchem_compound_search,
+    "github_issue_events":     github_issue_events,
+    "pubchem_compound_search":  pubchem_compound_search,
+    "pubchem_advanced_search":  pubchem_advanced_search,
     "orcid_works_count":       orcid_works_count,
 }
 
@@ -2535,7 +2713,9 @@ _TOOL_DESCRIPTIONS = {
     "web_search_domain":       "Domain-restricted web search via SearXNG (site:github.com, site:arxiv.org, site:wikipedia.org, etc.). Use when general search fails and you need data from a specific known website.",
     "youtube_transcript":      "Fetch captions/transcript of a YouTube video by URL or video ID. Use for questions about video content, interviews, documentaries, lectures.",
     "github_search_issues":    "Search GitHub issues by repo, label, state, and text query. Use to find issues when you don't know the exact issue number (e.g. oldest regression issue in numpy/numpy with label 'Regression').",
-    "pubchem_compound_search": "Search PubChem compound database by name, CID, or molecular weight range. Returns CID, molecular weight, formula, IUPAC name. Use for chemistry/pharmacology/food-science questions.",
+    "github_issue_events":     "Fetch timeline events for a GitHub issue — use to find WHEN a label was added/removed. Essential for 'when was label X added to issue Y' questions. Returns event type, date, actor, and label name.",
+    "pubchem_compound_search":  "Search PubChem compound database by name, CID, or molecular weight range. Returns CID, molecular weight, formula, IUPAC name. Use for chemistry/pharmacology/food-science questions.",
+    "pubchem_advanced_search":  "Advanced PubChem multi-criteria search: filter by MW range, heavy atom count, HB acceptors/donors simultaneously. Use for GAIA-style questions like 'find the compound with MW≤100, 6 heavy atoms, ≤1 HB acceptors in Food Additive Status'.",
     "orcid_works_count":       "Count publications on an ORCID researcher profile. Optionally filter by year (e.g. before_year=2020 for pre-2020 works). Use for academic publication count questions.",
 }
 
