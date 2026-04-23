@@ -3185,7 +3185,7 @@ async def graph_rag_node(state: AgentState):
     # public external facts (papers, databases, media) rather than internal ontology.
     # We still run if the plan explicitly includes knowledge_healing (graph needed).
     _has_knowledge_healing = "knowledge_healing" in categories
-    _is_public_fact_query = bool(_RESEARCH_MARKERS.search(state.get("input", "")))
+    _is_public_fact_query = bool(_RESEARCH_DETECT.search(state.get("input", "")))
     if _is_public_fact_query and not _has_knowledge_healing:
         logger.info("⚡ GraphRAG skipped (public-fact query — internal graph not relevant)")
         await _report("⚡ GraphRAG: skipped (external research query)")
