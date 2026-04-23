@@ -1847,14 +1847,21 @@ def _server_info(endpoint_name: str) -> dict:
     return next((s for s in INFERENCE_SERVERS_LIST if s["name"] == endpoint_name), {})
 
 
-# ─── AIHUB Fallback — qwen3.6:35b@N04-RTX ────────────────────────────────────
+# ─── AIHUB Fallback — qwen3.6:35b@N04-RTX → gemma4:31b@N04-RTX ──────────────
 
-_N04_FALLBACK_MODEL = "qwen3.6:35b"
-_N04_FALLBACK_NODE  = "N04-RTX"
+_N04_FALLBACK_MODEL         = "qwen3.6:35b"
+_N04_FALLBACK_MODEL_SECOND  = "gemma4:31b"   # second-tier fallback when qwen3.6 also fails
+_N04_FALLBACK_NODE          = "N04-RTX"
 
 # Per-endpoint degraded state: {url → monotonic timestamp of last failure}
 _aihub_degraded: dict[str, float] = {}
 _AIHUB_DEGRADED_TTL = 300  # 5 min blackout window after auth/quota failure
+
+# AIHUB retry config: try N times with short delay BEFORE triggering the fallback.
+# The AIHUB cluster is sometimes transiently unstable (not quota-limited), so a
+# quick retry succeeds without burning the N04-RTX fallback unnecessarily.
+_AIHUB_RETRY_COUNT = 3    # retries before declaring endpoint degraded
+_AIHUB_RETRY_DELAY = 2.0  # seconds between retries (short — transient instability)
 
 
 def _is_aihub_error(exc: Exception) -> bool:
@@ -1880,11 +1887,15 @@ def _endpoint_is_degraded(url: str) -> bool:
     return True
 
 
-async def _get_n04_fallback_llm(timeout: float = 120.0) -> "ChatOpenAI":
-    """Return a ChatOpenAI pointing to qwen3.6:35b on N04-RTX as fallback."""
+async def _get_n04_fallback_llm(timeout: float = 120.0, model: str = "") -> "ChatOpenAI":
+    """Return a ChatOpenAI pointing to a local N04-RTX model as fallback.
+
+    model: which fallback model to use. Defaults to _N04_FALLBACK_MODEL (qwen3.6:35b).
+           Pass _N04_FALLBACK_MODEL_SECOND (gemma4:31b) as second-tier fallback.
+    """
     url = URL_MAP.get(_N04_FALLBACK_NODE, "http://192.168.155.224:11434/v1")
     return ChatOpenAI(
-        model=_N04_FALLBACK_MODEL,
+        model=model or _N04_FALLBACK_MODEL,
         base_url=url,
         api_key="ollama",
         timeout=timeout,
@@ -1914,31 +1925,68 @@ async def _invoke_llm_with_aihub_fallback(
     """
     _on_aihub = _is_aihub_url(primary_url)
 
-    async def _try_fallback(reason: str):
+    async def _try_n04(reason: str, model: str = "") -> tuple:
+        """Try the given N04-RTX model. Returns (res, True) on success."""
         _mark_endpoint_degraded(primary_url)
+        _fb_model = model or _N04_FALLBACK_MODEL
         logger.warning("🔄 %s: %s — falling back to %s@%s",
-                       label, reason, _N04_FALLBACK_MODEL, _N04_FALLBACK_NODE)
-        fb_llm = await _get_n04_fallback_llm(timeout)
+                       label, reason, _fb_model, _N04_FALLBACK_NODE)
+        fb_llm = await _get_n04_fallback_llm(timeout, model=_fb_model)
         fb_res = await fb_llm.ainvoke(prompt)
-        logger.info("✅ %s: N04-RTX fallback succeeded", label)
         return fb_res, True
 
-    try:
-        if _endpoint_is_degraded(primary_url):
-            return await _try_fallback(f"endpoint {primary_url} is in degraded state")
-        res = await primary_llm.ainvoke(prompt)
-        # Silent failure: AIHUB sometimes returns HTTP 200 with empty body on quota exhaustion
-        if _on_aihub and (not res or not getattr(res, "content", None) or not res.content.strip()):
-            return await _try_fallback("AIHUB returned empty response (silent quota failure)")
-        return res, False
-    except Exception as e:
-        if _is_aihub_error(e) or (_on_aihub and "empty" in str(e).lower()):
+    async def _try_fallback_chain(reason: str) -> tuple:
+        """Try qwen3.6:35b first, then gemma4:31b as second fallback."""
+        try:
+            res, used = await _try_n04(reason, _N04_FALLBACK_MODEL)
+            logger.info("✅ %s: N04-RTX fallback (%s) succeeded", label, _N04_FALLBACK_MODEL)
+            return res, used
+        except Exception as fe1:
+            logger.warning("⚠️ %s: Primary fallback (%s) failed: %s — trying %s",
+                           label, _N04_FALLBACK_MODEL, str(fe1)[:60], _N04_FALLBACK_MODEL_SECOND)
             try:
-                return await _try_fallback(f"AIHUB error: {str(e)[:80]}")
-            except Exception as fe:
-                logger.error("❌ %s: N04-RTX fallback also failed: %s", label, fe)
-                raise fe
-        raise
+                res2, _ = await _try_n04(reason + " (2nd fallback)", _N04_FALLBACK_MODEL_SECOND)
+                logger.info("✅ %s: Second fallback (%s) succeeded", label, _N04_FALLBACK_MODEL_SECOND)
+                return res2, True
+            except Exception as fe2:
+                logger.error("❌ %s: Both fallbacks failed. Last: %s", label, fe2)
+                raise fe2
+
+    # ── Primary call: AIHUB with short retry before declaring it unstable ───
+    if _endpoint_is_degraded(primary_url):
+        return await _try_fallback_chain(f"endpoint {primary_url} is in degraded state")
+
+    _last_exc: Exception | None = None
+    for _attempt in range(_AIHUB_RETRY_COUNT if _on_aihub else 1):
+        try:
+            res = await primary_llm.ainvoke(prompt)
+            # Silent failure: AIHUB sometimes returns HTTP 200 with empty body
+            if _on_aihub and (not res or not getattr(res, "content", None) or not res.content.strip()):
+                _last_exc = RuntimeError("Empty response")
+                if _attempt < _AIHUB_RETRY_COUNT - 1:
+                    logger.debug("⏳ %s: Empty response, retry %d/%d in %.0fs",
+                                 label, _attempt + 1, _AIHUB_RETRY_COUNT, _AIHUB_RETRY_DELAY)
+                    await asyncio.sleep(_AIHUB_RETRY_DELAY)
+                    continue
+                # Exhausted retries → fallback
+                return await _try_fallback_chain("AIHUB returned empty response after retries")
+            return res, False
+        except Exception as e:
+            _last_exc = e
+            if _is_aihub_error(e) or (_on_aihub and "empty" in str(e).lower()):
+                if _attempt < _AIHUB_RETRY_COUNT - 1:
+                    logger.debug("⏳ %s: AIHUB error, retry %d/%d in %.0fs: %s",
+                                 label, _attempt + 1, _AIHUB_RETRY_COUNT, _AIHUB_RETRY_DELAY, str(e)[:60])
+                    await asyncio.sleep(_AIHUB_RETRY_DELAY)
+                    continue
+                # Exhausted retries → fallback
+                return await _try_fallback_chain(f"AIHUB error after {_AIHUB_RETRY_COUNT} retries: {str(e)[:60]}")
+            raise  # non-AIHUB error — propagate immediately
+
+    # Should not reach here but handle defensively
+    if _on_aihub and _last_exc:
+        return await _try_fallback_chain(f"AIHUB exhausted: {str(_last_exc)[:60]}")
+    raise _last_exc
 
 
 async def _invoke_judge_with_retry(
@@ -5795,6 +5843,37 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _matched_tmpl = next((t for t in _all_tmpls if t.get("name") == request.model), None)
     _tmpl_override: Optional[str] = _matched_tmpl["id"] if _matched_tmpl else None
     mode = _MODEL_ID_TO_MODE.get(request.model, "default")
+
+    # User-owned templates (stored in Valkey, not in admin DB) are invisible to the
+    # admin template lookup above. When a user selects their own template, _tmpl_override
+    # stays None and the native-endpoint block below incorrectly intercepts the request,
+    # routing it as a direct LLM call (native mode) instead of through the MoE pipeline.
+    # Fix: detect user templates early and set _tmpl_override so the pipeline is used.
+    if not _tmpl_override:
+        _early_user_tmpls: dict = {}
+        try:
+            _early_user_tmpls = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+        except Exception:
+            pass
+        if _early_user_tmpls:
+            # Match by template name (display name) or by template ID
+            for _ut_id, _ut_cfg in _early_user_tmpls.items():
+                if (_ut_cfg.get("name") == request.model or _ut_id == request.model):
+                    _tmpl_override = _ut_id
+                    logger.debug("User template detected by %s: %s → override=%s",
+                                 "name" if _ut_cfg.get("name") == request.model else "id",
+                                 request.model, _ut_id)
+                    break
+            # Also check if any template in the user's expert_template permissions is a user template
+            if not _tmpl_override:
+                _early_perms = json.loads(user_ctx.get("permissions_json", "{}") or "{}")
+                for _perm_tid in _early_perms.get("expert_template", []):
+                    if _perm_tid in _early_user_tmpls:
+                        _ut_cfg = _early_user_tmpls[_perm_tid]
+                        if (_ut_cfg.get("name") == request.model or _perm_tid == request.model):
+                            _tmpl_override = _perm_tid
+                            logger.debug("User template detected via permissions: %s", _perm_tid)
+                            break
 
     # Benchmark node reservation: reject non-benchmark requests when nodes are locked.
     # Fails open if Redis is unavailable so a Redis outage never blocks all traffic.
