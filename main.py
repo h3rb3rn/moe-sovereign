@@ -1847,11 +1847,22 @@ def _server_info(endpoint_name: str) -> dict:
     return next((s for s in INFERENCE_SERVERS_LIST if s["name"] == endpoint_name), {})
 
 
-# ─── AIHUB Fallback — qwen3.6:35b@N04-RTX → gemma4:31b@N04-RTX ──────────────
+# ─── AIHUB Fallback (configurable via environment) ───────────────────────────
+# When AIHUB (or any remote LLM endpoint) is unstable, the orchestrator can
+# transparently fall back to a local inference node. All three variables must
+# be set for the fallback to activate — an empty string disables the fallback.
+# The node name must match an entry in INFERENCE_SERVERS (configured via admin UI).
 
-_N04_FALLBACK_MODEL         = "qwen3.6:35b"
-_N04_FALLBACK_MODEL_SECOND  = "gemma4:31b"   # second-tier fallback when qwen3.6 also fails
-_N04_FALLBACK_NODE          = "N04-RTX"
+_AIHUB_FALLBACK_NODE         = os.getenv("AIHUB_FALLBACK_NODE", "")          # e.g. "N04-RTX"
+_AIHUB_FALLBACK_MODEL        = os.getenv("AIHUB_FALLBACK_MODEL", "")         # e.g. "qwen3.6:35b"
+_AIHUB_FALLBACK_MODEL_SECOND = os.getenv("AIHUB_FALLBACK_MODEL_SECOND", "")  # e.g. "gemma4:31b"
+
+# Keep legacy aliases so existing code references resolve without a sweep
+_N04_FALLBACK_NODE          = _AIHUB_FALLBACK_NODE
+_N04_FALLBACK_MODEL         = _AIHUB_FALLBACK_MODEL
+_N04_FALLBACK_MODEL_SECOND  = _AIHUB_FALLBACK_MODEL_SECOND
+
+_FALLBACK_ENABLED = bool(_AIHUB_FALLBACK_NODE and _AIHUB_FALLBACK_MODEL)
 
 # Per-endpoint degraded state: {url → monotonic timestamp of last failure}
 _aihub_degraded: dict[str, float] = {}
@@ -1888,16 +1899,27 @@ def _endpoint_is_degraded(url: str) -> bool:
 
 
 async def _get_n04_fallback_llm(timeout: float = 120.0, model: str = "") -> "ChatOpenAI":
-    """Return a ChatOpenAI pointing to a local N04-RTX model as fallback.
+    """Return a ChatOpenAI pointing to the configured local fallback node.
 
-    model: which fallback model to use. Defaults to _N04_FALLBACK_MODEL (qwen3.6:35b).
-           Pass _N04_FALLBACK_MODEL_SECOND (gemma4:31b) as second-tier fallback.
+    model: override which fallback model to use. Defaults to AIHUB_FALLBACK_MODEL.
+           Raises RuntimeError when fallback is not configured (AIHUB_FALLBACK_NODE empty).
     """
-    url = URL_MAP.get(_N04_FALLBACK_NODE, "http://192.168.155.224:11434/v1")
+    if not _FALLBACK_ENABLED:
+        raise RuntimeError(
+            "No local fallback configured. Set AIHUB_FALLBACK_NODE and "
+            "AIHUB_FALLBACK_MODEL environment variables to enable."
+        )
+    url = URL_MAP.get(_AIHUB_FALLBACK_NODE)
+    if not url:
+        raise RuntimeError(
+            f"Fallback node '{_AIHUB_FALLBACK_NODE}' is not in the configured "
+            "inference servers (INFERENCE_SERVERS env var)."
+        )
+    token = TOKEN_MAP.get(_AIHUB_FALLBACK_NODE, "ollama")
     return ChatOpenAI(
-        model=model or _N04_FALLBACK_MODEL,
+        model=model or _AIHUB_FALLBACK_MODEL,
         base_url=url,
-        api_key="ollama",
+        api_key=token,
         timeout=timeout,
     )
 
@@ -1936,21 +1958,33 @@ async def _invoke_llm_with_aihub_fallback(
         return fb_res, True
 
     async def _try_fallback_chain(reason: str) -> tuple:
-        """Try qwen3.6:35b first, then gemma4:31b as second fallback."""
+        """Try primary fallback model, then second-tier fallback model.
+
+        Does nothing (re-raises) when fallback is not configured via env vars.
+        """
+        if not _FALLBACK_ENABLED:
+            logger.warning("⚠️ %s: %s — no local fallback configured (AIHUB_FALLBACK_NODE/MODEL not set)",
+                           label, reason)
+            raise RuntimeError(f"{label} failed and no fallback configured: {reason}")
+
         try:
-            res, used = await _try_n04(reason, _N04_FALLBACK_MODEL)
-            logger.info("✅ %s: N04-RTX fallback (%s) succeeded", label, _N04_FALLBACK_MODEL)
+            res, used = await _try_n04(reason, _AIHUB_FALLBACK_MODEL)
+            logger.info("✅ %s: Fallback (%s@%s) succeeded", label, _AIHUB_FALLBACK_MODEL, _AIHUB_FALLBACK_NODE)
             return res, used
         except Exception as fe1:
-            logger.warning("⚠️ %s: Primary fallback (%s) failed: %s — trying %s",
-                           label, _N04_FALLBACK_MODEL, str(fe1)[:60], _N04_FALLBACK_MODEL_SECOND)
-            try:
-                res2, _ = await _try_n04(reason + " (2nd fallback)", _N04_FALLBACK_MODEL_SECOND)
-                logger.info("✅ %s: Second fallback (%s) succeeded", label, _N04_FALLBACK_MODEL_SECOND)
-                return res2, True
-            except Exception as fe2:
-                logger.error("❌ %s: Both fallbacks failed. Last: %s", label, fe2)
-                raise fe2
+            if _AIHUB_FALLBACK_MODEL_SECOND:
+                logger.warning("⚠️ %s: Primary fallback (%s) failed: %s — trying %s",
+                               label, _AIHUB_FALLBACK_MODEL, str(fe1)[:60], _AIHUB_FALLBACK_MODEL_SECOND)
+                try:
+                    res2, _ = await _try_n04(reason + " (2nd fallback)", _AIHUB_FALLBACK_MODEL_SECOND)
+                    logger.info("✅ %s: Second fallback (%s) succeeded", label, _AIHUB_FALLBACK_MODEL_SECOND)
+                    return res2, True
+                except Exception as fe2:
+                    logger.error("❌ %s: Both fallbacks failed. Last: %s", label, fe2)
+                    raise fe2
+            logger.error("❌ %s: Fallback (%s) failed, no second fallback configured: %s",
+                         label, _AIHUB_FALLBACK_MODEL, fe1)
+            raise fe1
 
     # ── Primary call: AIHUB with short retry before declaring it unstable ───
     if _endpoint_is_degraded(primary_url):
@@ -2043,8 +2077,8 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
     u = (state.get("judge_url_override")   or "").strip()
     t = (state.get("judge_token_override") or "ollama").strip()
     if m and u:
-        if _endpoint_is_degraded(u.rstrip("/")):
-            logger.info("⚡ Judge endpoint degraded — returning N04-RTX fallback directly")
+        if _endpoint_is_degraded(u.rstrip("/")) and _FALLBACK_ENABLED:
+            logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_n04_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT)
     if m and not u:
@@ -2066,8 +2100,8 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
     u = (state.get("planner_url_override")   or "").strip()
     t = (state.get("planner_token_override") or "ollama").strip()
     if m and u:
-        if _endpoint_is_degraded(u.rstrip("/")):
-            logger.info("⚡ Planner endpoint degraded — returning N04-RTX fallback directly")
+        if _endpoint_is_degraded(u.rstrip("/")) and _FALLBACK_ENABLED:
+            logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_n04_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT)
     if m and not u:
