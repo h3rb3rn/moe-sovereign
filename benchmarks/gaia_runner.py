@@ -959,10 +959,15 @@ async def call_orchestrator(
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
             usage = data.get("usage", {})
             # Retry on known orchestrator fallback phrases or raw tool-call leakage
+            _stripped = content.strip()
             raw_tool_call = (
-                content.strip().startswith('{"query"')
-                or content.strip().startswith('{"search_query"')
-                or content.strip().startswith('[{"query"')
+                _stripped.startswith('{"query"')
+                or _stripped.startswith('{"search_query"')
+                or _stripped.startswith('[{"query"')
+                or _stripped.startswith('{"tool"')
+                or _stripped.startswith('{"name"')
+                or (_stripped.startswith('{') and '"arguments"' in _stripped[:60])
+                or (_stripped.startswith('[{') and '"tool"' in _stripped[:80])
             )
             if (any(p in content.lower() for p in _NO_ANSWER_PHRASES) or raw_tool_call) and attempt < 3:
                 reason = "raw tool-call leaked" if raw_tool_call else "orchestrator fallback detected"

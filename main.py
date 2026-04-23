@@ -1891,6 +1891,12 @@ async def _get_n04_fallback_llm(timeout: float = 120.0) -> "ChatOpenAI":
     )
 
 
+def _is_aihub_url(url: str) -> bool:
+    """Return True when the URL points to an AIHUB endpoint (not a local Ollama node)."""
+    u = url.lower()
+    return "adesso-ai-hub" in u or ("aihub" in u and "ollama" not in u)
+
+
 async def _invoke_llm_with_aihub_fallback(
     primary_llm: "ChatOpenAI",
     primary_url: str,
@@ -1898,25 +1904,37 @@ async def _invoke_llm_with_aihub_fallback(
     timeout: float = 120.0,
     label: str = "LLM",
 ) -> tuple:
-    """Invoke primary_llm; on AIHUB auth/quota error transparently retry with N04-RTX.
+    """Invoke primary_llm; on AIHUB auth/quota error OR empty response, retry with N04-RTX.
+
+    Handles two failure modes:
+    1. Exception (401, 429, connection error) — caught in except block.
+    2. Silent empty body (HTTP 200 with no content) — detected after ainvoke returns.
 
     Returns (result, used_fallback: bool).
     """
+    _on_aihub = _is_aihub_url(primary_url)
+
+    async def _try_fallback(reason: str):
+        _mark_endpoint_degraded(primary_url)
+        logger.warning("🔄 %s: %s — falling back to %s@%s",
+                       label, reason, _N04_FALLBACK_MODEL, _N04_FALLBACK_NODE)
+        fb_llm = await _get_n04_fallback_llm(timeout)
+        fb_res = await fb_llm.ainvoke(prompt)
+        logger.info("✅ %s: N04-RTX fallback succeeded", label)
+        return fb_res, True
+
     try:
         if _endpoint_is_degraded(primary_url):
-            raise RuntimeError(f"Endpoint {primary_url} is in degraded state — skipping")
+            return await _try_fallback(f"endpoint {primary_url} is in degraded state")
         res = await primary_llm.ainvoke(prompt)
+        # Silent failure: AIHUB sometimes returns HTTP 200 with empty body on quota exhaustion
+        if _on_aihub and (not res or not getattr(res, "content", None) or not res.content.strip()):
+            return await _try_fallback("AIHUB returned empty response (silent quota failure)")
         return res, False
     except Exception as e:
-        if _is_aihub_error(e):
-            _mark_endpoint_degraded(primary_url)
-            logger.warning("🔄 %s: AIHUB unavailable (%s) — falling back to %s@%s",
-                           label, str(e)[:80], _N04_FALLBACK_MODEL, _N04_FALLBACK_NODE)
+        if _is_aihub_error(e) or (_on_aihub and "empty" in str(e).lower()):
             try:
-                fb_llm = await _get_n04_fallback_llm(timeout)
-                res = await fb_llm.ainvoke(prompt)
-                logger.info("✅ %s: N04-RTX fallback succeeded", label)
-                return res, True
+                return await _try_fallback(f"AIHUB error: {str(e)[:80]}")
             except Exception as fe:
                 logger.error("❌ %s: N04-RTX fallback also failed: %s", label, fe)
                 raise fe
