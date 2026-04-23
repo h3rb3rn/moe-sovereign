@@ -70,7 +70,7 @@ from math_node import math_node
 # Import for GraphRAG
 from graph_rag import GraphRAGManager
 # Import context window budget helper
-from context_budget import graphrag_budget_chars
+from context_budget import graphrag_budget_chars, web_research_budget
 
 # --- CONFIG & LOGGING ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -935,6 +935,8 @@ def _check_rate_limit_exhausted(endpoint: str) -> bool:
 
 # MCP tool descriptions for the planner (loaded at startup)
 MCP_TOOLS_DESCRIPTION = ""
+# Per-tool description dict for domain-filtered planner injection: {name: description}
+_MCP_TOOLS_DICT: dict[str, str] = {}
 # MCP tool schemas for pre-call arg validation: {tool_name: {required: [...], args: {...}}}
 MCP_TOOL_SCHEMAS: dict = {}
 
@@ -942,6 +944,84 @@ MCP_TOOL_SCHEMAS: dict = {}
 # only injected into the planner prompt when agentic_coder is active.
 _AGENTIC_TOOL_NAMES = {"repo_map", "read_file_chunked", "lsp_query"}
 AGENTIC_CODE_TOOLS_DESCRIPTION = ""
+
+# ── Tool groups for domain-filtered planner injection ────────────────────────
+# Core: always shown — fundamental precision + web access
+_TOOL_GROUP_CORE = frozenset({
+    "calculate", "python_sandbox", "fetch_pdf_text",
+    "web_search_domain", "wikipedia_get_section",
+    "date_diff", "date_add", "unit_convert",
+})
+# Research: shown when query contains paper/author/database/species/media markers
+_TOOL_GROUP_RESEARCH = frozenset({
+    "semantic_scholar_search", "orcid_works_count",
+    "pubchem_compound_search", "pubchem_advanced_search",
+    "github_search_issues", "github_issue_events",
+    "youtube_transcript",
+})
+# Data/Math: shown for numeric, statistical, or text-processing queries
+_TOOL_GROUP_DATA = frozenset({
+    "statistics_calc", "regex_extract", "json_query", "text_analyze",
+    "hash_text", "base64_codec", "solve_equation", "gcd_lcm",
+    "prime_factorize", "roman_numeral", "subnet_calc", "day_of_week",
+})
+# Legal: shown only for law/regulatory queries
+_TOOL_GROUP_LEGAL = frozenset({
+    "legal_search_laws", "legal_get_law_overview",
+    "legal_get_paragraph", "legal_fulltext_search",
+})
+# Files/Graph: shown for attachment or knowledge-graph queries
+_TOOL_GROUP_FILES = frozenset({
+    "parse_attachment", "file_upload", "file_download_url",
+    "graph_query", "graph_ingest", "graph_provenance", "graph_analyze",
+})
+
+_RESEARCH_DETECT = re.compile(
+    r'\b(paper|article|study|studies|journal|published|author|researcher|professor|'
+    r'arxiv|doi|isbn|pubchem|orcid|database|dataset|classification|compound|'
+    r'species|genus|wikipedia|museum|collection|archive|standard|transcript|'
+    r'video|episode|season|channel|github|issue|repo)\b', re.I,
+)
+_LEGAL_DETECT = re.compile(
+    r'\b(§+\s*\d+|bgh|bverfg|bfh|bsg|bgh|hgb|bdb|stvo|dsgvo|gdpr|'
+    r'vertrag|gesetz|recht|klage|straf|gmbh|ag\b|ug\b|insolvenz|'
+    r'law|legal|statute|regulation|compliance|contract|court)\b', re.I,
+)
+_DATA_DETECT = re.compile(
+    r'\b(berechne?|calculate|compute|average|median|stdev|hash|base64|'
+    r'regex|cidr|subnet|subnet|ip.address|convert|unit|statistic|prozent|percent)\b', re.I,
+)
+_FILE_DETECT = re.compile(
+    r'\b(attachment|datei|file|upload|image|foto|bild|pdf|spreadsheet|csv|graph|ontology)\b', re.I,
+)
+
+
+def _build_filtered_tool_desc(query: str, enable_graphrag: bool = False) -> str:
+    """Return MCP tool description block filtered to the query's domain.
+
+    Always includes CORE tools.  Adds RESEARCH, DATA, LEGAL, FILE groups
+    when the query contains matching markers.  Falls back to the global
+    MCP_TOOLS_DESCRIPTION if the per-tool dict is not yet populated.
+    """
+    if not _MCP_TOOLS_DICT:
+        return MCP_TOOLS_DESCRIPTION
+
+    active = set(_TOOL_GROUP_CORE)
+    if _RESEARCH_DETECT.search(query):
+        active |= _TOOL_GROUP_RESEARCH
+    if _LEGAL_DETECT.search(query):
+        active |= _TOOL_GROUP_LEGAL
+    if _DATA_DETECT.search(query):
+        active |= _TOOL_GROUP_DATA
+    if _FILE_DETECT.search(query) or enable_graphrag:
+        active |= _TOOL_GROUP_FILES
+
+    lines = [
+        f"  - {name}: {desc}"
+        for name, desc in _MCP_TOOLS_DICT.items()
+        if name in active
+    ]
+    return "\n".join(lines) if lines else MCP_TOOLS_DESCRIPTION
 
 # Categories handled by specialized nodes (not by expert LLMs)
 NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
@@ -3526,7 +3606,7 @@ Use for: game rules · algorithm specifications · protocols/standards · anythi
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{MCP_TOOLS_DESCRIPTION}
+{_build_filtered_tool_desc(state["input"], enable_graphrag=state.get("enable_graphrag", False))}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
@@ -4387,19 +4467,22 @@ async def merger_node(state: AgentState):
     if math_res:
         sections.append(f"MATH (SymPy):\n{math_res}")
     if web:
-        # Structured web-research compression: keep only the top 3 search
-        # result blocks and cap each at 600 chars.  This replaces the old
-        # blunt character truncate (which cut mid-sentence in the 3rd
-        # result) with a relevance-preserving filter.
+        # Adaptive web-research compression: block/char limits scale with the
+        # judge model's context window so small fallback models (gemma4:31b 8K)
+        # get tighter limits than large models (gpt-120B 128K).
+        _judge_model_for_web = state.get("judge_model_override") or JUDGE_MODEL
+        MAX_WEB_BLOCKS, MAX_BLOCK_CHARS = web_research_budget(
+            model=_judge_model_for_web,
+            query_chars=len(state.get("input", "")),
+            graphrag_chars_used=len(_gctx) if "_gctx" in dir() else 0,
+        )
         web_blocks = [b.strip() for b in re.split(r'\n\[(?:Research|Recherche|\d+)', web) if b.strip()]
-        MAX_WEB_BLOCKS = 5 if mode in ("research", "plan") else 3
-        MAX_BLOCK_CHARS = 800 if mode in ("research", "plan") else 600
         compressed_web = "\n\n".join(
             block[:MAX_BLOCK_CHARS] + ("…" if len(block) > MAX_BLOCK_CHARS else "")
             for block in web_blocks[:MAX_WEB_BLOCKS]
         )
         if not compressed_web:
-            compressed_web = web[:2000]  # fallback if split produced nothing
+            compressed_web = web[:MAX_BLOCK_CHARS * 2]  # fallback if split produced nothing
         sections.append(f"WEB RESEARCH (current, with sources):\n{compressed_web}")
     if cached:
         sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:1000]}")
@@ -5042,7 +5125,7 @@ async def _load_mcp_tool_descriptions():
 
     Also populates MCP_TOOL_SCHEMAS for pre-call argument validation.
     """
-    global MCP_TOOLS_DESCRIPTION, AGENTIC_CODE_TOOLS_DESCRIPTION, MCP_TOOL_SCHEMAS
+    global MCP_TOOLS_DESCRIPTION, AGENTIC_CODE_TOOLS_DESCRIPTION, MCP_TOOL_SCHEMAS, _MCP_TOOLS_DICT
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{MCP_URL}/tools")
@@ -5056,6 +5139,7 @@ async def _load_mcp_tool_descriptions():
                     agentic_lines.append(line)
                 else:
                     general_lines.append(line)
+                    _MCP_TOOLS_DICT[t['name']] = t['description']
                 # Store schema for pre-call validation
                 MCP_TOOL_SCHEMAS[t["name"]] = {
                     "required": t.get("required_args", t.get("required", [])),
