@@ -34,6 +34,18 @@ _COMPLEX_MARKERS = re.compile(
     re.I,
 )
 
+# ── Research-question markers → complex ──────────────────────────────────────
+# Questions referencing named papers, studies, authors, or databases require
+# multi-source research (3+ searches) and should never be capped at max_tasks=2.
+_RESEARCH_MARKERS = re.compile(
+    r'\b(paper|article|study|studies|journal|publication|published|according to|'
+    r'researcher|professor|author|et al\.?|arxiv|doi|isbn|pubchem|orcid|'
+    r'database|dataset|classification|compound|species|genus|wikipedia|'
+    r'museum|collection|archive|standard|regulation|nonnative|invasive|'
+    r'transcript|video|episode|season|series|channel)\b',
+    re.I,
+)
+
 # ── Domain markers → at least moderate ───────────────────────────────────────
 _DOMAIN_MARKERS = re.compile(
     r'\b(§+\s*\d+|bgh|bverfg|awmf|s3-leitlinie?|icd-\d+|dosierung|wirkstoff|'
@@ -79,6 +91,10 @@ def estimate_complexity(query: str) -> ComplexityLevel:
     if _COMPLEX_MARKERS.search(query):
         return "complex"
 
+    # Research-question markers → complex (requires multiple paper/database lookups)
+    if _RESEARCH_MARKERS.search(query):
+        return "complex"
+
     # Short factual questions take priority over domain markers
     # ("What is Docker?" is trivial, not moderate)
     if n <= _TRIVIAL_TOKEN_MAX and _TRIVIAL_MARKERS.search(query):
@@ -121,7 +137,7 @@ def complexity_routing_hint(level: ComplexityLevel) -> dict:
         }
     elif level == "moderate":
         return {
-            "max_tasks":      2,
+            "max_tasks":      3,
             "skip_research":  False,
             "skip_graph":     False,
             "skip_thinking":  True,
