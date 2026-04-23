@@ -96,6 +96,18 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     # ── AIHUB sovereign (H200 cloud) ─────────────────────────────────────────
     "gpt-oss-120b-sovereign":   32_768,
     "qwen-3.5-122b-sovereign":  32_768,
+    # ── Local fallback models (N04-RTX) ───────────────────────────────────────
+    "qwen3.6:35b":              32_768,
+    "qwen3.6":                  32_768,
+    "gemma4:31b":                8_192,
+    "gemma4:12b":                8_192,
+    "gemma4":                    8_192,
+    "gemma3:27b":                8_192,
+    "gemma3":                    8_192,
+    # ── Additional qwen3 variants ─────────────────────────────────────────────
+    "qwen3:14b":                32_768,
+    "qwen3:7b":                 32_768,
+    "qwen3:4b":                 32_768,
 }
 
 
@@ -162,3 +174,58 @@ def graphrag_budget_chars(
     query_tokens = (query_chars + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
     available = ctx_tokens - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - query_tokens
     return max(MIN_GRAPHRAG_CHARS, available * CHARS_PER_TOKEN)
+
+
+# ── Web-research budget constants ─────────────────────────────────────────────
+# After GraphRAG and expert responses are allocated, what remains goes to web.
+# Minimum: always pass at least this much web context to the judge.
+MIN_WEB_CHARS: int = 1_200
+DEFAULT_WEB_CHARS: int = 4_000
+
+# Fraction of remaining context budget allocated to web research (after GraphRAG).
+# The rest is reserved for expert outputs and headroom already in MERGER_FIXED_TOKENS.
+WEB_BUDGET_FRACTION: float = 0.55
+
+
+def web_research_budget(
+    model: str,
+    query_chars: int = 0,
+    graphrag_chars_used: int = 0,
+) -> tuple[int, int]:
+    """Compute adaptive web-research block and per-block character limits.
+
+    Returns (max_blocks, max_block_chars) that the merger should use when
+    compressing web_research before injecting it into the judge prompt.
+
+    The limits scale with the judge model's context window so that:
+      - Small models (gemma4:31b  8K): fewer / shorter blocks
+      - Mid models   (qwen3.6    32K): moderate blocks
+      - Large models (gpt-120B  128K): generous blocks
+
+    Args:
+        model:              Judge model name.
+        query_chars:        Length of the user query in characters.
+        graphrag_chars_used: Actual chars of GraphRAG context that will be included.
+
+    Returns:
+        (max_blocks, max_block_chars)
+    """
+    ctx_tokens = get_model_context_window(model)
+    if ctx_tokens <= 0:
+        return 5, DEFAULT_WEB_CHARS // 5  # fallback: 5 blocks × 800 chars
+
+    query_tokens  = (query_chars + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+    graph_tokens  = (graphrag_chars_used + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+    remaining     = ctx_tokens - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - query_tokens - graph_tokens
+    web_tokens    = max(MIN_WEB_CHARS // CHARS_PER_TOKEN, int(remaining * WEB_BUDGET_FRACTION))
+    web_chars     = web_tokens * CHARS_PER_TOKEN
+
+    # Distribute across blocks: prefer more shorter blocks over fewer long ones.
+    if web_chars >= 8_000:
+        return 7, 1_200
+    elif web_chars >= 4_000:
+        return 5, 900
+    elif web_chars >= 2_000:
+        return 3, 700
+    else:
+        return 2, max(MIN_WEB_CHARS // 2, web_chars // 2)
