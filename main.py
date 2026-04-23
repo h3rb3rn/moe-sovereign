@@ -1847,13 +1847,89 @@ def _server_info(endpoint_name: str) -> dict:
     return next((s for s in INFERENCE_SERVERS_LIST if s["name"] == endpoint_name), {})
 
 
+# ─── AIHUB Fallback — qwen3.6:35b@N04-RTX ────────────────────────────────────
+
+_N04_FALLBACK_MODEL = "qwen3.6:35b"
+_N04_FALLBACK_NODE  = "N04-RTX"
+
+# Per-endpoint degraded state: {url → monotonic timestamp of last failure}
+_aihub_degraded: dict[str, float] = {}
+_AIHUB_DEGRADED_TTL = 300  # 5 min blackout window after auth/quota failure
+
+
+def _is_aihub_error(exc: Exception) -> bool:
+    """Return True when the exception signals AIHUB is unavailable (auth/quota)."""
+    s = str(exc).lower()
+    return any(k in s for k in ("401", "unauthorized", "403", "forbidden",
+                                 "429", "rate limit", "quota exceeded",
+                                 "authentication", "x-api-key"))
+
+
+def _mark_endpoint_degraded(url: str) -> None:
+    _aihub_degraded[url] = time.monotonic()
+    logger.warning("⚠️ Endpoint marked degraded (5 min): %s", url)
+
+
+def _endpoint_is_degraded(url: str) -> bool:
+    ts = _aihub_degraded.get(url)
+    if ts is None:
+        return False
+    if time.monotonic() - ts > _AIHUB_DEGRADED_TTL:
+        _aihub_degraded.pop(url, None)
+        return False
+    return True
+
+
+async def _get_n04_fallback_llm(timeout: float = 120.0) -> "ChatOpenAI":
+    """Return a ChatOpenAI pointing to qwen3.6:35b on N04-RTX as fallback."""
+    url = URL_MAP.get(_N04_FALLBACK_NODE, "http://192.168.155.224:11434/v1")
+    return ChatOpenAI(
+        model=_N04_FALLBACK_MODEL,
+        base_url=url,
+        api_key="ollama",
+        timeout=timeout,
+    )
+
+
+async def _invoke_llm_with_aihub_fallback(
+    primary_llm: "ChatOpenAI",
+    primary_url: str,
+    prompt,
+    timeout: float = 120.0,
+    label: str = "LLM",
+) -> tuple:
+    """Invoke primary_llm; on AIHUB auth/quota error transparently retry with N04-RTX.
+
+    Returns (result, used_fallback: bool).
+    """
+    try:
+        if _endpoint_is_degraded(primary_url):
+            raise RuntimeError(f"Endpoint {primary_url} is in degraded state — skipping")
+        res = await primary_llm.ainvoke(prompt)
+        return res, False
+    except Exception as e:
+        if _is_aihub_error(e):
+            _mark_endpoint_degraded(primary_url)
+            logger.warning("🔄 %s: AIHUB unavailable (%s) — falling back to %s@%s",
+                           label, str(e)[:80], _N04_FALLBACK_MODEL, _N04_FALLBACK_NODE)
+            try:
+                fb_llm = await _get_n04_fallback_llm(timeout)
+                res = await fb_llm.ainvoke(prompt)
+                logger.info("✅ %s: N04-RTX fallback succeeded", label)
+                return res, True
+            except Exception as fe:
+                logger.error("❌ %s: N04-RTX fallback also failed: %s", label, fe)
+                raise fe
+        raise
+
+
 async def _invoke_judge_with_retry(
     state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None
 ):
     """Invoke the judge LLM with retry logic for empty/failed responses.
     On failure: waits 5s (model reload time), re-discovers the node, retries.
-    This handles the Ollama TTL unloading issue where the judge model gets
-    evicted between expert inference calls.
+    When AIHUB returns 401/429, immediately falls back to qwen3.6:35b@N04-RTX
+    without burning retry budget on unavailable endpoints.
 
     temperature: when set, overrides the default judge sampling temperature.
     """
@@ -1863,7 +1939,11 @@ async def _invoke_judge_with_retry(
             llm = await _get_judge_llm(state)
             if temperature is not None:
                 llm = llm.bind(temperature=temperature)
-            res = await llm.ainvoke(prompt)
+            # Determine primary URL for degradation tracking
+            _j_url = (state.get("judge_url_override") or JUDGE_URL or "").rstrip("/")
+            res, used_fb = await _invoke_llm_with_aihub_fallback(
+                llm, _j_url, prompt, timeout=JUDGE_TIMEOUT, label="Judge"
+            )
             # Check for empty/useless response
             if res and hasattr(res, 'content') and res.content and len(res.content.strip()) > 0:
                 if attempt > 0:
@@ -1891,11 +1971,15 @@ async def _invoke_judge_with_retry(
 
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template judge LLM, or global judge_llm as fallback.
-    Supports floating mode: if model is set but URL is empty, discovers the best node."""
+    Supports floating mode: if model is set but URL is empty, discovers the best node.
+    When the configured endpoint is in degraded state, returns N04-RTX fallback directly."""
     m = (state.get("judge_model_override") or "").strip()
     u = (state.get("judge_url_override")   or "").strip()
     t = (state.get("judge_token_override") or "ollama").strip()
     if m and u:
+        if _endpoint_is_degraded(u.rstrip("/")):
+            logger.info("⚡ Judge endpoint degraded — returning N04-RTX fallback directly")
+            return await _get_n04_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT)
     if m and not u:
         # Floating judge: discover the best node for this model
@@ -1910,11 +1994,15 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
 
 async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template planner LLM, or global planner_llm as fallback.
-    Supports floating mode: if model is set but URL is empty, discovers the best node."""
+    Supports floating mode: if model is set but URL is empty, discovers the best node.
+    When the configured endpoint is in degraded state, returns N04-RTX fallback directly."""
     m = (state.get("planner_model_override") or "").strip()
     u = (state.get("planner_url_override")   or "").strip()
     t = (state.get("planner_token_override") or "ollama").strip()
     if m and u:
+        if _endpoint_is_degraded(u.rstrip("/")):
+            logger.info("⚡ Planner endpoint degraded — returning N04-RTX fallback directly")
+            return await _get_n04_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT)
     if m and not u:
         # Floating planner: discover the best node for this model
@@ -3384,8 +3472,15 @@ JSON array:"""
     total_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
     plan: Optional[list] = None
     for attempt in range(PLANNER_RETRIES):
-        _planner_llm_inst = (await _get_planner_llm(state)).bind(temperature=_query_temp)
-        res = await _planner_llm_inst.ainvoke(prompt)
+        _planner_llm_inst = await _get_planner_llm(state)
+        _planner_url = (state.get("planner_url_override") or PLANNER_URL or "").rstrip("/")
+        _planner_llm_inst = _planner_llm_inst.bind(temperature=_query_temp)
+        res, _planner_fb = await _invoke_llm_with_aihub_fallback(
+            _planner_llm_inst, _planner_url, prompt,
+            timeout=PLANNER_TIMEOUT, label="Planner",
+        )
+        if _planner_fb:
+            await _report("⚠️ Planner: used N04-RTX fallback (AIHUB degraded)")
         u = _extract_usage(res)
         total_usage["prompt_tokens"]     += u["prompt_tokens"]
         total_usage["completion_tokens"] += u["completion_tokens"]
@@ -3568,7 +3663,14 @@ async def expert_worker(state: AgentState):
             )
             llm = ChatOpenAI(model=model_name, base_url=url, api_key=token, timeout=_expert_node_timeout)
             try:
-                res = await llm.ainvoke(messages)
+                _primary_url = url.rstrip("/")
+                res, _used_fallback = await _invoke_llm_with_aihub_fallback(
+                    llm, _primary_url, messages,
+                    timeout=_expert_node_timeout,
+                    label=f"Expert[{cat}]",
+                )
+                if _used_fallback:
+                    await _report(f"⚠️ Expert [{cat}]: used N04-RTX fallback (AIHUB degraded)")
                 usage = _extract_usage(res)
                 content = res.content[:MAX_EXPERT_OUTPUT_CHARS]
                 if len(res.content) > MAX_EXPERT_OUTPUT_CHARS:
@@ -3725,15 +3827,40 @@ async def research_node(state: AgentState):
     _is_agentic_replan = state.get("agentic_iteration", 0) > 0 and state.get("agentic_max_rounds", 0) > 0
     _prev_queries: list = list(state.get("attempted_queries") or [])
 
+    _SEARCH_CACHE_TTL = 86400  # 24 h — results reproducible within a day
+
     async def _fetch_one(task: dict, idx: int, total: int) -> tuple[str, str, str]:
-        """Execute a single search. Returns (result_text, query, quality)."""
+        """Execute a single search with Redis caching for reproducibility.
+
+        Returns (result_text, query, quality).
+        Cache key: sha256(query) — collisions are astronomically unlikely for search strings.
+        """
         query = task.get("search_query", state["input"])
+        # Redis cache lookup (never blocks if Redis is down)
+        _cache_key = f"moe:search_cache:{hashlib.sha256(query.encode()).hexdigest()[:32]}"
+        if redis_client is not None:
+            try:
+                cached = await redis_client.get(_cache_key)
+                if cached:
+                    logger.debug("🗄️ Search cache hit: %s", query[:60])
+                    return cached.decode("utf-8", errors="replace"), query, "ok-cached"
+            except Exception:
+                pass
+
         await _report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
         raw = await _web_search_with_citations(query)
         quality = "ok" if raw and len(raw) > 200 else "empty"
+
         if raw:
             await _report(f"🌐 Search [{idx+1}] result ({len(raw)} chars)")
+            # Store in Redis cache
+            if redis_client is not None:
+                try:
+                    await redis_client.set(_cache_key, raw.encode("utf-8"), ex=_SEARCH_CACHE_TTL)
+                except Exception:
+                    pass
             return raw, query, quality
+
         await _report(f"🌐 Search [{idx+1}]: no result (SearXNG unreachable or empty)")
         return "", query, "empty"
 

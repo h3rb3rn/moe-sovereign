@@ -919,7 +919,9 @@ async def call_orchestrator(
             f"{file_context}"
             f"\n\n--- QUESTION ---\n{question}"
         )
-    _NO_ANSWER_PHRASES = ("no answer available", "please try again")
+    _NO_ANSWER_PHRASES = ("no answer available", "please try again",
+                          "unable to determine", "cannot be determined",
+                          "i cannot find", "not available", "fallback")
     last_err = ""
     for attempt in range(1, 4):  # up to 3 attempts
         try:
