@@ -3752,6 +3752,83 @@ JSON array:"""
     return {"plan": plan, "metadata_filters": _extracted_filters,
             **total_usage, **_complexity_state_update, **_skill_state, **_agentic_state_reset}
 
+def _topological_levels(tasks: list[tuple[int, dict]]) -> list[list[tuple[int, dict]]]:
+    """Group (index, task) pairs into dependency levels for mixed parallel/sequential execution.
+
+    Tasks within the same level have no dependency on each other and run in parallel.
+    A task in level N+1 depends on at least one task in level ≤ N.
+
+    Tasks with no 'depends_on' field (or with an unresolvable dependency) are placed
+    in level 0 and run immediately in parallel with other independent tasks.
+    """
+    id_to_idx: dict[str, int] = {}
+    for orig_idx, t in tasks:
+        tid = t.get("id", "")
+        if tid:
+            id_to_idx[tid] = orig_idx
+
+    levels: list[list[tuple[int, dict]]] = []
+    placed: set[str] = set()          # task IDs that have been scheduled
+    placed_orig: set[int] = set()     # original indices of placed tasks
+    remaining = list(tasks)
+
+    while remaining:
+        # A task is ready if its dependency is already placed (or it has none)
+        ready = []
+        still_waiting = []
+        for item in remaining:
+            orig_idx, t = item
+            dep = t.get("depends_on", "")
+            if not dep or dep in placed:
+                ready.append(item)
+            else:
+                still_waiting.append(item)
+
+        if not ready:
+            # Circular or unresolvable dependency — place all remaining as independent
+            levels.append(still_waiting)
+            break
+
+        levels.append(ready)
+        for orig_idx, t in ready:
+            tid = t.get("id", "")
+            if tid:
+                placed.add(tid)
+            placed_orig.add(orig_idx)
+        remaining = still_waiting
+
+    return levels
+
+
+def _inject_prior_results(task: dict, prior_outputs: dict[str, str]) -> dict:
+    """Substitute {result_of:task_id} placeholders in task fields with prior expert outputs.
+
+    Creates a shallow copy of task with placeholders replaced so the dependent
+    expert receives concrete context from its predecessor.
+
+    prior_outputs: {task_id: expert_output_text (trimmed to ~400 chars)}
+    """
+    if not prior_outputs:
+        return task
+
+    def _sub(text: str) -> str:
+        import re as _re
+        def _replace(m: re.Match) -> str:
+            tid = m.group(1).strip()
+            val = prior_outputs.get(tid, "")
+            return val[:400] if val else f"[result_of:{tid} — not available]"
+        return _re.sub(r'\{result_of:([^}]+)\}', _replace, text)
+
+    out = dict(task)
+    for field in ("task", "search_query", "mcp_args"):
+        if isinstance(out.get(field), str):
+            out[field] = _sub(out[field])
+        elif isinstance(out.get(field), dict):
+            out[field] = {k: _sub(v) if isinstance(v, str) else v
+                          for k, v in out[field].items()}
+    return out
+
+
 async def expert_worker(state: AgentState):
     if state.get("cache_hit"):
         return {"expert_results": []}
@@ -3991,8 +4068,42 @@ async def expert_worker(state: AgentState):
 
         return task_results
 
-    groups = await asyncio.gather(*[run_task(i, task) for i, task in expert_tasks])
-    all_results: List[dict] = [r for group in groups for r in group]
+    # Dynamic parallel/sequential execution via dependency levels.
+    # Tasks with no 'depends_on' run in parallel (level 0).
+    # Tasks whose 'depends_on' points to a level-N task run in level N+1.
+    # Within each level, all tasks run in parallel (asyncio.gather).
+    levels = _topological_levels(expert_tasks)
+    has_deps = any(t.get("depends_on") for _, t in expert_tasks)
+    if has_deps:
+        logger.info(f"⛓️ Expert execution: {len(levels)} dependency level(s) "
+                    f"({[len(lvl) for lvl in levels]} tasks per level)")
+
+    all_results: List[dict] = []
+    prior_outputs: dict[str, str] = {}  # task_id → trimmed expert output for placeholder injection
+
+    for lvl_idx, level in enumerate(levels):
+        # Inject results from prior levels into {result_of:id} placeholders
+        injected_level = [(i, _inject_prior_results(t, prior_outputs)) for i, t in level]
+
+        if has_deps and len(levels) > 1:
+            level_ids = [t.get("id", f"task{i}") for i, t in level]
+            await _report(
+                f"⛓️ Dependency level {lvl_idx + 1}/{len(levels)}: "
+                f"running {len(level)} task(s) in parallel — [{', '.join(level_ids)}]"
+            )
+
+        level_groups = await asyncio.gather(
+            *[run_task(i, task) for i, task in injected_level]
+        )
+        level_results = [r for group in level_groups for r in group]
+        all_results.extend(level_results)
+
+        # Collect outputs for downstream placeholder injection
+        for (orig_idx, orig_task), group in zip(injected_level, level_groups):
+            tid = orig_task.get("id", "")
+            if tid:
+                combined = " | ".join(r.get("res", "") for r in group if r.get("res"))
+                prior_outputs[tid] = combined[:400]
 
     used = [r["model_cat"] for r in all_results if r.get("model_cat")]
     return {
