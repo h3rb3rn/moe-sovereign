@@ -3181,6 +3181,16 @@ async def graph_rag_node(state: AgentState):
     plan = state.get("plan", [])
     categories = [t.get("category", "") for t in plan if isinstance(t, dict)]
 
+    # GraphRAG on-demand: skip the Neo4j query for queries that are clearly about
+    # public external facts (papers, databases, media) rather than internal ontology.
+    # We still run if the plan explicitly includes knowledge_healing (graph needed).
+    _has_knowledge_healing = "knowledge_healing" in categories
+    _is_public_fact_query = bool(_RESEARCH_MARKERS.search(state.get("input", "")))
+    if _is_public_fact_query and not _has_knowledge_healing:
+        logger.info("⚡ GraphRAG skipped (public-fact query — internal graph not relevant)")
+        await _report("⚡ GraphRAG: skipped (external research query)")
+        return {"graph_context": ""}
+
     # GraphRAG-Cache (Valkey, TTL=3600s)
     import hashlib as _hashlib
     _graph_cache_key = f"moe:graph:{_hashlib.sha256((state['input'][:200] + ''.join(sorted(categories))).encode()).hexdigest()[:16]}"
@@ -4133,18 +4143,48 @@ async def research_node(state: AgentState):
     _is_agentic_replan = state.get("agentic_iteration", 0) > 0 and state.get("agentic_max_rounds", 0) > 0
     _prev_queries: list = list(state.get("attempted_queries") or [])
 
-    _SEARCH_CACHE_TTL = 86400  # 24 h — results reproducible within a day
+    # Search cache TTL strategy:
+    # - First pass (iteration 0): 24h cache reads + writes — reproducible results
+    # - Agentic re-plan (iteration > 0): skip cache reads (force fresh), write with 2h TTL
+    #   This ensures gap-filling searches always see current web content, and any bad
+    #   agentic-round results expire quickly rather than poisoning subsequent runs.
+    _SEARCH_CACHE_TTL      = 86400  # 24 h for first-pass searches
+    _SEARCH_CACHE_TTL_AGNT = 7_200  # 2 h for agentic re-plan searches
+
+    def _search_cache_key(query: str, domain_hint: str = "") -> str:
+        """Build a domain-aware cache key.
+
+        Including the domain in the key means that a domain-restricted follow-up
+        search (e.g., site:tardis.fandom.com) never hits a broad-query cache entry
+        for the same topic — each domain+query pair caches independently.
+        """
+        raw = f"{domain_hint.lower()}::{query}" if domain_hint else query
+        return f"moe:search_cache:{hashlib.sha256(raw.encode()).hexdigest()[:32]}"
 
     async def _fetch_one(task: dict, idx: int, total: int) -> tuple[str, str, str]:
-        """Execute a single search with Redis caching for reproducibility.
+        """Execute a single search with domain-aware Redis caching.
 
         Returns (result_text, query, quality).
-        Cache key: sha256(query) — collisions are astronomically unlikely for search strings.
+
+        Cache behaviour:
+          - iteration 0: read + write at 24h TTL (reproducibility)
+          - iteration > 0 (agentic): skip read (force fresh), write at 2h TTL
+        Domain hint is extracted from 'domain' field (web_search_domain calls) or
+        from site: syntax in the query to ensure domain-specific cache isolation.
         """
         query = task.get("search_query", state["input"])
-        # Redis cache lookup (never blocks if Redis is down)
-        _cache_key = f"moe:search_cache:{hashlib.sha256(query.encode()).hexdigest()[:32]}"
-        if redis_client is not None:
+        domain_hint = task.get("domain", "")
+        # Also extract site: prefix if planner embedded it in the query string
+        if not domain_hint:
+            _site_m = re.search(r'\bsite:(\S+)', query)
+            if _site_m:
+                domain_hint = _site_m.group(1)
+
+        _cache_key = _search_cache_key(query, domain_hint)
+        _ttl = _SEARCH_CACHE_TTL_AGNT if _is_agentic_replan else _SEARCH_CACHE_TTL
+
+        # Cache read: skipped during agentic re-plan to guarantee fresh results
+        if redis_client is not None and not _is_agentic_replan:
             try:
                 cached = await redis_client.get(_cache_key)
                 if cached:
@@ -4159,10 +4199,9 @@ async def research_node(state: AgentState):
 
         if raw:
             await _report(f"🌐 Search [{idx+1}] result ({len(raw)} chars)")
-            # Store in Redis cache
             if redis_client is not None:
                 try:
-                    await redis_client.set(_cache_key, raw.encode("utf-8"), ex=_SEARCH_CACHE_TTL)
+                    await redis_client.set(_cache_key, raw.encode("utf-8"), ex=_ttl)
                 except Exception:
                     pass
             return raw, query, quality
