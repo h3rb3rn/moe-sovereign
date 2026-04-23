@@ -205,60 +205,99 @@ def download_gaia_attachment(task_id: str, raw_file_name: str) -> pathlib.Path |
 
 
 def _process_xlsx(path: pathlib.Path) -> str:
-    """Parse spreadsheet: extract cell colors as a structured grid description.
+    """Parse spreadsheet: extract cell values and, when present, ownership colour maps.
 
-    Returns a human-readable description of the colour layout so the orchestrator
-    can reason about traversal questions (e.g. Eulerian paths) itself.
+    For colour-coded ownership spreadsheets (e.g. Eulerian-path questions), the
+    function returns a colour grid. For plain data spreadsheets (inventory, tables),
+    it falls back to cell-value mode so the LLM can read the actual content.
+
+    The colour-map mode is only activated when a substantial fraction of cells carry
+    one of the recognised ownership colours (Green/Red/Blue/Yellow). Incidental
+    formatting colours (alternating row shading, headers) are ignored.
+
+    Supports both modern .xlsx/.ods (via openpyxl) and legacy .xls (via xlrd).
     """
+    # Legacy .xls format: openpyxl cannot read it — use xlrd instead and return plain values.
+    if path.suffix.lower() == ".xls":
+        try:
+            import xlrd
+            book = xlrd.open_workbook(str(path))
+            sheet = book.sheet_by_index(0)
+            rows_text: list[str] = []
+            for r in range(sheet.nrows):
+                row = "\t".join(str(sheet.cell_value(r, c)) for c in range(sheet.ncols))
+                if row.strip():
+                    rows_text.append(row)
+            return "SPREADSHEET DATA (legacy .xls):\n" + "\n".join(rows_text[:100])
+        except ImportError:
+            return "[XLS parse error: xlrd not installed. Install with: pip install xlrd]"
+        except Exception as e:
+            return f"[XLS parse error: {e}]"
+
     import openpyxl
 
     wb = openpyxl.load_workbook(str(path), read_only=False, data_only=True)
     ws = wb.active
 
-    # Map each owner color to their cells
-    color_cells: dict[str, set[tuple[int, int]]] = {}
     GREEN_RGBS = {"FF00B050", "FF92D050", "FF00FF00", "FF70AD47"}
+    OWNERSHIP_RGBS = GREEN_RGBS | {"FFFF0000", "FF0070C0", "FFFFFF00"}
     COLOR_NAMES = {
         "FF00B050": "Green", "FF92D050": "Green", "FF00FF00": "Green",
         "FF70AD47": "Green", "FFFF0000": "Red", "FF0070C0": "Blue",
         "FFFFFF00": "Yellow",
     }
 
+    # Scan all cells for colour information AND collect values
+    color_cells: dict[str, set[tuple[int, int]]] = {}
+    ownership_cells: dict[str, set[tuple[int, int]]] = {}
+    total_cells = 0
+
     for row in ws.iter_rows():
         for cell in row:
+            if cell.value is not None:
+                total_cells += 1
             try:
                 fill = cell.fill
                 if fill and fill.fgColor and fill.fgColor.type == "rgb":
                     rgb = fill.fgColor.rgb
-                    if rgb and rgb != "00000000":
+                    if rgb and rgb != "00000000" and rgb != "FFFFFFFF":
                         color_cells.setdefault(rgb, set()).add((cell.row, cell.column))
+                        if rgb in OWNERSHIP_RGBS:
+                            ownership_cells.setdefault(rgb, set()).add((cell.row, cell.column))
             except Exception:
                 pass
 
-    # Fallback: plain cell-value dump
-    if not color_cells:
-        rows_text: list[str] = []
-        for row in ws.iter_rows(values_only=True):
-            r = "\t".join(str(c or "") for c in row)
-            if r.strip():
-                rows_text.append(r)
-        return "SPREADSHEET (values only, no color detected):\n" + "\n".join(rows_text[:60])
+    # Count ownership-coloured cells
+    n_ownership = sum(len(v) for v in ownership_cells.values())
 
-    # Build a colour-annotated grid description
-    green_cells = set()
+    # Use colour-map mode only when ownership colours dominate (graph/traversal questions).
+    # Threshold: at least 10 ownership cells AND they represent >20% of coloured cells.
+    n_coloured = sum(len(v) for v in color_cells.values())
+    use_color_map = n_ownership >= 10 and (n_coloured == 0 or n_ownership / n_coloured > 0.2)
+
+    # --- Plain value dump (default for data/inventory spreadsheets) ---
+    rows_text: list[str] = []
+    for row in ws.iter_rows(values_only=True):
+        r = "\t".join(str(c) if c is not None else "" for c in row)
+        if r.strip():
+            rows_text.append(r)
+
+    if not use_color_map:
+        return "SPREADSHEET DATA:\n" + "\n".join(rows_text[:100])
+
+    # --- Colour-map mode for ownership/graph questions ---
+    green_cells: set[tuple[int, int]] = set()
     for rgb in GREEN_RGBS:
-        green_cells |= color_cells.get(rgb, set())
+        green_cells |= ownership_cells.get(rgb, set())
 
-    # Grid dimensions
     all_cells: set[tuple[int, int]] = set()
-    for cells in color_cells.values():
+    for cells in ownership_cells.values():
         all_cells |= cells
     max_row = max(r for r, c in all_cells)
     max_col = max(c for r, c in all_cells)
 
-    # Compact colour map (row, col → colour name)
     cell_color: dict[tuple[int, int], str] = {}
-    for rgb, cells in color_cells.items():
+    for rgb, cells in ownership_cells.items():
         name = COLOR_NAMES.get(rgb, f"Color_{rgb[-6:]}")
         for pos in cells:
             cell_color[pos] = name
@@ -269,12 +308,16 @@ def _process_xlsx(path: pathlib.Path) -> str:
         if row_str.replace("\t", "").replace(".", "").strip():
             rows_out.append(f"Row {r}: {row_str}")
 
+    other_colors = ", ".join(
+        COLOR_NAMES.get(k, f"Color_{k[-6:]}") + f"({len(v)})"
+        for k, v in ownership_cells.items()
+        if k not in GREEN_RGBS
+    )
     summary = (
         f"SPREADSHEET COLOUR MAP ({max_row}×{max_col} grid):\n"
         f"  Green cells (Earl): {len(green_cells)} cells at positions "
         f"{sorted(green_cells)[:20]}{'...' if len(green_cells) > 20 else ''}\n"
-        f"  Other colours: "
-        f"{', '.join(COLOR_NAMES.get(k,'?') + f'({len(v)})' for k,v in color_cells.items() if k not in GREEN_RGBS)}\n\n"
+        f"  Other colours: {other_colors}\n\n"
         "Grid (. = empty/white):\n" + "\n".join(rows_out[:40])
     )
     return summary
@@ -420,6 +463,41 @@ def _process_zip(path: pathlib.Path) -> str:
         return f"[ZIP parse error: {e}]"
 
 
+def _process_xml(path: pathlib.Path) -> str:
+    """Parse an XML file, extracting readable text content.
+
+    For Microsoft Word XML documents (containing <w:t> elements), extracts the
+    paragraph text rather than dumping the raw XML with verbose namespaces.
+    For other XML files, returns the raw text (truncated to a reasonable length).
+    """
+    raw = path.read_text(errors="replace")
+
+    # Detect Word XML format by its progid or w:document root
+    is_word_xml = (
+        'progid="Word.Document"' in raw[:500]
+        or "<w:document" in raw[:2000]
+        or "<w:wordDocument" in raw[:2000]
+    )
+
+    if is_word_xml:
+        # Extract text from <w:t> elements — the actual paragraph content in Word XML.
+        # Strip namespace prefixes for simpler regex matching.
+        text_matches = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", raw)
+        if text_matches:
+            extracted = " ".join(t.strip() for t in text_matches if t.strip())
+            return f"WORD DOCUMENT (XML) TEXT CONTENT:\n{extracted}"
+
+    # Generic XML: strip prolific namespace declarations from the header and return.
+    # The namespace blob is up to ~3 KB and wastes the content budget.
+    cleaned = re.sub(
+        r'<\?[^?]*\?>\s*|xmlns(?::\w+)?="[^"]*"\s*',
+        "",
+        raw,
+        count=500,
+    )
+    return cleaned[:_MAX_CONTENT_CHARS]
+
+
 def _dispatch_processor(path: pathlib.Path) -> str:
     """Route to the correct processor based on file extension."""
     ext = path.suffix.lower()
@@ -437,8 +515,10 @@ def _dispatch_processor(path: pathlib.Path) -> str:
         return _process_code(path)
     if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
         return _process_image(path)
-    if ext in (".txt", ".md", ".rst", ".xml", ".yaml", ".yml"):
+    if ext in (".txt", ".md", ".rst", ".yaml", ".yml"):
         return path.read_text(errors="replace")
+    if ext == ".xml":
+        return _process_xml(path)
     if ext == ".pdb":
         return _process_pdb(path)
     if ext == ".zip":
@@ -546,6 +626,15 @@ def load_gaia_dataset() -> list[dict]:
     return list(ds)
 
 
+# Irregular English plural → singular (for answer matching: "mice" vs "mouse")
+_PLURAL_TO_SINGULAR: dict[str, str] = {
+    "mice": "mouse", "geese": "goose", "teeth": "tooth", "feet": "foot",
+    "men": "man", "women": "woman", "children": "child", "people": "person",
+    "oxen": "ox", "lice": "louse", "cacti": "cactus", "fungi": "fungus",
+    "alumni": "alumnus", "radii": "radius", "nuclei": "nucleus",
+    "larvae": "larva", "formulae": "formula",
+}
+
 # Zahlwörter EN + DE → Ziffern
 _NUMBER_WORDS: dict[str, str] = {
     "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
@@ -574,6 +663,9 @@ def normalize_answer(text: str) -> str:
     # Convert number words to digits (whole words only)
     for word, digit in _NUMBER_WORDS.items():
         text = re.sub(r"\b" + re.escape(word) + r"\b", digit, text)
+    # Normalize irregular plurals to singular for flexible matching
+    for plural, singular in _PLURAL_TO_SINGULAR.items():
+        text = re.sub(r"\b" + re.escape(plural) + r"\b", singular, text)
     return text
 
 
@@ -635,6 +727,12 @@ def check_answer(model_output: str, expected: str) -> tuple[bool, str]:
     def _matches(candidate: str) -> bool:
         norm_cand = normalize_answer(candidate)
         if norm_expected in norm_cand:
+            return True
+        # Separator-normalised comparison: "3.1.3.1; 1.11.1.7" == "3.1.3.1;1.11.1.7"
+        _sep_re = re.compile(r"\s*([;,])\s*")
+        norm_exp_nosep = _sep_re.sub(r"\1", norm_expected)
+        norm_cand_nosep = _sep_re.sub(r"\1", norm_cand)
+        if norm_exp_nosep and (norm_exp_nosep == norm_cand_nosep or norm_exp_nosep in norm_cand_nosep):
             return True
         # Numeric near-match
         try:

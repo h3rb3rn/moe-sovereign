@@ -114,6 +114,8 @@ class AgentState(TypedDict):
     agentic_max_rounds: int             # Max allowed iterations from template config (0 = disabled)
     agentic_history: list               # [{iteration, findings, gap}] accumulated across rounds
     agentic_gap: str                    # What information is still missing — output of gap-detection LLM call
+    attempted_queries: list             # All search queries already tried [{query, result_quality}] — injected into re-planner to prevent repetition
+    search_strategy_hint: str          # Suggested next search approach from gap-detection LLM (e.g. "try site:github.com")
 
     # ── 12. Working memory hub ────────────────────────────────────────────────
     # Structured persistence layer for tool results across agentic iterations.
