@@ -5890,21 +5890,35 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         except Exception:
             pass
         if _early_user_tmpls:
-            # Match by template name (display name) or by template ID
+            # Match by template name (display name) or by template ID.
+            # Also try _req_model_base (the name without any "@node" suffix) because
+            # Open WebUI appends "@connectionname" to model IDs when a user selects a
+            # template — e.g. "nff-test@AIHUB_NFF" → base name is "nff-test".
             for _ut_id, _ut_cfg in _early_user_tmpls.items():
-                if (_ut_cfg.get("name") == request.model or _ut_id == request.model):
+                _ut_name = _ut_cfg.get("name", "")
+                if (
+                    _ut_name == request.model          # exact match with full model string
+                    or _ut_name == _req_model_base     # match without @node suffix
+                    or _ut_id  == request.model        # match by template ID
+                    or _ut_id  == _req_model_base
+                ):
                     _tmpl_override = _ut_id
-                    logger.debug("User template detected by %s: %s → override=%s",
-                                 "name" if _ut_cfg.get("name") == request.model else "id",
-                                 request.model, _ut_id)
+                    logger.debug("User template detected: '%s' (req='%s') → override=%s",
+                                 _ut_name or _ut_id, request.model, _ut_id)
                     break
-            # Also check if any template in the user's expert_template permissions is a user template
+            # Also check templates referenced in the user's expert_template permissions
             if not _tmpl_override:
                 _early_perms = json.loads(user_ctx.get("permissions_json", "{}") or "{}")
                 for _perm_tid in _early_perms.get("expert_template", []):
                     if _perm_tid in _early_user_tmpls:
                         _ut_cfg = _early_user_tmpls[_perm_tid]
-                        if (_ut_cfg.get("name") == request.model or _perm_tid == request.model):
+                        _ut_name = _ut_cfg.get("name", "")
+                        if (
+                            _ut_name == request.model
+                            or _ut_name == _req_model_base
+                            or _perm_tid == request.model
+                            or _perm_tid == _req_model_base
+                        ):
                             _tmpl_override = _perm_tid
                             logger.debug("User template detected via permissions: %s", _perm_tid)
                             break

@@ -1370,12 +1370,18 @@ async def sync_user_to_redis(user_id: str) -> None:
     perms_json = json.dumps(perms)
     cost_factor = _get_user_cost_factor(perms)
 
-    # Cache user-owned templates inline (for orchestrator access without DB hit)
+    # Cache user-owned templates inline (for orchestrator access without DB hit).
+    # The template name and description from the DB row are merged into the config
+    # so the orchestrator can match templates by name without a DB hit.
     user_tmpls = await list_user_templates(user_id)
-    user_templates_map = {
-        t["id"]: json.loads(t["config_json"])
-        for t in user_tmpls if t.get("is_active", True)
-    }
+    user_templates_map = {}
+    for t in user_tmpls:
+        if not t.get("is_active", True):
+            continue
+        cfg = json.loads(t["config_json"])
+        cfg["name"]        = t.get("name", "")         # needed for name-based matching
+        cfg["description"] = t.get("description", "")
+        user_templates_map[t["id"]] = cfg
     user_templates_json = json.dumps(user_templates_map)
 
     # User-eigene CC-Profile inline cachen
