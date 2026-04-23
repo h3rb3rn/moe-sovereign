@@ -948,6 +948,7 @@ async def call_orchestrator(
                     "max_tokens": 500,
                     "temperature": TEMPERATURE,
                     "no_cache": True,
+                    "mode": "research",  # force multi-search mode regardless of complexity estimate
                 },
                 headers={
                     "Authorization": f"Bearer {API_KEY}",
