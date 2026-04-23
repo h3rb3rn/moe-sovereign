@@ -117,11 +117,11 @@ const _modelsLoaded = {};
 const _modelsVisible = {};
 
 const _tservers = {
-  error:             "{{ t(request, 'js.load_error') }}",
-  confirmBlock:      "{{ t(request, 'js.confirm_block_server') }}",
-  floatingFail:      "{{ t(request, 'js.load_error') }}",
-  blockFail:         "{{ t(request, 'js.load_error') }}",
-  dashboardUpdated:  "{{ t(request, 'js.dashboard_updated') }}",
+  error:            {{ t(request, 'js.load_error') | tojson }},
+  confirmBlock:     {{ t(request, 'js.confirm_block_server') | tojson }},
+  floatingFail:     {{ t(request, 'js.load_error') | tojson }},
+  blockFail:        {{ t(request, 'js.load_error') | tojson }},
+  dashboardUpdated: {{ t(request, 'js.dashboard_updated') | tojson }},
 };
 
 async function loadAll() {

@@ -918,5 +918,8 @@
   ,"info.skillssh_audit":              "Évaluation skills.sh"
   ,"js.audit_complete":                "Audit terminé : {verdict}"
   ,"js.audit_required":                "Veuillez d'abord effectuer un audit"
+  ,"section.endpoint_availability":    "Disponibilité des points de terminaison (24h)"
+  ,"section.endpoint_budget":          "Budget des points de terminaison API"
+  ,"lbl.last_24h":                     "Dernières 24 heures"
 
 }

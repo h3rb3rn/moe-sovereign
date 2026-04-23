@@ -918,5 +918,8 @@
   ,"info.skillssh_audit":              "skills.sh Bewertung"
   ,"js.audit_complete":                "Audit abgeschlossen: {verdict}"
   ,"js.audit_required":                "Bitte zuerst ein Audit durchführen"
+  ,"section.endpoint_availability":    "Endpunkt-Verfügbarkeit (24h)"
+  ,"section.endpoint_budget":          "API-Endpunkt Budget"
+  ,"lbl.last_24h":                     "Letzte 24 Stunden"
 
 }

@@ -8,6 +8,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.6.0] - 2026-04-23
+
+> `impact: minor` · `breaking: no` · `domain: admin-ui, api, monitoring`
+
+### Added — Endpoint Availability Graph
+
+The System Monitoring page now shows a stepped-line chart with the **24-hour availability history** per configured inference server. Data is sourced from Prometheus `query_range` on `moe_inference_server_up` at 5-minute resolution. New API route: `GET /api/endpoints/availability`.
+
+### Added — API Endpoint Budget Overview
+
+For every OpenAI-compatible inference server (e.g. AIHUB / LiteLLM), the monitoring page shows a live **budget card** with spend, maximum budget, and a colour-coded progress bar (green < 70 % · orange 70–90 % · red ≥ 90 %). Budget values are read from the `x-litellm-key-spend` and `x-litellm-key-max-budget` response headers via a lightweight `GET /v1/models` probe. New API route: `GET /api/endpoints/budget`.
+
+### Added — User Budget Response Headers
+
+`/v1/chat/completions` now returns two additional HTTP headers for authenticated users:
+
+- `X-MoE-Budget-Daily-Used` — tokens consumed today
+- `X-MoE-Budget-Daily-Limit` — daily token limit (omitted if unlimited)
+
+### Fixed — Servers Page JavaScript Crash
+
+The `js.confirm_block_server` translation string contains multi-line text which, when rendered into a JavaScript string literal without `| tojson`, produced a `SyntaxError` that silently killed the entire `<script>` block — leaving all server cards with static `–` values and non-functional buttons. Fixed with the `tojson` Jinja2 filter.
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | Admin UI, API |
+
+---
+
 ## [2.5.0] - 2026-04-22
 
 > `impact: minor` · `breaking: no` · `domain: admin-ui, skills, servers, users`
