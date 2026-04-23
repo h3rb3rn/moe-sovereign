@@ -3477,11 +3477,26 @@ async def planner_node(state: AgentState):
         if _strategy_hint:
             _depth_hint += f"  • Suggested approach from gap analysis: {_strategy_hint}\n"
 
+        # Domains discovered in previous searches — offered as targeted follow-up targets
+        _disc_domains: list = state.get("discovered_domains") or []
+        if _disc_domains:
+            _domain_lines = "\n".join(
+                f"  • {d['domain']}" + (f" — {d['context']}" if d.get("context") else "")
+                for d in _disc_domains[:8]
+            )
+            _discovered_block = (
+                "\nSOURCES FOUND IN PREVIOUS SEARCHES (consider using web_search_domain with these):\n"
+                f"{_domain_lines}\n"
+            )
+        else:
+            _discovered_block = ""
+
         _agentic_context_block = (
             f"\n=== AGENTIC ITERATION {_agentic_iteration}/{_agentic_max_rounds} ===\n"
             f"{_context_facts}\n\n"
             f"Still unresolved:\n{_gap[:800]}\n"
             f"{_search_history_block}"
+            f"{_discovered_block}"
             f"{_fail_block}\n"
             f"{_depth_hint}\n"
             "Instructions: Focus ONLY on resolving the gap above. "
@@ -3977,6 +3992,16 @@ async def research_node(state: AgentState):
         combined = "\n\n".join(combined_parts)
         new_query_records = [{"query": q, "quality": qlt} for _, q, qlt in raw_results]
 
+        # Extract authoritative domains from all results for agentic follow-up
+        _prev_domains: list = list(state.get("discovered_domains") or [])
+        _known_domains = {d["domain"] for d in _prev_domains}
+        _new_domains = [
+            d for r, _, _ in raw_results if r
+            for d in _extract_authoritative_domains(r)
+            if d["domain"] not in _known_domains
+        ]
+        _all_domains = _prev_domains + _new_domains
+
         await _report(
             f"🌐 Multi-search complete: {len(combined)} chars total ({sum(1 for r, _, _ in raw_results if r)} hits)"
             if combined else "🌐 Multi-search: no results"
@@ -3984,16 +4009,101 @@ async def research_node(state: AgentState):
         return {
             "web_research": combined,
             "attempted_queries": _prev_queries + new_query_records,
+            "discovered_domains": _all_domains,
         }
     else:
         # Standard single-search mode
         query = research_tasks[0].get("search_query", state["input"])
         logger.info(f"--- [NODE] WEB RESEARCH: '{query[:80]}' ---")
         raw, q, quality = await _fetch_one(research_tasks[0], 0, 1)
+        _prev_domains = list(state.get("discovered_domains") or [])
+        _known_domains = {d["domain"] for d in _prev_domains}
+        _new_domains = [
+            d for d in _extract_authoritative_domains(raw)
+            if d["domain"] not in _known_domains
+        ] if raw else []
         return {
             "web_research": raw,
             "attempted_queries": _prev_queries + [{"query": q, "quality": quality}],
+            "discovered_domains": _prev_domains + _new_domains,
         }
+
+
+# ─── Domain Discovery ─────────────────────────────────────────────────────────
+
+# Domains that carry no domain-specific authority — filtered out so the
+# re-planner is not offered generic search infrastructure as "sources".
+_GENERIC_DOMAINS: frozenset[str] = frozenset({
+    "google.com", "google.de", "bing.com", "duckduckgo.com", "yahoo.com",
+    "baidu.com", "yandex.ru", "ask.com", "search.yahoo.com",
+    "t.co", "twitter.com", "x.com", "facebook.com", "instagram.com",
+    "reddit.com", "quora.com", "pinterest.com", "linkedin.com",
+    "youtube.com",           # transcripts go through youtube_transcript tool instead
+    "amazon.com", "ebay.com", "etsy.com",
+    "cloudflare.com", "amazonaws.com", "akamai.com",
+    "w3.org", "schema.org", "openstreetmap.org",
+    "fonts.googleapis.com", "gstatic.com",
+})
+
+
+def _extract_authoritative_domains(web_result_text: str) -> list[dict]:
+    """Parse URLs from a web-search result block and return authoritative domains.
+
+    Each returned dict has the shape:
+        {"domain": str, "context": str}   # context = a short hint why it looks useful
+
+    Domains that appear in _GENERIC_DOMAINS are silently dropped. The caller
+    accumulates these across iterations so the re-planner can offer them as
+    targeted follow-up search targets via web_search_domain.
+    """
+    import urllib.parse as _urlparse
+    _URL_RE = re.compile(r'https?://[^\s\)"\'<>]+')
+    seen: set[str] = set()
+    result: list[dict] = []
+
+    def _classify(domain: str) -> str:
+        if any(domain.endswith(s) for s in (".fandom.com", ".wikia.com", ".wiki.gg")):
+            return "fan wiki"
+        if "wikipedia.org" in domain:
+            return "encyclopedia"
+        if any(x in domain for x in ("museum", "smithsonian", "getty", "moma")):
+            return "museum database"
+        if any(x in domain for x in ("ncbi.nlm.nih.gov", "pubmed", "pubchem", "chembl")):
+            return "scientific database"
+        if any(x in domain for x in ("webbook.nist", "physics.nist", "nist.gov")):
+            return "standards database"
+        if "arxiv.org" in domain:
+            return "preprint server"
+        if "github.com" in domain:
+            return "code repository"
+        if "orcid.org" in domain:
+            return "researcher profile"
+        if any(x in domain for x in ("sciencedirect", "springer", "nature.com", "wiley", "tandfonline")):
+            return "academic publisher"
+        if domain.endswith(".gov"):
+            return "government source"
+        if domain.endswith(".edu"):
+            return "academic institution"
+        if domain.endswith(".org"):
+            return "organization"
+        return "web source"
+
+    for match in _URL_RE.finditer(web_result_text):
+        url = match.group(0).rstrip(".,;)")
+        try:
+            parsed = _urlparse.urlparse(url)
+            domain = parsed.netloc.lower()
+            if domain.startswith("www."):
+                domain = domain[4:]
+        except Exception:
+            continue
+        if not domain or domain in _GENERIC_DOMAINS or domain in seen:
+            continue
+        seen.add(domain)
+        result.append({"domain": domain, "context": _classify(domain)})
+        if len(result) >= 6:
+            break
+    return result
 
 
 # ─── Context Compression Layer ────────────────────────────────────────────────

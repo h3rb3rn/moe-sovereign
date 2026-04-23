@@ -1067,7 +1067,7 @@ async def main() -> int:
             result = GAIAResult(
                 task_id=task_id,
                 level=level,
-                question=question[:200],
+                question=question,
                 expected_answer=expected,
                 model_answer=answer[:500],  # raw orchestrator output, unextracted
                 correct=correct,

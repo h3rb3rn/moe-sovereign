@@ -116,6 +116,7 @@ class AgentState(TypedDict):
     agentic_gap: str                    # What information is still missing — output of gap-detection LLM call
     attempted_queries: list             # All search queries already tried [{query, result_quality}] — injected into re-planner to prevent repetition
     search_strategy_hint: str          # Suggested next search approach from gap-detection LLM (e.g. "try site:github.com")
+    discovered_domains: list           # Authoritative domains found in web results [{domain, context}] — offered to re-planner for targeted follow-up
 
     # ── 12. Working memory hub ────────────────────────────────────────────────
     # Structured persistence layer for tool results across agentic iterations.

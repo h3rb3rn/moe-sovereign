@@ -2466,14 +2466,21 @@ def orcid_works_count(orcid_id: str, before_year: int = 0, after_year: int = 0) 
     groups = data.get("group", [])
     years: list[int] = []
     for grp in groups:
+        # Each group represents one unique work. Multiple work-summaries within a group
+        # are different data sources for the same work — take only the first year found
+        # to avoid counting the same publication multiple times.
+        year_for_group: int | None = None
         for ws in grp.get("work-summary", []):
             pub_date = ws.get("publication-date") or {}
             year_val = (pub_date.get("year") or {}).get("value")
             if year_val:
                 try:
-                    years.append(int(year_val))
+                    year_for_group = int(year_val)
+                    break
                 except ValueError:
                     pass
+        if year_for_group is not None:
+            years.append(year_for_group)
 
     # Apply year filters
     filtered = years
@@ -2486,12 +2493,14 @@ def orcid_works_count(orcid_id: str, before_year: int = 0, after_year: int = 0) 
     year_dist = dict(sorted(Counter(filtered).items()))
     result = {
         "orcid": orcid_clean,
-        "total_works": len(groups),
-        "works_in_filter": len(filtered),
-        "filter": {
+        "total_unique_works": len(groups),
+        "works_with_year": len(years),
+        "filtered_count": len(filtered),
+        "filter_applied": {
             "before_year": before_year or None,
             "after_year": after_year or None,
         },
+        "NOTE": "Use 'filtered_count' when a year filter was applied, 'total_unique_works' otherwise.",
         "year_distribution": year_dist,
     }
     return json.dumps(result, indent=2)
@@ -2504,13 +2513,16 @@ def pubchem_advanced_search(
     heavy_atoms: int = 0,
     hb_acceptors_max: int = -1,
     hb_donors_max: int = -1,
+    complexity_min: int = 0,
+    complexity_max: int = 0,
     classification: str = "",
     max_results: int = 10,
 ) -> str:
     """Advanced PubChem compound search with multi-criteria filtering.
 
     Use this for GAIA-style questions like "find the compound in PubChem's Food Additive
-    Status classification with MW ≤ 100, 6 heavy atoms, and ≤ 1 hydrogen bond acceptors".
+    Status classification with MW ≤ 100, 6 heavy atoms, ≤ 1 hydrogen bond acceptors,
+    and complexity between 10 and 15".
 
     All filter arguments are optional — provide only the ones you need.
     Returns matching compound CIDs with their molecular weight, formula, and IUPAC name.
@@ -2519,11 +2531,12 @@ def pubchem_advanced_search(
     heavy_atoms:          Exact heavy atom count (0 = no filter)
     hb_acceptors_max:     Max hydrogen bond acceptors (-1 = no filter)
     hb_donors_max:        Max hydrogen bond donors (-1 = no filter)
+    complexity_min/max:   Bertz complexity score range (0 = no filter)
     classification:       Filter hint for result description (e.g. 'Food Additive')
     max_results:          Max compounds to return (1-20)
     """
     base = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
-    _PROPS = "MolecularWeight,MolecularFormula,IUPACName,HBondAcceptorCount,HBondDonorCount,HeavyAtomCount"
+    _PROPS = "MolecularWeight,MolecularFormula,IUPACName,HBondAcceptorCount,HBondDonorCount,HeavyAtomCount,Complexity"
 
     def _batch_props(cids: list[int]) -> list[dict]:
         """Fetch properties for up to 200 CIDs in a single request."""
@@ -2545,14 +2558,10 @@ def pubchem_advanced_search(
         candidate_cids: list[int] = []
 
         if classification and "food" in classification.lower():
-            # Fetch all CIDs in NCATS Food Additive Status classification
-            class_url = f"{base}/classification/cid/JSON?source=NCATS+Food+Additive+Status&MaxRecords=2000"
-            cr = httpx.get(class_url, timeout=30)
-            if cr.status_code == 200:
-                for item in cr.json().get("InformationList", {}).get("Information", []):
-                    cid = item.get("CID")
-                    if cid:
-                        candidate_cids.append(int(cid))
+            # The /classification/cid/JSON?source=NCATS+Food+Additive+Status endpoint
+            # returns HTTP 400. Scan CIDs 1-10000, which covers all known small-molecule
+            # food additives in PubChem (the vast majority have CID < 10000).
+            candidate_cids = list(range(1, 10001))
 
         # If no classification-based candidates, use MW-range PubChem search
         if not candidate_cids:
@@ -2601,6 +2610,11 @@ def pubchem_advanced_search(
                     continue
                 if hb_donors_max >= 0 and hbd > hb_donors_max:
                     continue
+                cplx = int(props.get("Complexity", 0) or 0)
+                if complexity_min > 0 and cplx < complexity_min:
+                    continue
+                if complexity_max > 0 and cplx > complexity_max:
+                    continue
                 results.append(props)
 
         if not results:
@@ -2621,6 +2635,96 @@ def pubchem_advanced_search(
 
     except Exception as e:
         return f"[pubchem_advanced_search error: {e}]"
+
+
+@mcp.tool()
+def semantic_scholar_search(
+    query: str,
+    year_filter: str = "",
+    max_results: int = 5,
+    fetch_pdf: bool = False,
+) -> str:
+    """Search Semantic Scholar for academic papers and retrieve abstracts and PDF links.
+
+    Semantic Scholar aggregates open-access papers from many publishers.  Use this
+    to find specific academic papers by author, title, or topic — especially when
+    those papers may be behind a paywall on the journal's own site.  If fetch_pdf
+    is True and a free PDF URL exists, the first result's text is also extracted.
+
+    query:       Author name + topic, or paper title fragment (e.g. "Valencfia-Mendez
+                 harlequin shrimp length 2017")
+    year_filter: Restrict results to a single year or range, e.g. "2017" or "2000-2005"
+    max_results: Number of papers to return (1-10)
+    fetch_pdf:   If True and a free PDF URL is found, extract up to 6000 chars of text
+    """
+    ss_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+    fields = "title,year,authors,abstract,openAccessPdf,externalIds,publicationVenue"
+    params: dict = {
+        "query": query,
+        "fields": fields,
+        "limit": min(max(1, max_results), 10),
+    }
+    if year_filter:
+        params["year"] = year_filter
+
+    try:
+        resp = httpx.get(ss_url, params=params, timeout=15,
+                         headers={"User-Agent": "MoE-Research/1.0"})
+    except Exception as e:
+        return f"[semantic_scholar_search request failed: {e}]"
+
+    if resp.status_code == 429:
+        return "[semantic_scholar_search: rate limited — retry in a few seconds]"
+    if resp.status_code != 200:
+        return f"[semantic_scholar_search: HTTP {resp.status_code}]"
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return f"[semantic_scholar_search: parse error: {e}]"
+
+    papers = data.get("data", [])
+    if not papers:
+        return f"[semantic_scholar_search: no results for query '{query[:80]}']"
+
+    results = []
+    pdf_text = ""
+    for p in papers:
+        authors = ", ".join(a.get("name", "") for a in (p.get("authors") or [])[:4])
+        oa = p.get("openAccessPdf") or {}
+        pdf_url = oa.get("url", "")
+        doi = (p.get("externalIds") or {}).get("DOI", "")
+        venue = (p.get("publicationVenue") or {}).get("name", "")
+        entry = {
+            "title":    p.get("title", ""),
+            "year":     p.get("year"),
+            "authors":  authors,
+            "venue":    venue,
+            "doi":      doi,
+            "pdf_url":  pdf_url,
+            "abstract": (p.get("abstract") or "")[:800],
+        }
+        results.append(entry)
+
+        # Optionally fetch the first available PDF text
+        if fetch_pdf and pdf_url and not pdf_text:
+            try:
+                pr = httpx.get(pdf_url, timeout=20, follow_redirects=True)
+                if pr.status_code == 200 and b"%PDF" in pr.content[:8]:
+                    import io, pdfminer.high_level as _pdf  # type: ignore
+                    pdf_text = _pdf.extract_text(io.BytesIO(pr.content))[:6000]
+            except Exception:
+                pass
+
+    output: dict = {
+        "query": query,
+        "total_found": data.get("total", len(results)),
+        "papers": results,
+    }
+    if pdf_text:
+        output["pdf_text_preview"] = pdf_text
+
+    return json.dumps(output, indent=2, ensure_ascii=False)
 
 
 # ─── Tool registry for REST shim ────────────────────────────────────────────
@@ -2670,6 +2774,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "pubchem_compound_search":  pubchem_compound_search,
     "pubchem_advanced_search":  pubchem_advanced_search,
     "orcid_works_count":       orcid_works_count,
+    "semantic_scholar_search": semantic_scholar_search,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -2717,6 +2822,7 @@ _TOOL_DESCRIPTIONS = {
     "pubchem_compound_search":  "Search PubChem compound database by name, CID, or molecular weight range. Returns CID, molecular weight, formula, IUPAC name. Use for chemistry/pharmacology/food-science questions.",
     "pubchem_advanced_search":  "Advanced PubChem multi-criteria search: filter by MW range, heavy atom count, HB acceptors/donors simultaneously. Use for GAIA-style questions like 'find the compound with MW≤100, 6 heavy atoms, ≤1 HB acceptors in Food Additive Status'.",
     "orcid_works_count":       "Count publications on an ORCID researcher profile. Optionally filter by year (e.g. before_year=2020 for pre-2020 works). Use for academic publication count questions.",
+    "semantic_scholar_search": "Search Semantic Scholar for academic papers by author/title/topic. Returns abstracts, DOI, and open-access PDF links. Use for questions requiring specific measurements or data from named academic papers (e.g. 'Valencfia-Mendez 2017 harlequin shrimp length'). Set fetch_pdf=true to also extract the paper's text if a free PDF is available.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────
