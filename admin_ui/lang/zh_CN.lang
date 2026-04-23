@@ -51,6 +51,8 @@
   "btn.save":             "保存并重启编排器",
   "btn.cancel":           "取消",
   "btn.edit":             "编辑",
+  "btn.copy_profile":     "复制配置",
+  "btn.backup":           "创建备份",
   "btn.delete":           "删除",
   "btn.activate":         "激活",
   "btn.deactivate":       "停用",
@@ -918,5 +920,8 @@
   ,"info.skillssh_audit":              "skills.sh 评分"
   ,"js.audit_complete":                "审计完成：{verdict}"
   ,"js.audit_required":                "请先执行审计"
+  ,"section.endpoint_availability":    "端点可用性（24小时）"
+  ,"section.endpoint_budget":          "API端点预算"
+  ,"lbl.last_24h":                     "最近24小时"
 
 }

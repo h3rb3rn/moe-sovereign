@@ -27,6 +27,9 @@
         <li><a class="dropdown-item" href="#" onclick="exportTemplates(true); return false;"><i class="bi bi-download me-2"></i>Alle exportieren</a></li>
       </ul>
     </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="backupTemplates()" title="{{ t(request, 'btn.backup') }}">
+      <i class="bi bi-archive me-1"></i>{{ t(request, 'btn.backup') }}
+    </button>
     <label class="btn btn-outline-secondary btn-sm mb-0" title="Templates aus JSON-Datei importieren">
       <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
       <input type="file" id="import-templates-file" accept=".json" style="display:none" onchange="importTemplates(this)">
@@ -898,6 +901,18 @@ document.getElementById('tmpl-select-all').addEventListener('change', function()
   updateTmplExportCount();
 });
 
+async function backupTemplates() {
+  const ts = new Date().toISOString().slice(0, 10);
+  const res = await fetch('/api/expert-templates/export');
+  if (!res.ok) { alert('Backup failed'); return; }
+  const blob = await res.blob();
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob),
+    download: `expert_templates_backup_${ts}.json`,
+  });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
 async function exportTemplates(all = false) {
   const checked = [...document.querySelectorAll('.tmpl-cb:checked')].map(cb => cb.value);
   const params = (!all && checked.length > 0) ? `?ids=${checked.join(',')}` : '';
@@ -912,6 +927,9 @@ async function exportTemplates(all = false) {
 async function importTemplates(input) {
   const file = input.files[0];
   if (!file) return;
+  if (confirm('Create a backup of all current templates before importing?')) {
+    await backupTemplates();
+  }
   const replace = confirm('Overwrite existing templates with the same name?\n\nOK = Replace | Cancel = Import new only');
   const mode = replace ? 'replace' : 'merge';
   const formData = new FormData();
@@ -933,6 +951,9 @@ async function importTemplatesFromCode() {
   if (!raw) { alert('Please paste JSON code.'); return; }
   let data;
   try { data = JSON.parse(raw); } catch(e) { alert('Invalid JSON: ' + e.message); return; }
+  if (confirm('Create a backup of all current templates before importing?')) {
+    await backupTemplates();
+  }
   const mode = document.getElementById('import-tmpl-code-mode').value;
   const res = await fetch(`/api/expert-templates/import?mode=${mode}`, {
     method: 'POST',

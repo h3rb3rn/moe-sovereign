@@ -30,6 +30,9 @@
         <li><a class="dropdown-item" href="#" onclick="exportProfiles(true); return false;"><i class="bi bi-download me-2"></i>Alle exportieren</a></li>
       </ul>
     </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="backupProfiles()" title="{{ t(request, 'btn.backup') }}">
+      <i class="bi bi-archive me-1"></i>{{ t(request, 'btn.backup') }}
+    </button>
     <label class="btn btn-outline-secondary btn-sm mb-0" title="Profile aus JSON-Datei importieren">
       <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import_json') }}
       <input type="file" id="import-profiles-file" accept=".json" style="display:none" onchange="importProfiles(this)">
@@ -145,8 +148,11 @@
           <i class="bi bi-toggle-off me-1"></i>{{ t(request, 'btn.enable_profile') }}
         </button>
         {% endif %}
-        <button class="btn btn-outline-secondary btn-sm" onclick="openEditModal('{{ p.id }}')" title="Edit">
+        <button class="btn btn-outline-secondary btn-sm" onclick="openEditModal('{{ p.id }}')" title="{{ t(request, 'btn.edit') }}">
           <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="copyProfile('{{ p.id }}')" title="{{ t(request, 'btn.copy_profile') }}">
+          <i class="bi bi-copy"></i>
         </button>
         <button class="btn btn-outline-danger btn-sm" onclick="deleteProfile('{{ p.id }}', this)" title="{{ t(request, 'btn.delete') }}">
           <i class="bi bi-trash"></i>
@@ -353,6 +359,15 @@ async function openEditModal(id) {
   await fillModal(p);
 }
 
+async function copyProfile(id) {
+  const p = profileById(id);
+  if (!p) return;
+  document.getElementById('profileModalTitle').textContent = '{{ t(request, "modal.new_profile") }}';
+  new bootstrap.Modal(document.getElementById('profileModal')).show();
+  await fillModal({ ...p, id: '', name: 'Copy of ' + p.name });
+  document.getElementById('pm-id').value = '';
+}
+
 // ─── Sync banner ─────────────────────────────────────────────────────────────
 function showSyncBanner() {
   const el = document.getElementById('sync-banner');
@@ -458,6 +473,18 @@ document.getElementById('profile-select-all').addEventListener('change', functio
   updateProfileExportCount();
 });
 
+async function backupProfiles() {
+  const ts = new Date().toISOString().slice(0, 10);
+  const res = await fetch('/api/profiles/export');
+  if (!res.ok) { alert('Backup failed'); return; }
+  const blob = await res.blob();
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob),
+    download: `cc_profiles_backup_${ts}.json`,
+  });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
 async function exportProfiles(all = false) {
   const checked = [...document.querySelectorAll('.profile-cb:checked')].map(cb => cb.value);
   const params = (!all && checked.length > 0) ? `?ids=${checked.join(',')}` : '';
@@ -472,6 +499,9 @@ async function exportProfiles(all = false) {
 async function importProfiles(input) {
   const file = input.files[0];
   if (!file) return;
+  if (confirm('Create a backup of all current profiles before importing?')) {
+    await backupProfiles();
+  }
   const replace = confirm('Overwrite existing profiles with the same name?\n\nOK = Replace | Cancel = Import new only');
   const mode = replace ? 'replace' : 'merge';
   const formData = new FormData();
@@ -493,6 +523,9 @@ async function importProfilesFromCode() {
   if (!raw) { alert('Please paste JSON code.'); return; }
   let data;
   try { data = JSON.parse(raw); } catch(e) { alert('Invalid JSON: ' + e.message); return; }
+  if (confirm('Create a backup of all current profiles before importing?')) {
+    await backupProfiles();
+  }
   const mode = document.getElementById('import-profile-code-mode').value;
   const res = await fetch(`/api/profiles/import?mode=${mode}`, {
     method: 'POST',

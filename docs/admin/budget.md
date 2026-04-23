@@ -166,6 +166,31 @@ GET /api/users/{user_id}/usage?days=30
 
 Returns JSON with all entries from the last N days, including key label and key prefix.
 
+## Budget Headers in API Responses
+
+Every `/v1/chat/completions` response for an authenticated (non-anonymous) user includes budget information as HTTP response headers — no extra API call needed:
+
+| Header | Value | Example |
+|--------|-------|---------|
+| `X-MoE-Budget-Daily-Used` | Tokens consumed today | `142350` |
+| `X-MoE-Budget-Daily-Limit` | Daily token limit (omitted if unlimited) | `500000` |
+
+These headers are appended after the LLM call completes, so the values reflect the state **before** the current request's tokens are added (Valkey increment is fire-and-forget, race-condition-free for display purposes).
+
+**Usage example (curl):**
+```bash
+curl -s -D - -o /dev/null \
+  -H "Authorization: Bearer moe-sk-..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"moe-default","messages":[{"role":"user","content":"Hi"}]}' \
+  http://localhost:8002/v1/chat/completions \
+  | grep -i x-moe-budget
+# X-MoE-Budget-Daily-Used: 142350
+# X-MoE-Budget-Daily-Limit: 500000
+```
+
+---
+
 ## Summary: Life of a Token
 
 ```mermaid

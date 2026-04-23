@@ -51,6 +51,8 @@
   "btn.save":             "Save & Restart Orchestrator",
   "btn.cancel":           "Cancel",
   "btn.edit":             "Edit",
+  "btn.copy_profile":     "Copy Profile",
+  "btn.backup":           "Create Backup",
   "btn.delete":           "Delete",
   "btn.activate":         "Activate",
   "btn.deactivate":       "Deactivate",
@@ -918,5 +920,8 @@
   ,"info.skillssh_audit":              "skills.sh Rating"
   ,"js.audit_complete":                "Audit complete: {verdict}"
   ,"js.audit_required":                "Please run an audit first"
+  ,"section.endpoint_availability":    "Endpoint Availability (24h)"
+  ,"section.endpoint_budget":          "API Endpoint Budget"
+  ,"lbl.last_24h":                     "Last 24 hours"
 
 }

@@ -2126,6 +2126,70 @@ async def api_servers_health(request: Request, _=Depends(require_login)):
     return results
 
 
+@app.get("/api/endpoints/availability", dependencies=[Depends(require_login)])
+async def api_endpoints_availability():
+    """Return 24h availability history per inference server from Prometheus query_range."""
+    import time as _time
+    now   = int(_time.time())
+    start = now - 86400
+    params = {
+        "query": "moe_inference_server_up",
+        "start": start,
+        "end":   now,
+        "step":  "300",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{PROMETHEUS_URL}/api/v1/query_range", params=params)
+        data = r.json().get("data", {}).get("result", [])
+        return [
+            {
+                "server": s["metric"].get("server", "unknown"),
+                "values": [[int(float(ts)), float(v)] for ts, v in s.get("values", [])],
+            }
+            for s in data
+        ]
+    except Exception:
+        return []
+
+
+@app.get("/api/endpoints/budget", dependencies=[Depends(require_login)])
+async def api_endpoints_budget():
+    """Return live budget data for OpenAI-compatible endpoints via LiteLLM response headers."""
+    servers = _get_inference_servers()
+    results = []
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for srv in servers:
+            if srv.get("api_type") != "openai":
+                continue
+            try:
+                r = await client.get(
+                    f"{srv['url'].rstrip('/')}/models",
+                    headers={"Authorization": f"Bearer {srv.get('token', '')}"},
+                )
+                spend = r.headers.get("x-litellm-key-spend", "-1")
+                max_b = r.headers.get("x-litellm-key-max-budget", "-1")
+                spend_f = float(spend)
+                max_f   = float(max_b)
+                results.append({
+                    "name":      srv["name"],
+                    "url":       srv["url"],
+                    "spend_usd": spend_f,
+                    "max_usd":   max_f,
+                    "pct":       round(spend_f / max_f * 100, 1) if max_f > 0 else None,
+                })
+            except Exception as exc:
+                results.append({
+                    "name":      srv["name"],
+                    "url":       srv["url"],
+                    "spend_usd": -1,
+                    "max_usd":   -1,
+                    "pct":       None,
+                    "error":     str(exc),
+                })
+    return results
+
+
 @app.get("/api/servers/models")
 async def api_servers_models(request: Request, server: str, _=Depends(require_login)):
     """Return available models from a specific inference server."""

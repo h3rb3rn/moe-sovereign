@@ -51,6 +51,8 @@
   "btn.save":             "Enregistrer & Redémarrer",
   "btn.cancel":           "Annuler",
   "btn.edit":             "Modifier",
+  "btn.copy_profile":     "Copier le profil",
+  "btn.backup":           "Créer une sauvegarde",
   "btn.delete":           "Supprimer",
   "btn.activate":         "Activer",
   "btn.deactivate":       "Désactiver",
@@ -918,5 +920,8 @@
   ,"info.skillssh_audit":              "Évaluation skills.sh"
   ,"js.audit_complete":                "Audit terminé : {verdict}"
   ,"js.audit_required":                "Veuillez d'abord effectuer un audit"
+  ,"section.endpoint_availability":    "Disponibilité des points de terminaison (24h)"
+  ,"section.endpoint_budget":          "Budget des points de terminaison API"
+  ,"lbl.last_24h":                     "Dernières 24 heures"
 
 }

@@ -1865,7 +1865,7 @@ async def _invoke_judge_with_retry(
                 llm = llm.bind(temperature=temperature)
             res = await llm.ainvoke(prompt)
             # Check for empty/useless response
-            if res and hasattr(res, 'content') and res.content and len(res.content.strip()) > 10:
+            if res and hasattr(res, 'content') and res.content and len(res.content.strip()) > 0:
                 if attempt > 0:
                     logger.info(f"✅ Judge retry {attempt+1}/{max_retries} succeeded")
                 return res
@@ -5830,6 +5830,19 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     if _tmpl_override:
         _moe_resp_headers["X-MoE-Template-Id"]   = _tmpl_override
         _moe_resp_headers["X-MoE-Template-Name"]  = _tmpl_name or request.model
+
+    # Expose user token budget so callers can track their quota without a separate API call.
+    if user_id and user_id != "anon" and redis_client is not None:
+        try:
+            from datetime import date as _date
+            _today = _date.today().strftime("%Y-%m-%d")
+            _used_tok = int(await redis_client.get(f"user:{user_id}:tokens:daily:{_today}") or 0)
+            _moe_resp_headers["X-MoE-Budget-Daily-Used"] = str(_used_tok)
+            _daily_limit = user_ctx.get("budget_daily")
+            if _daily_limit:
+                _moe_resp_headers["X-MoE-Budget-Daily-Limit"] = str(_daily_limit)
+        except Exception:
+            pass
 
     if request.stream:
         return StreamingResponse(

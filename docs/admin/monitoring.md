@@ -119,6 +119,54 @@ Key panels:
 
 ## System Monitoring (`/monitoring`)
 
+### Endpoint Availability (24 h)
+
+A stepped line chart at the top of the monitoring page shows the **availability history** of every configured inference server over the last 24 hours.
+
+- **Data source:** Prometheus `query_range` on `moe_inference_server_up{server}` (5-minute resolution)
+- **Y-axis:** `UP` (1) / `DOWN` (0) — the label switches for readability
+- **One line per server** — colors are assigned round-robin and match the legend below the chart
+- **API:** `GET /api/endpoints/availability` — returns a list of `{server, values: [[ts, v], …]}` objects
+
+```json
+[
+  { "server": "N04-RTX",  "values": [[1745400000, 1.0], [1745400300, 1.0], …] },
+  { "server": "AIHUB",    "values": [[1745400000, 1.0], …] }
+]
+```
+
+If Prometheus has no data yet (fresh install, no traffic), the chart area is replaced by a "No data" notice.
+
+---
+
+### API Endpoint Budget
+
+For every **OpenAI-compatible** inference server (e.g. AIHUB / LiteLLM), the monitoring page shows a live budget card:
+
+| Element | Description |
+|---------|-------------|
+| Server name | Display name from the server configuration |
+| Spend / Max | USD spend and maximum budget read from LiteLLM response headers |
+| Progress bar | Visual fill: green < 70 % · orange 70–90 % · red ≥ 90 % |
+| Percentage | Exact `(spend / max) × 100 %` |
+
+**How it works:** The Admin UI makes a lightweight `GET /v1/models` request to each OpenAI-compatible endpoint on every page load and reads the LiteLLM-specific response headers:
+
+| Header | Meaning |
+|--------|---------|
+| `x-litellm-key-spend` | Current cumulative spend in USD |
+| `x-litellm-key-max-budget` | Maximum budget configured for this API key |
+
+- **API:** `GET /api/endpoints/budget` — returns `[{name, url, spend_usd, max_usd, pct}]`
+- Ollama servers are **skipped** (they have no budget concept)
+- On network error the card shows the error message instead of values
+
+!!! tip "Budget alerts"
+    When the fill reaches orange (70 %) or red (90 %), plan for a budget top-up or
+    switch to a local-only template to avoid 402/429 errors from the provider.
+
+---
+
 ### Provider Rate Limits
 
 When Claude Code is active, this section shows the remaining API quota for each endpoint:
