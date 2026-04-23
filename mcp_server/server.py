@@ -2466,14 +2466,21 @@ def orcid_works_count(orcid_id: str, before_year: int = 0, after_year: int = 0) 
     groups = data.get("group", [])
     years: list[int] = []
     for grp in groups:
+        # Each group represents one unique work. Multiple work-summaries within a group
+        # are different data sources for the same work — take only the first year found
+        # to avoid counting the same publication multiple times.
+        year_for_group: int | None = None
         for ws in grp.get("work-summary", []):
             pub_date = ws.get("publication-date") or {}
             year_val = (pub_date.get("year") or {}).get("value")
             if year_val:
                 try:
-                    years.append(int(year_val))
+                    year_for_group = int(year_val)
+                    break
                 except ValueError:
                     pass
+        if year_for_group is not None:
+            years.append(year_for_group)
 
     # Apply year filters
     filtered = years
@@ -2486,12 +2493,14 @@ def orcid_works_count(orcid_id: str, before_year: int = 0, after_year: int = 0) 
     year_dist = dict(sorted(Counter(filtered).items()))
     result = {
         "orcid": orcid_clean,
-        "total_works": len(groups),
-        "works_in_filter": len(filtered),
-        "filter": {
+        "total_unique_works": len(groups),
+        "works_with_year": len(years),
+        "filtered_count": len(filtered),
+        "filter_applied": {
             "before_year": before_year or None,
             "after_year": after_year or None,
         },
+        "NOTE": "Use 'filtered_count' when a year filter was applied, 'total_unique_works' otherwise.",
         "year_distribution": year_dist,
     }
     return json.dumps(result, indent=2)
@@ -2545,14 +2554,10 @@ def pubchem_advanced_search(
         candidate_cids: list[int] = []
 
         if classification and "food" in classification.lower():
-            # Fetch all CIDs in NCATS Food Additive Status classification
-            class_url = f"{base}/classification/cid/JSON?source=NCATS+Food+Additive+Status&MaxRecords=2000"
-            cr = httpx.get(class_url, timeout=30)
-            if cr.status_code == 200:
-                for item in cr.json().get("InformationList", {}).get("Information", []):
-                    cid = item.get("CID")
-                    if cid:
-                        candidate_cids.append(int(cid))
+            # The /classification/cid/JSON?source=NCATS+Food+Additive+Status endpoint
+            # returns HTTP 400. Scan CIDs 1-10000, which covers all known small-molecule
+            # food additives in PubChem (the vast majority have CID < 10000).
+            candidate_cids = list(range(1, 10001))
 
         # If no classification-based candidates, use MW-range PubChem search
         if not candidate_cids:
