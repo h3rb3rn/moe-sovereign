@@ -51,6 +51,8 @@
   "btn.save":             "Save & Restart Orchestrator",
   "btn.cancel":           "Cancel",
   "btn.edit":             "Edit",
+  "btn.copy_profile":     "Copy Profile",
+  "btn.backup":           "Create Backup",
   "btn.delete":           "Delete",
   "btn.activate":         "Activate",
   "btn.deactivate":       "Deactivate",

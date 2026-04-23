@@ -51,6 +51,8 @@
   "btn.save":             "Enregistrer & Redémarrer",
   "btn.cancel":           "Annuler",
   "btn.edit":             "Modifier",
+  "btn.copy_profile":     "Copier le profil",
+  "btn.backup":           "Créer une sauvegarde",
   "btn.delete":           "Supprimer",
   "btn.activate":         "Activer",
   "btn.deactivate":       "Désactiver",

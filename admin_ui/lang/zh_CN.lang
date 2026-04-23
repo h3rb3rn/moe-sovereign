@@ -51,6 +51,8 @@
   "btn.save":             "保存并重启编排器",
   "btn.cancel":           "取消",
   "btn.edit":             "编辑",
+  "btn.copy_profile":     "复制配置",
+  "btn.backup":           "创建备份",
   "btn.delete":           "删除",
   "btn.activate":         "激活",
   "btn.deactivate":       "停用",
