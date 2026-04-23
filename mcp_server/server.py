@@ -2667,14 +2667,26 @@ def semantic_scholar_search(
     if year_filter:
         params["year"] = year_filter
 
-    try:
-        resp = httpx.get(ss_url, params=params, timeout=15,
-                         headers={"User-Agent": "MoE-Research/1.0"})
-    except Exception as e:
-        return f"[semantic_scholar_search request failed: {e}]"
+    # Retry up to 3 times with backoff on rate-limit (429) or transient errors.
+    resp = None
+    for _attempt in range(3):
+        try:
+            resp = httpx.get(ss_url, params=params, timeout=15,
+                             headers={"User-Agent": "MoE-Research/1.0"})
+            if resp.status_code != 429:
+                break
+            import time as _time
+            _time.sleep(2 ** _attempt)  # 1s, 2s, 4s backoff
+        except Exception as e:
+            if _attempt == 2:
+                return f"[semantic_scholar_search request failed: {e}]"
+            import time as _time
+            _time.sleep(1)
 
+    if resp is None:
+        return "[semantic_scholar_search: all retries failed]"
     if resp.status_code == 429:
-        return "[semantic_scholar_search: rate limited — retry in a few seconds]"
+        return "[semantic_scholar_search: rate limited after 3 retries — use web_search_domain with site:semanticscholar.org as fallback]"
     if resp.status_code != 200:
         return f"[semantic_scholar_search: HTTP {resp.status_code}]"
 

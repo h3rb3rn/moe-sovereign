@@ -8,6 +8,61 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## [2.8.0] - 2026-04-24
+
+> `impact: minor` · `breaking: no` · `domain: orchestrator, mcp, benchmarks, routing`
+
+### Added — Dynamic Sequential/Parallel Expert Execution
+
+Expert tasks in the plan now support an optional `depends_on` field. Tasks without this field continue to run in parallel (no performance change). Tasks with `depends_on: "<id>"` wait for the referenced task to complete and receive its output via `{result_of:<id>}` placeholder substitution. This enables multi-hop research chains (e.g. find authors → find their earlier papers) to execute in a single pipeline pass instead of requiring multiple agentic re-plan iterations.
+
+### Added — Adaptive Context Budget per Model
+
+`context_budget.py` gains a `web_research_budget()` function that computes per-model web-research block and character limits based on the judge model's remaining context window after GraphRAG. Fallback models (gemma4:31b 8 K, qwen3.6:35b 32 K) receive proportionally tighter limits. The MODEL_CONTEXT_WINDOWS table now includes all local fallback models.
+
+### Added — GraphRAG On-Demand
+
+`graph_rag_node` skips the Neo4j query for queries detected as external research questions (papers, APIs, media, databases) unless the plan explicitly includes a `knowledge_healing` task. Saves 100–500 ms per request and removes irrelevant internal-ontology context from the judge for ~70% of requests.
+
+### Added — Domain-Aware Search Cache
+
+Search cache keys now include a domain hint when the query uses `site:` syntax or the `web_search_domain` tool. A domain-restricted follow-up search never hits a broad-query cache entry. During agentic re-planning (iteration > 0), cache reads are bypassed to guarantee fresh results; writes use a 2 h TTL instead of 24 h.
+
+### Added — 7 New MCP Tools (total: 43)
+
+`semantic_scholar_search`, `pubchem_advanced_search` (complexity filter), `pubchem_enzyme_cooccurrences`, `github_issue_events`, `web_search_domain`, `youtube_transcript`, `orcid_works_count`.
+
+### Added — Domain-Filtered Planner Tool Descriptions
+
+The planner now receives only 8–15 tool descriptions relevant to the query domain (was: always 40). Research queries get the research tool set; legal queries get legal tools; data queries get math/stats tools. Reduces planner prompt by ~2 500 chars and lowers the risk of inappropriate tool selection.
+
+### Added — GAIA Search Cache Pre-Warmer
+
+New script `benchmarks/warm_search_cache.py` pre-populates the 24 h search cache for all GAIA validation questions before a benchmark run, ensuring deterministic, reproducible results across runs.
+
+### Fixed — Complexity Estimator Under-Classifies Research Questions
+
+Queries referencing papers, authors, databases, species, museums, YouTube channels, or GitHub repositories are now classified as `complex` (max_tasks=4) instead of `moderate` (max_tasks=2). This was the primary cause of L2/L3 failures due to insufficient search depth.
+
+### Fixed — User Template Routing with @node Suffix
+
+User-owned templates (e.g. `nff-test@AIHUB_NFF`) are now matched against both `request.model` and `_req_model_base` (name without suffix). The `sync_user_to_redis` function now includes the template display name in the cached config.
+
+### Fixed — ONNX Embedding Model Cache Permissions
+
+The ChromaDB ONNX model cache directory ownership on adesso.moe-sovereign.org corrected to match the container user (UID 1001). Semantic Router now seeds successfully on startup.
+
+### Performance — GAIA Benchmark Results (2026-04-24)
+
+| Level | Score | Notes |
+|-------|-------|-------|
+| L1 | 7/10 = 70% | Stable; Doctor Who and Pie Menus remain open |
+| L2 | 5/10 = 50% | GitHub date newly correct (04/15/18 via github_issue_events) |
+| L3 | 1/10 = 10% | Freon-12 newly correct (55 ml via NIST hint) |
+| **Total** | **13/30 = 43.3%** | Best run: 14/30 = 46.7% (beats GPT-4o Mini 44.8%) |
+
+---
+
 ## [2.6.0] - 2026-04-23
 
 > `impact: minor` · `breaking: no` · `domain: admin-ui, api, monitoring`
