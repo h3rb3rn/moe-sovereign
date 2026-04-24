@@ -3182,6 +3182,10 @@ async def graph_rag_node(state: AgentState):
     if not state.get("enable_graphrag", True):
         logger.info("GraphRAG disabled by template toggle")
         return {"graph_context": ""}
+    # Complexity routing: skip for trivial requests (complexity_estimator sets skip_graph)
+    if state.get("skip_graph"):
+        logger.info("⚡ GraphRAG skipped (complexity routing: trivial/skip_graph)")
+        return {"graph_context": ""}
     if not GRAPH_VIA_MCP and graph_manager is None:
         return {"graph_context": ""}
     plan = state.get("plan", [])
@@ -3634,7 +3638,7 @@ Use for: game rules · algorithm specifications · protocols/standards · anythi
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{_build_filtered_tool_desc(state["input"], enable_graphrag=state.get("enable_graphrag", False))}
+{_build_filtered_tool_desc(state["input"], enable_graphrag=state.get("enable_graphrag", False)) if state.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - unit_convert: unit conversions"}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
@@ -4724,9 +4728,10 @@ async def merger_node(state: AgentState):
         fast_resp = _details_m.group(1).strip() if _details_m else _raw_fp.strip()
         logger.info(f"⚡ Fast-Path: single high-confidence expert → direct response ({len(fast_resp)} chars)")
         await _report(f"⚡ Fast-Path: single high-confidence expert ({len(fast_resp)} chars)")
-        if len(fast_resp) > CACHE_MIN_RESPONSE_LEN:
+        if len(fast_resp) > CACHE_MIN_RESPONSE_LEN and not state.get("no_cache", False):
             # Deterministic ID (SHA-256 of content) prevents duplicate entries under
             # concurrent writes — upsert is idempotent if same response races twice.
+            # Skipped when no_cache=True to avoid polluting the vector store.
             _fp_cid = hashlib.sha256(fast_resp.encode()).hexdigest()[:32]
             await asyncio.to_thread(
                 cache_collection.upsert,
@@ -4850,9 +4855,12 @@ async def merger_node(state: AgentState):
             res_content_clean = _best_expert.strip()
             logger.warning("⚠️ Merger output empty after strip — using best expert result as fallback")
 
-    if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN:
+    _no_cache_write = state.get("no_cache", False)
+    if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN and not _no_cache_write:
         # Deterministic ID (SHA-256 of content) prevents duplicate entries under
         # concurrent writes — upsert is idempotent if same response races twice.
+        # Skipped when no_cache=True: unique benchmark/research queries would only
+        # pollute the vector store with entries that are never read again.
         chroma_doc_id = hashlib.sha256(res_content_clean.encode()).hexdigest()[:32]
         await asyncio.to_thread(
             cache_collection.upsert,
