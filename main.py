@@ -3381,7 +3381,13 @@ async def planner_node(state: AgentState):
     # is generated — important for benchmark runs that follow cache pre-warming.
     import hashlib as _hashlib
     _no_cache_flag  = state.get("no_cache", False)
-    _plan_cache_key = f"moe:plan:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
+    # Include a short config fingerprint so the plan cache auto-invalidates when
+    # the MCP tool set or planner prompt changes between deployments.
+    _cfg_fp = _hashlib.md5(
+        f"{len(MCP_TOOLS_DESCRIPTION)}:{(state.get('planner_prompt') or '')[:80]}"
+        .encode()
+    ).hexdigest()[:6]
+    _plan_cache_key = f"moe:plan:{_cfg_fp}:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
     if redis_client is not None and not _is_agentic_replan and not _no_cache_flag:
         try:
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
@@ -3408,8 +3414,11 @@ async def planner_node(state: AgentState):
     logger.info(f"💰 Cost-Tier: {_cost_tier} (complexity={_complexity})")
 
     # Store routing hints in state for downstream nodes
-    _query_temp = _detect_query_temperature(state["input"])
-    logger.info(f"🌡️ Adaptive temperature: {_query_temp} (input analysis)")
+    # Use explicit request temperature when set (e.g. GAIA benchmark temperature=0.0);
+    # fall back to query-adaptive detection when None.
+    _explicit_temp = state.get("query_temperature")  # set by HTTP handler from request
+    _query_temp    = _explicit_temp if _explicit_temp is not None else _detect_query_temperature(state["input"])
+    logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
     _complexity_state_update = {
         "complexity_level":   _complexity,
         "skip_research":      _routing["skip_research"],
@@ -3946,7 +3955,12 @@ async def expert_worker(state: AgentState):
             _expert_node_timeout = float(
                 selected.get("timeout", EXPERT_TIMEOUT) if not LITELLM_URL else EXPERT_TIMEOUT
             )
-            llm = ChatOpenAI(model=model_name, base_url=url, api_key=token, timeout=_expert_node_timeout)
+            _expert_temp = state.get("query_temperature")  # None = API default
+            _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
+                                 "timeout": _expert_node_timeout}
+            if _expert_temp is not None:
+                _llm_kwargs["temperature"] = _expert_temp
+            llm = ChatOpenAI(**_llm_kwargs)
             try:
                 _primary_url = url.rstrip("/")
                 res, _used_fallback = await _invoke_llm_with_aihub_fallback(
@@ -4932,11 +4946,26 @@ async def merger_node(state: AgentState):
             # Token-budget guard: skip gap detection if already close to limit
             _used_tokens = state.get("prompt_tokens", 0) + merger_usage.get("prompt_tokens", 0)
 
-            # Expert-leak detection: if any expert broke character and described its own limitations
-            # instead of trying to answer, force NEEDS_MORE_INFO so the agentic loop retries.
+            # Confidence gate: if the answer is short, precise and all experts reported high
+            # confidence, skip re-planning — the answer is almost certainly correct and further
+            # searching may overwrite it with a wrong result (e.g. "backtick" → "dot").
+            _all_high = all(
+                _parse_expert_confidence(r) == "high"
+                for r in (state.get("expert_results") or []) if r
+            )
+            _answer_is_short = len(res_content_clean.split()) <= 15
+            _confidence_gate_passed = _all_high and _answer_is_short
+            if _confidence_gate_passed:
+                logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
+                _agentic_gap = "COMPLETE"
+
+            # Expert-leak detection: detect when experts describe plans instead of answering.
+            # Uses an extended regex covering all observed leak patterns (I cannot, We will browse,
+            # Let's search, We should look up, etc.) — broad enough to catch new formulations.
             _EXPERT_LEAK_RE = re.compile(
-                r"\b(i (cannot|can't) (access|browse|fetch|retrieve|visit)|"
+                r"\b(i (cannot|can't|won'?t) (access|browse|fetch|retrieve|visit|search)|"
                 r"i don'?t have (web|internet|direct|real.?time)|"
+                r"(we|let'?s|i'?ll|we'?ll) (will |)(browse|search|look up|fetch|navigate|check)|"
                 r"no (direct )?access to (the )?(internet|web|url|website|page)|"
                 r"unable to (browse|access|fetch|visit|open)|"
                 r"as an ai.{0,30}(cannot|can'?t)|"
@@ -4944,7 +4973,7 @@ async def merger_node(state: AgentState):
                 re.I,
             )
             _expert_results_combined = " ".join(state.get("expert_results") or [])
-            if _EXPERT_LEAK_RE.search(_expert_results_combined):
+            if not _confidence_gate_passed and _EXPERT_LEAK_RE.search(_expert_results_combined):
                 logger.info("🔍 Expert-leak detected — forcing NEEDS_MORE_INFO")
                 _agentic_gap = (
                     "One or more experts responded with a capability disclaimer instead of "
@@ -5833,8 +5862,8 @@ async def _stream_native_llm(
         "stream":         True,
         "stream_options": {"include_usage": True},
     }
-    if request.max_tokens:  payload["max_tokens"]  = request.max_tokens
-    if request.temperature: payload["temperature"] = request.temperature
+    if request.max_tokens:                    payload["max_tokens"]  = request.max_tokens
+    if request.temperature is not None:       payload["temperature"] = request.temperature
 
     _t_start = time.monotonic()
     _t_first: Optional[float] = None
@@ -6548,7 +6577,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                       "messages": [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
                       "stream": False,
                       **({"max_tokens": request.max_tokens} if request.max_tokens else {}),
-                      **({"temperature": request.temperature} if request.temperature else {})},
+                      **({"temperature": request.temperature} if request.temperature is not None else {})},
             )
         _nr.raise_for_status()
         _nj = _nr.json()
@@ -6639,7 +6668,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "agentic_gap": "",
          "attempted_queries": [],
          "search_strategy_hint": "",
-         "no_cache": request.no_cache},
+         "no_cache": request.no_cache,
+         # Pass explicit temperature into state so planner, judge and experts
+         # can honour it. None means "use query-adaptive detection".
+         "query_temperature": request.temperature,
+         },
         {"configurable": {"thread_id": str(uuid.uuid4())}},
     )
     p_tok = result.get("prompt_tokens",     0)

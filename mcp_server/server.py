@@ -2740,6 +2740,49 @@ def semantic_scholar_search(
 
 
 @mcp.tool()
+def wikidata_search(text: str, language: str = "en", max_results: int = 5) -> str:
+    """Search Wikidata for entities by text and return their IDs for use in wikidata_sparql.
+
+    Use this BEFORE wikidata_sparql when you don't know the entity ID (wd:Q...).
+    Returns list of {id, label, description} — use the id in a follow-up wikidata_sparql call.
+
+    Example workflow:
+      1. wikidata_search("Morarji Desai") → finds wd:Q192131 (actually Giuseppe Meazza)
+         → use the correct ID from results
+      2. wikidata_sparql("SELECT ?label WHERE { wd:<id> rdfs:label ?label ... }")
+
+    text:        Search term (person name, place, concept)
+    language:    Result label language (default: "en")
+    max_results: Max entities to return (1-10)
+    """
+    url = "https://www.wikidata.org/w/api.php"
+    try:
+        resp = httpx.get(url, params={
+            "action":   "wbsearchentities",
+            "search":   text,
+            "language": language,
+            "format":   "json",
+            "limit":    min(max(1, max_results), 10),
+            "type":     "item",
+        }, headers={"User-Agent": "MoE-Research/1.0"}, timeout=10)
+    except Exception as e:
+        return f"[wikidata_search request failed: {e}]"
+    if resp.status_code != 200:
+        return f"[wikidata_search: HTTP {resp.status_code}]"
+    try:
+        results = resp.json().get("search", [])
+    except Exception as e:
+        return f"[wikidata_search: parse error: {e}]"
+    if not results:
+        return f"[wikidata_search: no entities found for '{text}']"
+    entities = [
+        {"id": r.get("id", ""), "label": r.get("label", ""), "description": r.get("description", "")}
+        for r in results
+    ]
+    return json.dumps({"query": text, "entities": entities}, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
 def wikidata_sparql(sparql_query: str, max_results: int = 10) -> str:
     """Execute a SPARQL query against Wikidata for deterministic fact lookup.
 
@@ -2896,6 +2939,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "pubchem_advanced_search":  pubchem_advanced_search,
     "orcid_works_count":       orcid_works_count,
     "semantic_scholar_search": semantic_scholar_search,
+    "wikidata_search":         wikidata_search,
     "wikidata_sparql":         wikidata_sparql,
     "pubmed_search":           pubmed_search,
 }
@@ -2946,6 +2990,7 @@ _TOOL_DESCRIPTIONS = {
     "pubchem_advanced_search":  "Advanced PubChem multi-criteria search: filter by MW range, heavy atom count, HB acceptors/donors simultaneously. Use for GAIA-style questions like 'find the compound with MW≤100, 6 heavy atoms, ≤1 HB acceptors in Food Additive Status'.",
     "orcid_works_count":       "Count publications on an ORCID researcher profile. Optionally filter by year (e.g. before_year=2020 for pre-2020 works). Use for academic publication count questions.",
     "semantic_scholar_search": "Search Semantic Scholar for academic papers by author/title/topic. Returns abstracts, DOI, and open-access PDF links. Use for questions requiring specific measurements or data from named academic papers (e.g. 'Valencfia-Mendez 2017 harlequin shrimp length'). Set fetch_pdf=true to also extract the paper's text if a free PDF is available.",
+    "wikidata_search":         "Search Wikidata by text to find entity IDs (wd:Q...) for use in wikidata_sparql. Use this first when you know the name but not the Wikidata ID.",
     "wikidata_sparql":         "Execute SPARQL against Wikidata for deterministic entity facts (dates, locations, people, species, relationships). ALWAYS prefer over web search for factual lookups — no HTML parsing, no SearXNG variance. Write a SPARQL 1.1 query; use wd: entity IDs or wdt: property filters.",
     "pubmed_search":           "Search PubMed/NCBI for biomedical, biology, ecology, and life science papers. Returns title, authors, year, abstract, DOI. Prefer over semantic_scholar_search for species studies, genetics, clinical trials, ecology — deterministic NCBI API, no SearXNG variance.",
 }
