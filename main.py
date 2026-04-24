@@ -3376,10 +3376,13 @@ async def planner_node(state: AgentState):
     _is_agentic_replan  = _agentic_iteration > 0 and _agentic_max_rounds > 0
 
     # Planner result cache: same request → same plan (Valkey, TTL=30 min)
-    # Skip cache entirely during agentic re-planning — each iteration needs a fresh plan.
+    # Skip cache entirely during agentic re-planning or when the caller requests no cache.
+    # no_cache=True bypasses both L0 LLM cache and planner cache to ensure a fresh plan
+    # is generated — important for benchmark runs that follow cache pre-warming.
     import hashlib as _hashlib
+    _no_cache_flag  = state.get("no_cache", False)
     _plan_cache_key = f"moe:plan:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
-    if redis_client is not None and not _is_agentic_replan:
+    if redis_client is not None and not _is_agentic_replan and not _no_cache_flag:
         try:
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
             if _cached_plan_raw:
@@ -4917,17 +4920,44 @@ async def merger_node(state: AgentState):
         else:
             # Token-budget guard: skip gap detection if already close to limit
             _used_tokens = state.get("prompt_tokens", 0) + merger_usage.get("prompt_tokens", 0)
+
+            # Expert-leak detection: if any expert broke character and described its own limitations
+            # instead of trying to answer, force NEEDS_MORE_INFO so the agentic loop retries.
+            _EXPERT_LEAK_RE = re.compile(
+                r"\b(i (cannot|can't) (access|browse|fetch|retrieve|visit)|"
+                r"i don'?t have (web|internet|direct|real.?time)|"
+                r"no (direct )?access to (the )?(internet|web|url|website|page)|"
+                r"unable to (browse|access|fetch|visit|open)|"
+                r"as an ai.{0,30}(cannot|can'?t)|"
+                r"i('m| am) not able to (access|browse|fetch))\b",
+                re.I,
+            )
+            _expert_results_combined = " ".join(state.get("expert_results") or [])
+            if _EXPERT_LEAK_RE.search(_expert_results_combined):
+                logger.info("🔍 Expert-leak detected — forcing NEEDS_MORE_INFO")
+                _agentic_gap = (
+                    "One or more experts responded with a capability disclaimer instead of "
+                    "attempting to research. Use web_researcher or fetch_pdf_text to get the data directly."
+                )
+                _strategy_hint = "use web_researcher with a targeted search query for the missing data"
+
             if _used_tokens < 80_000:
                 _gap_prompt = (
                     "You are a completion assessor. Based on the original question and the current answer, "
                     "determine if the answer is complete and what specific data is still missing.\n\n"
                     f"ORIGINAL QUESTION:\n{state['input'][:600]}\n\n"
                     f"CURRENT ANSWER:\n{res_content_clean[:800]}\n\n"
+                    "IMPORTANT: If the answer contains phrases like 'I cannot access', 'no web browsing', "
+                    "'I don't have internet access' — this is INCOMPLETE regardless of other content.\n\n"
                     "Reply ONLY in this exact format (no extra text):\n"
                     "COMPLETION_STATUS: COMPLETE | NEEDS_MORE_INFO\n"
                     "GAP: <specific fact/calculation/document still missing, or 'none'>\n"
-                    "SEARCH_STRATEGY: <concrete next search approach — e.g. 'search site:github.com numpy polynomial issues', "
-                    "'use youtube_transcript for video', 'use pubchem_compound_search', 'search exact paper title in quotes'>"
+                    "SEARCH_STRATEGY: <concrete next search — prefer domain-specific: "
+                    "'web_search_domain site:semanticscholar.org <paper title>', "
+                    "'web_search_domain site:webbook.nist.gov <compound name>', "
+                    "'web_search_domain site:<authoritative_domain> <query>', "
+                    "'use youtube_transcript with discovered video URL', "
+                    "'use semantic_scholar_search <author year topic>'>"
                 )
                 try:
                     _gap_res = await _invoke_judge_with_retry(state, _gap_prompt)

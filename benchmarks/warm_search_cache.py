@@ -1,30 +1,29 @@
 """
 warm_search_cache.py — Pre-warms the SearXNG search cache for all GAIA questions.
 
-Run this before a GAIA benchmark run to ensure deterministic, consistent search
-results. Each question's key search terms are sent through the orchestrator's
-/v1/chat/completions endpoint in research mode, warming the 24h Redis cache.
+Sends requests identical to gaia_runner.py so the orchestrator's planner generates
+the same search queries as during the real benchmark run. The resulting SearXNG
+search results are stored in the 24h Redis search cache.
 
 Subsequent benchmark runs within 24h will hit the warm cache and get identical
-search results regardless of SearXNG state, making scores reproducible.
+search results, making scores fully reproducible.
 
 Usage:
     HF_TOKEN=hf_... MOE_API_KEY=moe-sk-... python benchmarks/warm_search_cache.py
 """
 import asyncio
-import hashlib
-import json
 import os
 import sys
-import re
 
 import httpx
 
 HF_TOKEN    = os.environ.get("HF_TOKEN", "")
 API_BASE    = os.environ.get("MOE_API_BASE", "http://localhost:8002")
 API_KEY     = os.environ.get("MOE_API_KEY", "")
-REDIS_URL   = os.environ.get("REDIS_URL", "redis://:@localhost:6379")
-CONCURRENCY = int(os.environ.get("WARM_CONCURRENCY", "3"))  # parallel warm requests
+TEMPLATE    = os.environ.get("MOE_TEMPLATE", "moe-aihub-free-gremium-deep-wcc")
+LANGUAGE    = os.environ.get("GAIA_LANGUAGE", "en")
+MAX_LEVEL   = int(os.environ.get("GAIA_MAX_PER_LEVEL", "10"))
+CONCURRENCY = int(os.environ.get("WARM_CONCURRENCY", "2"))
 
 if not HF_TOKEN:
     print("ERROR: HF_TOKEN required", file=sys.stderr)
@@ -34,62 +33,48 @@ if not API_KEY:
     sys.exit(1)
 
 
-def _extract_search_terms(question: str, file_name: str = "") -> list[str]:
-    """Extract 2-3 targeted search queries from a GAIA question."""
-    q = question.strip()
-    queries = []
+async def warm_question(client: httpx.AsyncClient, question: dict, idx: int, total: int) -> dict:
+    """Send a warm-up request using the exact same format as gaia_runner.py.
 
-    # Extract quoted strings (exact titles, names)
-    quoted = re.findall(r'"([^"]{10,80})"', q)
-    queries.extend(quoted[:2])
+    Uses the actual benchmark system prompt and question format so the planner
+    generates identical search queries — warming exactly the right cache entries.
+    no_cache=False allows the L0 LLM cache to be hit (only the search cache is warmed).
+    """
+    q_text = question["Question"]
+    task_id = question["task_id"]
+    level = question["Level"]
 
-    # Extract year + topic patterns
-    year_m = re.search(r'\b(19|20)\d{2}\b', q)
-    year = year_m.group(0) if year_m else ""
-
-    # Extract proper nouns and key entities (capitalized multi-word phrases)
-    proper = re.findall(r'\b([A-Z][a-z]+(?: [A-Z][a-z]+){1,3})\b', q)
-    if proper:
-        queries.append(" ".join(proper[:3]) + (f" {year}" if year else ""))
-
-    # Use first 120 chars of question as fallback
-    if not queries:
-        queries.append(q[:120])
-
-    # Always add the raw question start as a catch-all
-    queries.append(q[:100])
-
-    return list(dict.fromkeys(queries))[:3]  # deduplicate, max 3
-
-
-async def warm_question(client: httpx.AsyncClient, question: str,
-                        task_id: str, level: int, file_name: str = "") -> dict:
-    """Send a warm-up request for one question through the orchestrator."""
-    queries = _extract_search_terms(question, file_name)
-    print(f"  L{level} [{task_id[:8]}] Warming {len(queries)} queries: {queries[0][:60]}...")
-
-    # Use a lightweight research-only call — we don't need an answer, just cache warm
-    warmup_msg = (
-        f"Research only (no answer needed): {question[:300]}\n"
-        f"Search for: {' | '.join(queries)}"
+    # Use same system prompt as gaia_runner.py
+    system_msg = (
+        "You are a helpful assistant answering factual questions. "
+        "Give ONLY the final answer — no explanation, no preamble. "
+        "If the answer is a number, give just the number. "
+        "If a name, give just the name. Be as concise as possible. "
+        "ALWAYS answer in English, regardless of the question language. "
+        "Provide only the final answer value — no step-by-step explanation."
     )
+
+    print(f"  [{idx}/{total}] L{level} [{task_id[:8]}] {q_text[:70]}...", flush=True)
     try:
         r = await client.post(
             f"{API_BASE}/v1/chat/completions",
             json={
-                "model":       "moe-aihub-free-gremium-deep-wcc",
-                "messages":    [{"role": "user", "content": warmup_msg}],
+                "model":       TEMPLATE,
+                "messages":    [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user",   "content": q_text},
+                ],
                 "stream":      False,
-                "max_tokens":  50,
+                "max_tokens":  100,        # short — we only need the cache warmed
                 "temperature": 0.0,
-                "no_cache":    False,  # allow L0 cache — we want L1 search cache warmed
-                "mode":        "research",
+                "no_cache":    False,      # allow LLM cache — we want SEARCH cache warmed
+                "mode":        "research", # same as benchmark runner
             },
             headers={
                 "Authorization": f"Bearer {API_KEY}",
                 "Content-Type":  "application/json",
             },
-            timeout=120,
+            timeout=180,
         )
         status = "ok" if r.status_code == 200 else f"HTTP {r.status_code}"
     except Exception as e:
@@ -102,7 +87,7 @@ async def main():
     print("GAIA Search Cache Pre-Warmer")
     print("=" * 60)
 
-    # Load GAIA dataset
+    # Load GAIA dataset — same method as gaia_runner.py
     try:
         from huggingface_hub import hf_hub_download
         import pandas as pd
@@ -113,40 +98,31 @@ async def main():
             token=HF_TOKEN,
         )
         df = pd.read_parquet(path)
-        print(f"Loaded {len(df)} GAIA questions")
+        print(f"Loaded {len(df)} GAIA questions", flush=True)
     except Exception as e:
         print(f"ERROR loading GAIA dataset: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Sample same questions as benchmark (10 per level)
-    import random
-    random.seed(42)  # deterministic sample
+    # Mirror gaia_runner.py sampling: take first MAX_LEVEL per level (deterministic, no shuffle)
     questions = []
     for lvl in [1, 2, 3]:
-        lvl_df = df[df["Level"] == str(lvl)]  # Level column is string in parquet
-        sample = lvl_df.sample(min(10, len(lvl_df)), random_state=42)
-        for _, row in sample.iterrows():
-            questions.append({
-                "task_id":  row["task_id"],
-                "level":    lvl,
-                "question": row["Question"],
-                "file":     row.get("file_name", ""),
-            })
+        lvl_rows = df[df["Level"] == str(lvl)].to_dict(orient="records")
+        questions.extend(lvl_rows[:MAX_LEVEL])
+        print(f"  Level {lvl}: {min(MAX_LEVEL, len(lvl_rows))} questions", flush=True)
 
-    print(f"Warming cache for {len(questions)} questions (concurrency={CONCURRENCY})...")
+    print(f"\nWarming cache for {len(questions)} questions (concurrency={CONCURRENCY})...")
     print("=" * 60)
 
     sem = asyncio.Semaphore(CONCURRENCY)
     async with httpx.AsyncClient() as client:
-        async def _bounded(q):
+        async def _bounded(q, idx):
             async with sem:
-                return await warm_question(client, q["question"],
-                                           q["task_id"], q["level"], q["file"])
+                return await warm_question(client, q, idx, len(questions))
 
-        results = await asyncio.gather(*[_bounded(q) for q in questions])
+        results = await asyncio.gather(*[_bounded(q, i+1) for i, q in enumerate(questions)])
 
     ok = sum(1 for r in results if r["status"] == "ok")
-    print(f"\nDone: {ok}/{len(results)} warmed successfully")
+    print(f"\nDone: {ok}/{len(results)} warmed successfully", flush=True)
     if ok < len(results):
         for r in results:
             if r["status"] != "ok":
