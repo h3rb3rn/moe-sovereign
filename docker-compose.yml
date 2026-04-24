@@ -443,6 +443,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?missing MINIO_ROOT_PASSWORD}
     volumes:
       - moe_storage_data:/data
+    ports:
+      - "127.0.0.1:9010:9000"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 30s
