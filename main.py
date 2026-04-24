@@ -948,13 +948,19 @@ AGENTIC_CODE_TOOLS_DESCRIPTION = ""
 # ── Tool groups for domain-filtered planner injection ────────────────────────
 # Core: always shown — fundamental precision + web access
 _TOOL_GROUP_CORE = frozenset({
-    "calculate", "python_sandbox", "fetch_pdf_text",
-    "web_search_domain", "wikipedia_get_section",
+    # Web research — always available; these are the backbone of every research task
+    "web_researcher", "web_search_domain", "fetch_pdf_text",
+    "wikipedia_get_section",
+    # Deterministic entity/fact lookup — prefer over web search for structured data
+    "wikidata_search", "wikidata_sparql",
+    # Math / utility — domain-agnostic
+    "calculate", "python_sandbox",
     "date_diff", "date_add", "unit_convert",
 })
 # Research: shown when query contains paper/author/database/species/media markers
 _TOOL_GROUP_RESEARCH = frozenset({
-    "semantic_scholar_search", "orcid_works_count",
+    "semantic_scholar_search", "pubmed_search",
+    "orcid_works_count",
     "pubchem_compound_search", "pubchem_advanced_search",
     "github_search_issues", "github_issue_events",
     "youtube_transcript",
@@ -4821,6 +4827,9 @@ async def merger_node(state: AgentState):
         re.IGNORECASE,
     )
     res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
+
+    # Strip OpenAI-style citation superscripts leaked from tool results: 【n†source】
+    res_content_clean = re.sub(r'【\d+†[^】]*】', '', res_content_clean).strip()
 
     # Post-strip fallback: if cleaning stripped everything, use best expert result.
     # This prevents empty final responses when the judge only output tags/metadata.
