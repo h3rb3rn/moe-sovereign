@@ -2739,6 +2739,115 @@ def semantic_scholar_search(
     return json.dumps(output, indent=2, ensure_ascii=False)
 
 
+@mcp.tool()
+def wikidata_sparql(sparql_query: str, max_results: int = 10) -> str:
+    """Execute a SPARQL query against Wikidata for deterministic fact lookup.
+
+    Use for entity facts, dates, locations, relationships — deterministic, no
+    SearXNG variance, no HTML parsing.  Wikidata has 100M+ entities.
+
+    Examples:
+      SELECT ?label WHERE { wd:Q192131 rdfs:label ?label. FILTER(LANG(?label)='en') }
+      SELECT ?dob WHERE { wd:Q... wdt:P569 ?dob }
+
+    sparql_query: Valid SPARQL 1.1 for https://query.wikidata.org/sparql
+    max_results:  LIMIT injected when query has none (1-50)
+    """
+    endpoint = "https://query.wikidata.org/sparql"
+    q = sparql_query.strip()
+    if "LIMIT" not in q.upper():
+        q = q.rstrip(";") + f" LIMIT {min(max(1, max_results), 50)}"
+    try:
+        resp = httpx.get(
+            endpoint,
+            params={"query": q, "format": "json"},
+            headers={"Accept": "application/sparql-results+json",
+                     "User-Agent": "MoE-Research/1.0"},
+            timeout=20,
+        )
+    except Exception as e:
+        return f"[wikidata_sparql request failed: {e}]"
+    if resp.status_code == 400:
+        return f"[wikidata_sparql: invalid SPARQL — {resp.text[:200]}]"
+    if resp.status_code != 200:
+        return f"[wikidata_sparql: HTTP {resp.status_code}]"
+    try:
+        data = resp.json()
+    except Exception as e:
+        return f"[wikidata_sparql: parse error: {e}]"
+    bindings = data.get("results", {}).get("bindings", [])
+    if not bindings:
+        return "[wikidata_sparql: no results — try a broader query or check entity IDs]"
+    rows = [
+        {k: v.get("value", "") for k, v in b.items()}
+        for b in bindings[:max_results]
+    ]
+    return json.dumps({"query": sparql_query[:200], "results": rows},
+                      indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def pubmed_search(query: str, max_results: int = 5, year_min: int = 0) -> str:
+    """Search PubMed/NCBI for biomedical and life science academic papers.
+
+    Use for biology, ecology, medicine, species studies, genetics, clinical papers.
+    Prefer over semantic_scholar_search when the paper is biology/ecology/medicine.
+    Supports PubMed Boolean syntax: "Hafnia alvei[tiab] AND mice", "harlequin shrimp[tiab]".
+
+    query:       PubMed search query
+    max_results: Number of papers to return (1-10)
+    year_min:    Restrict to papers from this year onward (0 = no filter)
+    """
+    base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    full_query = f"({query}) AND {year_min}:3000[pdat]" if year_min > 0 else query
+    try:
+        sr = httpx.get(f"{base}/esearch.fcgi", params={
+            "db": "pubmed", "term": full_query,
+            "retmax": min(max(1, max_results), 10),
+            "retmode": "json",
+            "tool": "MoE-Research", "email": "research@moe-sovereign.org",
+        }, timeout=15)
+        if sr.status_code != 200:
+            return f"[pubmed_search: search HTTP {sr.status_code}]"
+        pmids = sr.json().get("esearchresult", {}).get("idlist", [])
+        if not pmids:
+            return f"[pubmed_search: no results for '{query[:80]}']"
+
+        fr = httpx.get(f"{base}/efetch.fcgi", params={
+            "db": "pubmed", "id": ",".join(pmids),
+            "rettype": "abstract", "retmode": "xml",
+            "tool": "MoE-Research", "email": "research@moe-sovereign.org",
+        }, timeout=20)
+        if fr.status_code != 200:
+            return f"[pubmed_search: fetch HTTP {fr.status_code}]"
+
+        import xml.etree.ElementTree as _ET
+        root = _ET.fromstring(fr.content)
+        papers = []
+        for article in root.findall(".//PubmedArticle"):
+            def _t(path):
+                el = article.find(path)
+                return (el.text or "").strip() if el is not None else ""
+            abstract = " ".join(
+                (el.text or "") for el in article.findall(".//AbstractText")
+            )[:600]
+            authors = ", ".join(
+                f"{el.findtext('LastName', '')} {el.findtext('Initials', '')}".strip()
+                for el in article.findall(".//Author")[:4]
+            )
+            papers.append({
+                "pmid":     _t(".//PMID"),
+                "title":    _t(".//ArticleTitle"),
+                "year":     _t(".//PubDate/Year") or _t(".//PubDate/MedlineDate")[:4],
+                "authors":  authors,
+                "doi":      _t(".//ArticleId[@IdType='doi']"),
+                "abstract": abstract,
+            })
+        return json.dumps({"query": query, "papers": papers}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"[pubmed_search error: {e}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -2787,6 +2896,8 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "pubchem_advanced_search":  pubchem_advanced_search,
     "orcid_works_count":       orcid_works_count,
     "semantic_scholar_search": semantic_scholar_search,
+    "wikidata_sparql":         wikidata_sparql,
+    "pubmed_search":           pubmed_search,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -2835,6 +2946,8 @@ _TOOL_DESCRIPTIONS = {
     "pubchem_advanced_search":  "Advanced PubChem multi-criteria search: filter by MW range, heavy atom count, HB acceptors/donors simultaneously. Use for GAIA-style questions like 'find the compound with MW≤100, 6 heavy atoms, ≤1 HB acceptors in Food Additive Status'.",
     "orcid_works_count":       "Count publications on an ORCID researcher profile. Optionally filter by year (e.g. before_year=2020 for pre-2020 works). Use for academic publication count questions.",
     "semantic_scholar_search": "Search Semantic Scholar for academic papers by author/title/topic. Returns abstracts, DOI, and open-access PDF links. Use for questions requiring specific measurements or data from named academic papers (e.g. 'Valencfia-Mendez 2017 harlequin shrimp length'). Set fetch_pdf=true to also extract the paper's text if a free PDF is available.",
+    "wikidata_sparql":         "Execute SPARQL against Wikidata for deterministic entity facts (dates, locations, people, species, relationships). ALWAYS prefer over web search for factual lookups — no HTML parsing, no SearXNG variance. Write a SPARQL 1.1 query; use wd: entity IDs or wdt: property filters.",
+    "pubmed_search":           "Search PubMed/NCBI for biomedical, biology, ecology, and life science papers. Returns title, authors, year, abstract, DOI. Prefer over semantic_scholar_search for species studies, genetics, clinical trials, ecology — deterministic NCBI API, no SearXNG variance.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────
