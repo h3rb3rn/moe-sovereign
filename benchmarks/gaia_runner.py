@@ -55,8 +55,8 @@ MAX_PER_LEVEL = int(os.environ.get("GAIA_MAX_PER_LEVEL", "10"))
 TEMPERATURE   = float(os.environ.get("GAIA_TEMPERATURE", "0.0"))
 # Per-level temperature overrides: L1 benefits from slight exploration, L3 from pure determinism
 TEMPERATURE_BY_LEVEL: dict[int, float] = {
-    1: float(os.environ.get("GAIA_TEMPERATURE_L1", "0.05")),
-    2: float(os.environ.get("GAIA_TEMPERATURE_L2", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
+    1: float(os.environ.get("GAIA_TEMPERATURE_L1", "0.1")),   # Calculation/counting needs exploration
+    2: float(os.environ.get("GAIA_TEMPERATURE_L2", "0.05")),  # Multi-step factual: slight exploration
     3: float(os.environ.get("GAIA_TEMPERATURE_L3", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
 }
 LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
