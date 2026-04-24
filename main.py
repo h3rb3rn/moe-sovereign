@@ -4822,6 +4822,18 @@ async def merger_node(state: AgentState):
     )
     res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
 
+    # Post-strip fallback: if cleaning stripped everything, use best expert result.
+    # This prevents empty final responses when the judge only output tags/metadata.
+    if not res_content_clean:
+        _expert_results = state.get("expert_results") or []
+        _best_expert = (
+            next((r for r in _expert_results if _parse_expert_confidence(r) == "high"), None)
+            or (_expert_results[0] if _expert_results else None)
+        )
+        if _best_expert:
+            res_content_clean = _best_expert.strip()
+            logger.warning("⚠️ Merger output empty after strip — using best expert result as fallback")
+
     if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN:
         # Deterministic ID (SHA-256 of content) prevents duplicate entries under
         # concurrent writes — upsert is idempotent if same response races twice.
@@ -4946,26 +4958,13 @@ async def merger_node(state: AgentState):
             # Token-budget guard: skip gap detection if already close to limit
             _used_tokens = state.get("prompt_tokens", 0) + merger_usage.get("prompt_tokens", 0)
 
-            # Confidence gate: if the answer is short, precise and all experts reported high
-            # confidence, skip re-planning — the answer is almost certainly correct and further
-            # searching may overwrite it with a wrong result (e.g. "backtick" → "dot").
-            _all_high = all(
-                _parse_expert_confidence(r) == "high"
-                for r in (state.get("expert_results") or []) if r
-            )
-            _answer_is_short = len(res_content_clean.split()) <= 15
-            _confidence_gate_passed = _all_high and _answer_is_short
-            if _confidence_gate_passed:
-                logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
-                _agentic_gap = "COMPLETE"
-
-            # Expert-leak detection: detect when experts describe plans instead of answering.
-            # Uses an extended regex covering all observed leak patterns (I cannot, We will browse,
-            # Let's search, We should look up, etc.) — broad enough to catch new formulations.
+            # Expert-leak detection FIRST: capability disclaimers must override confidence gate.
+            # "We need to browse." is ≤15 words and would pass the confidence gate falsely.
             _EXPERT_LEAK_RE = re.compile(
                 r"\b(i (cannot|can't|won'?t) (access|browse|fetch|retrieve|visit|search)|"
                 r"i don'?t have (web|internet|direct|real.?time)|"
                 r"(we|let'?s|i'?ll|we'?ll) (will |)(browse|search|look up|fetch|navigate|check)|"
+                r"(we|it) need(s)? to (browse|search|fetch|access|look up|retrieve)|"
                 r"no (direct )?access to (the )?(internet|web|url|website|page)|"
                 r"unable to (browse|access|fetch|visit|open)|"
                 r"as an ai.{0,30}(cannot|can'?t)|"
@@ -4973,13 +4972,28 @@ async def merger_node(state: AgentState):
                 re.I,
             )
             _expert_results_combined = " ".join(state.get("expert_results") or [])
-            if not _confidence_gate_passed and _EXPERT_LEAK_RE.search(_expert_results_combined):
-                logger.info("🔍 Expert-leak detected — forcing NEEDS_MORE_INFO")
+            _expert_is_leak = bool(_EXPERT_LEAK_RE.search(_expert_results_combined))
+            if _expert_is_leak:
+                logger.info("🔍 Expert-leak detected — forcing NEEDS_MORE_INFO (skipping confidence gate)")
                 _agentic_gap = (
                     "One or more experts responded with a capability disclaimer instead of "
                     "attempting to research. Use web_researcher or fetch_pdf_text to get the data directly."
                 )
                 _strategy_hint = "use web_researcher with a targeted search query for the missing data"
+
+            # Confidence gate: if the answer is short, precise and all experts reported high
+            # confidence, skip re-planning — the answer is almost certainly correct and further
+            # searching may overwrite it with a wrong result (e.g. "backtick" → "dot").
+            # Only applies when no expert-leak was detected.
+            _all_high = all(
+                _parse_expert_confidence(r) == "high"
+                for r in (state.get("expert_results") or []) if r
+            )
+            _answer_is_short = len(res_content_clean.split()) <= 15
+            _confidence_gate_passed = not _expert_is_leak and _all_high and _answer_is_short
+            if _confidence_gate_passed:
+                logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
+                _agentic_gap = "COMPLETE"
 
             if _used_tokens < 80_000:
                 _gap_prompt = (
