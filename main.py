@@ -3376,10 +3376,13 @@ async def planner_node(state: AgentState):
     _is_agentic_replan  = _agentic_iteration > 0 and _agentic_max_rounds > 0
 
     # Planner result cache: same request → same plan (Valkey, TTL=30 min)
-    # Skip cache entirely during agentic re-planning — each iteration needs a fresh plan.
+    # Skip cache entirely during agentic re-planning or when the caller requests no cache.
+    # no_cache=True bypasses both L0 LLM cache and planner cache to ensure a fresh plan
+    # is generated — important for benchmark runs that follow cache pre-warming.
     import hashlib as _hashlib
+    _no_cache_flag  = state.get("no_cache", False)
     _plan_cache_key = f"moe:plan:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
-    if redis_client is not None and not _is_agentic_replan:
+    if redis_client is not None and not _is_agentic_replan and not _no_cache_flag:
         try:
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
             if _cached_plan_raw:
