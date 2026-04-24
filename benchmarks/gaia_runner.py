@@ -60,6 +60,8 @@ TEMPERATURE_BY_LEVEL: dict[int, float] = {
     3: float(os.environ.get("GAIA_TEMPERATURE_L3", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
 }
 LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
+# Per-question timeout — prevents multi-hour hangs on slow local models (0 = disabled)
+QUESTION_TIMEOUT = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "0"))
 
 # MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
@@ -975,6 +977,11 @@ async def call_orchestrator(
                 or _stripped.startswith('{"name"')
                 or (_stripped.startswith('{') and '"arguments"' in _stripped[:60])
                 or (_stripped.startswith('[{') and '"tool"' in _stripped[:80])
+                # XML-style tool calls (qwen3 and other models emit these)
+                or _stripped.startswith('<web_search>')
+                or _stripped.startswith('<search>')
+                or _stripped.startswith('<tool_call>')
+                or (re.match(r'^<[a-z_]+>', _stripped) and '</' in _stripped[:100])
             )
             if (any(p in content.lower() for p in _NO_ANSWER_PHRASES) or raw_tool_call) and attempt < 3:
                 reason = "raw tool-call leaked" if raw_tool_call else "orchestrator fallback detected"
@@ -1063,9 +1070,17 @@ async def main() -> int:
             _level_temp = TEMPERATURE_BY_LEVEL.get(level, TEMPERATURE)
             if _level_temp != TEMPERATURE:
                 print(f"  🌡 T={_level_temp} (L{level} adaptive)", flush=True)
-            res = await call_orchestrator(
-                client, processed_q, file_context=file_ctx, temperature=_level_temp
-            )
+            _q_timeout = QUESTION_TIMEOUT if QUESTION_TIMEOUT > 0 else 1800
+            try:
+                res = await asyncio.wait_for(
+                    call_orchestrator(client, processed_q, file_context=file_ctx,
+                                      temperature=_level_temp, timeout=_q_timeout),
+                    timeout=_q_timeout + 30,
+                )
+            except asyncio.TimeoutError:
+                print(f"  ⏱ Timeout after {_q_timeout}s — skipping", flush=True)
+                res = {"content": "", "tokens_out": 0, "error": f"timeout>{_q_timeout}s",
+                       "status": 408}
             answer = res["content"]
             # Extract a concise answer for scoring; keep the full response as
             # model_answer so the raw orchestrator output is preserved in results.

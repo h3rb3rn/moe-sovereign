@@ -5004,7 +5004,10 @@ async def merger_node(state: AgentState):
                 logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
                 _agentic_gap = "COMPLETE"
 
-            if _used_tokens < 80_000:
+            # Skip gap detection when already resolved by confidence gate or expert-leak handler.
+            # Running a judge LLM-call after the gate already decided COMPLETE wastes tokens
+            # and risks overwriting the correct COMPLETE verdict with NEEDS_MORE_INFO.
+            if not _confidence_gate_passed and _agentic_gap != "COMPLETE" and _used_tokens < 80_000:
                 _gap_prompt = (
                     "You are a completion assessor. Based on the original question and the current answer, "
                     "determine if the answer is complete and what specific data is still missing.\n\n"
@@ -5050,9 +5053,14 @@ async def merger_node(state: AgentState):
             "gap": _agentic_gap,
         })
 
-        # Working Memory: LLM-based fact extraction when gap still open and budget allows
+        # Working Memory: LLM-based fact extraction only when:
+        # (a) gap is still open — facts will feed the next re-planning round
+        # (b) there are more rounds available — extraction is useless on the last iteration
+        _max_rounds = state.get("max_agentic_rounds", 2)
         _wm_merged: dict = dict(state.get("working_memory") or {})
-        if _agentic_gap != "COMPLETE" and state.get("prompt_tokens", 0) < 90_000:
+        if (_agentic_gap != "COMPLETE"
+                and _agentic_iter < _max_rounds - 1
+                and state.get("prompt_tokens", 0) < 90_000):
             _extract_prompt = (
                 "Extract the key facts from the text below as a flat JSON object "
                 "{\"key\": \"value\"}. Keys must be short snake_case. "
