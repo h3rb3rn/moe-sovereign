@@ -53,6 +53,12 @@ TEMPLATE      = os.environ.get("MOE_TEMPLATE", "moe-reference-30b-balanced")
 LEVELS        = [int(x) for x in os.environ.get("GAIA_LEVELS", "1,2,3").split(",")]
 MAX_PER_LEVEL = int(os.environ.get("GAIA_MAX_PER_LEVEL", "10"))
 TEMPERATURE   = float(os.environ.get("GAIA_TEMPERATURE", "0.0"))
+# Per-level temperature overrides: L1 benefits from slight exploration, L3 from pure determinism
+TEMPERATURE_BY_LEVEL: dict[int, float] = {
+    1: float(os.environ.get("GAIA_TEMPERATURE_L1", "0.05")),
+    2: float(os.environ.get("GAIA_TEMPERATURE_L2", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
+    3: float(os.environ.get("GAIA_TEMPERATURE_L3", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
+}
 LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
 
 # MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
@@ -908,7 +914,7 @@ def _extract_gaia_answer(full_answer: str, question: str) -> str:  # noqa: ARG00
 
 async def call_orchestrator(
     client: httpx.AsyncClient, question: str, timeout: int = 1800,
-    file_context: str = "",
+    file_context: str = "", temperature: float | None = None,
 ) -> dict:
     """Send a GAIA question to the MoE Sovereign API with optional file attachment context."""
     user_content = question
@@ -946,7 +952,7 @@ async def call_orchestrator(
                     ],
                     "stream": False,
                     "max_tokens": 500,
-                    "temperature": TEMPERATURE,
+                    "temperature": temperature if temperature is not None else TEMPERATURE,
                     "no_cache": True,
                     "mode": "research",  # force multi-search mode regardless of complexity estimate
                 },
@@ -1054,8 +1060,11 @@ async def main() -> int:
             if processed_q != question:
                 print(f"  🔄 Decoded question: {processed_q[:80]}", flush=True)
 
+            _level_temp = TEMPERATURE_BY_LEVEL.get(level, TEMPERATURE)
+            if _level_temp != TEMPERATURE:
+                print(f"  🌡 T={_level_temp} (L{level} adaptive)", flush=True)
             res = await call_orchestrator(
-                client, processed_q, file_context=file_ctx
+                client, processed_q, file_context=file_ctx, temperature=_level_temp
             )
             answer = res["content"]
             # Extract a concise answer for scoring; keep the full response as
@@ -1167,6 +1176,10 @@ if __name__ == "__main__":
         MAX_PER_LEVEL = args.max_per_level
     if args.temperature is not None:
         TEMPERATURE = args.temperature
+        # Propagate global override to level defaults (env overrides take precedence over this)
+        for _lvl in TEMPERATURE_BY_LEVEL:
+            if f"GAIA_TEMPERATURE_L{_lvl}" not in os.environ:
+                TEMPERATURE_BY_LEVEL[_lvl] = args.temperature
     if args.language is not None:
         LANGUAGE = args.language
 

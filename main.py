@@ -4966,6 +4966,7 @@ async def merger_node(state: AgentState):
                 r"\b(i (cannot|can't|won'?t) (access|browse|fetch|retrieve|visit|search)|"
                 r"i don'?t have (web|internet|direct|real.?time)|"
                 r"(we|let'?s|i'?ll|we'?ll) (will |)(browse|search|look up|fetch|navigate|check)|"
+                r"(we|it) need(s)? to (browse|search|fetch|access|look up|retrieve)|"
                 r"no (direct )?access to (the )?(internet|web|url|website|page)|"
                 r"unable to (browse|access|fetch|visit|open)|"
                 r"as an ai.{0,30}(cannot|can'?t)|"
