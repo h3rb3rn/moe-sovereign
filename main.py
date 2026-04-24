@@ -4198,13 +4198,24 @@ async def research_node(state: AgentState):
 
         await _report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
         raw = await _web_search_with_citations(query)
-        quality = "ok" if raw and len(raw) > 200 else "empty"
+        # Quality classification drives both the result flag and the cache TTL.
+        # Poor results (empty or < 500 chars) are only cached for 30 min to prevent
+        # poisoning subsequent runs with stale, low-signal snippets.
+        if raw and len(raw) > 500:
+            quality = "ok"
+            _effective_ttl = _ttl
+        elif raw and len(raw) > 100:
+            quality = "partial"
+            _effective_ttl = min(_ttl, 1800)  # 30 min for short results
+        else:
+            quality = "empty"
+            _effective_ttl = 0  # do not cache empty results
 
         if raw:
-            await _report(f"🌐 Search [{idx+1}] result ({len(raw)} chars)")
-            if redis_client is not None:
+            await _report(f"🌐 Search [{idx+1}] result ({len(raw)} chars, quality={quality})")
+            if redis_client is not None and _effective_ttl > 0:
                 try:
-                    await redis_client.set(_cache_key, raw.encode("utf-8"), ex=_ttl)
+                    await redis_client.set(_cache_key, raw.encode("utf-8"), ex=_effective_ttl)
                 except Exception:
                     pass
             return raw, query, quality
