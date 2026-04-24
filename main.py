@@ -4989,7 +4989,7 @@ async def merger_node(state: AgentState):
                 _parse_expert_confidence(r) == "high"
                 for r in (state.get("expert_results") or []) if r
             )
-            _answer_is_short = len(res_content_clean.split()) <= 15
+            _answer_is_short = len(res_content_clean.split()) <= 5  # ≤5 words: single-token answers like "backtick", "Fred", "42"
             _confidence_gate_passed = not _expert_is_leak and _all_high and _answer_is_short
             if _confidence_gate_passed:
                 logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")

@@ -393,6 +393,8 @@ EXISTING_NEO4J_PASS=""
 EXISTING_GRAFANA_PASS=""
 EXISTING_PG_LANGGRAPH_PASS=""
 EXISTING_PG_USERDB_PASS=""
+EXISTING_MINIO_USER=""
+EXISTING_MINIO_PASS=""
 EXISTING_ADMIN_USER=""
 EXISTING_ADMIN_PASSWORD=""
 EXISTING_DOMAIN=""
@@ -415,6 +417,8 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   EXISTING_PG_LANGGRAPH_PASS=$(read_env POSTGRES_CHECKPOINT_PASSWORD)
   EXISTING_PG_USERDB_PASS=$(read_env MOE_USERDB_PASSWORD)
   EXISTING_LIBRIS_DB_PASS=$(read_env LIBRIS_DB_PASSWORD)
+  EXISTING_MINIO_USER=$(read_env MINIO_ROOT_USER)
+  EXISTING_MINIO_PASS=$(read_env MINIO_ROOT_PASSWORD)
   EXISTING_ADMIN_USER=$(read_env ADMIN_USER)
   EXISTING_ADMIN_PASSWORD=$(read_env ADMIN_PASSWORD)
   EXISTING_DOMAIN=$(read_env DOMAIN)
@@ -428,6 +432,8 @@ GEN_GRAFANA_PASS="${EXISTING_GRAFANA_PASS:-$(openssl rand -hex 12)}"
 GEN_PG_LANGGRAPH_PASS="${EXISTING_PG_LANGGRAPH_PASS:-$(openssl rand -hex 16)}"
 GEN_PG_USERDB_PASS="${EXISTING_PG_USERDB_PASS:-$(openssl rand -hex 16)}"
 GEN_LIBRIS_DB_PASS="${EXISTING_LIBRIS_DB_PASS:-$(openssl rand -hex 16)}"
+GEN_MINIO_USER="${EXISTING_MINIO_USER:-moeadmin}"
+GEN_MINIO_PASS="${EXISTING_MINIO_PASS:-$(openssl rand -hex 16)}"
 
 echo "  --- Admin Account ---"
 prompt_input ADMIN_USER     "Admin username"   "${EXISTING_ADMIN_USER:-admin}"
@@ -466,12 +472,15 @@ if [[ -n "$EXISTING_REDIS_PASS" ]]; then
   echo "  Neo4j password:    [kept]"
   echo "  Grafana password:  [kept]"
   echo "  Postgres passwords: [kept]"
+  echo "  MinIO credentials: [kept]"
 else
   echo "  --- Auto-generated secrets (saved to .env) ---"
   echo "  Admin secret key:  [auto]"
   echo "  Redis password:    [auto]"
   echo "  Neo4j password:    [auto]"
   echo "  Grafana password:  [auto]"
+  echo "  MinIO user:        ${GEN_MINIO_USER}"
+  echo "  MinIO password:    [auto]"
 fi
 echo ""
 
@@ -636,6 +645,15 @@ fi
   echo 'OIDC_ISSUER='
   echo 'OIDC_END_SESSION_URL='
   echo 'PUBLIC_SSO_URL='
+  echo ""
+  echo "# --- Object Storage (MinIO) ---"
+  echo "# MINIO_ENDPOINT: internal container URL (moe-storage:9000)"
+  echo "# MINIO_PUBLIC_URL: public download base URL — set after configuring Nginx"
+  printf 'MINIO_ROOT_USER=%s\n'     "${GEN_MINIO_USER}"
+  printf 'MINIO_ROOT_PASSWORD=%s\n' "${GEN_MINIO_PASS}"
+  echo 'MINIO_ENDPOINT=moe-storage:9000'
+  echo 'MINIO_PUBLIC_URL='
+  echo 'MINIO_DEFAULT_BUCKET=moe-files'
 } > "${MOE_ENV_FILE}"
 
 # 644: containers bind-mount this :ro and run as non-root (uid 1001 for langgraph,

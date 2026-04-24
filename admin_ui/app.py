@@ -1409,7 +1409,12 @@ async def save_config(request: Request, _=Depends(require_login)):
             if o.strip()
         ),
         # ── MinIO / Object Storage ──
-        "MINIO_PUBLIC_URL": form.get("MINIO_PUBLIC_URL", "").strip(),
+        "MINIO_ENDPOINT":    form.get("MINIO_ENDPOINT", "").strip(),
+        "MINIO_PUBLIC_URL":  form.get("MINIO_PUBLIC_URL", "").strip(),
+        "MINIO_ROOT_USER":   form.get("MINIO_ROOT_USER", "").strip(),
+        # Empty password = preserve existing value (field is masked in UI)
+        "MINIO_ROOT_PASSWORD": form.get("MINIO_ROOT_PASSWORD", "").strip() or read_env().get("MINIO_ROOT_PASSWORD", ""),
+        "MINIO_DEFAULT_BUCKET": form.get("MINIO_DEFAULT_BUCKET", "moe-files").strip(),
     }
 
     # Validate JSON round-trips before writing
