@@ -118,6 +118,7 @@ nav:
     - GPU & Node Monitoring: deployment/gpu-monitoring.md
     - Firewall & Network Exposure: deployment/firewall.md
     - macOS (Docker Desktop): deployment/macos.md
+    - Windows (WSL 2): deployment/wsl2.md
   - System:
     - system/index.md
     - Architecture: system/architecture.md

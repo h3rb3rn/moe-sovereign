@@ -948,13 +948,19 @@ AGENTIC_CODE_TOOLS_DESCRIPTION = ""
 # ── Tool groups for domain-filtered planner injection ────────────────────────
 # Core: always shown — fundamental precision + web access
 _TOOL_GROUP_CORE = frozenset({
-    "calculate", "python_sandbox", "fetch_pdf_text",
-    "web_search_domain", "wikipedia_get_section",
+    # Web research — always available; these are the backbone of every research task
+    "web_researcher", "web_search_domain", "fetch_pdf_text",
+    "wikipedia_get_section",
+    # Deterministic entity/fact lookup — prefer over web search for structured data
+    "wikidata_search", "wikidata_sparql",
+    # Math / utility — domain-agnostic
+    "calculate", "python_sandbox",
     "date_diff", "date_add", "unit_convert",
 })
 # Research: shown when query contains paper/author/database/species/media markers
 _TOOL_GROUP_RESEARCH = frozenset({
-    "semantic_scholar_search", "orcid_works_count",
+    "semantic_scholar_search", "pubmed_search",
+    "orcid_works_count",
     "pubchem_compound_search", "pubchem_advanced_search",
     "github_search_issues", "github_issue_events",
     "youtube_transcript",
@@ -4822,6 +4828,9 @@ async def merger_node(state: AgentState):
     )
     res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
 
+    # Strip OpenAI-style citation superscripts leaked from tool results: 【n†source】
+    res_content_clean = re.sub(r'【\d+†[^】]*】', '', res_content_clean).strip()
+
     # Post-strip fallback: if cleaning stripped everything, use best expert result.
     # This prevents empty final responses when the judge only output tags/metadata.
     if not res_content_clean:
@@ -4995,7 +5004,10 @@ async def merger_node(state: AgentState):
                 logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
                 _agentic_gap = "COMPLETE"
 
-            if _used_tokens < 80_000:
+            # Skip gap detection when already resolved by confidence gate or expert-leak handler.
+            # Running a judge LLM-call after the gate already decided COMPLETE wastes tokens
+            # and risks overwriting the correct COMPLETE verdict with NEEDS_MORE_INFO.
+            if not _confidence_gate_passed and _agentic_gap != "COMPLETE" and _used_tokens < 80_000:
                 _gap_prompt = (
                     "You are a completion assessor. Based on the original question and the current answer, "
                     "determine if the answer is complete and what specific data is still missing.\n\n"
@@ -5041,9 +5053,14 @@ async def merger_node(state: AgentState):
             "gap": _agentic_gap,
         })
 
-        # Working Memory: LLM-based fact extraction when gap still open and budget allows
+        # Working Memory: LLM-based fact extraction only when:
+        # (a) gap is still open — facts will feed the next re-planning round
+        # (b) there are more rounds available — extraction is useless on the last iteration
+        _max_rounds = state.get("max_agentic_rounds", 2)
         _wm_merged: dict = dict(state.get("working_memory") or {})
-        if _agentic_gap != "COMPLETE" and state.get("prompt_tokens", 0) < 90_000:
+        if (_agentic_gap != "COMPLETE"
+                and _agentic_iter < _max_rounds - 1
+                and state.get("prompt_tokens", 0) < 90_000):
             _extract_prompt = (
                 "Extract the key facts from the text below as a flat JSON object "
                 "{\"key\": \"value\"}. Keys must be short snake_case. "
