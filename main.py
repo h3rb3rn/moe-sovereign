@@ -4822,6 +4822,18 @@ async def merger_node(state: AgentState):
     )
     res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
 
+    # Post-strip fallback: if cleaning stripped everything, use best expert result.
+    # This prevents empty final responses when the judge only output tags/metadata.
+    if not res_content_clean:
+        _expert_results = state.get("expert_results") or []
+        _best_expert = (
+            next((r for r in _expert_results if _parse_expert_confidence(r) == "high"), None)
+            or (_expert_results[0] if _expert_results else None)
+        )
+        if _best_expert:
+            res_content_clean = _best_expert.strip()
+            logger.warning("⚠️ Merger output empty after strip — using best expert result as fallback")
+
     if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN:
         # Deterministic ID (SHA-256 of content) prevents duplicate entries under
         # concurrent writes — upsert is idempotent if same response races twice.
