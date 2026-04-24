@@ -4831,6 +4831,13 @@ async def merger_node(state: AgentState):
     # Strip OpenAI-style citation superscripts leaked from tool results: 【n†source】
     res_content_clean = re.sub(r'【\d+†[^】]*】', '', res_content_clean).strip()
 
+    # Strip leading markdown bold label if the answer starts with "**Label:** value".
+    # Models like qwen3 emit structured output ("**Identified Compound:** Benzene") which
+    # should be reduced to just the value ("Benzene").
+    _md_label = re.match(r'^\*{1,2}[^*\n]{1,40}\*{1,2}\s*[:\-]\s*(.+)', res_content_clean, re.DOTALL)
+    if _md_label:
+        res_content_clean = _md_label.group(1).strip()
+
     # Post-strip fallback: if cleaning stripped everything, use best expert result.
     # This prevents empty final responses when the judge only output tags/metadata.
     if not res_content_clean:
@@ -5046,11 +5053,13 @@ async def merger_node(state: AgentState):
                 logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
                 _agentic_gap = "COMPLETE"
 
-        # Record this iteration's findings for planner context in next round
+        # Record only gap + strategy for the re-planner — not full findings text.
+        # Full findings bloat the re-planner prompt (~1200 chars × rounds) without
+        # adding information the planner can act on. Gap and strategy are sufficient.
         _agentic_history.append({
             "iteration": _agentic_iter,
-            "findings": res_content_clean[:1200],
-            "gap": _agentic_gap,
+            "gap":      _agentic_gap[:300],
+            "strategy": _strategy_hint[:200],
         })
 
         # Working Memory: LLM-based fact extraction only when:
@@ -5084,11 +5093,14 @@ async def merger_node(state: AgentState):
             except Exception as _fe:
                 logger.debug(f"Merger fact extraction failed: {_fe}")
 
+        # Increment agentic_iteration here via state return — not via direct mutation
+        # in the router function (_should_replan), which is an anti-pattern in LangGraph.
         _agentic_extra = {
-            "agentic_gap": _agentic_gap,
-            "agentic_history": _agentic_history,
-            "working_memory": _wm_merged,
+            "agentic_gap":          _agentic_gap,
+            "agentic_history":      _agentic_history,
+            "working_memory":       _wm_merged,
             "search_strategy_hint": _strategy_hint,
+            "agentic_iteration":    _agentic_iter + 1 if _agentic_gap != "COMPLETE" else _agentic_iter,
         }
 
     return {
@@ -5101,54 +5113,50 @@ async def merger_node(state: AgentState):
 
 async def research_fallback_node(state: AgentState):
     """
-    Runs after all parallel nodes — analyzes expert outputs for knowledge gaps.
-    For each CONFIDENCE:low result a targeted web search is started.
-    Results are aggregated in web_research before the merger synthesizes.
+    Runs after all parallel nodes — only when a gap-detector strategy_hint provides
+    a *different* search query than already attempted. Avoids re-running identical
+    SearXNG queries that the research_node already executed (which produced the
+    low-confidence result in the first place).
     """
     if state.get("cache_hit"):
         return {"web_research": state.get("web_research", "")}
 
-    expert_results = state.get("expert_results") or []
-    plan           = state.get("plan") or []
-    existing_web   = state.get("web_research") or ""
+    expert_results   = state.get("expert_results") or []
+    existing_web     = state.get("web_research") or ""
+    strategy_hint    = (state.get("search_strategy_hint") or "").strip()
+    attempted        = {q.get("query", "") for q in (state.get("attempted_queries") or [])}
 
-    # Expert tasks from the plan (LLM-handled only, no precision_tools/research)
-    expert_tasks = [
-        t for t in plan
-        if isinstance(t, dict) and t.get("category") not in NON_EXPERT_CATEGORIES
-    ]
-
-    # Pair low-confidence results with matching plan tasks
-    searches: List[Dict] = []
-    seen: set = set()
-    for result in expert_results:
-        if _parse_expert_confidence(result) != "low":
-            continue
-        cat = _expert_category(result)
-        matching = [t for t in expert_tasks if t.get("category") == cat]
-        for task in matching:
-            key = task.get("task", "")[:100]
-            if key in seen:
-                continue
-            seen.add(key)
-            searches.append({"query": task.get("task", state["input"]), "category": cat})
-
-    if not searches:
+    # Only fire when we have a concrete new search strategy from the gap detector
+    # that hasn't been tried yet. Using the same plan-task query again wastes a
+    # SearXNG call — the first result already showed it couldn't answer the question.
+    if not strategy_hint or strategy_hint in attempted:
+        if any(_parse_expert_confidence(r) == "low" for r in expert_results):
+            logger.info("⚡ Research fallback skipped — no new strategy hint from gap detector")
         return {"web_research": existing_web}
 
-    logger.info(f"--- [NODE] RESEARCH FALLBACK ({len(searches)} knowledge gaps) ---")
-    await _report(f"🔍 {len(searches)} knowledge gap(s) detected — starting research agent...")
+    # Build search list from gap-detector strategy hint (new, not-yet-tried query)
+    low_conf_cats = {
+        _expert_category(r)
+        for r in expert_results
+        if _parse_expert_confidence(r) == "low"
+    }
+    cat = next(iter(low_conf_cats), "general")
+    searches = [{"query": strategy_hint, "category": cat}]
+    seen = {strategy_hint}
+
+    logger.info(f"--- [NODE] RESEARCH FALLBACK (strategy: '{strategy_hint[:60]}') ---")
+    await _report(f"🔍 Research fallback — new strategy: '{strategy_hint[:60]}'")
 
     async def _search_one(item: dict) -> str:
         query = item["query"][:180]
-        cat   = item["category"]
-        await _report(f"🌐 Agent researching [{cat}]: '{query[:60]}'...")
+        cat_s = item["category"]
+        await _report(f"🌐 Fallback search [{cat_s}]: '{query[:60]}'...")
         raw = await _web_search_with_citations(query)
         if raw:
-            await _report(f"🌐 [{cat}]: {len(raw)} chars research result")
-            logger.info(f"🌐 Research Fallback [{cat}]: {len(raw)} chars")
-            return f"[Research / {cat}]:\n{raw[:2000]}"
-        await _report(f"⚠️ Research [{cat}] failed")
+            await _report(f"🌐 [{cat_s}]: {len(raw)} chars fallback result")
+            logger.info(f"🌐 Research Fallback [{cat_s}]: {len(raw)} chars")
+            return f"[Research Fallback / {cat_s}]:\n{raw[:2000]}"
+        await _report(f"⚠️ Fallback search [{cat_s}] returned empty")
         return ""
 
     results = await asyncio.gather(*[_search_one(s) for s in searches])
@@ -5181,7 +5189,11 @@ async def thinking_node(state: AgentState):
     expert_results = state.get("expert_results") or []
 
     has_low_conf = any(_parse_expert_confidence(r) == "low" for r in expert_results)
-    is_complex   = len(plan) > 1
+    # Genuine complexity: sequential task chains (depends_on) or multi-domain expert divergence.
+    # len(plan) > 1 is too broad — most research requests have >1 task but don't need CoT.
+    has_sequential_chain = any(t.get("depends_on") for t in plan if isinstance(t, dict))
+    has_multi_category   = len({t.get("category") for t in plan if isinstance(t, dict)}) > 2
+    is_complex = has_sequential_chain or has_multi_category
 
     if not (force or is_complex or has_low_conf):
         return {"reasoning_trace": ""}
@@ -5235,9 +5247,8 @@ def _should_replan(state: AgentState) -> str:
     _gap = (state.get("agentic_gap") or "").strip()
     if not _gap or _gap.upper() == "COMPLETE" or _gap.lower() in ("none", ""):
         return "critic"
-    # Increment iteration counter via state mutation (read by planner_node)
-    state["agentic_iteration"] = _iter + 1  # type: ignore[index]
-    logger.info(f"🔄 Agentic router: iteration {_iter + 1}/{_max}, gap='{_gap[:60]}'")
+    # agentic_iteration is incremented in merger_node via state return — no direct mutation here.
+    logger.info(f"🔄 Agentic router: iteration {_iter}/{_max}, gap='{_gap[:60]}'")
     return "planner"
 
 
