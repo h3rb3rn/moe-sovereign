@@ -87,7 +87,7 @@ services:
     container_name: langgraph-orchestrator
     restart: always
     ports:
-      - "127.0.0.1:${LANGGRAPH_HOST_PORT:-8002}:8000"
+      - "${LANGGRAPH_HOST_PORT:-8002}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -256,7 +256,7 @@ services:
     container_name: moe-admin
     restart: always
     ports:
-      - "127.0.0.1:${ADMIN_UI_HOST_PORT:-8088}:8088"
+      - "${ADMIN_UI_HOST_PORT:-8088}:8088"
     security_opt:
       - no-new-privileges:true
     cap_drop:
