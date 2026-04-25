@@ -5033,7 +5033,12 @@ async def merger_node(state: AgentState):
                 for r in (state.get("expert_results") or []) if r
             )
             _answer_is_short = len(res_content_clean.split()) <= 5  # ≤5 words: single-token answers like "backtick", "Fred", "42"
-            _confidence_gate_passed = not _expert_is_leak and _all_high and _answer_is_short
+            _complexity_level = state.get("complexity_level", "moderate")
+            # For complex questions (L3 GAIA, multi-step research), require at least one
+            # agentic iteration before allowing early exit — prevents the gate from locking
+            # in a confidently-wrong short answer without any gap-detection research.
+            _gate_min_iter_ok = (_agentic_iter >= 1) or (_complexity_level != "complex")
+            _confidence_gate_passed = not _expert_is_leak and _all_high and _answer_is_short and _gate_min_iter_ok
             if _confidence_gate_passed:
                 logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
                 _agentic_gap = "COMPLETE"
