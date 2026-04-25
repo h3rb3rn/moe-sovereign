@@ -953,6 +953,8 @@ _TOOL_GROUP_CORE = frozenset({
     "wikipedia_get_section",
     # Deterministic entity/fact lookup — prefer over web search for structured data
     "wikidata_search", "wikidata_sparql",
+    # JS-capable browser + alternative search — generic enough for any research query
+    "web_browser", "duckduckgo_search",
     # Math / utility — domain-agnostic
     "calculate", "python_sandbox",
     "date_diff", "date_add", "unit_convert",
@@ -960,7 +962,9 @@ _TOOL_GROUP_CORE = frozenset({
 # Research: shown when query contains paper/author/database/species/media markers
 _TOOL_GROUP_RESEARCH = frozenset({
     "semantic_scholar_search", "pubmed_search",
+    "crossref_lookup", "openalex_search",   # academic publication databases
     "orcid_works_count",
+    "wayback_fetch",                         # historical snapshots (ORCID, archived pages)
     "pubchem_compound_search", "pubchem_advanced_search",
     "github_search_issues", "github_issue_events",
     "youtube_transcript",
