@@ -1450,14 +1450,44 @@ _ATTACH_MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard limit
 _ATTACH_TIMEOUT   = 30.0              # seconds
 
 
+def _assert_public_url(url: str) -> None:
+    """Raise ValueError if the URL resolves to a private/loopback/link-local address.
+
+    Prevents SSRF: an attacker could prompt the LLM to call fetch_pdf_text or
+    parse_attachment with an internal URL (172.20.x.x, 169.254.x.x, localhost, etc.)
+    to reach container-internal services like Postgres, Redis, or the admin API.
+    """
+    import urllib.parse
+    parsed = urllib.parse.urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme '{scheme}' is not allowed — only http/https.")
+    host = parsed.hostname or ""
+    if not host:
+        raise ValueError("URL has no hostname.")
+    # Reject obvious hostnames
+    if host.lower() in ("localhost", "metadata.google.internal"):
+        raise ValueError(f"Host '{host}' is not allowed (internal).")
+    try:
+        addr = ipaddress.ip_address(host)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise ValueError(f"URL resolves to a private/reserved IP ({addr}) — SSRF blocked.")
+    except ValueError as ve:
+        if "SSRF blocked" in str(ve) or "not allowed" in str(ve) or "scheme" in str(ve):
+            raise
+        # hostname that isn't a bare IP — allow (DNS will resolve it at fetch time)
+        pass
+
+
 def _fetch_attachment_bytes(url: str) -> bytes:
     """
     Downloads a URL with a streaming size check (max 20 MB, 30 s timeout).
     Raises ValueError on size violation, httpx exceptions on network errors.
     """
+    _assert_public_url(url)  # SSRF guard — blocks private/internal IPs
     collected: list[bytes] = []
     total = 0
-    with httpx.stream("GET", url, timeout=_ATTACH_TIMEOUT, follow_redirects=True) as resp:
+    with httpx.stream("GET", url, timeout=_ATTACH_TIMEOUT, follow_redirects=False) as resp:
         resp.raise_for_status()
         for chunk in resp.iter_bytes(chunk_size=65536):
             total += len(chunk)
@@ -1844,6 +1874,8 @@ def fetch_pdf_text(url: str, max_chars: int = 8000) -> str:
     import re as _re
     import pypdf
 
+    _assert_public_url(url)  # SSRF guard
+
     # Normalise arXiv URLs: abs/ → pdf/ with .pdf suffix
     arxiv_abs = _re.match(r'https?://arxiv\.org/abs/(\d{4}\.\d+(?:v\d+)?)', url)
     if arxiv_abs:
@@ -1925,7 +1957,9 @@ def python_sandbox(code: str) -> str:
 
     _ALLOWED_MODULES = {
         "math", "fractions", "itertools", "collections",
-        "decimal", "statistics", "random", "re",
+        "decimal", "statistics", "random",
+        # "re" intentionally excluded: regex objects expose __class__.__mro__
+        # which can be used to escape the sandbox via __subclasses__() traversal.
     }
 
     def _restricted_import(name, *args, **kwargs):
@@ -1936,12 +1970,18 @@ def python_sandbox(code: str) -> str:
     original_import = builtins.__import__
     stdout_capture = io.StringIO()
 
+    # Block builtins that enable introspection-based sandbox escapes.
+    # vars/dir/getattr allow traversal of __class__.__mro__.__subclasses__().
+    _BLOCKED_BUILTINS = {
+        "open", "exec", "eval", "compile", "input", "breakpoint",
+        "__import__", "vars", "dir", "getattr", "setattr", "delattr",
+        "globals", "locals", "memoryview",
+    }
     safe_globals = {
         "__builtins__": {
             k: getattr(builtins, k)
             for k in dir(builtins)
-            if not k.startswith("_") and k not in {"open", "exec", "eval", "compile",
-                                                     "input", "breakpoint", "__import__"}
+            if not k.startswith("_") and k not in _BLOCKED_BUILTINS
         },
         "__import__": _restricted_import,
     }

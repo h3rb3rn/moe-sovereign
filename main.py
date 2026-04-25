@@ -3182,6 +3182,10 @@ async def graph_rag_node(state: AgentState):
     if not state.get("enable_graphrag", True):
         logger.info("GraphRAG disabled by template toggle")
         return {"graph_context": ""}
+    # Complexity routing: skip for trivial requests (complexity_estimator sets skip_graph)
+    if state.get("skip_graph"):
+        logger.info("⚡ GraphRAG skipped (complexity routing: trivial/skip_graph)")
+        return {"graph_context": ""}
     if not GRAPH_VIA_MCP and graph_manager is None:
         return {"graph_context": ""}
     plan = state.get("plan", [])
@@ -3634,7 +3638,7 @@ Use for: game rules · algorithm specifications · protocols/standards · anythi
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{_build_filtered_tool_desc(state["input"], enable_graphrag=state.get("enable_graphrag", False))}
+{_build_filtered_tool_desc(state["input"], enable_graphrag=state.get("enable_graphrag", False)) if state.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - unit_convert: unit conversions"}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
@@ -4724,9 +4728,10 @@ async def merger_node(state: AgentState):
         fast_resp = _details_m.group(1).strip() if _details_m else _raw_fp.strip()
         logger.info(f"⚡ Fast-Path: single high-confidence expert → direct response ({len(fast_resp)} chars)")
         await _report(f"⚡ Fast-Path: single high-confidence expert ({len(fast_resp)} chars)")
-        if len(fast_resp) > CACHE_MIN_RESPONSE_LEN:
+        if len(fast_resp) > CACHE_MIN_RESPONSE_LEN and not state.get("no_cache", False):
             # Deterministic ID (SHA-256 of content) prevents duplicate entries under
             # concurrent writes — upsert is idempotent if same response races twice.
+            # Skipped when no_cache=True to avoid polluting the vector store.
             _fp_cid = hashlib.sha256(fast_resp.encode()).hexdigest()[:32]
             await asyncio.to_thread(
                 cache_collection.upsert,
@@ -4831,6 +4836,13 @@ async def merger_node(state: AgentState):
     # Strip OpenAI-style citation superscripts leaked from tool results: 【n†source】
     res_content_clean = re.sub(r'【\d+†[^】]*】', '', res_content_clean).strip()
 
+    # Strip leading markdown bold label if the answer starts with "**Label:** value".
+    # Models like qwen3 emit structured output ("**Identified Compound:** Benzene") which
+    # should be reduced to just the value ("Benzene").
+    _md_label = re.match(r'^\*{1,2}[^*\n]{1,40}\*{1,2}\s*[:\-]\s*(.+)', res_content_clean, re.DOTALL)
+    if _md_label:
+        res_content_clean = _md_label.group(1).strip()
+
     # Post-strip fallback: if cleaning stripped everything, use best expert result.
     # This prevents empty final responses when the judge only output tags/metadata.
     if not res_content_clean:
@@ -4843,9 +4855,12 @@ async def merger_node(state: AgentState):
             res_content_clean = _best_expert.strip()
             logger.warning("⚠️ Merger output empty after strip — using best expert result as fallback")
 
-    if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN:
+    _no_cache_write = state.get("no_cache", False)
+    if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN and not _no_cache_write:
         # Deterministic ID (SHA-256 of content) prevents duplicate entries under
         # concurrent writes — upsert is idempotent if same response races twice.
+        # Skipped when no_cache=True: unique benchmark/research queries would only
+        # pollute the vector store with entries that are never read again.
         chroma_doc_id = hashlib.sha256(res_content_clean.encode()).hexdigest()[:32]
         await asyncio.to_thread(
             cache_collection.upsert,
@@ -5046,11 +5061,13 @@ async def merger_node(state: AgentState):
                 logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
                 _agentic_gap = "COMPLETE"
 
-        # Record this iteration's findings for planner context in next round
+        # Record only gap + strategy for the re-planner — not full findings text.
+        # Full findings bloat the re-planner prompt (~1200 chars × rounds) without
+        # adding information the planner can act on. Gap and strategy are sufficient.
         _agentic_history.append({
             "iteration": _agentic_iter,
-            "findings": res_content_clean[:1200],
-            "gap": _agentic_gap,
+            "gap":      _agentic_gap[:300],
+            "strategy": _strategy_hint[:200],
         })
 
         # Working Memory: LLM-based fact extraction only when:
@@ -5084,11 +5101,14 @@ async def merger_node(state: AgentState):
             except Exception as _fe:
                 logger.debug(f"Merger fact extraction failed: {_fe}")
 
+        # Increment agentic_iteration here via state return — not via direct mutation
+        # in the router function (_should_replan), which is an anti-pattern in LangGraph.
         _agentic_extra = {
-            "agentic_gap": _agentic_gap,
-            "agentic_history": _agentic_history,
-            "working_memory": _wm_merged,
+            "agentic_gap":          _agentic_gap,
+            "agentic_history":      _agentic_history,
+            "working_memory":       _wm_merged,
             "search_strategy_hint": _strategy_hint,
+            "agentic_iteration":    _agentic_iter + 1 if _agentic_gap != "COMPLETE" else _agentic_iter,
         }
 
     return {
@@ -5101,54 +5121,50 @@ async def merger_node(state: AgentState):
 
 async def research_fallback_node(state: AgentState):
     """
-    Runs after all parallel nodes — analyzes expert outputs for knowledge gaps.
-    For each CONFIDENCE:low result a targeted web search is started.
-    Results are aggregated in web_research before the merger synthesizes.
+    Runs after all parallel nodes — only when a gap-detector strategy_hint provides
+    a *different* search query than already attempted. Avoids re-running identical
+    SearXNG queries that the research_node already executed (which produced the
+    low-confidence result in the first place).
     """
     if state.get("cache_hit"):
         return {"web_research": state.get("web_research", "")}
 
-    expert_results = state.get("expert_results") or []
-    plan           = state.get("plan") or []
-    existing_web   = state.get("web_research") or ""
+    expert_results   = state.get("expert_results") or []
+    existing_web     = state.get("web_research") or ""
+    strategy_hint    = (state.get("search_strategy_hint") or "").strip()
+    attempted        = {q.get("query", "") for q in (state.get("attempted_queries") or [])}
 
-    # Expert tasks from the plan (LLM-handled only, no precision_tools/research)
-    expert_tasks = [
-        t for t in plan
-        if isinstance(t, dict) and t.get("category") not in NON_EXPERT_CATEGORIES
-    ]
-
-    # Pair low-confidence results with matching plan tasks
-    searches: List[Dict] = []
-    seen: set = set()
-    for result in expert_results:
-        if _parse_expert_confidence(result) != "low":
-            continue
-        cat = _expert_category(result)
-        matching = [t for t in expert_tasks if t.get("category") == cat]
-        for task in matching:
-            key = task.get("task", "")[:100]
-            if key in seen:
-                continue
-            seen.add(key)
-            searches.append({"query": task.get("task", state["input"]), "category": cat})
-
-    if not searches:
+    # Only fire when we have a concrete new search strategy from the gap detector
+    # that hasn't been tried yet. Using the same plan-task query again wastes a
+    # SearXNG call — the first result already showed it couldn't answer the question.
+    if not strategy_hint or strategy_hint in attempted:
+        if any(_parse_expert_confidence(r) == "low" for r in expert_results):
+            logger.info("⚡ Research fallback skipped — no new strategy hint from gap detector")
         return {"web_research": existing_web}
 
-    logger.info(f"--- [NODE] RESEARCH FALLBACK ({len(searches)} knowledge gaps) ---")
-    await _report(f"🔍 {len(searches)} knowledge gap(s) detected — starting research agent...")
+    # Build search list from gap-detector strategy hint (new, not-yet-tried query)
+    low_conf_cats = {
+        _expert_category(r)
+        for r in expert_results
+        if _parse_expert_confidence(r) == "low"
+    }
+    cat = next(iter(low_conf_cats), "general")
+    searches = [{"query": strategy_hint, "category": cat}]
+    seen = {strategy_hint}
+
+    logger.info(f"--- [NODE] RESEARCH FALLBACK (strategy: '{strategy_hint[:60]}') ---")
+    await _report(f"🔍 Research fallback — new strategy: '{strategy_hint[:60]}'")
 
     async def _search_one(item: dict) -> str:
         query = item["query"][:180]
-        cat   = item["category"]
-        await _report(f"🌐 Agent researching [{cat}]: '{query[:60]}'...")
+        cat_s = item["category"]
+        await _report(f"🌐 Fallback search [{cat_s}]: '{query[:60]}'...")
         raw = await _web_search_with_citations(query)
         if raw:
-            await _report(f"🌐 [{cat}]: {len(raw)} chars research result")
-            logger.info(f"🌐 Research Fallback [{cat}]: {len(raw)} chars")
-            return f"[Research / {cat}]:\n{raw[:2000]}"
-        await _report(f"⚠️ Research [{cat}] failed")
+            await _report(f"🌐 [{cat_s}]: {len(raw)} chars fallback result")
+            logger.info(f"🌐 Research Fallback [{cat_s}]: {len(raw)} chars")
+            return f"[Research Fallback / {cat_s}]:\n{raw[:2000]}"
+        await _report(f"⚠️ Fallback search [{cat_s}] returned empty")
         return ""
 
     results = await asyncio.gather(*[_search_one(s) for s in searches])
@@ -5181,7 +5197,11 @@ async def thinking_node(state: AgentState):
     expert_results = state.get("expert_results") or []
 
     has_low_conf = any(_parse_expert_confidence(r) == "low" for r in expert_results)
-    is_complex   = len(plan) > 1
+    # Genuine complexity: sequential task chains (depends_on) or multi-domain expert divergence.
+    # len(plan) > 1 is too broad — most research requests have >1 task but don't need CoT.
+    has_sequential_chain = any(t.get("depends_on") for t in plan if isinstance(t, dict))
+    has_multi_category   = len({t.get("category") for t in plan if isinstance(t, dict)}) > 2
+    is_complex = has_sequential_chain or has_multi_category
 
     if not (force or is_complex or has_low_conf):
         return {"reasoning_trace": ""}
@@ -5235,9 +5255,8 @@ def _should_replan(state: AgentState) -> str:
     _gap = (state.get("agentic_gap") or "").strip()
     if not _gap or _gap.upper() == "COMPLETE" or _gap.lower() in ("none", ""):
         return "critic"
-    # Increment iteration counter via state mutation (read by planner_node)
-    state["agentic_iteration"] = _iter + 1  # type: ignore[index]
-    logger.info(f"🔄 Agentic router: iteration {_iter + 1}/{_max}, gap='{_gap[:60]}'")
+    # agentic_iteration is incremented in merger_node via state return — no direct mutation here.
+    logger.info(f"🔄 Agentic router: iteration {_iter}/{_max}, gap='{_gap[:60]}'")
     return "planner"
 
 
@@ -5666,6 +5685,38 @@ async def lifespan(app_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# ── Security Headers Middleware ────────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+
+class _SecurityHeadersMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"]    = "nosniff"
+        response.headers["X-Frame-Options"]           = "DENY"
+        response.headers["X-XSS-Protection"]          = "1; mode=block"
+        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=()"
+        # HSTS only when behind TLS (Nginx sets this on the public endpoint)
+        return response
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+# ── Request Body Size Limit — protect against payload-based DoS ───────────────
+from starlette.middleware.base import BaseHTTPMiddleware as _BM2
+_MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_MB", "16")) * 1024 * 1024
+
+class _BodySizeLimitMiddleware(_BM2):
+    async def dispatch(self, request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > _MAX_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"error": f"Request body exceeds {_MAX_BODY_BYTES // (1024*1024)} MB limit"},
+            )
+        return await call_next(request)
+
+app.add_middleware(_BodySizeLimitMiddleware)
+
 # CORS for Open WebUI direct connections (browser-side)
 from fastapi.middleware.cors import CORSMiddleware
 _cors_all     = os.getenv("CORS_ALL_ORIGINS", "0") == "1"
@@ -5679,6 +5730,32 @@ if _cors_origins:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "x-api-key", "Content-Type"],
     )
+
+async def _check_ip_rate_limit(request: Request) -> bool:
+    """Token-bucket rate limit per client IP using Redis.
+
+    Returns True if the request is allowed, False if rate-limited.
+    Limit: MAX_REQUESTS_PER_MINUTE per IP (default 60). Unauthenticated
+    requests use a stricter limit (default 20/min) to slow credential bruteforce.
+    """
+    if redis_client is None:
+        return True  # fails open — no Redis, no rate limiting
+    try:
+        _ip = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or request.headers.get("x-real-ip", "")
+            or (request.client.host if request.client else "unknown")
+        )
+        _window = 60  # seconds
+        _key    = f"moe:ratelimit:ip:{_ip}"
+        _limit  = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
+        _count  = await redis_client.incr(_key)
+        if _count == 1:
+            await redis_client.expire(_key, _window)
+        return _count <= _limit
+    except Exception:
+        return True  # fails open on Redis errors
+
 
 @app.get("/health")
 async def health_check():
@@ -6294,6 +6371,13 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
     session_id = _extract_session_id(raw_request)
+
+    # IP-based rate limit (pre-auth, guards against credential bruteforce & DoS)
+    if not await _check_ip_rate_limit(raw_request):
+        return JSONResponse(status_code=429, content={"error": {
+            "message": "Rate limit exceeded — too many requests from this IP",
+            "type": "rate_limit_error", "code": "rate_limit_exceeded",
+        }}, headers={"Retry-After": "60"})
 
     # Auth
     raw_key  = _extract_api_key(raw_request)

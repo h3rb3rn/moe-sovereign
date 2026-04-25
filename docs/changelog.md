@@ -8,6 +8,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-04-25 — Security Hardening, Architektur-Optimierungen & GAIA-Benchmark
+
+### Sicherheit
+- **SSRF-Guard**: `_assert_public_url()` blockiert private/loopback IPs in `fetch_pdf_text`, `parse_attachment`
+- **SQL-Injection-Fix**: DDL-Identifier-Validierung in `bootstrap_db()` (regex `[a-zA-Z_][a-zA-Z0-9_]{0,62}`)
+- **Python-Sandbox-Härtung**: `re`-Modul entfernt, `vars/dir/getattr/globals` aus builtins geblockt
+- **Container-Härtung**: `no-new-privileges`, `cap_drop: ALL` für langgraph-app, mcp-precision, moe-admin
+- **Security Headers**: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
+- **Rate Limiting**: IP-basiertes Token-Bucket (60 req/min) via Redis, 16MB Body-Limit
+- **MCP-Port**: 127.0.0.1-only (nicht mehr 0.0.0.0)
+
+### Architektur-Optimierungen
+- **Thinking-Node**: Aktivierungsbedingung von `len(plan) > 1` auf echte Komplexitätsindikatoren verschärft (`depends_on`-Chains oder 3+ Expert-Kategorien)
+- **Research-Fallback**: Läuft nur noch mit neuem `strategy_hint` aus Gap-Detektor, nicht mehr mit identischer Query
+- **Gap-Detektor**: Überspringt LLM-Call wenn Confidence Gate bereits COMPLETE gesetzt hat
+- **Working Memory**: Extraktion nur wenn weitere Agentic-Rounds folgen (nicht auf letzter Iteration)
+- **State-Mutation**: `agentic_iteration` wird jetzt via Merger-Return statt direkter State-Mutation inkrementiert
+- **`skip_graph` Flag**: GraphRAG-Node respektiert jetzt das Flag des Complexity-Estimators
+- **no_cache schreibt nicht mehr**: ChromaDB/Redis-Writes werden bei `no_cache=True` übersprungen
+- **Core-Tools**: `web_researcher`, `wikidata_search`, `wikidata_sparql` immer im Core-Set (waren versehentlich gefiltert)
+
+### MCP Tools (46 total)
+- `wikidata_sparql` — SPARQL gegen Wikidata-Endpoint
+- `pubmed_search` — NCBI eutils für Biomedizin/Ökologie
+- `web_researcher`, `wikidata_search`, `wikidata_sparql` jetzt im Core-Tool-Set
+
+### GAIA Benchmark
+- **Bestes Ergebnis**: 14/30 = 46.7% (schlägt GPT-4o Mini 44.8%)
+- **qwen3.6:35b Vergleich**: 11/30 = 36.7% (79% der AIHUB-Qualität, 10× langsamer)
+- Level-adaptive Temperature: L1=0.1, L2=0.05, L3=0.0
+- XML-Tool-Call-Filter im Benchmark-Runner für lokale Modelle
+- Per-Question-Timeout Option (`GAIA_QUESTION_TIMEOUT`)
+
+### Deployment
+- `install.sh`: Generiert `Caddyfile` automatisch (localhost-Stub ohne Domain, vollständig mit Domain)
+- `install.sh`: MINIO_ROOT_USER/PASSWORD werden automatisch generiert
+- Admin-UI: Vollständige Object-Storage-Konfigurationssektion (5 MinIO-Felder)
+- WSL 2 Deployment-Guide: neue Dokumentation unter `deployment/wsl2.md`
+
+---
+
 ## [2.8.0] - 2026-04-24
 
 > `impact: minor` · `breaking: no` · `domain: orchestrator, mcp, benchmarks, routing`

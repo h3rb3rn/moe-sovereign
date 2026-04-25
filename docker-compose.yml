@@ -62,7 +62,14 @@ services:
     container_name: mcp-precision
     restart: always
     ports:
-      - "${MCP_HOST_PORT:-8003}:8003"
+      - "127.0.0.1:${MCP_HOST_PORT:-8003}:8003"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
     env_file:
       - .env
     volumes:
@@ -81,6 +88,17 @@ services:
     restart: always
     ports:
       - "${LANGGRAPH_HOST_PORT:-8002}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          memory: 512M
     env_file:
       - .env
     environment:
@@ -239,6 +257,10 @@ services:
     restart: always
     ports:
       - "${ADMIN_UI_HOST_PORT:-8088}:8088"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     env_file:
       - .env
     environment:
