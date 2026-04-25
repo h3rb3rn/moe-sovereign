@@ -2931,6 +2931,89 @@ def pubmed_search(query: str, max_results: int = 5, year_min: int = 0) -> str:
         return f"[pubmed_search error: {e}]"
 
 
+@mcp.tool()
+def web_browser(url: str, wait_seconds: float = 2.0, max_chars: int = 6000) -> str:
+    """Render a URL with a JavaScript-capable headless browser (Splash).
+
+    Use when fetch_pdf_text or web_researcher return empty or broken content
+    because the page requires JavaScript to render (Single-Page Apps, dynamic
+    tables, BBC scripts, British Museum collection pages, GitHub issue timelines).
+
+    Falls back to plain httpx fetch if Splash is unavailable.
+
+    url:          Full URL to render (http/https only)
+    wait_seconds: Time to wait after page load for JS execution (default 2s)
+    max_chars:    Maximum characters to return from the rendered HTML text
+    """
+    _assert_public_url(url)
+    splash_url = os.environ.get("SPLASH_URL", "http://moe-splash:8050")
+
+    # Try Splash first
+    try:
+        resp = httpx.get(
+            f"{splash_url}/render.html",
+            params={"url": url, "wait": wait_seconds, "timeout": 30},
+            timeout=40,
+        )
+        if resp.status_code == 200:
+            html = resp.text
+            # Strip HTML tags for clean text
+            import re as _re
+            text = _re.sub(r'<[^>]+>', ' ', html)
+            text = _re.sub(r'\s+', ' ', text).strip()
+            return text[:max_chars] if len(text) > max_chars else text
+        # Splash returned error — fall through to plain fetch
+    except Exception:
+        pass
+
+    # Fallback: plain httpx (no JS)
+    try:
+        resp = httpx.get(url, follow_redirects=False, timeout=20,
+                         headers={"User-Agent": "Mozilla/5.0 (research-bot/1.0)"})
+        resp.raise_for_status()
+        import re as _re
+        text = _re.sub(r'<[^>]+>', ' ', resp.text)
+        text = _re.sub(r'\s+', ' ', text).strip()
+        return text[:max_chars] if len(text) > max_chars else text
+    except Exception as e:
+        return f"[web_browser error: {e}]"
+
+
+@mcp.tool()
+def duckduckgo_search(query: str, max_results: int = 5, region: str = "wt-wt") -> str:
+    """Search the web via DuckDuckGo — no API key required, no rate-limit risk.
+
+    Use as a complement or fallback to web_researcher when SearXNG returns
+    poor results. DuckDuckGo indexes different sources and applies its own
+    relevance ranking independent of SearXNG.
+
+    Returns title, URL, and body snippet for each result.
+
+    query:       Search query string (English preferred for best coverage)
+    max_results: Number of results to return (1-10, default 5)
+    region:      DuckDuckGo region code (default wt-wt = worldwide)
+                 Examples: us-en, de-de, gb-en, fr-fr
+    """
+    try:
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, region=region, max_results=min(max(1, max_results), 10)))
+        if not results:
+            return f"[duckduckgo_search: no results for '{query[:80]}']"
+        output = []
+        for r in results:
+            output.append({
+                "title": r.get("title", ""),
+                "url":   r.get("href", ""),
+                "body":  r.get("body", "")[:400],
+            })
+        return json.dumps({"query": query, "results": output}, indent=2, ensure_ascii=False)
+    except ImportError:
+        return "[duckduckgo_search: ddgs library not installed — run: pip install ddgs]"
+    except Exception as e:
+        return f"[duckduckgo_search error: {e}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -2982,6 +3065,8 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "wikidata_search":         wikidata_search,
     "wikidata_sparql":         wikidata_sparql,
     "pubmed_search":           pubmed_search,
+    "duckduckgo_search":       duckduckgo_search,
+    "web_browser":             web_browser,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -3033,6 +3118,8 @@ _TOOL_DESCRIPTIONS = {
     "wikidata_search":         "Search Wikidata by text to find entity IDs (wd:Q...) for use in wikidata_sparql. Use this first when you know the name but not the Wikidata ID.",
     "wikidata_sparql":         "Execute SPARQL against Wikidata for deterministic entity facts (dates, locations, people, species, relationships). ALWAYS prefer over web search for factual lookups — no HTML parsing, no SearXNG variance. Write a SPARQL 1.1 query; use wd: entity IDs or wdt: property filters.",
     "pubmed_search":           "Search PubMed/NCBI for biomedical, biology, ecology, and life science papers. Returns title, authors, year, abstract, DOI. Prefer over semantic_scholar_search for species studies, genetics, clinical trials, ecology — deterministic NCBI API, no SearXNG variance.",
+    "duckduckgo_search":       "Search the web via DuckDuckGo (no API key, no rate-limit risk). Use as complement or fallback when SearXNG returns poor results — DuckDuckGo indexes different sources. Returns title, URL, snippet for each result. Good for English-language factual queries.",
+    "web_browser":             "Render a URL with a JavaScript-capable headless browser (Splash). Use when fetch_pdf_text or web_researcher return broken/empty content because the page needs JS to render: BBC scripts, British Museum collection pages, GitHub issue timelines, museum databases. Falls back to plain HTTP fetch if Splash unavailable.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────

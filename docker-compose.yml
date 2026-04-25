@@ -453,6 +453,20 @@ services:
           memory: 128M
 
   # --- MinIO Object Storage ---
+  # --- Splash — JavaScript-capable headless browser for MCP web_browser tool ---
+  # Renders JS-heavy pages (BBC scripts, British Museum collection, GitHub issues)
+  # that SearXNG's static indexer cannot handle. Lightweight (<200MB), REST API.
+  moe-splash:
+    image: scrapinghub/splash:latest
+    container_name: moe-splash
+    restart: unless-stopped
+    command: --maxrss 512 --slots 4
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
   moe-storage:
     image: quay.io/minio/minio:latest
     container_name: moe-storage
