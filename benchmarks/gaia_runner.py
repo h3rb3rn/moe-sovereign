@@ -60,8 +60,15 @@ TEMPERATURE_BY_LEVEL: dict[int, float] = {
     3: float(os.environ.get("GAIA_TEMPERATURE_L3", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
 }
 LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
-# Per-question timeout — prevents multi-hour hangs on slow local models (0 = disabled)
-QUESTION_TIMEOUT = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "480"))  # default 8min per question
+# Per-question timeout — level-adaptive; override all levels with GAIA_QUESTION_TIMEOUT
+# L1: simple lookups rarely exceed 2min; L2: 8min; L3: 15min for deep multi-step chains
+_global_timeout = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "0"))
+TIMEOUT_BY_LEVEL: dict[int, int] = {
+    1: _global_timeout or int(os.environ.get("GAIA_TIMEOUT_L1", "300")),   # 5 min
+    2: _global_timeout or int(os.environ.get("GAIA_TIMEOUT_L2", "480")),   # 8 min
+    3: _global_timeout or int(os.environ.get("GAIA_TIMEOUT_L3", "900")),   # 15 min
+}
+QUESTION_TIMEOUT = _global_timeout  # kept for backwards-compat check below
 
 # MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
@@ -1049,6 +1056,7 @@ async def main() -> int:
     print(f"  Template: {TEMPLATE}", flush=True)
     print(f"  Levels:   {LEVELS}", flush=True)
     print(f"  Max/level: {MAX_PER_LEVEL} (0=all)", flush=True)
+    print(f"  Timeouts: L1={TIMEOUT_BY_LEVEL[1]}s  L2={TIMEOUT_BY_LEVEL[2]}s  L3={TIMEOUT_BY_LEVEL[3]}s", flush=True)
     print(f"{'='*72}", flush=True)
 
     print("Loading GAIA dataset...", flush=True)
@@ -1093,7 +1101,7 @@ async def main() -> int:
             _level_temp = TEMPERATURE_BY_LEVEL.get(level, TEMPERATURE)
             if _level_temp != TEMPERATURE:
                 print(f"  🌡 T={_level_temp} (L{level} adaptive)", flush=True)
-            _q_timeout = QUESTION_TIMEOUT if QUESTION_TIMEOUT > 0 else 1800
+            _q_timeout = TIMEOUT_BY_LEVEL.get(level, 480)
             try:
                 res = await asyncio.wait_for(
                     call_orchestrator(client, processed_q, file_context=file_ctx,
