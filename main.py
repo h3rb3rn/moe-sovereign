@@ -4833,8 +4833,9 @@ async def merger_node(state: AgentState):
     )
     res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
 
-    # Strip OpenAI-style citation superscripts leaked from tool results: 【n†source】
-    res_content_clean = re.sub(r'【\d+†[^】]*】', '', res_content_clean).strip()
+    # Strip all 【...】 citation/reference brackets leaked from tool results:
+    # covers 【1†source】, 【https://arxiv.org/...】, 【n】 etc.
+    res_content_clean = re.sub(r'【[^】]*】', '', res_content_clean).strip()
 
     # Strip leading markdown bold label if the answer starts with "**Label:** value".
     # Models like qwen3 emit structured output ("**Identified Compound:** Benzene") which
