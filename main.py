@@ -5685,6 +5685,38 @@ async def lifespan(app_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# ── Security Headers Middleware ────────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+
+class _SecurityHeadersMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"]    = "nosniff"
+        response.headers["X-Frame-Options"]           = "DENY"
+        response.headers["X-XSS-Protection"]          = "1; mode=block"
+        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=()"
+        # HSTS only when behind TLS (Nginx sets this on the public endpoint)
+        return response
+
+app.add_middleware(_SecurityHeadersMiddleware)
+
+# ── Request Body Size Limit — protect against payload-based DoS ───────────────
+from starlette.middleware.base import BaseHTTPMiddleware as _BM2
+_MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_MB", "16")) * 1024 * 1024
+
+class _BodySizeLimitMiddleware(_BM2):
+    async def dispatch(self, request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > _MAX_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"error": f"Request body exceeds {_MAX_BODY_BYTES // (1024*1024)} MB limit"},
+            )
+        return await call_next(request)
+
+app.add_middleware(_BodySizeLimitMiddleware)
+
 # CORS for Open WebUI direct connections (browser-side)
 from fastapi.middleware.cors import CORSMiddleware
 _cors_all     = os.getenv("CORS_ALL_ORIGINS", "0") == "1"
@@ -5698,6 +5730,32 @@ if _cors_origins:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "x-api-key", "Content-Type"],
     )
+
+async def _check_ip_rate_limit(request: Request) -> bool:
+    """Token-bucket rate limit per client IP using Redis.
+
+    Returns True if the request is allowed, False if rate-limited.
+    Limit: MAX_REQUESTS_PER_MINUTE per IP (default 60). Unauthenticated
+    requests use a stricter limit (default 20/min) to slow credential bruteforce.
+    """
+    if redis_client is None:
+        return True  # fails open — no Redis, no rate limiting
+    try:
+        _ip = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or request.headers.get("x-real-ip", "")
+            or (request.client.host if request.client else "unknown")
+        )
+        _window = 60  # seconds
+        _key    = f"moe:ratelimit:ip:{_ip}"
+        _limit  = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
+        _count  = await redis_client.incr(_key)
+        if _count == 1:
+            await redis_client.expire(_key, _window)
+        return _count <= _limit
+    except Exception:
+        return True  # fails open on Redis errors
+
 
 @app.get("/health")
 async def health_check():
@@ -6313,6 +6371,13 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
     session_id = _extract_session_id(raw_request)
+
+    # IP-based rate limit (pre-auth, guards against credential bruteforce & DoS)
+    if not await _check_ip_rate_limit(raw_request):
+        return JSONResponse(status_code=429, content={"error": {
+            "message": "Rate limit exceeded — too many requests from this IP",
+            "type": "rate_limit_error", "code": "rate_limit_exceeded",
+        }}, headers={"Retry-After": "60"})
 
     # Auth
     raw_key  = _extract_api_key(raw_request)
