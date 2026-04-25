@@ -5005,6 +5005,8 @@ async def merger_node(state: AgentState):
                 r"(we|let'?s|i'?ll|we'?ll) (will |)(browse|search|look up|fetch|navigate|check)|"
                 r"(we|it) need(s)? to (browse|search|fetch|access|look up|retrieve)|"
                 r"attempt\s+(web\s+)?search|"
+                r"attempt\s+tool\s+(call|use)|"
+                r"attempt\s+to\s+(search|browse|fetch|find|look|call)|"
                 r"will\s+attempt\s+to\s+(search|browse|fetch|find)|"
                 r"no (direct )?access to (the )?(internet|web|url|website|page)|"
                 r"unable to (browse|access|fetch|visit|open)|"

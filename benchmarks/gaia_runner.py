@@ -61,7 +61,7 @@ TEMPERATURE_BY_LEVEL: dict[int, float] = {
 }
 LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
 # Per-question timeout — prevents multi-hour hangs on slow local models (0 = disabled)
-QUESTION_TIMEOUT = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "0"))
+QUESTION_TIMEOUT = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "480"))  # default 8min per question
 
 # MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
@@ -943,7 +943,8 @@ async def call_orchestrator(
                           "unable to determine", "cannot be determined",
                           "i cannot find", "not available", "fallback",
                           # Expert-leak phrases that slip through server-side detection
-                          "attempt web search", "attempt to search", "attempt to browse",
+                          "attempt web search", "attempt tool call", "attempt to search",
+                          "attempt to browse", "attempt to find", "attempt to look",
                           "will attempt to", "need to browse", "need to search",
                           "i cannot access", "i can't access", "cannot browse")
     last_err = ""
