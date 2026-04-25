@@ -3478,11 +3478,10 @@ async def planner_node(state: AgentState):
     # fall back to query-adaptive detection when None.
     _explicit_temp = state.get("query_temperature")  # set by HTTP handler from request
     _query_temp    = _explicit_temp if _explicit_temp is not None else _detect_query_temperature(state["input"])
-    # memory_recall: use very low temperature for near-deterministic recall
-    # without triggering safety-refusal at T=0 (greedy decoding can cause
-    # models to default to refusal mode for sensitive-looking values like keys).
+    # memory_recall: T=0 for deterministic exact-value recall (prevents
+    # stochastic drift where model picks old vs. new value unpredictably).
     if _complexity == "memory_recall" and _explicit_temp is None:
-        _query_temp = 0.05
+        _query_temp = 0.0
     logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
     _complexity_state_update = {
         "complexity_level":   _complexity,
