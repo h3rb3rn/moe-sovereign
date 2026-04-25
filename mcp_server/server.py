@@ -2328,56 +2328,95 @@ def github_search_issues(
     Finds issues matching labels, state, and optional text query — unlike
     github_get_issue which requires a known issue number.
 
+    IMPORTANT: GitHub labels often have prefixes (e.g. 'Regression' may be
+    stored as '06 - Regression'). This tool auto-resolves partial label names
+    by fetching the repo's label list first — pass the keyword only, e.g. 'Regression'.
+
     repo:        Repository in 'owner/repo' format (e.g. 'numpy/numpy')
-    labels:      Comma-separated label names (e.g. 'Regression,Bug')
+    labels:      Comma-separated label keywords — partial matches resolved automatically
     state:       'open', 'closed', or 'all'
     sort:        'created', 'updated', 'comments'
     order:       'asc' (oldest first) or 'desc' (newest first)
     max_results: Max issues to return (1-10)
     query:       Additional text to search in issue title/body
     """
-    q_parts = [f"repo:{repo}"]
-    if state and state != "all":
-        q_parts.append(f"is:{state}")
-    for label in (labels.split(",") if labels else []):
-        label = label.strip()
-        if label:
-            q_parts.append(f'label:"{label}"')
-    if query:
-        q_parts.append(query)
-    q_parts.append("is:issue")
-    search_q = " ".join(q_parts)
+    # Resolve fuzzy label names → exact GitHub label names
+    resolved_labels: list[str] = []
+    if labels:
+        try:
+            label_resp = httpx.get(
+                f"https://api.github.com/repos/{repo}/labels",
+                params={"per_page": 100},
+                headers={"Accept": "application/vnd.github.v3+json",
+                         "User-Agent": "MoE-Sovereign/1.0"},
+                timeout=10,
+            )
+            if label_resp.status_code == 200:
+                all_labels = [l["name"] for l in label_resp.json()]
+                for want in labels.split(","):
+                    want = want.strip()
+                    # Exact match first, then case-insensitive substring
+                    exact = [l for l in all_labels if l == want]
+                    # All fuzzy matches — e.g. 'Regression' → ['05 - Regression', '06 - Regression']
+                    fuzzy = [l for l in all_labels if want.lower() in l.lower()]
+                    resolved_labels.extend(exact or fuzzy or [want])
+            else:
+                resolved_labels = [l.strip() for l in labels.split(",") if l.strip()]
+        except Exception:
+            resolved_labels = [l.strip() for l in labels.split(",") if l.strip()]
 
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            params={"q": search_q, "sort": sort, "order": order, "per_page": max_results},
-            headers={
-                "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "MoE-Sovereign/1.0",
-            },
-            timeout=20,
-        )
-    except Exception as e:
-        return f"[github_search_issues request failed: {e}]"
+    # Build one query per resolved label (GitHub AND-es multiple label: filters).
+    # For OR semantics across label variants, run a query per label and merge results.
+    def _build_q(label_filter: str) -> str:
+        parts = [f"repo:{repo}"]
+        if state and state != "all":
+            parts.append(f"is:{state}")
+        if label_filter:
+            parts.append(f'label:"{label_filter}"')
+        if query:
+            parts.append(query)
+        parts.append("is:issue")
+        return " ".join(parts)
 
-    if resp.status_code == 422:
-        return f"[github_search_issues: Invalid search query: {search_q}]"
-    if resp.status_code != 200:
-        return f"[github_search_issues: HTTP {resp.status_code}]"
+    label_queries = [_build_q(lbl) for lbl in resolved_labels] if resolved_labels else [_build_q("")]
+    all_items: list[dict] = []
+    seen_ids: set[int] = set()
+    last_search_q = label_queries[0]
 
-    try:
-        data = resp.json()
-    except Exception as e:
-        return f"[github_search_issues: parse error: {e}]"
+    for search_q in label_queries:
+        last_search_q = search_q
+        try:
+            resp = httpx.get(
+                "https://api.github.com/search/issues",
+                params={"q": search_q, "sort": sort, "order": order, "per_page": max_results},
+                headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "MoE-Sovereign/1.0"},
+                timeout=20,
+            )
+        except Exception as e:
+            return f"[github_search_issues request failed: {e}]"
+        if resp.status_code == 422:
+            continue  # skip invalid query variant
+        if resp.status_code != 200:
+            return f"[github_search_issues: HTTP {resp.status_code}]"
+        try:
+            data = resp.json()
+        except Exception:
+            continue
+        for item in data.get("items", []):
+            if item["id"] not in seen_ids:
+                seen_ids.add(item["id"])
+                all_items.append(item)
 
-    items = data.get("items", [])
-    total = data.get("total_count", 0)
-    if not items:
-        return f"No issues found (total={total}) for query: {search_q}"
+    # Re-sort merged results by the requested sort field
+    if sort == "created":
+        all_items.sort(key=lambda x: x.get("created_at", ""), reverse=(order == "desc"))
+    all_items = all_items[:max_results]
+
+    if not all_items:
+        return f"No issues found for query: {last_search_q}"
 
     results = []
-    for issue in items[:max_results]:
+    for issue in all_items:
         results.append({
             "number":     issue.get("number"),
             "title":      issue.get("title"),
@@ -2387,7 +2426,7 @@ def github_search_issues(
             "labels":     [lbl["name"] for lbl in issue.get("labels", [])],
             "url":        issue.get("html_url"),
         })
-    return json.dumps({"total_count": total, "query": search_q, "issues": results}, indent=2)
+    return json.dumps({"total_count": len(results), "query": last_search_q, "issues": results}, indent=2)
 
 
 @mcp.tool()
@@ -3053,7 +3092,8 @@ def crossref_lookup(query: str, max_results: int = 5, filter_type: str = "") -> 
 
 @mcp.tool()
 def openalex_search(query: str, max_results: int = 5,
-                    year_min: int = 0, open_access_only: bool = False) -> str:
+                    year_min: int = 0, year_max: int = 0,
+                    open_access_only: bool = False) -> str:
     """Search OpenAlex — the world's largest open academic database (250M+ works).
 
     OpenAlex covers all research fields with rich metadata: concepts, citations,
@@ -3066,6 +3106,7 @@ def openalex_search(query: str, max_results: int = 5,
     query:            Search string (title, abstract, author, concept)
     max_results:      Number of works to return (1-20)
     year_min:         Only return works published from this year onward
+    year_max:         Only return works published up to and including this year
     open_access_only: Restrict to open-access works
     """
     params: dict = {
@@ -3077,6 +3118,8 @@ def openalex_search(query: str, max_results: int = 5,
     filters = []
     if year_min > 0:
         filters.append(f"publication_year:>{year_min - 1}")
+    if year_max > 0:
+        filters.append(f"publication_year:<{year_max + 1}")
     if open_access_only:
         filters.append("is_oa:true")
     if filters:
