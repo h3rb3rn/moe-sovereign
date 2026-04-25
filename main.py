@@ -1123,6 +1123,20 @@ _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
 
 # System prompts per expert role — define identity and behavior
 DEFAULT_EXPERT_PROMPTS: Dict[str, str] = {
+    "memory_recall": (
+        "You are a conversation memory expert. Your ONLY source of information is the "
+        "conversation history provided in this context — not the internet, not training data.\n"
+        "Rules:\n"
+        "1. Read ALL previous turns carefully before answering.\n"
+        "2. Answer ONLY with facts explicitly stated by the user in this conversation.\n"
+        "3. If asked for multiple facts, provide ALL of them — never omit details.\n"
+        "4. When a fact was corrected or updated (e.g. 'Correction: now it is X'), "
+        "use ONLY the most recent version — the correction supersedes earlier values.\n"
+        "5. If a fact was NOT mentioned in this conversation, say exactly: "
+        "'Diese Information wurde in unserem Gespräch nicht erwähnt.' "
+        "(or in English: 'This information was not mentioned in our conversation.')\n"
+        "6. Never guess, infer, or use external knowledge. Only recall from conversation."
+    ),
     "general": (
         "You are a versatile, fact-based expert. "
         "Answer precisely, in a structured manner. "
@@ -3318,7 +3332,7 @@ def _sanitize_plan(raw: list, fallback_input: str) -> list:
     Strings, empty dicts or dicts without 'task' key are discarded.
     Returns at least one fallback task.
     """
-    valid_cats = set(EXPERTS.keys()) | NON_EXPERT_CATEGORIES | {"agentic_coder"}
+    valid_cats = set(EXPERTS.keys()) | NON_EXPERT_CATEGORIES | {"agentic_coder", "memory_recall"}
     result = []
     for item in raw:
         if not isinstance(item, dict):
@@ -3416,6 +3430,16 @@ async def planner_node(state: AgentState):
     # Complexity estimation: determine routing hints before LLM planner call
     from complexity_estimator import estimate_complexity, complexity_routing_hint
     _complexity = estimate_complexity(state["input"])
+    # Day-2 upgrade: factual questions inside a multi-turn conversation are
+    # almost always asking about something the user stated earlier — not
+    # web-searchable facts. Upgrade trivial AND moderate to memory_recall
+    # when substantive chat_history is present. Complex/research queries are
+    # already routed differently by estimate_complexity before we reach here,
+    # so upgrading moderate is safe for recall-heavy conversation patterns.
+    _chat_hist = state.get("chat_history") or []
+    if _complexity in ("trivial", "moderate") and len(_chat_hist) >= 2:
+        _complexity = "memory_recall"
+        logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _complexity)
     _routing    = complexity_routing_hint(_complexity)
     PROM_COMPLEXITY.labels(level=_complexity).inc()
     logger.info(f"📊 Complexity: {_complexity} → {_routing}")

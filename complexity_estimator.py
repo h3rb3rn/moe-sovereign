@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-ComplexityLevel = Literal["trivial", "moderate", "complex"]
+ComplexityLevel = Literal["trivial", "moderate", "complex", "memory_recall"]
 
 # ── Thresholds ───────────────────────────────────────────────────────────────
 _TRIVIAL_TOKEN_MAX  = 15   # queries with ≤15 words → trivial candidate
@@ -31,6 +31,21 @@ _COMPLEX_MARKERS = re.compile(
     r'unterschied|vor- und nachteile?|pros? and cons?|step[- ]by[- ]step|'
     r'schritt für schritt|warum|wie genau|inwiefern|welche auswirkungen|'
     r'compare|analyze|explain why|evaluate|design|implement|optimize)\b',
+    re.I,
+)
+
+# ── Memory-recall markers → skip research, read conversation history ─────────
+# Questions that reference something the user said earlier in the conversation.
+# These should NEVER trigger web search — the answer is in the chat history.
+_MEMORY_RECALL_RE = re.compile(
+    r'\b(was habe ich (gesagt|erwähnt|genannt)|what did i (say|tell|mention)|'
+    r'ich habe (gesagt|erwähnt|genannt|dir gesagt)|i (said|told you|mentioned)|'
+    r'wie hieß|wie war|du hast|you said|you told me|'
+    r'aus unserem (gespräch|chat|dialog)|in our (conversation|chat|session)|'
+    r'erinner(e|st) dich|kannst du dich erinnern|remember when|remember what|'
+    r'ich habe (dir )?vorhin|weißt du noch|do you remember|'
+    r'welche (datenbank|port|ip|adresse|name|version|limit|schlüssel|key|team)'
+    r'\s+(habe ich|hatte ich|hab ich|have i|did i)\b)\b',
     re.I,
 )
 
@@ -83,6 +98,11 @@ def estimate_complexity(query: str) -> ComplexityLevel:
     words = query.split()
     n = len(words)
 
+    # Memory-recall questions: answered from chat history, no research needed.
+    # Check FIRST — even a long "do you remember what I said about the database?" is memory_recall.
+    if _MEMORY_RECALL_RE.search(query):
+        return "memory_recall"
+
     # Hard length limits decide immediately
     if n >= _COMPLEX_TOKEN_MIN:
         return "complex"
@@ -127,6 +147,16 @@ def complexity_routing_hint(level: ComplexityLevel) -> dict:
       - skip_thinking: True = no thinking node
       - force_tier1: True = use tier-1 models only
     """
+    if level == "memory_recall":
+        # Pure conversation-history lookup — no external research, no GraphRAG.
+        # The answer lives in the injected chat_history; skip everything else.
+        return {
+            "max_tasks":      1,
+            "skip_research":  True,
+            "skip_graph":     True,
+            "skip_thinking":  True,
+            "force_tier1":    True,
+        }
     if level == "trivial":
         return {
             "max_tasks":      1,
