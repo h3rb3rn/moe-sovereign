@@ -3449,6 +3449,18 @@ async def planner_node(state: AgentState):
         _complexity = "memory_recall"
         logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _prev_complexity)
     _routing    = complexity_routing_hint(_complexity)
+    # Multi-fact memory_recall: when the question asks for multiple facts
+    # (contains conjunctions like "und X und Y" or multiple interrogatives),
+    # allow 2 tasks so the planner can create separate recall tasks per fact.
+    if _complexity == "memory_recall":
+        _multi_fact = bool(re.search(
+            r'\b(und|and|sowie|als auch|außerdem|additionally|also)\b',
+            state["input"], re.I,
+        ))
+        if _multi_fact and _routing.get("max_tasks", 1) < 2:
+            _routing = dict(_routing)
+            _routing["max_tasks"] = 2
+            logger.info("🧠 Multi-fact memory_recall: max_tasks=2")
     PROM_COMPLEXITY.labels(level=_complexity).inc()
     logger.info(f"📊 Complexity: {_complexity} → {_routing}")
     # Map complexity to cost tier for OpEx tracking and expert-tier enforcement.
@@ -3464,6 +3476,10 @@ async def planner_node(state: AgentState):
     # fall back to query-adaptive detection when None.
     _explicit_temp = state.get("query_temperature")  # set by HTTP handler from request
     _query_temp    = _explicit_temp if _explicit_temp is not None else _detect_query_temperature(state["input"])
+    # memory_recall requires deterministic output — force T=0 so the model
+    # consistently reports the exact values from chat_history without drift.
+    if _complexity == "memory_recall" and _explicit_temp is None:
+        _query_temp = 0.0
     logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
     _complexity_state_update = {
         "complexity_level":   _complexity,
