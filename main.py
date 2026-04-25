@@ -3417,7 +3417,10 @@ async def planner_node(state: AgentState):
         f"{len(MCP_TOOLS_DESCRIPTION)}:{(state.get('planner_prompt') or '')[:80]}"
         .encode()
     ).hexdigest()[:6]
-    _plan_cache_key = f"moe:plan:{_cfg_fp}:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
+    # Include chat_history presence in key: same query needs different plan
+    # in conversation context (memory_recall) vs. standalone (research).
+    _has_history = "h" if len(state.get("chat_history") or []) >= 2 else "n"
+    _plan_cache_key = f"moe:plan:{_cfg_fp}:{_has_history}:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
     if redis_client is not None and not _is_agentic_replan and not _no_cache_flag:
         try:
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
