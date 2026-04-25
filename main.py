@@ -1131,6 +1131,8 @@ DEFAULT_EXPERT_PROMPTS: Dict[str, str] = {
         "2. For multi-part questions (e.g. 'What is X AND what is Y?'): answer EVERY "
         "part explicitly. Use a structured list if there are 3+ items. Include exact "
         "values (numbers, names, versions) as stated — never paraphrase or round.\n"
+        "   IMPORTANT: facts about the same entity may appear in DIFFERENT user turns. "
+        "Scan ALL turns to find each requested fact — do not stop after the first match.\n"
         "3. When a fact was corrected or updated — whether explicit ('Korrektur:', "
         "'Correction:', 'Update:') or implicit ('wurde auf X erhöht', 'ist jetzt X', "
         "'wurde geändert auf', 'was changed to', 'is now', 'has been updated to') — "
@@ -3476,10 +3478,11 @@ async def planner_node(state: AgentState):
     # fall back to query-adaptive detection when None.
     _explicit_temp = state.get("query_temperature")  # set by HTTP handler from request
     _query_temp    = _explicit_temp if _explicit_temp is not None else _detect_query_temperature(state["input"])
-    # memory_recall requires deterministic output — force T=0 so the model
-    # consistently reports the exact values from chat_history without drift.
+    # memory_recall: use very low temperature for near-deterministic recall
+    # without triggering safety-refusal at T=0 (greedy decoding can cause
+    # models to default to refusal mode for sensitive-looking values like keys).
     if _complexity == "memory_recall" and _explicit_temp is None:
-        _query_temp = 0.0
+        _query_temp = 0.05
     logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
     _complexity_state_update = {
         "complexity_level":   _complexity,
