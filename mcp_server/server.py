@@ -2945,6 +2945,11 @@ def wayback_fetch(url: str, timestamp: str = "", max_chars: int = 6000) -> str:
     max_chars: Maximum characters to return from the archived page
     """
     _assert_public_url(url)
+    import re as _re
+
+    # Strategy 1: availability API (fast, but occasionally returns empty)
+    snap_ts = timestamp or "20240101000000"
+    archive_url: str | None = None
     avail_params: dict = {"url": url}
     if timestamp:
         avail_params["timestamp"] = timestamp
@@ -2952,39 +2957,46 @@ def wayback_fetch(url: str, timestamp: str = "", max_chars: int = 6000) -> str:
         avail_resp = httpx.get(
             "http://archive.org/wayback/available",
             params=avail_params,
-            timeout=15,
+            timeout=12,
         )
-        if avail_resp.status_code != 200:
-            return f"[wayback_fetch: archive.org returned HTTP {avail_resp.status_code} — service may be temporarily unavailable]"
-        avail_data = avail_resp.json()
-    except Exception as e:
-        return f"[wayback_fetch: availability check failed: {e}]"
+        if avail_resp.status_code == 200:
+            snap = avail_resp.json().get("archived_snapshots", {}).get("closest", {})
+            if snap.get("available"):
+                archive_url = snap["url"]
+                snap_ts = snap.get("timestamp", snap_ts)
+    except Exception:
+        pass  # fall through to direct URL strategy
 
-    snap = avail_data.get("archived_snapshots", {}).get("closest", {})
-    if not snap.get("available"):
-        return f"[wayback_fetch: no snapshot available for '{url}' (timestamp={timestamp or 'any'})]"
+    # Strategy 2: direct URL — always works if archive.org has any snapshot
+    if not archive_url:
+        ts = timestamp or "2024"
+        archive_url = f"https://web.archive.org/web/{ts}/{url}"
 
-    archive_url = snap["url"]
-    snap_ts = snap.get("timestamp", "unknown")
     try:
         page_resp = httpx.get(
             archive_url,
-            follow_redirects=False,
-            timeout=25,
+            follow_redirects=True,
+            timeout=28,
             headers={"User-Agent": "Mozilla/5.0 (research-bot/1.0)"},
         )
-        import re as _re
+        if page_resp.status_code == 404:
+            return f"[wayback_fetch: no archived version of '{url}' found]"
+        if page_resp.status_code != 200:
+            return f"[wayback_fetch: HTTP {page_resp.status_code} from archive.org]"
+        # Extract actual snapshot timestamp from redirect URL if available
+        if "web.archive.org/web/" in str(page_resp.url):
+            snap_ts = str(page_resp.url).split("web.archive.org/web/")[1].split("/")[0]
         text = _re.sub(r'<[^>]+>', ' ', page_resp.text)
         text = _re.sub(r'\s+', ' ', text).strip()
         result = text[:max_chars] if len(text) > max_chars else text
         return json.dumps({
             "source_url": url,
-            "archive_url": archive_url,
+            "archive_url": str(page_resp.url),
             "snapshot_timestamp": snap_ts,
             "content": result,
         }, ensure_ascii=False)
     except Exception as e:
-        return f"[wayback_fetch: failed to retrieve {archive_url}: {e}]"
+        return f"[wayback_fetch: failed to retrieve archived '{url}': {e}]"
 
 
 @mcp.tool()
