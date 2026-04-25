@@ -4845,16 +4845,26 @@ async def merger_node(state: AgentState):
         res_content_clean = _md_label.group(1).strip()
 
     # Post-strip fallback: if cleaning stripped everything, use best expert result.
-    # This prevents empty final responses when the judge only output tags/metadata.
+    # Explicitly skip expert results that are capability disclaimers (expert-leak patterns)
+    # — using a leak answer as fallback is worse than returning empty.
+    _LEAK_FALLBACK_RE = re.compile(
+        r'\b(i (cannot|can\'t|won\'t) (access|browse|fetch)|'
+        r'we need(s)? to (browse|search|fetch)|'
+        r'no (direct )?access to (the )?(internet|web)|'
+        r'attempt\s+(web\s+)?search|'
+        r'unable to (browse|access|fetch))\b',
+        re.I,
+    )
     if not res_content_clean:
         _expert_results = state.get("expert_results") or []
+        _non_leak = [r for r in _expert_results if r and not _LEAK_FALLBACK_RE.search(r)]
         _best_expert = (
-            next((r for r in _expert_results if _parse_expert_confidence(r) == "high"), None)
-            or (_expert_results[0] if _expert_results else None)
+            next((r for r in _non_leak if _parse_expert_confidence(r) == "high"), None)
+            or (_non_leak[0] if _non_leak else None)
         )
         if _best_expert:
             res_content_clean = _best_expert.strip()
-            logger.warning("⚠️ Merger output empty after strip — using best expert result as fallback")
+            logger.warning("⚠️ Merger output empty after strip — using best non-leak expert result as fallback")
 
     _no_cache_write = state.get("no_cache", False)
     if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN and not _no_cache_write:
