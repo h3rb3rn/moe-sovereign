@@ -147,7 +147,18 @@ def load_longmemeval() -> list[dict]:
             "expected": "unknown/not mentioned",
             "expected_keywords": ["nicht erwähnt", "nicht genannt", "not mentioned", "keine Information", "nicht bekannt"],
         },
-        # TODO(human): Add a lme-contradiction-1 test case here
+        {
+            "id": "lme-contradiction-1",
+            "type": "knowledge_update",
+            "turns": [
+                {"role": "user", "content": "Das Projektbudget beträgt 50.000 Euro."},
+                {"role": "user", "content": "Nach Freigabe durch die Geschäftsführung wurde das Budget auf 75.000 Euro erhöht."},
+                {"role": "user", "content": "Wie hoch ist das aktuelle Projektbudget?"},
+            ],
+            "expected": "75000",
+            "expected_keywords": ["75.000", "75000", "75 000"],
+            "score_any_keyword": True,
+        },
     ]
     return dataset[:MAX_Q]
 
@@ -205,7 +216,9 @@ async def run_multi_turn(
     last_response = responses[-1]["content"] if responses else ""
     keywords = test.get("expected_keywords", [])
     found = [k for k in keywords if k.lower() in last_response.lower()]
-    if test.get("type") == "abstention":
+    if test.get("type") == "abstention" or test.get("score_any_keyword"):
+        # abstention: any single phrase = full pass
+        # score_any_keyword: keywords are format-variants of same value, any match = pass
         score = 100.0 if found else 0.0
     else:
         score = len(found) / len(keywords) * 100 if keywords else 0

@@ -1127,15 +1127,17 @@ DEFAULT_EXPERT_PROMPTS: Dict[str, str] = {
         "You are a conversation memory expert. Your ONLY source of information is the "
         "conversation history provided in this context — not the internet, not training data.\n"
         "Rules:\n"
-        "1. Read ALL previous turns carefully before answering.\n"
-        "2. Answer ONLY with facts explicitly stated by the user in this conversation.\n"
-        "3. If asked for multiple facts, provide ALL of them — never omit details.\n"
-        "4. When a fact was corrected or updated (e.g. 'Correction: now it is X'), "
+        "1. Read ALL previous turns carefully and completely before answering.\n"
+        "2. For multi-part questions (e.g. 'What is X AND what is Y?'): answer EVERY "
+        "part explicitly. Use a structured list if there are 3+ items. Include exact "
+        "values (numbers, names, versions) as stated — never paraphrase or round.\n"
+        "3. When a fact was corrected or updated (e.g. 'Correction: now it is X'), "
         "use ONLY the most recent version — the correction supersedes earlier values.\n"
-        "5. If a fact was NOT mentioned in this conversation, say exactly: "
+        "4. If a specific fact was NOT mentioned in this conversation, say exactly: "
         "'Diese Information wurde in unserem Gespräch nicht erwähnt.' "
         "(or in English: 'This information was not mentioned in our conversation.')\n"
-        "6. Never guess, infer, or use external knowledge. Only recall from conversation."
+        "5. Never guess, infer, or use external knowledge. Only recall from conversation.\n"
+        "6. Be complete: a partial answer that omits requested facts is incorrect."
     ),
     "general": (
         "You are a versatile, fact-based expert. "
@@ -3438,8 +3440,9 @@ async def planner_node(state: AgentState):
     # so upgrading moderate is safe for recall-heavy conversation patterns.
     _chat_hist = state.get("chat_history") or []
     if _complexity in ("trivial", "moderate") and len(_chat_hist) >= 2:
+        _prev_complexity = _complexity
         _complexity = "memory_recall"
-        logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _complexity)
+        logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _prev_complexity)
     _routing    = complexity_routing_hint(_complexity)
     PROM_COMPLEXITY.labels(level=_complexity).inc()
     logger.info(f"📊 Complexity: {_complexity} → {_routing}")
