@@ -647,6 +647,7 @@ _PLURAL_TO_SINGULAR: dict[str, str] = {
 _SYNONYMS: dict[str, str] = {
     "backquote": "backtick",   # Unlambda: both terms refer to the same character
     "grave accent": "backtick",
+    "grave": "backtick",       # `grave` alone is also used as shorthand for grave accent / backtick
     "back quote": "backtick",
     "back-quote": "backtick",
 }
@@ -940,7 +941,11 @@ async def call_orchestrator(
         )
     _NO_ANSWER_PHRASES = ("no answer available", "please try again",
                           "unable to determine", "cannot be determined",
-                          "i cannot find", "not available", "fallback")
+                          "i cannot find", "not available", "fallback",
+                          # Expert-leak phrases that slip through server-side detection
+                          "attempt web search", "attempt to search", "attempt to browse",
+                          "will attempt to", "need to browse", "need to search",
+                          "i cannot access", "i can't access", "cannot browse")
     last_err = ""
     for attempt in range(1, 4):  # up to 3 attempts
         try:
