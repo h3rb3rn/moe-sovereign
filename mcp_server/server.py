@@ -2328,56 +2328,95 @@ def github_search_issues(
     Finds issues matching labels, state, and optional text query — unlike
     github_get_issue which requires a known issue number.
 
+    IMPORTANT: GitHub labels often have prefixes (e.g. 'Regression' may be
+    stored as '06 - Regression'). This tool auto-resolves partial label names
+    by fetching the repo's label list first — pass the keyword only, e.g. 'Regression'.
+
     repo:        Repository in 'owner/repo' format (e.g. 'numpy/numpy')
-    labels:      Comma-separated label names (e.g. 'Regression,Bug')
+    labels:      Comma-separated label keywords — partial matches resolved automatically
     state:       'open', 'closed', or 'all'
     sort:        'created', 'updated', 'comments'
     order:       'asc' (oldest first) or 'desc' (newest first)
     max_results: Max issues to return (1-10)
     query:       Additional text to search in issue title/body
     """
-    q_parts = [f"repo:{repo}"]
-    if state and state != "all":
-        q_parts.append(f"is:{state}")
-    for label in (labels.split(",") if labels else []):
-        label = label.strip()
-        if label:
-            q_parts.append(f'label:"{label}"')
-    if query:
-        q_parts.append(query)
-    q_parts.append("is:issue")
-    search_q = " ".join(q_parts)
+    # Resolve fuzzy label names → exact GitHub label names
+    resolved_labels: list[str] = []
+    if labels:
+        try:
+            label_resp = httpx.get(
+                f"https://api.github.com/repos/{repo}/labels",
+                params={"per_page": 100},
+                headers={"Accept": "application/vnd.github.v3+json",
+                         "User-Agent": "MoE-Sovereign/1.0"},
+                timeout=10,
+            )
+            if label_resp.status_code == 200:
+                all_labels = [l["name"] for l in label_resp.json()]
+                for want in labels.split(","):
+                    want = want.strip()
+                    # Exact match first, then case-insensitive substring
+                    exact = [l for l in all_labels if l == want]
+                    # All fuzzy matches — e.g. 'Regression' → ['05 - Regression', '06 - Regression']
+                    fuzzy = [l for l in all_labels if want.lower() in l.lower()]
+                    resolved_labels.extend(exact or fuzzy or [want])
+            else:
+                resolved_labels = [l.strip() for l in labels.split(",") if l.strip()]
+        except Exception:
+            resolved_labels = [l.strip() for l in labels.split(",") if l.strip()]
 
-    try:
-        resp = httpx.get(
-            "https://api.github.com/search/issues",
-            params={"q": search_q, "sort": sort, "order": order, "per_page": max_results},
-            headers={
-                "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "MoE-Sovereign/1.0",
-            },
-            timeout=20,
-        )
-    except Exception as e:
-        return f"[github_search_issues request failed: {e}]"
+    # Build one query per resolved label (GitHub AND-es multiple label: filters).
+    # For OR semantics across label variants, run a query per label and merge results.
+    def _build_q(label_filter: str) -> str:
+        parts = [f"repo:{repo}"]
+        if state and state != "all":
+            parts.append(f"is:{state}")
+        if label_filter:
+            parts.append(f'label:"{label_filter}"')
+        if query:
+            parts.append(query)
+        parts.append("is:issue")
+        return " ".join(parts)
 
-    if resp.status_code == 422:
-        return f"[github_search_issues: Invalid search query: {search_q}]"
-    if resp.status_code != 200:
-        return f"[github_search_issues: HTTP {resp.status_code}]"
+    label_queries = [_build_q(lbl) for lbl in resolved_labels] if resolved_labels else [_build_q("")]
+    all_items: list[dict] = []
+    seen_ids: set[int] = set()
+    last_search_q = label_queries[0]
 
-    try:
-        data = resp.json()
-    except Exception as e:
-        return f"[github_search_issues: parse error: {e}]"
+    for search_q in label_queries:
+        last_search_q = search_q
+        try:
+            resp = httpx.get(
+                "https://api.github.com/search/issues",
+                params={"q": search_q, "sort": sort, "order": order, "per_page": max_results},
+                headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "MoE-Sovereign/1.0"},
+                timeout=20,
+            )
+        except Exception as e:
+            return f"[github_search_issues request failed: {e}]"
+        if resp.status_code == 422:
+            continue  # skip invalid query variant
+        if resp.status_code != 200:
+            return f"[github_search_issues: HTTP {resp.status_code}]"
+        try:
+            data = resp.json()
+        except Exception:
+            continue
+        for item in data.get("items", []):
+            if item["id"] not in seen_ids:
+                seen_ids.add(item["id"])
+                all_items.append(item)
 
-    items = data.get("items", [])
-    total = data.get("total_count", 0)
-    if not items:
-        return f"No issues found (total={total}) for query: {search_q}"
+    # Re-sort merged results by the requested sort field
+    if sort == "created":
+        all_items.sort(key=lambda x: x.get("created_at", ""), reverse=(order == "desc"))
+    all_items = all_items[:max_results]
+
+    if not all_items:
+        return f"No issues found for query: {last_search_q}"
 
     results = []
-    for issue in items[:max_results]:
+    for issue in all_items:
         results.append({
             "number":     issue.get("number"),
             "title":      issue.get("title"),
@@ -2387,7 +2426,7 @@ def github_search_issues(
             "labels":     [lbl["name"] for lbl in issue.get("labels", [])],
             "url":        issue.get("html_url"),
         })
-    return json.dumps({"total_count": total, "query": search_q, "issues": results}, indent=2)
+    return json.dumps({"total_count": len(results), "query": last_search_q, "issues": results}, indent=2)
 
 
 @mcp.tool()
@@ -2931,6 +2970,276 @@ def pubmed_search(query: str, max_results: int = 5, year_min: int = 0) -> str:
         return f"[pubmed_search error: {e}]"
 
 
+@mcp.tool()
+def wayback_fetch(url: str, timestamp: str = "", max_chars: int = 6000) -> str:
+    """Fetch a URL from the Wayback Machine (web.archive.org).
+
+    Retrieves a historical snapshot of any public web page. Useful for:
+    - ORCID profiles at a past point in time (use timestamp=YYYYMMDD)
+    - Pages that have since changed or disappeared
+    - Historical data that current APIs no longer return
+
+    url:       The original URL to look up (e.g. https://orcid.org/0000-0001-2345-6789)
+    timestamp: YYYYMMDD or YYYYMMDDHHMMSS — omit for the closest available snapshot
+    max_chars: Maximum characters to return from the archived page
+    """
+    _assert_public_url(url)
+    import re as _re
+
+    # Strategy 1: availability API (fast, but occasionally returns empty)
+    snap_ts = timestamp or "20240101000000"
+    archive_url: str | None = None
+    avail_params: dict = {"url": url}
+    if timestamp:
+        avail_params["timestamp"] = timestamp
+    try:
+        avail_resp = httpx.get(
+            "http://archive.org/wayback/available",
+            params=avail_params,
+            timeout=12,
+        )
+        if avail_resp.status_code == 200:
+            snap = avail_resp.json().get("archived_snapshots", {}).get("closest", {})
+            if snap.get("available"):
+                archive_url = snap["url"]
+                snap_ts = snap.get("timestamp", snap_ts)
+    except Exception:
+        pass  # fall through to direct URL strategy
+
+    # Strategy 2: direct URL — always works if archive.org has any snapshot
+    if not archive_url:
+        ts = timestamp or "2024"
+        archive_url = f"https://web.archive.org/web/{ts}/{url}"
+
+    try:
+        page_resp = httpx.get(
+            archive_url,
+            follow_redirects=True,
+            timeout=28,
+            headers={"User-Agent": "Mozilla/5.0 (research-bot/1.0)"},
+        )
+        if page_resp.status_code == 404:
+            return f"[wayback_fetch: no archived version of '{url}' found]"
+        if page_resp.status_code != 200:
+            return f"[wayback_fetch: HTTP {page_resp.status_code} from archive.org]"
+        # Extract actual snapshot timestamp from redirect URL if available
+        if "web.archive.org/web/" in str(page_resp.url):
+            snap_ts = str(page_resp.url).split("web.archive.org/web/")[1].split("/")[0]
+        text = _re.sub(r'<[^>]+>', ' ', page_resp.text)
+        text = _re.sub(r'\s+', ' ', text).strip()
+        result = text[:max_chars] if len(text) > max_chars else text
+        return json.dumps({
+            "source_url": url,
+            "archive_url": str(page_resp.url),
+            "snapshot_timestamp": snap_ts,
+            "content": result,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return f"[wayback_fetch: failed to retrieve archived '{url}': {e}]"
+
+
+@mcp.tool()
+def crossref_lookup(query: str, max_results: int = 5, filter_type: str = "") -> str:
+    """Search CrossRef for academic publications by title, author, DOI, or keyword.
+
+    CrossRef indexes 150M+ scholarly works with reliable metadata. Deterministic,
+    no API key required. Use for:
+    - Finding a paper's exact title, authors, DOI, publication year, journal
+    - Counting articles by publisher/journal in a given year
+    - Verifying publication details before answering
+
+    query:       Title, author, keyword, or DOI string
+    max_results: Number of works to return (1-20)
+    filter_type: Optional work type filter: journal-article, book-chapter, proceedings-article
+    """
+    params: dict = {
+        "query": query,
+        "rows": min(max(1, max_results), 20),
+        "mailto": "research@moe-sovereign.org",
+        "select": "DOI,title,author,published,publisher,container-title,type,is-referenced-by-count",
+    }
+    if filter_type:
+        params["filter"] = f"type:{filter_type}"
+    try:
+        resp = httpx.get("https://api.crossref.org/works", params=params, timeout=15)
+        if resp.status_code != 200:
+            return f"[crossref_lookup: HTTP {resp.status_code}]"
+        data = resp.json()
+        items = data.get("message", {}).get("items", [])
+        if not items:
+            return f"[crossref_lookup: no results for '{query[:80]}']"
+        results = []
+        for item in items[:max_results]:
+            authors = ", ".join(
+                f"{a.get('family', '')} {a.get('given', '')}".strip()
+                for a in item.get("author", [])[:4]
+            )
+            pub_date = item.get("published", {}).get("date-parts", [[None]])[0]
+            year = pub_date[0] if pub_date else None
+            results.append({
+                "doi":     item.get("DOI", ""),
+                "title":   (item.get("title") or [""])[0],
+                "authors": authors,
+                "year":    year,
+                "journal": (item.get("container-title") or [""])[0],
+                "type":    item.get("type", ""),
+                "cited_by": item.get("is-referenced-by-count", 0),
+            })
+        return json.dumps({"query": query, "results": results}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"[crossref_lookup error: {e}]"
+
+
+@mcp.tool()
+def openalex_search(query: str, max_results: int = 5,
+                    year_min: int = 0, year_max: int = 0,
+                    open_access_only: bool = False) -> str:
+    """Search OpenAlex — the world's largest open academic database (250M+ works).
+
+    OpenAlex covers all research fields with rich metadata: concepts, citations,
+    funding, author affiliations. Free, no API key, deterministic.
+    Complements PubMed (biomedical) and SemanticScholar with broader coverage.
+
+    Use for: counting publications by venue/year, finding papers across disciplines,
+    author publication counts, citation networks.
+
+    query:            Search string (title, abstract, author, concept)
+    max_results:      Number of works to return (1-20)
+    year_min:         Only return works published from this year onward
+    year_max:         Only return works published up to and including this year
+    open_access_only: Restrict to open-access works
+    """
+    params: dict = {
+        "search":   query,
+        "per_page": min(max(1, max_results), 20),
+        "mailto":   "research@moe-sovereign.org",
+        "select":   "id,title,authorships,publication_year,doi,primary_location,cited_by_count,type",
+    }
+    filters = []
+    if year_min > 0:
+        filters.append(f"publication_year:>{year_min - 1}")
+    if year_max > 0:
+        filters.append(f"publication_year:<{year_max + 1}")
+    if open_access_only:
+        filters.append("is_oa:true")
+    if filters:
+        params["filter"] = ",".join(filters)
+    try:
+        resp = httpx.get("https://api.openalex.org/works", params=params, timeout=15)
+        if resp.status_code != 200:
+            return f"[openalex_search: HTTP {resp.status_code}]"
+        data = resp.json()
+        items = data.get("results", [])
+        if not items:
+            return f"[openalex_search: no results for '{query[:80]}']"
+        results = []
+        for item in items[:max_results]:
+            authors = ", ".join(
+                a.get("author", {}).get("display_name", "")
+                for a in item.get("authorships", [])[:4]
+            )
+            venue = (item.get("primary_location") or {}).get("source", {})
+            results.append({
+                "title":    item.get("title", ""),
+                "authors":  authors,
+                "year":     item.get("publication_year"),
+                "doi":      item.get("doi", ""),
+                "venue":    venue.get("display_name", "") if venue else "",
+                "cited_by": item.get("cited_by_count", 0),
+                "type":     item.get("type", ""),
+            })
+        meta = data.get("meta", {})
+        return json.dumps({
+            "query": query, "total_found": meta.get("count", len(results)),
+            "results": results,
+        }, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return f"[openalex_search error: {e}]"
+
+
+@mcp.tool()
+def web_browser(url: str, wait_seconds: float = 2.0, max_chars: int = 6000) -> str:
+    """Render a URL with a JavaScript-capable headless browser (Splash).
+
+    Use when fetch_pdf_text or web_researcher return empty or broken content
+    because the page requires JavaScript to render (Single-Page Apps, dynamic
+    tables, BBC scripts, British Museum collection pages, GitHub issue timelines).
+
+    Falls back to plain httpx fetch if Splash is unavailable.
+
+    url:          Full URL to render (http/https only)
+    wait_seconds: Time to wait after page load for JS execution (default 2s)
+    max_chars:    Maximum characters to return from the rendered HTML text
+    """
+    _assert_public_url(url)
+    splash_url = os.environ.get("SPLASH_URL", "http://moe-splash:8050")
+
+    # Try Splash first
+    try:
+        resp = httpx.get(
+            f"{splash_url}/render.html",
+            params={"url": url, "wait": wait_seconds, "timeout": 30},
+            timeout=40,
+        )
+        if resp.status_code == 200:
+            html = resp.text
+            # Strip HTML tags for clean text
+            import re as _re
+            text = _re.sub(r'<[^>]+>', ' ', html)
+            text = _re.sub(r'\s+', ' ', text).strip()
+            return text[:max_chars] if len(text) > max_chars else text
+        # Splash returned error — fall through to plain fetch
+    except Exception:
+        pass
+
+    # Fallback: plain httpx (no JS)
+    try:
+        resp = httpx.get(url, follow_redirects=False, timeout=20,
+                         headers={"User-Agent": "Mozilla/5.0 (research-bot/1.0)"})
+        resp.raise_for_status()
+        import re as _re
+        text = _re.sub(r'<[^>]+>', ' ', resp.text)
+        text = _re.sub(r'\s+', ' ', text).strip()
+        return text[:max_chars] if len(text) > max_chars else text
+    except Exception as e:
+        return f"[web_browser error: {e}]"
+
+
+@mcp.tool()
+def duckduckgo_search(query: str, max_results: int = 5, region: str = "wt-wt") -> str:
+    """Search the web via DuckDuckGo — no API key required, no rate-limit risk.
+
+    Use as a complement or fallback to web_researcher when SearXNG returns
+    poor results. DuckDuckGo indexes different sources and applies its own
+    relevance ranking independent of SearXNG.
+
+    Returns title, URL, and body snippet for each result.
+
+    query:       Search query string (English preferred for best coverage)
+    max_results: Number of results to return (1-10, default 5)
+    region:      DuckDuckGo region code (default wt-wt = worldwide)
+                 Examples: us-en, de-de, gb-en, fr-fr
+    """
+    try:
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, region=region, max_results=min(max(1, max_results), 10)))
+        if not results:
+            return f"[duckduckgo_search: no results for '{query[:80]}']"
+        output = []
+        for r in results:
+            output.append({
+                "title": r.get("title", ""),
+                "url":   r.get("href", ""),
+                "body":  r.get("body", "")[:400],
+            })
+        return json.dumps({"query": query, "results": output}, indent=2, ensure_ascii=False)
+    except ImportError:
+        return "[duckduckgo_search: ddgs library not installed — run: pip install ddgs]"
+    except Exception as e:
+        return f"[duckduckgo_search error: {e}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -2982,6 +3291,11 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "wikidata_search":         wikidata_search,
     "wikidata_sparql":         wikidata_sparql,
     "pubmed_search":           pubmed_search,
+    "duckduckgo_search":       duckduckgo_search,
+    "web_browser":             web_browser,
+    "wayback_fetch":           wayback_fetch,
+    "crossref_lookup":         crossref_lookup,
+    "openalex_search":         openalex_search,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -3033,6 +3347,11 @@ _TOOL_DESCRIPTIONS = {
     "wikidata_search":         "Search Wikidata by text to find entity IDs (wd:Q...) for use in wikidata_sparql. Use this first when you know the name but not the Wikidata ID.",
     "wikidata_sparql":         "Execute SPARQL against Wikidata for deterministic entity facts (dates, locations, people, species, relationships). ALWAYS prefer over web search for factual lookups — no HTML parsing, no SearXNG variance. Write a SPARQL 1.1 query; use wd: entity IDs or wdt: property filters.",
     "pubmed_search":           "Search PubMed/NCBI for biomedical, biology, ecology, and life science papers. Returns title, authors, year, abstract, DOI. Prefer over semantic_scholar_search for species studies, genetics, clinical trials, ecology — deterministic NCBI API, no SearXNG variance.",
+    "duckduckgo_search":       "Search the web via DuckDuckGo (no API key, no rate-limit risk). Use as complement or fallback when SearXNG returns poor results — DuckDuckGo indexes different sources. Returns title, URL, snippet for each result. Good for English-language factual queries.",
+    "web_browser":             "Render a URL with a JavaScript-capable headless browser (Splash). Use when fetch_pdf_text or web_researcher return broken/empty content because the page needs JS to render: BBC scripts, British Museum collection pages, GitHub issue timelines, museum databases. Falls back to plain HTTP fetch if Splash unavailable.",
+    "wayback_fetch":           "Retrieve a historical snapshot of any web page from the Wayback Machine (web.archive.org). Use for: ORCID profiles at a past date, pages that have changed, historical API data. timestamp=YYYYMMDD optional — omit for closest available. Ideal for 'as of year X' questions.",
+    "crossref_lookup":         "Search CrossRef for 150M+ scholarly publications — title, author, DOI, keyword. Returns DOI, authors, year, journal, citation count. Use to count articles by venue/year or verify publication metadata. No API key, deterministic.",
+    "openalex_search":         "Search OpenAlex academic database (250M+ works, all disciplines). Broader than PubMed/SemanticScholar. Use for cross-disciplinary paper counts, author publication histories, funding data. Supports year_min filter and open_access_only. No API key.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────

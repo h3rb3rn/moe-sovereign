@@ -63,6 +63,12 @@ services:
     restart: always
     ports:
       - "127.0.0.1:${MCP_HOST_PORT:-8003}:8003"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from server import calculate; assert '4' in calculate('2+2')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -453,6 +459,20 @@ services:
           memory: 128M
 
   # --- MinIO Object Storage ---
+  # --- Splash — JavaScript-capable headless browser for MCP web_browser tool ---
+  # Renders JS-heavy pages (BBC scripts, British Museum collection, GitHub issues)
+  # that SearXNG's static indexer cannot handle. Lightweight (<200MB), REST API.
+  moe-splash:
+    image: scrapinghub/splash:latest
+    container_name: moe-splash
+    restart: unless-stopped
+    command: --maxrss 512 --slots 4
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
   moe-storage:
     image: quay.io/minio/minio:latest
     container_name: moe-storage

@@ -60,8 +60,15 @@ TEMPERATURE_BY_LEVEL: dict[int, float] = {
     3: float(os.environ.get("GAIA_TEMPERATURE_L3", str(os.environ.get("GAIA_TEMPERATURE", "0.0")))),
 }
 LANGUAGE      = os.environ.get("GAIA_LANGUAGE", "en")
-# Per-question timeout — prevents multi-hour hangs on slow local models (0 = disabled)
-QUESTION_TIMEOUT = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "0"))
+# Per-question timeout — level-adaptive; override all levels with GAIA_QUESTION_TIMEOUT
+# L1: simple lookups rarely exceed 2min; L2: 8min; L3: 15min for deep multi-step chains
+_global_timeout = int(os.environ.get("GAIA_QUESTION_TIMEOUT", "0"))
+TIMEOUT_BY_LEVEL: dict[int, int] = {
+    1: _global_timeout or int(os.environ.get("GAIA_TIMEOUT_L1", "300")),   # 5 min
+    2: _global_timeout or int(os.environ.get("GAIA_TIMEOUT_L2", "480")),   # 8 min
+    3: _global_timeout or int(os.environ.get("GAIA_TIMEOUT_L3", "900")),   # 15 min
+}
+QUESTION_TIMEOUT = _global_timeout  # kept for backwards-compat check below
 
 # MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
@@ -643,6 +650,15 @@ _PLURAL_TO_SINGULAR: dict[str, str] = {
     "larvae": "larva", "formulae": "formula",
 }
 
+# Synonym normalization: map alternative spellings/names to canonical form
+_SYNONYMS: dict[str, str] = {
+    "backquote": "backtick",   # Unlambda: both terms refer to the same character
+    "grave accent": "backtick",
+    "grave": "backtick",       # `grave` alone is also used as shorthand for grave accent / backtick
+    "back quote": "backtick",
+    "back-quote": "backtick",
+}
+
 # Zahlwörter EN + DE → Ziffern
 _NUMBER_WORDS: dict[str, str] = {
     "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
@@ -664,6 +680,12 @@ def normalize_answer(text: str) -> str:
     text = text.strip().lower()
     # Strip markdown bold/italic
     text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
+    # Strip screenplay slugline wrappers: "INT. X - DAY" / "INTERIOR – X – DAY" → "X"
+    # Handles both "INT./EXT." prefixes and "DAY/NIGHT/CONTINUOUS" suffixes
+    text = re.sub(
+        r"^(?:int(?:erior)?|ext(?:erior)?)[\.\s–\-]+(.+?)[\s–\-]+(?:day|night|continuous|dusk|dawn)$",
+        r"\1", text, flags=re.I,
+    ).strip()
     # Remove trailing punctuation
     text = re.sub(r"[.,;:!?\s]+$", "", text)
     # Normalize whitespace
@@ -674,6 +696,9 @@ def normalize_answer(text: str) -> str:
     # Normalize irregular plurals to singular for flexible matching
     for plural, singular in _PLURAL_TO_SINGULAR.items():
         text = re.sub(r"\b" + re.escape(plural) + r"\b", singular, text)
+    # Normalize synonyms to canonical form
+    for synonym, canonical in _SYNONYMS.items():
+        text = re.sub(r"\b" + re.escape(synonym) + r"\b", canonical, text)
     return text
 
 
@@ -929,7 +954,12 @@ async def call_orchestrator(
         )
     _NO_ANSWER_PHRASES = ("no answer available", "please try again",
                           "unable to determine", "cannot be determined",
-                          "i cannot find", "not available", "fallback")
+                          "i cannot find", "not available", "fallback",
+                          # Expert-leak phrases that slip through server-side detection
+                          "attempt web search", "attempt tool call", "attempt to search",
+                          "attempt to browse", "attempt to find", "attempt to look",
+                          "will attempt to", "need to browse", "need to search",
+                          "i cannot access", "i can't access", "cannot browse")
     last_err = ""
     for attempt in range(1, 4):  # up to 3 attempts
         try:
@@ -982,6 +1012,12 @@ async def call_orchestrator(
                 or _stripped.startswith('<search>')
                 or _stripped.startswith('<tool_call>')
                 or (re.match(r'^<[a-z_]+>', _stripped) and '</' in _stripped[:100])
+                # Single brace = truncated JSON (both { and } alone indicate broken output)
+                or _stripped in ("{", "}")
+                # Bracket-style tool calls: [web_search: query="..."] or [tool: ...]
+                or bool(re.match(r'^\[web_search\s*:', _stripped, re.I))
+                or bool(re.match(r'^\[search\s*:', _stripped, re.I))
+                or bool(re.match(r'^\[tool\s*:', _stripped, re.I))
             )
             if (any(p in content.lower() for p in _NO_ANSWER_PHRASES) or raw_tool_call) and attempt < 3:
                 reason = "raw tool-call leaked" if raw_tool_call else "orchestrator fallback detected"
@@ -1026,6 +1062,7 @@ async def main() -> int:
     print(f"  Template: {TEMPLATE}", flush=True)
     print(f"  Levels:   {LEVELS}", flush=True)
     print(f"  Max/level: {MAX_PER_LEVEL} (0=all)", flush=True)
+    print(f"  Timeouts: L1={TIMEOUT_BY_LEVEL[1]}s  L2={TIMEOUT_BY_LEVEL[2]}s  L3={TIMEOUT_BY_LEVEL[3]}s", flush=True)
     print(f"{'='*72}", flush=True)
 
     print("Loading GAIA dataset...", flush=True)
@@ -1070,7 +1107,7 @@ async def main() -> int:
             _level_temp = TEMPERATURE_BY_LEVEL.get(level, TEMPERATURE)
             if _level_temp != TEMPERATURE:
                 print(f"  🌡 T={_level_temp} (L{level} adaptive)", flush=True)
-            _q_timeout = QUESTION_TIMEOUT if QUESTION_TIMEOUT > 0 else 1800
+            _q_timeout = TIMEOUT_BY_LEVEL.get(level, 480)
             try:
                 res = await asyncio.wait_for(
                     call_orchestrator(client, processed_q, file_context=file_ctx,

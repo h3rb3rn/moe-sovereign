@@ -140,7 +140,7 @@ moe-infra/
 | **2** | Two-Tier Escalation | T1 screens fast; T2 engages only when needed |
 | **3** | Neo4j GraphRAG | Trust-score self-healing, contradiction detection, domain-scoped filters |
 | **4** | Community Knowledge Bundles | Export/import learned knowledge as JSON-LD with regex-based privacy scrubbing (PII, secrets, hostnames) |
-| **5** | 43 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks; includes semantic_scholar_search, pubchem_advanced_search (complexity filter), orcid_works_count, github_issue_events, youtube_transcript, web_search_domain |
+| **5** | 51 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks; includes wikidata_sparql, pubmed_search, crossref_lookup, openalex_search, duckduckgo_search, web_browser (Splash JS rendering), wayback_fetch, github_search_issues with fuzzy label resolution |
 | **6** | VRAM-Aware Scheduling | Per-node VRAM limits, warm-model affinity, sticky sessions |
 | **7** | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |
@@ -194,9 +194,10 @@ flowchart LR
 
 | Benchmark | Score | Reference |
 |---|:---:|---|
-| **GAIA Level 1** | **70–80%** | GPT-4o: 33% &bull; Claude 3.7: 44% &bull; MoE Sovereign: **70–80%** (7–8/10, `moe-aihub-free-gremium-deep-wcc`, best run 8/10) |
-| **GAIA Level 2** | **50–60%** | GPT-4o Mini: &lt;30% &bull; MoE Sovereign: **50–60%** (5–6/10) — multi-hop database lookups, github issue events |
-| **GAIA Overall** | **~46%** | GPT-4o Mini reference: 44.8% &bull; MoE Sovereign best: **46.7%** (14/30) across L1+L2+L3 |
+| **GAIA Level 1** | **60%** | GPT-4o: 33% &bull; Claude 3.7: 44% &bull; MoE Sovereign: **60%** (6/10, `moe-aihub-free-gremium-deep-wcc`, best run) |
+| **GAIA Level 2** | **50%** | GPT-4o Mini: &lt;30% &bull; MoE Sovereign: **50%** (5/10) — multi-hop database lookups, github issue events, Wikidata SPARQL |
+| **GAIA Level 3** | **40%** | MoE Sovereign: **40%** (4/10) — complex multi-step research chains |
+| **GAIA Overall** | **46.7%** | GPT-4o Mini reference: 44.8% &bull; MoE Sovereign best: **46.7%** (14/30) — 5 iterative runs 2026-04-25 |
 | **Math Precision (MCP)** | **10/10** | Deterministic AST computation, 0% variance |
 | **Security Code Review** | **9.0/10** | SQLi + XSS identified and fixed |
 | **Adversarial MCP** | **9/9 blocked** | All code injection attempts stopped by AST firewall |

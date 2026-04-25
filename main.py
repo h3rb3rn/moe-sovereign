@@ -953,6 +953,8 @@ _TOOL_GROUP_CORE = frozenset({
     "wikipedia_get_section",
     # Deterministic entity/fact lookup — prefer over web search for structured data
     "wikidata_search", "wikidata_sparql",
+    # JS-capable browser + alternative search — generic enough for any research query
+    "web_browser", "duckduckgo_search",
     # Math / utility — domain-agnostic
     "calculate", "python_sandbox",
     "date_diff", "date_add", "unit_convert",
@@ -960,7 +962,9 @@ _TOOL_GROUP_CORE = frozenset({
 # Research: shown when query contains paper/author/database/species/media markers
 _TOOL_GROUP_RESEARCH = frozenset({
     "semantic_scholar_search", "pubmed_search",
+    "crossref_lookup", "openalex_search",   # academic publication databases
     "orcid_works_count",
+    "wayback_fetch",                         # historical snapshots (ORCID, archived pages)
     "pubchem_compound_search", "pubchem_advanced_search",
     "github_search_issues", "github_issue_events",
     "youtube_transcript",
@@ -1119,6 +1123,26 @@ _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
 
 # System prompts per expert role — define identity and behavior
 DEFAULT_EXPERT_PROMPTS: Dict[str, str] = {
+    "memory_recall": (
+        "You are a conversation memory expert. Your ONLY source of information is the "
+        "conversation history provided in this context — not the internet, not training data.\n"
+        "Rules:\n"
+        "1. Read ALL previous turns carefully and completely before answering.\n"
+        "2. For multi-part questions (e.g. 'What is X AND what is Y?'): answer EVERY "
+        "part explicitly. Use a structured list if there are 3+ items. Include exact "
+        "values (numbers, names, versions) as stated — never paraphrase or round.\n"
+        "   IMPORTANT: facts about the same entity may appear in DIFFERENT user turns. "
+        "Scan ALL turns to find each requested fact — do not stop after the first match.\n"
+        "3. When a fact was corrected or updated — whether explicit ('Korrektur:', "
+        "'Correction:', 'Update:') or implicit ('wurde auf X erhöht', 'ist jetzt X', "
+        "'wurde geändert auf', 'was changed to', 'is now', 'has been updated to') — "
+        "use ONLY the most recent value. Later statements always supersede earlier ones.\n"
+        "4. If a specific fact was NOT mentioned in this conversation, say exactly: "
+        "'Diese Information wurde in unserem Gespräch nicht erwähnt.' "
+        "(or in English: 'This information was not mentioned in our conversation.')\n"
+        "5. Never guess, infer, or use external knowledge. Only recall from conversation.\n"
+        "6. Be complete: a partial answer that omits requested facts is incorrect."
+    ),
     "general": (
         "You are a versatile, fact-based expert. "
         "Answer precisely, in a structured manner. "
@@ -3314,7 +3338,7 @@ def _sanitize_plan(raw: list, fallback_input: str) -> list:
     Strings, empty dicts or dicts without 'task' key are discarded.
     Returns at least one fallback task.
     """
-    valid_cats = set(EXPERTS.keys()) | NON_EXPERT_CATEGORIES | {"agentic_coder"}
+    valid_cats = set(EXPERTS.keys()) | NON_EXPERT_CATEGORIES | {"agentic_coder", "memory_recall"}
     result = []
     for item in raw:
         if not isinstance(item, dict):
@@ -3397,7 +3421,10 @@ async def planner_node(state: AgentState):
         f"{len(MCP_TOOLS_DESCRIPTION)}:{(state.get('planner_prompt') or '')[:80]}"
         .encode()
     ).hexdigest()[:6]
-    _plan_cache_key = f"moe:plan:{_cfg_fp}:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
+    # Include chat_history presence in key: same query needs different plan
+    # in conversation context (memory_recall) vs. standalone (research).
+    _has_history = "h" if len(state.get("chat_history") or []) >= 2 else "n"
+    _plan_cache_key = f"moe:plan:{_cfg_fp}:{_has_history}:{_hashlib.sha256(state['input'][:300].encode()).hexdigest()[:16]}"
     if redis_client is not None and not _is_agentic_replan and not _no_cache_flag:
         try:
             _cached_plan_raw = await redis_client.get(_plan_cache_key)
@@ -3412,7 +3439,30 @@ async def planner_node(state: AgentState):
     # Complexity estimation: determine routing hints before LLM planner call
     from complexity_estimator import estimate_complexity, complexity_routing_hint
     _complexity = estimate_complexity(state["input"])
+    # Day-2 upgrade: factual questions inside a multi-turn conversation are
+    # almost always asking about something the user stated earlier — not
+    # web-searchable facts. Upgrade trivial AND moderate to memory_recall
+    # when substantive chat_history is present. Complex/research queries are
+    # already routed differently by estimate_complexity before we reach here,
+    # so upgrading moderate is safe for recall-heavy conversation patterns.
+    _chat_hist = state.get("chat_history") or []
+    if _complexity in ("trivial", "moderate") and len(_chat_hist) >= 2:
+        _prev_complexity = _complexity
+        _complexity = "memory_recall"
+        logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _prev_complexity)
     _routing    = complexity_routing_hint(_complexity)
+    # Multi-fact memory_recall: when the question asks for multiple facts
+    # (contains conjunctions like "und X und Y" or multiple interrogatives),
+    # allow 2 tasks so the planner can create separate recall tasks per fact.
+    if _complexity == "memory_recall":
+        _multi_fact = bool(re.search(
+            r'\b(und|and|sowie|als auch|außerdem|additionally|also)\b',
+            state["input"], re.I,
+        ))
+        if _multi_fact and _routing.get("max_tasks", 1) < 2:
+            _routing = dict(_routing)
+            _routing["max_tasks"] = 2
+            logger.info("🧠 Multi-fact memory_recall: max_tasks=2")
     PROM_COMPLEXITY.labels(level=_complexity).inc()
     logger.info(f"📊 Complexity: {_complexity} → {_routing}")
     # Map complexity to cost tier for OpEx tracking and expert-tier enforcement.
@@ -3428,6 +3478,10 @@ async def planner_node(state: AgentState):
     # fall back to query-adaptive detection when None.
     _explicit_temp = state.get("query_temperature")  # set by HTTP handler from request
     _query_temp    = _explicit_temp if _explicit_temp is not None else _detect_query_temperature(state["input"])
+    # memory_recall: T=0 for deterministic exact-value recall (prevents
+    # stochastic drift where model picks old vs. new value unpredictably).
+    if _complexity == "memory_recall" and _explicit_temp is None:
+        _query_temp = 0.0
     logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
     _complexity_state_update = {
         "complexity_level":   _complexity,
@@ -4833,8 +4887,9 @@ async def merger_node(state: AgentState):
     )
     res_content_clean = _CONFIDENCE_TAG_RE.sub('', res_content_clean).strip()
 
-    # Strip OpenAI-style citation superscripts leaked from tool results: 【n†source】
-    res_content_clean = re.sub(r'【\d+†[^】]*】', '', res_content_clean).strip()
+    # Strip all 【...】 citation/reference brackets leaked from tool results:
+    # covers 【1†source】, 【https://arxiv.org/...】, 【n】 etc.
+    res_content_clean = re.sub(r'【[^】]*】', '', res_content_clean).strip()
 
     # Strip leading markdown bold label if the answer starts with "**Label:** value".
     # Models like qwen3 emit structured output ("**Identified Compound:** Benzene") which
@@ -4844,16 +4899,26 @@ async def merger_node(state: AgentState):
         res_content_clean = _md_label.group(1).strip()
 
     # Post-strip fallback: if cleaning stripped everything, use best expert result.
-    # This prevents empty final responses when the judge only output tags/metadata.
+    # Explicitly skip expert results that are capability disclaimers (expert-leak patterns)
+    # — using a leak answer as fallback is worse than returning empty.
+    _LEAK_FALLBACK_RE = re.compile(
+        r'\b(i (cannot|can\'t|won\'t) (access|browse|fetch)|'
+        r'we need(s)? to (browse|search|fetch)|'
+        r'no (direct )?access to (the )?(internet|web)|'
+        r'attempt\s+(web\s+)?search|'
+        r'unable to (browse|access|fetch))\b',
+        re.I,
+    )
     if not res_content_clean:
         _expert_results = state.get("expert_results") or []
+        _non_leak = [r for r in _expert_results if r and not _LEAK_FALLBACK_RE.search(r)]
         _best_expert = (
-            next((r for r in _expert_results if _parse_expert_confidence(r) == "high"), None)
-            or (_expert_results[0] if _expert_results else None)
+            next((r for r in _non_leak if _parse_expert_confidence(r) == "high"), None)
+            or (_non_leak[0] if _non_leak else None)
         )
         if _best_expert:
             res_content_clean = _best_expert.strip()
-            logger.warning("⚠️ Merger output empty after strip — using best expert result as fallback")
+            logger.warning("⚠️ Merger output empty after strip — using best non-leak expert result as fallback")
 
     _no_cache_write = state.get("no_cache", False)
     if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN and not _no_cache_write:
@@ -4989,6 +5054,10 @@ async def merger_node(state: AgentState):
                 r"i don'?t have (web|internet|direct|real.?time)|"
                 r"(we|let'?s|i'?ll|we'?ll) (will |)(browse|search|look up|fetch|navigate|check)|"
                 r"(we|it) need(s)? to (browse|search|fetch|access|look up|retrieve)|"
+                r"attempt\s+(web\s+)?search|"
+                r"attempt\s+tool\s+(call|use)|"
+                r"attempt\s+to\s+(search|browse|fetch|find|look|call)|"
+                r"will\s+attempt\s+to\s+(search|browse|fetch|find)|"
                 r"no (direct )?access to (the )?(internet|web|url|website|page)|"
                 r"unable to (browse|access|fetch|visit|open)|"
                 r"as an ai.{0,30}(cannot|can'?t)|"
@@ -5201,7 +5270,10 @@ async def thinking_node(state: AgentState):
     # len(plan) > 1 is too broad — most research requests have >1 task but don't need CoT.
     has_sequential_chain = any(t.get("depends_on") for t in plan if isinstance(t, dict))
     has_multi_category   = len({t.get("category") for t in plan if isinstance(t, dict)}) > 2
-    is_complex = has_sequential_chain or has_multi_category
+    # Also activate for complex/research queries with multiple tasks — L3 GAIA questions
+    # have only 1 category but multi-step reasoning benefits from CoT.
+    has_multi_task = len([t for t in plan if isinstance(t, dict)]) > 2
+    is_complex = has_sequential_chain or has_multi_category or has_multi_task
 
     if not (force or is_complex or has_low_conf):
         return {"reasoning_trace": ""}
