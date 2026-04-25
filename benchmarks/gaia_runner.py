@@ -680,6 +680,12 @@ def normalize_answer(text: str) -> str:
     text = text.strip().lower()
     # Strip markdown bold/italic
     text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
+    # Strip screenplay slugline wrappers: "INT. X - DAY" / "INTERIOR – X – DAY" → "X"
+    # Handles both "INT./EXT." prefixes and "DAY/NIGHT/CONTINUOUS" suffixes
+    text = re.sub(
+        r"^(?:int(?:erior)?|ext(?:erior)?)[\.\s–\-]+(.+?)[\s–\-]+(?:day|night|continuous|dusk|dawn)$",
+        r"\1", text, flags=re.I,
+    ).strip()
     # Remove trailing punctuation
     text = re.sub(r"[.,;:!?\s]+$", "", text)
     # Normalize whitespace
