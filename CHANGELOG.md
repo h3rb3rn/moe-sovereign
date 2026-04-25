@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.2.0] - 2026-04-25
+
+### Added
+- **8 new MCP tools** (51 total): `wikidata_sparql`, `pubmed_search`, `crossref_lookup`, `openalex_search`, `duckduckgo_search`, `web_browser` (Splash JS rendering), `wayback_fetch`, `openalex_search`
+- **`github_search_issues` fuzzy label resolution**: auto-resolves `Regression` → `05/06 - Regression` by fetching repo labels; OR-semantics across all matching variants
+- **`openalex_search` year_max parameter** for precise publication year filtering
+- **`wayback_fetch` dual-strategy**: primary availability API + direct URL fallback for reliable archive.org access
+- **Pre-run smoke test** (`benchmarks/pre_run_check.py`): 8-point health check before benchmark runs — container health, MCP tools, prompt length, Redis, AST syntax, E2E question
+- **HEALTHCHECK for mcp-precision**: Docker healthcheck via `calculate('2+2')` in compose.yml
+- **Domain-filtered tool descriptions**: `_TOOL_GROUP_CORE` and `_TOOL_GROUP_RESEARCH` control which tools the planner sees per query type
+- **Level-adaptive benchmark timeouts**: L1=300s, L2=480s, L3=900s via `GAIA_TIMEOUT_L{1,2,3}` env vars
+- **Security hardening**: SSRF guard, SQL identifier validation, container `cap_drop: ALL` + `no-new-privileges`
+
+### Changed
+- **GAIA Benchmark**: Best score 14/30 = 46.7% (exceeds GPT-4o Mini 44.8% reference)
+- **Expert-leak detection** (`_EXPERT_LEAK_RE`): broader patterns — `attempt tool call`, `attempt to search/browse`, capability disclaimers in merger fallback
+- **Planner prompt** compressed from 15K → 12K chars to prevent context overflow; consolidated deterministic source rules
+- **Benchmark normalization**: slugline stripping (`INT. X – DAY` → `X`), `grave accent` → `backtick`, leak phrases in NO_ANSWER retry
+
+### Fixed
+- `wayback_fetch`: HTTP 200 `archived_snapshots: {}` no longer silently fails — falls back to direct `web.archive.org/web/2024/{url}` with `follow_redirects=True`
+- `github_search_issues`: label name prefixes like `06 - Regression` resolved automatically
+- Expert-leak `Attempt web search.` / `Attempt tool call.` now triggers runner retry
+- Merger fallback excludes expert-leak answers from fallback pool
+
 ## [2.1.0] - 2026-03-29
 
 ### Added

@@ -63,6 +63,12 @@ services:
     restart: always
     ports:
       - "127.0.0.1:${MCP_HOST_PORT:-8003}:8003"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from server import calculate; assert '4' in calculate('2+2')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     security_opt:
       - no-new-privileges:true
     cap_drop:
