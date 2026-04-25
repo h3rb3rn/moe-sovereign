@@ -982,6 +982,10 @@ async def call_orchestrator(
                 or _stripped.startswith('<search>')
                 or _stripped.startswith('<tool_call>')
                 or (re.match(r'^<[a-z_]+>', _stripped) and '</' in _stripped[:100])
+                # Bracket-style tool calls: [web_search: query="..."] or [tool: ...]
+                or bool(re.match(r'^\[web_search\s*:', _stripped, re.I))
+                or bool(re.match(r'^\[search\s*:', _stripped, re.I))
+                or bool(re.match(r'^\[tool\s*:', _stripped, re.I))
             )
             if (any(p in content.lower() for p in _NO_ANSWER_PHRASES) or raw_tool_call) and attempt < 3:
                 reason = "raw tool-call leaked" if raw_tool_call else "orchestrator fallback detected"
