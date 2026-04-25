@@ -326,6 +326,15 @@ async def _bootstrap_role_and_db() -> None:
     target_pass = _url.unquote(parsed.password or "")
     target_db   = (parsed.path or "/moe_userdb").lstrip("/") or "moe_userdb"
 
+    # Validate identifiers before injecting into DDL — psycopg cannot parameterise
+    # CREATE ROLE / CREATE DATABASE, so we enforce a strict safe-identifier pattern.
+    import re as _re_db
+    _safe_ident = _re_db.compile(r'^[a-zA-Z_][a-zA-Z0-9_]{0,62}$')
+    if not _safe_ident.match(target_user):
+        raise ValueError(f"Unsafe DB username '{target_user}' — must match [a-zA-Z_][a-zA-Z0-9_]{{0,62}}")
+    if not _safe_ident.match(target_db):
+        raise ValueError(f"Unsafe DB name '{target_db}' — must match [a-zA-Z_][a-zA-Z0-9_]{{0,62}}")
+
     dsn = (
         f"host={parsed.hostname} port={parsed.port or 5432} "
         f"user={su_user} password={su_pass} dbname={su_db}"
