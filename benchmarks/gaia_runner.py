@@ -643,6 +643,14 @@ _PLURAL_TO_SINGULAR: dict[str, str] = {
     "larvae": "larva", "formulae": "formula",
 }
 
+# Synonym normalization: map alternative spellings/names to canonical form
+_SYNONYMS: dict[str, str] = {
+    "backquote": "backtick",   # Unlambda: both terms refer to the same character
+    "grave accent": "backtick",
+    "back quote": "backtick",
+    "back-quote": "backtick",
+}
+
 # Zahlwörter EN + DE → Ziffern
 _NUMBER_WORDS: dict[str, str] = {
     "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
@@ -674,6 +682,9 @@ def normalize_answer(text: str) -> str:
     # Normalize irregular plurals to singular for flexible matching
     for plural, singular in _PLURAL_TO_SINGULAR.items():
         text = re.sub(r"\b" + re.escape(plural) + r"\b", singular, text)
+    # Normalize synonyms to canonical form
+    for synonym, canonical in _SYNONYMS.items():
+        text = re.sub(r"\b" + re.escape(synonym) + r"\b", canonical, text)
     return text
 
 
@@ -982,6 +993,8 @@ async def call_orchestrator(
                 or _stripped.startswith('<search>')
                 or _stripped.startswith('<tool_call>')
                 or (re.match(r'^<[a-z_]+>', _stripped) and '</' in _stripped[:100])
+                # Single brace = truncated JSON (both { and } alone indicate broken output)
+                or _stripped in ("{", "}")
                 # Bracket-style tool calls: [web_search: query="..."] or [tool: ...]
                 or bool(re.match(r'^\[web_search\s*:', _stripped, re.I))
                 or bool(re.match(r'^\[search\s*:', _stripped, re.I))

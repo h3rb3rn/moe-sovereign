@@ -4990,6 +4990,8 @@ async def merger_node(state: AgentState):
                 r"i don'?t have (web|internet|direct|real.?time)|"
                 r"(we|let'?s|i'?ll|we'?ll) (will |)(browse|search|look up|fetch|navigate|check)|"
                 r"(we|it) need(s)? to (browse|search|fetch|access|look up|retrieve)|"
+                r"attempt\s+(web\s+)?search|"
+                r"will\s+attempt\s+to\s+(search|browse|fetch|find)|"
                 r"no (direct )?access to (the )?(internet|web|url|website|page)|"
                 r"unable to (browse|access|fetch|visit|open)|"
                 r"as an ai.{0,30}(cannot|can'?t)|"
@@ -5202,7 +5204,10 @@ async def thinking_node(state: AgentState):
     # len(plan) > 1 is too broad — most research requests have >1 task but don't need CoT.
     has_sequential_chain = any(t.get("depends_on") for t in plan if isinstance(t, dict))
     has_multi_category   = len({t.get("category") for t in plan if isinstance(t, dict)}) > 2
-    is_complex = has_sequential_chain or has_multi_category
+    # Also activate for complex/research queries with multiple tasks — L3 GAIA questions
+    # have only 1 category but multi-step reasoning benefits from CoT.
+    has_multi_task = len([t for t in plan if isinstance(t, dict)]) > 2
+    is_complex = has_sequential_chain or has_multi_category or has_multi_task
 
     if not (force or is_complex or has_low_conf):
         return {"reasoning_trace": ""}
