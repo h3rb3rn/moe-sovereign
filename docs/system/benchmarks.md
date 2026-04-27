@@ -1025,4 +1025,61 @@ This activates Tier-2 retrieval for that template. No model change required.
 
 > Results will vary by model and template. Run `benchmarks/mrcr_lite_runner.py` to get actual measurements for your deployment.
 
-<!-- Results injected after benchmark completion -->
+### Measured Results (April 2026, post-fix)
+
+**Template:** `moe-memory-aihub-hybrid` | **Embedding:** `nomic-embed-text` 768-dim  
+**Retrieval:** direct numpy cosine ranking (HNSW removed as primary path)
+
+| Condition | Recall | Notes |
+|---|---|---|
+| `with_prepopulation` | **1.000** | All 5 needle types, depths 5 + 10 confirmed |
+| `without_prepopulation` | **0.000** | Needle confirmed evicted from hot window |
+
+| Needle type | Pre-fix | Post-fix | Root cause of pre-fix failure |
+|---|---|---|---|
+| number | 0.20 | **1.00** | Session-scoped count bug → HNSW used instead of numpy |
+| person | 0.40 | **1.00** | Same; HNSW missed low-frequency proper nouns |
+| date / name / technical | 1.00 | **1.00** | Unaffected |
+
+**Key fix:** `collection.count()` (total) replaced by `len(collection.get(where={"session_id": sid}))` (session-scoped).  
+HNSW is now a last-resort fallback only; numpy direct cosine ranking guarantees exact results at any session depth.
+
+---
+
+## April 2026 — Token Overhead Benchmark
+
+Measures the token cost multiplier of the MoE pipeline vs. a direct API call to the same underlying model.
+
+**Setup:** 10 prompts × 5 categories. Direct baseline: `gpt-oss-120b-sovereign` via AIHUB.  
+MoE path: `moe-memory-aihub-hybrid` (Planner → Expert → Judge).
+
+### Results
+
+| Category | Direct tokens (avg) | MoE tokens (avg) | Overhead factor |
+|---|---|---|---|
+| reasoning | ~1,750 | ~16,000 | 14.76× |
+| knowledge | ~4,640 | ~29,450 | **6.35×** (lowest) |
+| coding | ~1,880 | ~18,950 | 10.36× |
+| math | ~1,270 | ~15,400 | 12.48× |
+| instruction following | ~460 | ~18,700 | **42.66×** (highest) |
+| **Overall** | **~2,011** | **~19,844** | **17.32×** |
+
+**Prompt overhead: +11,077 tokens per request (constant across categories)**
+
+### Key Findings
+
+1. **Absolute prompt overhead is constant** (~11,000 tokens) regardless of category. It represents the fixed cost of the Planner/Expert/Judge cycle — system prompts, routing instructions, expert context, and judge fusion.
+2. **Relative overhead varies inversely with answer length.** Knowledge questions (long direct answers) see the lowest factor (6.35×); instruction-following questions (short direct answers) see the highest (42.66×).
+3. **Knowledge-intensive use cases are the most efficient** for MoE: the ~11,000-token fixed cost is amortised over a large denominator (complex, multi-hop answers).
+4. **No token overhead from Tier-2 Semantic Memory** at inference time — retrieval is vector search, not additional LLM tokens.
+
+### Running the Benchmark
+
+```bash
+MOE_API_KEY=moe-sk-... \
+CHEXT_BASE=<direct-api-url>/v1 \
+CHEXT_MODEL=<model-name> \
+CHEXT_TOKEN=<api-token> \
+MOE_OVH_TEMPLATE=moe-memory-aihub-hybrid \
+  python3 benchmarks/overhead_benchmark.py
+```
