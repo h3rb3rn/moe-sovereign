@@ -18,6 +18,7 @@ The system is **OpenAI API-compatible** (including correctly terminating streami
 - **Exactness over LLM estimation** — calculations, data, hashes are deterministic via MCP server
 - **Learning through use** — feedback flows back into expert performance scores and the knowledge graph
 - **Persistent background processing** — Kafka decouples the HTTP path from ingest and logging
+- **Infrastructure-level context window** — Tier-2 Semantic Memory (ChromaDB) extends effective context to 1M+ tokens, independent of the LLM's native context limit
 
 ---
 

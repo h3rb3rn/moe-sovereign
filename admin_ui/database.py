@@ -1320,6 +1320,44 @@ async def delete_user_connection(conn_id: str, user_id: str) -> bool:
             return cur.rowcount > 0
 
 
+async def revoke_model_endpoints_by_node(user_id: str, node_name: str) -> int:
+    """Revoke all model_endpoint permissions for a user that reference a specific node name.
+
+    Matches entries like 'model@node_name' and '*@node_name'. Returns the number of revoked rows.
+    Uses Python-side filtering to safely handle node names containing LIKE wildcard characters.
+    """
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, resource_id FROM permissions "
+                "WHERE user_id=%s AND resource_type='model_endpoint'",
+                (user_id,),
+            )
+            rows = await cur.fetchall()
+    suffix = f"@{node_name}"
+    ids_to_delete = [r["id"] for r in rows if r["resource_id"].endswith(suffix)]
+    if not ids_to_delete:
+        return 0
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM permissions WHERE id = ANY(%s)",
+                (ids_to_delete,),
+            )
+            return cur.rowcount
+
+
+async def admin_get_user_connection(conn_id: str) -> Optional[dict]:
+    """Fetch any user connection by ID without user scope. Admin use only."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT * FROM user_api_connections WHERE id=%s",
+                (conn_id,),
+            )
+            return await cur.fetchone()
+
+
 async def update_connection_models_cache(conn_id: str, user_id: str, models: list) -> None:
     """Persist a refreshed model list for a connection."""
     now = datetime.now(timezone.utc).isoformat()

@@ -134,6 +134,7 @@ nav:
       - MCP Precision Tools: system/toolstack/mcp_tools.md
       - Ollama Cluster: system/toolstack/ollama_cluster.md
     - MoE-Eval Benchmarks: system/benchmarks.md
+    - Semantic Memory (1M Context): system/memory.md
     - Kafka Event Streaming: system/kafka.md
     - Docker Services: system/services.md
     - Object Storage (MinIO): system/storage.md

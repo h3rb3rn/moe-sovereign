@@ -363,18 +363,19 @@ async def main() -> None:
 
     # Warmup: use a SEPARATE client so a failed warmup connection does not
     # corrupt the pool used by the actual benchmark calls.
-    print("Warmup call (priming remote models)…", flush=True)
+    warmup_timeout = float(os.environ.get("MRCR_WARMUP_TIMEOUT", "120.0"))
+    print(f"Warmup call (priming remote models, timeout={warmup_timeout:.0f}s)…", flush=True)
     for _attempt in range(3):
         try:
             async with httpx.AsyncClient() as _wc:
                 warmup_msgs = [{"role": "user", "content": "Antworte nur mit: READY"}]
                 _wr, _ = await chat(_wc, warmup_msgs, uuid.uuid4().hex,
-                                    template=TEMPLATE_WITH, timeout=300.0)
-            print(f"Warmup done: {_wr[:30]}\n")
+                                    template=TEMPLATE_WITH, timeout=warmup_timeout)
+            print(f"Warmup done: {_wr[:30]}\n", flush=True)
             break
         except Exception as _we:
             err_str = str(_we) or type(_we).__name__
-            print(f"Warmup attempt {_attempt+1}/3 failed (non-fatal): {err_str}\n")
+            print(f"Warmup attempt {_attempt+1}/3 failed (non-fatal): {err_str}\n", flush=True)
 
     async with httpx.AsyncClient() as client:
         for rep in range(reps):

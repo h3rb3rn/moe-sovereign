@@ -8,6 +8,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-04-27 — Tier-2 Semantic Memory (1M-Token Context Window) & MRCR-lite Benchmark
+
+> `impact: minor` · `breaking: no` · `domain: orchestrator, memory, benchmarks`
+
+### Added — Tier-2 Semantic Memory
+
+- **`memory_retrieval.py`**: New module implementing Tier-2 ChromaDB-backed semantic memory.
+  Evicted conversation turns are embedded via `nomic-embed-text` (768 dim.) and stored
+  per session. Retrieval uses hybrid ranking: ANN cosine similarity + topic-overlap fallback
+  + keyword metadata filter.
+- **`_HttpxOllamaEF`**: Custom httpx-based embedding function — no `ollama` Python package
+  required. Supports batch `/api/embed` with fallback to `/api/embeddings`.
+- **Versioned collections**: `conversation_memory_{embed_slug}` prevents data corruption
+  when switching embedding models.
+- **Session-scoped count**: Fixed critical bug where `collection.count()` returned total
+  collection size instead of per-session document count, causing the small-session ANN
+  bypass to never activate (needle at rank #21 → rank #1 after fix).
+- **Planner fast-path**: `memory_recall` complexity class bypasses LLM planner entirely
+  when a `memory_recall` expert is configured — reduces latency for pure recall queries.
+- **ChromaDB TTL cleanup**: Background task running every 6h removes entries older than
+  `SEMANTIC_MEMORY_TTL_HOURS` (default: 6h).
+- **Template flag**: `"enable_semantic_memory": true` in `config_json` activates Tier-2
+  for any expert template without model changes or container restarts.
+
+### Added — MRCR-lite v2 Benchmark
+
+- **`benchmarks/mrcr_lite_runner.py`**: Synthetic multi-turn recall benchmark. Injects
+  "needle" facts at configurable depths (5–100 filler turns), evicts them from the LLM
+  hot window via ChromaDB pre-population, and measures recall with and without Tier-2 memory.
+  A/B design: `with_prepopulation` (ChromaDB seeded) vs. `without_prepopulation` (baseline).
+- **`benchmarks/datasets/mrcr_lite_v1.json`**: 5 needles across types (number, name,
+  technical, date, person), 15 filler turns, test matrix (depths: 5/10/20/50/100, 2 reps).
+- **`benchmarks/overhead_benchmark.py`**: Measures token overhead (prompt/completion/reasoning)
+  of native LLM calls vs. MoE-template calls. Calculates overhead factor per category.
+
+### Added — Expert Templates for Semantic Memory
+
+Four new templates created:
+- `moe-memory-m10-autark`: Local-only, M10 hardware, semantic memory enabled
+- `moe-memory-m10-hybrid`: Local memory expert + AIHUB planner/judge
+- `moe-memory-aihub-hybrid`: AIHUB planner/judge + local memory expert
+- `moe-memory-aihub-nosm`: AIHUB without semantic memory (MRCR baseline)
+
+### Fixed — Hybrid Retrieval Calibration
+
+- Session-scoped document count (was: `collection.count()` → total; now: `len(get(where=session_id))`)
+- Topic-overlap fallback no longer gated on `len(turns) < n`
+- Keyword fallback guard removed to allow all relevant turns regardless of ANN result count
+- Direct numpy cosine ranking now processes all session turns (not just ANN top-k)
+
+---
+
 ## 2026-04-25 — Security Hardening, Architektur-Optimierungen & GAIA-Benchmark
 
 ### Sicherheit

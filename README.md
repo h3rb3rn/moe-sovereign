@@ -2,7 +2,7 @@
 
 # MoE Sovereign
 
-**A Self-Hosted Multi-Model Orchestrator with Template-Based Expert Routing<br>for Sovereign AI Infrastructure**
+**A Self-Hosted Multi-Model Orchestrator with Template-Based Expert Routing<br>and 1M-Token Context Window for Sovereign AI Infrastructure**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Deployment](https://img.shields.io/badge/Deployment-Docker_%7C_LXC_%7C_Podman_%7C_Helm-2ea44f.svg)](#deployment-targets)
@@ -55,8 +55,8 @@ flowchart TD
     end
 
     subgraph Storage["Persistence Layer"]
-        Neo4j[("Neo4j<br/>Knowledge Graph")]
-        Chroma[("ChromaDB<br/>Vector Cache")]
+        Neo4j[("Neo4j<br/>Knowledge Graph<br/><i>Tier-3 Cold</i>")]
+        Chroma[("ChromaDB<br/>Vector Cache (L1)<br/><i>+ Tier-2 Semantic Memory</i>")]
         Kafka["Kafka<br/>Event Stream"]
         Valkey[("Valkey<br/>State & Sessions")]
         PG[("PostgreSQL<br/>Users & Checkpoints")]
