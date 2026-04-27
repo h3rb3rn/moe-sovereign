@@ -520,8 +520,15 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             # Agentic re-planning loop: 0 = disabled (single-pass), N = max re-plan iterations.
             "max_agentic_rounds":  int(tmpl.get("max_agentic_rounds", 0)),
             # Tier-2 semantic memory: embed evicted turns in ChromaDB, retrieve relevant context.
-            # Adds ~50ms overhead per request. Enable on templates where conversation depth matters.
-            "enable_semantic_memory": bool(tmpl.get("enable_semantic_memory", False)),
+            "enable_semantic_memory":       bool(tmpl.get("enable_semantic_memory", False)),
+            # Per-template memory tuning (0 = use global env-var default)
+            "semantic_memory_n_results":    int(tmpl.get("semantic_memory_n_results", 0)),
+            "semantic_memory_ttl_hours":    int(tmpl.get("semantic_memory_ttl_hours", 0)),
+            # Cross-session: retrieve relevant turns from past sessions of the same user.
+            # Scopes: "private" (own sessions), "team" (team-shared), "shared" (tenant-visible).
+            "enable_cross_session_memory":  bool(tmpl.get("enable_cross_session_memory", False)),
+            "cross_session_scopes":         list(tmpl.get("cross_session_scopes", ["private"])),
+            "cross_session_ttl_days":       int(tmpl.get("cross_session_ttl_days", 0)),
         }
     except Exception:
         return empty
@@ -2543,31 +2550,70 @@ async def _apply_semantic_memory(
     user_input: str,
     session_id: Optional[str],
     enabled: bool,
+    user_id: str = "",
+    team_ids: Optional[List[str]] = None,
+    cross_session_enabled: bool = False,
+    cross_session_scopes: Optional[List[str]] = None,
+    # Template-level memory tuning
+    n_results: int = 0,
+    ttl_hours: int = 0,
+    # User preference overrides (loaded from DB)
+    prefer_fresh: bool = False,
+    share_with_team: bool = False,
 ) -> List[Dict]:
     """Store evicted turns (Tier-2 write) and inject relevant past turns as warm context.
 
-    When enabled, evicted turns are embedded async (fire-and-forget).
-    Relevant turns are retrieved synchronously via ANN search and prepended to
-    kept_history as a warm context block so the LLM can reference them.
+    Privacy hierarchy:
+      - session: only current session turns (default)
+      - private cross-session: all sessions owned by user_id (scope=private)
+      - team cross-session: sessions shared within user's teams (scope=team)
+      - shared cross-session: tenant-visible knowledge (scope=shared)
 
-    Returns the (potentially extended) history list. Falls back to kept_history
-    on any error so this path never blocks or breaks the main pipeline.
+    User flags:
+      prefer_fresh     — disables cross-session; each session starts clean
+      share_with_team  — stores turns as scope=team so team members can retrieve them
     """
     if not enabled or not session_id:
         return kept_history
-    store = get_memory_store()
 
-    # Write: embed evicted turns in background (does not block the response)
+    from memory_retrieval import SCOPE_PRIVATE, SCOPE_TEAM, _N_RESULTS
+    store      = get_memory_store()
+    _team_ids  = team_ids or []
+    _scopes    = cross_session_scopes or [SCOPE_PRIVATE]
+    _n         = n_results or _N_RESULTS
+    store_scope = SCOPE_TEAM if (share_with_team and _team_ids) else SCOPE_PRIVATE
+
+    # Write: embed evicted turns in background (non-blocking)
     evicted = compute_evicted_turns(raw_history, kept_history)
     if evicted:
         async def _store_bg() -> None:
-            n = await store.store_turns(session_id, evicted)
+            n = await store.store_turns(
+                session_id, evicted,
+                user_id=user_id,
+                team_id=_team_ids[0] if _team_ids else "",
+                scope=store_scope,
+                ttl_hours=ttl_hours,
+            )
             if n:
                 PROM_SEMANTIC_MEMORY_STORED.inc(n)
         asyncio.create_task(_store_bg())
 
-    # Read: retrieve most relevant past turns for this query
-    retrieved = await store.retrieve_relevant(session_id, user_input)
+    # Read: current-session retrieval (always)
+    current_turns = await store.retrieve_relevant(session_id, user_input, n_results=_n)
+
+    # Read: cross-session retrieval (if enabled, user_id known, and user hasn't opted out)
+    cross_turns: List[Dict] = []
+    if cross_session_enabled and user_id and not prefer_fresh:
+        cross_turns = await store.retrieve_cross_session(
+            session_id=session_id,
+            query=user_input,
+            user_id=user_id,
+            team_ids=_team_ids,
+            allowed_scopes=_scopes,
+        )
+
+    # Merge
+    retrieved = store.merge_session_results(current_turns, cross_turns)
     if not retrieved:
         return kept_history
 
@@ -2576,9 +2622,13 @@ async def _apply_semantic_memory(
         return kept_history
 
     PROM_SEMANTIC_MEMORY_HITS.inc()
-    logger.info(f"💾 Semantic memory: injected {len(retrieved)} warm turns (session={session_id[:8]}…)")
+    cross_count = sum(1 for t in retrieved if t.get("cross"))
+    logger.info(
+        f"💾 Semantic memory: {len(retrieved)} warm turns "
+        f"({len(retrieved)-cross_count} session, {cross_count} cross-session) "
+        f"session={session_id[:8]}…"
+    )
 
-    # Prepend as a synthetic early turn-pair so the LLM treats it as prior conversation
     warm_messages: List[Dict] = [
         {"role": "user",      "content": warm_block},
         {"role": "assistant", "content": "[Acknowledged: I have access to these earlier conversation turns.]"},
@@ -6860,9 +6910,30 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _hist_turns = _tmpl_prompts.get("history_max_turns", 0) or None
     _hist_chars = _tmpl_prompts.get("history_max_chars", 0) or None
     history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
+    _sm_team_ids: List[str] = []
+    _sm_user_prefs: dict = {}
+    if _tmpl_prompts.get("enable_semantic_memory") and user_id:
+        try:
+            from admin_ui.database import (
+                get_user_teams        as _get_user_teams,
+                get_user_memory_prefs as _get_mem_prefs,
+            )
+            if _tmpl_prompts.get("enable_cross_session_memory"):
+                _sm_team_ids = await _get_user_teams(user_id)
+            _sm_user_prefs = await _get_mem_prefs(user_id)
+        except Exception:
+            pass
     history = await _apply_semantic_memory(
         raw_history, history, user_input, session_id,
         enabled=_tmpl_prompts.get("enable_semantic_memory", False),
+        user_id=user_id,
+        team_ids=_sm_team_ids,
+        cross_session_enabled=_tmpl_prompts.get("enable_cross_session_memory", False),
+        cross_session_scopes=_tmpl_prompts.get("cross_session_scopes", ["private"]),
+        n_results=_tmpl_prompts.get("semantic_memory_n_results", 0),
+        ttl_hours=_tmpl_prompts.get("semantic_memory_ttl_hours", 0),
+        prefer_fresh=_sm_user_prefs.get("prefer_fresh", False),
+        share_with_team=_sm_user_prefs.get("share_with_team", False),
     )
 
     # Native LLM: forward directly to endpoint, no MoE pipeline
@@ -7577,7 +7648,9 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
                                   user_id: str = "anon",
                                   api_key_id: str = "",
                                   session_id: str = None,
-                                  enable_semantic_memory: bool = False):
+                                  enable_semantic_memory: bool = False,
+                                  cross_session_enabled: bool = False,
+                                  cross_session_scopes: Optional[List[str]] = None):
     """Route pure text requests through the MoE agent pipeline."""
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
@@ -7622,9 +7695,30 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
         if m.get("role") in ("user", "assistant")
     ]
     history = _truncate_history(history_raw)
+    _sm_team_ids_h: List[str] = []
+    _sm_prefs_h:   dict      = {}
+    if enable_semantic_memory and user_id and user_id != "anon":
+        try:
+            from admin_ui.database import (
+                get_user_teams        as _gut_h,
+                get_user_memory_prefs as _gmp_h,
+            )
+            if cross_session_enabled:
+                _sm_team_ids_h = await _gut_h(user_id)
+            _sm_prefs_h = await _gmp_h(user_id)
+        except Exception:
+            pass
     history = await _apply_semantic_memory(
         history_raw, history, user_input, session_id,
         enabled=enable_semantic_memory,
+        user_id=user_id,
+        team_ids=_sm_team_ids_h,
+        cross_session_enabled=cross_session_enabled,
+        cross_session_scopes=cross_session_scopes or ["private"],
+        n_results=0,   # anthropic handler: use template default (passed via caller)
+        ttl_hours=0,
+        prefer_fresh=_sm_prefs_h.get("prefer_fresh", False),
+        share_with_team=_sm_prefs_h.get("share_with_team", False),
     )
 
     invoke_state = {
@@ -7967,7 +8061,9 @@ async def anthropic_messages(request: Request):
                                              user_id=_user_id,
                                              api_key_id=_api_key_id,
                                              session_id=session_id,
-                                             enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False))
+                                             enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False),
+                                             cross_session_enabled=_user_tmpl_prompts.get("enable_cross_session_memory", False),
+                                             cross_session_scopes=_user_tmpl_prompts.get("cross_session_scopes", ["private"]))
     except Exception as _exc:
         logger.error("Messages-Endpoint unbehandelte Exception (chat_id=%s): %s", chat_id, _exc, exc_info=True)
         asyncio.create_task(_deregister_active_request(chat_id))

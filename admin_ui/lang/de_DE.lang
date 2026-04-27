@@ -617,6 +617,12 @@
   "portal.threshold_label":   "Warn-Schwellwert:",
   "portal.alert_email_label": "Benachrichtigungs-E-Mail",
   "portal.alert_email_hint":  "Leer lassen = Profil-E-Mail wird verwendet.",
+  "portal.memory_header":               "Gesprächsgedächtnis",
+  "portal.memory_desc":                 "Steuere, wie das System deine vergangenen Gespräche nutzt.",
+  "portal.memory_prefer_fresh":         "Neustart bei jeder Session (Fresh Start)",
+  "portal.memory_prefer_fresh_hint":    "Jede Unterhaltung beginnt ohne Zugriff auf frühere Sessions. Empfohlen für vertrauliche Themen.",
+  "portal.memory_share_with_team":      "Gesprächskontext mit Team teilen",
+  "portal.memory_share_with_team_hint": "Deine Turns werden für Team-Mitglieder abrufbar gespeichert. Nur wirksam wenn das Template Cross-Session aktiviert hat.",
 
   "portal.my_templates_title":"Meine Experten-Templates",
   "portal.my_templates_desc": "Erstelle eigene Experten-Konfigurationen für die freigeschalteten Inferenz-Server. Du kannst diese Templates über deine API-Keys als <code>model</code>-Parameter verwenden.",

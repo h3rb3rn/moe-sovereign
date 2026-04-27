@@ -4553,6 +4553,34 @@ async def user_alerts_post(
     })
 
 
+@app.post("/user/memory-prefs", response_class=HTMLResponse)
+async def user_memory_prefs_post(
+    request: Request,
+    user_id:    str = Depends(require_user_login),
+    csrf_token: str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    form_data       = await request.form()
+    prefer_fresh    = form_data.get("memory_prefer_fresh")    == "1"
+    share_with_team = form_data.get("memory_share_with_team") == "1"
+    flash      = None
+    flash_type = "success"
+    try:
+        await db.set_user_memory_prefs(user_id, prefer_fresh=prefer_fresh, share_with_team=share_with_team)
+        flash = "Memory preferences saved"
+    except Exception as e:
+        flash      = f"Error: {e}"
+        flash_type = "danger"
+    ctx = await _user_portal_ctx(user_id)
+    return TEMPLATES.TemplateResponse(request, "user_portal.html", {
+        **ctx,
+        "page":       "profile",
+        "flash":      flash,
+        "flash_type": flash_type,
+        "csrf_token": get_csrf_token(request),
+    })
+
+
 @app.get("/user/usage", response_class=HTMLResponse)
 async def user_usage_page(request: Request, user_id: str = Depends(require_user_login)):
     ctx     = await _user_portal_ctx(user_id)

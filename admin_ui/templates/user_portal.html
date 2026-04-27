@@ -1559,6 +1559,44 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         </div>
       </div>
 
+      {# ─── MEMORY PREFERENCES ───────────────────────────────────────────── #}
+      <div class="card mt-3">
+        <div class="card-header bg-dark text-white">
+          <i class="bi bi-brain me-2"></i>{{ t(request, 'portal.memory_header') }}
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">{{ t(request, 'portal.memory_desc') }}</p>
+          <form method="post" action="/user/memory-prefs">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="mb-3">
+              <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" name="memory_prefer_fresh"
+                       id="memory_prefer_fresh" value="1"
+                       {% if user.memory_prefer_fresh %}checked{% endif %}>
+                <label class="form-check-label small fw-semibold" for="memory_prefer_fresh">
+                  {{ t(request, 'portal.memory_prefer_fresh') }}
+                </label>
+              </div>
+              <div class="form-text small ms-4">{{ t(request, 'portal.memory_prefer_fresh_hint') }}</div>
+            </div>
+            <div class="mb-3">
+              <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" name="memory_share_with_team"
+                       id="memory_share_with_team" value="1"
+                       {% if user.memory_share_with_team %}checked{% endif %}>
+                <label class="form-check-label small fw-semibold" for="memory_share_with_team">
+                  {{ t(request, 'portal.memory_share_with_team') }}
+                </label>
+              </div>
+              <div class="form-text small ms-4">{{ t(request, 'portal.memory_share_with_team_hint') }}</div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_settings') }}
+            </button>
+          </form>
+        </div>
+      </div>
+
       {# ─── MY TEMPLATES ─────────────────────────────────────────────────── #}
       {% elif page == "templates" %}
       <h5 class="mb-3"><i class="bi bi-diagram-3 me-2 text-primary"></i>{{ t(request, 'portal.my_templates_title') }}</h5>

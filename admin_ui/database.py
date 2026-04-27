@@ -290,6 +290,10 @@ CREATE TABLE IF NOT EXISTS team_budgets (
 CREATE INDEX IF NOT EXISTS idx_team_memberships_team ON team_memberships(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_memberships_user ON team_memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant ON tenant_memberships(tenant_id);
+
+-- Memory preferences: idempotent column additions for existing deployments
+ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_prefer_fresh       BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_share_with_team    BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
 
@@ -577,12 +581,45 @@ async def list_users() -> list[dict]:
             return await cur.fetchall()
 
 
+async def get_user_memory_prefs(user_id: str) -> dict:
+    """Return memory preference flags for a user. Defaults to False for both."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT memory_prefer_fresh, memory_share_with_team FROM users WHERE id=%s",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+    if not row:
+        return {"prefer_fresh": False, "share_with_team": False}
+    return {
+        "prefer_fresh":      bool(row.get("memory_prefer_fresh",    False)),
+        "share_with_team":   bool(row.get("memory_share_with_team", False)),
+    }
+
+
+async def set_user_memory_prefs(
+    user_id: str,
+    prefer_fresh: bool,
+    share_with_team: bool,
+) -> None:
+    """Persist memory preference flags for a user."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET memory_prefer_fresh=%s, memory_share_with_team=%s, "
+                "updated_at=%s WHERE id=%s",
+                (prefer_fresh, share_with_team, now_iso(), user_id),
+            )
+
+
 async def update_user(user_id: str, **kwargs) -> Optional[dict]:
     allowed = {
         "email", "display_name", "is_active", "is_admin", "role",
         "alert_enabled", "alert_threshold_pct", "alert_email", "last_alert_sent_at",
         "first_name", "last_name", "street_address", "postal_code", "city",
         "country", "date_of_birth", "gender",
+        "memory_prefer_fresh", "memory_share_with_team",
     }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:

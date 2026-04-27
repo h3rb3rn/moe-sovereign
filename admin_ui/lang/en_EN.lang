@@ -617,6 +617,12 @@
   "portal.threshold_label":   "Warning threshold:",
   "portal.alert_email_label": "Notification Email",
   "portal.alert_email_hint":  "Leave empty to use your profile email.",
+  "portal.memory_header":               "Conversation Memory",
+  "portal.memory_desc":                 "Control how the system uses your past conversations.",
+  "portal.memory_prefer_fresh":         "Fresh start for every session",
+  "portal.memory_prefer_fresh_hint":    "Each conversation starts without access to earlier sessions. Recommended for sensitive topics.",
+  "portal.memory_share_with_team":      "Share conversation context with team",
+  "portal.memory_share_with_team_hint": "Your turns are stored so team members can retrieve them. Only active when the template has cross-session enabled.",
 
   "portal.my_templates_title":"My Expert Templates",
   "portal.my_templates_desc": "Create your own expert configurations for unlocked inference servers. You can use these templates via your API keys as the <code>model</code> parameter.",
