@@ -648,37 +648,41 @@ class ConversationMemoryStore:
     ) -> list[dict]:
         """Merge current-session and cross-session retrieval results.
 
-        current — turns from the active session (higher priority, most recent)
-        cross   — turns from past sessions or team knowledge (lower priority)
-        n_max   — max total turns returned
+        Strategy: Recency-first + hard cap on cross-session turns.
 
-        # TODO(human): implement merge strategy.
-        # The infrastructure is complete — this is the design decision:
-        #
-        # Options to consider:
-        #   a) Recency-first: current session results always precede cross,
-        #      regardless of relevance score (cos_dist). Cross fills remaining slots.
-        #   b) Pure relevance: interleave both lists by cos_dist (lower = better).
-        #   c) Penalised relevance: multiply cross turn distances by a factor > 1
-        #      (e.g. 1.5×) to express that current-session hits are preferred at
-        #      equal relevance, without completely suppressing cross-session.
-        #   d) Hard cap: take all current hits + at most K cross hits (K=2 default).
-        #
-        # The "distance" field is populated for ANN hits; topic/keyword matches
-        # use distance=0.0 (treat as highest priority).
-        #
-        # Current and cross lists are already deduplicated by content fingerprint
-        # within their own retrieval pass. Deduplication across lists is needed here.
+        1. All current-session turns are included first, preserving temporal order.
+           Current turns can never be displaced by cross-session hits — this prevents
+           contradictions where an outdated historical fact would shadow a newer one.
+        2. Cross-session turns fill remaining slots up to _CROSS_SESSION_N.
+           They supplement context (e.g. project decisions from past sessions)
+           without overriding what was established in the active conversation.
+        3. Total result is capped at n_max.
+        4. Deduplication by content fingerprint across both lists.
         """
-        # TODO(human): replace with your implementation
-        seen: set[str] = set()
-        merged: list[dict] = []
-        for t in current + cross:
+        seen:    set[str]   = set()
+        merged:  list[dict] = []
+        cross_added = 0
+
+        # Pass 1: all current-session turns (unconditional)
+        for t in current:
             fp = hashlib.sha256(t.get("content", "")[:120].encode()).hexdigest()[:16]
             if fp not in seen:
                 seen.add(fp)
                 merged.append(t)
-        return merged[:n_max]
+
+        # Pass 2: cross-session turns up to cap
+        for t in cross:
+            if cross_added >= _CROSS_SESSION_N:
+                break
+            if len(merged) >= n_max:
+                break
+            fp = hashlib.sha256(t.get("content", "")[:120].encode()).hexdigest()[:16]
+            if fp not in seen:
+                seen.add(fp)
+                merged.append(t)
+                cross_added += 1
+
+        return merged
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
