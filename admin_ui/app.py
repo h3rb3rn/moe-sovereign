@@ -3950,12 +3950,17 @@ async def _user_portal_ctx(user_id: str) -> dict:
     perms = await db.get_permissions_map(user_id)
     model_endpoint_perms = perms.get("model_endpoint", [])
     is_expert_or_admin = (user or {}).get("role") in ("expert", "admin")
-    can_create_templates = is_expert_or_admin and bool(model_endpoint_perms)
-    can_create_cc_profiles = can_create_templates
+    has_template_feature   = "templates"   in perms.get("feature", [])
+    has_cc_feature         = "cc_profiles" in perms.get("feature", [])
+    has_conn_feature       = "connections" in perms.get("feature", [])
+    can_create_templates   = (is_expert_or_admin and bool(model_endpoint_perms)) or has_template_feature
+    can_create_cc_profiles = (is_expert_or_admin and bool(model_endpoint_perms)) or has_cc_feature
+    can_create_connections = is_expert_or_admin or has_conn_feature
     return {
-        "user":                   user,
-        "can_create_templates":   can_create_templates,
-        "can_create_cc_profiles": can_create_cc_profiles,
+        "user":                    user,
+        "can_create_templates":    can_create_templates,
+        "can_create_cc_profiles":  can_create_cc_profiles,
+        "can_create_connections":  can_create_connections,
     }
 
 
@@ -4128,7 +4133,7 @@ async def api_grant_permission(user_id: str, request: Request):
     ri = body.get("resource_id", "").strip()
     if not rt or not ri:
         raise HTTPException(status_code=400, detail="resource_type and resource_id are required")
-    valid_types = {"model_endpoint", "skill", "mcp_tool", "moe_mode", "cc_profile", "expert_template"}
+    valid_types = {"model_endpoint", "skill", "mcp_tool", "moe_mode", "cc_profile", "expert_template", "feature"}
     if rt not in valid_types:
         raise HTTPException(status_code=400, detail=f"resource_type muss einer von {valid_types} sein")
     perm = await db.grant_permission(user_id, rt, ri)
@@ -4194,6 +4199,12 @@ async def api_resources():
     skill_items   = [{"id": "*", "name": "* (Alle Skills)"}] + [{"id": s, "name": s} for s in skills]
     mcp_items     = [{"id": "*", "name": "* (Alle MCP Tools)"}] + [{"id": t, "name": t} for t in mcp_tools]
 
+    feature_items = [
+        {"id": "connections", "name": "API Connections (own)"},
+        {"id": "templates",   "name": "Expert Templates (own)"},
+        {"id": "cc_profiles", "name": "CC Profiles (own)"},
+    ]
+
     return {
         "expert_template": expert_tmpl_list,
         "cc_profile":      cc_profiles,
@@ -4201,6 +4212,7 @@ async def api_resources():
         "moe_mode":        ["native", "moe_orchestrated", "moe_reasoning"],
         "skill":           skill_items,
         "mcp_tool":        mcp_items,
+        "feature":         feature_items,
     }
 
 
@@ -4848,12 +4860,15 @@ async def user_revoke_key(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def _require_template_access(user_id: str, request: Request) -> dict:
-    """Raises 403 if the user does not have the role expert/admin or lacks model_endpoint permissions."""
+    """Raises 403 unless user has (expert/admin role + model_endpoint) or feature permission 'templates'."""
     user  = await db.get_user(user_id)
     perms = await db.get_permissions_map(user_id)
-    if not user or (user.get("role") not in ("expert", "admin")):
-        raise HTTPException(status_code=403, detail="Access denied: role 'expert' or 'admin' required")
-    if not perms.get("model_endpoint"):
+    is_expert_or_admin = user and user.get("role") in ("expert", "admin")
+    has_model_endpoint = bool(perms.get("model_endpoint"))
+    has_feature        = "templates" in perms.get("feature", [])
+    if not (is_expert_or_admin or has_feature):
+        raise HTTPException(status_code=403, detail="Access denied: role 'expert'/'admin' or feature 'templates' required")
+    if not has_model_endpoint and not has_feature:
         raise HTTPException(status_code=403, detail="Access denied: no inference server enabled")
     return {"user": user, "perms": perms}
 
@@ -4864,7 +4879,8 @@ async def user_templates_page(request: Request, user_id: str = Depends(require_u
     perms = await db.get_permissions_map(user_id)
     model_endpoint_perms = perms.get("model_endpoint", [])
     can_create_templates = (
-        (user or {}).get("role") in ("expert", "admin") and bool(model_endpoint_perms)
+        ((user or {}).get("role") in ("expert", "admin") and bool(model_endpoint_perms))
+        or "templates" in perms.get("feature", [])
     )
     if not can_create_templates:
         return RedirectResponse("/user/dashboard", status_code=303)
@@ -5081,12 +5097,15 @@ async def user_api_delete_template(tmpl_id: str, user_id: str = Depends(require_
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def _require_cc_profile_access(user_id: str, request) -> dict:
-    """Raises 403 if the user does not have the role expert/admin or lacks model_endpoint permissions."""
+    """Raises 403 unless user has (expert/admin role + model_endpoint) or feature permission 'cc_profiles'."""
     user  = await db.get_user(user_id)
     perms = await db.get_permissions_map(user_id)
-    if not user or (user.get("role") not in ("expert", "admin")):
-        raise HTTPException(status_code=403, detail="Access denied: role 'expert' or 'admin' required")
-    if not perms.get("model_endpoint"):
+    is_expert_or_admin = user and user.get("role") in ("expert", "admin")
+    has_model_endpoint = bool(perms.get("model_endpoint"))
+    has_feature        = "cc_profiles" in perms.get("feature", [])
+    if not (is_expert_or_admin or has_feature):
+        raise HTTPException(status_code=403, detail="Access denied: role 'expert'/'admin' or feature 'cc_profiles' required")
+    if not has_model_endpoint and not has_feature:
         raise HTTPException(status_code=403, detail="Access denied: no inference server enabled")
     return {"user": user, "perms": perms}
 
@@ -5116,7 +5135,10 @@ def _get_permitted_servers_for_user(perms: dict) -> list:
 async def user_cc_profiles_page(request: Request, user_id: str = Depends(require_user_login)):
     user  = await db.get_user(user_id)
     perms = await db.get_permissions_map(user_id)
-    can_create = (user or {}).get("role") in ("expert", "admin") and bool(perms.get("model_endpoint"))
+    can_create = (
+        ((user or {}).get("role") in ("expert", "admin") and bool(perms.get("model_endpoint")))
+        or "cc_profiles" in perms.get("feature", [])
+    )
     if not can_create:
         return RedirectResponse("/user/dashboard", status_code=303)
     default_id = (user or {}).get("default_cc_profile_id") or ""
@@ -5514,14 +5536,44 @@ async def api_admin_delete_cc_profile(profile_id: str):
     return {"ok": True}
 
 
+@app.get("/api/admin/user-connections/{user_id}", dependencies=[Depends(require_login)])
+async def api_admin_list_user_connections(user_id: str):
+    """Return all API connections for a user (admin view). API keys are never returned."""
+    conns = await db.list_user_connections(user_id)
+    safe = []
+    for c in conns:
+        entry = {k: v for k, v in c.items() if k != "api_key_enc"}
+        try:
+            entry["models_cache"] = json.loads(c.get("models_cache", "[]"))
+        except Exception:
+            entry["models_cache"] = []
+        safe.append(entry)
+    return safe
+
+
+@app.delete("/api/admin/user-connections/{user_id}/{conn_id}", dependencies=[Depends(require_login)])
+async def api_admin_delete_user_connection(user_id: str, conn_id: str):
+    """Delete a user's API connection and revoke related model_endpoint permissions."""
+    conn = await db.admin_get_user_connection(conn_id)
+    if not conn or conn["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    await db.delete_user_connection(conn_id, user_id)
+    await db.revoke_model_endpoints_by_node(user_id, conn["name"])
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True}
+
+
 # ─── User API Connections ─────────────────────────────────────────────────────
 
 
 async def _require_connections_access(user_id: str) -> dict:
-    """Raise 403 if the user does not have role 'expert' or 'admin'."""
-    user = await db.get_user(user_id)
-    if not user or user.get("role") not in ("expert", "admin"):
-        raise HTTPException(status_code=403, detail="Role 'expert' or 'admin' required")
+    """Raise 403 unless user has role 'expert'/'admin' or feature permission 'connections'."""
+    user  = await db.get_user(user_id)
+    perms = await db.get_permissions_map(user_id)
+    is_privileged = user and user.get("role") in ("expert", "admin")
+    has_feature   = "connections" in perms.get("feature", [])
+    if not (is_privileged or has_feature):
+        raise HTTPException(status_code=403, detail="Role 'expert'/'admin' or feature 'connections' required")
     return user
 
 
@@ -5626,11 +5678,13 @@ async def user_api_update_connection(
 
 @app.delete("/user/api/connections/{conn_id}")
 async def user_api_delete_connection(conn_id: str, user_id: str = Depends(require_user_login)):
-    """Delete a private API connection."""
+    """Delete a private API connection and revoke related model_endpoint permissions."""
     await _require_connections_access(user_id)
-    deleted = await db.delete_user_connection(conn_id, user_id)
-    if not deleted:
+    conn = await db.get_user_connection(conn_id, user_id)
+    if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    await db.delete_user_connection(conn_id, user_id)
+    await db.revoke_model_endpoints_by_node(user_id, conn["name"])
     await db.sync_user_to_redis(user_id)
     return {"ok": True}
 

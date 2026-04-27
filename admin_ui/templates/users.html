@@ -499,6 +499,7 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
     <li class="nav-item"><a class="nav-link active" href="#tab-stammdaten" data-bs-toggle="tab">{{ t(request, 'section.personal_data') }}</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-budget" data-bs-toggle="tab">Budget</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-perms" data-bs-toggle="tab">Permissions</a></li>
+    <li class="nav-item"><a class="nav-link" href="#tab-connections" data-bs-toggle="tab" onclick="loadAdminConnections('${uid}')">Connections</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-keys" data-bs-toggle="tab">API Keys</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-usage" data-bs-toggle="tab">Usage</a></li>
   </ul>
@@ -611,10 +612,10 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
     </div>
     ${(()=>{
       if (perms.length === 0) return '<p class="text-muted small text-center mb-3">No permissions assigned.</p>';
-      const TYPE_ORDER = ['expert_template','cc_profile','model_endpoint','skill','mcp_tool','moe_mode'];
-      const TYPE_COLOR = {expert_template:'success',cc_profile:'primary',model_endpoint:'info',moe_mode:'warning',skill:'secondary',mcp_tool:'dark'};
-      const TYPE_BG    = {expert_template:'#e8f5e9',cc_profile:'#e3f2fd',model_endpoint:'#e1f5fe',skill:'#f3e5f5',mcp_tool:'#e8eaf6',moe_mode:'#fff8e1'};
-      const TYPE_ICON  = {expert_template:'bi-collection-fill',cc_profile:'bi-person-badge-fill',model_endpoint:'bi-cpu-fill',skill:'bi-magic',mcp_tool:'bi-tools',moe_mode:'bi-gear'};
+      const TYPE_ORDER = ['feature','expert_template','cc_profile','model_endpoint','skill','mcp_tool','moe_mode'];
+      const TYPE_COLOR = {feature:'warning',expert_template:'success',cc_profile:'primary',model_endpoint:'info',moe_mode:'warning',skill:'secondary',mcp_tool:'dark'};
+      const TYPE_BG    = {feature:'#f9fbe7',expert_template:'#e8f5e9',cc_profile:'#e3f2fd',model_endpoint:'#e1f5fe',skill:'#f3e5f5',mcp_tool:'#e8eaf6',moe_mode:'#fff8e1'};
+      const TYPE_ICON  = {feature:'bi-toggles',expert_template:'bi-collection-fill',cc_profile:'bi-person-badge-fill',model_endpoint:'bi-cpu-fill',skill:'bi-magic',mcp_tool:'bi-tools',moe_mode:'bi-gear'};
       // Group perms by type
       const byType = {};
       for (const p of perms) {
@@ -802,6 +803,51 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
       </div>
     </div>
 
+    <!-- Section 6: User Features -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#f0f4c3;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_feature_collapse_${uid}" aria-expanded="false">
+        <i class="bi bi-toggles" style="color:#827717"></i>
+        <span class="small fw-bold">User Features</span>
+        <span class="text-muted small ms-1">— Direct rights to create own content</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
+      </div>
+      <div class="collapse" id="perm_feature_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          <p class="small text-muted mb-2">Grant without requiring the <code>expert</code> role. Users can then create their own API connections, templates, and CC profiles.</p>
+          ${(()=>{
+            const featurePerms = perms.filter(p => p.resource_type === 'feature');
+            const granted = {};
+            for (const p of featurePerms) granted[p.resource_id] = p.id;
+            const features = [
+              {id:'connections', label:'API Connections', desc:'Create &amp; manage own API connections', icon:'bi-plug-fill'},
+              {id:'templates',   label:'Expert Templates', desc:'Create &amp; manage own expert templates', icon:'bi-collection-fill'},
+              {id:'cc_profiles', label:'CC Profiles', desc:'Create &amp; manage own CC profiles', icon:'bi-person-badge-fill'},
+            ];
+            return features.map(f => {
+              const isGranted = f.id in granted;
+              const permId    = granted[f.id] || '';
+              const btnCls    = isGranted ? 'btn-success' : 'btn-outline-secondary';
+              const ico       = isGranted ? 'bi-toggle-on' : 'bi-toggle-off';
+              const lbl       = isGranted ? 'Enabled' : 'Disabled';
+              return \`<div class="d-flex align-items-center gap-3 mb-2 p-2 border rounded">
+                <i class="bi \${f.icon} text-success" style="font-size:1.1rem"></i>
+                <div class="flex-grow-1">
+                  <div class="small fw-semibold">\${f.label}</div>
+                  <div class="text-muted" style="font-size:.75rem">\${f.desc}</div>
+                </div>
+                <button class="btn btn-sm \${btnCls}"
+                        onclick="toggleFeaturePerm('\${uid}','\${f.id}',\${isGranted},'\${permId}','${name}')">
+                  <i class="bi \${ico} me-1"></i>\${lbl}
+                </button>
+              </div>\`;
+            }).join('');
+          })()}
+        </div>
+      </div>
+    </div>
+
     <!-- Advanced: MoE mode (rarely needed) -->
     <details class="mt-1">
       <summary class="small text-muted" style="cursor:pointer">
@@ -883,6 +929,13 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
     </a>
   </div>
 
+  <!-- Connections Tab -->
+  <div class="tab-pane" id="tab-connections">
+    <div id="admin-conn-list-${uid}" class="text-center py-3 text-muted small">
+      <i class="bi bi-plug me-1"></i>Click the tab to load connections…
+    </div>
+  </div>
+
   </div>`; // end tab-content
 
   document.getElementById('detailModalBody').innerHTML = html;
@@ -915,6 +968,59 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
   buildMultiDropdown('perm_mcp_wrap', 'perm_mcp_label',
     resources.mcp_tool || [],
     o => o.name || o.id);
+}
+
+async function loadAdminConnections(uid) {
+  const el = document.getElementById(`admin-conn-list-${uid}`);
+  if (!el) return;
+  el.innerHTML = '<div class="text-center py-2"><span class="spinner-border spinner-border-sm"></span></div>';
+  try {
+    const r = await fetch(`/api/admin/user-connections/${uid}`);
+    if (!r.ok) { el.innerHTML = '<div class="alert alert-danger small">Error loading connections</div>'; return; }
+    const conns = await r.json();
+    if (!conns.length) {
+      el.innerHTML = '<p class="text-muted text-center small py-3"><i class="bi bi-plug me-1"></i>No API connections.</p>';
+      return;
+    }
+    el.innerHTML = `<div class="table-responsive"><table class="table table-sm mb-0">
+      <thead class="table-light"><tr>
+        <th>Name</th><th>Display Name</th><th>Type</th><th>URL</th><th>Models</th><th>Created</th><th></th>
+      </tr></thead>
+      <tbody>${conns.map(c => `<tr>
+        <td><code class="small">${escHtml(c.name)}</code></td>
+        <td class="small">${escHtml(c.display_name||'')}</td>
+        <td><span class="badge bg-secondary" style="font-size:.65rem">${escHtml(c.api_type||'')}</span></td>
+        <td class="small text-truncate" style="max-width:180px" title="${escHtml(c.url||'')}">${escHtml(c.url||'')}</td>
+        <td class="small">${Array.isArray(c.models_cache)?c.models_cache.length:0}</td>
+        <td class="small text-muted">${c.created_at?String(c.created_at).slice(0,10):'—'}</td>
+        <td><button class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.1rem .4rem"
+                    onclick="deleteAdminConnection('${uid}','${c.id}','${escHtml(c.display_name||c.name)}')">
+              <i class="bi bi-trash"></i>
+            </button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  } catch(e) {
+    el.innerHTML = '<div class="alert alert-danger small">Error loading connections</div>';
+  }
+}
+
+async function deleteAdminConnection(uid, connId, connName) {
+  if (!confirm(`Delete connection "${connName}"?\n\nThis also removes all model_endpoint permissions that reference this connection.`)) return;
+  const r = await fetch(`/api/admin/user-connections/${uid}/${connId}`, {method: 'DELETE'});
+  if (r.ok) loadAdminConnections(uid);
+  else alert('Error deleting connection');
+}
+
+async function toggleFeaturePerm(uid, feature, isGranted, permId, name) {
+  if (isGranted && permId) {
+    await fetch(`/api/users/${uid}/permissions/${permId}`, {method: 'DELETE'});
+  } else if (!isGranted) {
+    await fetch(`/api/users/${uid}/permissions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({resource_type: 'feature', resource_id: feature})
+    });
+  }
+  openUserDetail(uid, name, 'tab-perms');
 }
 
 async function saveStammdaten(uid) {
