@@ -29,19 +29,26 @@ import re
 import time
 from typing import Optional
 
+import numpy as np
+
 import chromadb
 from chromadb.utils import embedding_functions
 
 logger = logging.getLogger(__name__)
 
 _CHROMA_HOST      = os.getenv("CHROMA_HOST", "")
-_CHROMA_PORT      = int(os.getenv("CHROMA_PORT", "8000"))
-_N_RESULTS        = int(os.getenv("SEMANTIC_MEMORY_N_RESULTS", "10"))   # increased from 5
-_MAX_CHARS        = int(os.getenv("SEMANTIC_MEMORY_MAX_CHARS", "4000"))
-_TTL_DAYS         = int(os.getenv("SEMANTIC_MEMORY_TTL_DAYS", "30"))
-# For sessions with few stored turns, retrieve all of them to avoid missing the needle.
-# In production with many turns, _N_RESULTS applies; for small test sessions, retrieve all.
-_SMALL_SESSION_THRESHOLD = int(os.getenv("SEMANTIC_MEMORY_SMALL_SESSION_THRESHOLD", "60"))
+_CHROMA_PORT            = int(os.getenv("CHROMA_PORT", "8000"))
+_N_RESULTS              = int(os.getenv("SEMANTIC_MEMORY_N_RESULTS", "10"))
+_MAX_CHARS              = int(os.getenv("SEMANTIC_MEMORY_MAX_CHARS", "4000"))
+_TTL_DAYS               = int(os.getenv("SEMANTIC_MEMORY_TTL_DAYS", "30"))
+_CROSS_SESSION_N        = int(os.getenv("SEMANTIC_MEMORY_CROSS_SESSION_N", "4"))
+# Deprecated: numpy path now runs for all session sizes; HNSW is last resort only.
+_SMALL_SESSION_THRESHOLD = int(os.getenv("SEMANTIC_MEMORY_SMALL_SESSION_THRESHOLD", "9999"))
+
+# Scope constants — stored in ChromaDB metadata
+SCOPE_PRIVATE = "private"   # only the owner (user_id) may retrieve
+SCOPE_TEAM    = "team"      # all members of the owning team
+SCOPE_SHARED  = "shared"    # team + explicitly linked Mandanten (tenants)
 
 # Embedding model: configurable via SEMANTIC_MEMORY_EMBED_MODEL env var.
 # Options:
@@ -270,13 +277,26 @@ class ConversationMemoryStore:
         session_id: str,
         turns: list[dict],
         base_turn_index: int = 0,
+        user_id: str = "",
+        team_id: str = "",
+        scope: str = SCOPE_PRIVATE,
+        ttl_hours: int = 0,
     ) -> int:
-        """Embed and store evicted turns. Returns number of turns stored."""
+        """Embed and store evicted turns. Returns number of turns stored.
+
+        scope controls who can retrieve this content in cross-session queries:
+          SCOPE_PRIVATE — only the owner (user_id)
+          SCOPE_TEAM    — all members of team_id
+          SCOPE_SHARED  — team + linked Mandanten (tenants)
+
+        ttl_hours overrides the global TTL (0 = use SEMANTIC_MEMORY_TTL_DAYS default).
+        """
         if not turns or not session_id:
             return 0
         try:
             return await asyncio.to_thread(
-                self._store_sync, session_id, turns, base_turn_index
+                self._store_sync, session_id, turns, base_turn_index,
+                user_id, team_id, scope, ttl_hours,
             )
         except Exception as exc:
             logger.warning(f"Semantic memory store error: {exc}")
@@ -287,35 +307,38 @@ class ConversationMemoryStore:
         session_id: str,
         turns: list[dict],
         base_turn_index: int,
+        user_id: str = "",
+        team_id: str = "",
+        scope: str = SCOPE_PRIVATE,
+        ttl_hours: int = 0,
     ) -> int:
         self._ensure_connected()
         docs, ids, metas = [], [], []
-        ts = int(time.time())
-        expire_at = ts + _TTL_DAYS * 86400
+        ts        = int(time.time())
+        ttl_secs  = ttl_hours * 3600 if ttl_hours > 0 else _TTL_DAYS * 86400
+        expire_at = ts + ttl_secs
 
         for i, turn in enumerate(turns):
             role    = turn.get("role", "user")
             content = turn.get("content", "")
-            # Skip compressed placeholders and empty turns
             if not content or content.strip() in ("[…]", ""):
                 continue
-            # Stable ID: session + position + content fingerprint
             fp = hashlib.sha256(
                 f"{session_id}:{base_turn_index + i}:{content[:120]}".encode()
             ).hexdigest()[:32]
-            # Extract keywords for hybrid retrieval fallback.
-            # Regex captures exact-match values (numbers, codes, proper nouns)
-            # that semantic embedding may miss due to paraphrasing.
             keywords = _extract_keywords(content)
             docs.append(content)
             ids.append(fp)
             metas.append({
                 "session_id":  session_id,
+                "user_id":     user_id,
+                "team_id":     team_id,
+                "scope":       scope,
                 "role":        role,
                 "turn_index":  base_turn_index + i,
                 "stored_at":   ts,
                 "expire_at":   expire_at,
-                "keywords":    keywords,  # space-separated for partial match queries
+                "keywords":    keywords,
             })
 
         if not docs:
@@ -355,29 +378,22 @@ class ConversationMemoryStore:
     ) -> list[dict]:
         self._ensure_connected()
 
-        # Guard: ChromaDB raises if n_results > collection size
-        total_count = self._collection.count()
-        if total_count == 0:
+        if self._collection.count() == 0:
             return []
 
-        # Query reformulation: strip interrogative prefix for better ANN matching.
         search_query = _reformulate_query(query)
-
-        # ── Retrieval strategy ────────────────────────────────────────────────
-        # ChromaDB's HNSW query can compute wrong distances when the embedding
-        # function's query vector format differs from expectations. For small
-        # SESSIONS (< threshold), we load ALL session turns and rank with numpy
-        # ourselves — bypassing HNSW entirely for guaranteed correct cosine.
-        # For large sessions, we fall back to HNSW which is acceptably accurate.
-        #
-        # IMPORTANT: use session-scoped count, not total collection count.
-        # The collection accumulates turns from many sessions; total_count would
-        # incorrectly trigger HNSW mode for small individual sessions.
-        now = int(time.time())
+        now          = int(time.time())
         seen_ids: set[str] = set()
-        turns: list[dict] = []
+        turns: list[dict]  = []
 
-        # Fetch all session docs to get the session-scoped count cheaply
+        # Fetch ALL session docs with embeddings upfront.
+        # We always rank with direct numpy cosine — bypassing HNSW entirely.
+        # Rationale: HNSW is an approximation optimised for millions of vectors.
+        # A session with 200 docs (depth=100) is trivial for numpy:
+        #   200 docs × 768 dim × 4 bytes ≈ 0.6 MB — ranking takes < 5 ms on CPU.
+        # HNSW missed low-frequency needles (number, person) at large depths
+        # because its graph structure biases toward high-degree "hub" vectors.
+        # Numpy guarantees exact cosine ranking regardless of session depth.
         raw = self._collection.get(
             where={"session_id": session_id},
             include=["documents", "metadatas", "embeddings"],
@@ -385,52 +401,42 @@ class ConversationMemoryStore:
         raw_docs   = raw.get("documents",  [])
         raw_metas  = raw.get("metadatas",  [])
         raw_embeds = raw.get("embeddings")
-        count = len(raw_docs)   # session-scoped count
+        count      = len(raw_docs)
 
         if count == 0:
             return []
 
-        if count <= _SMALL_SESSION_THRESHOLD:
-            # Direct retrieval: rank all session turns by cosine using numpy
-            if raw_embeds is not None and len(raw_embeds) > 0:
-                import numpy as np
-                # Embed query once with our EF (correct format guaranteed)
-                q_emb = _get_ef()([search_query])[0]
-                q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-9)
+        # ── Phase 1: Direct numpy cosine ranking (all session docs) ──────────
+        if raw_embeds is not None and len(raw_embeds) > 0:
+            q_emb  = _get_ef()([search_query])[0]
+            q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-9)
 
-                ranked = []
-                for doc, meta, emb in zip(raw_docs, raw_metas, raw_embeds):
-                    if meta.get("expire_at", 0) < now:
-                        continue
-                    e = np.array(emb, dtype=np.float32)
-                    e_norm = e / (np.linalg.norm(e) + 1e-9)
-                    cos_dist = float(1.0 - np.dot(q_norm, e_norm))
-                    ranked.append((cos_dist, doc, meta))
+            ranked = []
+            for doc, meta, emb in zip(raw_docs, raw_metas, raw_embeds):
+                if meta.get("expire_at", 0) < now:
+                    continue
+                e      = np.array(emb, dtype=np.float32)
+                e_norm = e / (np.linalg.norm(e) + 1e-9)
+                ranked.append((float(1.0 - np.dot(q_norm, e_norm)), doc, meta))
 
-                ranked.sort(key=lambda x: x[0])
-                # In direct-numpy mode: return ALL turns within threshold.
-                # build_warm_context_block will truncate to _MAX_CHARS anyway.
-                for cos_dist, doc, meta in ranked:
-                    if cos_dist > 0.75:
-                        break
-                    fp = hashlib.sha256(doc[:120].encode()).hexdigest()[:16]
-                    if fp in seen_ids:
-                        continue
-                    seen_ids.add(fp)
-                    turns.append({
-                        "role":       meta.get("role", "user"),
-                        "content":    doc,
-                        "turn_index": int(meta.get("turn_index", 0)),
-                        "distance":   round(cos_dist, 4),
-                    })
-            else:
-                # No embeddings returned — fall through to HNSW
-                count = _SMALL_SESSION_THRESHOLD + 1
-
-        if count > _SMALL_SESSION_THRESHOLD:
-            # HNSW-based ANN retrieval for large sessions
-            n = min(n_results, total_count)
-            results = self._collection.query(
+            ranked.sort(key=lambda x: x[0])
+            for cos_dist, doc, meta in ranked:
+                if cos_dist > 0.75:
+                    break
+                fp = hashlib.sha256(doc[:120].encode()).hexdigest()[:16]
+                if fp in seen_ids:
+                    continue
+                seen_ids.add(fp)
+                turns.append({
+                    "role":       meta.get("role", "user"),
+                    "content":    doc,
+                    "turn_index": int(meta.get("turn_index", 0)),
+                    "distance":   round(cos_dist, 4),
+                })
+        else:
+            # Embeddings unavailable (ChromaDB storage issue) — HNSW last resort
+            n = min(n_results, self._collection.count())
+            results   = self._collection.query(
                 query_texts=[search_query],
                 n_results=n,
                 where={"session_id": session_id},
@@ -440,9 +446,7 @@ class ConversationMemoryStore:
             metas     = (results.get("metadatas")  or [[]])[0]
             distances = (results.get("distances")  or [[]])[0]
             for doc, meta, dist in zip(docs, metas, distances):
-                if meta.get("expire_at", 0) < now:
-                    continue
-                if dist > 0.75:
+                if meta.get("expire_at", 0) < now or dist > 0.75:
                     continue
                 fp = hashlib.sha256(doc[:120].encode()).hexdigest()[:16]
                 if fp in seen_ids:
@@ -455,35 +459,27 @@ class ConversationMemoryStore:
                     "distance":   round(dist, 4),
                 })
 
-        # ── Phase 2: Topic-overlap fallback ──────────────────────────────────
-        # For recall questions ("Was ist meine Glückszahl?"), nomic-embed-text
-        # may rank other questions higher than the matching answer.
-        # Fallback: extract meaningful words from the reformulated query and look
-        # for stored turns containing those words — a simple text overlap that
-        # reliably finds the injected fact regardless of embedding quality.
-        # Always run topic-overlap: adds needle to top even when numpy ranking
-        # already returned many turns. build_warm_context_block truncates to
-        # _MAX_CHARS so extra entries are safe.
+        # ── Phase 2: Topic-overlap fallback (always, all session docs) ────────
+        # Runs unconditionally regardless of session depth.
+        # Ensures the needle is found even when ANN similarity is low
+        # (e.g. "Glückszahl" query matching "Meine Glückszahl ist 7342").
         topic_words = _topic_words(search_query)
         if topic_words:
             try:
-                if count <= _SMALL_SESSION_THRESHOLD:
-                    # Direct scan: already have raw docs from Phase 1
-                    for doc, meta in zip(raw_docs, raw_metas):
-                        if meta.get("expire_at", 0) < now:
-                            continue
-                        fp = hashlib.sha256(doc[:120].encode()).hexdigest()[:16]
-                        if fp in seen_ids:
-                            continue
-                        doc_lower = doc.lower()
-                        if any(w in doc_lower for w in topic_words):
-                            seen_ids.add(fp)
-                            turns.append({
-                                "role":       meta.get("role", "user"),
-                                "content":    doc,
-                                "turn_index": int(meta.get("turn_index", 0)),
-                                "distance":   0.0,  # topic-overlap match
-                            })
+                for doc, meta in zip(raw_docs, raw_metas):
+                    if meta.get("expire_at", 0) < now:
+                        continue
+                    fp = hashlib.sha256(doc[:120].encode()).hexdigest()[:16]
+                    if fp in seen_ids:
+                        continue
+                    if any(w in doc.lower() for w in topic_words):
+                        seen_ids.add(fp)
+                        turns.append({
+                            "role":       meta.get("role", "user"),
+                            "content":    doc,
+                            "turn_index": int(meta.get("turn_index", 0)),
+                            "distance":   0.0,
+                        })
             except Exception as _te:
                 logger.debug(f"Topic-overlap fallback error: {_te}")
 
@@ -523,6 +519,166 @@ class ConversationMemoryStore:
 
         turns.sort(key=lambda t: t["turn_index"])
         return turns
+
+    # ── Cross-session retrieval ───────────────────────────────────────────────
+
+    async def retrieve_cross_session(
+        self,
+        session_id: str,
+        query: str,
+        user_id: str,
+        team_ids: list[str],
+        allowed_scopes: list[str],
+        n_results: int = _CROSS_SESSION_N,
+    ) -> list[dict]:
+        """Retrieve semantically relevant turns from OTHER sessions owned by
+        user_id (private) or shared within their teams (team / shared scope).
+
+        Current session (session_id) is always excluded — it is handled by
+        retrieve_relevant() which has higher priority in the merge step.
+
+        Privacy guarantee: only documents whose (user_id, team_id, scope) match
+        the caller's identity and allowed_scopes are returned. No cross-user leakage.
+        """
+        if not user_id or not allowed_scopes:
+            return []
+        try:
+            return await asyncio.to_thread(
+                self._retrieve_cross_session_sync,
+                session_id, query, user_id, team_ids, allowed_scopes, n_results,
+            )
+        except Exception as exc:
+            logger.warning(f"Cross-session retrieve error: {exc}")
+            return []
+
+    def _retrieve_cross_session_sync(
+        self,
+        session_id: str,
+        query: str,
+        user_id: str,
+        team_ids: list[str],
+        allowed_scopes: list[str],
+        n_results: int,
+    ) -> list[dict]:
+        self._ensure_connected()
+        now          = int(time.time())
+        search_query = _reformulate_query(query)
+        all_docs: list[str]  = []
+        all_metas: list[dict] = []
+        all_embeds: list      = []
+
+        def _collect(raw: dict) -> None:
+            docs   = raw.get("documents",  []) or []
+            metas  = raw.get("metadatas",  []) or []
+            embeds = raw.get("embeddings") or [None] * len(docs)
+            for doc, meta, emb in zip(docs, metas, embeds):
+                if meta.get("session_id") == session_id:   # exclude current
+                    continue
+                if meta.get("expire_at", 0) < now:
+                    continue
+                all_docs.append(doc)
+                all_metas.append(meta)
+                all_embeds.append(emb)
+
+        # Private: own sessions, excluding current
+        if SCOPE_PRIVATE in allowed_scopes and user_id:
+            _collect(self._collection.get(
+                where={"$and": [{"user_id": user_id}, {"scope": SCOPE_PRIVATE}]},
+                include=["documents", "metadatas", "embeddings"],
+            ))
+
+        # Team-shared: sessions published by any of the user's teams
+        if SCOPE_TEAM in allowed_scopes and team_ids:
+            for tid in team_ids:
+                _collect(self._collection.get(
+                    where={"$and": [{"team_id": tid}, {"scope": SCOPE_TEAM}]},
+                    include=["documents", "metadatas", "embeddings"],
+                ))
+
+        # Shared: tenant-visible knowledge (team + linked Mandanten)
+        if SCOPE_SHARED in allowed_scopes and team_ids:
+            for tid in team_ids:
+                _collect(self._collection.get(
+                    where={"$and": [{"team_id": tid}, {"scope": SCOPE_SHARED}]},
+                    include=["documents", "metadatas", "embeddings"],
+                ))
+
+        if not all_docs:
+            return []
+
+        # Numpy cosine ranking across all collected docs
+        valid = [(doc, meta, emb) for doc, meta, emb in zip(all_docs, all_metas, all_embeds) if emb is not None]
+        if not valid:
+            return []
+
+        q_emb  = _get_ef()([search_query])[0]
+        q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-9)
+        ranked = []
+        for doc, meta, emb in valid:
+            e      = np.array(emb, dtype=np.float32)
+            e_norm = e / (np.linalg.norm(e) + 1e-9)
+            ranked.append((float(1.0 - np.dot(q_norm, e_norm)), doc, meta))
+
+        ranked.sort(key=lambda x: x[0])
+        seen:  set[str]   = set()
+        turns: list[dict] = []
+        for cos_dist, doc, meta in ranked:
+            if cos_dist > 0.75 or len(turns) >= n_results:
+                break
+            fp = hashlib.sha256(doc[:120].encode()).hexdigest()[:16]
+            if fp in seen:
+                continue
+            seen.add(fp)
+            turns.append({
+                "role":       meta.get("role", "user"),
+                "content":    doc,
+                "turn_index": int(meta.get("turn_index", 0)),
+                "distance":   round(cos_dist, 4),
+                "session_id": meta.get("session_id", ""),
+                "scope":      meta.get("scope", SCOPE_PRIVATE),
+                "cross":      True,   # marker for warm-context builder
+            })
+        return turns
+
+    @staticmethod
+    def merge_session_results(
+        current: list[dict],
+        cross: list[dict],
+        n_max: int = 10,
+    ) -> list[dict]:
+        """Merge current-session and cross-session retrieval results.
+
+        current — turns from the active session (higher priority, most recent)
+        cross   — turns from past sessions or team knowledge (lower priority)
+        n_max   — max total turns returned
+
+        # TODO(human): implement merge strategy.
+        # The infrastructure is complete — this is the design decision:
+        #
+        # Options to consider:
+        #   a) Recency-first: current session results always precede cross,
+        #      regardless of relevance score (cos_dist). Cross fills remaining slots.
+        #   b) Pure relevance: interleave both lists by cos_dist (lower = better).
+        #   c) Penalised relevance: multiply cross turn distances by a factor > 1
+        #      (e.g. 1.5×) to express that current-session hits are preferred at
+        #      equal relevance, without completely suppressing cross-session.
+        #   d) Hard cap: take all current hits + at most K cross hits (K=2 default).
+        #
+        # The "distance" field is populated for ANN hits; topic/keyword matches
+        # use distance=0.0 (treat as highest priority).
+        #
+        # Current and cross lists are already deduplicated by content fingerprint
+        # within their own retrieval pass. Deduplication across lists is needed here.
+        """
+        # TODO(human): replace with your implementation
+        seen: set[str] = set()
+        merged: list[dict] = []
+        for t in current + cross:
+            fp = hashlib.sha256(t.get("content", "")[:120].encode()).hexdigest()[:16]
+            if fp not in seen:
+                seen.add(fp)
+                merged.append(t)
+        return merged[:n_max]
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 

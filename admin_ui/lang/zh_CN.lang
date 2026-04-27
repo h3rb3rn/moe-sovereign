@@ -617,6 +617,12 @@
   "portal.threshold_label":   "警告阈值：",
   "portal.alert_email_label": "通知邮件",
   "portal.alert_email_hint":  "留空则使用个人资料邮件。",
+  "portal.memory_header":               "对话记忆",
+  "portal.memory_desc":                 "控制系统如何使用您过去的对话。",
+  "portal.memory_prefer_fresh":         "每次会话全新开始",
+  "portal.memory_prefer_fresh_hint":    "每次对话不访问之前的会话记录。适合涉及敏感话题时使用。",
+  "portal.memory_share_with_team":      "与团队共享对话上下文",
+  "portal.memory_share_with_team_hint": "您的对话轮次将被存储，供团队成员检索。仅在模板启用跨会话记忆时生效。",
 
   "portal.my_templates_title":"我的专家模板",
   "portal.my_templates_desc": "为已解锁的推理服务器创建自定义专家配置。可通过API密钥将这些模板用作 <code>model</code> 参数。",

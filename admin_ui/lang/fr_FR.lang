@@ -617,6 +617,12 @@
   "portal.threshold_label":   "Seuil d'alerte :",
   "portal.alert_email_label": "E-mail de notification",
   "portal.alert_email_hint":  "Laisser vide = utiliser l'e-mail du profil.",
+  "portal.memory_header":               "Mémoire conversationnelle",
+  "portal.memory_desc":                 "Contrôlez comment le système utilise vos conversations passées.",
+  "portal.memory_prefer_fresh":         "Nouvelle session à chaque fois (Fresh Start)",
+  "portal.memory_prefer_fresh_hint":    "Chaque conversation démarre sans accès aux sessions précédentes. Recommandé pour les sujets sensibles.",
+  "portal.memory_share_with_team":      "Partager le contexte avec l'équipe",
+  "portal.memory_share_with_team_hint": "Vos tours sont stockés pour que les membres de l'équipe puissent les récupérer. Actif uniquement si le template a activé la mémoire inter-sessions.",
 
   "portal.my_templates_title":"Mes templates experts",
   "portal.my_templates_desc": "Créez vos propres configurations experts pour les serveurs d'inférence débloqués.",
