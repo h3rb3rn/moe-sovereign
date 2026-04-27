@@ -951,3 +951,78 @@ MOE_TEMPLATE=moe-n04-qwen3-35b-wcc \
 GAIA_QUESTION_TIMEOUT=600 \
   python3 benchmarks/gaia_runner.py
 ```
+
+---
+
+## MRCR-lite — Semantic Memory Recall Benchmark
+
+> **Purpose:** Measures how far back in a conversation the system can reliably retrieve specific injected facts ("needles"), with and without Tier-2 Semantic Memory enabled.
+
+### Background
+
+Standard LLMs are limited to their native context window (typically 4k–32k tokens for local models). MoE Sovereign's **Tier-2 Semantic Memory** (ChromaDB ANN retrieval) extends this by embedding evicted conversation turns and retrieving the most relevant ones at query time.
+
+MRCR-lite quantifies this improvement: the same recall question is asked after 5, 10, 20, and 50 filler turns, under two conditions — with and without `enable_semantic_memory: true` in the template config.
+
+### Architecture: Three Memory Tiers
+
+```
+Tier 1 — HOT   (~6k tokens in LLM context)   Last N turns verbatim
+Tier 2 — WARM  (ChromaDB, disk-bound)         ANN retrieval of evicted turns
+Tier 3 — COLD  (Neo4j, disk-bound)            GraphRAG entity/fact extraction
+```
+
+### Test Protocol
+
+A synthetic conversation is built as:
+
+```
+[filler_0 … filler_{depth-1}]   ← oldest (evicted from hot window)
+[NEEDLE: "My lucky number is 7342."]
+[filler_{depth} … filler_{depth+2}]   ← recent (stays in hot window)
+RECALL QUESTION: "What was my lucky number?"
+```
+
+Needle types: `number`, `technical`, `date`, `name/person`
+Depths tested: 5, 10, 20, 50 filler turns before the recall question
+Scoring: `1.0` exact recall · `0.5` partial · `0.0` miss
+
+### Running the Benchmark
+
+```bash
+# With default template
+MOE_API_KEY=moe-sk-... python3 benchmarks/mrcr_lite_runner.py
+
+# A/B test: compare two templates (one with, one without semantic_memory)
+MOE_API_KEY=moe-sk-... MOE_TEMPLATE=moe-reference-30b-balanced \
+  python3 benchmarks/mrcr_lite_runner.py
+
+# Limit depth for quick smoke test
+MOE_API_KEY=moe-sk-... MRCR_MAX_DEPTH=10 \
+  python3 benchmarks/mrcr_lite_runner.py
+```
+
+### Enabling Semantic Memory on a Template
+
+In the Admin UI → Templates → Edit → `config_json`:
+
+```json
+{
+  "enable_semantic_memory": true
+}
+```
+
+This activates Tier-2 retrieval for that template. No model change required.
+
+### Expected Result Pattern
+
+| Depth | Without Semantic Memory | With Semantic Memory |
+|------:|------------------------|----------------------|
+|     5 | ~1.0 (in hot window)   | ~1.0                 |
+|    10 | ~0.5 (edge of window)  | ~0.9                 |
+|    20 | ~0.1 (evicted)         | ~0.8                 |
+|    50 | ~0.0 (evicted)         | ~0.7                 |
+
+> Results will vary by model and template. Run `benchmarks/mrcr_lite_runner.py` to get actual measurements for your deployment.
+
+<!-- Results injected after benchmark completion -->

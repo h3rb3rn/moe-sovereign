@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "description": "Overhead-Benchmark Suite: gleiche Prompts, direkter vs. MoE-Aufruf. Kategorien nach Artificial Analysis Intelligence Index: reasoning, knowledge, coding, math, instruction_following.",
+  "prompts": [
+    {
+      "id": "r01",
+      "category": "reasoning",
+      "prompt": "Ein Zug fährt von A nach B mit 120 km/h. Ein anderer Zug fährt gleichzeitig von B nach A mit 80 km/h. Die Strecke ist 500 km. Nach wie vielen Minuten treffen sie sich, und wie weit ist der Treffpunkt von A entfernt?"
+    },
+    {
+      "id": "r02",
+      "category": "reasoning",
+      "prompt": "In einem Dorf lügen alle Ritter an Montagen und an allen anderen Tagen sagen sie die Wahrheit. Alle Bauern lügen an Donnerstagen und sagen sonst die Wahrheit. Du triffst eine Person, die sagt: 'Gestern habe ich gelogen.' Welcher Tag ist heute, und ist die Person ein Ritter oder ein Bauer?"
+    },
+    {
+      "id": "k01",
+      "category": "knowledge",
+      "prompt": "Erkläre den Unterschied zwischen BGB § 823 und § 280 in Bezug auf Schadensersatzansprüche bei Vertragsverletzung vs. unerlaubter Handlung. Wann gilt welche Norm?"
+    },
+    {
+      "id": "k02",
+      "category": "knowledge",
+      "prompt": "Was ist der Unterschied zwischen Hashimoto-Thyreoiditis und Morbus Basedow? Erkläre Ätiologie, Symptomatik und Behandlungsansätze beider Erkrankungen."
+    },
+    {
+      "id": "c01",
+      "category": "coding",
+      "prompt": "Schreibe eine Python-Funktion, die prüft ob ein gegebener String eine valide E-Mail-Adresse ist. Berücksichtige RFC 5322 Grundregeln. Füge Unit-Tests hinzu."
+    },
+    {
+      "id": "c02",
+      "category": "coding",
+      "prompt": "Erkläre eine SQL-Injection-Schwachstelle in diesem Code und zeige wie man sie behebt:\n```python\ndef get_user(username):\n    query = f\"SELECT * FROM users WHERE username = '{username}'\"\n    return db.execute(query)\n```"
+    },
+    {
+      "id": "m01",
+      "category": "math",
+      "prompt": "Berechne das Integral von f(x) = x² * e^(2x) über den Bereich [0, 1]. Zeige alle Rechenschritte."
+    },
+    {
+      "id": "m02",
+      "category": "math",
+      "prompt": "Ein Rechenzentrum verbraucht 45 kW Dauerleistung. Strom kostet 0,32 €/kWh. Wie hoch sind die Jahresstromkosten? Wie viele CO₂-Äquivalente entstehen (Emissionsfaktor: 420 g CO₂/kWh)?"
+    },
+    {
+      "id": "i01",
+      "category": "instruction_following",
+      "prompt": "Fasse diesen Text in genau 3 Stichpunkten zusammen, jeder Stichpunkt maximal 10 Wörter:\n\"Transformer-Architekturen haben die natürliche Sprachverarbeitung revolutioniert. Sie nutzen Self-Attention-Mechanismen, um Beziehungen zwischen allen Token eines Textes gleichzeitig zu modellieren, anstatt sie sequenziell zu verarbeiten wie frühere RNN-Modelle. Dies ermöglicht paralleles Training auf GPUs und führt zu deutlich besseren Ergebnissen bei Übersetzung, Zusammenfassung und Textgenerierung.\""
+    },
+    {
+      "id": "i02",
+      "category": "instruction_following",
+      "prompt": "Antworte ausschließlich in folgendem JSON-Format ohne weitere Erklärungen:\n{\"hauptthema\": string, \"schwierigkeitsgrad\": \"leicht|mittel|schwer\", \"geschaetzte_lernzeit_minuten\": integer}\n\nFür das Thema: Quantenverschränkung und ihre Anwendung in der Quantenkryptographie."
+    }
+  ]
+}

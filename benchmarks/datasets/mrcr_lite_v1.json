@@ -1,0 +1,68 @@
+{
+  "version": "1.0",
+  "description": "MRCR-lite: synthetic multi-turn recall benchmark for MoE Sovereign. Tests Tier-2 semantic memory at varying needle depths and interference levels.",
+  "needles": [
+    {
+      "id": "n01",
+      "type": "number",
+      "inject_template": "Meine Glückszahl für dieses Jahr ist {value}.",
+      "recall_question": "Was ist meine Glückszahl für dieses Jahr?",
+      "value": "7342",
+      "category": "personal_fact"
+    },
+    {
+      "id": "n02",
+      "type": "name",
+      "inject_template": "Der Projektcode für unsere neue Initiative lautet {value}.",
+      "recall_question": "Wie lautet der Projektcode für unsere neue Initiative?",
+      "value": "SOVEREIGN-AMBER",
+      "category": "project_fact"
+    },
+    {
+      "id": "n03",
+      "type": "technical",
+      "inject_template": "Unser interner API-Endpunkt für den Staging-Server ist {value}.",
+      "recall_question": "Was ist der interne API-Endpunkt für den Staging-Server?",
+      "value": "http://api-staging.internal:9977/v2",
+      "category": "technical_fact"
+    },
+    {
+      "id": "n04",
+      "type": "date",
+      "inject_template": "Das geplante Go-Live-Datum für Phase 2 ist der {value}.",
+      "recall_question": "Wann ist das geplante Go-Live-Datum für Phase 2?",
+      "value": "14. November 2026",
+      "category": "temporal_fact"
+    },
+    {
+      "id": "n05",
+      "type": "person",
+      "inject_template": "Die Ansprechpartnerin bei unserem Kunden Nexalin GmbH ist {value}.",
+      "recall_question": "Wer ist die Ansprechpartnerin bei der Nexalin GmbH?",
+      "value": "Dr. Katharina Breitfeld",
+      "category": "person_fact"
+    }
+  ],
+  "filler_turns": [
+    {"user": "Erkläre kurz, wie neuronale Netze funktionieren.", "assistant": "Neuronale Netze bestehen aus Schichten von Knoten (Neuronen), die durch gewichtete Verbindungen miteinander verknüpft sind. Das Training passt diese Gewichte an, um Muster in Daten zu erkennen."},
+    {"user": "Was ist der Unterschied zwischen supervised und unsupervised learning?", "assistant": "Supervised Learning nutzt gelabelte Trainingsdaten, unsupervised Learning findet Strukturen ohne Labels — z.B. Clustering."},
+    {"user": "Erkläre Transformer-Architekturen in zwei Sätzen.", "assistant": "Transformer nutzen Self-Attention, um Abhängigkeiten zwischen Tokens unabhängig von ihrer Position zu modellieren. Dies macht paralleles Training möglich und ermöglicht sehr lange Kontextfenster."},
+    {"user": "Wie funktioniert Backpropagation?", "assistant": "Backpropagation berechnet Gradienten durch die Kettenregel vom Ausgabe-Layer rückwärts durch das Netz, um Gewichte per Gradientenabstieg anzupassen."},
+    {"user": "Was sind die Vorteile von Quantisierung?", "assistant": "Quantisierung reduziert Modellgröße und Inferenzlatenz, indem Gewichte von Float32 auf Int8/Int4 komprimiert werden — mit minimalem Qualitätsverlust bei großen Modellen."},
+    {"user": "Erkläre den Begriff 'Attention Head'.", "assistant": "Ein Attention Head ist ein paralleler Self-Attention-Mechanismus. Mehrere Heads lernen unterschiedliche Aspekte der Token-Beziehungen, ihre Outputs werden konkateniert."},
+    {"user": "Was ist Gradient Clipping?", "assistant": "Gradient Clipping begrenzt die Norm der Gradienten auf einen Maximalwert, um explodierende Gradienten bei tiefen Netzen zu verhindern."},
+    {"user": "Was bedeutet KV-Cache?", "assistant": "Der KV-Cache speichert berechnete Key-Value-Paare aus früheren Tokens, sodass bei der Inferenz nur neue Tokens berechnet werden müssen — deutliche Latenzreduktion."},
+    {"user": "Was ist LoRA?", "assistant": "LoRA (Low-Rank Adaptation) fügt trainierbare niedrig-dimensionale Matrizen zu vortrainierten Gewichten hinzu, sodass Fine-Tuning mit einem Bruchteil der Parameter möglich wird."},
+    {"user": "Erkläre Flash Attention.", "assistant": "Flash Attention optimiert den Standard-Attention-Algorithmus durch blockweise Verarbeitung im SRAM, was Speichernutzung von O(n²) auf O(n) reduziert."},
+    {"user": "Was ist ein Mixture-of-Experts-Modell?", "assistant": "MoE-Modelle aktivieren pro Token nur einen Bruchteil der Parameter (Experten), was sehr große Modelle bei konstanter Inferenzlatenz ermöglicht."},
+    {"user": "Was unterscheidet GPT-4 von früheren Modellen?", "assistant": "GPT-4 ist multimodal, hat ein deutlich größeres Kontextfenster, besseres Reasoning und wurde mit RLHF stärker auf hilfreiche Antworten ausgerichtet."},
+    {"user": "Erkläre RLHF.", "assistant": "Reinforcement Learning from Human Feedback trainiert zuerst ein Reward-Modell aus menschlichen Präferenz-Ratings, dann optimiert PPO das Sprachmodell gegen dieses Reward-Signal."},
+    {"user": "Was ist Constitutional AI?", "assistant": "Constitutional AI (Anthropic) nutzt einen Satz von Prinzipien, gegen die das Modell eigene Antworten bewertet und iterativ verbessert — reduziert Abhängigkeit von menschlichem Feedback."},
+    {"user": "Was ist VRAM und warum ist es ein Engpass?", "assistant": "VRAM ist der dedizierte Speicher der GPU. Bei LLMs muss das gesamte Modell (Gewichte + KV-Cache) in VRAM passen — bei 70B-Modellen sind das 40-80 GB."}
+  ],
+  "test_matrix": {
+    "depths": [5, 10, 20, 50, 100],
+    "conditions": ["with_prepopulation", "without_prepopulation"],
+    "repetitions": 2
+  }
+}
