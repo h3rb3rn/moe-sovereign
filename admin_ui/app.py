@@ -4625,6 +4625,82 @@ async def user_budget_api(request: Request, user_id: str = Depends(require_user_
     }
 
 
+@app.get("/user/api/live/my-requests")
+async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
+    """Return the current user's active and recently completed requests from Valkey.
+
+    Active requests come from moe:active:* keys; completed requests from the
+    moe:admin:completed sorted set. Both are filtered strictly to this user.
+    """
+    now = datetime.now(timezone.utc)
+    active: list[dict] = []
+    recent: list[dict] = []
+    _safe_fields_active    = ("chat_id", "model", "moe_mode", "template_name",
+                               "backend_model", "backend_host", "started_at",
+                               "duration_s", "key_label", "key_prefix")
+    _safe_fields_completed = ("chat_id", "model", "moe_mode", "template_name",
+                               "backend_model", "backend_host", "started_at",
+                               "ended_at", "status", "key_label")
+    try:
+        r = await db._get_redis()
+
+        # Active requests
+        keys: list[str] = []
+        async for key in r.scan_iter("moe:active:*"):
+            keys.append(key)
+        if keys:
+            for raw in await r.mget(*keys):
+                if not raw:
+                    continue
+                try:
+                    meta = json.loads(raw)
+                    if meta.get("user_id") != user_id:
+                        continue
+                    started = meta.get("started_at", "")
+                    if started:
+                        try:
+                            st = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                            meta["duration_s"] = round((now - st).total_seconds(), 1)
+                        except Exception:
+                            meta["duration_s"] = None
+                    active.append({k: meta.get(k) for k in _safe_fields_active})
+                except Exception:
+                    pass
+
+        # Recently completed (global sorted set, user-filtered)
+        try:
+            for raw in await r.zrevrange("moe:admin:completed", 0, 199):
+                try:
+                    meta = json.loads(raw)
+                    if meta.get("user_id") != user_id:
+                        continue
+                    entry = {k: meta.get(k) for k in _safe_fields_completed}
+                    if entry.get("started_at") and entry.get("ended_at"):
+                        try:
+                            st = datetime.fromisoformat(entry["started_at"].replace("Z", "+00:00"))
+                            en = datetime.fromisoformat(entry["ended_at"].replace("Z", "+00:00"))
+                            entry["duration_s"] = round((en - st).total_seconds(), 1)
+                        except Exception:
+                            entry["duration_s"] = None
+                    recent.append(entry)
+                    if len(recent) >= 20:
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    except Exception as exc:
+        logger.warning("Live my-requests Valkey error: %s", exc)
+
+    return {
+        "active":    active,
+        "recent":    recent[:10],
+        "count":     len(active),
+        "timestamp": now.isoformat(),
+    }
+
+
 @app.get("/user/keys", response_class=HTMLResponse)
 async def user_keys_page(request: Request, user_id: str = Depends(require_user_login)):
     ctx   = await _user_portal_ctx(user_id)
