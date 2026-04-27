@@ -71,6 +71,8 @@ from math_node import math_node
 from graph_rag import GraphRAGManager
 # Import context window budget helper
 from context_budget import graphrag_budget_chars, web_research_budget
+# Import Tier-2 semantic memory (warm context retrieval from ChromaDB)
+from memory_retrieval import get_memory_store, compute_evicted_turns
 
 # --- CONFIG & LOGGING ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -517,6 +519,9 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             "force_think":         bool(tmpl.get("force_think", False)),
             # Agentic re-planning loop: 0 = disabled (single-pass), N = max re-plan iterations.
             "max_agentic_rounds":  int(tmpl.get("max_agentic_rounds", 0)),
+            # Tier-2 semantic memory: embed evicted turns in ChromaDB, retrieve relevant context.
+            # Adds ~50ms overhead per request. Enable on templates where conversation depth matters.
+            "enable_semantic_memory": bool(tmpl.get("enable_semantic_memory", False)),
         }
     except Exception:
         return empty
@@ -1285,8 +1290,10 @@ PROM_LINTING_DECAY      = Counter('moe_linting_decay_deleted_total', 'Relations 
 PROM_QUARANTINE_ADDED   = Counter('moe_quarantine_added_total', 'Triples quarantined by blast-radius check')
 PROM_SYNTHESIS_CREATED  = Counter('moe_synthesis_persisted_total',     'Synthesis nodes persisted',               ['domain', 'insight_type'])
 # --- RL FLYWHEEL & CONTEXT WINDOW METRICS ---
-PROM_HISTORY_COMPRESSED = Counter('moe_history_compressed_total',      'History compression events (turns truncated)')
-PROM_HISTORY_UNLIMITED  = Counter('moe_history_unlimited_total',       'Requests with compression disabled (per-template)')
+PROM_HISTORY_COMPRESSED      = Counter('moe_history_compressed_total',      'History compression events (turns truncated)')
+PROM_HISTORY_UNLIMITED       = Counter('moe_history_unlimited_total',       'Requests with compression disabled (per-template)')
+PROM_SEMANTIC_MEMORY_STORED  = Counter('moe_semantic_memory_stored_total',  'Conversation turns stored in Tier-2 semantic memory')
+PROM_SEMANTIC_MEMORY_HITS    = Counter('moe_semantic_memory_hits_total',    'Warm context blocks injected from semantic memory')
 PROM_CORRECTIONS_STORED = Counter('moe_corrections_stored_total',      'Correction memory entries written to Neo4j',   ['source'])
 PROM_CORRECTIONS_INJECTED = Counter('moe_corrections_injected_total',  'Correction memory entries injected into expert prompts', ['category'])
 PROM_JUDGE_REFINED      = Counter('moe_judge_refinement_total',        'Judge refinement rounds executed',             ['outcome'])
@@ -2497,6 +2504,56 @@ def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: in
         prom_unlimited=PROM_HISTORY_UNLIMITED,
         prom_compressed=PROM_HISTORY_COMPRESSED,
     )
+
+
+async def _apply_semantic_memory(
+    raw_history: List[Dict],
+    kept_history: List[Dict],
+    user_input: str,
+    session_id: Optional[str],
+    enabled: bool,
+) -> List[Dict]:
+    """Store evicted turns (Tier-2 write) and inject relevant past turns as warm context.
+
+    When enabled, evicted turns are embedded async (fire-and-forget).
+    Relevant turns are retrieved synchronously via ANN search and prepended to
+    kept_history as a warm context block so the LLM can reference them.
+
+    Returns the (potentially extended) history list. Falls back to kept_history
+    on any error so this path never blocks or breaks the main pipeline.
+    """
+    if not enabled or not session_id:
+        return kept_history
+    store = get_memory_store()
+
+    # Write: embed evicted turns in background (does not block the response)
+    evicted = compute_evicted_turns(raw_history, kept_history)
+    if evicted:
+        async def _store_bg() -> None:
+            n = await store.store_turns(session_id, evicted)
+            if n:
+                PROM_SEMANTIC_MEMORY_STORED.inc(n)
+        asyncio.create_task(_store_bg())
+
+    # Read: retrieve most relevant past turns for this query
+    retrieved = await store.retrieve_relevant(session_id, user_input)
+    if not retrieved:
+        return kept_history
+
+    warm_block = store.build_warm_context_block(retrieved)
+    if not warm_block:
+        return kept_history
+
+    PROM_SEMANTIC_MEMORY_HITS.inc()
+    logger.info(f"💾 Semantic memory: injected {len(retrieved)} warm turns (session={session_id[:8]}…)")
+
+    # Prepend as a synthetic early turn-pair so the LLM treats it as prior conversation
+    warm_messages: List[Dict] = [
+        {"role": "user",      "content": warm_block},
+        {"role": "assistant", "content": "[Acknowledged: I have access to these earlier conversation turns.]"},
+    ]
+    return warm_messages + kept_history
+
 
 # _DOMAIN_SCORES, _domain_score, _reliability_label — see web_search.py
 
@@ -6747,6 +6804,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _hist_turns = _tmpl_prompts.get("history_max_turns", 0) or None
     _hist_chars = _tmpl_prompts.get("history_max_chars", 0) or None
     history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
+    history = await _apply_semantic_memory(
+        raw_history, history, user_input, session_id,
+        enabled=_tmpl_prompts.get("enable_semantic_memory", False),
+    )
 
     # Native LLM: forward directly to endpoint, no MoE pipeline
     if _native_endpoint:
@@ -7459,7 +7520,8 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
                                   planner_token_override: str = "",
                                   user_id: str = "anon",
                                   api_key_id: str = "",
-                                  session_id: str = None):
+                                  session_id: str = None,
+                                  enable_semantic_memory: bool = False):
     """Route pure text requests through the MoE agent pipeline."""
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
@@ -7504,6 +7566,10 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
         if m.get("role") in ("user", "assistant")
     ]
     history = _truncate_history(history_raw)
+    history = await _apply_semantic_memory(
+        history_raw, history, user_input, session_id,
+        enabled=enable_semantic_memory,
+    )
 
     invoke_state = {
         "input": user_input, "response_id": chat_id,
@@ -7720,8 +7786,21 @@ async def anthropic_messages(request: Request):
             _effective_cc_mode       = _user_cc_profile.get("moe_mode", CLAUDE_CODE_MODE)
             _effective_tool_model    = _user_cc_profile.get("tool_model", CLAUDE_CODE_TOOL_MODEL).strip().rstrip("*")
             _effective_tool_endpoint = _user_cc_profile.get("tool_endpoint", CLAUDE_CODE_TOOL_ENDPOINT)
-            _effective_tool_url      = URL_MAP.get(_effective_tool_endpoint) or _CLAUDE_CODE_TOOL_URL
+            _effective_tool_url      = URL_MAP.get(_effective_tool_endpoint)
             _effective_tool_token    = TOKEN_MAP.get(_effective_tool_endpoint, "ollama")
+            if not _effective_tool_url:
+                # Fallback: resolve tool_endpoint as a user private connection
+                _cc_conns: dict = {}
+                try:
+                    _cc_conns = json.loads(_user_conns_json2 or "{}")
+                except Exception:
+                    pass
+                _uc = _cc_conns.get(_effective_tool_endpoint)
+                if _uc:
+                    _effective_tool_url   = _uc["url"]
+                    _effective_tool_token = _uc.get("api_key") or "ollama"
+                else:
+                    _effective_tool_url = _CLAUDE_CODE_TOOL_URL
             # CC profile can force an expert template (admin_override bypasses permission check)
             _cc_tmpl_id = _user_cc_profile.get("expert_template_id") or None
             if _cc_tmpl_id:
@@ -7831,7 +7910,8 @@ async def anthropic_messages(request: Request):
                                              planner_token_override=_user_tmpl_prompts["planner_token_override"],
                                              user_id=_user_id,
                                              api_key_id=_api_key_id,
-                                             session_id=session_id)
+                                             session_id=session_id,
+                                             enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False))
     except Exception as _exc:
         logger.error("Messages-Endpoint unbehandelte Exception (chat_id=%s): %s", chat_id, _exc, exc_info=True)
         asyncio.create_task(_deregister_active_request(chat_id))

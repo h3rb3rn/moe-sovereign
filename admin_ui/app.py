@@ -696,8 +696,8 @@ def _admin_name_set(exclude_type: str = None, exclude_id: str = None) -> set:
 
 
 async def _user_name_set(user_id: str, exclude_type: str = None, exclude_id: str = None) -> set:
-    """All names in user context: own templates + own CC profiles + all admin names."""
-    names = _admin_name_set()
+    """Names already taken within this user's own namespace (templates + CC profiles)."""
+    names: set = set()
     for t in await db.list_user_templates(user_id):
         if exclude_type == "user_template" and t["id"] == exclude_id:
             continue
@@ -5026,7 +5026,7 @@ async def user_api_import_templates(
     if not isinstance(items, list):
         raise HTTPException(status_code=422, detail="'items' must be a list")
     existing = await db.list_user_templates(user_id)
-    existing_names = {t["name"] for t in existing} | _admin_name_set() | {p["name"] for p in await db.list_user_cc_profiles(user_id)}
+    existing_names = {t["name"] for t in existing} | {p["name"] for p in await db.list_user_cc_profiles(user_id)}
     imported = 0
     skipped = 0
     for item in items:
@@ -5221,6 +5221,8 @@ async def user_api_create_cc_profile(request: Request, user_id: str = Depends(re
         raise HTTPException(status_code=409, detail=f"Name '{name}' is already used in another profile or template")
     permitted_servers = _get_permitted_servers_for_user(perms)
     permitted_names   = {s["name"] for s in permitted_servers}
+    user_conn_names   = {c["name"] for c in await db.list_user_connections(user_id) if c.get("is_active", True)}
+    permitted_names.update(user_conn_names)
     tool_endpoint     = (body.get("tool_endpoint") or "").strip()
     if tool_endpoint and tool_endpoint not in permitted_names:
         raise HTTPException(status_code=403, detail=f"Server '{tool_endpoint}' nicht freigeschaltet")
@@ -5299,8 +5301,10 @@ async def user_api_import_cc_profiles(
         raise HTTPException(status_code=422, detail="'items' must be a list")
     permitted_servers = _get_permitted_servers_for_user(perms)
     permitted_names   = {s["name"] for s in permitted_servers}
+    user_conn_names   = {c["name"] for c in await db.list_user_connections(user_id) if c.get("is_active", True)}
+    permitted_names.update(user_conn_names)
     existing = await db.list_user_cc_profiles(user_id)
-    existing_names = {p["name"] for p in existing} | _admin_name_set() | {t["name"] for t in await db.list_user_templates(user_id)}
+    existing_names = {p["name"] for p in existing} | {t["name"] for t in await db.list_user_templates(user_id)}
     imported = 0
     skipped = 0
     for item in items:
@@ -5346,6 +5350,8 @@ async def user_api_update_cc_profile(profile_id: str, request: Request, user_id:
         raise HTTPException(status_code=409, detail=f"Name '{name}' is already used in another profile or template")
     permitted_servers = _get_permitted_servers_for_user(perms)
     permitted_names   = {s["name"] for s in permitted_servers}
+    user_conn_names   = {c["name"] for c in await db.list_user_connections(user_id) if c.get("is_active", True)}
+    permitted_names.update(user_conn_names)
     tool_endpoint     = (body.get("tool_endpoint") or "").strip()
     if tool_endpoint and tool_endpoint not in permitted_names:
         raise HTTPException(status_code=403, detail=f"Server '{tool_endpoint}' nicht freigeschaltet")
@@ -5418,7 +5424,7 @@ async def user_api_clear_default_cc_profile(user_id: str = Depends(require_user_
 
 @app.get("/user/api/permitted-models")
 async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
-    """Returns all llm@host options for the user's permitted servers."""
+    """Returns all llm@host options for the user's permitted servers and private connections."""
     perms = await db.get_permissions_map(user_id)
     servers = _get_permitted_servers_for_user(perms)
     results: set[str] = set()
@@ -5433,6 +5439,14 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             m, _, _ = ep.partition("@")
             if m and m != "*":
                 results.add(ep)
+    # Include models from user's private connections (uses cached model list)
+    for conn in await db.list_user_connections(user_id):
+        if not conn.get("is_active", True):
+            continue
+        models_cache = _safe_json(conn.get("models_cache", "[]"), [])
+        for m in models_cache:
+            if m:
+                results.add(f"{m}@{conn['name']}")
     return sorted(results)
 
 
@@ -5569,9 +5583,6 @@ async def user_api_create_connection(request: Request, user_id: str = Depends(re
         raise HTTPException(status_code=400, detail="name must be 1-32 chars: letters, digits, _ or -")
     if api_type not in ("openai", "ollama"):
         raise HTTPException(status_code=400, detail="api_type must be 'openai' or 'ollama'")
-    if name in _get_global_server_names():
-        raise HTTPException(status_code=409,
-                            detail=f"Name '{name}' conflicts with a global inference server name")
 
     try:
         conn = await db.create_user_connection(user_id, name, display_name, url, api_type, api_key)
