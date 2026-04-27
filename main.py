@@ -1498,23 +1498,54 @@ def _extract_api_key(request: Request) -> Optional[str]:
 
 
 def _extract_session_id(request: Request) -> Optional[str]:
-    """Extract session ID from known client headers.
+    """Extract or derive a session ID for semantic memory continuity.
 
-    Supported clients and their headers:
+    Priority:
+    1. Explicit headers (client-provided, most reliable)
+    2. Conversation fingerprint derived from the request body's first user
+       message — gives a stable, client-agnostic session ID without any
+       client configuration. Clients that send the same conversation history
+       across turns will naturally hash to the same session_id.
+
+    Supported explicit headers:
     - Claude Code / Anthropic SDK:  x-stainless-session-id
-    - Continue.dev:                 x-request-id (consistent per conversation)
-    - OpenCode / OpenAI SDK:        x-stainless-session-id (Stainless framework)
-    - Cline / Claw-Code:            x-stainless-session-id or x-session-id
+    - Continue.dev:                 x-request-id
+    - OpenCode / OpenAI SDK:        x-stainless-session-id
     - Generic:                      x-session-id, x-conversation-id
     """
     h = request.headers
-    return (
+    explicit = (
         h.get("x-stainless-session-id") or
         h.get("x-session-id") or
         h.get("x-conversation-id") or
-        h.get("x-request-id") or
-        None
+        h.get("x-request-id")
     )
+    if explicit:
+        return explicit
+    # Derive from conversation fingerprint: hash of the first user message.
+    # Stable across requests in the same conversation (same opening message).
+    try:
+        body_bytes = request.state._body if hasattr(request.state, "_body") else None
+        if body_bytes:
+            import hashlib as _hashlib
+            body = json.loads(body_bytes)
+            msgs = body.get("messages", [])
+            # Use first 3 user messages for a stable fingerprint that survives
+            # generic openers ("OK", "Hi") without collisions across conversations.
+            user_msgs = [
+                str(m.get("content", ""))[:200]
+                for m in msgs if m.get("role") == "user"
+            ][:3]
+            if user_msgs:
+                # Include user_id in hash so two users asking the same question
+                # get separate memory namespaces.
+                user_id = request.state.user_id if hasattr(request.state, "user_id") else ""
+                seed = user_id + "".join(user_msgs)
+                fp = _hashlib.sha256(seed.encode()).hexdigest()[:24]
+                return f"fp-{fp}"
+    except Exception:
+        pass
+    return None
 
 
 async def _log_usage_to_db(user_id: str, api_key_id: str, request_id: str,
@@ -3558,6 +3589,22 @@ async def planner_node(state: AgentState):
                 {"task": state["input"], "category": "code_reviewer"},
                 {"task": state["input"], "category": "technical_support"},
             ],
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
+    # memory_recall fast-path: if complexity is memory_recall AND the template has a
+    # dedicated memory_recall expert configured, skip the LLM planner entirely.
+    # The planner LLM would misroute recall questions (e.g. routing to "research")
+    # because it cannot distinguish facts from this conversation vs. external knowledge.
+    # This bypass is template-driven — only activates when memory_recall is in user_experts.
+    _user_experts_map = state.get("user_experts") or {}
+    if _complexity == "memory_recall" and "memory_recall" in _user_experts_map:
+        logger.info("🧠 memory_recall fast-path: dedicated expert configured, LLM planner skipped")
+        await _report("🧠 Memory Expert: Analysiere Konversationshistorie...")
+        return {
+            **_complexity_state_update,
+            "plan": [{"task": state["input"], "category": "memory_recall"}],
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
@@ -5791,6 +5838,15 @@ async def lifespan(app_: FastAPI):
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
     asyncio.create_task(_auto_resume_dedicated_healer())
     asyncio.create_task(_watchdog_dedicated_healer())
+    # Semantic memory TTL cleanup — runs every 6 hours, removes expired ChromaDB turns
+    async def _semantic_memory_cleanup_loop() -> None:
+        from memory_retrieval import cleanup_expired_turns
+        while True:
+            await asyncio.sleep(6 * 3600)
+            deleted = await cleanup_expired_turns(max_delete=1000)
+            if deleted:
+                logger.info(f"🧹 Semantic memory: {deleted} expired turns removed from ChromaDB")
+    asyncio.create_task(_semantic_memory_cleanup_loop())
     async with AsyncPostgresSaver.from_conn_string(POSTGRES_CHECKPOINT_URL) as checkpointer:
         await checkpointer.setup()
         app_graph = builder.compile(checkpointer=checkpointer)

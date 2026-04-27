@@ -156,6 +156,8 @@ moe-infra/
 | **18** | Dynamic Sequential/Parallel Experts | Planner tasks support `depends_on` for multi-hop chains (e.g. find author → find their papers). Independent tasks run in parallel; dependent tasks execute sequentially with result injection via `{result_of:id}` placeholders |
 | **19** | Adaptive Context Budget | Context window limits per model auto-scale web-research blocks and GraphRAG budget. Fallback models (gemma4:31b 8K, qwen3.6:35b 32K) receive proportionally smaller context slices |
 | **20** | GraphRAG On-Demand | Neo4j queries skipped for external research questions (papers, APIs, media) — only runs for internal knowledge queries or when the plan includes a knowledge_healing task |
+| **21** | Tier-2 Semantic Memory | Evicted conversation turns are embedded in ChromaDB; at query time the most relevant past turns are retrieved via ANN search and injected as warm context — effective context reach far beyond the LLM's native window. Enable per template: `enable_semantic_memory: true` |
+| **22** | MRCR-lite Benchmark | Synthetic multi-turn recall benchmark: injects facts ("needles") at configurable depths (5–50 turns), measures recall with/without Tier-2 memory, scores by type (number, date, name, technical). Run: `python benchmarks/mrcr_lite_runner.py` |
 
 ---
 
