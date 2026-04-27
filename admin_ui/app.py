@@ -5439,10 +5439,16 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             m, _, _ = ep.partition("@")
             if m and m != "*":
                 results.add(ep)
-    # Include models from user's private connections (uses cached model list)
+    # Include models from user's private connections (uses cached model list).
+    # Skip connections whose name matches a global permitted server — that server's
+    # live models are already in `results` and we must not create duplicates or mix
+    # models from different API keys under the same endpoint name.
+    _global_server_names = {s["name"] for s in servers}
     for conn in await db.list_user_connections(user_id):
         if not conn.get("is_active", True):
             continue
+        if conn["name"] in _global_server_names:
+            continue  # global server takes precedence; avoid duplicate model@name entries
         models_cache = _safe_json(conn.get("models_cache", "[]"), [])
         for m in models_cache:
             if m:
