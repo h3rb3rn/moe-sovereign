@@ -35,6 +35,8 @@
     .budget-bar .progress { height: 10px; border-radius: 5px; }
     .key-mono { font-family: monospace; font-size: .82rem; word-break: break-all; }
     footer { font-size: .78rem; color: #adb5bd; }
+    @keyframes live-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.75)} }
+    #live-pulse-dot { animation: live-pulse 1.6s ease-in-out infinite; }
   </style>
 <script>
 const CSRF_TOKEN = "{{ csrf_token }}";
@@ -757,6 +759,45 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         </div>
       </div>
 
+      <!-- Live Monitor -->
+      <div class="card mb-3 border-0 shadow-sm" id="live-monitor-card">
+        <div class="card-header d-flex align-items-center gap-2 py-2 px-3 user-select-none"
+             style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#e2e8f0;cursor:pointer;border-radius:8px 8px 0 0"
+             onclick="toggleLiveMonitor()">
+          <span id="live-pulse-dot" class="d-inline-block rounded-circle"
+                style="width:9px;height:9px;background:#22c55e;flex-shrink:0"></span>
+          <span class="small fw-bold" style="letter-spacing:.03em">Live Monitor</span>
+          <span id="live-active-badge" class="badge ms-1"
+                style="font-size:.6rem;background:#166534;color:#bbf7d0">0 active</span>
+          <span class="ms-auto text-muted" id="live-updated-label" style="font-size:.72rem">–</span>
+          <i class="bi bi-chevron-down ms-2 small" id="live-chevron" style="transition:transform .2s"></i>
+        </div>
+        <div id="live-monitor-body">
+          <!-- Active requests -->
+          <div class="px-3 pt-3 pb-2">
+            <div class="d-flex align-items-center gap-1 mb-2">
+              <i class="bi bi-activity text-success" style="font-size:.85rem"></i>
+              <span class="small fw-semibold text-muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">Active Requests</span>
+            </div>
+            <div id="live-active-list">
+              <p class="text-muted text-center small py-1 mb-0">No active requests</p>
+            </div>
+          </div>
+          <hr class="my-0" style="border-color:#e2e8f0">
+          <!-- Recently completed -->
+          <div class="px-3 pt-2 pb-3">
+            <div class="d-flex align-items-center gap-1 mb-2">
+              <i class="bi bi-check2-circle text-muted" style="font-size:.85rem"></i>
+              <span class="small fw-semibold text-muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">Recently Completed</span>
+              <span class="badge bg-light text-muted ms-1" id="live-completed-badge" style="font-size:.6rem">0</span>
+            </div>
+            <div id="live-completed-list">
+              <p class="text-muted text-center small py-1 mb-0">No recent activity</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Filter-Leiste -->
       <div class="card mb-2">
         <div class="card-body py-2 px-3">
@@ -981,6 +1022,159 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         ['f_mode','f_status'].forEach(id => { const el = document.getElementById(id); if (el) el.selectedIndex = 0; });
         applyFilters();
       }
+
+      // ─── Live Monitor ────────────────────────────────────────────────────────
+      let _liveData       = {active: [], recent: [], count: 0};
+      let _liveInterval   = null;
+      let _tickInterval   = null;
+      let _lastPollMs     = 0;
+      let _liveOpen       = true;
+      let _liveStartedAt  = {};   // chat_id → Date (from last poll for client-side tick)
+
+      function toggleLiveMonitor() {
+        _liveOpen = !_liveOpen;
+        const body    = document.getElementById('live-monitor-body');
+        const chevron = document.getElementById('live-chevron');
+        body.style.display    = _liveOpen ? '' : 'none';
+        chevron.style.transform = _liveOpen ? '' : 'rotate(-90deg)';
+      }
+
+      // TODO(human): Implement tickElapsed()
+      // This function runs every second to smoothly update the elapsed time
+      // displayed for each active request row between API polls.
+      //
+      // Hint: _liveStartedAt[chatId] holds the JS Date the request started.
+      //       Each row in #live-active-list has data-chat-id="..." and
+      //       a <span class="live-elapsed"> that shows the current elapsed time.
+      //       Format: whole seconds under 60s ("42s"), then "1m 12s" etc.
+      function tickElapsed() {
+        const now = Date.now();
+        document.querySelectorAll('#live-active-list [data-chat-id]').forEach(row => {
+          const start = _liveStartedAt[row.dataset.chatId];
+          if (!start) return;
+          const elapsed = (now - start) / 1000;
+          const span = row.querySelector('.live-elapsed');
+          if (span) span.textContent = fmtDuration(elapsed);
+        });
+      }
+
+      function fmtDuration(s) {
+        if (s == null) return '–';
+        if (s < 60)   return `${s.toFixed(1)}s`;
+        const m = Math.floor(s / 60);
+        const r = Math.round(s % 60);
+        return `${m}m ${r}s`;
+      }
+
+      function fmtModel(model) {
+        if (!model) return '–';
+        const at = model.lastIndexOf('@');
+        return at >= 0
+          ? `<code style="font-size:.75rem">${escHtml(model.slice(0,at))}</code><span class="text-muted" style="font-size:.7rem">@${escHtml(model.slice(at+1))}</span>`
+          : `<code style="font-size:.75rem">${escHtml(model)}</code>`;
+      }
+
+      function renderActive(list) {
+        const el = document.getElementById('live-active-list');
+        if (!list.length) {
+          el.innerHTML = '<p class="text-muted text-center small py-1 mb-0">No active requests</p>';
+          return;
+        }
+        _liveStartedAt = {};
+        el.innerHTML = list.map(r => {
+          const started = r.started_at ? new Date(r.started_at) : null;
+          if (started) _liveStartedAt[r.chat_id] = started;
+          const elapsed = r.duration_s != null ? fmtDuration(r.duration_s) : '…';
+          const keyLbl  = r.key_label  ? `<span class="badge bg-light text-dark border ms-1" style="font-size:.6rem">${escHtml(r.key_label)}</span>` : '';
+          const mode    = r.moe_mode   ? `<span class="badge bg-secondary ms-1" style="font-size:.58rem">${escHtml(r.moe_mode)}</span>` : '';
+          return `<div class="d-flex align-items-center gap-2 py-1 px-2 mb-1 rounded"
+                       style="background:#f0fdf4;border-left:3px solid #22c55e"
+                       data-chat-id="${escHtml(r.chat_id||'')}">
+            <i class="bi bi-arrow-right-circle-fill text-success" style="font-size:.9rem;flex-shrink:0"></i>
+            <div class="flex-grow-1 text-truncate" style="font-size:.8rem">
+              ${fmtModel(r.model)}${mode}${keyLbl}
+            </div>
+            <span class="live-elapsed text-muted fw-semibold" style="font-size:.75rem;white-space:nowrap;font-family:monospace">${escHtml(elapsed)}</span>
+          </div>`;
+        }).join('');
+      }
+
+      function renderCompleted(list) {
+        const el    = document.getElementById('live-completed-list');
+        const badge = document.getElementById('live-completed-badge');
+        if (badge) badge.textContent = list.length;
+        if (!list.length) {
+          el.innerHTML = '<p class="text-muted text-center small py-1 mb-0">No recent activity</p>';
+          return;
+        }
+        el.innerHTML = list.map(r => {
+          const status = r.status === 'completed' ? 'completed' : (r.status || 'done');
+          const ico    = status === 'completed' ? 'bi-check-circle-fill text-success' : 'bi-x-circle-fill text-danger';
+          const dur    = fmtDuration(r.duration_s);
+          return `<div class="d-flex align-items-center gap-2 py-1 px-2 mb-1 rounded"
+                       style="background:#f8fafc;border-left:3px solid #94a3b8">
+            <i class="bi ${ico}" style="font-size:.85rem;flex-shrink:0"></i>
+            <div class="flex-grow-1 text-truncate" style="font-size:.78rem">
+              ${fmtModel(r.model)}
+              ${r.moe_mode ? `<span class="badge bg-light text-dark border ms-1" style="font-size:.57rem">${escHtml(r.moe_mode)}</span>` : ''}
+            </div>
+            <span class="text-muted" style="font-size:.72rem;white-space:nowrap;font-family:monospace">${escHtml(dur)}</span>
+          </div>`;
+        }).join('');
+      }
+
+      async function pollLive() {
+        try {
+          const res = await fetch('/user/api/live/my-requests');
+          if (!res.ok) return;
+          const data = await res.json();
+          _liveData   = data;
+          _lastPollMs = Date.now();
+
+          // Update badge + dot color
+          const badge = document.getElementById('live-active-badge');
+          const dot   = document.getElementById('live-pulse-dot');
+          const lbl   = document.getElementById('live-updated-label');
+          if (badge) badge.textContent = `${data.count} active`;
+          if (dot)   dot.style.background = data.count > 0 ? '#22c55e' : '#64748b';
+          if (lbl)   lbl.textContent = 'just now';
+
+          renderActive(data.active);
+          renderCompleted(data.recent);
+        } catch (e) { /* network error — silent */ }
+      }
+
+      function startLiveMonitor() {
+        if (_liveInterval) return;
+        pollLive();
+        _liveInterval = setInterval(pollLive, 3000);
+        _tickInterval = setInterval(tickElapsed, 1000);
+      }
+
+      function stopLiveMonitor() {
+        clearInterval(_liveInterval);
+        clearInterval(_tickInterval);
+        _liveInterval = null;
+        _tickInterval = null;
+      }
+
+      // Update "X seconds ago" label
+      setInterval(() => {
+        if (!_lastPollMs) return;
+        const ago = Math.round((Date.now() - _lastPollMs) / 1000);
+        const el = document.getElementById('live-updated-label');
+        if (el) el.textContent = ago <= 1 ? 'just now' : `${ago}s ago`;
+      }, 1000);
+
+      // Pause when tab is hidden, resume when visible
+      document.addEventListener('visibilitychange', () => {
+        document.hidden ? stopLiveMonitor() : startLiveMonitor();
+      });
+
+      // Auto-start on page load
+      document.addEventListener('DOMContentLoaded', () => {
+        startLiveMonitor();
+      });
 
       // ─── Note modal ──────────────────────────────────────────────────────────
       let _noteModal, _noteUsageId;
