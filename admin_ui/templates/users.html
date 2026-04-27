@@ -831,17 +831,17 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
               const btnCls    = isGranted ? 'btn-success' : 'btn-outline-secondary';
               const ico       = isGranted ? 'bi-toggle-on' : 'bi-toggle-off';
               const lbl       = isGranted ? 'Enabled' : 'Disabled';
-              return \`<div class="d-flex align-items-center gap-3 mb-2 p-2 border rounded">
-                <i class="bi \${f.icon} text-success" style="font-size:1.1rem"></i>
+              return `<div class="d-flex align-items-center gap-3 mb-2 p-2 border rounded">
+                <i class="bi ${f.icon} text-success" style="font-size:1.1rem"></i>
                 <div class="flex-grow-1">
-                  <div class="small fw-semibold">\${f.label}</div>
-                  <div class="text-muted" style="font-size:.75rem">\${f.desc}</div>
+                  <div class="small fw-semibold">${f.label}</div>
+                  <div class="text-muted" style="font-size:.75rem">${f.desc}</div>
                 </div>
-                <button class="btn btn-sm \${btnCls}"
-                        onclick="toggleFeaturePerm('\${uid}','\${f.id}',\${isGranted},'\${permId}','${name}')">
-                  <i class="bi \${ico} me-1"></i>\${lbl}
+                <button class="btn btn-sm ${btnCls}"
+                        onclick="toggleFeaturePerm('${uid}','${f.id}',${isGranted},'${permId}','${name}')">
+                  <i class="bi ${ico} me-1"></i>${lbl}
                 </button>
-              </div>\`;
+              </div>`;
             }).join('');
           })()}
         </div>
