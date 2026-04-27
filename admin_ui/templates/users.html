@@ -455,7 +455,7 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
   _titleEl.appendChild(_titleIcon);
   _titleEl.appendChild(document.createTextNode(name));
   document.getElementById('detailModalBody').innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>';
-  const modal = new bootstrap.Modal(document.getElementById('userDetailModal'));
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('userDetailModal'));
   modal.show();
 
   let res, resources;
@@ -943,7 +943,7 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
   // Activate requested tab (default: tab-budget)
   if (activeTab !== 'tab-budget') {
     const tabEl = document.querySelector(`[href="#${activeTab}"]`);
-    if (tabEl) new bootstrap.Tab(tabEl).show();
+    if (tabEl) bootstrap.Tab.getOrCreateInstance(tabEl).show();
   }
 
   // "Select all" checkbox for bulk revoke
