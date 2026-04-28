@@ -42,6 +42,7 @@ MOE_KEY       = os.environ.get("MOE_API_KEY", "")
 MOE_TEMPLATE  = os.environ.get("MOE_OVH_TEMPLATE", "moe-overhead-sonnet46")
 CHEXT_BASE    = os.environ.get("CHEXT_BASE", "")
 CHEXT_MODEL   = os.environ.get("CHEXT_MODEL", "claude-sonnet-4-6")
+CHEXT_TOKEN   = os.environ.get("CHEXT_TOKEN", "")
 DATASET       = os.environ.get(
     "OVH_DATASET",
     str(pathlib.Path(__file__).parent / "datasets" / "overhead_suite_v1.json"),
@@ -179,12 +180,15 @@ async def call_direct(
     messages: list[dict],
     timeout: float = 300.0,
 ) -> tuple[int, int, int, float, str, str]:
-    """Direct call to CHEXT. Returns (prompt, completion, reasoning, latency, response, error)."""
+    """Direct call to API endpoint (CHEXT_BASE). Returns (prompt, completion, reasoning, latency, response, error)."""
     t0 = time.monotonic()
     try:
+        headers: dict = {"Content-Type": "application/json"}
+        if CHEXT_TOKEN:
+            headers["Authorization"] = f"Bearer {CHEXT_TOKEN}"
         resp = await client.post(
             f"{CHEXT_BASE}/chat/completions",
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             json={"model": CHEXT_MODEL, "messages": messages, "stream": False},
             timeout=timeout,
         )

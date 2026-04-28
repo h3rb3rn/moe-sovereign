@@ -1361,7 +1361,7 @@ async def revoke_model_endpoints_by_node(user_id: str, node_name: str) -> int:
     """Revoke all model_endpoint permissions for a user that reference a specific node name.
 
     Matches entries like 'model@node_name' and '*@node_name'. Returns the number of revoked rows.
-    Uses Python-side filtering to safely handle node names containing LIKE wildcard characters.
+    Uses fuzzy matching (normalized: lowercase, no hyphens/underscores) to handle renamed/legacy nodes.
     """
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
@@ -1371,8 +1371,18 @@ async def revoke_model_endpoints_by_node(user_id: str, node_name: str) -> int:
                 (user_id,),
             )
             rows = await cur.fetchall()
-    suffix = f"@{node_name}"
-    ids_to_delete = [r["id"] for r in rows if r["resource_id"].endswith(suffix)]
+    # Normalize both names: lowercase, strip hyphens/underscores for fuzzy matching
+    # This handles legacy renames (e.g. "nff-aihub" matches "AIHUB_NFF")
+    target = node_name.lower().replace("-", "").replace("_", "")
+    ids_to_delete = []
+    for r in rows:
+        rid = r["resource_id"]
+        if not rid or "@" not in rid:
+            continue
+        # Extract the suffix after the last @
+        suffix = rid.rsplit("@", 1)[1]
+        if suffix.lower().replace("-", "").replace("_", "") == target:
+            ids_to_delete.append(r["id"])
     if not ids_to_delete:
         return 0
     async with _get_pool().connection() as conn:

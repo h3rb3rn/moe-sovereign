@@ -5577,8 +5577,14 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             continue  # global server takes precedence; avoid duplicate model@name entries
         models_cache = _safe_json(conn.get("models_cache", "[]"), [])
         for m in models_cache:
-            if m:
-                results.add(f"{m}@{conn['name']}")
+            if not m:
+                continue
+            # Strip stale @suffixes from deleted nodes (AIHUB_NFF, AIHUB_VR, etc.)
+            # to prevent cumulative contamination on every permitted-models call.
+            base_model = m.rsplit("@", 1)[0] if "@" in m else m
+            if not base_model:
+                base_model = m
+            results.add(f"{base_model}@{conn['name']}")
     return sorted(results)
 
 
