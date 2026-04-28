@@ -1041,6 +1041,19 @@ This activates Tier-2 retrieval for that template. No model change required.
 | person | 0.40 | **1.00** | Same; HNSW missed low-frequency proper nouns |
 | date / name / technical | 1.00 | **1.00** | Unaffected |
 
+**60-run benchmark results (5 needles × 3 depths × 2 conditions × 2 reps, April 2026):**
+
+| Condition | Score | Notes |
+|---|---|---|
+| `with_prepopulation` | **0.966** | 2/30 WITH-pop runs failed due to embedding cold-start; all stable runs: 1.000 |
+| `without_prepopulation` | **0.000** | Needle confirmed evicted; perfect baseline |
+
+| Depth | WITH SM | WITHOUT SM |
+|---|---|---|
+| 5 | 1.000 (stable runs) | 0.000 |
+| 10 | **1.000** | 0.000 |
+| 20 | **1.000** | 0.000 |
+
 **Key fix:** `collection.count()` (total) replaced by `len(collection.get(where={"session_id": sid}))` (session-scoped).  
 HNSW is now a last-resort fallback only; numpy direct cosine ranking guarantees exact results at any session depth.
 
