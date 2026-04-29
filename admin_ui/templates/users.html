@@ -521,6 +521,10 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
         <input type="email" class="form-control form-control-sm" id="sd_email" value="${escHtml(u.email||'')}">
       </div>
       <div class="col-12">
+        <label class="form-label small fw-semibold">{{ t(request, 'lbl.display_name') }}</label>
+        <input type="text" class="form-control form-control-sm" id="sd_display_name" value="${escHtml(u.display_name||'')}" placeholder="{{ t(request, 'lbl.display_name') }}">
+      </div>
+      <div class="col-12">
         <label class="form-label small fw-semibold">{{ t(request, 'lbl.street_address') }} <span class="text-danger">*</span></label>
         <input type="text" class="form-control form-control-sm" id="sd_street" value="${escHtml(u.street_address||'')}">
       </div>
@@ -1037,6 +1041,7 @@ async function saveStammdaten(uid) {
       first_name:     document.getElementById('sd_first_name').value.trim(),
       last_name:      document.getElementById('sd_last_name').value.trim(),
       email:          document.getElementById('sd_email').value.trim(),
+      display_name:   document.getElementById('sd_display_name').value.trim(),
       street_address: document.getElementById('sd_street').value.trim(),
       postal_code:    document.getElementById('sd_postal').value.trim(),
       city:           document.getElementById('sd_city').value.trim(),
