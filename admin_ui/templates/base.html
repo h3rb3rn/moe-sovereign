@@ -30,6 +30,12 @@
     /* Collapse chevron rotation */
     [data-bs-toggle="collapse"] .bi-chevron-down { transition: transform .2s ease; }
     [data-bs-toggle="collapse"][aria-expanded="true"] .bi-chevron-down { transform: rotate(-180deg); }
+    /* Sortable table headers */
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { background: rgba(0,0,0,.05); }
+    [data-bs-theme="dark"] th.sortable:hover { background: rgba(255,255,255,.07); }
+    th.sortable .sort-ind { font-size: .65em; opacity: .3; margin-left: .3em; vertical-align: middle; }
+    th.sortable.sort-asc .sort-ind, th.sortable.sort-desc .sort-ind { opacity: 1; }
   </style>
 </head>
 <body>
@@ -318,6 +324,56 @@
 </footer>
 
 <script src="/static/js/bootstrap.bundle.min.js"></script>
+<script>
+/* ─── moeSort: generic sortable table utility ─────────────────────────────── */
+(function () {
+  function cellVal(td) {
+    return ((td && (td.dataset.sort ?? td.textContent)) || '').trim();
+  }
+  function initSortable(tbl) {
+    if (!tbl || tbl._moeSortInit) return;
+    tbl._moeSortInit = true;
+    tbl.querySelectorAll('thead th').forEach((th, colIdx) => {
+      if (th.dataset.nosort !== undefined || !th.textContent.trim()) return;
+      th.classList.add('sortable');
+      const ind = document.createElement('span');
+      ind.className = 'sort-ind';
+      ind.textContent = '⇕';
+      th.appendChild(ind);
+      th._dir = 0;
+      th.addEventListener('click', () => {
+        const tbody = tbl.tBodies[0];
+        if (!tbody) return;
+        tbl.querySelectorAll('thead th.sortable').forEach(o => {
+          if (o !== th) { o.classList.remove('sort-asc', 'sort-desc'); o._dir = 0; o.querySelector('.sort-ind').textContent = '⇕'; }
+        });
+        th._dir = th._dir === 1 ? -1 : 1;
+        th.classList.toggle('sort-asc', th._dir === 1);
+        th.classList.toggle('sort-desc', th._dir === -1);
+        ind.textContent = th._dir === 1 ? '▲' : '▼';
+        const rows = [...tbody.rows];
+        const isNum = rows.every(r => {
+          const v = cellVal(r.cells[colIdx]);
+          return v === '' || v === '–' || !isNaN(parseFloat(v.replace(/[^\d.,-]/g, '').replace(',', '.')));
+        });
+        rows.sort((a, b) => {
+          const va = cellVal(a.cells[colIdx]), vb = cellVal(b.cells[colIdx]);
+          if (isNum) {
+            return th._dir * ((parseFloat(va.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0) -
+                              (parseFloat(vb.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0));
+          }
+          return th._dir * va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' });
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('table[data-sortable]').forEach(initSortable);
+  });
+  window.moeSort = { init: initSortable };
+})();
+</script>
 <script>
 const CSRF_TOKEN = "{{ csrf_token }}";
 /* ─── CSRF: inject X-CSRF-Token into all mutating fetch() calls ─────────── */

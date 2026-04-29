@@ -29,16 +29,16 @@
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle" id="usersTable">
+      <table class="table table-hover mb-0 align-middle" id="usersTable" data-sortable>
         <thead class="table-light">
           <tr>
-            <th style="width:40px"></th>
+            <th style="width:40px" data-nosort></th>
             <th>{{ t(request, 'table.username') }}</th>
             <th>{{ t(request, 'table.email') }}</th>
             <th>{{ t(request, 'table.budget') }}</th>
             <th>{{ t(request, 'table.created') }}</th>
             <th>{{ t(request, 'table.status') }}</th>
-            <th style="width:120px">{{ t(request, 'table.actions') }}</th>
+            <th style="width:120px" data-nosort>{{ t(request, 'table.actions') }}</th>
           </tr>
         </thead>
         <tbody>

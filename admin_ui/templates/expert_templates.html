@@ -40,6 +40,14 @@
     <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createTemplateModal">
       <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.new_template') }}
     </button>
+    <div class="btn-group ms-1">
+      <button class="btn btn-outline-secondary btn-sm" onclick="toggleAllTemplates(true)" title="Alle aufklappen">
+        <i class="bi bi-chevron-bar-expand"></i>
+      </button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="toggleAllTemplates(false)" title="Alle zuklappen">
+        <i class="bi bi-chevron-bar-contract"></i>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -56,10 +64,14 @@
   {% for tmpl in templates %}
   <div class="col-12">
     <div class="card">
-      <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+      <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center"
+           style="cursor:pointer;user-select:none"
+           data-bs-toggle="collapse" data-bs-target="#tmpl-body-{{ tmpl.id }}"
+           aria-expanded="false" aria-controls="tmpl-body-{{ tmpl.id }}">
         <span class="d-flex align-items-center gap-2">
           <input type="checkbox" class="form-check-input tmpl-cb mt-0 flex-shrink-0" value="{{ tmpl.id }}"
                  onchange="updateTmplExportCount()" onclick="event.stopPropagation()" title="Für Export auswählen">
+          <i class="bi bi-chevron-down tmpl-chevron me-1" style="transition:transform 0.2s;font-size:.8rem"></i>
           <i class="bi bi-collection me-1"></i>{{ tmpl.name }}
         </span>
         <div class="d-flex gap-2 align-items-center">
@@ -84,19 +96,20 @@
           <span class="badge bg-dark" style="font-size:.65rem" title="Judge-LLM: {{ tmpl.judge_model }}"><i class="bi bi-cpu me-1"></i>{{ tmpl.judge_model }}</span>
           {% endif %}
           <button class="btn btn-xs btn-outline-light" style="font-size:.75rem;padding:.2rem .5rem"
-                  onclick="copyTemplate('{{ tmpl.id }}')" title="Als Vorlage kopieren">
+                  onclick="event.stopPropagation();copyTemplate('{{ tmpl.id }}')" title="Als Vorlage kopieren">
             <i class="bi bi-copy"></i>
           </button>
           <button class="btn btn-xs btn-outline-light" style="font-size:.75rem;padding:.2rem .5rem"
-                  onclick="openEditModal('{{ tmpl.id }}')">
+                  onclick="event.stopPropagation();openEditModal('{{ tmpl.id }}')">
             <i class="bi bi-pencil"></i>
           </button>
           <button class="btn btn-xs btn-outline-danger" style="font-size:.75rem;padding:.2rem .5rem"
-                  onclick="deleteTemplate('{{ tmpl.id }}', '{{ tmpl.name }}')">
+                  onclick="event.stopPropagation();deleteTemplate('{{ tmpl.id }}', '{{ tmpl.name }}')">
             <i class="bi bi-trash"></i>
           </button>
         </div>
       </div>
+      <div class="collapse tmpl-collapse" id="tmpl-body-{{ tmpl.id }}">
       <div class="card-body py-2">
         {% if tmpl.description %}
         <p class="small text-muted mb-2">{{ tmpl.description }}</p>
@@ -143,6 +156,7 @@
         <p class="small text-muted mb-0">Keine Experten konfiguriert.</p>
         {% endif %}
       </div>
+      </div><!-- /.collapse -->
     </div>
   </div>
   {% endfor %}
@@ -901,6 +915,25 @@ document.getElementById('tmpl-select-all').addEventListener('change', function()
   updateTmplExportCount();
 });
 
+// Chevron rotation on collapse events
+document.querySelectorAll('.tmpl-collapse').forEach(el => {
+  el.addEventListener('show.bs.collapse', () => {
+    const chevron = el.previousElementSibling?.querySelector('.tmpl-chevron');
+    if (chevron) chevron.style.transform = 'rotate(-180deg)';
+  });
+  el.addEventListener('hide.bs.collapse', () => {
+    const chevron = el.previousElementSibling?.querySelector('.tmpl-chevron');
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+  });
+});
+
+function toggleAllTemplates(expand) {
+  document.querySelectorAll('.tmpl-collapse').forEach(el => {
+    const instance = bootstrap.Collapse.getOrCreateInstance(el, {toggle: false});
+    expand ? instance.show() : instance.hide();
+  });
+}
+
 async function backupTemplates() {
   const ts = new Date().toISOString().slice(0, 10);
   const res = await fetch('/api/expert-templates/export');
@@ -924,53 +957,121 @@ async function exportTemplates(all = false) {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
+// ─── Import: shared options modal flow ───────────────────────────────────────
+let _pendingImport = null;
+
+function _showImportOptions(info) {
+  document.getElementById('import-options-info').textContent = info;
+  document.getElementById('import-do-backup').checked = true;
+  new bootstrap.Modal(document.getElementById('importOptionsModal')).show();
+}
+
 async function importTemplates(input) {
   const file = input.files[0];
   if (!file) return;
-  if (confirm('Create a backup of all current templates before importing?')) {
-    await backupTemplates();
-  }
-  const replace = confirm('Overwrite existing templates with the same name?\n\nOK = Replace | Cancel = Import new only');
-  const mode = replace ? 'replace' : 'merge';
-  const formData = new FormData();
-  formData.append('file', file);
-  const res = await fetch(`/api/expert-templates/import?mode=${mode}`, {method: 'POST', body: formData});
-  input.value = '';
-  if (res.ok) {
-    const data = await res.json();
-    alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
-    window.location.reload();
-  } else {
-    const err = await res.json().catch(() => ({detail: 'Unknown error'}));
-    alert('Import failed: ' + (err.detail || 'Unknown error'));
-  }
+  _pendingImport = { type: 'file', file };
+  _showImportOptions(`${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
 }
 
 async function importTemplatesFromCode() {
   const raw = document.getElementById('import-tmpl-code').value.trim();
-  if (!raw) { alert('Please paste JSON code.'); return; }
+  if (!raw) { alert('Bitte JSON-Code einfügen.'); return; }
   let data;
-  try { data = JSON.parse(raw); } catch(e) { alert('Invalid JSON: ' + e.message); return; }
-  if (confirm('Create a backup of all current templates before importing?')) {
+  try { data = JSON.parse(raw); } catch(e) { alert('Ungültiges JSON: ' + e.message); return; }
+  _pendingImport = { type: 'json', data };
+  const count = Array.isArray(data.items) ? data.items.length : (Array.isArray(data) ? data.length : '?');
+  bootstrap.Modal.getInstance(document.getElementById('importTemplateCodeModal'))?.hide();
+  setTimeout(() => _showImportOptions(`JSON-Code · ${count} Template(s)`), 300);
+}
+
+async function confirmImport(mode) {
+  const optModal = bootstrap.Modal.getInstance(document.getElementById('importOptionsModal'));
+  optModal?.hide();
+  if (document.getElementById('import-do-backup').checked) {
     await backupTemplates();
   }
-  const mode = document.getElementById('import-tmpl-code-mode').value;
-  const res = await fetch(`/api/expert-templates/import?mode=${mode}`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(data)
-  });
+  const p = _pendingImport;
+  _pendingImport = null;
+  document.getElementById('import-templates-file').value = '';
+  let res;
+  if (p.type === 'file') {
+    const formData = new FormData();
+    formData.append('file', p.file);
+    res = await fetch(`/api/expert-templates/import?mode=${mode}`, { method: 'POST', body: formData });
+  } else {
+    res = await fetch(`/api/expert-templates/import?mode=${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(p.data),
+    });
+  }
   if (res.ok) {
     const d = await res.json();
-    alert(`Import complete: ${d.imported} imported, ${d.skipped} skipped`);
-    bootstrap.Modal.getInstance(document.getElementById('importTemplateCodeModal')).hide();
+    alert(`Import abgeschlossen: ${d.imported} importiert, ${d.skipped} übersprungen`);
     window.location.reload();
   } else {
-    const err = await res.json().catch(() => ({detail: 'Unknown error'}));
-    alert('Import failed: ' + (err.detail || 'Unknown error'));
+    const err = await res.json().catch(() => ({ detail: 'Unbekannter Fehler' }));
+    alert('Import fehlgeschlagen: ' + (err.detail || 'Unbekannter Fehler'));
   }
 }
+
+function cancelImport() {
+  _pendingImport = null;
+  document.getElementById('import-templates-file').value = '';
+}
 </script>
+
+<!-- ── Import Options Modal ───────────────────────────────────────────────── -->
+<div class="modal fade" id="importOptionsModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title mb-0"><i class="bi bi-upload me-2 text-primary"></i>Template-Import</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="cancelImport()"></button>
+      </div>
+      <div class="modal-body">
+        <p id="import-options-info" class="small text-muted mb-3 font-monospace"></p>
+
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="import-do-backup" checked>
+          <label class="form-check-label small fw-semibold" for="import-do-backup">
+            <i class="bi bi-archive me-1 text-secondary"></i>Backup vorher erstellen
+          </label>
+          <div class="form-text" style="font-size:.72rem">Alle aktuellen Templates als JSON sichern</div>
+        </div>
+
+        <hr class="my-2">
+
+        <p class="small fw-semibold mb-2">Was soll bei gleichem Namen passieren?</p>
+        <div class="d-grid gap-2">
+          <button class="btn btn-outline-secondary text-start py-2" onclick="confirmImport('merge')">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-plus-circle text-success fs-5 flex-shrink-0"></i>
+              <div>
+                <div class="fw-semibold small">Nur neue hinzufügen</div>
+                <div class="text-muted" style="font-size:.72rem">Vorhandene Templates bleiben unverändert</div>
+              </div>
+            </div>
+          </button>
+          <button class="btn btn-outline-danger text-start py-2" onclick="confirmImport('replace')">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-arrow-repeat text-danger fs-5 flex-shrink-0"></i>
+              <div>
+                <div class="fw-semibold small">Vorhandene überschreiben</div>
+                <div class="text-muted" style="font-size:.72rem">Templates mit gleichem Namen werden ersetzt</div>
+              </div>
+            </div>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" onclick="cancelImport()">
+          {{ t(request, 'btn.cancel') }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ── Import JSON-Code Modal ─────────────────────────────────────────────── -->
 <div class="modal fade" id="importTemplateCodeModal" tabindex="-1">
@@ -981,13 +1082,6 @@ async function importTemplatesFromCode() {
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div class="mb-3">
-          <label class="form-label">{{ t(request, 'modal.import_mode') }}</label>
-          <select id="import-tmpl-code-mode" class="form-select form-select-sm" style="width:auto">
-            <option value="merge">{{ t(request, 'modal.merge') }}</option>
-            <option value="replace">{{ t(request, 'modal.replace') }}</option>
-          </select>
-        </div>
         <label class="form-label">{{ t(request, 'modal.json_code') }}</label>
         <textarea id="import-tmpl-code" class="form-control font-monospace" rows="14"
           placeholder='{"type":"expert_template","version":"1.0","items":[...]}'></textarea>
@@ -995,7 +1089,7 @@ async function importTemplatesFromCode() {
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
         <button type="button" class="btn btn-primary" onclick="importTemplatesFromCode()">
-          <i class="bi bi-upload me-1"></i>{{ t(request, 'btn.import') }}
+          <i class="bi bi-arrow-right me-1"></i>Weiter
         </button>
       </div>
     </div>

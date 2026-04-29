@@ -521,12 +521,13 @@ async function refreshOvernightList() {
         </td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover align-middle">
+    el.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover align-middle" data-sortable>
       <thead><tr>
-        <th>${_t.runId}</th><th>${_t.started}</th><th>${_t.epochsLabel}</th><th>${_t.report}</th><th>Summary</th><th></th>
+        <th>${_t.runId}</th><th>${_t.started}</th><th>${_t.epochsLabel}</th><th data-nosort>${_t.report}</th><th data-nosort>Summary</th><th data-nosort></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
+    el.querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
@@ -562,12 +563,13 @@ async function refreshSingleList() {
         </td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover align-middle">
+    el.innerHTML = `<div class="table-responsive"><table class="table table-sm table-hover align-middle" data-sortable>
       <thead><tr>
-        <th>${_t.template}</th><th>${_t.timestamp}</th><th>Ø ${_t.score}</th><th>${_t.evalFile}</th><th></th>
+        <th>${_t.template}</th><th>${_t.timestamp}</th><th>Ø ${_t.score}</th><th data-nosort>${_t.evalFile}</th><th data-nosort></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
+    el.querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
@@ -589,7 +591,7 @@ async function showResult(runId) {
       }
       if (d.report && d.report.per_epoch) {
         html += `<h6>${_t.epochsOverview}</h6>`;
-        html += `<div class="table-responsive"><table class="table table-sm table-bordered align-middle">
+        html += `<div class="table-responsive"><table class="table table-sm table-bordered align-middle" data-sortable>
           <thead><tr>
             <th>${_t.epoche}</th><th>Ø ${_t.score}</th><th>${_t.tokens}</th><th>${_t.duration} (s)</th>
             <th>${_t.graphEntitiesDelta}</th><th>${_t.cacheHitRate}</th><th>${_t.compressions}</th>
@@ -608,7 +610,7 @@ async function showResult(runId) {
         html += '</tbody></table></div>';
       } else if (d.epochs && d.epochs.length > 0) {
         html += `<h6>${_t.epochsSummary}</h6>`;
-        html += `<div class="table-responsive"><table class="table table-sm table-bordered align-middle">
+        html += `<div class="table-responsive"><table class="table table-sm table-bordered align-middle" data-sortable>
           <thead><tr><th>${_t.epoche}</th><th>Ø ${_t.score}</th><th>${_t.tests}</th></tr></thead><tbody>`;
         for (const ep of d.epochs) {
           html += `<tr><td>${ep.epoch}</td><td>${scoreBadge(ep.avg_score)}</td><td>${ep.tests}</td></tr>`;
@@ -667,7 +669,7 @@ async function showResult(runId) {
           </div></div>
         </div>`;
 
-        html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.83rem">
+        html += `<div class="table-responsive"><table class="table table-sm table-hover align-middle" style="font-size:.83rem" data-sortable>
           <thead><tr>
             <th>${_t.testId}</th><th>${_t.category}</th><th>${_t.typeLabel}</th>
             <th>${_t.score}</th><th>${_t.tokens}</th><th>${_t.duration}</th><th>${_t.statusLabel}</th>
@@ -722,7 +724,9 @@ async function showResult(runId) {
         html += '</tbody></table></div>';
       }
     }
-    document.getElementById('result-modal-body').innerHTML = html || `<div class="text-muted">${_t.noData}</div>`;
+    const modalBody = document.getElementById('result-modal-body');
+    modalBody.innerHTML = html || `<div class="text-muted">${_t.noData}</div>`;
+    modalBody.querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     document.getElementById('result-modal-body').innerHTML =
       `<div class="text-danger">${_t.loadError}: ${escHtml(e.message)}</div>`;
@@ -873,16 +877,17 @@ async function refreshGaiaList() {
       </tr>`;
     }).join('');
     el.innerHTML = `
-      <table class="table table-sm table-hover align-middle">
+      <table class="table table-sm table-hover align-middle" data-sortable>
         <thead><tr>
           <th>${_t.timestamp}</th>
           <th>Template</th>
-          <th>${_t.gaiaLevel}</th>
+          <th data-nosort>${_t.gaiaLevel}</th>
           <th>${_t.overall}</th>
-          <th></th>
+          <th data-nosort></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
+    el.querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
@@ -925,18 +930,19 @@ async function showGaiaResult(filename) {
       </div>
       <div class="mb-3">${lvlSummary}</div>
       <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle">
+        <table class="table table-sm table-hover align-middle" data-sortable>
           <thead><tr>
             <th>${_t.gaiaCorrect}</th>
             <th>${_t.gaiaLevel}</th>
-            <th>${_t.gaiaQuestion}</th>
-            <th>${_t.gaiaExpected}</th>
-            <th>${_t.gaiaAnswer}</th>
+            <th data-nosort>${_t.gaiaQuestion}</th>
+            <th data-nosort>${_t.gaiaExpected}</th>
+            <th data-nosort>${_t.gaiaAnswer}</th>
             <th>${_t.duration}</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+    document.getElementById('result-modal-body').querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     document.getElementById('result-modal-body').innerHTML =
       `<div class="text-danger">${_t.loadError}: ${escHtml(e.message)}</div>`;
@@ -999,16 +1005,17 @@ async function refreshLongMemEvalList() {
       </tr>`;
     }).join('');
     el.innerHTML = `
-      <table class="table table-sm table-hover align-middle">
+      <table class="table table-sm table-hover align-middle" data-sortable>
         <thead><tr>
           <th>${_t.timestamp}</th>
           <th>Template</th>
           <th>${_t.tests}</th>
           <th>${_t.avgScore}</th>
-          <th></th>
+          <th data-nosort></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
+    el.querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     el.innerHTML = `<div class="text-danger small">${_t.loadError}: ${escHtml(e.message)}</div>`;
   }
@@ -1051,13 +1058,14 @@ async function showLmeResult(filename) {
       </div>
       <div class="mb-3">${typeSummary}</div>
       <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle">
+        <table class="table table-sm table-hover align-middle" data-sortable>
           <thead><tr>
-            <th>OK</th><th>Type</th><th>Turns</th><th>${_t.gaiaExpected}</th><th>${_t.score}</th><th>${_t.duration}</th>
+            <th>OK</th><th>Type</th><th>Turns</th><th data-nosort>${_t.gaiaExpected}</th><th>${_t.score}</th><th>${_t.duration}</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+    document.getElementById('result-modal-body').querySelectorAll('table[data-sortable]').forEach(t => window.moeSort?.init(t));
   } catch (e) {
     document.getElementById('result-modal-body').innerHTML =
       `<div class="text-danger">${_t.loadError}: ${escHtml(e.message)}</div>`;
