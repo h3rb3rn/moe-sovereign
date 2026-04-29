@@ -5071,8 +5071,14 @@ async def user_api_copy_admin_template(
     source = next((t for t in all_templates if t.get("id") == tmpl_id), None)
     if not source:
         raise HTTPException(status_code=404, detail="Template not found")
-    # Create copy as user template
-    config = {k: v for k, v in source.items() if k not in ("id", "name", "description")}
+    # Create copy as user template — strip admin-controlled prompts
+    _STRIP_TOP = {"id", "name", "description", "planner_prompt", "judge_prompt"}
+    config = {k: v for k, v in source.items() if k not in _STRIP_TOP}
+    if "experts" in config:
+        config["experts"] = {
+            cat: {k: v for k, v in cat_cfg.items() if k != "system_prompt"}
+            for cat, cat_cfg in config["experts"].items()
+        }
     new_name = f"Copy of {source.get('name', tmpl_id)}"
     new_desc = source.get("description", "")
     tmpl = await db.create_user_template(user_id, new_name, new_desc, 1.0, config)
@@ -5159,7 +5165,15 @@ async def user_api_import_templates(
             continue
         description  = (item.get("description") or "").strip()
         cost_factor  = float(item.get("cost_factor") or 1.0)
-        config       = item.get("config") or {}
+        config       = dict(item.get("config") or {})
+        # Strip admin-controlled prompts that must not carry over to user copies
+        config.pop("planner_prompt", None)
+        config.pop("judge_prompt", None)
+        if "experts" in config:
+            config["experts"] = {
+                cat: {k: v for k, v in cat_cfg.items() if k != "system_prompt"}
+                for cat, cat_cfg in config["experts"].items()
+            }
         await db.create_user_template(user_id, name, description, cost_factor, config)
         existing_names.add(name)
         imported += 1
