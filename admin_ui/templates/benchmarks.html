@@ -391,6 +391,10 @@ const _t = {
   correctOf:           "{{ t(request, 'js.correct_of') }}",
   noLmeRuns:           "{{ t(request, 'js.no_longmemeval_runs') }}",
   lmeStarted:          "{{ t(request, 'js.longmemeval_started') }}",
+  saAddTemplate:       "{{ t(request, 'lbl.sa_add_template') }}",
+  saAdded:             "{{ t(request, 'js.sa_template_added') }}",
+  saRemoved:           "{{ t(request, 'js.sa_template_removed') }}",
+  error:               "{{ t(request, 'js.error') }}",
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1169,7 +1173,7 @@ async function loadServiceAccount() {
 
   const sel = document.getElementById('sa-add-select');
   if (sel) {
-    sel.innerHTML = '<option value="">— Template hinzufügen —</option>';
+    sel.innerHTML = `<option value="">${_t.saAddTemplate}</option>`;
     for (const t of _saData.all_templates) {
       if (!_saData.granted_templates.includes(t.id)) {
         sel.insertAdjacentHTML('beforeend', `<option value="${t.id}">${t.name}</option>`);
@@ -1188,7 +1192,7 @@ async function saGrantTemplate() {
   });
   const d = await r.json();
   const msgEl = document.getElementById('sa-msg');
-  if (msgEl) msgEl.textContent = d.ok ? `✓ ${tmplId} hinzugefügt` : `Fehler: ${d.detail}`;
+  if (msgEl) msgEl.textContent = d.ok ? _t.saAdded.replace('{id}', tmplId) : `${_t.error}: ${d.detail}`;
   loadServiceAccount();
 }
 
@@ -1196,7 +1200,7 @@ async function saRevokeTemplate(tmplId) {
   const r = await fetch(`/api/service-accounts/benchmarks/templates/${encodeURIComponent(tmplId)}`, {method: 'DELETE'});
   const d = await r.json();
   const msgEl = document.getElementById('sa-msg');
-  if (msgEl) msgEl.textContent = d.ok ? `✓ ${tmplId} entfernt` : `Fehler: ${d.detail}`;
+  if (msgEl) msgEl.textContent = d.ok ? _t.saRemoved.replace('{id}', tmplId) : `${_t.error}: ${d.detail}`;
   loadServiceAccount();
 }
 

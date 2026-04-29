@@ -928,6 +928,12 @@
   ,"js.audit_required":                "Veuillez d'abord effectuer un audit"
   ,"section.endpoint_availability":    "Disponibilité des points de terminaison (24h)"
   ,"section.endpoint_budget":          "Budget des points de terminaison API"
+  ,"info.backup_before_import":         "Sauvegarder tous les modèles actuels en JSON"
+  ,"dialog.import_mode_question":      "Que faire si un nom existe déjà ?"
+  ,"dialog.import_merge_title":        "Ajouter les nouveaux seulement"
+  ,"dialog.import_merge_desc":         "Les entrées existantes restent inchangées"
+  ,"dialog.import_replace_title":      "Écraser les existants"
+  ,"dialog.import_replace_desc":       "Les entrées portant le même nom seront remplacées"
   ,"lbl.last_24h":                     "Dernières 24 heures"
 
 }

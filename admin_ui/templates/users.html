@@ -339,6 +339,7 @@ async function _loadResources() {
   return _resourcesCache;
 }
 
+const _usersT = { unknown: {{ t(request, 'lbl.unknown') | tojson }} };
 // Build a grouped LLM dropdown, grouped by node
 function buildLLMGroupedDropdown(wrapperId, uid, models) {
   const wrap = document.getElementById(wrapperId);
@@ -348,7 +349,7 @@ function buildLLMGroupedDropdown(wrapperId, uid, models) {
   const groups = {};
   for (const m of models) {
     const at = m.lastIndexOf('@');
-    const node = at >= 0 ? m.slice(at + 1) : '(unbekannt)';
+    const node = at >= 0 ? m.slice(at + 1) : _usersT.unknown;
     const model = at >= 0 ? m.slice(0, at) : m;
     if (!groups[node]) groups[node] = [];
     groups[node].push({model, full: m});

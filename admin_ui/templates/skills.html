@@ -191,7 +191,7 @@ async function loadSkills() {
     renderGrid(skills);
   } catch(e) {
     document.getElementById('skills-grid').innerHTML =
-      `<div class="col-12"><div class="alert alert-danger">Fehler beim Laden: ${e.message}</div></div>`;
+      `<div class="col-12"><div class="alert alert-danger">${_tskills.error}: ${e.message}</div></div>`;
   }
 }
 
@@ -334,7 +334,7 @@ async function loadUpstream() {
     document.getElementById('upstream-count').textContent = skills.length;
     renderUpstreamGrid(skills);
   } catch(e) {
-    grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">Fehler: ${e.message}</div></div>`;
+    grid.innerHTML = `<div class="col-12"><div class="alert alert-danger">${_tskills.error}: ${e.message}</div></div>`;
   }
 }
 

@@ -928,6 +928,12 @@
   ,"js.audit_required":                "Please run an audit first"
   ,"section.endpoint_availability":    "Endpoint Availability (24h)"
   ,"section.endpoint_budget":          "API Endpoint Budget"
+  ,"info.backup_before_import":         "Save all current templates as a JSON backup"
+  ,"dialog.import_mode_question":      "What should happen when a name already exists?"
+  ,"dialog.import_merge_title":        "Add new only"
+  ,"dialog.import_merge_desc":         "Existing entries remain unchanged"
+  ,"dialog.import_replace_title":      "Overwrite existing"
+  ,"dialog.import_replace_desc":       "Entries with the same name will be replaced"
   ,"lbl.last_24h":                     "Last 24 hours"
 
 }

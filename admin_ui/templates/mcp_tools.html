@@ -52,6 +52,7 @@
 {% block scripts %}
 <script>
 const MCP_TOOLS_URL = '/api/mcp-tools';
+const _mcpT = { error: {{ t(request, 'js.error') | tojson }} };
 
 function showFlash(msg, type = 'success') {
   const c = document.getElementById('flash-container');
@@ -155,7 +156,7 @@ async function toggleTool(name, btn) {
 
     showFlash(`Tool '${name}' ${enabled ? 'aktiviert' : 'deaktiviert'}.`);
   } catch(e) {
-    showFlash(`Fehler: ${e.message}`, 'danger');
+    showFlash(`${_mcpT.error}: ${e.message}`, 'danger');
   } finally {
     btn.disabled = false;
   }
