@@ -1946,20 +1946,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       async function importUserTemplates(input) {
         const file = input.files[0];
         if (!file) return;
-        const replace = confirm('Overwrite existing templates with the same name?\n\nOK = Replace | Cancel = Import new only');
-        const mode = replace ? 'replace' : 'merge';
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch(`/user/api/templates/import?mode=${mode}`, {method: 'POST', body: formData});
-        input.value = '';
-        if (res.ok) {
-          const data = await res.json();
-          alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
-          window.location.reload();
-        } else {
-          const err = await res.json().catch(() => ({detail: 'Unknown error'}));
-          alert('Import failed: ' + (err.detail || 'Unknown error'));
-        }
+        _pendingUserImport = { type: 'template', file, inputEl: input };
+        document.getElementById('up-import-info').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        new bootstrap.Modal(document.getElementById('upImportOptionsModal')).show();
       }
 
       function addExpertCategory() {
@@ -2527,20 +2516,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       async function importUserCcProfiles(input) {
         const file = input.files[0];
         if (!file) return;
-        const replace = confirm('Overwrite existing profiles with the same name?\n\nOK = Replace | Cancel = Import new only');
-        const mode = replace ? 'replace' : 'merge';
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch(`/user/api/cc-profiles/import?mode=${mode}`, {method: 'POST', body: formData});
-        input.value = '';
-        if (res.ok) {
-          const data = await res.json();
-          alert(`Import complete: ${data.imported} imported, ${data.skipped} skipped`);
-          window.location.reload();
-        } else {
-          const err = await res.json().catch(() => ({detail: 'Unknown error'}));
-          alert('Import failed: ' + (err.detail || 'Unknown error'));
-        }
+        _pendingUserImport = { type: 'cc-profile', file, inputEl: input };
+        document.getElementById('up-import-info').textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        new bootstrap.Modal(document.getElementById('upImportOptionsModal')).show();
       }
       </script>
 
@@ -2798,6 +2776,79 @@ new Chart(ctx, {
 });
 </script>
 {% endif %}
+
+<!-- ── Import Options Modal (Templates & CC-Profiles) ─────────────────────── -->
+<div class="modal fade" id="upImportOptionsModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title mb-0"><i class="bi bi-upload me-2 text-primary"></i>Import</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="cancelUserImport()"></button>
+      </div>
+      <div class="modal-body">
+        <p id="up-import-info" class="small text-muted mb-3 font-monospace"></p>
+        <p class="small fw-semibold mb-2">Was soll bei gleichem Namen passieren?</p>
+        <div class="d-grid gap-2">
+          <button class="btn btn-outline-secondary text-start py-2" onclick="confirmUserImport('merge')">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-plus-circle text-success fs-5 flex-shrink-0"></i>
+              <div>
+                <div class="fw-semibold small">Nur neue hinzufügen</div>
+                <div class="text-muted" style="font-size:.72rem">Vorhandene Einträge bleiben unverändert</div>
+              </div>
+            </div>
+          </button>
+          <button class="btn btn-outline-danger text-start py-2" onclick="confirmUserImport('replace')">
+            <div class="d-flex align-items-center gap-2">
+              <i class="bi bi-arrow-repeat text-danger fs-5 flex-shrink-0"></i>
+              <div>
+                <div class="fw-semibold small">Vorhandene überschreiben</div>
+                <div class="text-muted" style="font-size:.72rem">Einträge mit gleichem Namen werden ersetzt</div>
+              </div>
+            </div>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" onclick="cancelUserImport()">
+          Abbrechen
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ─── User portal import flow ────────────────────────────────────────────── */
+let _pendingUserImport = null;
+
+async function confirmUserImport(mode) {
+  bootstrap.Modal.getInstance(document.getElementById('upImportOptionsModal'))?.hide();
+  const p = _pendingUserImport;
+  _pendingUserImport = null;
+  if (!p) return;
+  if (p.inputEl) p.inputEl.value = '';
+  const endpoint = p.type === 'cc-profile'
+    ? `/user/api/cc-profiles/import?mode=${mode}`
+    : `/user/api/templates/import?mode=${mode}`;
+  const formData = new FormData();
+  formData.append('file', p.file);
+  const res = await fetch(endpoint, { method: 'POST', body: formData });
+  if (res.ok) {
+    const data = await res.json();
+    alert(`Import abgeschlossen: ${data.imported} importiert, ${data.skipped} übersprungen`);
+    window.location.reload();
+  } else {
+    const err = await res.json().catch(() => ({ detail: 'Unbekannter Fehler' }));
+    alert('Import fehlgeschlagen: ' + (err.detail || 'Unbekannter Fehler'));
+  }
+}
+
+function cancelUserImport() {
+  if (_pendingUserImport?.inputEl) _pendingUserImport.inputEl.value = '';
+  _pendingUserImport = null;
+}
+</script>
 
 <script>
 /* ─── Dark / Light theme toggle ─────────────────────────────────────────── */
