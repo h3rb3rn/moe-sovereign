@@ -1005,13 +1005,18 @@ async function confirmImport(mode) {
       body: JSON.stringify(p.data),
     });
   }
+  const _importT = {
+    done:         {{ t(request, 'msg.import_done')   | tojson }},
+    failed:       {{ t(request, 'msg.import_failed') | tojson }},
+    unknownError: {{ t(request, 'msg.unknown_error') | tojson }},
+  };
   if (res.ok) {
     const d = await res.json();
-    alert(`Import abgeschlossen: ${d.imported} importiert, ${d.skipped} übersprungen`);
+    alert(_importT.done.replace('{imported}', d.imported).replace('{skipped}', d.skipped));
     window.location.reload();
   } else {
-    const err = await res.json().catch(() => ({ detail: 'Unbekannter Fehler' }));
-    alert('Import fehlgeschlagen: ' + (err.detail || 'Unbekannter Fehler'));
+    const err = await res.json().catch(() => ({ detail: _importT.unknownError }));
+    alert(_importT.failed.replace('{error}', err.detail || _importT.unknownError));
   }
 }
 
@@ -1026,7 +1031,7 @@ function cancelImport() {
   <div class="modal-dialog modal-sm">
     <div class="modal-content">
       <div class="modal-header py-2">
-        <h6 class="modal-title mb-0"><i class="bi bi-upload me-2 text-primary"></i>Template-Import</h6>
+        <h6 class="modal-title mb-0"><i class="bi bi-upload me-2 text-primary"></i>{{ t(request, 'btn.import') }}</h6>
         <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="cancelImport()"></button>
       </div>
       <div class="modal-body">
@@ -1035,21 +1040,21 @@ function cancelImport() {
         <div class="form-check mb-3">
           <input class="form-check-input" type="checkbox" id="import-do-backup" checked>
           <label class="form-check-label small fw-semibold" for="import-do-backup">
-            <i class="bi bi-archive me-1 text-secondary"></i>Backup vorher erstellen
+            <i class="bi bi-archive me-1 text-secondary"></i>{{ t(request, 'btn.backup') }}
           </label>
-          <div class="form-text" style="font-size:.72rem">Alle aktuellen Templates als JSON sichern</div>
+          <div class="form-text" style="font-size:.72rem">{{ t(request, 'info.backup_before_import') }}</div>
         </div>
 
         <hr class="my-2">
 
-        <p class="small fw-semibold mb-2">Was soll bei gleichem Namen passieren?</p>
+        <p class="small fw-semibold mb-2">{{ t(request, 'dialog.import_mode_question') }}</p>
         <div class="d-grid gap-2">
           <button class="btn btn-outline-secondary text-start py-2" onclick="confirmImport('merge')">
             <div class="d-flex align-items-center gap-2">
               <i class="bi bi-plus-circle text-success fs-5 flex-shrink-0"></i>
               <div>
-                <div class="fw-semibold small">Nur neue hinzufügen</div>
-                <div class="text-muted" style="font-size:.72rem">Vorhandene Templates bleiben unverändert</div>
+                <div class="fw-semibold small">{{ t(request, 'dialog.import_merge_title') }}</div>
+                <div class="text-muted" style="font-size:.72rem">{{ t(request, 'dialog.import_merge_desc') }}</div>
               </div>
             </div>
           </button>
@@ -1057,8 +1062,8 @@ function cancelImport() {
             <div class="d-flex align-items-center gap-2">
               <i class="bi bi-arrow-repeat text-danger fs-5 flex-shrink-0"></i>
               <div>
-                <div class="fw-semibold small">Vorhandene überschreiben</div>
-                <div class="text-muted" style="font-size:.72rem">Templates mit gleichem Namen werden ersetzt</div>
+                <div class="fw-semibold small">{{ t(request, 'dialog.import_replace_title') }}</div>
+                <div class="text-muted" style="font-size:.72rem">{{ t(request, 'dialog.import_replace_desc') }}</div>
               </div>
             </div>
           </button>

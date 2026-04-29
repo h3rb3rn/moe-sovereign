@@ -80,6 +80,13 @@
 
 {% block scripts %}
 <script>
+const _ucT = {
+  error:            {{ t(request, 'js.error')                        | tojson }},
+  loadError:        {{ t(request, 'js.load_error')                   | tojson }},
+  unknownError:     {{ t(request, 'msg.unknown_error')               | tojson }},
+  confirmDelTmpl:   {{ t(request, 'js.confirm_delete_template')      | tojson }},
+  confirmDelCc:     {{ t(request, 'js.confirm_delete_cc_profile')    | tojson }},
+};
 let _templates = [];
 let _ccProfiles = [];
 let _activeTab = 'templates';
@@ -192,7 +199,7 @@ async function loadContent() {
     applyFilter();
   } catch (e) {
     document.getElementById('templates-tbody').innerHTML =
-      `<tr><td colspan="6" class="text-danger text-center py-3">Fehler beim Laden: ${escHtml(e.message)}</td></tr>`;
+      `<tr><td colspan="6" class="text-danger text-center py-3">${_ucT.loadError}: ${escHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -203,14 +210,14 @@ async function toggleTemplate(id, newActive) {
     body: JSON.stringify({is_active: !!newActive}),
   });
   if (res.ok) loadContent();
-  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+  else { const d = await res.json(); alert(_ucT.error + ': ' + (d.detail || _ucT.unknownError)); }
 }
 
 async function deleteTemplate(id, name) {
-  if (!confirm(`Template "${name}" wirklich löschen?`)) return;
+  if (!confirm(_ucT.confirmDelTmpl.replace('{name}', name))) return;
   const res = await fetch(`/api/admin/user-templates/${encodeURIComponent(id)}`, {method: 'DELETE'});
   if (res.ok) loadContent();
-  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+  else { const d = await res.json(); alert(_ucT.error + ': ' + (d.detail || _ucT.unknownError)); }
 }
 
 async function toggleCcProfile(id, newActive) {
@@ -220,14 +227,14 @@ async function toggleCcProfile(id, newActive) {
     body: JSON.stringify({is_active: !!newActive}),
   });
   if (res.ok) loadContent();
-  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+  else { const d = await res.json(); alert(_ucT.error + ': ' + (d.detail || _ucT.unknownError)); }
 }
 
 async function deleteCcProfile(id, name) {
-  if (!confirm(`CC Profil "${name}" wirklich löschen?`)) return;
+  if (!confirm(_ucT.confirmDelCc.replace('{name}', name))) return;
   const res = await fetch(`/api/admin/user-cc-profiles/${encodeURIComponent(id)}`, {method: 'DELETE'});
   if (res.ok) loadContent();
-  else { const d = await res.json(); alert('Fehler: ' + (d.detail || 'unbekannt')); }
+  else { const d = await res.json(); alert(_ucT.error + ': ' + (d.detail || _ucT.unknownError)); }
 }
 
 document.addEventListener('DOMContentLoaded', loadContent);

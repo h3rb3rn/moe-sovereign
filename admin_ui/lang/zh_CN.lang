@@ -928,6 +928,12 @@
   ,"js.audit_required":                "请先执行审计"
   ,"section.endpoint_availability":    "端点可用性（24小时）"
   ,"section.endpoint_budget":          "API端点预算"
+  ,"info.backup_before_import":         "将所有当前模板保存为 JSON 备份"
+  ,"dialog.import_mode_question":      "同名时应如何处理？"
+  ,"dialog.import_merge_title":        "仅添加新内容"
+  ,"dialog.import_merge_desc":         "现有条目保持不变"
+  ,"dialog.import_replace_title":      "覆盖已有内容"
+  ,"dialog.import_replace_desc":       "同名条目将被替换"
   ,"lbl.last_24h":                     "最近24小时"
 
 }

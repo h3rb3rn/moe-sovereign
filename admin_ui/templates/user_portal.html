@@ -2782,19 +2782,19 @@ new Chart(ctx, {
   <div class="modal-dialog modal-sm">
     <div class="modal-content">
       <div class="modal-header py-2">
-        <h6 class="modal-title mb-0"><i class="bi bi-upload me-2 text-primary"></i>Import</h6>
+        <h6 class="modal-title mb-0"><i class="bi bi-upload me-2 text-primary"></i>{{ t(request, 'btn.import') }}</h6>
         <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="cancelUserImport()"></button>
       </div>
       <div class="modal-body">
         <p id="up-import-info" class="small text-muted mb-3 font-monospace"></p>
-        <p class="small fw-semibold mb-2">Was soll bei gleichem Namen passieren?</p>
+        <p class="small fw-semibold mb-2">{{ t(request, 'dialog.import_mode_question') }}</p>
         <div class="d-grid gap-2">
           <button class="btn btn-outline-secondary text-start py-2" onclick="confirmUserImport('merge')">
             <div class="d-flex align-items-center gap-2">
               <i class="bi bi-plus-circle text-success fs-5 flex-shrink-0"></i>
               <div>
-                <div class="fw-semibold small">Nur neue hinzufügen</div>
-                <div class="text-muted" style="font-size:.72rem">Vorhandene Einträge bleiben unverändert</div>
+                <div class="fw-semibold small">{{ t(request, 'dialog.import_merge_title') }}</div>
+                <div class="text-muted" style="font-size:.72rem">{{ t(request, 'dialog.import_merge_desc') }}</div>
               </div>
             </div>
           </button>
@@ -2802,8 +2802,8 @@ new Chart(ctx, {
             <div class="d-flex align-items-center gap-2">
               <i class="bi bi-arrow-repeat text-danger fs-5 flex-shrink-0"></i>
               <div>
-                <div class="fw-semibold small">Vorhandene überschreiben</div>
-                <div class="text-muted" style="font-size:.72rem">Einträge mit gleichem Namen werden ersetzt</div>
+                <div class="fw-semibold small">{{ t(request, 'dialog.import_replace_title') }}</div>
+                <div class="text-muted" style="font-size:.72rem">{{ t(request, 'dialog.import_replace_desc') }}</div>
               </div>
             </div>
           </button>
@@ -2811,7 +2811,7 @@ new Chart(ctx, {
       </div>
       <div class="modal-footer py-2">
         <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" onclick="cancelUserImport()">
-          Abbrechen
+          {{ t(request, 'btn.cancel') }}
         </button>
       </div>
     </div>
@@ -2821,6 +2821,11 @@ new Chart(ctx, {
 <script>
 /* ─── User portal import flow ────────────────────────────────────────────── */
 let _pendingUserImport = null;
+const _upImportT = {
+  done:         {{ t(request, 'msg.import_done')   | tojson }},
+  failed:       {{ t(request, 'msg.import_failed') | tojson }},
+  unknownError: {{ t(request, 'msg.unknown_error') | tojson }},
+};
 
 async function confirmUserImport(mode) {
   bootstrap.Modal.getInstance(document.getElementById('upImportOptionsModal'))?.hide();
@@ -2836,11 +2841,11 @@ async function confirmUserImport(mode) {
   const res = await fetch(endpoint, { method: 'POST', body: formData });
   if (res.ok) {
     const data = await res.json();
-    alert(`Import abgeschlossen: ${data.imported} importiert, ${data.skipped} übersprungen`);
+    alert(_upImportT.done.replace('{imported}', data.imported).replace('{skipped}', data.skipped));
     window.location.reload();
   } else {
-    const err = await res.json().catch(() => ({ detail: 'Unbekannter Fehler' }));
-    alert('Import fehlgeschlagen: ' + (err.detail || 'Unbekannter Fehler'));
+    const err = await res.json().catch(() => ({ detail: _upImportT.unknownError }));
+    alert(_upImportT.failed.replace('{error}', err.detail || _upImportT.unknownError));
   }
 }
 
