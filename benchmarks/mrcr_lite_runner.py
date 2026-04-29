@@ -51,6 +51,7 @@ TEMPLATE        = os.environ.get("MOE_TEMPLATE", "moe-memory-aihub-hybrid")
 TEMPLATE_WITH   = os.environ.get("MRCR_TEMPLATE_WITH",  TEMPLATE)
 TEMPLATE_NO     = os.environ.get("MRCR_TEMPLATE_NO",    "moe-memory-aihub-nosm")
 MAX_DEPTH       = int(os.environ.get("MRCR_MAX_DEPTH", "100"))
+CALL_TIMEOUT    = float(os.environ.get("MRCR_CALL_TIMEOUT", "600.0"))
 DATASET   = os.environ.get(
     "MRCR_DATASET",
     str(pathlib.Path(__file__).parent / "datasets" / "mrcr_lite_v1.json"),
@@ -310,7 +311,8 @@ async def run_needle_test(
         # Send only hot window + recall question; semantic memory provides the needle
         messages = hot_window + [{"role": "user", "content": recall_q}]
         response_text, latency = await chat(
-            client, messages, session_id, template=used_template
+            client, messages, session_id, template=used_template,
+            timeout=CALL_TIMEOUT,
         )
         score = score_response(response_text, needle["value"], needle["type"])
         return NeedleResult(
