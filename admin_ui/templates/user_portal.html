@@ -2547,7 +2547,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <span class="badge {% if conn.api_type == 'ollama' %}bg-info{% else %}bg-success{% endif %} ms-1">{{ conn.api_type }}</span>
                 </div>
                 <div class="btn-group btn-group-sm">
-                  <button class="btn btn-outline-secondary" onclick="openConnModal('{{ conn.id }}', {{ {'name': conn.name, 'display_name': conn.display_name, 'api_type': conn.api_type, 'url': conn.url} | tojson | safe }})" title="Edit">
+                  <button class="btn btn-outline-secondary"
+                          data-conn-id="{{ conn.id }}"
+                          data-conn="{{ {'name': conn.name, 'display_name': conn.display_name, 'api_type': conn.api_type, 'url': conn.url} | tojson | forceescape }}"
+                          onclick="openConnModal(this.dataset.connId, JSON.parse(this.dataset.conn))"
+                          title="Edit">
                     <i class="bi bi-pencil"></i>
                   </button>
                   <button class="btn btn-outline-danger" onclick="deleteConn('{{ conn.id }}', '{{ conn.display_name or conn.name }}')" title="Delete">
