@@ -322,6 +322,26 @@ else
   fi
 fi
 
+# --- Validate compose command ---------------------------------------------------
+# Test that $COMPOSE actually works. Falls back to docker-compose (v1) for
+# systems that have Docker CE without the compose plugin.
+if [[ -z "$COMPOSE" ]] || ! $COMPOSE version &>/dev/null 2>&1; then
+  if [[ "$CONTAINER_RUNTIME" == "docker" ]] && command -v docker-compose &>/dev/null; then
+    COMPOSE="docker-compose"
+    echo "  compose plugin missing — falling back to docker-compose (v1) ✓"
+  elif [[ -z "$COMPOSE" ]]; then
+    echo "[ERROR] No compose command available. Install docker-compose-plugin or podman-compose."
+    exit 1
+  else
+    echo "[ERROR] Compose command '${COMPOSE}' not working."
+    echo "        For Docker CE: install docker-compose-plugin via the Docker repo."
+    echo "        For Podman: install podman-compose (apt install podman-compose)."
+    exit 1
+  fi
+fi
+echo "  Compose: ${COMPOSE} ✓"
+# -------------------------------------------------------------------------------
+
 # =============================================================================
 #  SECTION 6: Host directory creation
 # =============================================================================
