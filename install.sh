@@ -47,21 +47,22 @@ print_banner
 #
 # Update mode: re-apply volume ownership, git pull, compose rebuild. Done.
 # No interactive prompts, no .env rewrite.
-_upd_rt=""
+# Use an array so "docker compose" is two words regardless of IFS=$'\n\t'.
+_upd_rt=()
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  _upd_rt="docker compose"
+  _upd_rt=(docker compose)
 elif command -v podman &>/dev/null; then
   if podman compose version &>/dev/null 2>&1; then
-    _upd_rt="podman compose"
+    _upd_rt=(podman compose)
   elif command -v podman-compose &>/dev/null; then
-    _upd_rt="podman-compose"
+    _upd_rt=(podman-compose)
   else
-    _upd_rt="podman compose"
+    _upd_rt=(podman compose)
   fi
 fi
 
-if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
-  if [[ "${_upd_rt}" == podman* ]]; then
+if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
+  if [[ "${_upd_rt[0]}" == podman* ]]; then
     vol_count=$(podman volume ls -q 2>/dev/null \
       | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
   else
@@ -80,7 +81,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
     echo "  Credentials will NOT be changed. Running:"
     echo "    1. Re-apply volume permissions (fixes container UID mismatches)"
     echo "    2. git pull --ff-only"
-    echo "    3. ${_upd_rt} build + up -d"
+    echo "    3. ${_upd_rt[*]} build + up -d"
     echo "  =================================================================="
     echo ""
 
@@ -132,8 +133,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
     # Rebuild images and restart containers
     echo "  [3/3] Rebuilding containers..."
     cd "${INSTALL_DIR}"
-    ${_upd_rt} build --quiet
-    ${_upd_rt} up -d
+    "${_upd_rt[@]}" build --quiet
+    "${_upd_rt[@]}" up -d
     echo "        Containers started ✓"
 
     # Health check (same as Section 12)
@@ -149,7 +150,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
       if [[ ${_elapsed} -ge ${_max_wait} ]]; then
         echo ""
         echo "  [!] API did not respond within ${_max_wait}s."
-        echo "      Check logs: sudo ${_upd_rt} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+        echo "      Check logs: sudo ${_upd_rt[*]} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
         break
       fi
       printf "."
@@ -161,8 +162,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
     echo "  =================================================================="
     echo "  MoE Sovereign updated successfully."
     echo ""
-    echo "  Logs:    sudo ${_upd_rt} logs -f"
-    echo "  Status:  sudo ${_upd_rt} ps"
+    echo "  Logs:    sudo ${_upd_rt[*]} logs -f"
+    echo "  Status:  sudo ${_upd_rt[*]} ps"
     echo "  =================================================================="
     echo ""
     exit 0
@@ -234,50 +235,60 @@ echo "  OS: ${PRETTY_NAME} (${VERSION_CODENAME}) ✓"
 echo "[2/9] Detecting container runtime..."
 
 CONTAINER_RUNTIME=""
-COMPOSE=""
+COMPOSE=""        # display / .env string
+COMPOSE_CMD=()    # executable array — immune to IFS=$'\n\t'
+
+# Checks whether docker-compose plugin is registered — uses "docker info" which
+# we know works, avoiding any dependency on "docker compose version" exit codes.
+_docker_has_compose() {
+  docker info --format '{{range .ClientInfo.Plugins}}{{.Name}} {{end}}' 2>/dev/null \
+    | grep -qw "compose"
+}
 
 _resolve_podman_compose() {
   if podman compose version &>/dev/null 2>&1; then
-    COMPOSE="podman compose"
+    COMPOSE="podman compose"; COMPOSE_CMD=(podman compose)
   elif command -v podman-compose &>/dev/null; then
-    COMPOSE="podman-compose"
+    COMPOSE="podman-compose"; COMPOSE_CMD=(podman-compose)
   else
-    COMPOSE="podman compose"   # will be validated after install
+    COMPOSE="podman compose"; COMPOSE_CMD=(podman compose)
   fi
 }
 
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   DOCKER_VERSION=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
-  echo "  Docker ${DOCKER_VERSION} already installed ✓"
   CONTAINER_RUNTIME="docker"
-  COMPOSE="docker compose"
+  COMPOSE="docker compose"; COMPOSE_CMD=(docker compose)
+  if _docker_has_compose; then
+    echo "  Docker ${DOCKER_VERSION} + compose plugin detected ✓"
+  else
+    echo "  Docker ${DOCKER_VERSION} detected (compose plugin missing — will install) ✓"
+  fi
 elif command -v podman &>/dev/null; then
   PODMAN_VERSION=$(podman --version 2>/dev/null | awk '{print $3}')
-  echo "  Podman ${PODMAN_VERSION} already installed ✓"
   CONTAINER_RUNTIME="podman"
   _resolve_podman_compose
+  echo "  Podman ${PODMAN_VERSION} detected ✓"
 else
   echo ""
-  echo "  No container runtime detected. Choose one to install:"
+  echo "  No container runtime found. Choose one to install:"
   echo ""
-  echo "  1) Docker CE  — industry-standard engine, broad ecosystem, daemon-based"
+  echo "  1) Docker CE  — industry-standard daemon-based engine, broad ecosystem"
   echo "  2) Podman     — daemonless, rootless OCI runtime, drop-in compatible"
   echo ""
   while true; do
     read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
     _rt_choice="${_rt_choice:-1}"
     case "${_rt_choice}" in
-      1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; break ;;
+      1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; COMPOSE_CMD=(docker compose); break ;;
       2) CONTAINER_RUNTIME="podman"; break ;;
       *) echo "  Please enter 1 or 2." ;;
     esac
   done
 fi
 
-echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE:-pending install} ✓"
-
 # =============================================================================
-#  SECTION 5: Container runtime installation (if not already present)
+#  SECTION 5: Install runtime and required packages
 # =============================================================================
 echo "[3/9] Installing runtime and required packages..."
 
@@ -285,62 +296,70 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg lsb-release git apache2-utils python3
 
-if [[ "$CONTAINER_RUNTIME" == "docker" ]] && ! command -v docker &>/dev/null; then
+if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
 
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
+  if ! command -v docker &>/dev/null; then
+    # ── Fresh Docker CE install from the official repo ──────────────────────
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
 
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
-    > /etc/apt/sources.list.d/docker.list
+      > /etc/apt/sources.list.d/docker.list
 
-  apt-get update -qq
-  apt-get install -y --no-install-recommends \
-    docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
+    apt-get update -qq
+    apt-get install -y --no-install-recommends \
+      docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin
 
-  systemctl enable --now docker
-  COMPOSE="docker compose"
-  echo "  Docker CE installed and started ✓"
+    systemctl enable --now docker
+    echo "  Docker CE + compose plugin installed ✓"
 
-elif [[ "$CONTAINER_RUNTIME" == "podman" ]] && ! command -v podman &>/dev/null; then
+  elif ! _docker_has_compose; then
+    # ── Docker present but compose plugin missing ────────────────────────────
+    # Add the official Docker repo if not already configured, then install plugin.
+    if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+      apt-get update -qq
+    fi
+    apt-get install -y --no-install-recommends docker-compose-plugin
+    if ! _docker_has_compose; then
+      echo "[ERROR] docker-compose-plugin not registering with Docker."
+      echo "        If Docker was installed via Snap, reinstall via the official repo:"
+      echo "        https://docs.docker.com/engine/install/${DISTRO_ID}/"
+      exit 1
+    fi
+    echo "  docker-compose-plugin installed ✓"
 
-  # TODO(human): install Podman and a compose provider for Debian/Ubuntu.
-  # Decide between:
-  #   a) OS-native repos (simpler, slightly older versions — apt install podman podman-compose)
-  #   b) kubic OBS repo (latest Podman builds, extra external repo to maintain)
-  # After installing, call _resolve_podman_compose to set $COMPOSE correctly.
-  echo "[!] Podman installation not yet implemented — please install podman manually."
-  exit 1
-
-else
-  echo "  Runtime already present — skipping installation ✓"
-  if [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
-    _resolve_podman_compose
-  fi
-fi
-
-# --- Validate compose command ---------------------------------------------------
-# Test that $COMPOSE actually works. Falls back to docker-compose (v1) for
-# systems that have Docker CE without the compose plugin.
-if [[ -z "$COMPOSE" ]] || ! $COMPOSE version &>/dev/null 2>&1; then
-  if [[ "$CONTAINER_RUNTIME" == "docker" ]] && command -v docker-compose &>/dev/null; then
-    COMPOSE="docker-compose"
-    echo "  compose plugin missing — falling back to docker-compose (v1) ✓"
-  elif [[ -z "$COMPOSE" ]]; then
-    echo "[ERROR] No compose command available. Install docker-compose-plugin or podman-compose."
-    exit 1
   else
-    echo "[ERROR] Compose command '${COMPOSE}' not working."
-    echo "        For Docker CE: install docker-compose-plugin via the Docker repo."
-    echo "        For Podman: install podman-compose (apt install podman-compose)."
+    echo "  Docker CE + compose plugin already present ✓"
+  fi
+
+elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
+
+  if ! command -v podman &>/dev/null; then
+    # TODO(human): install Podman and a compose provider for Debian/Ubuntu.
+    # Decide between:
+    #   a) OS-native repos  — apt install podman podman-compose
+    #   b) kubic OBS repo   — latest builds, extra external repo to maintain
+    # After installing, call _resolve_podman_compose to set $COMPOSE.
+    echo "[!] Podman installation not yet implemented — please install podman manually."
     exit 1
   fi
+  _resolve_podman_compose
+  echo "  Podman + compose ready ✓"
+
 fi
-echo "  Compose: ${COMPOSE} ✓"
-# -------------------------------------------------------------------------------
+
+echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE} ✓"
 
 # =============================================================================
 #  SECTION 6: Host directory creation
@@ -886,9 +905,9 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-${COMPOSE} pull --quiet 2>/dev/null || true
-${COMPOSE} build --quiet
-${COMPOSE} up -d
+"${COMPOSE_CMD[@]}" pull --quiet 2>/dev/null || true
+"${COMPOSE_CMD[@]}" build --quiet
+"${COMPOSE_CMD[@]}" up -d
 
 echo "  Containers started ✓"
 
