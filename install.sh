@@ -520,6 +520,32 @@ CONTAINERSCONF
     echo "  Root mount propagation set to shared ✓"
   fi
 
+  # Configure unqualified-search-registries so short image names like
+  # "postgres:17-alpine" resolve to docker.io without explicit prefix.
+  _reg_conf="/etc/containers/registries.conf.d/docker-io-search.conf"
+  if [[ ! -f "$_reg_conf" ]]; then
+    echo 'unqualified-search-registries = ["docker.io"]' \
+      | _sudo tee "$_reg_conf" > /dev/null
+    echo "  docker.io added as default search registry ✓"
+  fi
+
+  # Install nftables (required by netavark network backend) and aardvark-dns
+  # (container DNS resolution). Without these, container networking fails.
+  _sudo apt-get install -y --no-install-recommends nftables 2>/dev/null || true
+  _sudo apt-get install -y --no-install-recommends aardvark-dns 2>/dev/null || true
+
+  # Enable Podman socket so docker-socket-proxy and moe-admin can use the
+  # container API. With rootless Podman the socket lives at
+  # /run/user/<uid>/podman/podman.sock.
+  _deploy_uid=$(id -u "$DEPLOY_USER" 2>/dev/null || echo "1000")
+  _podman_socket="/run/user/${_deploy_uid}/podman/podman.sock"
+  if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+    XDG_RUNTIME_DIR="/run/user/${_deploy_uid}" \
+      sudo -u "$DEPLOY_USER" systemctl --user enable --now podman.socket 2>/dev/null || true
+  else
+    systemctl --user enable --now podman.socket 2>/dev/null || true
+  fi
+
   _podman_as_user system migrate &>/dev/null || true
 
   # Smoke-test: verify rootless Podman is functional before proceeding.
@@ -541,6 +567,8 @@ CONTAINERSCONF
 
   # Rootless Podman needs no group — each user manages their own containers.
   _RT_GROUP=""
+  # Store socket path for use in .env generation (Section 10).
+  _PODMAN_SOCKET="$_podman_socket"
   echo "  Podman + compose ready ✓"
 
 fi
@@ -600,6 +628,8 @@ _sudo mkdir -p \
   "${MOE_DATA_ROOT}/admin-logs" \
   "${MOE_DATA_ROOT}/userdb" \
   "${MOE_DATA_ROOT}/few-shot" \
+  "${MOE_DATA_ROOT}/generated" \
+  "${MOE_DATA_ROOT}/langgraph-checkpoints" \
   "${GRAFANA_DATA_ROOT}/data" \
   "${GRAFANA_DATA_ROOT}/dashboards" \
   "${INSTALL_DIR}" 2>/dev/null || true
@@ -954,6 +984,17 @@ fi
     echo 'COMPOSE_PROFILES=caddy'
   else
     echo 'COMPOSE_PROFILES='
+  fi
+  echo ""
+  echo "# --- Container runtime socket + storage paths ---"
+  echo "# Docker: DOCKER_SOCKET=/var/run/docker.sock, CONTAINER_STORAGE_ROOT=/var/lib/docker"
+  echo "# Podman: DOCKER_SOCKET=/run/user/<uid>/podman/podman.sock, CONTAINER_STORAGE_ROOT=~/.local/share/containers"
+  if [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
+    printf 'DOCKER_SOCKET=%s\n'              "${_PODMAN_SOCKET:-/run/user/1000/podman/podman.sock}"
+    printf 'CONTAINER_STORAGE_ROOT=%s\n'    "${HOME}/.local/share/containers"
+  else
+    echo 'DOCKER_SOCKET=/var/run/docker.sock'
+    echo 'CONTAINER_STORAGE_ROOT=/var/lib/docker'
   fi
   echo ""
   echo "# --- Host data roots (bind-mount sources) ---"
