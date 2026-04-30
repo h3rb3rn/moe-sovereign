@@ -236,31 +236,42 @@ echo "[2/9] Detecting container runtime..."
 CONTAINER_RUNTIME=""
 COMPOSE=""
 
+# Checks whether docker-compose plugin is registered — uses "docker info" which
+# we know works, avoiding any dependency on "docker compose version" exit codes.
+_docker_has_compose() {
+  docker info --format '{{range .ClientInfo.Plugins}}{{.Name}} {{end}}' 2>/dev/null \
+    | grep -qw "compose"
+}
+
 _resolve_podman_compose() {
   if podman compose version &>/dev/null 2>&1; then
     COMPOSE="podman compose"
   elif command -v podman-compose &>/dev/null; then
     COMPOSE="podman-compose"
   else
-    COMPOSE="podman compose"   # will be validated after install
+    COMPOSE="podman compose"
   fi
 }
 
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   DOCKER_VERSION=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
-  echo "  Docker ${DOCKER_VERSION} already installed ✓"
   CONTAINER_RUNTIME="docker"
   COMPOSE="docker compose"
+  if _docker_has_compose; then
+    echo "  Docker ${DOCKER_VERSION} + compose plugin detected ✓"
+  else
+    echo "  Docker ${DOCKER_VERSION} detected (compose plugin missing — will install) ✓"
+  fi
 elif command -v podman &>/dev/null; then
   PODMAN_VERSION=$(podman --version 2>/dev/null | awk '{print $3}')
-  echo "  Podman ${PODMAN_VERSION} already installed ✓"
   CONTAINER_RUNTIME="podman"
   _resolve_podman_compose
+  echo "  Podman ${PODMAN_VERSION} detected ✓"
 else
   echo ""
-  echo "  No container runtime detected. Choose one to install:"
+  echo "  No container runtime found. Choose one to install:"
   echo ""
-  echo "  1) Docker CE  — industry-standard engine, broad ecosystem, daemon-based"
+  echo "  1) Docker CE  — industry-standard daemon-based engine, broad ecosystem"
   echo "  2) Podman     — daemonless, rootless OCI runtime, drop-in compatible"
   echo ""
   while true; do
@@ -274,10 +285,8 @@ else
   done
 fi
 
-echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE:-pending install} ✓"
-
 # =============================================================================
-#  SECTION 5: Container runtime installation (if not already present)
+#  SECTION 5: Install runtime and required packages
 # =============================================================================
 echo "[3/9] Installing runtime and required packages..."
 
@@ -285,77 +294,70 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg lsb-release git apache2-utils python3
 
-if [[ "$CONTAINER_RUNTIME" == "docker" ]] && ! command -v docker &>/dev/null; then
+if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
 
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
+  if ! command -v docker &>/dev/null; then
+    # ── Fresh Docker CE install from the official repo ──────────────────────
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
 
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
-    > /etc/apt/sources.list.d/docker.list
+      > /etc/apt/sources.list.d/docker.list
 
-  apt-get update -qq
-  apt-get install -y --no-install-recommends \
-    docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
+    apt-get update -qq
+    apt-get install -y --no-install-recommends \
+      docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin
 
-  systemctl enable --now docker
-  COMPOSE="docker compose"
-  echo "  Docker CE installed and started ✓"
+    systemctl enable --now docker
+    echo "  Docker CE + compose plugin installed ✓"
 
-elif [[ "$CONTAINER_RUNTIME" == "podman" ]] && ! command -v podman &>/dev/null; then
-
-  # TODO(human): install Podman and a compose provider for Debian/Ubuntu.
-  # Decide between:
-  #   a) OS-native repos (simpler, slightly older versions — apt install podman podman-compose)
-  #   b) kubic OBS repo (latest Podman builds, extra external repo to maintain)
-  # After installing, call _resolve_podman_compose to set $COMPOSE correctly.
-  echo "[!] Podman installation not yet implemented — please install podman manually."
-  exit 1
-
-else
-  echo "  Runtime already present — skipping installation ✓"
-  if [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
-    _resolve_podman_compose
-  fi
-fi
-
-# --- Validate compose command ---------------------------------------------------
-# Test that $COMPOSE actually works. Tries to auto-install the missing provider
-# before giving up. Covers: snap-installed Docker, Docker CE without the plugin,
-# and any other setup where the compose command is absent.
-_compose_ok() { [[ -n "$COMPOSE" ]] && $COMPOSE version &>/dev/null 2>&1; }
-
-if ! _compose_ok; then
-  if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
-    echo "  Compose plugin not found — installing docker-compose-plugin..."
+  elif ! _docker_has_compose; then
+    # ── Docker present but compose plugin missing ────────────────────────────
+    # Add the official Docker repo if not already configured, then install plugin.
+    if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+      apt-get update -qq
+    fi
     apt-get install -y --no-install-recommends docker-compose-plugin
-    COMPOSE="docker compose"
-    if ! _compose_ok; then
-      echo "[ERROR] docker-compose-plugin installed but 'docker compose' still not working."
-      echo "        Docker may be installed via Snap or another non-APT method."
-      echo "        Reinstall Docker CE from the official repo: https://docs.docker.com/engine/install/"
+    if ! _docker_has_compose; then
+      echo "[ERROR] docker-compose-plugin not registering with Docker."
+      echo "        If Docker was installed via Snap, reinstall via the official repo:"
+      echo "        https://docs.docker.com/engine/install/${DISTRO_ID}/"
       exit 1
     fi
     echo "  docker-compose-plugin installed ✓"
-  elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
-    echo "  podman-compose not found — installing..."
-    apt-get install -y --no-install-recommends podman-compose &>/dev/null || true
-    _resolve_podman_compose
-    if ! _compose_ok; then
-      echo "[ERROR] podman-compose unavailable. Install: apt install podman-compose"
-      exit 1
-    fi
-    echo "  podman-compose installed ✓"
+
   else
-    echo "[ERROR] No compose command available. Install docker-compose-plugin or podman-compose."
+    echo "  Docker CE + compose plugin already present ✓"
+  fi
+
+elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
+
+  if ! command -v podman &>/dev/null; then
+    # TODO(human): install Podman and a compose provider for Debian/Ubuntu.
+    # Decide between:
+    #   a) OS-native repos  — apt install podman podman-compose
+    #   b) kubic OBS repo   — latest builds, extra external repo to maintain
+    # After installing, call _resolve_podman_compose to set $COMPOSE.
+    echo "[!] Podman installation not yet implemented — please install podman manually."
     exit 1
   fi
+  _resolve_podman_compose
+  echo "  Podman + compose ready ✓"
+
 fi
-echo "  Compose: ${COMPOSE} ✓"
-# -------------------------------------------------------------------------------
+
+echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE} ✓"
 
 # =============================================================================
 #  SECTION 6: Host directory creation
