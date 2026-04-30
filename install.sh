@@ -491,21 +491,28 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
   # invocation and may fail to start containers. cgroupfs works everywhere.
   _deploy_home=$(eval echo "~${DEPLOY_USER}")
   _containers_conf="${_deploy_home}/.config/containers/containers.conf"
+  # Detect environments where nftables is unavailable (WSL, some LXC/VMs).
+  # Netavark (default Podman network backend) requires nf_tables kernel module.
+  # Fall back to CNI + slirp4netns which operates entirely in userspace.
+  _network_backend="netavark"
+  if ! nft list ruleset &>/dev/null 2>&1; then
+    _network_backend="cni"
+    _sudo apt-get install -y --no-install-recommends containernetworking-plugins 2>/dev/null || \
+    _sudo apt-get install -y --no-install-recommends golang-github-containernetworking-plugins 2>/dev/null || true
+    echo "  nftables unavailable (WSL/LXC?) — using CNI network backend ✓"
+  fi
+
   if [[ ! -f "$_containers_conf" ]]; then
     if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
       sudo -u "$DEPLOY_USER" mkdir -p "${_deploy_home}/.config/containers"
-      sudo -u "$DEPLOY_USER" tee "$_containers_conf" > /dev/null <<'CONTAINERSCONF'
-[engine]
-cgroup_manager = "cgroupfs"
-CONTAINERSCONF
+      printf '[engine]\ncgroup_manager = "cgroupfs"\n\n[network]\nnetwork_backend = "%s"\n' \
+        "$_network_backend" | sudo -u "$DEPLOY_USER" tee "$_containers_conf" > /dev/null
     else
       mkdir -p "${_deploy_home}/.config/containers"
-      tee "$_containers_conf" > /dev/null <<'CONTAINERSCONF'
-[engine]
-cgroup_manager = "cgroupfs"
-CONTAINERSCONF
+      printf '[engine]\ncgroup_manager = "cgroupfs"\n\n[network]\nnetwork_backend = "%s"\n' \
+        "$_network_backend" | tee "$_containers_conf" > /dev/null
     fi
-    echo "  Podman cgroup_manager set to cgroupfs ✓"
+    echo "  Podman: cgroup_manager=cgroupfs, network_backend=${_network_backend} ✓"
   fi
 
   # Fix "/ is not a shared mount" warning: configure the kernel mount
@@ -636,6 +643,14 @@ _sudo mkdir -p \
 
 # INSTALL_DIR is owned by the deploy user so git clone and .env writes work without sudo.
 _sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "${INSTALL_DIR}"
+
+# dozzle-users.yml must exist as a file before Podman/Docker mounts it.
+# Without this, the container runtime creates a directory instead and Dozzle fails.
+# The moe-dozzle-init container overwrites it with the correct bcrypt hash on first start.
+_dozzle_users="${MOE_DATA_ROOT}/dozzle-users.yml"
+if [[ ! -f "$_dozzle_users" ]]; then
+  _sudo touch "$_dozzle_users"
+fi
 
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
