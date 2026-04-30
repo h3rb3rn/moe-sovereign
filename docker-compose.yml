@@ -532,6 +532,10 @@ volumes:
 
 
 networks:
+  default:
+    # Explicit declaration required by podman-compose; Docker Compose would
+    # create this implicitly, but older podman-compose versions do not.
+    driver: bridge
   authentik_network:
     # Created automatically. If Authentik SSO is deployed separately,
     # change to 'external: true' and ensure the network exists.
