@@ -31,8 +31,10 @@ from typing import Optional
 
 import numpy as np
 
-import chromadb
-from chromadb.utils import embedding_functions
+_EDGE_MODE = os.getenv("ENVIRONMENT") == "edge_mobile"
+if not _EDGE_MODE:
+    import chromadb
+    from chromadb.utils import embedding_functions
 
 logger = logging.getLogger(__name__)
 
@@ -237,11 +239,19 @@ class ConversationMemoryStore:
     """Tier-2 semantic memory: store evicted turns, retrieve by relevance."""
 
     def __init__(self) -> None:
-        self._client: Optional[chromadb.HttpClient] = None
+        self._client = None
         self._collection = None
 
     def _ensure_connected(self) -> None:
         if self._collection is not None:
+            return
+        if _EDGE_MODE:
+            from edge_vector_store import EdgeClient
+            self._client     = EdgeClient()
+            self._collection = self._client.get_or_create_collection(
+                name=_COLLECTION_NAME,
+            )
+            logger.info(f"Semantic memory: connected to EdgeCollection '{_COLLECTION_NAME}'")
             return
         if not _CHROMA_HOST:
             raise RuntimeError("CHROMA_HOST not configured — semantic memory disabled")
