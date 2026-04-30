@@ -323,19 +323,42 @@ else
 fi
 
 # --- Validate compose command ---------------------------------------------------
-# Test that $COMPOSE actually works. Falls back to docker-compose (v1) for
-# systems that have Docker CE without the compose plugin.
-if [[ -z "$COMPOSE" ]] || ! $COMPOSE version &>/dev/null 2>&1; then
-  if [[ "$CONTAINER_RUNTIME" == "docker" ]] && command -v docker-compose &>/dev/null; then
-    COMPOSE="docker-compose"
-    echo "  compose plugin missing — falling back to docker-compose (v1) ✓"
-  elif [[ -z "$COMPOSE" ]]; then
-    echo "[ERROR] No compose command available. Install docker-compose-plugin or podman-compose."
-    exit 1
+# Test that $COMPOSE actually works. Tries to auto-install the missing provider
+# before giving up. Covers: snap-installed Docker, Docker CE without the plugin,
+# and any other setup where the compose command is absent.
+_compose_ok() { [[ -n "$COMPOSE" ]] && $COMPOSE version &>/dev/null 2>&1; }
+
+if ! _compose_ok; then
+  if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
+    echo "  Compose plugin not found — installing docker-compose-plugin..."
+    apt-get install -y --no-install-recommends docker-compose-plugin &>/dev/null || true
+    COMPOSE="docker compose"
+    if ! _compose_ok; then
+      # Compose plugin still missing — Docker may be installed via snap or a
+      # non-APT method. Fall back to standalone docker-compose (v1) if present.
+      if command -v docker-compose &>/dev/null; then
+        COMPOSE="docker-compose"
+        echo "  Using docker-compose (v1) ✓"
+      else
+        echo "[ERROR] Could not install docker-compose-plugin and no docker-compose found."
+        echo "        Install manually: apt install docker-compose-plugin"
+        echo "        Or (v1):          apt install docker-compose"
+        exit 1
+      fi
+    else
+      echo "  docker-compose-plugin installed ✓"
+    fi
+  elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
+    echo "  podman-compose not found — installing..."
+    apt-get install -y --no-install-recommends podman-compose &>/dev/null || true
+    _resolve_podman_compose
+    if ! _compose_ok; then
+      echo "[ERROR] podman-compose unavailable. Install: apt install podman-compose"
+      exit 1
+    fi
+    echo "  podman-compose installed ✓"
   else
-    echo "[ERROR] Compose command '${COMPOSE}' not working."
-    echo "        For Docker CE: install docker-compose-plugin via the Docker repo."
-    echo "        For Podman: install podman-compose (apt install podman-compose)."
+    echo "[ERROR] No compose command available. Install docker-compose-plugin or podman-compose."
     exit 1
   fi
 fi
