@@ -476,7 +476,7 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     echo "  subgid range added for '${DEPLOY_USER}' ✓"
   fi
 
-  # Migrate Podman storage config after dependency changes.
+  # Helper to run podman as the deploy user even when script is root.
   _podman_as_user() {
     if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
       sudo -u "$DEPLOY_USER" podman "$@"
@@ -484,6 +484,42 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
       podman "$@"
     fi
   }
+
+  # Configure Podman to use cgroupfs instead of systemd.
+  # Without a full systemd user session (e.g. SSH logins), Podman would warn
+  # "cgroupv2 manager set to systemd but no user session available" on every
+  # invocation and may fail to start containers. cgroupfs works everywhere.
+  _deploy_home=$(eval echo "~${DEPLOY_USER}")
+  _containers_conf="${_deploy_home}/.config/containers/containers.conf"
+  if [[ ! -f "$_containers_conf" ]]; then
+    if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+      sudo -u "$DEPLOY_USER" mkdir -p "${_deploy_home}/.config/containers"
+      sudo -u "$DEPLOY_USER" tee "$_containers_conf" > /dev/null <<'CONTAINERSCONF'
+[engine]
+cgroup_manager = "cgroupfs"
+CONTAINERSCONF
+    else
+      mkdir -p "${_deploy_home}/.config/containers"
+      tee "$_containers_conf" > /dev/null <<'CONTAINERSCONF'
+[engine]
+cgroup_manager = "cgroupfs"
+CONTAINERSCONF
+    fi
+    echo "  Podman cgroup_manager set to cgroupfs ✓"
+  fi
+
+  # Fix "/ is not a shared mount" warning: configure the kernel mount
+  # propagation for the root filesystem via a systemd override.
+  # This persists across reboots and avoids bind-mount issues in rootless mode.
+  _mnt_override="/etc/systemd/system/local-fs.target.d/shared-propagation.conf"
+  if [[ ! -f "$_mnt_override" ]]; then
+    _sudo mkdir -p "$(dirname "$_mnt_override")"
+    printf '[Unit]\nConditionPathIsMountPoint=/\n[Service]\nExecStartPost=/bin/mount --make-rshared /\n' \
+      | _sudo tee "$_mnt_override" > /dev/null
+    _sudo mount --make-rshared / 2>/dev/null || true
+    echo "  Root mount propagation set to shared ✓"
+  fi
+
   _podman_as_user system migrate &>/dev/null || true
 
   # Smoke-test: verify rootless Podman is functional before proceeding.
