@@ -96,6 +96,7 @@ nav:
     - Claude Code Profiles: admin/profiles.md
     - Skills: admin/skills.md
     - Monitoring & Processes: admin/monitoring.md
+    - Starfleet — Ambient Intelligence: system/starfleet.md
     - Maintenance & Disk Management: admin/maintenance.md
   - Federation:
     - federation/index.md
