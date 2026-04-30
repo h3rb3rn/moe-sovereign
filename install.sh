@@ -47,21 +47,22 @@ print_banner
 #
 # Update mode: re-apply volume ownership, git pull, compose rebuild. Done.
 # No interactive prompts, no .env rewrite.
-_upd_rt=""
+# Use an array so "docker compose" is two words regardless of IFS=$'\n\t'.
+_upd_rt=()
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  _upd_rt="docker compose"
+  _upd_rt=(docker compose)
 elif command -v podman &>/dev/null; then
   if podman compose version &>/dev/null 2>&1; then
-    _upd_rt="podman compose"
+    _upd_rt=(podman compose)
   elif command -v podman-compose &>/dev/null; then
-    _upd_rt="podman-compose"
+    _upd_rt=(podman-compose)
   else
-    _upd_rt="podman compose"
+    _upd_rt=(podman compose)
   fi
 fi
 
-if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
-  if [[ "${_upd_rt}" == podman* ]]; then
+if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
+  if [[ "${_upd_rt[0]}" == podman* ]]; then
     vol_count=$(podman volume ls -q 2>/dev/null \
       | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
   else
@@ -80,7 +81,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
     echo "  Credentials will NOT be changed. Running:"
     echo "    1. Re-apply volume permissions (fixes container UID mismatches)"
     echo "    2. git pull --ff-only"
-    echo "    3. ${_upd_rt} build + up -d"
+    echo "    3. ${_upd_rt[*]} build + up -d"
     echo "  =================================================================="
     echo ""
 
@@ -132,8 +133,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
     # Rebuild images and restart containers
     echo "  [3/3] Rebuilding containers..."
     cd "${INSTALL_DIR}"
-    ${_upd_rt} build --quiet
-    ${_upd_rt} up -d
+    "${_upd_rt[@]}" build --quiet
+    "${_upd_rt[@]}" up -d
     echo "        Containers started ✓"
 
     # Health check (same as Section 12)
@@ -149,7 +150,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
       if [[ ${_elapsed} -ge ${_max_wait} ]]; then
         echo ""
         echo "  [!] API did not respond within ${_max_wait}s."
-        echo "      Check logs: sudo ${_upd_rt} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+        echo "      Check logs: sudo ${_upd_rt[*]} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
         break
       fi
       printf "."
@@ -161,8 +162,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
     echo "  =================================================================="
     echo "  MoE Sovereign updated successfully."
     echo ""
-    echo "  Logs:    sudo ${_upd_rt} logs -f"
-    echo "  Status:  sudo ${_upd_rt} ps"
+    echo "  Logs:    sudo ${_upd_rt[*]} logs -f"
+    echo "  Status:  sudo ${_upd_rt[*]} ps"
     echo "  =================================================================="
     echo ""
     exit 0
@@ -234,7 +235,8 @@ echo "  OS: ${PRETTY_NAME} (${VERSION_CODENAME}) ✓"
 echo "[2/9] Detecting container runtime..."
 
 CONTAINER_RUNTIME=""
-COMPOSE=""
+COMPOSE=""        # display / .env string
+COMPOSE_CMD=()    # executable array — immune to IFS=$'\n\t'
 
 # Checks whether docker-compose plugin is registered — uses "docker info" which
 # we know works, avoiding any dependency on "docker compose version" exit codes.
@@ -245,18 +247,18 @@ _docker_has_compose() {
 
 _resolve_podman_compose() {
   if podman compose version &>/dev/null 2>&1; then
-    COMPOSE="podman compose"
+    COMPOSE="podman compose"; COMPOSE_CMD=(podman compose)
   elif command -v podman-compose &>/dev/null; then
-    COMPOSE="podman-compose"
+    COMPOSE="podman-compose"; COMPOSE_CMD=(podman-compose)
   else
-    COMPOSE="podman compose"
+    COMPOSE="podman compose"; COMPOSE_CMD=(podman compose)
   fi
 }
 
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   DOCKER_VERSION=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
   CONTAINER_RUNTIME="docker"
-  COMPOSE="docker compose"
+  COMPOSE="docker compose"; COMPOSE_CMD=(docker compose)
   if _docker_has_compose; then
     echo "  Docker ${DOCKER_VERSION} + compose plugin detected ✓"
   else
@@ -278,7 +280,7 @@ else
     read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
     _rt_choice="${_rt_choice:-1}"
     case "${_rt_choice}" in
-      1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; break ;;
+      1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; COMPOSE_CMD=(docker compose); break ;;
       2) CONTAINER_RUNTIME="podman"; break ;;
       *) echo "  Please enter 1 or 2." ;;
     esac
@@ -903,9 +905,9 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-${COMPOSE} pull --quiet 2>/dev/null || true
-${COMPOSE} build --quiet
-${COMPOSE} up -d
+"${COMPOSE_CMD[@]}" pull --quiet 2>/dev/null || true
+"${COMPOSE_CMD[@]}" build --quiet
+"${COMPOSE_CMD[@]}" up -d
 
 echo "  Containers started ✓"
 
