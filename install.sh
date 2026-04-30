@@ -97,6 +97,28 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     _upd_data=$(_renv MOE_DATA_ROOT);   _upd_data="${_upd_data:-/opt/moe-infra}"
     _upd_graf=$(_renv GRAFANA_DATA_ROOT); _upd_graf="${_upd_graf:-/opt/grafana}"
 
+    # ── .env migration: add keys introduced in newer installer versions ──────
+    # COMPOSE_PROFILES — added when moe-caddy moved behind a Compose profile.
+    # Detect whether Caddy was running before and preserve that intent.
+    if [[ -z "$(_renv COMPOSE_PROFILES)" ]]; then
+      if docker ps -a --filter "name=moe-caddy" --format '{{.Names}}' 2>/dev/null \
+          | grep -q "moe-caddy"; then
+        echo "  [migrate] moe-caddy detected → COMPOSE_PROFILES=caddy added to .env ✓"
+        echo "COMPOSE_PROFILES=caddy" >> "${MOE_ENV_FILE}"
+      else
+        echo "  [migrate] No Caddy container → COMPOSE_PROFILES= (disabled) ✓"
+        echo "COMPOSE_PROFILES=" >> "${MOE_ENV_FILE}"
+      fi
+    fi
+
+    # CPU limits — added to prevent startup failures on 2-core systems.
+    for _cpu_var in NEO4J_CPU_LIMIT LANGGRAPH_CPU_LIMIT KAFKA_CPU_LIMIT CHROMA_CPU_LIMIT; do
+      if [[ -z "$(_renv ${_cpu_var})" ]]; then
+        echo "${_cpu_var}=2" >> "${MOE_ENV_FILE}"
+      fi
+    done
+    # ────────────────────────────────────────────────────────────────────────
+
     # Ensure directories exist (they should, but guard against partial installs)
     mkdir -p \
       "${_upd_data}/kafka-data"       "${_upd_data}/neo4j-data"   \
