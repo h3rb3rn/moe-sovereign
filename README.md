@@ -157,7 +157,7 @@ moe-infra/
 | **19** | Adaptive Context Budget | Context window limits per model auto-scale web-research blocks and GraphRAG budget. Fallback models (gemma4:31b 8K, qwen3.6:35b 32K) receive proportionally smaller context slices |
 | **20** | GraphRAG On-Demand | Neo4j queries skipped for external research questions (papers, APIs, media) — only runs for internal knowledge queries or when the plan includes a knowledge_healing task |
 | **21** | Tier-2 Semantic Memory | Evicted conversation turns are embedded in ChromaDB; at query time the most relevant past turns are retrieved via ANN search and injected as warm context — effective context reach far beyond the LLM's native window. Enable per template: `enable_semantic_memory: true` |
-| **22** | MRCR-lite Benchmark | Synthetic multi-turn recall benchmark: injects facts ("needles") at configurable depths (5–50 turns), measures recall with/without Tier-2 memory, scores by type (number, date, name, technical). Run: `python benchmarks/mrcr_lite_runner.py` |
+| **22** | MRCR-lite Benchmark | Synthetic multi-turn recall benchmark: injects facts ("needles") at configurable depths (5–100 turns), measures recall with/without Tier-2 memory, scores by type (number, date, name, technical). **Measured: 1.000 WITH / 0.000 WITHOUT** across all depths and needle types (100 runs). Run: `python benchmarks/mrcr_lite_runner.py` |
 
 ---
 
@@ -205,6 +205,7 @@ flowchart LR
 | **Adversarial MCP** | **9/9 blocked** | All code injection attempts stopped by AST firewall |
 | **69 LLM Model Test** | **phi4:14b** | Best planner/judge from 69 models tested |
 | **Accumulation Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache) |
+| **MRCR-lite v2 — Semantic Memory** | **1.000 / 0.000** | WITH semantic memory: 100% recall · WITHOUT: 0% — perfect separation across all depths (5–100 turns), all needle types, 100 runs, 0 failures (April 2026) |
 
 ---
 
