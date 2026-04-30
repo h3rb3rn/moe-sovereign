@@ -437,20 +437,26 @@ https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
 elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
 
   if ! command -v podman &>/dev/null; then
-    # Install Podman + podman-compose from OS-native repos.
-    # Debian 11+ and Ubuntu 22.04+ ship recent-enough versions in their
-    # standard repositories — no extra repo registration needed.
-    echo "  Installing Podman from OS repos..."
+    # Install Podman + rootless dependencies from OS-native repos.
+    # Debian 11+ and Ubuntu 22.04+ ship recent-enough versions.
+    echo "  Installing Podman + rootless dependencies..."
     _sudo apt-get update -qq
-    _sudo apt-get install -y --no-install-recommends podman podman-compose
+    _sudo apt-get install -y --no-install-recommends \
+      podman podman-compose \
+      uidmap \
+      passt \
+      slirp4netns \
+      fuse-overlayfs \
+      dbus-user-session
     if ! command -v podman &>/dev/null; then
-      echo "[ERROR] Podman installation failed."
-      echo "        Check 'apt policy podman' or install manually."
+      echo "[ERROR] Podman installation failed. Check 'apt policy podman'."
       exit 1
     fi
-    echo "  Podman installed ✓"
+    echo "  Podman + rootless dependencies installed ✓"
   else
-    echo "  Podman already present ✓"
+    echo "  Podman already present — installing missing rootless dependencies..."
+    _sudo apt-get install -y --no-install-recommends \
+      uidmap passt slirp4netns fuse-overlayfs dbus-user-session &>/dev/null || true
   fi
 
   # Ensure podman-compose is available (might be missing even if podman is)
@@ -458,12 +464,79 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     _sudo apt-get install -y --no-install-recommends podman-compose
   fi
 
+  # Configure user namespace mappings required for rootless containers.
+  # newuidmap/newgidmap (from uidmap) use these files to set up the UID/GID
+  # ranges that Podman can map inside the container.
+  if ! grep -q "^${DEPLOY_USER}:" /etc/subuid 2>/dev/null; then
+    echo "${DEPLOY_USER}:100000:65536" | _sudo tee -a /etc/subuid > /dev/null
+    echo "  subuid range added for '${DEPLOY_USER}' ✓"
+  fi
+  if ! grep -q "^${DEPLOY_USER}:" /etc/subgid 2>/dev/null; then
+    echo "${DEPLOY_USER}:100000:65536" | _sudo tee -a /etc/subgid > /dev/null
+    echo "  subgid range added for '${DEPLOY_USER}' ✓"
+  fi
+
+  # Helper to run podman as the deploy user even when script is root.
+  _podman_as_user() {
+    if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+      sudo -u "$DEPLOY_USER" podman "$@"
+    else
+      podman "$@"
+    fi
+  }
+
+  # Configure Podman to use cgroupfs instead of systemd.
+  # Without a full systemd user session (e.g. SSH logins), Podman would warn
+  # "cgroupv2 manager set to systemd but no user session available" on every
+  # invocation and may fail to start containers. cgroupfs works everywhere.
+  _deploy_home=$(eval echo "~${DEPLOY_USER}")
+  _containers_conf="${_deploy_home}/.config/containers/containers.conf"
+  if [[ ! -f "$_containers_conf" ]]; then
+    if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+      sudo -u "$DEPLOY_USER" mkdir -p "${_deploy_home}/.config/containers"
+      sudo -u "$DEPLOY_USER" tee "$_containers_conf" > /dev/null <<'CONTAINERSCONF'
+[engine]
+cgroup_manager = "cgroupfs"
+CONTAINERSCONF
+    else
+      mkdir -p "${_deploy_home}/.config/containers"
+      tee "$_containers_conf" > /dev/null <<'CONTAINERSCONF'
+[engine]
+cgroup_manager = "cgroupfs"
+CONTAINERSCONF
+    fi
+    echo "  Podman cgroup_manager set to cgroupfs ✓"
+  fi
+
+  # Fix "/ is not a shared mount" warning: configure the kernel mount
+  # propagation for the root filesystem via a systemd override.
+  # This persists across reboots and avoids bind-mount issues in rootless mode.
+  _mnt_override="/etc/systemd/system/local-fs.target.d/shared-propagation.conf"
+  if [[ ! -f "$_mnt_override" ]]; then
+    _sudo mkdir -p "$(dirname "$_mnt_override")"
+    printf '[Unit]\nConditionPathIsMountPoint=/\n[Service]\nExecStartPost=/bin/mount --make-rshared /\n' \
+      | _sudo tee "$_mnt_override" > /dev/null
+    _sudo mount --make-rshared / 2>/dev/null || true
+    echo "  Root mount propagation set to shared ✓"
+  fi
+
+  _podman_as_user system migrate &>/dev/null || true
+
+  # Smoke-test: verify rootless Podman is functional before proceeding.
+  echo "  Verifying rootless Podman..."
+  if ! _podman_as_user info &>/dev/null; then
+    echo "[ERROR] Podman smoke test failed — 'podman info' returned an error."
+    echo "        Try: podman info"
+    exit 1
+  fi
+  echo "  Podman rootless smoke test passed ✓"
+
   _resolve_podman_compose
 
   # Enable lingering so rootless containers survive logout / start on boot.
   if command -v loginctl &>/dev/null && [[ "$DEPLOY_USER" != "root" ]]; then
     _sudo loginctl enable-linger "$DEPLOY_USER" 2>/dev/null || true
-    echo "  Linger enabled for '${DEPLOY_USER}' (containers start on boot) ✓"
+    echo "  Linger enabled for '${DEPLOY_USER}' (containers survive logout) ✓"
   fi
 
   # Rootless Podman needs no group — each user manages their own containers.
