@@ -5166,14 +5166,11 @@ async def user_api_import_templates(
         description  = (item.get("description") or "").strip()
         cost_factor  = float(item.get("cost_factor") or 1.0)
         config       = dict(item.get("config") or {})
-        # Strip admin-controlled prompts that must not carry over to user copies
+        # planner_prompt / judge_prompt are admin-orchestration fields that
+        # have no meaning on user templates — strip them on import.
+        # system_prompt lives inside experts and belongs to the user; preserve it.
         config.pop("planner_prompt", None)
         config.pop("judge_prompt", None)
-        if "experts" in config:
-            config["experts"] = {
-                cat: {k: v for k, v in cat_cfg.items() if k != "system_prompt"}
-                for cat, cat_cfg in config["experts"].items()
-            }
         await db.create_user_template(user_id, name, description, cost_factor, config)
         existing_names.add(name)
         imported += 1
