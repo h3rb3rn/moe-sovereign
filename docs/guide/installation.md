@@ -4,25 +4,60 @@
 
 | Resource | Minimum | Recommended |
 |---|---|---|
-| OS | Debian 11 (bullseye) | Debian 13 (trixie) |
+| OS | Any Linux with Docker or Podman | See note below |
 | RAM | 8 GB | 16 GB+ |
 | Disk | 40 GB | 100 GB+ |
-| CPU | 4 cores | 8 cores+ |
+| CPU | 2 cores | 8 cores+ |
 | GPU | optional | NVIDIA (CUDA), AMD (ROCm) |
-| Docker | CE or EE | Docker CE 24+ |
+| Container runtime | Docker CE 24+ **or** Podman 4+ | Docker CE (latest) |
 | Internet | Required for setup | Optional after setup |
 
-Debian 11 (bullseye), 12 (bookworm), and 13 (trixie) are supported. Other Linux distributions are not tested.
+!!! info "Distribution independence"
+    The stack runs via **Docker Compose or Podman Compose** — it has no
+    OS-level dependencies beyond the container runtime itself. Any Linux
+    distribution that provides Docker or Podman works.
+
+    The **install script** (`install.sh`) is an optional convenience tool
+    that sets up the container runtime for you. It currently supports
+    **Debian 11–13** and **Ubuntu 22.04–26.04** via `apt`. On all other
+    distributions, install Docker CE or Podman manually and then run
+    `docker compose up -d` directly — no script needed.
 
 ---
 
-## One-Line Install (Linux)
+## One-Line Install (Debian / Ubuntu)
 
-Run this on a fresh Debian system as root or with sudo:
+Run this on a fresh Debian or Ubuntu system as root or with sudo:
 
 ```bash
 curl -sSL https://moe-sovereign.org/install.sh | bash
 ```
+
+**Supported by the install script:**
+
+| Distribution | Versions |
+|---|---|
+| Debian | 11 (bullseye), 12 (bookworm), 13 (trixie) |
+| Ubuntu | 22.04 (jammy), 24.04 (noble), 25.04 (plucky), 26.04+ |
+
+The installer will interactively ask for:
+
+1. **Installation directory** — where the repository is cloned (default `/opt/moe-sovereign`)
+2. **Data directory** — where container volumes are stored (default `/opt/moe-infra`)
+3. **Grafana directory** — for Grafana dashboards and data (default `/opt/grafana`)
+4. **Container runtime** — Docker CE or Podman (only prompted if neither is installed)
+5. **Admin account** — username and password for the Admin UI
+6. **Domain** — public hostname for HTTPS (optional, leave blank for local use)
+7. **Reverse proxy** — whether to deploy Caddy (skip if you already run Nginx or Traefik)
+8. **SSO / Authentik** — whether to pre-configure OIDC (optional)
+
+Then automatically:
+
+- Installs the chosen container runtime from the official repository if missing
+- Creates required host directories with correct ownership
+- Clones the repository and generates `.env` with random secrets
+- Builds and starts all containers
+- Waits for the API to become healthy and prints access URLs
 
 ## macOS
 
@@ -41,62 +76,73 @@ Full walkthrough including Docker Desktop File Sharing setup,
 Apple Silicon notes and host-side Ollama (Metal) tips:
 [Deployment → macOS](../deployment/macos.md).
 
-The installer will:
-
-1. Detect your OS version (Debian 11/12/13)
-2. Install Docker CE if not already present
-3. Create required directories under `/opt/`
-4. Clone the repository
-5. Prompt you for an admin username, password, and optional domain
-6. Auto-generate secure secrets for Valkey, Neo4j, and Grafana
-7. Write `/opt/moe-sovereign/.env`
-8. Build and start all containers
-9. Wait for the API to become healthy
-10. Print access URLs
-
 ---
 
-## Manual Installation
+## Manual Installation (any distribution)
 
-### 1. Install Docker CE
+The stack is a standard Docker Compose application. If your distribution is
+not covered by the install script, set up your container runtime manually
+and then follow these steps.
 
-Follow the [official Docker documentation](https://docs.docker.com/engine/install/debian/) for Debian, or use the commands below:
+### 1. Install Docker CE or Podman
 
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
+=== "Docker CE"
 
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    Follow the [official Docker documentation](https://docs.docker.com/engine/install/)
+    for your distribution, or use the commands below for Debian/Ubuntu:
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list
+    ```bash
+    sudo apt-get update
+    sudo apt-get install -y ca-certificates curl gnupg
 
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
-  docker-buildx-plugin docker-compose-plugin
-sudo systemctl enable --now docker
-```
+    sudo install -m 0755 -d /etc/apt/keyrings
+    DISTRO=$(. /etc/os-release && echo "$ID")
+    curl -fsSL "https://download.docker.com/linux/${DISTRO}/gpg" \
+      | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/${DISTRO} \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      | sudo tee /etc/apt/sources.list.d/docker.list
+
+    sudo apt-get update
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
+      docker-buildx-plugin docker-compose-plugin
+    sudo systemctl enable --now docker
+    ```
+
+=== "Podman"
+
+    ```bash
+    # Debian / Ubuntu (standard repos)
+    sudo apt-get install -y podman podman-compose
+
+    # Verify
+    podman compose version
+    ```
 
 ### 2. Create host directories
 
+Adjust the paths to match your preferred layout — these are only the defaults:
+
 ```bash
+DATA=/opt/moe-infra
+GRAFANA=/opt/grafana
+INSTALL=/opt/moe-sovereign
+
 sudo mkdir -p \
-  /opt/moe-infra/{kafka-data,neo4j-data,neo4j-logs,agent-logs,\
+  "${DATA}"/{kafka-data,neo4j-data,neo4j-logs,agent-logs,\
 chroma-onnx-cache,chroma-data,redis-data,langgraph-checkpoints,\
 prometheus-data,admin-logs,userdb,few-shot} \
-  /opt/grafana/{data,dashboards} \
-  /opt/moe-sovereign
+  "${GRAFANA}"/{data,dashboards} \
+  "${INSTALL}"
 ```
 
 ### 3. Clone the repository
 
 ```bash
-git clone https://github.com/h3rb3rn/moe-sovereign.git \
-  /opt/moe-sovereign
+git clone https://github.com/h3rb3rn/moe-sovereign.git /opt/moe-sovereign
 cd /opt/moe-sovereign
 ```
 
@@ -139,15 +185,20 @@ EOF
 ### 6. Deploy the stack
 
 ```bash
+# Docker
 sudo docker compose build
 sudo docker compose up -d
+
+# Podman
+podman compose build
+podman compose up -d
 ```
 
 ### 7. Verify
 
 ```bash
 # Check all containers are running
-sudo docker compose ps
+sudo docker compose ps   # or: podman compose ps
 
 # Wait for the API
 curl -f http://localhost:8002/v1/models
@@ -198,16 +249,24 @@ graph LR
 
 ## Upgrade
 
-Pull the latest code and rebuild:
+Re-run the install script — it detects an existing installation and runs in
+**update mode** (credentials preserved, data volumes untouched):
 
 ```bash
-cd /opt/moe-sovereign
+curl -sSL https://moe-sovereign.org/install.sh | bash
+```
+
+Or manually:
+
+```bash
+cd /opt/moe-sovereign   # your INSTALL_DIR
 git pull
 sudo docker compose build
 sudo docker compose up -d
 ```
 
-Configuration in `.env` is preserved. The database volumes under `/opt/moe-infra/` are never touched by `docker compose` pull/build.
+Configuration in `.env` is preserved. The database volumes under your data
+directory are never touched by `docker compose pull/build`.
 
 ---
 
@@ -226,6 +285,10 @@ sudo docker compose down && sudo docker compose up -d
 # Check .env is loaded correctly
 sudo docker compose exec langgraph-app env | grep JUDGE
 ```
+
+!!! tip "Podman users"
+    Replace `docker compose` with `podman compose` (or `podman-compose`) in all
+    commands above. Everything else is identical.
 
 !!! tip "Log Viewer"
     Once running, use the Dozzle log viewer at `https://logs.moe-sovereign.org` (or the Caddy-configured domain) for a browser-based view of all container logs.

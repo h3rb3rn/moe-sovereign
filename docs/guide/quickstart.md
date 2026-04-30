@@ -131,13 +131,19 @@ curl http://localhost:8002/v1/models
 
 ### Deployment
 
-For a fresh Debian server, the recommended approach is the one-line installer:
+For a fresh **Debian or Ubuntu** server, the recommended approach is the one-line installer:
 
 ```bash
 curl -sSL https://moe-sovereign.org/install.sh | bash
 ```
 
-The installer handles Docker CE installation, directory creation, configuration, and deployment automatically. See [Installation](installation.md) for details and the [First-Time Setup](first-setup.md) guide for the post-install wizard.
+The installer handles container runtime setup (Docker CE or Podman), directory
+creation, configuration, and deployment automatically.
+It supports **Debian 11–13** and **Ubuntu 22.04–26.04**.
+On any other Linux distribution, install Docker or Podman manually and run
+`docker compose up -d` directly — the stack itself has no OS dependencies.
+
+See [Installation](installation.md) for details and the [First-Time Setup](first-setup.md) guide for the post-install wizard.
 
 For manual deployment:
 
