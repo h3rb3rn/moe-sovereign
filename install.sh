@@ -176,16 +176,24 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       "${_upd_graf}/data"             "${_upd_graf}/dashboards"    \
       2>/dev/null || true
 
-    # Re-apply container UID ownership. These must match the UIDs baked into
-    # the Docker images; a mismatch causes write-permission crashes on startup.
+    # Re-apply container UID ownership. For rootless Podman the user-namespace
+    # mapping means container UIDs don't equal host UIDs; use podman unshare.
+    _upd_chown() {
+      local uid="$1" gid="$2"; shift 2
+      if [[ "${_upd_rt[0]}" == podman* ]]; then
+        podman unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
+      else
+        _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
+      fi
+    }
     # kafka (confluentinc/cp-kafka): appuser uid=1000
-    _sudo chown -R 1000:1000   "${_upd_data}/kafka-data"                       2>/dev/null || true
+    _upd_chown 1000 1000   "${_upd_data}/kafka-data"
     # prometheus: runs as nobody uid=65534
-    _sudo chown -R 65534:65534 "${_upd_data}/prometheus-data"                  2>/dev/null || true
+    _upd_chown 65534 65534 "${_upd_data}/prometheus-data"
     # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
-    _sudo chown -R 1001:0      "${_upd_data}/agent-logs"                       2>/dev/null || true
+    _upd_chown 1001 0      "${_upd_data}/agent-logs"
     # grafana: uid=472
-    _sudo chown -R 472:472     "${_upd_graf}/data" "${_upd_graf}/dashboards"   2>/dev/null || true
+    _upd_chown 472 472     "${_upd_graf}/data" "${_upd_graf}/dashboards"
 
     echo "  [1/3] Volume permissions reset ✓"
 
@@ -251,7 +259,9 @@ fi
 # =============================================================================
 if [[ $EUID -ne 0 ]]; then
   echo "  Deploy user: ${DEPLOY_USER}"
-  if ! sudo -v 2>/dev/null; then
+  # Use sudo -n (non-interactive) rather than sudo -v: sudo -v requires a TTY
+  # to validate credentials even with NOPASSWD, while -n just tests capability.
+  if ! sudo -n true 2>/dev/null; then
     echo "[ERROR] '${DEPLOY_USER}' needs sudo access for system-level operations."
     echo "        Add to sudoers: echo '${DEPLOY_USER} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/${DEPLOY_USER}"
     exit 1
@@ -580,6 +590,18 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
   _PODMAN_SOCKET="$_podman_socket"
   echo "  Podman + compose ready ✓"
 
+  # Rootless Podman cannot bind privileged ports (< 1024) by default.
+  # Lower the threshold to 80 so Caddy can serve HTTP/HTTPS without root.
+  if [[ "$(uname -s)" == "Linux" ]] && [[ $EUID -ne 0 ]]; then
+    _cur_port=$(sysctl -n net.ipv4.ip_unprivileged_port_start 2>/dev/null || echo 1024)
+    if [[ "${_cur_port}" -gt 80 ]]; then
+      _sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80 &>/dev/null || true
+      echo 'net.ipv4.ip_unprivileged_port_start=80' \
+        | _sudo tee /etc/sysctl.d/99-podman-unprivileged-ports.conf >/dev/null 2>&1 || true
+      echo "  Unprivileged port start lowered to 80 (Caddy TLS support) ✓"
+    fi
+  fi
+
 fi
 
 # podman-compose does not support --quiet; docker compose does.
@@ -656,17 +678,35 @@ fi
 
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
-# Fix ownership for containers that run as non-root.
+# Fix ownership for containers that run as non-root UIDs.
+#
+# Rootless Podman uses a user-namespace UID mapping: container UID 0 maps to
+# the deploy user on the host, container UID N (N≥1) maps to subuid N-1.
+# Plain `sudo chown <uid>` sets host UIDs that don't match the mapped UIDs, so
+# containers can't write to their volumes.  `podman unshare chown` runs the
+# chown inside the same user namespace the containers will use, translating
+# container UIDs to the correct host UIDs automatically.
+#
+# Docker uses the host's UID namespace directly, so a plain chown suffices.
+_chown_for_container() {
+  local uid="$1" gid="$2"; shift 2
+  if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
+    _podman_as_user unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
+  else
+    _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
+  fi
+}
+
 # kafka (confluentinc/cp-kafka): appuser uid=1000
-_sudo chown -R 1000:1000   "${MOE_DATA_ROOT}/kafka-data"                        2>/dev/null || true
+_chown_for_container 1000 1000 "${MOE_DATA_ROOT}/kafka-data"
 # postgres (terra_checkpoints): PGDATA is initialised by the container entrypoint
 # with correct ownership — no pre-chown needed for the data dir.
 # prometheus: runs as nobody uid=65534
-_sudo chown -R 65534:65534 "${MOE_DATA_ROOT}/prometheus-data"                   2>/dev/null || true
+_chown_for_container 65534 65534 "${MOE_DATA_ROOT}/prometheus-data"
 # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
-_sudo chown -R 1001:0      "${MOE_DATA_ROOT}/agent-logs"                        2>/dev/null || true
+_chown_for_container 1001 0 "${MOE_DATA_ROOT}/agent-logs"
 # grafana: uid=472
-_sudo chown -R 472:472     "${GRAFANA_DATA_ROOT}/data" "${GRAFANA_DATA_ROOT}/dashboards" 2>/dev/null || true
+_chown_for_container 472 472 "${GRAFANA_DATA_ROOT}/data" "${GRAFANA_DATA_ROOT}/dashboards"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo ""
@@ -925,22 +965,26 @@ if [[ "$INSTALL_CADDY" == "true" ]]; then
   if [[ ! -f "${CADDYFILE}" ]]; then
     if [[ -n "${DOMAIN:-}" ]]; then
       cat > "${CADDYFILE}" <<CADDY
-# Generated by install.sh — edit as needed, then: sudo ${COMPOSE} restart moe-caddy
+# Generated by install.sh — edit as needed, then: ${COMPOSE} restart moe-caddy
 
-docs.${DOMAIN} {
-    reverse_proxy moe-docs:8000
+admin.${DOMAIN} {
+    reverse_proxy moe-admin:8088
 }
 
-${DOMAIN} {
-    handle /install.sh {
-        root * /srv
-        file_server
-    }
-    redir * https://docs.${DOMAIN}{uri} 302
+api.${DOMAIN} {
+    reverse_proxy langgraph-orchestrator:8000
+}
+
+grafana.${DOMAIN} {
+    reverse_proxy moe-grafana:3000
 }
 
 logs.${DOMAIN} {
     reverse_proxy moe-dozzle:8080
+}
+
+docs.${DOMAIN} {
+    reverse_proxy moe-docs:8000
 }
 
 files.${DOMAIN} {
@@ -949,6 +993,14 @@ files.${DOMAIN} {
 
 storage.${DOMAIN} {
     reverse_proxy moe-storage:9001
+}
+
+${DOMAIN} {
+    handle /install.sh {
+        root * /srv
+        file_server
+    }
+    redir * https://admin.${DOMAIN}{uri} 302
 }
 CADDY
       echo "[6/9] Caddyfile generated for domain '${DOMAIN}' ✓"

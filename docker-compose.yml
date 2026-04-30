@@ -352,6 +352,11 @@ services:
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
       - '--collector.netclass.ignored-devices=^(veth|br|docker|lo).*'
+    # Podman rootless: prom/node-exporter uses a read-only rootfs; Podman needs
+    # a writable /run to inject .containerenv.  A tmpfs satisfies this without
+    # granting broader write access to the host filesystem.
+    tmpfs:
+      - /run
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -371,9 +376,16 @@ services:
       - "127.0.0.1:${CADVISOR_HOST_PORT:-9338}:8080"
     cap_add:
       - SYS_ADMIN
+    # Podman rootless: same tmpfs /run fix as node-exporter (read-only rootfs).
+    # /var/run is omitted: on Linux it is a symlink to /run, so mounting it
+    # read-only would silently replace the tmpfs and re-introduce the problem.
+    # CONTAINER_STORAGE_ROOT must point to the runtime's storage root:
+    #   Docker  → /var/lib/docker  (default)
+    #   Podman  → ~/.local/share/containers/storage  (rootless default)
+    tmpfs:
+      - /run
     volumes:
       - /:/rootfs:ro
-      - /var/run:/var/run:ro
       - /sys:/sys:ro
       - ${CONTAINER_STORAGE_ROOT:-/var/lib/docker}:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro
