@@ -48,6 +48,9 @@ from graph_rag.corrections import (
 )
 
 CORRECTION_MEMORY_ENABLED = os.getenv("CORRECTION_MEMORY_ENABLED", "true").lower() in ("1", "true", "yes")
+import starfleet_config as _starfleet
+import watchdog as _watchdog
+import mission_context as _mission_context
 import httpx
 import redis.asyncio as aioredis
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
@@ -522,6 +525,7 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             # Agentic re-planning loop: 0 = disabled (single-pass), N = max re-plan iterations.
             "max_agentic_rounds":  int(tmpl.get("max_agentic_rounds", 0)),
             # Tier-2 semantic memory: embed evicted turns in ChromaDB, retrieve relevant context.
+            "enable_mission_context":        bool(tmpl.get("enable_mission_context", False)),
             "enable_semantic_memory":       bool(tmpl.get("enable_semantic_memory", False)),
             # Per-template memory tuning (0 = use global env-var default)
             "semantic_memory_n_results":    int(tmpl.get("semantic_memory_n_results", 0)),
@@ -5815,7 +5819,9 @@ async def _gauge_updater_loop():
                                     PROM_SERVER_LOADED_MODELS.labels(server=_sname).set(0)
                                     PROM_SERVER_VRAM_BYTES.labels(server=_sname).set(0)
                             else:
-                                _r = await _hc.get(f"{_surl}/models")
+                                _token = _srv.get("token", "")
+                                _auth  = {"Authorization": f"Bearer {_token}"} if _token else {}
+                                _r = await _hc.get(f"{_surl}/models", headers=_auth)
                                 if _r.status_code == 200:
                                     _models = _r.json().get("data", [])
                                     PROM_SERVER_UP.labels(server=_sname).set(1)
@@ -5897,6 +5903,17 @@ async def lifespan(app_: FastAPI):
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
     asyncio.create_task(_auto_resume_dedicated_healer())
     asyncio.create_task(_watchdog_dedicated_healer())
+    # Starfleet: proactive watchdog alert loop
+    if _starfleet.is_feature_enabled_sync("watchdog"):
+        asyncio.create_task(_watchdog.watchdog_loop(
+            redis_client=redis_client,
+            inference_servers=INFERENCE_SERVERS_LIST,
+            kafka_producer=kafka_producer,
+            prom_server_up=PROM_SERVER_UP,
+            prom_loaded_models=PROM_SERVER_LOADED_MODELS,
+            prom_vram_bytes=PROM_SERVER_VRAM_BYTES,
+        ))
+        logger.info("🛸 Starfleet Watchdog enabled")
     # Semantic memory TTL cleanup — runs every 6 hours, removes expired ChromaDB turns
     async def _semantic_memory_cleanup_loop() -> None:
         from memory_retrieval import cleanup_expired_turns
@@ -6012,6 +6029,175 @@ async def _check_ip_rate_limit(request: Request) -> bool:
 async def health_check():
     """Liveness probe for Docker HEALTHCHECK and load balancers."""
     return {"status": "ok"}
+
+
+# ── Starfleet: Watchdog Alerts ────────────────────────────────────────────────
+
+@app.get("/api/watchdog/alerts")
+async def watchdog_alerts_endpoint(limit: int = 20):
+    """Return recent watchdog alerts from Valkey (most recent first)."""
+    if not await _starfleet.is_feature_enabled("watchdog", redis_client):
+        return JSONResponse({"enabled": False, "alerts": []})
+    if redis_client is None:
+        return JSONResponse({"enabled": True, "alerts": [], "error": "Valkey unavailable"})
+    raw = await redis_client.lrange(_watchdog.VALKEY_ALERT_KEY, 0, max(0, limit - 1))
+    alerts = []
+    for item in raw:
+        try:
+            alerts.append(json.loads(item))
+        except Exception:
+            pass
+    return {"enabled": True, "alerts": alerts}
+
+
+@app.get("/api/starfleet/features")
+async def starfleet_features_endpoint():
+    """Return current state of all Starfleet feature toggles."""
+    return await _starfleet.get_all_feature_states(redis_client)
+
+
+@app.get("/api/watchdog/config")
+async def watchdog_config_get():
+    """Return the current watchdog configuration."""
+    return await _watchdog._load_config(redis_client)
+
+
+@app.post("/api/watchdog/config")
+async def watchdog_config_set(request: Request):
+    """Merge-update watchdog configuration (hot-reload, no restart needed)."""
+    patch = await request.json()
+    return await _watchdog.save_config(redis_client, patch)
+
+
+@app.delete("/api/watchdog/alerts")
+async def watchdog_alerts_clear():
+    """Delete all stored watchdog alerts from Valkey."""
+    if redis_client is not None:
+        await redis_client.delete(_watchdog.VALKEY_ALERT_KEY)
+    return {"ok": True, "cleared": True}
+
+
+@app.get("/api/watchdog/node-status")
+async def watchdog_node_status():
+    """Return real-time per-node status via direct live health checks (3 s timeout).
+
+    Results are cached in Valkey for 20 s so rapid dashboard refreshes don't
+    hammer the inference nodes. Combines liveness from /api/tags (Ollama) or
+    /models (OpenAI-compat) with VRAM data from the Prometheus gauges.
+    """
+    _CACHE_KEY = "moe:watchdog:node_status_cache"
+    _CACHE_TTL = 20
+
+    # Return cached result if fresh enough.
+    if redis_client is not None:
+        try:
+            cached = await redis_client.get(_CACHE_KEY)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
+    results = []
+
+    async def _check_node(srv: dict) -> dict:
+        name      = srv["name"]
+        url       = srv.get("url", "").rstrip("/")
+        api_type  = srv.get("api_type", "ollama")
+        token     = srv.get("token", "")
+        vram_gb   = int(srv.get("vram_gb", 0))
+        up        = False
+        models_available = 0
+        models_loaded    = 0
+        vram_used_gb     = 0.0
+
+        # Build auth header — Ollama uses "ollama" as a dummy token (no real auth),
+        # OpenAI-compat endpoints require a real Bearer token.
+        headers = {}
+        if token and api_type != "ollama":
+            headers["Authorization"] = f"Bearer {token}"
+
+        try:
+            async with httpx.AsyncClient(timeout=3.0, headers=headers) as hc:
+                if api_type == "ollama":
+                    base = url[:-3] if url.endswith("/v1") else url
+                    r = await hc.get(f"{base}/api/tags")
+                    if r.status_code == 200:
+                        up = True
+                        models_available = len(r.json().get("models", []))
+                    try:
+                        rps = await hc.get(f"{base}/api/ps")
+                        if rps.status_code == 200:
+                            loaded = rps.json().get("models") or []
+                            models_loaded = len(loaded)
+                            vram_used_gb  = round(sum(
+                                int(m.get("size_vram") or 0) for m in loaded
+                            ) / 1e9, 1)
+                    except Exception:
+                        pass
+                else:
+                    # OpenAI-compatible: /models requires Bearer auth.
+                    r = await hc.get(f"{url}/models")
+                    if r.status_code == 200:
+                        up = True
+                        models_available = len(r.json().get("data", []))
+                    elif r.status_code in (401, 403) and not token:
+                        # Has an endpoint but no token configured — treat as unknown.
+                        up = None
+        except Exception:
+            pass
+
+        vram_pct = round(vram_used_gb / vram_gb * 100, 1) if vram_gb > 0 else None
+        # up: True=online, False=offline, None=unknown (no token / unreachable)
+        return {
+            "name":             name,
+            "api_type":         api_type,
+            "up":               up,
+            "models_available": models_available,
+            "models_loaded":    models_loaded,
+            "vram_used_gb":     vram_used_gb,
+            "vram_total_gb":    vram_gb,
+            "vram_pct":         vram_pct,
+            "source":           "admin",
+        }
+
+    results = await asyncio.gather(*[_check_node(s) for s in INFERENCE_SERVERS_LIST])
+    payload  = {"nodes": list(results), "live": True, "cache_ttl_seconds": _CACHE_TTL}
+
+    if redis_client is not None:
+        try:
+            await redis_client.setex(_CACHE_KEY, _CACHE_TTL, json.dumps(payload))
+        except Exception:
+            pass
+
+    return payload
+
+
+# ── Starfleet: Mission Context ────────────────────────────────────────────────
+
+@app.get("/api/mission-context")
+async def mission_context_get():
+    """Return the current persistent mission context."""
+    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
+        return JSONResponse({"enabled": False})
+    return await _mission_context.get_context()
+
+
+@app.post("/api/mission-context")
+async def mission_context_set(request: Request):
+    """Replace the mission context with the provided JSON body."""
+    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
+        return JSONResponse({"enabled": False}, status_code=409)
+    data = await request.json()
+    return await _mission_context.set_context(data)
+
+
+@app.patch("/api/mission-context")
+async def mission_context_patch(request: Request):
+    """Merge-update fields in the mission context."""
+    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
+        return JSONResponse({"enabled": False}, status_code=409)
+    patch = await request.json()
+    return await _mission_context.patch_context(patch)
 
 
 @app.get("/metrics")
@@ -6825,6 +7011,29 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Extract system message (coding agents send file/codebase context here)
     system_msgs   = [m for m in request.messages if m.role == "system"]
     system_prompt = _oai_content_to_str(system_msgs[0].content) if system_msgs else ""
+
+    # Mission Context injection — prepend compact project summary to the system prompt
+    # when enabled system-wide AND the active template does not opt out.
+    if (
+        _starfleet.is_feature_enabled_sync("mission_context")
+        and _tmpl_prompts.get("enable_mission_context", False)
+    ):
+        try:
+            _mc = await _mission_context.get_context()
+            _mc_title = (_mc.get("title") or "").strip()
+            if _mc_title:
+                _mc_lines = [f"## Mission Context: {_mc_title}"]
+                if _mc.get("description"):
+                    _mc_lines.append(_mc["description"].strip())
+                if _mc.get("open_tasks"):
+                    _mc_lines.append("Open tasks: " + "; ".join(_mc["open_tasks"][:5]))
+                if _mc.get("recent_decisions"):
+                    last = _mc["recent_decisions"][-1]
+                    _mc_lines.append(f"Last decision: {last.get('text', '')}")
+                _mc_block = "\n".join(_mc_lines)
+                system_prompt = f"{_mc_block}\n\n{system_prompt}" if system_prompt else _mc_block
+        except Exception:
+            pass
 
     # Last user message as the actual query
     user_msgs  = [m for m in request.messages if m.role in ("user", "assistant")]

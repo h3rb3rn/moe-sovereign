@@ -1,0 +1,752 @@
+{% extends "base.html" %}
+{% block title %}Starfleet — MoE Sovereign{% endblock %}
+
+{% block head_extra %}{% endblock %}
+
+{% block content %}
+<style>
+  /* ── LCARS Color Palette ─────────────────────────────────────────────────── */
+  :root {
+    --lcars-nominal:   #28a745;   /* green — all systems normal */
+    --lcars-degraded:  #f5a623;   /* amber — warning */
+    --lcars-critical:  #d0021b;   /* red — critical alert */
+    --lcars-benchmark: #4a90d9;   /* blue alert — heavy computation */
+    --lcars-unreachable: #6c757d; /* grey — orchestrator offline */
+    --state-color: var(--lcars-{{ system_state | lower }}, var(--lcars-nominal));
+  }
+
+  /* ── Theme-aware surface tokens ─────────────────────────────────────────── */
+  :root {
+    --lcars-surface-dark:  #111122;
+    --lcars-surface-mid:   #1a1a2e;
+    --lcars-surface-line:  #1e1e3a;
+    --lcars-text-dim:      #8899bb;
+    --lcars-text-muted:    #445566;
+  }
+  [data-bs-theme="light"] {
+    --lcars-surface-dark:  #e8eaf0;
+    --lcars-surface-mid:   #d0d4df;
+    --lcars-surface-line:  #b8bece;
+    --lcars-text-dim:      #3a4a6a;
+    --lcars-text-muted:    #5a6a8a;
+  }
+
+  /* ── LCARS Frame ─────────────────────────────────────────────────────────── */
+  .lcars-frame {
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 0 0 3px var(--state-color), 0 4px 24px rgba(0,0,0,.18);
+    margin-bottom: 1.25rem;
+  }
+
+  /* ── Top bar: title pill + state pill ───────────────────────────────────── */
+  .lcars-topbar {
+    background: var(--lcars-surface-mid);
+    display: flex;
+    align-items: stretch;
+    min-height: 52px;
+  }
+  .lcars-pill-left {
+    background: var(--state-color);
+    min-width: 220px;
+    display: flex;
+    align-items: center;
+    padding: 0 1.4rem;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 800;
+    font-size: .78rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #000;
+    border-radius: 0;
+    flex-shrink: 0;
+  }
+  .lcars-pill-left i { font-size: 1.1rem; margin-right: .5rem; }
+  .lcars-topbar-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    padding: 0 1.2rem;
+    gap: .6rem;
+  }
+  .lcars-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--state-color);
+    flex-shrink: 0;
+  }
+  .lcars-system-label {
+    color: var(--lcars-text-dim);
+    font-size: .72rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .lcars-divider {
+    width: 1px; background: var(--lcars-surface-line); align-self: stretch; margin: 8px 0;
+  }
+  .lcars-refresh-label {
+    color: var(--lcars-text-muted);
+    font-size: .68rem;
+    letter-spacing: .06em;
+    margin-left: auto;
+    padding-right: .5rem;
+  }
+
+  /* ── State banner ────────────────────────────────────────────────────────── */
+  .lcars-state-banner {
+    background: var(--state-color);
+    padding: 1rem 1.4rem;
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+  }
+  .lcars-state-name {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 900;
+    font-size: 2.4rem;
+    letter-spacing: .15em;
+    color: rgba(0,0,0,.85);
+    line-height: 1;
+    text-transform: uppercase;
+  }
+  .lcars-state-desc {
+    font-size: .82rem;
+    color: rgba(0,0,0,.6);
+    font-weight: 600;
+    letter-spacing: .04em;
+  }
+  .lcars-state-icon {
+    font-size: 2.8rem;
+    color: rgba(0,0,0,.4);
+    margin-left: auto;
+  }
+
+  {% if system_state == 'CRITICAL' %}
+  .lcars-state-banner { animation: lcars-pulse 1.1s ease-in-out infinite alternate; }
+  @keyframes lcars-pulse {
+    from { filter: brightness(1);   }
+    to   { filter: brightness(.65); }
+  }
+  {% endif %}
+
+  /* ── Metrics strip ───────────────────────────────────────────────────────── */
+  .lcars-metrics {
+    background: var(--lcars-surface-dark);
+    display: flex;
+    gap: 0;
+    border-top: 2px solid var(--state-color);
+  }
+  .lcars-metric {
+    flex: 1;
+    padding: .55rem 1rem;
+    border-right: 1px solid var(--lcars-surface-line);
+    text-align: center;
+  }
+  .lcars-metric:last-child { border-right: none; }
+  .lcars-metric-val {
+    font-size: 1.3rem;
+    font-weight: 800;
+    color: var(--state-color);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .lcars-metric-label {
+    font-size: .62rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--lcars-text-muted);
+    margin-top: 2px;
+  }
+
+  .lcars-state-badge {
+    font-size: .72rem; padding: .3em .8em;
+    border-radius: 2em; background: rgba(0,0,0,.25);
+    letter-spacing: .1em; color: rgba(0,0,0,.75); font-weight:700;
+  }
+
+  /* ── Feature Toggle Cards ────────────────────────────────────────────────── */
+  .feature-card { transition: box-shadow .2s; }
+  .feature-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.13); }
+  .feature-toggle { cursor: pointer; }
+  .restart-badge {
+    font-size: .68rem; padding: .2em .55em;
+    background: #6c757d22; border-radius: 3px;
+    color: #6c757d; vertical-align: middle;
+  }
+
+  /* ── Alert Timeline ──────────────────────────────────────────────────────── */
+  .alert-row { border-left: 3px solid transparent; padding-left: .6rem; }
+  .alert-row.node_down     { border-color: var(--lcars-critical); }
+  .alert-row.node_recovered { border-color: #28a745; }
+  .alert-row.vram_high     { border-color: var(--lcars-degraded); }
+  .alert-row.no_models     { border-color: var(--lcars-degraded); }
+  .alert-row.benchmark_stuck { border-color: var(--lcars-benchmark); }
+
+  /* ── Mission Context Panel ───────────────────────────────────────────────── */
+  .mission-tag {
+    font-size: .75rem; padding: .2em .55em;
+    border-radius: 3px; background: rgba(40,167,69,.15);
+    color: var(--lcars-nominal); border: 1px solid rgba(40,167,69,.3);
+  }
+  [data-bs-theme="dark"] .mission-tag { background: rgba(40,167,69,.1); }
+</style>
+<div class="container-fluid py-4">
+
+  <!-- LCARS Status Frame -->
+  <div class="lcars-frame">
+
+    <!-- Top bar -->
+    <div class="lcars-topbar">
+      <div class="lcars-pill-left">
+        <i class="bi bi-broadcast"></i>MoE Sovereign
+      </div>
+      <div class="lcars-topbar-center">
+        <div class="lcars-dot"></div>
+        <span class="lcars-system-label">Starfleet Operations Center</span>
+        <div class="lcars-divider"></div>
+        <span class="lcars-system-label ms-2">LCARS&nbsp;v2.0</span>
+        <span class="lcars-refresh-label">⟳ {{ refresh_secs }}s</span>
+      </div>
+    </div>
+
+    <!-- State banner -->
+    <div class="lcars-state-banner">
+      <div>
+        <div class="lcars-state-name">{{ system_state }}</div>
+        <div class="lcars-state-desc mt-1">
+          {% if system_state == 'NOMINAL' %}All systems operating within normal parameters{% endif %}
+          {% if system_state == 'DEGRADED' %}One or more systems require attention{% endif %}
+          {% if system_state == 'CRITICAL' %}⚠ Critical condition — immediate action required{% endif %}
+          {% if system_state == 'BENCHMARK' %}Active benchmark in progress — elevated load expected{% endif %}
+          {% if system_state == 'UNREACHABLE' %}Orchestrator unreachable — check network and container status{% endif %}
+        </div>
+      </div>
+      <div class="lcars-state-icon ms-auto">
+        {% if system_state == 'NOMINAL' %}<i class="bi bi-check-circle-fill"></i>{% endif %}
+        {% if system_state == 'DEGRADED' %}<i class="bi bi-exclamation-triangle-fill"></i>{% endif %}
+        {% if system_state == 'CRITICAL' %}<i class="bi bi-exclamation-octagon-fill"></i>{% endif %}
+        {% if system_state == 'BENCHMARK' %}<i class="bi bi-cpu-fill"></i>{% endif %}
+        {% if system_state == 'UNREACHABLE' %}<i class="bi bi-wifi-off"></i>{% endif %}
+      </div>
+    </div>
+
+    <!-- Metrics strip -->
+    <div class="lcars-metrics">
+      <div class="lcars-metric">
+        <div class="lcars-metric-val">{{ alerts | length }}</div>
+        <div class="lcars-metric-label">Active Alerts</div>
+      </div>
+      <div class="lcars-metric">
+        <div class="lcars-metric-val">{{ features | length }}</div>
+        <div class="lcars-metric-label">Features</div>
+      </div>
+      <div class="lcars-metric">
+        <div class="lcars-metric-val">
+          {{ features.values() | selectattr('enabled') | list | length }}
+        </div>
+        <div class="lcars-metric-label">Features Active</div>
+      </div>
+      <div class="lcars-metric">
+        <div class="lcars-metric-val">
+          {% if mission_ctx and mission_ctx.open_tasks %}{{ mission_ctx.open_tasks | length }}{% else %}—{% endif %}
+        </div>
+        <div class="lcars-metric-label">Open Tasks</div>
+      </div>
+      <div class="lcars-metric">
+        <div class="lcars-metric-val" style="font-size:.85rem;">
+          {% if mission_ctx and mission_ctx.title %}{{ mission_ctx.title[:18] }}{% else %}—{% endif %}
+        </div>
+        <div class="lcars-metric-label">Current Mission</div>
+      </div>
+    </div>
+
+  </div><!-- /lcars-frame -->
+
+  <div class="row g-3">
+
+    <!-- Left column: Feature Toggles + Mission Context -->
+    <div class="col-lg-5">
+
+      <!-- Feature Toggles -->
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-toggles section-icon"></i>
+          {{ t(request, 'starfleet_features') }}
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'feature') }}</th>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'status') }}</th>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'source') }}</th>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'action') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% set feature_meta = {
+                'watchdog':        {'icon': 'bi-broadcast',       'label': t(request, 'feat_watchdog')},
+                'mission_context': {'icon': 'bi-journal-text',    'label': t(request, 'feat_mission_context')},
+                'adaptive_ui':     {'icon': 'bi-display',         'label': t(request, 'feat_adaptive_ui')},
+                'infra_mcp':       {'icon': 'bi-cpu',             'label': t(request, 'feat_infra_mcp')},
+              } %}
+              {% for name, info in features.items() %}
+              {% set meta = feature_meta.get(name, {'icon': 'bi-gear', 'label': name}) %}
+              <tr class="feature-card">
+                <td style="padding:.6rem .75rem;">
+                  <i class="bi {{ meta.icon }} me-1 text-secondary"></i>
+                  <strong>{{ meta.label }}</strong>
+                  {% if info.get('requires_restart') %}
+                    <span class="restart-badge ms-1">restart req.</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if info.enabled %}
+                    <span class="badge bg-success status-badge">ON</span>
+                  {% else %}
+                    <span class="badge bg-secondary status-badge">OFF</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <code style="font-size:.75rem;">{{ info.get('source', '—') }}</code>
+                </td>
+                <td>
+                  <button
+                    class="btn btn-sm {{ 'btn-outline-danger' if info.enabled else 'btn-outline-success' }} feature-toggle"
+                    onclick="toggleFeature('{{ name }}', {{ 'false' if info.enabled else 'true' }}, this)"
+                    title="{{ 'Disable' if info.enabled else 'Enable' }} {{ name }}"
+                    {% if info.get('requires_restart') %}data-restart="1"{% endif %}
+                  >
+                    {{ t(request, 'disable') if info.enabled else t(request, 'enable') }}
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Mission Context -->
+      {% if mission_ctx and mission_ctx.get('title') %}
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-journal-text section-icon"></i>
+          {{ t(request, 'mission_context') }}
+          {% if mission_ctx.updated_at %}
+          <small class="text-muted ms-auto" style="font-size:.75rem;font-weight:400;">
+            {{ mission_ctx.updated_at[:16] | replace('T', ' ') }} UTC
+          </small>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <h6 class="mb-1">{{ mission_ctx.title }}</h6>
+          {% if mission_ctx.description %}
+          <p class="text-muted mb-2" style="font-size:.88rem;">{{ mission_ctx.description }}</p>
+          {% endif %}
+          {% if mission_ctx.open_tasks %}
+          <div class="mb-2">
+            <small class="text-muted">{{ t(request, 'open_tasks') }}</small>
+            <ul class="mb-0 ps-3" style="font-size:.88rem;">
+              {% for task in mission_ctx.open_tasks %}<li>{{ task }}</li>{% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+          {% if mission_ctx.recent_decisions %}
+          <div class="mb-2">
+            <small class="text-muted">{{ t(request, 'recent_decisions') }}</small>
+            {% for d in mission_ctx.recent_decisions[-3:] %}
+            <div style="font-size:.83rem;padding:.2rem 0;border-bottom:1px solid rgba(0,0,0,.05);">
+              <span class="text-muted me-1">{{ d.at[:10] if d.at else '' }}</span>{{ d.text }}
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if mission_ctx.tags %}
+          <div>
+            {% for tag in mission_ctx.tags %}
+            <span class="mission-tag me-1">{{ tag }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Watchdog Config Panel -->
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center" style="cursor:pointer;"
+             data-bs-toggle="collapse" data-bs-target="#watchdog-config-panel"
+             aria-expanded="false" aria-controls="watchdog-config-panel">
+          <i class="bi bi-sliders section-icon"></i>
+          {{ t(request, 'watchdog_config') }}
+          <i class="bi bi-chevron-down ms-auto"></i>
+        </div>
+        <div class="collapse" id="watchdog-config-panel">
+          <div class="card-body" id="watchdog-config-body">
+            <div class="text-center text-muted py-3" id="config-loading">
+              <span class="spinner-border spinner-border-sm me-1"></span>
+              {{ t(request, 'loading') }}…
+            </div>
+            <form id="watchdog-config-form" style="display:none;" onsubmit="saveWatchdogConfig(event)">
+
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'down_threshold') }}</label>
+                  <input type="number" class="form-control form-control-sm" name="down_threshold" min="1" max="20" step="1">
+                  <div class="form-text" style="font-size:.75rem;">{{ t(request, 'down_threshold_hint') }}</div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'vram_threshold_pct') }}</label>
+                  <input type="number" class="form-control form-control-sm" name="vram_threshold_pct" min="50" max="100" step="1">
+                  <div class="form-text" style="font-size:.75rem;">{{ t(request, 'vram_threshold_hint') }}</div>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" style="font-size:.83rem;">{{ t(request, 'stuck_minutes') }}</label>
+                <input type="number" class="form-control form-control-sm" name="stuck_minutes" min="5" max="240" step="5">
+                <div class="form-text" style="font-size:.75rem;">{{ t(request, 'stuck_minutes_hint') }}</div>
+              </div>
+
+              <hr>
+              <p class="mb-2" style="font-size:.83rem;font-weight:600;">
+                <i class="bi bi-envelope me-1"></i> {{ t(request, 'email_escalation') }}
+              </p>
+
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="email-enabled-check" name="email_escalation_enabled">
+                <label class="form-check-label" style="font-size:.85rem;" for="email-enabled-check">
+                  {{ t(request, 'email_escalation_enabled') }}
+                </label>
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label" style="font-size:.83rem;">{{ t(request, 'escalation_to') }}</label>
+                <input type="email" class="form-control form-control-sm" name="escalation_to"
+                       placeholder="ops@example.org">
+              </div>
+
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'escalation_cooldown') }}</label>
+                  <input type="number" class="form-control form-control-sm" name="escalation_cooldown_minutes" min="5" max="1440" step="5">
+                  <div class="form-text" style="font-size:.75rem;">{{ t(request, 'cooldown_hint') }}</div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'escalation_severities') }}</label>
+                  <select class="form-select form-select-sm" name="escalation_severities" multiple id="sev-select">
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-sm btn-primary">
+                  <i class="bi bi-save me-1"></i>{{ t(request, 'save') }}
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="sendTestAlert()">
+                  <i class="bi bi-envelope me-1"></i>{{ t(request, 'send_test_mail') }}
+                </button>
+                <span id="config-save-status" class="ms-2 text-muted" style="font-size:.83rem;line-height:2.2;"></span>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /left column -->
+
+    <!-- Right column: Node Status + Alert Timeline -->
+    <div class="col-lg-7">
+
+      <!-- Live Node Status -->
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-hdd-network section-icon"></i>
+          Inference Nodes
+          <span class="badge bg-secondary ms-2 status-badge" id="node-refresh-badge" style="font-size:.65rem;">⟳ 15s</span>
+          <span id="node-status-info" class="text-muted ms-auto" style="font-size:.75rem;"></span>
+        </div>
+        <div class="card-body p-2" id="node-status-grid">
+          <div class="text-center text-muted py-3">
+            <span class="spinner-border spinner-border-sm me-1"></span> Loading…
+          </div>
+        </div>
+      </div>
+
+      <!-- Alert Timeline -->
+      <div class="card">
+        <div class="card-header d-flex align-items-center gap-2">
+          <i class="bi bi-bell section-icon"></i>
+          {{ t(request, 'watchdog_alerts') }}
+          {% set fresh_count = alerts | selectattr('stale', 'equalto', false) | list | length %}
+          {% if fresh_count > 0 %}
+          <span class="badge bg-danger status-badge">{{ fresh_count }} fresh</span>
+          {% endif %}
+          {% if alerts | selectattr('stale') | list | length > 0 %}
+          <span class="badge bg-secondary status-badge">{{ alerts | selectattr('stale') | list | length }} stale</span>
+          {% endif %}
+          <div class="ms-auto d-flex gap-2 align-items-center">
+            <select class="form-select form-select-sm" style="width:auto;font-size:.78rem;"
+                    onchange="location.href='/starfleet?max_age='+this.value" title="Show alerts newer than…">
+              <option value="30"  {% if max_age_minutes==30  %}selected{% endif %}>Last 30 min</option>
+              <option value="120" {% if max_age_minutes==120 %}selected{% endif %}>Last 2 h</option>
+              <option value="480" {% if max_age_minutes==480 %}selected{% endif %}>Last 8 h</option>
+              <option value="1440"{% if max_age_minutes==1440%}selected{% endif %}>Last 24 h</option>
+              <option value="99999"{% if max_age_minutes>1440 %}selected{% endif %}>All</option>
+            </select>
+            <button class="btn btn-sm btn-outline-danger" onclick="clearAlerts(this)" title="Clear all alerts">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          {% if alerts %}
+          <div class="list-group list-group-flush">
+            {% for alert in alerts %}
+            <div class="list-group-item alert-row {{ alert.type }} {% if alert.stale %}stale-alert{% endif %}"
+                 style="font-size:.88rem;{% if alert.stale %}opacity:.45;{% endif %}">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  {% if alert.severity == 'critical' %}
+                    <i class="bi bi-exclamation-octagon-fill text-danger me-1"></i>
+                  {% elif alert.severity == 'warning' %}
+                    <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
+                  {% else %}
+                    <i class="bi bi-info-circle text-info me-1"></i>
+                  {% endif %}
+                  <strong>{{ alert.type | replace('_', ' ') | upper }}</strong>
+                  {% if alert.node %}
+                  <code class="ms-1" style="font-size:.78rem;">{{ alert.node }}</code>
+                  {% endif %}
+                  {% if alert.stale %}
+                  <span class="ms-1 text-muted" style="font-size:.7rem;">(stale)</span>
+                  {% endif %}
+                </div>
+                <small class="text-muted ms-3 text-nowrap">
+                  {{ alert.ts[:16] | replace('T', ' ') if alert.ts else '' }}
+                </small>
+              </div>
+              <div class="text-muted mt-1">{{ alert.message }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-center py-5 text-muted">
+            <i class="bi bi-check-circle-fill text-success" style="font-size:2rem;"></i>
+            <p class="mt-2 mb-0">{{ t(request, 'no_alerts') }}</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+    </div><!-- /right column -->
+
+  </div><!-- /row -->
+</div>
+
+<script>
+  // Auto-refresh (full page)
+  setTimeout(() => location.reload(), {{ refresh_secs }} * 1000);
+
+  // ── Live Node Status ────────────────────────────────────────────────────────
+
+  function renderNodeGrid(data) {
+    const grid = document.getElementById('node-status-grid');
+    // Only show admin-sourced nodes (source === 'admin' or source absent for backwards compat)
+    const nodes = (data.nodes || []).filter(n => !n.source || n.source === 'admin');
+    if (!nodes.length) {
+      grid.innerHTML = '<div class="text-center text-muted py-3">No inference nodes configured</div>';
+      return;
+    }
+    const upNodes = nodes.filter(n => n.up === true);
+    const info = document.getElementById('node-status-info');
+    info.textContent = `${upNodes.length}/${nodes.length} up · live`;
+
+    const cards = nodes.map(n => {
+      // Three states: true=UP, false=DOWN, null/undefined=UNKNOWN
+      const isUp      = n.up === true;
+      const isUnknown = n.up === null || n.up === undefined;
+      const upColor   = isUp ? '#28a745' : isUnknown ? '#6c757d' : '#d0021b';
+      const upIcon    = isUp ? 'bi-circle-fill' : isUnknown ? 'bi-question-circle' : 'bi-circle';
+      const upLabel   = isUp ? 'UP' : isUnknown ? '?' : 'DOWN';
+      const upTitle   = isUnknown ? 'Status unknown — check token config' : '';
+
+      const vramBar = (isUp && n.vram_total_gb > 0 && n.vram_pct !== null)
+        ? `<div class="progress mt-1" style="height:4px;background:var(--lcars-surface-line);">
+             <div class="progress-bar" style="width:${Math.min(n.vram_pct,100)}%;background:${n.vram_pct>90?'#d0021b':n.vram_pct>75?'#f5d623':'#f5a623'};"></div>
+           </div>
+           <div style="font-size:.68rem;color:var(--lcars-text-muted);">VRAM ${n.vram_used_gb}/${n.vram_total_gb} GB (${n.vram_pct}%)</div>`
+        : '';
+
+      const typeLabel = n.api_type !== 'ollama'
+        ? `<span style="font-size:.6rem;color:var(--lcars-text-dim);background:var(--lcars-surface-line);border:1px solid var(--lcars-surface-line);padding:.15em .45em;border-radius:3px;margin-left:.3rem;letter-spacing:.04em;">${n.api_type}</span>`
+        : '';
+
+      return `<div style="background:var(--lcars-surface-dark);border:1px solid var(--lcars-surface-line);border-left:3px solid ${upColor};
+                    border-radius:6px;padding:.5rem .75rem;margin:.25rem;" title="${upTitle}">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <i class="bi ${upIcon}" style="color:${upColor};font-size:.65rem;flex-shrink:0;"></i>
+          <strong style="color:var(--bs-body-color);font-size:.82rem;">${n.name}</strong>${typeLabel}
+          <span style="font-size:.68rem;color:${upColor};font-weight:700;letter-spacing:.06em;margin-left:auto;">${upLabel}</span>
+        </div>
+        ${isUp ? `<div style="font-size:.7rem;color:var(--lcars-text-muted);margin-top:2px;">${n.models_loaded} loaded · ${n.models_available} avail.</div>` : ''}
+        ${vramBar}
+      </div>`;
+    }).join('');
+
+    grid.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:.25rem;">${cards}</div>`;
+  }
+
+  async function loadNodeStatus() {
+    try {
+      const r = await fetch('/api/watchdog/node-status');
+      if (r.ok) renderNodeGrid(await r.json());
+    } catch(e) {
+      document.getElementById('node-status-info').textContent = 'Error: ' + e;
+    }
+  }
+
+  loadNodeStatus();
+  setInterval(loadNodeStatus, 15000);
+
+  // ── Clear Alerts ────────────────────────────────────────────────────────────
+
+  async function clearAlerts(btn) {
+    if (!confirm('Clear all watchdog alerts?')) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/watchdog/alerts', {method: 'DELETE'});
+      if ((await r.json()).ok) location.reload();
+    } catch(e) { alert('Error: ' + e); }
+    btn.disabled = false;
+  }
+
+  // ── Watchdog Config ────────────────────────────────────────────────────────
+
+  async function loadWatchdogConfig() {
+    try {
+      const r = await fetch('/api/watchdog/config');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const cfg = await r.json();
+      const form = document.getElementById('watchdog-config-form');
+      form.down_threshold.value          = cfg.down_threshold ?? 2;
+      form.vram_threshold_pct.value      = Math.round((cfg.vram_threshold ?? 0.90) * 100);
+      form.stuck_minutes.value           = cfg.stuck_minutes ?? 30;
+      form.email_escalation_enabled.checked = !!cfg.email_escalation_enabled;
+      form.escalation_to.value           = cfg.escalation_to ?? '';
+      form.escalation_cooldown_minutes.value = cfg.escalation_cooldown_minutes ?? 30;
+      const sevSel = document.getElementById('sev-select');
+      const activeSevs = cfg.escalation_severities ?? ['critical'];
+      for (const opt of sevSel.options) {
+        opt.selected = activeSevs.includes(opt.value);
+      }
+      document.getElementById('config-loading').style.display = 'none';
+      form.style.display = '';
+    } catch (e) {
+      document.getElementById('config-loading').textContent = 'Failed to load config: ' + e;
+    }
+  }
+
+  async function saveWatchdogConfig(ev) {
+    ev.preventDefault();
+    const form = ev.target;
+    const sevSel = document.getElementById('sev-select');
+    const sevs = Array.from(sevSel.selectedOptions).map(o => o.value);
+    const patch = {
+      down_threshold:              parseInt(form.down_threshold.value),
+      vram_threshold:              parseFloat(form.vram_threshold_pct.value) / 100,
+      stuck_minutes:               parseInt(form.stuck_minutes.value),
+      email_escalation_enabled:    form.email_escalation_enabled.checked,
+      escalation_to:               form.escalation_to.value.trim(),
+      escalation_cooldown_minutes: parseInt(form.escalation_cooldown_minutes.value),
+      escalation_severities:       sevs,
+    };
+    const status = document.getElementById('config-save-status');
+    status.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/watchdog/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(patch),
+      });
+      const data = await r.json();
+      status.textContent = r.ok ? '✓ Saved (hot-reload active)' : '✗ ' + (data.error ?? r.status);
+      status.style.color = r.ok ? '#28a745' : '#d0021b';
+    } catch (e) {
+      status.textContent = '✗ ' + e;
+      status.style.color = '#d0021b';
+    }
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+
+  async function sendTestAlert() {
+    const form = document.getElementById('watchdog-config-form');
+    const to = form.escalation_to.value.trim();
+    if (!to) { alert('Enter an escalation email address first.'); return; }
+    const testAlert = {
+      type: 'node_down', severity: 'critical', node: 'TEST-NODE',
+      message: 'This is a test alert from MoE Sovereign Watchdog.',
+      ts: new Date().toISOString(),
+    };
+    const status = document.getElementById('config-save-status');
+    status.textContent = 'Sending test mail…';
+    try {
+      const r = await fetch('/api/watchdog/config/test-mail', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({to, alert: testAlert}),
+      });
+      const d = await r.json();
+      status.textContent = d.ok ? '✓ Test mail sent to ' + to : '✗ ' + (d.error ?? r.status);
+      status.style.color = d.ok ? '#28a745' : '#d0021b';
+    } catch (e) {
+      status.textContent = '✗ ' + e;
+      status.style.color = '#d0021b';
+    }
+    setTimeout(() => { status.textContent = ''; }, 5000);
+  }
+
+  // Load config when panel is opened (lazy).
+  document.getElementById('watchdog-config-panel').addEventListener('show.bs.collapse', () => {
+    if (document.getElementById('config-loading').style.display !== 'none') {
+      loadWatchdogConfig();
+    }
+  });
+
+  async function toggleFeature(name, enable, btn) {
+    const needsRestart = btn.dataset.restart === '1';
+    if (needsRestart) {
+      const ok = confirm(
+        `Feature '${name}' requires a container restart to take effect.\n` +
+        `The runtime Redis override will be set immediately, but the service must be restarted.\n\nContinue?`
+      );
+      if (!ok) return;
+    }
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const r = await fetch(`/admin/features/${name}/toggle`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: enable}),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        location.reload();
+      } else {
+        alert('Toggle failed: ' + (data.detail || JSON.stringify(data)));
+        btn.disabled = false;
+        btn.textContent = enable ? 'Enable' : 'Disable';
+      }
+    } catch (e) {
+      alert('Network error: ' + e);
+      btn.disabled = false;
+      btn.textContent = enable ? 'Enable' : 'Disable';
+    }
+  }
+</script>
+{% endblock %}

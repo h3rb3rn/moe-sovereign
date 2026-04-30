@@ -255,6 +255,7 @@
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_graphrag" checked><label class="form-check-label small" for="ct_enable_graphrag">GraphRAG</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_web_research" checked><label class="form-check-label small" for="ct_enable_web_research">Web Research</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_force_think"><label class="form-check-label small" for="ct_force_think">{{ t(request, 'label.force_think') }}</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_mission_context"><label class="form-check-label small" for="ct_enable_mission_context">Mission Context</label></div></div>
         </div>
         <div class="row g-2 mt-1">
           <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
@@ -679,10 +680,11 @@ async function createTemplate() {
         planner_model:  getLlmValue('ct_planner_llm_select'),
         judge_model:    getLlmValue('ct_judge_llm_select'),
         experts:        collectExperts('ct'),
-        enable_cache:        document.getElementById('ct_enable_cache').checked,
-        enable_graphrag:     document.getElementById('ct_enable_graphrag').checked,
-        enable_web_research: document.getElementById('ct_enable_web_research').checked,
-        force_think:         document.getElementById('ct_force_think').checked,
+        enable_cache:            document.getElementById('ct_enable_cache').checked,
+        enable_graphrag:         document.getElementById('ct_enable_graphrag').checked,
+        enable_web_research:     document.getElementById('ct_enable_web_research').checked,
+        force_think:             document.getElementById('ct_force_think').checked,
+        enable_mission_context:  document.getElementById('ct_enable_mission_context').checked,
         graphrag_max_chars:  parseInt(document.getElementById('ct_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('ct_compression_enabled').checked
                                ? (parseInt(document.getElementById('ct_history_max_turns').value) || 0)
@@ -811,6 +813,13 @@ async function openEditModal(tmplId) {
           <label class="form-check-label small" for="et_force_think">{{ t(request, 'label.force_think') }}</label>
         </div>
       </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_enable_mission_context" ${tmpl.enable_mission_context ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_enable_mission_context">Mission Context</label>
+        </div>
+        <div class="form-text" style="font-size:.7rem;">Prepends project context to system prompt (requires system-wide Mission Context feature)</div>
+      </div>
     </div>
     <div class="row g-2 mt-1">
       <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
@@ -875,10 +884,11 @@ async function saveEditTemplate() {
         planner_model:  getLlmValue('et_planner_llm_select'),
         judge_model:    getLlmValue('et_judge_llm_select'),
         experts:        collectExperts('et'),
-        enable_cache:        document.getElementById('et_enable_cache').checked,
-        enable_graphrag:     document.getElementById('et_enable_graphrag').checked,
-        enable_web_research: document.getElementById('et_enable_web_research').checked,
-        force_think:         document.getElementById('et_force_think').checked,
+        enable_cache:            document.getElementById('et_enable_cache').checked,
+        enable_graphrag:         document.getElementById('et_enable_graphrag').checked,
+        enable_web_research:     document.getElementById('et_enable_web_research').checked,
+        force_think:             document.getElementById('et_force_think').checked,
+        enable_mission_context:  document.getElementById('et_enable_mission_context').checked,
         graphrag_max_chars:  parseInt(document.getElementById('et_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('et_compression_enabled').checked
                                ? (parseInt(document.getElementById('et_history_max_turns').value) || 0)

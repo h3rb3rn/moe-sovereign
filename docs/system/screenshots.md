@@ -6,6 +6,16 @@ Screenshots of all MoE Sovereign web interfaces. Generated automatically via Pla
 
 ## Admin UI
 
+### Starfleet — Ambient Intelligence Dashboard
+
+Full-page screenshot of the Starfleet dashboard in **NOMINAL** state. All 14 inference
+nodes are online. The LCARS status frame shows green with the metrics strip below
+(Active Alerts, Features, Features Active, Open Tasks, Current Mission). The left column
+shows the Starfleet feature toggles and the collapsible Watchdog-Konfiguration panel.
+The right column shows the live inference node grid and the Watchdog alert timeline.
+
+![Starfleet Dashboard — NOMINAL](../assets/screenshots/starfleet-dashboard.png)
+
 ### Login
 
 ![Admin Login](../assets/screenshots/admin_login.png)

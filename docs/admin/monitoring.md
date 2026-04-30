@@ -1,6 +1,13 @@
 # Monitoring & Processes
 
-The admin backend provides two monitoring layers: **System Monitoring** for aggregated Prometheus metrics and **Live Monitoring** for real-time process tracking with kill functionality.
+The admin backend provides three monitoring layers:
+
+- **System Monitoring** (`/monitoring`) — aggregated Prometheus metrics and charts
+- **Live Monitoring** (`/live-monitoring`) — real-time process tracking with kill functionality
+- **Starfleet** (`/starfleet`) — ambient intelligence dashboard with proactive alerts,
+  live node health, mission context, and feature toggles
+
+> **Starfleet documentation:** [Starfleet — Ambient Intelligence](../system/starfleet.md)
 
 ## Observability architecture at a glance
 

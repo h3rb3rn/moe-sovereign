@@ -623,8 +623,7 @@ async function loadMetrics() {
     // Corrections chart (stored by source)
     const corrStored = d.corrections_stored || [];
     if (corrStored.length) {
-      destroyChart('chart-corrections');
-      charts['chart-corrections'] = barChart('chart-corrections',
+      barChart('chart-corrections',
         corrStored.map(c => c.labels.source || '?'),
         corrStored.map(c => c.value),
       );
@@ -633,8 +632,7 @@ async function loadMetrics() {
     // Expert failures chart (by model × reason)
     const failures = d.expert_failures || [];
     if (failures.length) {
-      destroyChart('chart-failures');
-      charts['chart-failures'] = barChart('chart-failures',
+      barChart('chart-failures',
         failures.map(f => `${f.labels.model || '?'} (${f.labels.reason || '?'})`),
         failures.map(f => f.value),
       );

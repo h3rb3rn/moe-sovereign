@@ -46,6 +46,7 @@
   "msg.template_verify_desc":  "Prüft für jedes Template, ob das referenzierte Modell (model@Node) auf der zugehörigen Ollama-Instanz physisch verfügbar ist.",
   "msg.template_verify_click": "Klicke „Prüfen\" um Template-Modelle zu verifizieren.",
   "nav.benchmarks":       "Benchmarks",
+  "nav.starfleet":        "Starfleet",
   "nav.logout":           "Logout",
 
   "btn.save":             "Speichern & Orchestrator neustarten",
@@ -935,5 +936,38 @@
   ,"dialog.import_replace_title":      "Vorhandene überschreiben"
   ,"dialog.import_replace_desc":       "Einträge mit gleichem Namen werden ersetzt"
   ,"lbl.last_24h":                     "Letzte 24 Stunden"
+
+  ,"starfleet_features":               "Starfleet-Funktionen"
+  ,"feature":                          "Funktion"
+  ,"source":                           "Quelle"
+  ,"action":                           "Aktion"
+  ,"enable":                           "Aktivieren"
+  ,"disable":                          "Deaktivieren"
+  ,"feat_watchdog":                    "Proaktiver Watchdog"
+  ,"feat_mission_context":             "Missions-Kontext"
+  ,"feat_adaptive_ui":                 "Adaptives Dashboard"
+  ,"feat_infra_mcp":                   "Infra-MCP-Tools"
+  ,"mission_context":                  "Missions-Kontext"
+  ,"open_tasks":                       "Offene Aufgaben"
+  ,"recent_decisions":                 "Letzte Entscheidungen"
+  ,"watchdog_alerts":                  "Watchdog-Meldungen"
+  ,"nominal":                          "Nominal"
+  ,"no_alerts":                        "Keine Meldungen — System nominal"
+  ,"watchdog_config":                  "Watchdog-Konfiguration"
+  ,"loading":                          "Laden"
+  ,"down_threshold":                   "Down-Schwellwert (Zyklen)"
+  ,"down_threshold_hint":              "Anzahl aufeinander folgender Ausfälle bis zum Alert"
+  ,"vram_threshold_pct":               "VRAM-Schwellwert (%)"
+  ,"vram_threshold_hint":              "Auslastung ab der ein VRAM_HIGH-Alert ausgelöst wird"
+  ,"stuck_minutes":                    "Benchmark-Stuck-Limit (Min.)"
+  ,"stuck_minutes_hint":               "Inaktive Requests nach dieser Zeit lösen einen Alert aus"
+  ,"email_escalation":                 "E-Mail-Eskalation"
+  ,"email_escalation_enabled":         "Eskalations-Mails aktivieren"
+  ,"escalation_to":                    "Empfänger-Adresse"
+  ,"escalation_cooldown":              "Cooldown (Min.)"
+  ,"cooldown_hint":                    "Mindestabstand zwischen zwei Mails für denselben Alert"
+  ,"escalation_severities":            "Schweregrade eskalieren"
+  ,"save":                             "Speichern"
+  ,"send_test_mail":                   "Test-Mail senden"
 
 }
