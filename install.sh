@@ -437,20 +437,25 @@ https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
 elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
 
   if ! command -v podman &>/dev/null; then
-    # Install Podman + podman-compose from OS-native repos.
-    # Debian 11+ and Ubuntu 22.04+ ship recent-enough versions in their
-    # standard repositories — no extra repo registration needed.
-    echo "  Installing Podman from OS repos..."
+    # Install Podman + rootless dependencies from OS-native repos.
+    # Debian 11+ and Ubuntu 22.04+ ship recent-enough versions.
+    echo "  Installing Podman + rootless dependencies..."
     _sudo apt-get update -qq
-    _sudo apt-get install -y --no-install-recommends podman podman-compose
+    _sudo apt-get install -y --no-install-recommends \
+      podman podman-compose \
+      uidmap \
+      slirp4netns \
+      fuse-overlayfs \
+      dbus-user-session
     if ! command -v podman &>/dev/null; then
-      echo "[ERROR] Podman installation failed."
-      echo "        Check 'apt policy podman' or install manually."
+      echo "[ERROR] Podman installation failed. Check 'apt policy podman'."
       exit 1
     fi
-    echo "  Podman installed ✓"
+    echo "  Podman + rootless dependencies installed ✓"
   else
-    echo "  Podman already present ✓"
+    echo "  Podman already present — installing missing rootless dependencies..."
+    _sudo apt-get install -y --no-install-recommends \
+      uidmap slirp4netns fuse-overlayfs dbus-user-session &>/dev/null || true
   fi
 
   # Ensure podman-compose is available (might be missing even if podman is)
@@ -458,12 +463,43 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     _sudo apt-get install -y --no-install-recommends podman-compose
   fi
 
+  # Configure user namespace mappings required for rootless containers.
+  # newuidmap/newgidmap (from uidmap) use these files to set up the UID/GID
+  # ranges that Podman can map inside the container.
+  if ! grep -q "^${DEPLOY_USER}:" /etc/subuid 2>/dev/null; then
+    echo "${DEPLOY_USER}:100000:65536" | _sudo tee -a /etc/subuid > /dev/null
+    echo "  subuid range added for '${DEPLOY_USER}' ✓"
+  fi
+  if ! grep -q "^${DEPLOY_USER}:" /etc/subgid 2>/dev/null; then
+    echo "${DEPLOY_USER}:100000:65536" | _sudo tee -a /etc/subgid > /dev/null
+    echo "  subgid range added for '${DEPLOY_USER}' ✓"
+  fi
+
+  # Migrate Podman storage config after dependency changes.
+  _podman_as_user() {
+    if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+      sudo -u "$DEPLOY_USER" podman "$@"
+    else
+      podman "$@"
+    fi
+  }
+  _podman_as_user system migrate &>/dev/null || true
+
+  # Smoke-test: verify rootless Podman is functional before proceeding.
+  echo "  Verifying rootless Podman..."
+  if ! _podman_as_user info &>/dev/null; then
+    echo "[ERROR] Podman smoke test failed — 'podman info' returned an error."
+    echo "        Try: podman info"
+    exit 1
+  fi
+  echo "  Podman rootless smoke test passed ✓"
+
   _resolve_podman_compose
 
   # Enable lingering so rootless containers survive logout / start on boot.
   if command -v loginctl &>/dev/null && [[ "$DEPLOY_USER" != "root" ]]; then
     _sudo loginctl enable-linger "$DEPLOY_USER" 2>/dev/null || true
-    echo "  Linger enabled for '${DEPLOY_USER}' (containers start on boot) ✓"
+    echo "  Linger enabled for '${DEPLOY_USER}' (containers survive logout) ✓"
   fi
 
   # Rootless Podman needs no group — each user manages their own containers.
