@@ -46,6 +46,7 @@
   "msg.template_verify_desc":  "检查每个模板的 model@Node 引用在对应的 Ollama 实例上是否实际可用。",
   "msg.template_verify_click": "点击\"验证\"检查模板模型可用性。",
   "nav.benchmarks":       "基准测试",
+  "nav.starfleet":        "星际舰队",
   "nav.logout":           "退出",
 
   "btn.save":             "保存并重启编排器",

@@ -7235,12 +7235,18 @@ _STARFLEET_FEATURES_DEFAULTS = {
 }
 
 
-async def _get_starfleet_state() -> dict:
-    """Fetch feature states and recent alerts from the orchestrator."""
-    features = {}
-    alerts = []
+async def _get_starfleet_state(max_age_minutes: int = 120) -> dict:
+    """Fetch feature states and recent alerts from the orchestrator.
+
+    Alerts older than max_age_minutes are excluded from state evaluation
+    and displayed as stale (greyed out) in the dashboard.
+    """
+    from datetime import datetime, timezone, timedelta
+    features  = {}
+    alerts    = []
     mission_ctx = {}
     system_state = "NOMINAL"
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
@@ -7248,9 +7254,17 @@ async def _get_starfleet_state() -> dict:
             if feat_r.status_code == 200:
                 features = feat_r.json()
 
-            alert_r = await client.get(f"{ORCHESTRATOR_URL}/api/watchdog/alerts?limit=10")
+            alert_r = await client.get(f"{ORCHESTRATOR_URL}/api/watchdog/alerts?limit=50")
             if alert_r.status_code == 200:
-                alerts = alert_r.json().get("alerts", [])
+                raw_alerts = alert_r.json().get("alerts", [])
+                for a in raw_alerts:
+                    ts_str = a.get("ts", "")
+                    try:
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        a["stale"] = ts < cutoff
+                    except Exception:
+                        a["stale"] = False
+                alerts = raw_alerts[:30]
 
             ctx_r = await client.get(f"{ORCHESTRATOR_URL}/api/mission-context")
             if ctx_r.status_code == 200:
@@ -7258,37 +7272,47 @@ async def _get_starfleet_state() -> dict:
     except Exception:
         system_state = "UNREACHABLE"
 
-    # Determine state from alerts.
+    # State is driven only by FRESH (non-stale) alerts.
     if system_state != "UNREACHABLE":
+        fresh = [a for a in alerts if not a.get("stale")]
         critical_types = {"node_down", "benchmark_stuck"}
         warning_types  = {"vram_high", "no_models"}
-        recent_types   = {a.get("type") for a in alerts[:3]} if alerts else set()
-        if recent_types & critical_types:
+        fresh_types    = {a.get("type") for a in fresh[:5]}
+        if fresh_types & critical_types:
             system_state = "CRITICAL"
-        elif recent_types & warning_types:
+        elif fresh_types & warning_types:
             system_state = "DEGRADED"
         else:
             system_state = "NOMINAL"
 
     return {
-        "system_state": system_state,
-        "features":     features or _STARFLEET_FEATURES_DEFAULTS,
-        "alerts":       alerts,
-        "mission_ctx":  mission_ctx,
+        "system_state":     system_state,
+        "features":         features or _STARFLEET_FEATURES_DEFAULTS,
+        "alerts":           alerts,
+        "mission_ctx":      mission_ctx,
+        "max_age_minutes":  max_age_minutes,
     }
 
 
 @app.get("/starfleet", response_class=HTMLResponse)
-async def starfleet_dashboard(request: Request, _=Depends(require_login)):
-    """LCARS-style adaptive system state dashboard."""
-    state = await _get_starfleet_state()
-    return templates.TemplateResponse("starfleet.html", {
-        "request":      request,
-        "system_state": state["system_state"],
-        "features":     state["features"],
-        "alerts":       state["alerts"],
-        "mission_ctx":  state["mission_ctx"],
-        "refresh_secs": 30,
+async def starfleet_dashboard(
+    request: Request,
+    max_age: int = 120,
+    _=Depends(require_login),
+):
+    """LCARS-style adaptive system state dashboard.
+
+    max_age: alerts older than this many minutes are shown as stale (default 120 min).
+    """
+    state = await _get_starfleet_state(max_age_minutes=max_age)
+    return TEMPLATES.TemplateResponse(request, "starfleet.html", {
+        "system_state":    state["system_state"],
+        "features":        state["features"],
+        "alerts":          state["alerts"],
+        "mission_ctx":     state["mission_ctx"],
+        "refresh_secs":    30,
+        "max_age_minutes": state["max_age_minutes"],
+        "csrf_token":      get_csrf_token(request),
     })
 
 
@@ -7317,6 +7341,28 @@ async def watchdog_config_proxy_post(request: Request):
             return r.json() if r.status_code == 200 else {"error": f"HTTP {r.status_code}"}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.delete("/api/watchdog/alerts", dependencies=[Depends(require_login)])
+async def watchdog_alerts_clear_proxy():
+    """Clear all watchdog alerts via the orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.delete(f"{ORCHESTRATOR_URL}/api/watchdog/alerts")
+            return r.json() if r.status_code == 200 else {"error": f"HTTP {r.status_code}"}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/api/watchdog/node-status", dependencies=[Depends(require_login)])
+async def watchdog_node_status_proxy():
+    """Proxy real-time node status from the orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/watchdog/node-status")
+            return r.json() if r.status_code == 200 else {"nodes": [], "error": f"HTTP {r.status_code}"}
+    except Exception as exc:
+        return {"nodes": [], "error": str(exc)}
 
 
 @app.post("/api/watchdog/config/test-mail", dependencies=[Depends(require_login)])

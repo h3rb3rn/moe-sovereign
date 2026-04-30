@@ -46,6 +46,7 @@
   "msg.template_verify_desc":  "Vérifie pour chaque template que le modèle référencé (model@Node) est physiquement présent sur l'endpoint Ollama.",
   "msg.template_verify_click": "Cliquez sur « Vérifier » pour contrôler la disponibilité des modèles.",
   "nav.benchmarks":       "Benchmarks",
+  "nav.starfleet":        "Starfleet",
   "nav.logout":           "Déconnexion",
 
   "btn.save":             "Enregistrer & Redémarrer",

@@ -46,6 +46,7 @@
   "msg.template_verify_desc":  "For each template, checks that the pinned model (model@Node) is physically present on the referenced Ollama endpoint.",
   "msg.template_verify_click": "Click \"Verify\" to check template model availability.",
   "nav.benchmarks":       "Benchmarks",
+  "nav.starfleet":        "Starfleet",
   "nav.logout":           "Logout",
 
   "btn.save":             "Save & Restart Orchestrator",

@@ -54,7 +54,7 @@
     {# ── Desktop Nav: visible ≥992px — grouped dropdowns ── #}
     {# Active-state helpers for dropdown highlight #}
     {% set _p = request.url.path %}
-    {% set _monitoring_active = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks'] %}
+    {% set _monitoring_active = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet'] %}
     {% set _infra_active      = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active      = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
     {% set _users_active      = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
@@ -84,6 +84,10 @@
           </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/benchmarks') %}active{% endif %}" href="/benchmarks">
             <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/starfleet' %}active{% endif %}" href="/starfleet">
+            <i class="bi bi-broadcast me-2" style="color:#f5a623;"></i>{{ t(request, 'nav.starfleet') }}
           </a></li>
         </ul>
       </div>

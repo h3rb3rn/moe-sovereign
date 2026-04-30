@@ -184,12 +184,8 @@ def _evaluate_alerts(
                     },
                 ))
 
-    # NO_MODELS_LOADED — only meaningful when at least one node is reachable.
-    if total_loaded == 0 and any_up:
-        alerts.append(_make_alert(
-            AlertType.NO_MODELS_LOADED, AlertSeverity.WARNING, None,
-            "No models currently loaded in VRAM across all reachable nodes",
-        ))
+    # NO_MODELS_LOADED intentionally omitted — Ollama unloads models after
+    # inactivity by design; zero loaded models is the normal idle state.
 
     # BENCHMARK_STUCK — active request count frozen for longer than stuck_limit.
     if stuck_since is not None and active_requests > 0:
@@ -365,6 +361,13 @@ async def watchdog_loop(
     """
     logger.info("🛸 Watchdog loop started (base interval=%ds)", _ENV_INTERVAL)
 
+    # Grace period: the Prometheus gauge loop needs one full cycle (60 s) to
+    # populate values after a container restart. During this window all gauges
+    # are 0.0 (default), which would cause spurious NODE_DOWN alerts for every
+    # node. We skip two full intervals before evaluating any thresholds.
+    _GRACE_CYCLES  = 2
+    _cycles_done   = 0
+
     down_streaks:   dict[str, int]  = {s["name"]: 0 for s in inference_servers}
     was_down:       dict[str, bool] = {s["name"]: False for s in inference_servers}
     vram_capacity:  dict[str, int]  = {
@@ -379,6 +382,10 @@ async def watchdog_loop(
         interval = _ENV_INTERVAL  # interval not hot-reloaded to avoid drift
 
         await asyncio.sleep(interval)
+        _cycles_done += 1
+        if _cycles_done <= _GRACE_CYCLES:
+            logger.info("🛸 Watchdog grace period — skipping evaluation (cycle %d/%d)", _cycles_done, _GRACE_CYCLES)
+            continue
         try:
             # Build per-node snapshot from in-process Prometheus gauges.
             server_states: dict[str, dict] = {}

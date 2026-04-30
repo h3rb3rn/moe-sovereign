@@ -46,6 +46,7 @@
   "msg.template_verify_desc":  "Prüft für jedes Template, ob das referenzierte Modell (model@Node) auf der zugehörigen Ollama-Instanz physisch verfügbar ist.",
   "msg.template_verify_click": "Klicke „Prüfen\" um Template-Modelle zu verifizieren.",
   "nav.benchmarks":       "Benchmarks",
+  "nav.starfleet":        "Starfleet",
   "nav.logout":           "Logout",
 
   "btn.save":             "Speichern & Orchestrator neustarten",
