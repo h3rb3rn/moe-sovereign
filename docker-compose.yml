@@ -250,7 +250,7 @@ services:
       IMAGES: 1       # POST /images/prune (required by System Cleanup Manager)
       BUILD: 1        # POST /build/prune  (required by System Cleanup Manager)
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
     networks:
       - default
 
@@ -375,7 +375,7 @@ services:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
+      - ${CONTAINER_STORAGE_ROOT:-/var/lib/docker}:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro
     deploy:
       resources:
@@ -449,7 +449,7 @@ services:
     ports:
       - "127.0.0.1:${DOZZLE_HOST_PORT:-9999}:8080"   # local access: http://localhost:9999
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
       - ${MOE_DATA_ROOT}/dozzle-users.yml:/data/users.yml:ro
     depends_on:
       moe-dozzle-init:
