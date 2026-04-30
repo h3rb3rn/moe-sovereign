@@ -2,7 +2,7 @@
 
 # MoE Sovereign
 
-**A Self-Hosted Multi-Model Orchestrator with Template-Based Expert Routing<br>and 1M-Token Context Window for Sovereign AI Infrastructure**
+**A Self-Hosted Multi-Model Orchestrator with Template-Based Expert Routing<br>for Sovereign AI Infrastructure**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Deployment](https://img.shields.io/badge/Deployment-Docker_%7C_LXC_%7C_Podman_%7C_Helm-2ea44f.svg)](#deployment-targets)
@@ -55,8 +55,8 @@ flowchart TD
     end
 
     subgraph Storage["Persistence Layer"]
-        Neo4j[("Neo4j<br/>Knowledge Graph<br/><i>Tier-3 Cold</i>")]
-        Chroma[("ChromaDB<br/>Vector Cache (L1)<br/><i>+ Tier-2 Semantic Memory</i>")]
+        Neo4j[("Neo4j<br/>Knowledge Graph")]
+        Chroma[("ChromaDB<br/>Vector Cache")]
         Kafka["Kafka<br/>Event Stream"]
         Valkey[("Valkey<br/>State & Sessions")]
         PG[("PostgreSQL<br/>Users & Checkpoints")]
@@ -144,7 +144,7 @@ moe-infra/
 | **6** | VRAM-Aware Scheduling | Per-node VRAM limits, warm-model affinity, sticky sessions |
 | **7** | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |
-| **9** | Deployment Flexibility | One OCI image &rarr; LXC (tested), Docker Compose (tested), Podman (planned), Helm/K8s (architecturally prepared, community validation requested) |
+| **9** | Deployment Flexibility | One OCI image &rarr; LXC (tested), Docker Compose (tested), Podman rootless (tested), Helm/K8s (architecturally prepared, community validation requested) |
 | **10** | 9.3&times; Accumulation Speedup | 707 s &rarr; 76 s latency over 5 benchmark epochs |
 | **11** | Autonomous Disk Management | System Cleanup Manager in Admin UI: configurable TTL per subsystem, daily cron automation, LangGraph checkpoint archiving, Docker build-cache pruning, history tracking with averages |
 | **12** | Agentic Re-Planning Loop | After each synthesis the Judge checks completeness; unresolved gaps trigger a focused re-plan with injected context --- up to 3 autonomous iterations per request; domain-aware search cache prevents result poisoning across iterations |
@@ -156,13 +156,6 @@ moe-infra/
 | **18** | Dynamic Sequential/Parallel Experts | Planner tasks support `depends_on` for multi-hop chains (e.g. find author → find their papers). Independent tasks run in parallel; dependent tasks execute sequentially with result injection via `{result_of:id}` placeholders |
 | **19** | Adaptive Context Budget | Context window limits per model auto-scale web-research blocks and GraphRAG budget. Fallback models (gemma4:31b 8K, qwen3.6:35b 32K) receive proportionally smaller context slices |
 | **20** | GraphRAG On-Demand | Neo4j queries skipped for external research questions (papers, APIs, media) — only runs for internal knowledge queries or when the plan includes a knowledge_healing task |
-| **21** | Tier-2 Semantic Memory | Evicted conversation turns are embedded in ChromaDB; at query time the most relevant past turns are retrieved via ANN search and injected as warm context — effective context reach far beyond the LLM's native window. Enable per template: `enable_semantic_memory: true` |
-| **22** | MRCR-lite Benchmark | Synthetic multi-turn recall benchmark: injects facts ("needles") at configurable depths (5–100 turns), measures recall with/without Tier-2 memory, scores by type (number, date, name, technical). **Measured: 1.000 WITH / 0.000 WITHOUT** across all depths and needle types (100 runs). Run: `python benchmarks/mrcr_lite_runner.py` |
-| **23** | Starfleet Watchdog | Proactive alert loop evaluates node health and VRAM thresholds every 60 s (reads existing Prometheus gauges — zero extra polling). Alerts stored in Valkey `moe:watchdog:alerts` and published to Kafka. API: `GET /api/watchdog/alerts` |
-| **24** | Persistent Mission Context | Cross-session JSON document (`$MOE_DATA_ROOT/mission_context.json`) stores current project title, open tasks, and recent decisions. API: `GET/POST/PATCH /api/mission-context`. MCP tool: `mission_context_get` |
-| **25** | LCARS Adaptive Dashboard | `/starfleet` in Admin UI — color-coded system state (NOMINAL/DEGRADED/CRITICAL/BENCHMARK) driven by live watchdog alerts. Auto-refreshes every 30 s. No extra polling — reads Valkey. |
-| **26** | Starfleet Feature Toggles | Two-layer enable/disable for each Starfleet capability: `.env` (persistent, restart required) overridden by Redis `moe:features:<name>` (runtime, no restart). Toggle UI at `/starfleet`. |
-| **27** | Infra MCP Tools | Four read-only MCP tools (`node_status`, `active_requests`, `mission_context_get`, `watchdog_alerts`) let the AI introspect its own infrastructure. Guarded by `INFRA_MCP_ENABLED=true`. |
 
 ---
 
@@ -210,7 +203,6 @@ flowchart LR
 | **Adversarial MCP** | **9/9 blocked** | All code injection attempts stopped by AST firewall |
 | **69 LLM Model Test** | **phi4:14b** | Best planner/judge from 69 models tested |
 | **Accumulation Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache) |
-| **MRCR-lite v2 — Semantic Memory** | **1.000 / 0.000** | WITH semantic memory: 100% recall · WITHOUT: 0% — perfect separation across all depths (5–100 turns), all needle types, 100 runs, 0 failures (April 2026) |
 
 ---
 
@@ -253,7 +245,7 @@ flowchart LR
 
     Solo --> LXC["LXC / Proxmox"]
     Team --> DC["Docker Compose"]
-    Team --> Pod["Podman (rootless)"]
+    Team --> Pod["Podman (rootless) ✓"]
     Ent --> K3s["K3s / Kubernetes"]
     Ent --> OCP["OpenShift"]
 
@@ -264,7 +256,7 @@ flowchart LR
 |---|:---:|---|---|
 | Docker Compose | **Tested** | `team` | `docker compose up -d` |
 | LXC / Proxmox | **Tested** | `solo` | `deploy/lxc/setup.sh` |
-| Podman (rootless) | Planned | `team` | `podman kube play deploy/podman/kube.yaml` |
+| Podman (rootless) | **Tested** | `team` | `curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh \| bash` |
 | K3s / Kubernetes | Planned | `enterprise` | `helm install moe charts/moe-sovereign` |
 | OpenShift | Untested | `enterprise` | `helm install` with `openshift.enabled=true` |
 
