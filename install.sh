@@ -203,11 +203,12 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     cd "${INSTALL_DIR}"
     # _upd_rt may include "docker" which needs group membership — mirror _compose logic.
     _upd_group=""; [[ "${_upd_rt[0]}" == "docker" ]] && _upd_group="docker"
+    _upd_q="";    [[ "${_upd_rt[0]}" == "docker" ]] && _upd_q="--quiet"
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
-      sg "$_upd_group" -c "${_upd_rt[*]} build --quiet"
+      sg "$_upd_group" -c "${_upd_rt[*]} build ${_upd_q}"
       sg "$_upd_group" -c "${_upd_rt[*]} up -d"
     else
-      "${_upd_rt[@]}" build --quiet
+      "${_upd_rt[@]}" build ${_upd_q}
       "${_upd_rt[@]}" up -d
     fi
     echo "        Containers started ✓"
@@ -470,6 +471,9 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
   echo "  Podman + compose ready ✓"
 
 fi
+
+# podman-compose does not support --quiet; docker compose does.
+[[ "$CONTAINER_RUNTIME" == "docker" ]] && _Q="--quiet" || _Q=""
 
 echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE} | Group: ${_RT_GROUP:-none} ✓"
 
@@ -1045,8 +1049,8 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-_compose pull --quiet 2>/dev/null || true
-_compose build --quiet
+_compose pull ${_Q} 2>/dev/null || true
+_compose build ${_Q}
 _compose up -d
 
 echo "  Containers started ✓"
