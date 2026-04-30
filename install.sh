@@ -5,6 +5,7 @@
 #         or: bash install.sh
 #
 #  Supported OS: Debian 11 (bullseye), 12 (bookworm), 13 (trixie)
+#                Ubuntu 22.04 (jammy), 24.04 (noble), 25.04 (plucky), 26.04+
 #  Requires: root / sudo
 # =============================================================================
 set -euo pipefail
@@ -170,20 +171,38 @@ fi
 
 source /etc/os-release
 
-if [[ "${ID:-}" != "debian" ]]; then
-  echo "[ERROR] Unsupported OS: ${PRETTY_NAME:-unknown}."
-  echo "        MoE Sovereign currently supports Debian 11, 12, and 13 only."
-  exit 1
-fi
+DISTRO_ID="${ID:-}"
 
-VERSION_MAJOR="${VERSION_ID%%.*}"
-case "$VERSION_MAJOR" in
-  11) VERSION_CODENAME="bullseye" ;;
-  12) VERSION_CODENAME="bookworm" ;;
-  13) VERSION_CODENAME="trixie"   ;;
+case "${DISTRO_ID}" in
+  debian)
+    VERSION_MAJOR="${VERSION_ID%%.*}"
+    case "${VERSION_MAJOR}" in
+      11) VERSION_CODENAME="bullseye" ;;
+      12) VERSION_CODENAME="bookworm" ;;
+      13) VERSION_CODENAME="trixie"   ;;
+      *)
+        echo "[ERROR] Unsupported Debian version: ${VERSION_ID}."
+        echo "        Supported: Debian 11 (bullseye), 12 (bookworm), 13 (trixie)."
+        exit 1
+        ;;
+    esac
+    ;;
+  ubuntu)
+    # Ubuntu ships VERSION_CODENAME in /etc/os-release — use it directly.
+    # Only validate the version number; the codename comes from the OS.
+    case "${VERSION_ID}" in
+      22.04|24.04|25.04|26.04) ;;
+      *)
+        echo "[ERROR] Unsupported Ubuntu version: ${VERSION_ID}."
+        echo "        Supported: Ubuntu 22.04 (jammy), 24.04 (noble), 25.04 (plucky), 26.04."
+        exit 1
+        ;;
+    esac
+    # VERSION_CODENAME is already set by /etc/os-release on Ubuntu.
+    ;;
   *)
-    echo "[ERROR] Unsupported Debian version: ${VERSION_ID}."
-    echo "        Supported: Debian 11 (bullseye), 12 (bookworm), 13 (trixie)."
+    echo "[ERROR] Unsupported OS: ${PRETTY_NAME:-unknown}."
+    echo "        Supported: Debian 11–13, Ubuntu 22.04–26.04."
     exit 1
     ;;
 esac
@@ -213,12 +232,12 @@ if [[ "$DOCKER_FOUND" != "true" ]]; then
     ca-certificates curl gnupg lsb-release git apache2-utils python3
 
   install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/debian/gpg \
+  curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
     | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
   chmod a+r /etc/apt/keyrings/docker.gpg
 
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
     > /etc/apt/sources.list.d/docker.list
 
   apt-get update -qq

@@ -5165,7 +5165,13 @@ async def user_api_import_templates(
             continue
         description  = (item.get("description") or "").strip()
         cost_factor  = float(item.get("cost_factor") or 1.0)
-        config       = dict(item.get("config") or {})
+        # Admin exports are flat (no "config" wrapper); user exports nest data under "config".
+        # Normalise both formats into a single config dict.
+        _NON_CONFIG = {"name", "description", "cost_factor", "type", "scope",
+                       "version", "exported_at", "id"}
+        config = dict(item.get("config") or {
+            k: v for k, v in item.items() if k not in _NON_CONFIG
+        })
         # planner_prompt / judge_prompt are admin-orchestration fields that
         # have no meaning on user templates — strip them on import.
         # system_prompt lives inside experts and belongs to the user; preserve it.
