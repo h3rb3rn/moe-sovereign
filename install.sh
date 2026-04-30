@@ -38,6 +38,26 @@ EOF
 print_banner
 
 # =============================================================================
+#  SECTION 1a: Installation paths
+# =============================================================================
+# Prompted early so Section 1b (update detection) uses the correct MOE_ENV_FILE.
+echo "=========================================================================="
+echo "  Installation Paths"
+echo "=========================================================================="
+echo ""
+echo "  Press ENTER to accept the default shown in [brackets]."
+echo ""
+
+_default_install="${INSTALL_DIR:-/opt/moe-sovereign}"
+read -rp "  App installation directory [${_default_install}]: " _tmp_install < /dev/tty
+INSTALL_DIR="${_tmp_install:-${_default_install}}"
+MOE_ENV_FILE="${INSTALL_DIR}/.env"
+
+echo ""
+echo "  Install dir: ${INSTALL_DIR}"
+echo ""
+
+# =============================================================================
 #  SECTION 1b: Re-run detection — UPDATE MODE
 # =============================================================================
 # If an existing .env and Docker volumes are found, this is an update run,
@@ -388,30 +408,38 @@ echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE} ✓"
 # =============================================================================
 echo "[4/9] Creating host directories..."
 
-# MOE_DATA_ROOT is where bind-mounted volumes live. Default is /opt/moe-infra
-# on Linux; on macOS Docker Desktop /opt is not in the default File Sharing
-# list, so a user-owned home subdirectory is safer there.
+# Determine system defaults (macOS uses home dir; bind mounts in /opt not shared by default)
 case "$(uname -s)" in
   Darwin)
-    MOE_DATA_ROOT_DEFAULT="${HOME}/moe-data"
-    GRAFANA_DATA_ROOT_DEFAULT="${HOME}/moe-grafana"
+    _sys_data_default="${HOME}/moe-data"
+    _sys_graf_default="${HOME}/moe-grafana"
     ;;
   *)
-    MOE_DATA_ROOT_DEFAULT="/opt/moe-infra"
-    GRAFANA_DATA_ROOT_DEFAULT="/opt/grafana"
+    _sys_data_default="/opt/moe-infra"
+    _sys_graf_default="/opt/grafana"
     ;;
 esac
-# Preserve existing host roots from a previous install — moving them
-# would orphan the data volumes. Read directly from .env (the full
-# preservation block runs later, but we need these values now).
+
+# Preserve existing paths from a previous install as prompt defaults.
+# Moving an existing data root would orphan all volumes.
+_data_default="${MOE_DATA_ROOT:-${_sys_data_default}}"
+_graf_default="${GRAFANA_DATA_ROOT:-${_sys_graf_default}}"
 if [[ -f "${MOE_ENV_FILE}" ]]; then
   _prev_data=$(grep -E '^MOE_DATA_ROOT=' "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-)
   _prev_graf=$(grep -E '^GRAFANA_DATA_ROOT=' "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-)
-  [[ -n "$_prev_data" ]] && MOE_DATA_ROOT_DEFAULT="$_prev_data"
-  [[ -n "$_prev_graf" ]] && GRAFANA_DATA_ROOT_DEFAULT="$_prev_graf"
+  [[ -n "$_prev_data" ]] && _data_default="$_prev_data"
+  [[ -n "$_prev_graf" ]] && _graf_default="$_prev_graf"
 fi
-MOE_DATA_ROOT="${MOE_DATA_ROOT:-$MOE_DATA_ROOT_DEFAULT}"
-GRAFANA_DATA_ROOT="${GRAFANA_DATA_ROOT:-$GRAFANA_DATA_ROOT_DEFAULT}"
+
+read -rp "  Persistent data directory   [${_data_default}]: " _tmp_data < /dev/tty
+MOE_DATA_ROOT="${_tmp_data:-${_data_default}}"
+
+read -rp "  Grafana data directory      [${_graf_default}]: " _tmp_graf < /dev/tty
+GRAFANA_DATA_ROOT="${_tmp_graf:-${_graf_default}}"
+
+echo "  Data root:   ${MOE_DATA_ROOT}"
+echo "  Grafana root: ${GRAFANA_DATA_ROOT}"
+echo ""
 
 mkdir -p \
   "${MOE_DATA_ROOT}/kafka-data" \
@@ -427,7 +455,7 @@ mkdir -p \
   "${MOE_DATA_ROOT}/few-shot" \
   "${GRAFANA_DATA_ROOT}/data" \
   "${GRAFANA_DATA_ROOT}/dashboards" \
-  /opt/moe-sovereign 2>/dev/null || true
+  "${INSTALL_DIR}" 2>/dev/null || true
 
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
