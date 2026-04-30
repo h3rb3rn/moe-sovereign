@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+{% block title %}Starfleet — MoE Sovereign{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── LCARS Color Palette ─────────────────────────────────────────────────── */
+  :root {
+    --lcars-nominal:   #f5a623;   /* LCARS orange/amber — normal operations */
+    --lcars-degraded:  #f5d623;   /* yellow — warning */
+    --lcars-critical:  #d0021b;   /* red — critical alert */
+    --lcars-benchmark: #4a90d9;   /* blue alert — heavy computation */
+    --lcars-unreachable: #6c757d; /* grey — orchestrator offline */
+    --state-color: var(--lcars-{{ system_state | lower }}, var(--lcars-nominal));
+  }
+
+  /* ── State Header ────────────────────────────────────────────────────────── */
+  .lcars-header {
+    background: var(--state-color);
+    color: #000;
+    border-radius: 12px 12px 0 0;
+    padding: .8rem 1.4rem;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 1.15rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  {% if system_state == 'CRITICAL' %}
+  .lcars-header { animation: lcars-blink 1.2s step-start infinite; }
+  @keyframes lcars-blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .45; }
+  }
+  {% endif %}
+
+  .lcars-state-badge {
+    font-size: .72rem;
+    padding: .3em .8em;
+    border-radius: 2em;
+    background: rgba(0,0,0,.18);
+    letter-spacing: .1em;
+  }
+
+  /* ── Feature Toggle Cards ────────────────────────────────────────────────── */
+  .feature-card { transition: box-shadow .2s; }
+  .feature-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.13); }
+  .feature-toggle { cursor: pointer; }
+  .restart-badge {
+    font-size: .68rem; padding: .2em .55em;
+    background: #6c757d22; border-radius: 3px;
+    color: #6c757d; vertical-align: middle;
+  }
+
+  /* ── Alert Timeline ──────────────────────────────────────────────────────── */
+  .alert-row { border-left: 3px solid transparent; padding-left: .6rem; }
+  .alert-row.node_down     { border-color: var(--lcars-critical); }
+  .alert-row.node_recovered { border-color: #28a745; }
+  .alert-row.vram_high     { border-color: var(--lcars-degraded); }
+  .alert-row.no_models     { border-color: var(--lcars-degraded); }
+  .alert-row.benchmark_stuck { border-color: var(--lcars-benchmark); }
+
+  /* ── Mission Context Panel ───────────────────────────────────────────────── */
+  .mission-tag {
+    font-size: .75rem; padding: .2em .55em;
+    border-radius: 3px; background: rgba(245,166,35,.15);
+    color: var(--lcars-nominal); border: 1px solid rgba(245,166,35,.3);
+  }
+  [data-bs-theme="dark"] .mission-tag { background: rgba(245,166,35,.1); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <!-- LCARS Status Header -->
+  <div class="lcars-header mb-3">
+    <span>
+      <i class="bi bi-broadcast me-2"></i>
+      MoE Sovereign — Starfleet Operations
+    </span>
+    <span>
+      <span class="lcars-state-badge me-3">{{ system_state }}</span>
+      <small style="font-weight:400;font-size:.75rem;letter-spacing:.02em;">
+        Auto-refresh: {{ refresh_secs }}s
+      </small>
+    </span>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- Left column: Feature Toggles + Mission Context -->
+    <div class="col-lg-5">
+
+      <!-- Feature Toggles -->
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-toggles section-icon"></i>
+          {{ t(request, 'starfleet_features') }}
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'feature') }}</th>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'status') }}</th>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'source') }}</th>
+                <th style="font-size:.8rem;color:#6c757d;padding:.5rem .75rem;">{{ t(request, 'action') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% set feature_meta = {
+                'watchdog':        {'icon': 'bi-broadcast',       'label': t(request, 'feat_watchdog')},
+                'mission_context': {'icon': 'bi-journal-text',    'label': t(request, 'feat_mission_context')},
+                'adaptive_ui':     {'icon': 'bi-display',         'label': t(request, 'feat_adaptive_ui')},
+                'infra_mcp':       {'icon': 'bi-cpu',             'label': t(request, 'feat_infra_mcp')},
+              } %}
+              {% for name, info in features.items() %}
+              {% set meta = feature_meta.get(name, {'icon': 'bi-gear', 'label': name}) %}
+              <tr class="feature-card">
+                <td style="padding:.6rem .75rem;">
+                  <i class="bi {{ meta.icon }} me-1 text-secondary"></i>
+                  <strong>{{ meta.label }}</strong>
+                  {% if info.get('requires_restart') %}
+                    <span class="restart-badge ms-1">restart req.</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if info.enabled %}
+                    <span class="badge bg-success status-badge">ON</span>
+                  {% else %}
+                    <span class="badge bg-secondary status-badge">OFF</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <code style="font-size:.75rem;">{{ info.get('source', '—') }}</code>
+                </td>
+                <td>
+                  <button
+                    class="btn btn-sm {{ 'btn-outline-danger' if info.enabled else 'btn-outline-success' }} feature-toggle"
+                    onclick="toggleFeature('{{ name }}', {{ 'false' if info.enabled else 'true' }}, this)"
+                    title="{{ 'Disable' if info.enabled else 'Enable' }} {{ name }}"
+                    {% if info.get('requires_restart') %}data-restart="1"{% endif %}
+                  >
+                    {{ t(request, 'disable') if info.enabled else t(request, 'enable') }}
+                  </button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Mission Context -->
+      {% if mission_ctx and mission_ctx.get('title') %}
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-journal-text section-icon"></i>
+          {{ t(request, 'mission_context') }}
+          {% if mission_ctx.updated_at %}
+          <small class="text-muted ms-auto" style="font-size:.75rem;font-weight:400;">
+            {{ mission_ctx.updated_at[:16] | replace('T', ' ') }} UTC
+          </small>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <h6 class="mb-1">{{ mission_ctx.title }}</h6>
+          {% if mission_ctx.description %}
+          <p class="text-muted mb-2" style="font-size:.88rem;">{{ mission_ctx.description }}</p>
+          {% endif %}
+          {% if mission_ctx.open_tasks %}
+          <div class="mb-2">
+            <small class="text-muted">{{ t(request, 'open_tasks') }}</small>
+            <ul class="mb-0 ps-3" style="font-size:.88rem;">
+              {% for task in mission_ctx.open_tasks %}<li>{{ task }}</li>{% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+          {% if mission_ctx.recent_decisions %}
+          <div class="mb-2">
+            <small class="text-muted">{{ t(request, 'recent_decisions') }}</small>
+            {% for d in mission_ctx.recent_decisions[-3:] %}
+            <div style="font-size:.83rem;padding:.2rem 0;border-bottom:1px solid rgba(0,0,0,.05);">
+              <span class="text-muted me-1">{{ d.at[:10] if d.at else '' }}</span>{{ d.text }}
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if mission_ctx.tags %}
+          <div>
+            {% for tag in mission_ctx.tags %}
+            <span class="mission-tag me-1">{{ tag }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Watchdog Config Panel -->
+      <div class="card mb-3">
+        <div class="card-header d-flex align-items-center" style="cursor:pointer;"
+             data-bs-toggle="collapse" data-bs-target="#watchdog-config-panel"
+             aria-expanded="false" aria-controls="watchdog-config-panel">
+          <i class="bi bi-sliders section-icon"></i>
+          {{ t(request, 'watchdog_config') }}
+          <i class="bi bi-chevron-down ms-auto"></i>
+        </div>
+        <div class="collapse" id="watchdog-config-panel">
+          <div class="card-body" id="watchdog-config-body">
+            <div class="text-center text-muted py-3" id="config-loading">
+              <span class="spinner-border spinner-border-sm me-1"></span>
+              {{ t(request, 'loading') }}…
+            </div>
+            <form id="watchdog-config-form" style="display:none;" onsubmit="saveWatchdogConfig(event)">
+
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'down_threshold') }}</label>
+                  <input type="number" class="form-control form-control-sm" name="down_threshold" min="1" max="20" step="1">
+                  <div class="form-text" style="font-size:.75rem;">{{ t(request, 'down_threshold_hint') }}</div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'vram_threshold_pct') }}</label>
+                  <input type="number" class="form-control form-control-sm" name="vram_threshold_pct" min="50" max="100" step="1">
+                  <div class="form-text" style="font-size:.75rem;">{{ t(request, 'vram_threshold_hint') }}</div>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label" style="font-size:.83rem;">{{ t(request, 'stuck_minutes') }}</label>
+                <input type="number" class="form-control form-control-sm" name="stuck_minutes" min="5" max="240" step="5">
+                <div class="form-text" style="font-size:.75rem;">{{ t(request, 'stuck_minutes_hint') }}</div>
+              </div>
+
+              <hr>
+              <p class="mb-2" style="font-size:.83rem;font-weight:600;">
+                <i class="bi bi-envelope me-1"></i> {{ t(request, 'email_escalation') }}
+              </p>
+
+              <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="email-enabled-check" name="email_escalation_enabled">
+                <label class="form-check-label" style="font-size:.85rem;" for="email-enabled-check">
+                  {{ t(request, 'email_escalation_enabled') }}
+                </label>
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label" style="font-size:.83rem;">{{ t(request, 'escalation_to') }}</label>
+                <input type="email" class="form-control form-control-sm" name="escalation_to"
+                       placeholder="ops@example.org">
+              </div>
+
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'escalation_cooldown') }}</label>
+                  <input type="number" class="form-control form-control-sm" name="escalation_cooldown_minutes" min="5" max="1440" step="5">
+                  <div class="form-text" style="font-size:.75rem;">{{ t(request, 'cooldown_hint') }}</div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label" style="font-size:.83rem;">{{ t(request, 'escalation_severities') }}</label>
+                  <select class="form-select form-select-sm" name="escalation_severities" multiple id="sev-select">
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-sm btn-primary">
+                  <i class="bi bi-save me-1"></i>{{ t(request, 'save') }}
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="sendTestAlert()">
+                  <i class="bi bi-envelope me-1"></i>{{ t(request, 'send_test_mail') }}
+                </button>
+                <span id="config-save-status" class="ms-2 text-muted" style="font-size:.83rem;line-height:2.2;"></span>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /left column -->
+
+    <!-- Right column: Alert Timeline -->
+    <div class="col-lg-7">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-bell section-icon"></i>
+          {{ t(request, 'watchdog_alerts') }}
+          {% if alerts %}
+          <span class="badge bg-danger ms-2 status-badge">{{ alerts | length }}</span>
+          {% else %}
+          <span class="badge bg-success ms-2 status-badge">{{ t(request, 'nominal') }}</span>
+          {% endif %}
+        </div>
+        <div class="card-body p-0">
+          {% if alerts %}
+          <div class="list-group list-group-flush">
+            {% for alert in alerts %}
+            <div class="list-group-item alert-row {{ alert.type }}" style="font-size:.88rem;">
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  {% if alert.severity == 'critical' %}
+                    <i class="bi bi-exclamation-octagon-fill text-danger me-1"></i>
+                  {% elif alert.severity == 'warning' %}
+                    <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
+                  {% else %}
+                    <i class="bi bi-info-circle text-info me-1"></i>
+                  {% endif %}
+                  <strong>{{ alert.type | replace('_', ' ') | upper }}</strong>
+                  {% if alert.node %}
+                  <code class="ms-1" style="font-size:.78rem;">{{ alert.node }}</code>
+                  {% endif %}
+                </div>
+                <small class="text-muted ms-3 text-nowrap">
+                  {{ alert.ts[:16] | replace('T', ' ') if alert.ts else '' }}
+                </small>
+              </div>
+              <div class="text-muted mt-1">{{ alert.message }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-center py-5 text-muted">
+            <i class="bi bi-check-circle-fill text-success" style="font-size:2rem;"></i>
+            <p class="mt-2 mb-0">{{ t(request, 'no_alerts') }}</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div><!-- /right column -->
+
+  </div><!-- /row -->
+</div>
+
+<script>
+  // Auto-refresh
+  setTimeout(() => location.reload(), {{ refresh_secs }} * 1000);
+
+  // ── Watchdog Config ────────────────────────────────────────────────────────
+
+  async function loadWatchdogConfig() {
+    try {
+      const r = await fetch('/api/watchdog/config');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const cfg = await r.json();
+      const form = document.getElementById('watchdog-config-form');
+      form.down_threshold.value          = cfg.down_threshold ?? 2;
+      form.vram_threshold_pct.value      = Math.round((cfg.vram_threshold ?? 0.90) * 100);
+      form.stuck_minutes.value           = cfg.stuck_minutes ?? 30;
+      form.email_escalation_enabled.checked = !!cfg.email_escalation_enabled;
+      form.escalation_to.value           = cfg.escalation_to ?? '';
+      form.escalation_cooldown_minutes.value = cfg.escalation_cooldown_minutes ?? 30;
+      const sevSel = document.getElementById('sev-select');
+      const activeSevs = cfg.escalation_severities ?? ['critical'];
+      for (const opt of sevSel.options) {
+        opt.selected = activeSevs.includes(opt.value);
+      }
+      document.getElementById('config-loading').style.display = 'none';
+      form.style.display = '';
+    } catch (e) {
+      document.getElementById('config-loading').textContent = 'Failed to load config: ' + e;
+    }
+  }
+
+  async function saveWatchdogConfig(ev) {
+    ev.preventDefault();
+    const form = ev.target;
+    const sevSel = document.getElementById('sev-select');
+    const sevs = Array.from(sevSel.selectedOptions).map(o => o.value);
+    const patch = {
+      down_threshold:              parseInt(form.down_threshold.value),
+      vram_threshold:              parseFloat(form.vram_threshold_pct.value) / 100,
+      stuck_minutes:               parseInt(form.stuck_minutes.value),
+      email_escalation_enabled:    form.email_escalation_enabled.checked,
+      escalation_to:               form.escalation_to.value.trim(),
+      escalation_cooldown_minutes: parseInt(form.escalation_cooldown_minutes.value),
+      escalation_severities:       sevs,
+    };
+    const status = document.getElementById('config-save-status');
+    status.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/watchdog/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(patch),
+      });
+      const data = await r.json();
+      status.textContent = r.ok ? '✓ Saved (hot-reload active)' : '✗ ' + (data.error ?? r.status);
+      status.style.color = r.ok ? '#28a745' : '#d0021b';
+    } catch (e) {
+      status.textContent = '✗ ' + e;
+      status.style.color = '#d0021b';
+    }
+    setTimeout(() => { status.textContent = ''; }, 4000);
+  }
+
+  async function sendTestAlert() {
+    const form = document.getElementById('watchdog-config-form');
+    const to = form.escalation_to.value.trim();
+    if (!to) { alert('Enter an escalation email address first.'); return; }
+    const testAlert = {
+      type: 'node_down', severity: 'critical', node: 'TEST-NODE',
+      message: 'This is a test alert from MoE Sovereign Watchdog.',
+      ts: new Date().toISOString(),
+    };
+    const status = document.getElementById('config-save-status');
+    status.textContent = 'Sending test mail…';
+    try {
+      const r = await fetch('/api/watchdog/config/test-mail', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({to, alert: testAlert}),
+      });
+      const d = await r.json();
+      status.textContent = d.ok ? '✓ Test mail sent to ' + to : '✗ ' + (d.error ?? r.status);
+      status.style.color = d.ok ? '#28a745' : '#d0021b';
+    } catch (e) {
+      status.textContent = '✗ ' + e;
+      status.style.color = '#d0021b';
+    }
+    setTimeout(() => { status.textContent = ''; }, 5000);
+  }
+
+  // Load config when panel is opened (lazy).
+  document.getElementById('watchdog-config-panel').addEventListener('show.bs.collapse', () => {
+    if (document.getElementById('config-loading').style.display !== 'none') {
+      loadWatchdogConfig();
+    }
+  });
+
+  async function toggleFeature(name, enable, btn) {
+    const needsRestart = btn.dataset.restart === '1';
+    if (needsRestart) {
+      const ok = confirm(
+        `Feature '${name}' requires a container restart to take effect.\n` +
+        `The runtime Redis override will be set immediately, but the service must be restarted.\n\nContinue?`
+      );
+      if (!ok) return;
+    }
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const r = await fetch(`/admin/features/${name}/toggle`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: enable}),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        location.reload();
+      } else {
+        alert('Toggle failed: ' + (data.detail || JSON.stringify(data)));
+        btn.disabled = false;
+        btn.textContent = enable ? 'Enable' : 'Disable';
+      }
+    } catch (e) {
+      alert('Network error: ' + e);
+      btn.disabled = false;
+      btn.textContent = enable ? 'Enable' : 'Disable';
+    }
+  }
+</script>
+{% endblock %}

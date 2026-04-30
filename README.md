@@ -158,6 +158,11 @@ moe-infra/
 | **20** | GraphRAG On-Demand | Neo4j queries skipped for external research questions (papers, APIs, media) — only runs for internal knowledge queries or when the plan includes a knowledge_healing task |
 | **21** | Tier-2 Semantic Memory | Evicted conversation turns are embedded in ChromaDB; at query time the most relevant past turns are retrieved via ANN search and injected as warm context — effective context reach far beyond the LLM's native window. Enable per template: `enable_semantic_memory: true` |
 | **22** | MRCR-lite Benchmark | Synthetic multi-turn recall benchmark: injects facts ("needles") at configurable depths (5–100 turns), measures recall with/without Tier-2 memory, scores by type (number, date, name, technical). **Measured: 1.000 WITH / 0.000 WITHOUT** across all depths and needle types (100 runs). Run: `python benchmarks/mrcr_lite_runner.py` |
+| **23** | Starfleet Watchdog | Proactive alert loop evaluates node health and VRAM thresholds every 60 s (reads existing Prometheus gauges — zero extra polling). Alerts stored in Valkey `moe:watchdog:alerts` and published to Kafka. API: `GET /api/watchdog/alerts` |
+| **24** | Persistent Mission Context | Cross-session JSON document (`$MOE_DATA_ROOT/mission_context.json`) stores current project title, open tasks, and recent decisions. API: `GET/POST/PATCH /api/mission-context`. MCP tool: `mission_context_get` |
+| **25** | LCARS Adaptive Dashboard | `/starfleet` in Admin UI — color-coded system state (NOMINAL/DEGRADED/CRITICAL/BENCHMARK) driven by live watchdog alerts. Auto-refreshes every 30 s. No extra polling — reads Valkey. |
+| **26** | Starfleet Feature Toggles | Two-layer enable/disable for each Starfleet capability: `.env` (persistent, restart required) overridden by Redis `moe:features:<name>` (runtime, no restart). Toggle UI at `/starfleet`. |
+| **27** | Infra MCP Tools | Four read-only MCP tools (`node_status`, `active_requests`, `mission_context_get`, `watchdog_alerts`) let the AI introspect its own infrastructure. Guarded by `INFRA_MCP_ENABLED=true`. |
 
 ---
 

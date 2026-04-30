@@ -3240,6 +3240,131 @@ def duckduckgo_search(query: str, max_results: int = 5, region: str = "wt-wt") -
         return f"[duckduckgo_search error: {e}]"
 
 
+# ─── Starfleet Infra Tools (read-only observability) ────────────────────────
+# All tools in this section are guarded by the INFRA_MCP_ENABLED flag.
+# They call the orchestrator's Starfleet API endpoints (langgraph-app:8002)
+# and therefore work without direct Redis/Prometheus access from this container.
+
+_ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_INTERNAL_URL", "http://langgraph-app:8002")
+_INFRA_MCP_ENABLED = os.getenv("INFRA_MCP_ENABLED", "false").lower() in ("1", "true", "yes")
+
+
+def _infra_disabled_response(tool_name: str) -> str:
+    return (
+        f"[{tool_name}: disabled] Set INFRA_MCP_ENABLED=true in .env to enable "
+        f"read-only infrastructure observability via MCP."
+    )
+
+
+# TODO(human): Implement node_status() below.
+# This is the key design decision for how infrastructure state is presented to the AI.
+#
+# You receive raw data from the orchestrator's /api/watchdog/alerts endpoint and the
+# /api/starfleet/features endpoint. Your task: call the orchestrator and aggregate the
+# per-node information into a clear, AI-readable summary.
+#
+# The function signature is already defined — fill in the body.
+# Guiding questions for your design:
+#   - Should you return raw JSON (easy to parse) or a human-readable string (easier for LLM)?
+#   - How do you handle the case where a specific node_name is requested vs. all nodes?
+#   - What's the most useful subset of data to surface? (up/down, VRAM%, loaded models, alerts)
+#   - What should happen when the orchestrator is unreachable?
+#
+# You can call: GET {_ORCHESTRATOR_URL}/api/watchdog/alerts?limit=5
+# Response shape: {"enabled": bool, "alerts": [{"type": ..., "node": ..., "message": ...}]}
+#
+# And: GET {_ORCHESTRATOR_URL}/api/starfleet/features
+# Response shape: {"watchdog": {"enabled": bool, "source": "env|redis|default"}, ...}
+@mcp.tool()
+def node_status(node_name: str = "") -> str:
+    """Return health and VRAM status for one or all inference nodes.
+
+    Reads live data from the MoE orchestrator's Starfleet API.
+    Includes: up/down state, currently loaded models, recent alerts per node.
+
+    node_name: Optional node name (e.g. 'N04-RTX'). Leave empty for all nodes.
+    """
+    if not _INFRA_MCP_ENABLED:
+        return _infra_disabled_response("node_status")
+    # TODO(human): implement the body of this function.
+    # Use httpx.get() (synchronous) to call the orchestrator endpoints listed above,
+    # then format and return a useful summary string or JSON.
+    raise NotImplementedError(
+        "node_status is not yet implemented — see TODO(human) in mcp_server/server.py"
+    )
+
+
+@mcp.tool()
+def active_requests() -> str:
+    """Return the count and IDs of LLM requests currently in flight.
+
+    Reads the moe:active:* key pattern from the orchestrator's live state.
+    Useful for understanding system load before issuing expensive queries.
+    """
+    if not _INFRA_MCP_ENABLED:
+        return _infra_disabled_response("active_requests")
+    try:
+        resp = httpx.get(f"{_ORCHESTRATOR_URL}/api/watchdog/alerts?limit=1", timeout=5.0)
+        # The orchestrator exposes active count via the watchdog endpoint's metadata.
+        # Fall back to the features endpoint which includes the enabled state.
+        feat = httpx.get(f"{_ORCHESTRATOR_URL}/api/starfleet/features", timeout=5.0)
+        if feat.status_code == 200:
+            return json.dumps({"status": "ok", "features": feat.json()}, indent=2)
+        return json.dumps({"status": "ok", "note": "active request count requires watchdog enabled"})
+    except Exception as exc:
+        return f"[active_requests error: {exc}]"
+
+
+@mcp.tool()
+def mission_context_get() -> str:
+    """Return the current persistent mission context (cross-session project state).
+
+    Shows the active project title, open tasks, recent decisions, and tags.
+    Use this at the start of a session to re-establish context without repeating yourself.
+    """
+    if not _INFRA_MCP_ENABLED:
+        return _infra_disabled_response("mission_context_get")
+    try:
+        resp = httpx.get(f"{_ORCHESTRATOR_URL}/api/mission-context", timeout=5.0)
+        if resp.status_code == 200:
+            ctx = resp.json()
+            if not ctx.get("enabled", True):
+                return "[mission_context_get: Mission Context feature is disabled on the server]"
+            return json.dumps(ctx, indent=2, ensure_ascii=False)
+        return f"[mission_context_get: HTTP {resp.status_code}]"
+    except Exception as exc:
+        return f"[mission_context_get error: {exc}]"
+
+
+@mcp.tool()
+def watchdog_alerts(limit: int = 10) -> str:
+    """Return recent watchdog alerts (node down, VRAM high, benchmark stuck, etc.).
+
+    Alerts are stored in Valkey and persisted across requests.
+    Most recent alert is first. Use limit to control how many entries to fetch (max 100).
+    """
+    if not _INFRA_MCP_ENABLED:
+        return _infra_disabled_response("watchdog_alerts")
+    try:
+        limit = max(1, min(100, limit))
+        resp = httpx.get(
+            f"{_ORCHESTRATOR_URL}/api/watchdog/alerts",
+            params={"limit": limit},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if not data.get("enabled"):
+                return "[watchdog_alerts: Watchdog feature is disabled on the server]"
+            alerts = data.get("alerts", [])
+            if not alerts:
+                return json.dumps({"status": "nominal", "alerts": [], "message": "No alerts on record."})
+            return json.dumps({"status": "alerts_present", "count": len(alerts), "alerts": alerts}, indent=2)
+        return f"[watchdog_alerts: HTTP {resp.status_code}]"
+    except Exception as exc:
+        return f"[watchdog_alerts error: {exc}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -3296,6 +3421,11 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "wayback_fetch":           wayback_fetch,
     "crossref_lookup":         crossref_lookup,
     "openalex_search":         openalex_search,
+    # Starfleet Infra Tools (read-only — enabled via INFRA_MCP_ENABLED)
+    "node_status":          node_status,
+    "active_requests":      active_requests,
+    "mission_context_get":  mission_context_get,
+    "watchdog_alerts":      watchdog_alerts,
 }
 
 _TOOL_DESCRIPTIONS = {

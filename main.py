@@ -48,6 +48,9 @@ from graph_rag.corrections import (
 )
 
 CORRECTION_MEMORY_ENABLED = os.getenv("CORRECTION_MEMORY_ENABLED", "true").lower() in ("1", "true", "yes")
+import starfleet_config as _starfleet
+import watchdog as _watchdog
+import mission_context as _mission_context
 import httpx
 import redis.asyncio as aioredis
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
@@ -5897,6 +5900,17 @@ async def lifespan(app_: FastAPI):
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
     asyncio.create_task(_auto_resume_dedicated_healer())
     asyncio.create_task(_watchdog_dedicated_healer())
+    # Starfleet: proactive watchdog alert loop
+    if _starfleet.is_feature_enabled_sync("watchdog"):
+        asyncio.create_task(_watchdog.watchdog_loop(
+            redis_client=redis_client,
+            inference_servers=INFERENCE_SERVERS_LIST,
+            kafka_producer=kafka_producer,
+            prom_server_up=PROM_SERVER_UP,
+            prom_loaded_models=PROM_SERVER_LOADED_MODELS,
+            prom_vram_bytes=PROM_SERVER_VRAM_BYTES,
+        ))
+        logger.info("🛸 Starfleet Watchdog enabled")
     # Semantic memory TTL cleanup — runs every 6 hours, removes expired ChromaDB turns
     async def _semantic_memory_cleanup_loop() -> None:
         from memory_retrieval import cleanup_expired_turns
@@ -6012,6 +6026,72 @@ async def _check_ip_rate_limit(request: Request) -> bool:
 async def health_check():
     """Liveness probe for Docker HEALTHCHECK and load balancers."""
     return {"status": "ok"}
+
+
+# ── Starfleet: Watchdog Alerts ────────────────────────────────────────────────
+
+@app.get("/api/watchdog/alerts")
+async def watchdog_alerts_endpoint(limit: int = 20):
+    """Return recent watchdog alerts from Valkey (most recent first)."""
+    if not await _starfleet.is_feature_enabled("watchdog", redis_client):
+        return JSONResponse({"enabled": False, "alerts": []})
+    if redis_client is None:
+        return JSONResponse({"enabled": True, "alerts": [], "error": "Valkey unavailable"})
+    raw = await redis_client.lrange(_watchdog.VALKEY_ALERT_KEY, 0, max(0, limit - 1))
+    alerts = []
+    for item in raw:
+        try:
+            alerts.append(json.loads(item))
+        except Exception:
+            pass
+    return {"enabled": True, "alerts": alerts}
+
+
+@app.get("/api/starfleet/features")
+async def starfleet_features_endpoint():
+    """Return current state of all Starfleet feature toggles."""
+    return await _starfleet.get_all_feature_states(redis_client)
+
+
+@app.get("/api/watchdog/config")
+async def watchdog_config_get():
+    """Return the current watchdog configuration."""
+    return await _watchdog._load_config(redis_client)
+
+
+@app.post("/api/watchdog/config")
+async def watchdog_config_set(request: Request):
+    """Merge-update watchdog configuration (hot-reload, no restart needed)."""
+    patch = await request.json()
+    return await _watchdog.save_config(redis_client, patch)
+
+
+# ── Starfleet: Mission Context ────────────────────────────────────────────────
+
+@app.get("/api/mission-context")
+async def mission_context_get():
+    """Return the current persistent mission context."""
+    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
+        return JSONResponse({"enabled": False})
+    return await _mission_context.get_context()
+
+
+@app.post("/api/mission-context")
+async def mission_context_set(request: Request):
+    """Replace the mission context with the provided JSON body."""
+    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
+        return JSONResponse({"enabled": False}, status_code=409)
+    data = await request.json()
+    return await _mission_context.set_context(data)
+
+
+@app.patch("/api/mission-context")
+async def mission_context_patch(request: Request):
+    """Merge-update fields in the mission context."""
+    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
+        return JSONResponse({"enabled": False}, status_code=409)
+    patch = await request.json()
+    return await _mission_context.patch_context(patch)
 
 
 @app.get("/metrics")

@@ -854,6 +854,12 @@ def require_login(request: Request):
         raise HTTPException(status_code=303, headers={"Location": "/login"})
 
 
+def require_admin(request: Request):
+    """Same as require_login — the admin UI is already gated to admin users only."""
+    if not request.session.get("authenticated"):
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+
+
 def get_csrf_token(request: Request) -> str:
     token = request.session.get("csrf_token")
     if not token:
@@ -7217,3 +7223,144 @@ async def api_promote_knowledge(request: Request):
         f"{promoted} entities {from_tenant!r} → {to_tenant!r}"
     )
     return {"ok": True, "promoted": promoted, "from": from_tenant, "to": to_tenant}
+
+
+# ── Starfleet: LCARS Adaptive Dashboard ──────────────────────────────────────
+
+_STARFLEET_FEATURES_DEFAULTS = {
+    "watchdog":        {"enabled": True,  "requires_restart": True},
+    "mission_context": {"enabled": True,  "requires_restart": True},
+    "adaptive_ui":     {"enabled": True,  "requires_restart": False},
+    "infra_mcp":       {"enabled": False, "requires_restart": True},
+}
+
+
+async def _get_starfleet_state() -> dict:
+    """Fetch feature states and recent alerts from the orchestrator."""
+    features = {}
+    alerts = []
+    mission_ctx = {}
+    system_state = "NOMINAL"
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            feat_r = await client.get(f"{ORCHESTRATOR_URL}/api/starfleet/features")
+            if feat_r.status_code == 200:
+                features = feat_r.json()
+
+            alert_r = await client.get(f"{ORCHESTRATOR_URL}/api/watchdog/alerts?limit=10")
+            if alert_r.status_code == 200:
+                alerts = alert_r.json().get("alerts", [])
+
+            ctx_r = await client.get(f"{ORCHESTRATOR_URL}/api/mission-context")
+            if ctx_r.status_code == 200:
+                mission_ctx = ctx_r.json()
+    except Exception:
+        system_state = "UNREACHABLE"
+
+    # Determine state from alerts.
+    if system_state != "UNREACHABLE":
+        critical_types = {"node_down", "benchmark_stuck"}
+        warning_types  = {"vram_high", "no_models"}
+        recent_types   = {a.get("type") for a in alerts[:3]} if alerts else set()
+        if recent_types & critical_types:
+            system_state = "CRITICAL"
+        elif recent_types & warning_types:
+            system_state = "DEGRADED"
+        else:
+            system_state = "NOMINAL"
+
+    return {
+        "system_state": system_state,
+        "features":     features or _STARFLEET_FEATURES_DEFAULTS,
+        "alerts":       alerts,
+        "mission_ctx":  mission_ctx,
+    }
+
+
+@app.get("/starfleet", response_class=HTMLResponse)
+async def starfleet_dashboard(request: Request, _=Depends(require_login)):
+    """LCARS-style adaptive system state dashboard."""
+    state = await _get_starfleet_state()
+    return templates.TemplateResponse("starfleet.html", {
+        "request":      request,
+        "system_state": state["system_state"],
+        "features":     state["features"],
+        "alerts":       state["alerts"],
+        "mission_ctx":  state["mission_ctx"],
+        "refresh_secs": 30,
+    })
+
+
+@app.get("/api/watchdog/config", dependencies=[Depends(require_login)])
+async def watchdog_config_proxy_get():
+    """Proxy watchdog config read to the orchestrator (single source of truth in Valkey)."""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/watchdog/config")
+            return r.json() if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+@app.post("/api/watchdog/config", dependencies=[Depends(require_login)])
+async def watchdog_config_proxy_post(request: Request):
+    """Proxy watchdog config update to the orchestrator."""
+    patch = await request.json()
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/api/watchdog/config",
+                json=patch,
+                headers={"Content-Type": "application/json"},
+            )
+            return r.json() if r.status_code == 200 else {"error": f"HTTP {r.status_code}"}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/watchdog/config/test-mail", dependencies=[Depends(require_login)])
+async def watchdog_test_mail(request: Request):
+    """Send a test escalation email using the current SMTP config."""
+    body = await request.json()
+    to    = body.get("to", "").strip()
+    alert = body.get("alert", {
+        "type": "node_down", "severity": "critical", "node": "TEST",
+        "message": "Test alert from MoE Sovereign Watchdog.",
+    })
+    if not to:
+        return JSONResponse({"ok": False, "error": "No recipient address"}, status_code=400)
+    subject  = f"[MoE Watchdog TEST] {alert.get('type','test').replace('_',' ').title()}"
+    body_html = (
+        "<div style='font-family:Arial,sans-serif;padding:20px;'>"
+        "<h3 style='color:#f5a623;'>MoE Sovereign Watchdog — Test Mail</h3>"
+        f"<p>This is a test escalation mail sent from the Starfleet dashboard.</p>"
+        f"<p><strong>Recipient:</strong> {to}<br>"
+        f"<strong>SMTP host:</strong> {SMTP_HOST or '(not configured)'}</p>"
+        "<hr><p style='font-size:12px;color:#999;'>If you received this, email escalation is working correctly.</p>"
+        "</div>"
+    )
+    sent = await asyncio.to_thread(_smtp_send, to, subject, body_html)
+    return {"ok": sent, "to": to, "smtp_host": SMTP_HOST}
+
+
+@app.post("/admin/features/{name}/toggle", dependencies=[Depends(require_admin)])
+async def toggle_starfleet_feature(name: str, request: Request):
+    """Toggle a Starfleet feature via Redis (no restart required for runtime-toggleable features)."""
+    known = set(_STARFLEET_FEATURES_DEFAULTS.keys())
+    if name not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown feature '{name}'. Known: {sorted(known)}")
+    body = await request.json()
+    enabled = bool(body.get("enabled", True))
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/starfleet/features")
+            current = r.json().get(name, {}).get("enabled", False) if r.status_code == 200 else None
+        import redis.asyncio as _aioredis
+        _redis_url = os.getenv("REDIS_URL", "redis://:@terra_cache:6379/0")
+        _rc = _aioredis.from_url(_redis_url, decode_responses=True)
+        await _rc.set(f"moe:features:{name}", "true" if enabled else "false")
+        await _rc.aclose()
+        return {"ok": True, "feature": name, "enabled": enabled, "previous": current, "source": "redis"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
