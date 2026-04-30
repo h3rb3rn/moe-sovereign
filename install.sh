@@ -331,23 +331,15 @@ _compose_ok() { [[ -n "$COMPOSE" ]] && $COMPOSE version &>/dev/null 2>&1; }
 if ! _compose_ok; then
   if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
     echo "  Compose plugin not found — installing docker-compose-plugin..."
-    apt-get install -y --no-install-recommends docker-compose-plugin &>/dev/null || true
+    apt-get install -y --no-install-recommends docker-compose-plugin
     COMPOSE="docker compose"
     if ! _compose_ok; then
-      # Compose plugin still missing — Docker may be installed via snap or a
-      # non-APT method. Fall back to standalone docker-compose (v1) if present.
-      if command -v docker-compose &>/dev/null; then
-        COMPOSE="docker-compose"
-        echo "  Using docker-compose (v1) ✓"
-      else
-        echo "[ERROR] Could not install docker-compose-plugin and no docker-compose found."
-        echo "        Install manually: apt install docker-compose-plugin"
-        echo "        Or (v1):          apt install docker-compose"
-        exit 1
-      fi
-    else
-      echo "  docker-compose-plugin installed ✓"
+      echo "[ERROR] docker-compose-plugin installed but 'docker compose' still not working."
+      echo "        Docker may be installed via Snap or another non-APT method."
+      echo "        Reinstall Docker CE from the official repo: https://docs.docker.com/engine/install/"
+      exit 1
     fi
+    echo "  docker-compose-plugin installed ✓"
   elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     echo "  podman-compose not found — installing..."
     apt-get install -y --no-install-recommends podman-compose &>/dev/null || true
