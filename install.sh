@@ -6,7 +6,8 @@
 #
 #  Supported OS: Debian 11 (bullseye), 12 (bookworm), 13 (trixie)
 #                Ubuntu 22.04 (jammy), 24.04 (noble), 25.04 (plucky), 26.04+
-#  Requires: root / sudo
+#  Requires: sudo access (system packages, Docker install, group membership)
+#  Run as the user that will own the installation, NOT as root directly.
 # =============================================================================
 set -euo pipefail
 IFS=$'\n\t'
@@ -15,6 +16,32 @@ IFS=$'\n\t'
 MOE_REPO_URL="${MOE_REPO_URL:-https://github.com/h3rb3rn/moe-sovereign.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/moe-sovereign}"
 MOE_ENV_FILE="${INSTALL_DIR}/.env"
+
+# --- Deploy user detection ---------------------------------------------------
+# The deploy user is whoever runs this script. System commands use _sudo().
+# If someone mistakenly runs as root via sudo, honour SUDO_USER so ownership
+# ends up on the real account.
+if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
+  DEPLOY_USER="$SUDO_USER"
+else
+  DEPLOY_USER="${USER:-$(id -un)}"
+fi
+
+# Elevate system commands without requiring the whole script to run as root.
+_sudo() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+
+# Container runtime group (set by Section 4/5; empty means no group needed).
+_RT_GROUP=""
+
+# Group-aware compose execution: if the runtime group isn't active yet in this
+# session (user was just added), use 'sg' to activate it for the command.
+_compose() {
+  if [[ -n "$_RT_GROUP" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_RT_GROUP"; then
+    sg "$_RT_GROUP" -c "${COMPOSE_CMD[*]} $*"
+  else
+    "${COMPOSE_CMD[@]}" "$@"
+  fi
+}
 
 # =============================================================================
 #  SECTION 1: Banner
@@ -105,10 +132,9 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     echo "  =================================================================="
     echo ""
 
-    # Root is required for chown. The global root check (Section 2) comes
-    # later, so we do our own early check here for the update path.
-    if [[ $EUID -ne 0 ]]; then
-      echo "[ERROR] Update mode requires root. Re-run with: sudo bash install.sh"
+    # chown needs sudo — verify access early so we fail fast.
+    if ! _sudo true 2>/dev/null; then
+      echo "[ERROR] Update mode requires sudo access for volume ownership."
       exit 1
     fi
 
@@ -140,7 +166,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     # ────────────────────────────────────────────────────────────────────────
 
     # Ensure directories exist (they should, but guard against partial installs)
-    mkdir -p \
+    _sudo mkdir -p \
       "${_upd_data}/kafka-data"       "${_upd_data}/neo4j-data"   \
       "${_upd_data}/neo4j-logs"       "${_upd_data}/agent-logs"   \
       "${_upd_data}/chroma-onnx-cache" "${_upd_data}/chroma-data" \
@@ -153,13 +179,13 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     # Re-apply container UID ownership. These must match the UIDs baked into
     # the Docker images; a mismatch causes write-permission crashes on startup.
     # kafka (confluentinc/cp-kafka): appuser uid=1000
-    chown -R 1000:1000   "${_upd_data}/kafka-data"                          2>/dev/null || true
+    _sudo chown -R 1000:1000   "${_upd_data}/kafka-data"                       2>/dev/null || true
     # prometheus: runs as nobody uid=65534
-    chown -R 65534:65534 "${_upd_data}/prometheus-data"                     2>/dev/null || true
+    _sudo chown -R 65534:65534 "${_upd_data}/prometheus-data"                  2>/dev/null || true
     # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
-    chown -R 1001:0      "${_upd_data}/agent-logs"                          2>/dev/null || true
+    _sudo chown -R 1001:0      "${_upd_data}/agent-logs"                       2>/dev/null || true
     # grafana: uid=472
-    chown -R 472:472     "${_upd_graf}/data" "${_upd_graf}/dashboards"      2>/dev/null || true
+    _sudo chown -R 472:472     "${_upd_graf}/data" "${_upd_graf}/dashboards"   2>/dev/null || true
 
     echo "  [1/3] Volume permissions reset ✓"
 
@@ -175,8 +201,15 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     # Rebuild images and restart containers
     echo "  [3/3] Rebuilding containers..."
     cd "${INSTALL_DIR}"
-    "${_upd_rt[@]}" build --quiet
-    "${_upd_rt[@]}" up -d
+    # _upd_rt may include "docker" which needs group membership — mirror _compose logic.
+    _upd_group=""; [[ "${_upd_rt[0]}" == "docker" ]] && _upd_group="docker"
+    if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
+      sg "$_upd_group" -c "${_upd_rt[*]} build --quiet"
+      sg "$_upd_group" -c "${_upd_rt[*]} up -d"
+    else
+      "${_upd_rt[@]}" build --quiet
+      "${_upd_rt[@]}" up -d
+    fi
     echo "        Containers started ✓"
 
     # Health check (same as Section 12)
@@ -213,12 +246,18 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
 fi
 
 # =============================================================================
-#  SECTION 2: Root check
+#  SECTION 2: Sudo capability check
 # =============================================================================
 if [[ $EUID -ne 0 ]]; then
-  echo "[ERROR] This installer must be run as root or via sudo."
-  echo "        Re-run with: sudo bash install.sh"
-  exit 1
+  echo "  Deploy user: ${DEPLOY_USER}"
+  if ! sudo -v 2>/dev/null; then
+    echo "[ERROR] '${DEPLOY_USER}' needs sudo access for system-level operations."
+    echo "        Add to sudoers: echo '${DEPLOY_USER} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/${DEPLOY_USER}"
+    exit 1
+  fi
+  echo "  Sudo access confirmed ✓"
+else
+  echo "  Running as root (SUDO_USER=${SUDO_USER:-none}) → deploy user: ${DEPLOY_USER} ✓"
 fi
 
 # =============================================================================
@@ -334,45 +373,44 @@ fi
 # =============================================================================
 echo "[3/9] Installing runtime and required packages..."
 
-apt-get update -qq
-apt-get install -y --no-install-recommends \
+_sudo apt-get update -qq
+_sudo apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg lsb-release git apache2-utils python3
 
 if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
 
   if ! command -v docker &>/dev/null; then
     # ── Fresh Docker CE install from the official repo ──────────────────────
-    install -m 0755 -d /etc/apt/keyrings
+    _sudo install -m 0755 -d /etc/apt/keyrings
     curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
+      | _sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    _sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
-      > /etc/apt/sources.list.d/docker.list
+      | _sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    apt-get update -qq
-    apt-get install -y --no-install-recommends \
+    _sudo apt-get update -qq
+    _sudo apt-get install -y --no-install-recommends \
       docker-ce docker-ce-cli containerd.io \
       docker-buildx-plugin docker-compose-plugin
 
-    systemctl enable --now docker
+    _sudo systemctl enable --now docker
     echo "  Docker CE + compose plugin installed ✓"
 
   elif ! _docker_has_compose; then
     # ── Docker present but compose plugin missing ────────────────────────────
-    # Add the official Docker repo if not already configured, then install plugin.
     if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
-      install -m 0755 -d /etc/apt/keyrings
+      _sudo install -m 0755 -d /etc/apt/keyrings
       curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
-        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      chmod a+r /etc/apt/keyrings/docker.gpg
+        | _sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      _sudo chmod a+r /etc/apt/keyrings/docker.gpg
       echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
-        > /etc/apt/sources.list.d/docker.list
-      apt-get update -qq
+        | _sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      _sudo apt-get update -qq
     fi
-    apt-get install -y --no-install-recommends docker-compose-plugin
+    _sudo apt-get install -y --no-install-recommends docker-compose-plugin
     if ! _docker_has_compose; then
       echo "[ERROR] docker-compose-plugin not registering with Docker."
       echo "        If Docker was installed via Snap, reinstall via the official repo:"
@@ -383,6 +421,16 @@ https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
 
   else
     echo "  Docker CE + compose plugin already present ✓"
+  fi
+
+  # Add deploy user to docker group so they can run docker compose without sudo.
+  _RT_GROUP="docker"
+  if ! id -nG "$DEPLOY_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "docker"; then
+    _sudo usermod -aG docker "$DEPLOY_USER"
+    echo "  User '${DEPLOY_USER}' added to 'docker' group ✓"
+    echo "  (Re-login after install to use docker without sudo in future sessions)"
+  else
+    echo "  User '${DEPLOY_USER}' already in 'docker' group ✓"
   fi
 
 elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
@@ -397,11 +445,13 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     exit 1
   fi
   _resolve_podman_compose
+  # Rootless Podman runs as the current user without any group membership.
+  _RT_GROUP=""
   echo "  Podman + compose ready ✓"
 
 fi
 
-echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE} ✓"
+echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE} | Group: ${_RT_GROUP:-none} ✓"
 
 # =============================================================================
 #  SECTION 6: Host directory creation
@@ -441,7 +491,7 @@ echo "  Data root:   ${MOE_DATA_ROOT}"
 echo "  Grafana root: ${GRAFANA_DATA_ROOT}"
 echo ""
 
-mkdir -p \
+_sudo mkdir -p \
   "${MOE_DATA_ROOT}/kafka-data" \
   "${MOE_DATA_ROOT}/neo4j-data" \
   "${MOE_DATA_ROOT}/neo4j-logs" \
@@ -457,17 +507,22 @@ mkdir -p \
   "${GRAFANA_DATA_ROOT}/dashboards" \
   "${INSTALL_DIR}" 2>/dev/null || true
 
+# INSTALL_DIR is owned by the deploy user so git clone and .env writes work without sudo.
+_sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "${INSTALL_DIR}"
+
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
 # Fix ownership for containers that run as non-root.
 # kafka (confluentinc/cp-kafka): appuser uid=1000
-chown -R 1000:1000 "${MOE_DATA_ROOT}/kafka-data" 2>/dev/null || true
+_sudo chown -R 1000:1000   "${MOE_DATA_ROOT}/kafka-data"                        2>/dev/null || true
+# postgres (terra_checkpoints): PGDATA is initialised by the container entrypoint
+# with correct ownership — no pre-chown needed for the data dir.
 # prometheus: runs as nobody uid=65534
-chown -R 65534:65534 "${MOE_DATA_ROOT}/prometheus-data" 2>/dev/null || true
+_sudo chown -R 65534:65534 "${MOE_DATA_ROOT}/prometheus-data"                   2>/dev/null || true
 # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
-chown -R 1001:0 "${MOE_DATA_ROOT}/agent-logs" 2>/dev/null || true
+_sudo chown -R 1001:0      "${MOE_DATA_ROOT}/agent-logs"                        2>/dev/null || true
 # grafana: uid=472
-chown -R 472:472 "${GRAFANA_DATA_ROOT}/data" "${GRAFANA_DATA_ROOT}/dashboards" 2>/dev/null || true
+_sudo chown -R 472:472     "${GRAFANA_DATA_ROOT}/data" "${GRAFANA_DATA_ROOT}/dashboards" 2>/dev/null || true
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo ""
@@ -489,6 +544,10 @@ else
   echo "  Cloning repository to ${INSTALL_DIR}..."
   git clone "${MOE_REPO_URL}" "${INSTALL_DIR}"
 fi
+
+# Postgres mounts ./scripts/postgres-init as docker-entrypoint-initdb.d:ro.
+# The container user (uid 70 in postgres:alpine) needs read + execute on the dir.
+chmod -R a+rX "${INSTALL_DIR}/scripts" 2>/dev/null || true
 
 echo "  Repository ready ✓"
 
@@ -955,9 +1014,9 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-"${COMPOSE_CMD[@]}" pull --quiet 2>/dev/null || true
-"${COMPOSE_CMD[@]}" build --quiet
-"${COMPOSE_CMD[@]}" up -d
+_compose pull --quiet 2>/dev/null || true
+_compose build --quiet
+_compose up -d
 
 echo "  Containers started ✓"
 
