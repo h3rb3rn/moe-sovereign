@@ -436,16 +436,36 @@ https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
 elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
 
   if ! command -v podman &>/dev/null; then
-    # TODO(human): install Podman and a compose provider for Debian/Ubuntu.
-    # Decide between:
-    #   a) OS-native repos  — apt install podman podman-compose
-    #   b) kubic OBS repo   — latest builds, extra external repo to maintain
-    # After installing, call _resolve_podman_compose to set $COMPOSE.
-    echo "[!] Podman installation not yet implemented — please install podman manually."
-    exit 1
+    # Install Podman + podman-compose from OS-native repos.
+    # Debian 11+ and Ubuntu 22.04+ ship recent-enough versions in their
+    # standard repositories — no extra repo registration needed.
+    echo "  Installing Podman from OS repos..."
+    _sudo apt-get update -qq
+    _sudo apt-get install -y --no-install-recommends podman podman-compose
+    if ! command -v podman &>/dev/null; then
+      echo "[ERROR] Podman installation failed."
+      echo "        Check 'apt policy podman' or install manually."
+      exit 1
+    fi
+    echo "  Podman installed ✓"
+  else
+    echo "  Podman already present ✓"
   fi
+
+  # Ensure podman-compose is available (might be missing even if podman is)
+  if ! command -v podman-compose &>/dev/null; then
+    _sudo apt-get install -y --no-install-recommends podman-compose
+  fi
+
   _resolve_podman_compose
-  # Rootless Podman runs as the current user without any group membership.
+
+  # Enable lingering so rootless containers survive logout / start on boot.
+  if command -v loginctl &>/dev/null && [[ "$DEPLOY_USER" != "root" ]]; then
+    _sudo loginctl enable-linger "$DEPLOY_USER" 2>/dev/null || true
+    echo "  Linger enabled for '${DEPLOY_USER}' (containers start on boot) ✓"
+  fi
+
+  # Rootless Podman needs no group — each user manages their own containers.
   _RT_GROUP=""
   echo "  Podman + compose ready ✓"
 
