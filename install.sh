@@ -789,6 +789,13 @@ fi
   echo 'FEEDBACK_POSITIVE_THRESHOLD=4'
   echo 'FEEDBACK_NEGATIVE_THRESHOLD=2'
   echo ""
+  echo "# --- Container CPU Limits (increase on systems with more than 2 cores) ---"
+  echo '# Default 2 is safe for 2-core hosts; raise per-service on larger machines.'
+  echo 'NEO4J_CPU_LIMIT=2'
+  echo 'LANGGRAPH_CPU_LIMIT=2'
+  echo 'KAFKA_CPU_LIMIT=2'
+  echo 'CHROMA_CPU_LIMIT=2'
+  echo ""
   echo "# --- Timeouts & Limits ---"
   echo 'HISTORY_MAX_TURNS=4'
   echo 'HISTORY_MAX_CHARS=3000'

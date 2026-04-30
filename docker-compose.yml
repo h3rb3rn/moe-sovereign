@@ -29,7 +29,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: '${KAFKA_CPU_LIMIT:-2}'
           memory: 2G
   # --- Neo4j Knowledge Graph (GraphRAG + Ontologie) ---
   neo4j-knowledge:
@@ -51,7 +51,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
+          cpus: '${NEO4J_CPU_LIMIT:-2}'
           memory: 8G
 
   # --- MCP Precision Tools Server ---
@@ -101,7 +101,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
+          cpus: '${LANGGRAPH_CPU_LIMIT:-2}'
           memory: 4G
         reservations:
           memory: 512M
@@ -207,7 +207,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: '${CHROMA_CPU_LIMIT:-2}'
           memory: 4G
 
   # --- Prometheus (Metriken-Scraper) ---
