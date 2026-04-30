@@ -62,8 +62,10 @@ from langgraph.graph import StateGraph, END
 from contextlib import asynccontextmanager
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-import chromadb
-from chromadb.utils import embedding_functions
+_EDGE_MODE = os.getenv("ENVIRONMENT") == "edge_mobile"
+if not _EDGE_MODE:
+    import chromadb
+    from chromadb.utils import embedding_functions
 
 # Import for the math node
 from math_node import math_node
@@ -1769,11 +1771,18 @@ async def assign_gpu(endpoint: str = "") -> int:
     return idx
 
 # --- DB SETUP ---
-chroma_client = chromadb.HttpClient(host=os.getenv("CHROMA_HOST", "chromadb-vector"), port=8000)
-default_ef = embedding_functions.DefaultEmbeddingFunction()
-cache_collection = chroma_client.get_or_create_collection(name="moe_fact_cache", embedding_function=default_ef)
-# Second collection for semantic pre-routing: prototypical task queries per category
-route_collection = chroma_client.get_or_create_collection(name="task_type_prototypes", embedding_function=default_ef)
+if _EDGE_MODE:
+    from edge_vector_store import EdgeClient
+    chroma_client    = EdgeClient()
+    default_ef       = None
+    cache_collection = chroma_client.get_or_create_collection("moe_fact_cache")
+    route_collection = chroma_client.get_or_create_collection("task_type_prototypes")
+else:
+    chroma_client    = chromadb.HttpClient(host=os.getenv("CHROMA_HOST", "chromadb-vector"), port=8000)
+    default_ef       = embedding_functions.DefaultEmbeddingFunction()
+    cache_collection = chroma_client.get_or_create_collection(name="moe_fact_cache", embedding_function=default_ef)
+    # Second collection for semantic pre-routing: prototypical task queries per category
+    route_collection = chroma_client.get_or_create_collection(name="task_type_prototypes", embedding_function=default_ef)
 
 # --- MODES ---
 # Control output format and behavior of the entire pipeline.
@@ -5897,11 +5906,18 @@ async def lifespan(app_: FastAPI):
             if deleted:
                 logger.info(f"🧹 Semantic memory: {deleted} expired turns removed from ChromaDB")
     asyncio.create_task(_semantic_memory_cleanup_loop())
-    async with AsyncPostgresSaver.from_conn_string(POSTGRES_CHECKPOINT_URL) as checkpointer:
-        await checkpointer.setup()
+    if _EDGE_MODE:
+        from langgraph.checkpoint.memory import MemorySaver
+        checkpointer = MemorySaver()
         app_graph = builder.compile(checkpointer=checkpointer)
-        logger.info("✅ PostgresSaver initialized — checkpoints persisted on terra_checkpoints")
+        logger.info("✅ MemorySaver initialized (edge_mobile — in-RAM checkpoints)")
         yield
+    else:
+        async with AsyncPostgresSaver.from_conn_string(POSTGRES_CHECKPOINT_URL) as checkpointer:
+            await checkpointer.setup()
+            app_graph = builder.compile(checkpointer=checkpointer)
+            logger.info("✅ PostgresSaver initialized — checkpoints persisted on terra_checkpoints")
+            yield
     # Cleanup
     gauge_task.cancel()
     consumer_task.cancel()
