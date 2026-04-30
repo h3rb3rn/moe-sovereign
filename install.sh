@@ -444,6 +444,7 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     _sudo apt-get install -y --no-install-recommends \
       podman podman-compose \
       uidmap \
+      passt \
       slirp4netns \
       fuse-overlayfs \
       dbus-user-session
@@ -455,7 +456,7 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
   else
     echo "  Podman already present — installing missing rootless dependencies..."
     _sudo apt-get install -y --no-install-recommends \
-      uidmap slirp4netns fuse-overlayfs dbus-user-session &>/dev/null || true
+      uidmap passt slirp4netns fuse-overlayfs dbus-user-session &>/dev/null || true
   fi
 
   # Ensure podman-compose is available (might be missing even if podman is)
