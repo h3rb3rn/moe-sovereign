@@ -60,10 +60,10 @@ from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SearxSearchWrapper
 from langgraph.graph import StateGraph, END
 from contextlib import asynccontextmanager
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 _EDGE_MODE = os.getenv("ENVIRONMENT") == "edge_mobile"
 if not _EDGE_MODE:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     import chromadb
     from chromadb.utils import embedding_functions
 
