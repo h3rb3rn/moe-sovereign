@@ -537,12 +537,23 @@ fi
 # =============================================================================
 echo "[5/9] Setting up MoE Sovereign repository..."
 
+# Git operations must run as DEPLOY_USER so all repo files are user-owned.
+# If the script is executed as root (sudo bash install.sh), use sudo -u to
+# drop privileges for git commands.
+_git_as_user() {
+  if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+    sudo -u "$DEPLOY_USER" git "$@"
+  else
+    git "$@"
+  fi
+}
+
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   echo "  Existing installation found — pulling latest changes..."
-  git -C "${INSTALL_DIR}" pull --ff-only
+  _git_as_user -C "${INSTALL_DIR}" pull --ff-only
 else
   echo "  Cloning repository to ${INSTALL_DIR}..."
-  git clone "${MOE_REPO_URL}" "${INSTALL_DIR}"
+  _git_as_user clone "${MOE_REPO_URL}" "${INSTALL_DIR}"
 fi
 
 # Postgres mounts ./scripts/postgres-init as docker-entrypoint-initdb.d:ro.
