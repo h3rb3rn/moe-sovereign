@@ -492,8 +492,7 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
   _deploy_home=$(eval echo "~${DEPLOY_USER}")
   _containers_conf="${_deploy_home}/.config/containers/containers.conf"
   # Detect environments where nftables is unavailable (WSL, some LXC/VMs).
-  # Netavark (default Podman network backend) requires nf_tables kernel module.
-  # Fall back to CNI + slirp4netns which operates entirely in userspace.
+  # Netavark requires nf_tables; fall back to CNI which runs in userspace.
   _network_backend="netavark"
   if ! nft list ruleset &>/dev/null 2>&1; then
     _network_backend="cni"
@@ -502,17 +501,24 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     echo "  nftables unavailable (WSL/LXC?) — using CNI network backend ✓"
   fi
 
-  if [[ ! -f "$_containers_conf" ]]; then
-    if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
-      sudo -u "$DEPLOY_USER" mkdir -p "${_deploy_home}/.config/containers"
-      printf '[engine]\ncgroup_manager = "cgroupfs"\n\n[network]\nnetwork_backend = "%s"\n' \
-        "$_network_backend" | sudo -u "$DEPLOY_USER" tee "$_containers_conf" > /dev/null
-    else
-      mkdir -p "${_deploy_home}/.config/containers"
-      printf '[engine]\ncgroup_manager = "cgroupfs"\n\n[network]\nnetwork_backend = "%s"\n' \
-        "$_network_backend" | tee "$_containers_conf" > /dev/null
-    fi
-    echo "  Podman: cgroup_manager=cgroupfs, network_backend=${_network_backend} ✓"
+  # Always write containers.conf so re-runs (e.g. after first install with wrong
+  # backend) pick up the correct settings. The file is idempotent.
+  if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+    sudo -u "$DEPLOY_USER" mkdir -p "${_deploy_home}/.config/containers"
+    printf '[engine]\ncgroup_manager = "cgroupfs"\n\n[network]\nnetwork_backend = "%s"\n' \
+      "$_network_backend" | sudo -u "$DEPLOY_USER" tee "$_containers_conf" > /dev/null
+  else
+    mkdir -p "${_deploy_home}/.config/containers"
+    printf '[engine]\ncgroup_manager = "cgroupfs"\n\n[network]\nnetwork_backend = "%s"\n' \
+      "$_network_backend" | tee "$_containers_conf" > /dev/null
+  fi
+  echo "  Podman: cgroup_manager=cgroupfs, network_backend=${_network_backend} ✓"
+
+  # If switching to CNI, existing networks created with netavark must be removed
+  # so Podman recreates them with the correct backend on next compose up.
+  if [[ "$_network_backend" == "cni" ]]; then
+    _podman_as_user network prune --force &>/dev/null || true
+    echo "  Existing Podman networks cleared (will be recreated with CNI) ✓"
   fi
 
   # Fix "/ is not a shared mount" warning: configure the kernel mount
