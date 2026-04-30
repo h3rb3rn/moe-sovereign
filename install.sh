@@ -47,8 +47,27 @@ print_banner
 #
 # Update mode: re-apply volume ownership, git pull, compose rebuild. Done.
 # No interactive prompts, no .env rewrite.
-if [[ -f "${MOE_ENV_FILE}" ]] && command -v docker >/dev/null 2>&1; then
-  vol_count=$(docker volume ls -q 2>/dev/null | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
+_upd_rt=""
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+  _upd_rt="docker compose"
+elif command -v podman &>/dev/null; then
+  if podman compose version &>/dev/null 2>&1; then
+    _upd_rt="podman compose"
+  elif command -v podman-compose &>/dev/null; then
+    _upd_rt="podman-compose"
+  else
+    _upd_rt="podman compose"
+  fi
+fi
+
+if [[ -f "${MOE_ENV_FILE}" ]] && [[ -n "${_upd_rt}" ]]; then
+  if [[ "${_upd_rt}" == podman* ]]; then
+    vol_count=$(podman volume ls -q 2>/dev/null \
+      | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
+  else
+    vol_count=$(docker volume ls -q 2>/dev/null \
+      | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
+  fi
   if [[ "${vol_count:-0}" -gt 0 ]]; then
 
     echo ""
@@ -61,7 +80,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && command -v docker >/dev/null 2>&1; then
     echo "  Credentials will NOT be changed. Running:"
     echo "    1. Re-apply volume permissions (fixes container UID mismatches)"
     echo "    2. git pull --ff-only"
-    echo "    3. docker compose build + up -d"
+    echo "    3. ${_upd_rt} build + up -d"
     echo "  =================================================================="
     echo ""
 
@@ -113,8 +132,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && command -v docker >/dev/null 2>&1; then
     # Rebuild images and restart containers
     echo "  [3/3] Rebuilding containers..."
     cd "${INSTALL_DIR}"
-    docker compose build --quiet
-    docker compose up -d
+    ${_upd_rt} build --quiet
+    ${_upd_rt} up -d
     echo "        Containers started ✓"
 
     # Health check (same as Section 12)
@@ -130,7 +149,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && command -v docker >/dev/null 2>&1; then
       if [[ ${_elapsed} -ge ${_max_wait} ]]; then
         echo ""
         echo "  [!] API did not respond within ${_max_wait}s."
-        echo "      Check logs: sudo docker compose -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+        echo "      Check logs: sudo ${_upd_rt} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
         break
       fi
       printf "."
@@ -142,8 +161,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && command -v docker >/dev/null 2>&1; then
     echo "  =================================================================="
     echo "  MoE Sovereign updated successfully."
     echo ""
-    echo "  Logs:    sudo docker compose logs -f"
-    echo "  Status:  sudo docker compose ps"
+    echo "  Logs:    sudo ${_upd_rt} logs -f"
+    echo "  Status:  sudo ${_upd_rt} ps"
     echo "  =================================================================="
     echo ""
     exit 0
@@ -210,26 +229,63 @@ esac
 echo "  OS: ${PRETTY_NAME} (${VERSION_CODENAME}) ✓"
 
 # =============================================================================
-#  SECTION 4: Docker detection
+#  SECTION 4: Container runtime detection
 # =============================================================================
-echo "[2/9] Checking for Docker..."
+echo "[2/9] Detecting container runtime..."
 
-DOCKER_FOUND=false
+CONTAINER_RUNTIME=""
+COMPOSE=""
+
+_resolve_podman_compose() {
+  if podman compose version &>/dev/null 2>&1; then
+    COMPOSE="podman compose"
+  elif command -v podman-compose &>/dev/null; then
+    COMPOSE="podman-compose"
+  else
+    COMPOSE="podman compose"   # will be validated after install
+  fi
+}
+
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   DOCKER_VERSION=$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')
-  echo "  Docker ${DOCKER_VERSION} already installed ✓ — skipping installation."
-  DOCKER_FOUND=true
+  echo "  Docker ${DOCKER_VERSION} already installed ✓"
+  CONTAINER_RUNTIME="docker"
+  COMPOSE="docker compose"
+elif command -v podman &>/dev/null; then
+  PODMAN_VERSION=$(podman --version 2>/dev/null | awk '{print $3}')
+  echo "  Podman ${PODMAN_VERSION} already installed ✓"
+  CONTAINER_RUNTIME="podman"
+  _resolve_podman_compose
+else
+  echo ""
+  echo "  No container runtime detected. Choose one to install:"
+  echo ""
+  echo "  1) Docker CE  — industry-standard engine, broad ecosystem, daemon-based"
+  echo "  2) Podman     — daemonless, rootless OCI runtime, drop-in compatible"
+  echo ""
+  while true; do
+    read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
+    _rt_choice="${_rt_choice:-1}"
+    case "${_rt_choice}" in
+      1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; break ;;
+      2) CONTAINER_RUNTIME="podman"; break ;;
+      *) echo "  Please enter 1 or 2." ;;
+    esac
+  done
 fi
 
-# =============================================================================
-#  SECTION 5: Docker CE installation (if not already present)
-# =============================================================================
-if [[ "$DOCKER_FOUND" != "true" ]]; then
-  echo "[3/9] Installing Docker CE..."
+echo "  Runtime: ${CONTAINER_RUNTIME} | Compose: ${COMPOSE:-pending install} ✓"
 
-  apt-get update -qq
-  apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg lsb-release git apache2-utils python3
+# =============================================================================
+#  SECTION 5: Container runtime installation (if not already present)
+# =============================================================================
+echo "[3/9] Installing runtime and required packages..."
+
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+  ca-certificates curl gnupg lsb-release git apache2-utils python3
+
+if [[ "$CONTAINER_RUNTIME" == "docker" ]] && ! command -v docker &>/dev/null; then
 
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" \
@@ -246,10 +302,24 @@ https://download.docker.com/linux/${DISTRO_ID} ${VERSION_CODENAME} stable" \
     docker-buildx-plugin docker-compose-plugin
 
   systemctl enable --now docker
+  COMPOSE="docker compose"
   echo "  Docker CE installed and started ✓"
+
+elif [[ "$CONTAINER_RUNTIME" == "podman" ]] && ! command -v podman &>/dev/null; then
+
+  # TODO(human): install Podman and a compose provider for Debian/Ubuntu.
+  # Decide between:
+  #   a) OS-native repos (simpler, slightly older versions — apt install podman podman-compose)
+  #   b) kubic OBS repo (latest Podman builds, extra external repo to maintain)
+  # After installing, call _resolve_podman_compose to set $COMPOSE correctly.
+  echo "[!] Podman installation not yet implemented — please install podman manually."
+  exit 1
+
 else
-  echo "[3/9] Installing required system packages..."
-  apt-get install -y --no-install-recommends git apache2-utils python3 -qq
+  echo "  Runtime already present — skipping installation ✓"
+  if [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
+    _resolve_podman_compose
+  fi
 fi
 
 # =============================================================================
@@ -484,6 +554,44 @@ else
 fi
 
 echo ""
+echo "  --- Optional Components ---"
+
+# Caddy reverse proxy
+echo ""
+echo "  Caddy is a built-in TLS reverse proxy for this stack."
+echo "  Skip if you already run Nginx, Traefik, or another proxy in front."
+INSTALL_CADDY="false"
+while true; do
+  read -rp "  Install Caddy reverse proxy? [y/N]: " _caddy_choice < /dev/tty
+  _caddy_choice="${_caddy_choice:-N}"
+  case "${_caddy_choice,,}" in
+    y|yes) INSTALL_CADDY="true";  break ;;
+    n|no)  INSTALL_CADDY="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+
+# Authentik SSO
+echo ""
+echo "  Authentik is a self-hosted SSO/OIDC provider."
+echo "  Skip if you handle authentication differently or plan to add it later."
+INSTALL_SSO="false"
+AUTHENTIK_URL_INPUT=""
+while true; do
+  read -rp "  Configure Authentik SSO? [y/N]: " _sso_choice < /dev/tty
+  _sso_choice="${_sso_choice:-N}"
+  case "${_sso_choice,,}" in
+    y|yes) INSTALL_SSO="true";  break ;;
+    n|no)  INSTALL_SSO="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+if [[ "$INSTALL_SSO" == "true" ]]; then
+  prompt_input AUTHENTIK_URL_INPUT \
+    "Authentik base URL (e.g. https://auth.example.com)" "" "false" "true"
+fi
+
+echo ""
 if [[ -n "$EXISTING_REDIS_PASS" ]]; then
   echo "  --- Infrastructure secrets (preserved from existing .env) ---"
   echo "  Admin secret key:  [kept]"
@@ -504,17 +612,17 @@ fi
 echo ""
 
 # =============================================================================
-#  SECTION 9: Caddyfile — generate if missing (required by docker-compose mount)
+#  SECTION 9: Caddyfile — only when Caddy was selected
 # =============================================================================
-# docker-compose mounts ./Caddyfile into the caddy container. If the file does
-# not exist Docker creates a directory instead, causing a fatal mount error.
-# We always write a Caddyfile: a full config when DOMAIN is set, or a minimal
-# localhost-only stub when running without a public domain (e.g. WSL, dev).
-CADDYFILE="${INSTALL_DIR}/Caddyfile"
-if [[ ! -f "${CADDYFILE}" ]]; then
-  if [[ -n "${DOMAIN:-}" ]]; then
-    cat > "${CADDYFILE}" <<CADDY
-# Generated by install.sh — edit as needed, then: sudo docker compose restart moe-caddy
+# Skipped when INSTALL_CADDY=false (user runs Nginx, Traefik, or no proxy).
+# When enabled, docker-compose activates the moe-caddy service via the
+# "caddy" profile (COMPOSE_PROFILES=caddy in .env).
+if [[ "$INSTALL_CADDY" == "true" ]]; then
+  CADDYFILE="${INSTALL_DIR}/Caddyfile"
+  if [[ ! -f "${CADDYFILE}" ]]; then
+    if [[ -n "${DOMAIN:-}" ]]; then
+      cat > "${CADDYFILE}" <<CADDY
+# Generated by install.sh — edit as needed, then: sudo ${COMPOSE} restart moe-caddy
 
 docs.${DOMAIN} {
     reverse_proxy moe-docs:8000
@@ -540,21 +648,22 @@ storage.${DOMAIN} {
     reverse_proxy moe-storage:9001
 }
 CADDY
-    echo "[6/9] Caddyfile generated for domain '${DOMAIN}' ✓"
-  else
-    # No domain — write a minimal stub so the container starts without errors.
-    # Caddy will listen on :80 and respond 200; no TLS, no routing.
-    cat > "${CADDYFILE}" <<CADDY
-# Minimal localhost stub — replace with Caddyfile.example content once a
-# public domain is configured, then: sudo docker compose restart moe-caddy
+      echo "[6/9] Caddyfile generated for domain '${DOMAIN}' ✓"
+    else
+      cat > "${CADDYFILE}" <<CADDY
+# Minimal localhost stub — replace with Caddyfile.example once a domain is set,
+# then: sudo ${COMPOSE} restart moe-caddy
 :80 {
     respond "MoE Sovereign — configure domain in Admin UI" 200
 }
 CADDY
-    echo "[6/9] Caddyfile: localhost stub written (no domain configured) ✓"
+      echo "[6/9] Caddyfile: localhost stub written (no domain configured) ✓"
+    fi
+  else
+    echo "[6/9] Caddyfile already exists — skipping ✓"
   fi
 else
-  echo "[6/9] Caddyfile already exists — skipping ✓"
+  echo "[6/9] Caddy skipped — configure your existing proxy manually ✓"
 fi
 
 # =============================================================================
@@ -582,7 +691,14 @@ fi
   echo "# MoE Sovereign — Runtime Configuration"
   echo "# Generated by install.sh on $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
   echo "# Edit this file or use the Admin UI to change settings."
-  echo "# After changes: sudo docker compose up -d"
+  echo "# After changes: sudo ${COMPOSE} up -d"
+  echo ""
+  echo "# --- Compose profiles (controls optional services) ---"
+  if [[ "$INSTALL_CADDY" == "true" ]]; then
+    echo 'COMPOSE_PROFILES=caddy'
+  else
+    echo 'COMPOSE_PROFILES='
+  fi
   echo ""
   echo "# --- Host data roots (bind-mount sources) ---"
   printf 'MOE_DATA_ROOT=%s\n'            "${MOE_DATA_ROOT}"
@@ -710,7 +826,7 @@ fi
   echo 'SMTP_SSL=false'
   echo ""
   echo "# --- SSO / OIDC (optional) ---"
-  echo 'AUTHENTIK_URL='
+  printf 'AUTHENTIK_URL=%s\n' "${AUTHENTIK_URL_INPUT:-}"
   echo 'OIDC_CLIENT_ID='
   echo 'OIDC_CLIENT_SECRET='
   echo 'OIDC_REDIRECT_URI='
@@ -743,9 +859,9 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-docker compose pull --quiet 2>/dev/null || true
-docker compose build --quiet
-docker compose up -d
+${COMPOSE} pull --quiet 2>/dev/null || true
+${COMPOSE} build --quiet
+${COMPOSE} up -d
 
 echo "  Containers started ✓"
 
@@ -769,7 +885,7 @@ while true; do
   if [[ $ELAPSED -ge $MAX_WAIT ]]; then
     echo ""
     echo "  [!] API did not respond within ${MAX_WAIT}s."
-    echo "      Check logs with: sudo docker compose -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+    echo "      Check logs with: sudo ${COMPOSE} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
     echo "      The rest of the stack may still be starting — this is normal"
     echo "      on first run while models and databases initialize."
     break
@@ -792,11 +908,26 @@ if [[ -n "${DOMAIN:-}" ]]; then
   echo "  Admin UI:    https://admin.${DOMAIN}"
   echo "  API:         https://api.${DOMAIN}  (or http://localhost:8088)"
   echo "  Docs:        https://docs.${DOMAIN}"
-  echo "  Log Viewer:  https://logs.${DOMAIN}"
+  if [[ "$INSTALL_CADDY" == "true" ]]; then
+    echo "  Log Viewer:  https://logs.${DOMAIN}"
+  else
+    echo "  Log Viewer:  http://localhost:8082 (direct, no proxy)"
+  fi
 else
   echo "  Admin UI:    http://localhost:8088"
   echo "  API:         http://localhost:8002"
-  echo "  Log Viewer:  http://localhost (requires local Caddy or direct access)"
+  if [[ "$INSTALL_CADDY" == "true" ]]; then
+    echo "  Log Viewer:  http://localhost (via Caddy)"
+  else
+    echo "  Log Viewer:  http://localhost:8082 (direct)"
+  fi
+fi
+
+if [[ "$INSTALL_SSO" == "true" ]]; then
+  echo ""
+  echo "  SSO/OIDC:    ${AUTHENTIK_URL_INPUT}"
+  echo "  [!] Complete OIDC client registration in Authentik, then add"
+  echo "      Client ID, Secret and redirect URI via Admin UI → Settings → SSO."
 fi
 
 echo ""
@@ -810,9 +941,9 @@ echo "  2. Add at least one inference server (Ollama, OpenAI, LiteLLM, etc.)"
 echo "  3. Configure Judge and Planner models"
 echo "  4. Start chatting at your Open WebUI instance"
 echo ""
-echo "  Logs:    sudo docker compose logs -f"
-echo "  Status:  sudo docker compose ps"
-echo "  Stop:    sudo docker compose down"
+echo "  Logs:    sudo ${COMPOSE} logs -f"
+echo "  Status:  sudo ${COMPOSE} ps"
+echo "  Stop:    sudo ${COMPOSE} down"
 echo ""
 echo "=========================================================================="
 echo ""

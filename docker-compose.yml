@@ -501,9 +501,11 @@ services:
           memory: 512M
 
   # --- Caddy Reverse Proxy (TLS für docs.moe-sovereign.org) ---
+  # Only started when COMPOSE_PROFILES includes "caddy" (set by install.sh).
   moe-caddy:
     image: caddy:2-alpine
     container_name: moe-caddy
+    profiles: [caddy]
     restart: unless-stopped
     deploy:
       resources:
