@@ -668,6 +668,8 @@ _sudo mkdir -p \
   "${MOE_DATA_ROOT}/few-shot" \
   "${MOE_DATA_ROOT}/generated" \
   "${MOE_DATA_ROOT}/langgraph-checkpoints" \
+  "${MOE_DATA_ROOT}/gap-healer-stats" \
+  "${MOE_DATA_ROOT}/checkpoint-archives" \
   "${GRAFANA_DATA_ROOT}/data" \
   "${GRAFANA_DATA_ROOT}/dashboards" \
   "${INSTALL_DIR}" 2>/dev/null || true
@@ -675,13 +677,23 @@ _sudo mkdir -p \
 # INSTALL_DIR is owned by the deploy user so git clone and .env writes work without sudo.
 _sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "${INSTALL_DIR}"
 
-# dozzle-users.yml must exist as a file before Podman/Docker mounts it.
-# Without this, the container runtime creates a directory instead and Dozzle fails.
-# The moe-dozzle-init container overwrites it with the correct bcrypt hash on first start.
-_dozzle_users="${MOE_DATA_ROOT}/dozzle-users.yml"
-if [[ ! -f "$_dozzle_users" ]]; then
-  _sudo touch "$_dozzle_users"
-fi
+# Files that must exist as regular files (not directories) before the container
+# runtime mounts them.  Create them owned by the deploy user so rootless
+# container processes can write to them without a chown step.
+_touch_as_user() {
+  local f="$1"
+  [[ -f "$f" ]] && return
+  if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
+    sudo -u "$DEPLOY_USER" touch "$f" 2>/dev/null || _sudo touch "$f"
+  else
+    touch "$f" 2>/dev/null || _sudo touch "$f"
+  fi
+}
+# dozzle-users.yml — moe-dozzle-init overwrites with bcrypt hash on first start
+_touch_as_user "${MOE_DATA_ROOT}/dozzle-users.yml"
+# moe-admin runtime files
+_touch_as_user "${MOE_DATA_ROOT}/cleanup-config.json"
+_touch_as_user "${MOE_DATA_ROOT}/cleanup-history.jsonl"
 
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
@@ -764,6 +776,14 @@ _chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-onnx-cache"       # chromadb: 
 _chown_for_container 65534 65534 "${MOE_DATA_ROOT}/prometheus-data"
 # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
 _chown_for_container 1001 0 "${MOE_DATA_ROOT}/agent-logs"
+# moe-admin: moe uid=1001 gid=0 (runtime state files and directories)
+_chown_for_container 1001 0 \
+  "${MOE_DATA_ROOT}/admin-logs" \
+  "${MOE_DATA_ROOT}/generated" \
+  "${MOE_DATA_ROOT}/gap-healer-stats" \
+  "${MOE_DATA_ROOT}/checkpoint-archives" \
+  "${MOE_DATA_ROOT}/cleanup-config.json" \
+  "${MOE_DATA_ROOT}/cleanup-history.jsonl"
 # grafana: uid=472
 _chown_for_container 472 472 "${GRAFANA_DATA_ROOT}/data" "${GRAFANA_DATA_ROOT}/dashboards"
 

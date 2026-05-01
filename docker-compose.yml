@@ -424,7 +424,9 @@ services:
           memory: 512M
     volumes:
       - .:/app
-      - ${FEW_SHOT_HOST_DIR:-${MOE_DATA_ROOT}/few-shot}:/moe-few-shot:ro
+      # podman-compose does not support nested variable substitution; FEW_SHOT_HOST_DIR
+      # is always written to .env by install.sh so the fallback is not needed.
+      - ${FEW_SHOT_HOST_DIR}:/moe-few-shot:ro
     environment:
       - DOCS_DIR=/app/docs
       - EXPERTS_PATH=/app/prompts/systemprompt
