@@ -687,29 +687,53 @@ echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
 # Fix ownership for containers that run as non-root UIDs.
 #
-# Rootless Podman uses a user-namespace UID mapping: container UID 0 maps to
-# the deploy user on the host, container UID N (N≥1) maps to subuid N-1.
-# Plain `sudo chown <uid>` sets host UIDs that don't match the mapped UIDs, so
-# containers can't write to their volumes.  `podman unshare chown` runs the
-# chown inside the same user namespace the containers will use, translating
-# container UIDs to the correct host UIDs automatically.
+# Three strategies are tried in order:
 #
-# Docker uses the host's UID namespace directly, so a plain chown suffices.
+# 1. `podman unshare chown` — runs chown inside the user namespace so that
+#    container UIDs translate to the correct host subuid range automatically.
+#    Works on native Linux; may fail on WSL2 kernels that restrict unshare.
+#
+# 2. Direct `sudo chown <host-uid>` — when unshare fails, compute the host
+#    UID that corresponds to the container UID (UID 0 → deploy-user UID;
+#    UID N → subuid_start + N − 1) and chown directly.  Requires sudo but
+#    avoids user-namespace restrictions entirely.
+#
+# 3. chmod a+rwX fallback — last resort when both chown strategies fail
+#    (e.g. read-only filesystem).  Less secure but prevents a total failure.
+#
+# Docker uses the host UID namespace directly, so strategy 1 is skipped and
+# strategy 2 uses the literal container UID as the host UID.
+_container_uid_to_host_uid() {
+  local cuid="$1"
+  if [[ "$cuid" -eq 0 ]]; then
+    id -u "${DEPLOY_USER}" 2>/dev/null || echo "${UID:-1000}"
+  else
+    local _sub
+    _sub=$(grep -m1 "^${DEPLOY_USER}:" /etc/subuid 2>/dev/null | cut -d: -f2)
+    [[ -n "$_sub" ]] && echo $(( _sub + cuid - 1 )) || echo "$cuid"
+  fi
+}
+
 _chown_for_container() {
   local uid="$1" gid="$2"; shift 2
   local _ok=0
   if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
+    # Strategy 1: podman unshare (native Linux)
     _podman_as_user unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
+    if [[ $_ok -eq 0 ]]; then
+      # Strategy 2: direct sudo chown with computed host UIDs (WSL2 fallback)
+      local h_uid h_gid
+      h_uid=$(_container_uid_to_host_uid "$uid")
+      h_gid=$(_container_uid_to_host_uid "$gid")
+      _sudo chown -R "${h_uid}:${h_gid}" "$@" 2>/dev/null && _ok=1 || true
+    fi
   else
     _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
   fi
-  # If chown succeeded, explicitly set u+rwX so the owner can always write
-  # even when the directory was created with a restrictive umask.
-  # If chown failed silently (WSL2, certain FUSE/NTFS mounts), fall back to
-  # a+rwX so the container process can still write regardless of ownership.
   if [[ $_ok -eq 1 ]]; then
     _sudo chmod -R u+rwX "$@" 2>/dev/null || true
   else
+    # Strategy 3: world-writable fallback
     echo "  [!] chown ${uid}:${gid} failed for $* — applying fallback chmod a+rwX"
     _sudo chmod -R a+rwX "$@" 2>/dev/null || true
   fi
