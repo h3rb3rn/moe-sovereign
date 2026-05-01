@@ -690,10 +690,21 @@ echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 # Docker uses the host's UID namespace directly, so a plain chown suffices.
 _chown_for_container() {
   local uid="$1" gid="$2"; shift 2
+  local _ok=0
   if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
-    _podman_as_user unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
+    _podman_as_user unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
   else
-    _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
+    _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
+  fi
+  # If chown succeeded, explicitly set u+rwX so the owner can always write
+  # even when the directory was created with a restrictive umask.
+  # If chown failed silently (WSL2, certain FUSE/NTFS mounts), fall back to
+  # a+rwX so the container process can still write regardless of ownership.
+  if [[ $_ok -eq 1 ]]; then
+    _sudo chmod -R u+rwX "$@" 2>/dev/null || true
+  else
+    echo "  [!] chown ${uid}:${gid} failed for $* — applying fallback chmod a+rwX"
+    _sudo chmod -R a+rwX "$@" 2>/dev/null || true
   fi
 }
 
