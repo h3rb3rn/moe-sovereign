@@ -188,6 +188,13 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     }
     # kafka (confluentinc/cp-kafka): appuser uid=1000
     _upd_chown 1000 1000   "${_upd_data}/kafka-data"
+    # entrypoint-chown dirs: pre-own as container root (see Section 6 comment)
+    _upd_chown 0 0         "${_upd_data}/langgraph-checkpoints"
+    _upd_chown 0 0         "${_upd_data}/redis-data"
+    _upd_chown 0 0         "${_upd_data}/neo4j-data"
+    _upd_chown 0 0         "${_upd_data}/neo4j-logs"
+    _upd_chown 0 0         "${_upd_data}/chroma-data"
+    _upd_chown 0 0         "${_upd_data}/chroma-onnx-cache"
     # prometheus: runs as nobody uid=65534
     _upd_chown 65534 65534 "${_upd_data}/prometheus-data"
     # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
@@ -710,8 +717,25 @@ _chown_for_container() {
 
 # kafka (confluentinc/cp-kafka): appuser uid=1000
 _chown_for_container 1000 1000 "${MOE_DATA_ROOT}/kafka-data"
-# postgres (terra_checkpoints): PGDATA is initialised by the container entrypoint
-# with correct ownership — no pre-chown needed for the data dir.
+
+# Containers whose entrypoints chown the data dir to their service user at
+# startup need the directory owned by container root (UID 0) first.
+#
+# In rootless Podman container UID 0 == the deploy user on the host.
+# Directories created by `sudo mkdir` are host-root-owned, which maps to
+# UID 65534 (overflow/nobody) inside the container — the entrypoint's root
+# process cannot chown a file it does not own.  Pre-chowning to UID 0 via
+# `podman unshare` translates to the deploy user on the host, giving
+# container root ownership and allowing the entrypoint's chown to succeed.
+# In Docker container root == host root, so UID 0:0 is already the owner
+# after `sudo mkdir` — this is effectively a no-op.
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/langgraph-checkpoints"  # postgres entrypoint: chown → postgres (70)
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/redis-data"              # valkey entrypoint:   chown → valkey (999)
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/neo4j-data"              # neo4j entrypoint:    chown → neo4j (7474)
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/neo4j-logs"              # neo4j entrypoint:    chown → neo4j (7474)
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-data"             # chromadb: runs as root, needs writable /data
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-onnx-cache"       # chromadb: ONNX model cache
+
 # prometheus: runs as nobody uid=65534
 _chown_for_container 65534 65534 "${MOE_DATA_ROOT}/prometheus-data"
 # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
