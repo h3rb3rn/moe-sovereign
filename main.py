@@ -12,7 +12,7 @@ from prometheus_client import (
     generate_latest, CONTENT_TYPE_LATEST,
 )
 from datetime import datetime, timedelta, timezone
-from typing import List, Annotated, Dict, Any, TypedDict, Optional, Union
+from typing import List, Annotated, Dict, Any, TypedDict, Optional, Union, AsyncGenerator
 from pipeline.state import AgentState
 from web_search import (
     _domain_score,
@@ -1807,6 +1807,12 @@ MODES: Dict[str, Dict] = {
             "CRITICAL: If the original question has multiple parts (a), (b), (c), you MUST address "
             "EVERY part in your synthesis. Each expert may have answered a different part — combine "
             "them all. When an MCP tool provided a calculation result, copy the result VERBATIM.\n"
+            "MULTI-EXPERT SYNTHESIS: When multiple expert responses are present, treat them as "
+            "complementary domain perspectives — do NOT pick one and ignore the others. "
+            "Each expert covers a different angle; your job is to integrate ALL angles into a "
+            "single coherent answer. If experts contradict each other, name the contradiction "
+            "explicitly and state which view is better supported by available evidence. "
+            "If an expert's domain is irrelevant to the question, skip it silently.\n"
             "LANGUAGE: Always answer in the same language as the original question."
         ),
     },
@@ -1954,6 +1960,7 @@ class ChatCompletionRequest(BaseModel):
     stream_options: Optional[Dict] = None
     files: Optional[List[Any]] = None           # OpenWebUI file attachments [{type, id, name, ...}]
     no_cache: bool = False                      # If True, skip L0 (Redis) and L1 (ChromaDB) cache reads and writes
+    max_agentic_rounds: Optional[int] = None   # Override template's max_agentic_rounds for this request
 
 class FeedbackRequest(BaseModel):
     response_id: str           # chat_id from the response ("chatcmpl-...")
@@ -4852,19 +4859,28 @@ async def merger_node(state: AgentState):
         state["graphrag_entities"] = state.get("graphrag_entities") or []
         sections.append(f"STRUCTURED KNOWLEDGE (Ontology/Knowledge Graph):\n{_gctx}")
     if expert_results:
-        # Truncate overly long expert outputs before merging to reduce
-        # merger token consumption.  The first ~2000 chars typically contain
-        # the core finding; the rest is elaboration that inflates the prompt
-        # without proportional quality gain.  (Measured: merger was 45% of
-        # total token budget before this cap.)
-        MAX_EXPERT_CHARS = 2000
+        # Dynamic per-expert truncation: budget scales with expert count so
+        # multi-expert synthesis retains enough of each response to synthesise.
+        # With 1 expert: 3500 chars. With 2: 2800 each. With 4+: 2000 each.
+        _n_experts    = len(expert_results)
+        MAX_EXPERT_CHARS = max(2000, min(3500, 3500 - (_n_experts - 1) * 500))
         trimmed = []
         for er in expert_results:
             if len(er) > MAX_EXPERT_CHARS:
                 trimmed.append(er[:MAX_EXPERT_CHARS] + "\n[...truncated for merger efficiency]")
             else:
                 trimmed.append(er)
-        sections.append("EXPERT RESPONSES:\n" + "\n\n".join(trimmed))
+        if _n_experts > 1:
+            domain_index = ", ".join(
+                f"[{_expert_category(er) or 'general'}]" for er in expert_results
+            )
+            expert_header = (
+                f"EXPERT RESPONSES ({_n_experts} domains: {domain_index}) — "
+                "integrate ALL domains into the synthesis:\n"
+            )
+        else:
+            expert_header = "EXPERT RESPONSES:\n"
+        sections.append(expert_header + "\n\n".join(trimmed))
     if ensemble_results:
         sections.append(
             "ENSEMBLE ANALYSIS (multiple models from different providers, run in parallel with identical prompt — "
@@ -5250,7 +5266,13 @@ async def merger_node(state: AgentState):
                 for r in (state.get("expert_results") or []) if r
             )
             _answer_is_short = len(res_content_clean.split()) <= 5  # ≤5 words: single-token answers like "backtick", "Fred", "42"
-            _confidence_gate_passed = not _expert_is_leak and _all_high and _answer_is_short
+            _is_research_mode = (state.get("mode") or "") == "research"
+            _confidence_gate_passed = (
+                not _expert_is_leak
+                and _all_high
+                and _answer_is_short
+                and not _is_research_mode
+            )
             if _confidence_gate_passed:
                 logger.info("⚡ Agentic gap skipped: short high-confidence answer — no re-plan")
                 _agentic_gap = "COMPLETE"
@@ -5819,9 +5841,9 @@ async def _gauge_updater_loop():
                                     PROM_SERVER_LOADED_MODELS.labels(server=_sname).set(0)
                                     PROM_SERVER_VRAM_BYTES.labels(server=_sname).set(0)
                             else:
-                                _token = _srv.get("token", "")
-                                _auth  = {"Authorization": f"Bearer {_token}"} if _token else {}
-                                _r = await _hc.get(f"{_surl}/models", headers=_auth)
+                                _tok = _srv.get("token", "")
+                                _hdr = {"Authorization": f"Bearer {_tok}"} if _tok and _tok != "ollama" else {}
+                                _r = await _hc.get(f"{_surl}/models", headers=_hdr)
                                 if _r.status_code == 200:
                                     _models = _r.json().get("data", [])
                                     PROM_SERVER_UP.labels(server=_sname).set(1)
@@ -7227,7 +7249,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             pending_reports=_pending_reports,
                             images=_user_images,
                             session_id=session_id,
-                            max_agentic_rounds=_tmpl_prompts.get("max_agentic_rounds", 0),
+                            max_agentic_rounds=(
+                                request.max_agentic_rounds
+                                if request.max_agentic_rounds is not None
+                                else _tmpl_prompts.get("max_agentic_rounds", 0)
+                            ),
                             no_cache=request.no_cache),
             media_type="text/event-stream",
             headers=_moe_resp_headers or None,
@@ -9461,6 +9487,677 @@ async def _ollama_internal_stream(
         no_cache=False,
     ):
         yield sse_line
+
+
+@app.get("/api/version")
+async def ollama_version():
+    """Ollama version stub — clients use this to detect Ollama compatibility."""
+    return {"version": "0.6.0"}
+
+
+@app.get("/api/tags")
+async def ollama_tags(raw_request: Request):
+    """Return templates visible to this API key in Ollama model-list format."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
+    templates  = _read_expert_templates()
+    allowed    = user_perms.get("expert_template")
+    now        = _ollama_now()
+
+    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
+
+
+@app.get("/api/ps")
+async def ollama_ps(raw_request: Request):
+    """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
+    templates  = _read_expert_templates()
+    allowed    = user_perms.get("expert_template")
+    now        = _ollama_now()
+    expires    = (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
+
+    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    models = []
+    for t in visible:
+        entry = _ollama_model_entry(t, now_iso=now)
+        entry["expires_at"] = expires
+        entry["size_vram"]  = 0
+        models.append(entry)
+    return {"models": models}
+
+
+@app.post("/api/show")
+async def ollama_show(raw_request: Request):
+    """Return template details in Ollama modelinfo format (no auth required for show)."""
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+    model_name = body.get("model", body.get("name", ""))
+    templates  = _read_expert_templates()
+    tmpl = next(
+        (t for t in templates if t.get("name") == model_name or t.get("id") == model_name),
+        None,
+    )
+    if not tmpl:
+        return JSONResponse(status_code=404, content={"error": f"model '{model_name}' not found"})
+    return {
+        "modelfile":  f"# MoE Sovereign Template: {tmpl.get('name', '')}",
+        "parameters": "",
+        "template":   "{{ .Prompt }}",
+        "details": {
+            "family":             "moe",
+            "parameter_size":     tmpl.get("description", ""),
+            "quantization_level": "MoE",
+        },
+        "model_info": {
+            "general.name":        tmpl.get("name", ""),
+            "general.description": tmpl.get("description", ""),
+        },
+    }
+
+
+@app.post("/api/chat")
+async def ollama_chat(raw_request: Request):
+    """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+
+    model    = body.get("model", "")
+    stream   = body.get("stream", True)
+    options  = body.get("options", {})
+    oai_msgs = _ollama_messages_to_oai(body.get("messages", []))
+
+    async def _ndjson_stream():
+        total_tokens = 0
+        async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+            sse_line = sse_line.strip()
+            if not sse_line or sse_line.startswith(":"):
+                continue  # skip SSE keep-alives and empty lines
+            if sse_line.startswith("data: "):
+                payload = sse_line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    total_tokens += 1
+                yield json.dumps({
+                    "model":      model,
+                    "created_at": _ollama_now(),
+                    "message":    {"role": "assistant", "content": content},
+                    "done":       False,
+                }) + "\n"
+        yield json.dumps({
+            "model":           model,
+            "created_at":      _ollama_now(),
+            "message":         {"role": "assistant", "content": ""},
+            "done":            True,
+            "done_reason":     "stop",
+            "total_duration":  0,
+            "eval_count":      total_tokens,
+        }) + "\n"
+
+    if stream:
+        return StreamingResponse(_ndjson_stream(), media_type="application/x-ndjson")
+
+    # Non-streaming: collect all content, return single response object
+    content_parts = []
+    async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+        sse_line = sse_line.strip()
+        if not sse_line or sse_line.startswith(":"):
+            continue
+        if sse_line.startswith("data: "):
+            payload = sse_line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+            content_parts.append(delta.get("content", ""))
+    return {
+        "model":       model,
+        "created_at":  _ollama_now(),
+        "message":     {"role": "assistant", "content": "".join(content_parts)},
+        "done":        True,
+        "done_reason": "stop",
+    }
+
+
+@app.post("/api/generate")
+async def ollama_generate(raw_request: Request):
+    """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
+
+    Response uses key 'response' (not 'message.content') per Ollama spec.
+    """
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+
+    model   = body.get("model", "")
+    prompt  = body.get("prompt", "")
+    system  = body.get("system", "")
+    stream  = body.get("stream", True)
+    options = body.get("options", {})
+
+    oai_msgs = []
+    if system:
+        oai_msgs.append({"role": "system", "content": system})
+    oai_msgs.append({"role": "user", "content": prompt})
+
+    async def _gen_stream():
+        total_tokens = 0
+        async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+            sse_line = sse_line.strip()
+            if not sse_line or sse_line.startswith(":"):
+                continue
+            if sse_line.startswith("data: "):
+                payload = sse_line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    total_tokens += 1
+                yield json.dumps({
+                    "model":      model,
+                    "created_at": _ollama_now(),
+                    "response":   content,
+                    "done":       False,
+                }) + "\n"
+        yield json.dumps({
+            "model":           model,
+            "created_at":      _ollama_now(),
+            "response":        "",
+            "done":            True,
+            "done_reason":     "stop",
+            "total_duration":  0,
+            "eval_count":      total_tokens,
+        }) + "\n"
+
+    if stream:
+        return StreamingResponse(_gen_stream(), media_type="application/x-ndjson")
+
+    content_parts = []
+    async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
+        sse_line = sse_line.strip()
+        if not sse_line or sse_line.startswith(":"):
+            continue
+        if sse_line.startswith("data: "):
+            payload = sse_line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+            content_parts.append(delta.get("content", ""))
+    return {
+        "model":       model,
+        "created_at":  _ollama_now(),
+        "response":    "".join(content_parts),
+        "done":        True,
+        "done_reason": "stop",
+    }
+
+
+@app.post("/api/pull")
+async def ollama_pull(raw_request: Request):
+    """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
+    try:
+        body = await raw_request.json()
+    except Exception:
+        body = {}
+    do_stream = body.get("stream", True)
+    if not do_stream:
+        return {"status": "success"}
+
+    async def _progress():
+        for status in ["pulling manifest", "verifying sha256 digest", "writing manifest", "success"]:
+            yield json.dumps({"status": status}) + "\n"
+            await asyncio.sleep(0.05)
+
+    return StreamingResponse(_progress(), media_type="application/x-ndjson")
+
+
+@app.delete("/api/delete")
+async def ollama_delete():
+    """Model deletion is not supported — managed via Admin UI."""
+    return JSONResponse(status_code=400, content={
+        "error": "Model deletion is managed via Admin UI"
+    })
+
+
+@app.post("/api/copy")
+@app.post("/api/push")
+@app.post("/api/embed")
+@app.post("/api/embeddings")
+async def ollama_not_supported():
+    """Stub for Ollama endpoints not supported by MoE Sovereign."""
+    return JSONResponse(status_code=400, content={
+        "error": "Not supported by MoE Sovereign"
+    })
+
+
+# ─── End of OLLAMA COMPATIBILITY API ─────────────────────────────────────────
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        timeout_keep_alive=600,      # 10 min — prevents proxy/load-balancer from dropping long-running non-streaming requests
+        timeout_graceful_shutdown=60,
+    )
+# Converts OpenAI Responses API (/v1/responses) to Chat Completions internally.
+# Required by Codex CLI (wire_api = "responses").
+
+class _ResponsesRequest(BaseModel):
+    model: str
+    input: Any                        # str or list of {role, content} items
+    instructions: Optional[str] = None
+    stream: bool = False
+    max_output_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    previous_response_id: Optional[str] = None
+    # passthrough fields silently accepted
+    tools: Optional[Any] = None
+    text: Optional[Any] = None
+    include: Optional[Any] = None
+    background: Optional[bool] = None
+    context_management: Optional[Any] = None
+    max_agentic_rounds: Optional[int] = None
+    no_cache: bool = False
+
+
+def _flatten_responses_content(content: Any) -> str:
+    """Flatten Responses API content blocks to a plain string for Ollama."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                btype = block.get("type", "")
+                if btype in ("text", "input_text", "output_text"):
+                    parts.append(block.get("text", ""))
+                elif btype == "input_file":
+                    fname = block.get("filename", "attachment")
+                    fdata = block.get("file_data") or block.get("text", "")
+                    if fdata:
+                        parts.append(f"\n\n--- {fname} ---\n{fdata}\n---")
+                elif btype == "image_url":
+                    pass  # text-only experts skip images
+                else:
+                    text = block.get("text", "") or str(block.get("value", ""))
+                    if text:
+                        parts.append(text)
+        return "\n".join(p for p in parts if p)
+    return str(content) if content else ""
+
+
+def _responses_input_to_messages(inp: Any, instructions: Optional[str]) -> list:
+    """Convert Responses API input to Chat Completions messages list.
+
+    Handles both simple strings and the richer Responses API format:
+    items may be plain message dicts, type='message' wrappers, or direct
+    text/file content blocks. Content blocks are flattened to strings so
+    downstream Ollama experts receive only plain text.
+    """
+    messages: list = []
+    if instructions:
+        messages.append({"role": "system", "content": instructions})
+    if isinstance(inp, str):
+        messages.append({"role": "user", "content": inp})
+    elif isinstance(inp, list):
+        for item in inp:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type", "")
+            # type="message" wrapper or plain role/content dict
+            if itype == "message" or "role" in item:
+                role = item.get("role", "user")
+                if role == "developer":
+                    role = "system"
+                content = _flatten_responses_content(item.get("content", ""))
+                if content:
+                    messages.append({"role": role, "content": content})
+            elif itype in ("input_text", "text"):
+                # top-level text item without role wrapper → treat as user
+                text = item.get("text", "")
+                if text:
+                    messages.append({"role": "user", "content": text})
+    return messages
+
+
+def _chat_completion_to_responses(chat_resp: dict, response_id: str) -> dict:
+    """Convert a Chat Completions response dict to Responses API format."""
+    choice = (chat_resp.get("choices") or [{}])[0]
+    message = choice.get("message", {})
+    content_text = message.get("content", "") or ""
+    finish = choice.get("finish_reason", "stop")
+    status = "completed" if finish in ("stop", "length", None) else "incomplete"
+    usage = chat_resp.get("usage", {})
+    ts = int(time.time())
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": ts,
+        "status": status,
+        "model": chat_resp.get("model", ""),
+        "output": [
+            {
+                "id": f"msg_{response_id}",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": content_text, "annotations": []}
+                ],
+            }
+        ],
+        "usage": {
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "output_tokens_details": {"reasoning_tokens": 0},
+        },
+    }
+
+
+async def _invoke_pipeline_for_responses(
+    raw_request: Request,
+    request: "_ResponsesRequest",
+    messages: list,
+) -> tuple[str, int, int]:
+    """Call the MoE pipeline directly and return (full_text, prompt_tokens, completion_tokens).
+
+    Consumes stream_response() as an async generator so no HTTP self-call is needed.
+    Collects only the final synthesised chat.completion chunk; skips all
+    status/progress/debug delta lines emitted by the pipeline.
+    """
+    raw_key = _extract_api_key(raw_request)
+    user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
+    if "error" in user_ctx:
+        return "", 0, 0
+
+    user_id = user_ctx.get("user_id", "anon")
+    api_key_id = user_ctx.get("key_id", "")
+    chat_id = f"chatcmpl-{uuid.uuid4()}"
+
+    # Separate system messages from conversation history
+    sys_msgs = [m for m in messages if m["role"] == "system"]
+    conv = [m for m in messages if m["role"] != "system"]
+    system_prompt = sys_msgs[-1]["content"] if sys_msgs else ""
+    user_input = ""
+    history: list = []
+    if conv:
+        *history, last = conv
+        user_input = last.get("content", "") if isinstance(last.get("content"), str) else ""
+
+    mode = _MODEL_ID_TO_MODE.get(request.model, "default")
+    _tp = _resolve_template_prompts(
+        user_ctx.get("permissions_json", ""),
+        override_tmpl_id=request.model if request.model and request.model != "moe-orchestrator" else None,
+        user_templates_json=user_ctx.get("user_templates_json", "{}"),
+        admin_override=False,
+        user_connections_json=user_ctx.get("user_connections_json", "{}"),
+    )
+    _max_rounds = (
+        request.max_agentic_rounds
+        if request.max_agentic_rounds is not None
+        else _tp.get("max_agentic_rounds", 0)
+    )
+
+    full_text = ""
+    prompt_tokens = 0
+    completion_tokens = 0
+    _text_parts: list[str] = []
+    _in_think = False  # skip everything between <think> and </think> (pipeline internals)
+    try:
+        async for sse_line in stream_response(
+            user_input=user_input,
+            chat_id=chat_id,
+            mode=mode,
+            chat_history=history,
+            system_prompt=system_prompt,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            planner_prompt=_tp.get("planner_prompt", ""),
+            judge_prompt=_tp.get("judge_prompt", ""),
+            judge_model_override=_tp.get("judge_model_override", ""),
+            judge_url_override=_tp.get("judge_url_override", ""),
+            judge_token_override=_tp.get("judge_token_override", ""),
+            planner_model_override=_tp.get("planner_model_override", ""),
+            planner_url_override=_tp.get("planner_url_override", ""),
+            planner_token_override=_tp.get("planner_token_override", ""),
+            model_name=request.model,
+            session_id=_extract_session_id(raw_request),
+            max_agentic_rounds=_max_rounds,
+            no_cache=request.no_cache,
+        ):
+            if not isinstance(sse_line, str) or not sse_line.startswith("data:"):
+                continue
+            payload = sse_line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except Exception:
+                continue
+            # Usage chunk has choices=[] — extract token counts
+            u = chunk.get("usage") or {}
+            if u.get("prompt_tokens"):
+                prompt_tokens = u["prompt_tokens"]
+            if u.get("completion_tokens"):
+                completion_tokens = u["completion_tokens"]
+            # Content chunks carry delta.content — skip pipeline internals inside <think>
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta", {})
+            piece = delta.get("content", "")
+            if not piece:
+                continue
+            if "<think>" in piece:
+                _in_think = True
+                continue
+            if "</think>" in piece:
+                _in_think = False
+                continue
+            if not _in_think:
+                _text_parts.append(piece)
+        full_text = "".join(_text_parts)
+    except Exception as _pe:
+        logger.warning("Responses API pipeline error: %s", _pe)
+
+    return full_text, prompt_tokens, completion_tokens
+
+
+async def _stream_responses_api(
+    raw_request: Request,
+    request: "_ResponsesRequest",
+    response_id: str,
+) -> AsyncGenerator[str, None]:
+    """Stream Responses API SSE events matching OpenAI spec exactly.
+
+    Uses sequence_number, output_index, content_index as required by Codex CLI.
+    Sends keepalive SSE comments every 15 s while the pipeline runs.
+    """
+    messages = _responses_input_to_messages(request.input, request.instructions)
+    ts = int(time.time())
+    item_id = f"msg_{response_id}"
+    seq = 0
+
+    def _ev(event_type: str, data: dict) -> str:
+        nonlocal seq
+        data["sequence_number"] = seq
+        seq += 1
+        return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+    yield _ev("response.created", {
+        "type": "response.created",
+        "response": {"id": response_id, "object": "response", "status": "in_progress",
+                     "created_at": ts, "output": []},
+    })
+    yield _ev("response.output_item.added", {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {"id": item_id, "type": "message", "role": "assistant",
+                 "status": "in_progress", "content": []},
+    })
+    yield _ev("response.content_part.added", {
+        "type": "response.content_part.added",
+        "output_index": 0,
+        "content_index": 0,
+        "part": {"type": "output_text", "text": ""},
+    })
+
+    # Run pipeline as background task; send keepalives every 15 s while waiting
+    pipeline_task = asyncio.create_task(
+        _invoke_pipeline_for_responses(raw_request, request, messages)
+    )
+    while not pipeline_task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(pipeline_task), timeout=15.0)
+        except asyncio.TimeoutError:
+            yield ": keep-alive\n\n"
+    full_text, prompt_tokens, completion_tokens = pipeline_task.result()
+
+    for i in range(0, max(len(full_text), 1), 50):
+        piece = full_text[i:i + 50]
+        if piece:
+            yield _ev("response.output_text.delta", {
+                "type": "response.output_text.delta",
+                "item_id": item_id,
+                "output_index": 0,
+                "content_index": 0,
+                "delta": piece,
+            })
+
+    yield _ev("response.output_text.done", {
+        "type": "response.output_text.done",
+        "item_id": item_id,
+        "output_index": 0,
+        "content_index": 0,
+        "text": full_text,
+    })
+    yield _ev("response.content_part.done", {
+        "type": "response.content_part.done",
+        "output_index": 0,
+        "content_index": 0,
+        "part": {"type": "output_text", "text": full_text, "annotations": []},
+    })
+    yield _ev("response.output_item.done", {
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {"id": item_id, "type": "message", "role": "assistant",
+                 "status": "completed",
+                 "content": [{"type": "output_text", "text": full_text, "annotations": []}]},
+    })
+    yield _ev("response.completed", {
+        "type": "response.completed",
+        "response": {
+            "id": response_id, "object": "response", "created_at": ts,
+            "status": "completed", "model": request.model,
+            "output": [{"id": item_id, "type": "message", "role": "assistant",
+                        "content": [{"type": "output_text", "text": full_text,
+                                     "annotations": []}]}],
+            "usage": {"input_tokens": prompt_tokens, "output_tokens": completion_tokens,
+                      "total_tokens": prompt_tokens + completion_tokens,
+                      "output_tokens_details": {"reasoning_tokens": 0}},
+        },
+    })
+
+
+@app.post("/v1/responses")
+async def responses_api(raw_request: Request, request: _ResponsesRequest):
+    """OpenAI Responses API compatibility endpoint for Codex CLI."""
+    response_id = f"resp_{uuid.uuid4().hex}"
+
+    if request.stream:
+        return StreamingResponse(
+            _stream_responses_api(raw_request, request, response_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Non-streaming: call pipeline directly (no HTTP self-call to avoid deadlock)
+    messages = _responses_input_to_messages(request.input, request.instructions)
+    try:
+        full_text, prompt_tokens, completion_tokens = await _invoke_pipeline_for_responses(
+            raw_request, request, messages
+        )
+        ts = int(time.time())
+        return JSONResponse({
+            "id": response_id,
+            "object": "response",
+            "created_at": ts,
+            "status": "completed",
+            "model": request.model,
+            "output": [
+                {
+                    "id": f"msg_{response_id}",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": full_text, "annotations": []}],
+                }
+            ],
+            "usage": {
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "output_tokens_details": {"reasoning_tokens": 0},
+            },
+        })
+    except Exception as _ie:
+        logger.warning("Responses API non-streaming pipeline failed: %s", _ie)
+        return JSONResponse(status_code=500, content={"error": {"message": str(_ie)}})
 
 
 @app.get("/api/version")
