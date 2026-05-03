@@ -59,7 +59,7 @@ def find_latest_results() -> pathlib.Path:
     path = os.environ.get("MOE_EVAL_RESULTS")
     if path:
         return pathlib.Path(path)
-    candidates = sorted(RESULTS_DIR.glob("run_*.json"), reverse=True)
+    candidates = sorted(RESULTS_DIR.glob("run_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         print("No results files found in benchmarks/results/", file=sys.stderr)
         sys.exit(1)
