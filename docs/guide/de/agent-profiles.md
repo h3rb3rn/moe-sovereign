@@ -9,16 +9,17 @@ Feature-Kompatibilitaet im Ueberblick.
 
 ## Funktionsweise
 
-MoE Sovereign stellt zwei API-Endpunkte bereit:
+MoE Sovereign stellt drei API-Endpunkte bereit:
 
 | Endpunkt | Protokoll | Genutzt von |
 |----------|-----------|-------------|
 | `/v1/messages` | Anthropic Messages API | Claude Code |
-| `/v1/chat/completions` | OpenAI Chat Completions API | OpenCode, Claw Code, Codex CLI, Aider, Continue.dev, Cursor, Open WebUI |
+| `/v1/chat/completions` | OpenAI Chat Completions API | OpenCode, Aider, Continue.dev, Cursor, Open WebUI |
+| `/v1/responses` | OpenAI Responses API | Codex CLI, Continue.dev |
 
-Beide Endpunkte leiten Anfragen durch dieselbe MoE-Pipeline. Welcher Endpunkt
-zum Einsatz kommt, haengt ausschliesslich davon ab, welches Protokoll der
-jeweilige Agent erwartet -- die Verarbeitung im Hintergrund ist identisch.
+Alle Endpunkte leiten Anfragen durch dieselbe MoE-Pipeline. Welcher Endpunkt
+zum Einsatz kommt, hängt ausschließlich davon ab, welches Protokoll der
+jeweilige Agent erwartet — die Verarbeitung im Hintergrund ist identisch.
 
 ---
 
@@ -170,7 +171,7 @@ OpenAI-kompatible Backends.
 ### Schnellstart
 
 ```bash
-export OPENAI_BASE_URL=https://your-moe-instance.example.com/v1
+export OPENAI_BASE_URL=https://your-moe-instance.example.com
 export OPENAI_API_KEY=moe-sk-xxxxxxxx...
 
 codex --model moe-reference-30b-balanced
@@ -178,11 +179,12 @@ codex --model moe-reference-30b-balanced
 
 ### Hinweise
 
-- Codex CLI erwartet ein vollstaendig OpenAI-kompatibles Backend. Der
-  `/v1/chat/completions`-Endpunkt von MoE Sovereign erfuellt diese Anforderung.
-- Tool Use und Streaming werden unterstuetzt.
-- Das `--model`-Flag waehlt die Experten-Vorlage anhand der Modell-ID aus
-  `/v1/models`.
+- Codex CLI nutzt die **OpenAI Responses API** (`/v1/responses`) nativ.
+  MoE Sovereign implementiert diesen Endpunkt mit vollständigem SSE-Streaming
+  inklusive `sequence_number`, `output_index` und `content_index`.
+- `@filename`-Referenzen und mehrturnige Konversation werden vollständig unterstützt.
+- Das `--model`-Flag wählt die Experten-Vorlage anhand der Modell-ID aus `/v1/models`.
+- `OPENAI_BASE_URL` **ohne** `/v1`-Suffix angeben — Codex CLI fügt den Pfad selbst an.
 
 ---
 

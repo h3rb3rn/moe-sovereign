@@ -62,7 +62,7 @@ flowchart TD
         PG[("PostgreSQL<br/>Users & Checkpoints")]
     end
 
-    Clients -->|"/v1/chat/completions<br/>/v1/messages"| Cache
+    Clients -->|"/v1/chat/completions<br/>/v1/messages<br/>/v1/responses"| Cache
     Cache -->|Miss| Planner
     Cache -->|Hit| Response
     Planner --> Experts
@@ -156,6 +156,7 @@ moe-infra/
 | **18** | Dynamic Sequential/Parallel Experts | Planner tasks support `depends_on` for multi-hop chains (e.g. find author → find their papers). Independent tasks run in parallel; dependent tasks execute sequentially with result injection via `{result_of:id}` placeholders |
 | **19** | Adaptive Context Budget | Context window limits per model auto-scale web-research blocks and GraphRAG budget. Fallback models (gemma4:31b 8K, qwen3.6:35b 32K) receive proportionally smaller context slices |
 | **20** | GraphRAG On-Demand | Neo4j queries skipped for external research questions (papers, APIs, media) — only runs for internal knowledge queries or when the plan includes a knowledge_healing task |
+| **21** | OpenAI Responses API (`/v1/responses`) | Full Responses API streaming with correct SSE events (`sequence_number`, `output_index`, `content_index`) — enables Codex CLI, Continue.dev, and any OpenAI Responses API compatible agent out of the box |
 
 ---
 
@@ -286,9 +287,10 @@ flowchart LR
 | Agent | Endpoint | Configuration |
 |---|---|---|
 | **Claude Code** | `/v1/messages` | `export ANTHROPIC_BASE_URL=https://your-server` |
+| **Codex CLI** | `/v1/responses` | `export OPENAI_BASE_URL=https://your-server` |
 | **OpenCode** | `/v1/chat/completions` | Provider config in `config.toml` |
 | **Aider** | `/v1/chat/completions` | `export OPENAI_BASE_URL=https://your-server/v1` |
-| **Continue.dev** | `/v1/chat/completions` | Add in `.continue/config.json` |
+| **Continue.dev** | `/v1/chat/completions` or `/v1/responses` | Add in `.continue/config.json` |
 | **Open WebUI** | `/v1/chat/completions` | Add as OpenAI-compatible connection |
 
 ---
