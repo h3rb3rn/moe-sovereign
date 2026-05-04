@@ -539,6 +539,107 @@ services:
       - moe-docs
       - moe-dozzle
 
+  # --- Authentik SSO Stack ---
+  # All four services are started when COMPOSE_PROFILES includes "authentik".
+  # Set by install.sh; to add manually: echo 'COMPOSE_PROFILES=authentik' >> .env
+  # then re-run: sudo <compose> --profile authentik up -d
+
+  authentik-postgresql:
+    image: postgres:16-alpine
+    container_name: authentik-postgresql
+    profiles: [authentik]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
+      POSTGRES_DB: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
+      POSTGRES_PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:?missing AUTHENTIK_POSTGRESQL__PASSWORD — run install.sh}
+    volumes:
+      - ${MOE_DATA_ROOT}/authentik/postgres:/var/lib/postgresql/data
+    networks:
+      - authentik_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTHENTIK_POSTGRESQL__USER:-authentik}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  authentik-redis:
+    image: redis:alpine
+    container_name: authentik-redis
+    profiles: [authentik]
+    restart: unless-stopped
+    command: --save 60 1 --loglevel warning
+    volumes:
+      - ${MOE_DATA_ROOT}/authentik/redis:/data
+    networks:
+      - authentik_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.2.1}
+    container_name: authentik-server
+    profiles: [authentik]
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?missing AUTHENTIK_SECRET_KEY — run install.sh}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:?missing}
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED:-false}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - ${MOE_DATA_ROOT}/authentik/media:/media
+      - ${MOE_DATA_ROOT}/authentik/custom-templates:/templates
+    ports:
+      - "${AUTHENTIK_HTTP_PORT:-9000}:9000"
+      - "${AUTHENTIK_HTTPS_PORT:-9443}:9443"
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    networks:
+      - authentik_network
+      - default
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.2.1}
+    container_name: authentik-worker
+    profiles: [authentik]
+    restart: unless-stopped
+    command: worker
+    user: root
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?missing AUTHENTIK_SECRET_KEY — run install.sh}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:?missing}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED:-false}
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - ${MOE_DATA_ROOT}/authentik/certs:/certs
+      - ${MOE_DATA_ROOT}/authentik/media:/media
+      - ${MOE_DATA_ROOT}/authentik/custom-templates:/templates
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    networks:
+      - authentik_network
+
 volumes:
   caddy_data:
   caddy_config:
@@ -551,6 +652,6 @@ networks:
     # create this implicitly, but older podman-compose versions do not.
     driver: bridge
   authentik_network:
-    # Created automatically. If Authentik SSO is deployed separately,
-    # change to 'external: true' and ensure the network exists.
+    # Shared network for Authentik server/worker/db/redis and the MoE app.
+    # Created automatically when the "authentik" profile is active.
     driver: bridge

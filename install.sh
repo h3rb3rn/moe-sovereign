@@ -906,6 +906,8 @@ EXISTING_PG_LANGGRAPH_PASS=""
 EXISTING_PG_USERDB_PASS=""
 EXISTING_MINIO_USER=""
 EXISTING_MINIO_PASS=""
+EXISTING_AUTHENTIK_SECRET=""
+EXISTING_AUTHENTIK_PG_PASS=""
 EXISTING_ADMIN_USER=""
 EXISTING_ADMIN_PASSWORD=""
 EXISTING_DOMAIN=""
@@ -930,6 +932,8 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   EXISTING_LIBRIS_DB_PASS=$(read_env LIBRIS_DB_PASSWORD)
   EXISTING_MINIO_USER=$(read_env MINIO_ROOT_USER)
   EXISTING_MINIO_PASS=$(read_env MINIO_ROOT_PASSWORD)
+  EXISTING_AUTHENTIK_SECRET=$(read_env AUTHENTIK_SECRET_KEY)
+  EXISTING_AUTHENTIK_PG_PASS=$(read_env AUTHENTIK_POSTGRESQL__PASSWORD)
   EXISTING_ADMIN_USER=$(read_env ADMIN_USER)
   EXISTING_ADMIN_PASSWORD=$(read_env ADMIN_PASSWORD)
   EXISTING_DOMAIN=$(read_env DOMAIN)
@@ -945,6 +949,8 @@ GEN_PG_USERDB_PASS="${EXISTING_PG_USERDB_PASS:-$(openssl rand -hex 16)}"
 GEN_LIBRIS_DB_PASS="${EXISTING_LIBRIS_DB_PASS:-$(openssl rand -hex 16)}"
 GEN_MINIO_USER="${EXISTING_MINIO_USER:-moeadmin}"
 GEN_MINIO_PASS="${EXISTING_MINIO_PASS:-$(openssl rand -hex 16)}"
+GEN_AUTHENTIK_SECRET="${EXISTING_AUTHENTIK_SECRET:-$(openssl rand -hex 32)}"
+GEN_AUTHENTIK_PG_PASS="${EXISTING_AUTHENTIK_PG_PASS:-$(openssl rand -hex 16)}"
 
 echo "  --- Admin Account ---"
 prompt_input ADMIN_USER     "Admin username"   "${EXISTING_ADMIN_USER:-admin}"
@@ -993,24 +999,56 @@ while true; do
   esac
 done
 
-# Authentik SSO
+# Authentik SSO — deploy built-in server
 echo ""
-echo "  Authentik is a self-hosted SSO/OIDC provider."
-echo "  Skip if you handle authentication differently or plan to add it later."
-INSTALL_SSO="false"
-AUTHENTIK_URL_INPUT=""
+echo "  Authentik is a self-hosted SSO/OIDC provider (server + worker + DB + Redis)."
+echo "  Installs 4 containers inside this stack. Skip if you already run an external IdP."
+INSTALL_AUTHENTIK="false"
+AUTHENTIK_BOOTSTRAP_EMAIL_INPUT=""
+AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT=""
 while true; do
-  read -rp "  Configure Authentik SSO? [y/N]: " _sso_choice < /dev/tty
-  _sso_choice="${_sso_choice:-N}"
-  case "${_sso_choice,,}" in
-    y|yes) INSTALL_SSO="true";  break ;;
-    n|no)  INSTALL_SSO="false"; break ;;
+  read -rp "  Deploy Authentik SSO server? [y/N]: " _authentik_choice < /dev/tty
+  _authentik_choice="${_authentik_choice:-N}"
+  case "${_authentik_choice,,}" in
+    y|yes) INSTALL_AUTHENTIK="true";  break ;;
+    n|no)  INSTALL_AUTHENTIK="false"; break ;;
     *) echo "  Please enter y or n." ;;
   esac
 done
-if [[ "$INSTALL_SSO" == "true" ]]; then
-  prompt_input AUTHENTIK_URL_INPUT \
-    "Authentik base URL (e.g. https://auth.example.com)" "" "false" "true"
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  prompt_input AUTHENTIK_BOOTSTRAP_EMAIL_INPUT \
+    "Authentik bootstrap admin e-mail" "${ADMIN_EMAIL:-admin@example.com}" "false" "true"
+  prompt_input AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT \
+    "Authentik bootstrap admin password (min 10 chars)" "" "true" "true"
+fi
+
+# Authentik SSO — OIDC client configuration
+echo ""
+INSTALL_SSO="false"
+AUTHENTIK_URL_INPUT=""
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  # Auto-configure OIDC to point at the local Authentik instance
+  INSTALL_SSO="true"
+  if [[ -n "${DOMAIN:-}" ]]; then
+    AUTHENTIK_URL_INPUT="https://sso.${DOMAIN}"
+  else
+    AUTHENTIK_URL_INPUT="http://localhost:9000"
+  fi
+else
+  echo "  Configure OIDC against an existing Authentik (or other IdP)?"
+  while true; do
+    read -rp "  Configure Authentik/OIDC SSO? [y/N]: " _sso_choice < /dev/tty
+    _sso_choice="${_sso_choice:-N}"
+    case "${_sso_choice,,}" in
+      y|yes) INSTALL_SSO="true";  break ;;
+      n|no)  INSTALL_SSO="false"; break ;;
+      *) echo "  Please enter y or n." ;;
+    esac
+  done
+  if [[ "$INSTALL_SSO" == "true" ]]; then
+    prompt_input AUTHENTIK_URL_INPUT \
+      "Authentik base URL (e.g. https://auth.example.com)" "" "false" "true"
+  fi
 fi
 
 echo ""
@@ -1128,11 +1166,10 @@ fi
   echo "# After changes: sudo ${COMPOSE} up -d"
   echo ""
   echo "# --- Compose profiles (controls optional services) ---"
-  if [[ "$INSTALL_CADDY" == "true" ]]; then
-    echo 'COMPOSE_PROFILES=caddy'
-  else
-    echo 'COMPOSE_PROFILES='
-  fi
+  _env_profiles=()
+  [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
+  [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
+  printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
   echo ""
   echo "# --- Container runtime socket + storage paths ---"
   echo "# Docker: DOCKER_SOCKET=/var/run/docker.sock, CONTAINER_STORAGE_ROOT=/var/lib/docker"
@@ -1287,6 +1324,18 @@ fi
   echo 'OIDC_END_SESSION_URL='
   echo 'PUBLIC_SSO_URL='
   echo ""
+  echo "# --- Authentik Server (only active when COMPOSE_PROFILES includes 'authentik') ---"
+  echo "AUTHENTIK_TAG=2026.2.1"
+  printf 'AUTHENTIK_SECRET_KEY=%s\n'           "${GEN_AUTHENTIK_SECRET}"
+  echo 'AUTHENTIK_POSTGRESQL__USER=authentik'
+  echo 'AUTHENTIK_POSTGRESQL__NAME=authentik'
+  printf 'AUTHENTIK_POSTGRESQL__PASSWORD=%s\n' "${GEN_AUTHENTIK_PG_PASS}"
+  printf 'AUTHENTIK_BOOTSTRAP_EMAIL=%s\n'      "${AUTHENTIK_BOOTSTRAP_EMAIL_INPUT:-}"
+  printf 'AUTHENTIK_BOOTSTRAP_PASSWORD=%s\n'   "${AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT:-}"
+  echo 'AUTHENTIK_HTTP_PORT=9000'
+  echo 'AUTHENTIK_HTTPS_PORT=9443'
+  echo 'AUTHENTIK_ERROR_REPORTING__ENABLED=false'
+  echo ""
   echo "# --- Object Storage (MinIO) ---"
   echo "# MINIO_ENDPOINT: internal container URL (moe-storage:9000)"
   echo "# MINIO_PUBLIC_URL: public download base URL — set after configuring Nginx"
@@ -1311,10 +1360,20 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
+
+# Create Authentik data directories (bind-mount sources must exist before compose up)
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  for _ak_dir in postgres redis media certs custom-templates; do
+    mkdir -p "${MOE_DATA_ROOT}/authentik/${_ak_dir}"
+  done
+  echo "  Authentik data directories created under ${MOE_DATA_ROOT}/authentik/ ✓"
+fi
+
 # Build explicit --profile flags: podman-compose does not auto-read COMPOSE_PROFILES
 # from .env; docker compose does. Passing --profile explicitly works for both.
 _PROFILE_ARGS=()
-[[ "$INSTALL_CADDY" == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
+[[ "$INSTALL_CADDY"     == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
+[[ "$INSTALL_AUTHENTIK" == "true" ]] && _PROFILE_ARGS+=(--profile authentik)
 
 _compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
 _compose "${_PROFILE_ARGS[@]}" build ${_Q}
@@ -1380,7 +1439,19 @@ else
   fi
 fi
 
-if [[ "$INSTALL_SSO" == "true" ]]; then
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  echo ""
+  if [[ -n "${DOMAIN:-}" ]]; then
+    echo "  Authentik:   https://sso.${DOMAIN}"
+  else
+    echo "  Authentik:   http://localhost:9000"
+  fi
+  echo "  Admin login: ${AUTHENTIK_BOOTSTRAP_EMAIL_INPUT}"
+  echo ""
+  echo "  [!] Authentik needs ~60s to initialise on first start."
+  echo "      Then create an OAuth2/OIDC Provider + Application in the Authentik UI"
+  echo "      and add Client ID, Secret, and Redirect URI via Admin UI → Settings → SSO."
+elif [[ "$INSTALL_SSO" == "true" ]]; then
   echo ""
   echo "  SSO/OIDC:    ${AUTHENTIK_URL_INPUT}"
   echo "  [!] Complete OIDC client registration in Authentik, then add"
