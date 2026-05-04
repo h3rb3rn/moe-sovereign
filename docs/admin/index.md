@@ -10,7 +10,7 @@ Administrators can authenticate via local credentials or via SSO (Authentik). Th
 
 ## Dashboard
 
-![Admin Dashboard](../assets/screenshots/admin_dashboard.jpg)
+![Admin Dashboard](../assets/screenshots/admin_dashboard.png)
 
 ## Navigation
 
@@ -29,6 +29,8 @@ On smaller screens a hamburger menu opens the full offcanvas sidebar.
 |-----------|------|---------|
 | Monitoring | `/monitoring` | Prometheus metrics, server status |
 | Live Monitoring | `/live-monitoring` | Active processes, process kill, LLM instances |
+| Starfleet | `/starfleet` | Ambient intelligence dashboard, node health, alerts |
+| Pipeline Log | `/pipeline-log` | Per-request routing decisions, filters, CSV export |
 | Statistics | `/statistics` | Token and cost statistics |
 | Benchmarks | `/benchmarks` | GAIA / LongMemEval benchmark runs |
 

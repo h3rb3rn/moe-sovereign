@@ -6,43 +6,48 @@ Screenshots of all MoE Sovereign web interfaces. Generated automatically via Pla
 
 ## Admin UI
 
-### Starfleet — Ambient Intelligence Dashboard
-
-Full-page screenshot of the Starfleet dashboard in **NOMINAL** state. All 14 inference
-nodes are online. The LCARS status frame shows green with the metrics strip below
-(Active Alerts, Features, Features Active, Open Tasks, Current Mission). The left column
-shows the Starfleet feature toggles and the collapsible Watchdog-Konfiguration panel.
-The right column shows the live inference node grid and the Watchdog alert timeline.
-
-![Starfleet Dashboard — NOMINAL](../assets/screenshots/starfleet-dashboard.png)
+> All screenshots use the current grouped navigation bar (Konfiguration · Monitoring · Infra · Tools · Users).
 
 ### Login
 
 ![Admin Login](../assets/screenshots/admin_login.png)
 
-### Dashboard — Full Overview (with Advanced Pipeline Settings)
+### Dashboard — Server Status
 
-Full-page screenshot of the Admin UI dashboard including all configuration sections:
-server tiles, model routing, SMTP, OIDC, CORS, and the expanded Advanced Pipeline Settings block.
-All sensitive fields (URLs, credentials, API keys, server names) are privacy-blurred.
+Live inference-node status table with URL, VRAM, GPU count, API type, token and activity indicators.
 
-![Admin Overview](../assets/screenshots/moe-admin-overview.png)
+![Admin Dashboard](../assets/screenshots/admin_dashboard.png)
 
-### Live Monitoring
+### System Monitoring
 
-Full-page screenshot of the monitoring view showing per-node GPU utilisation, inference
-throughput, memory occupancy, and the gap-healer slot counters. Server tiles wait for
-the background health-check to complete before capture.
+Six knowledge-stack gauges, LLM server status cards for all inference nodes, and Chart.js widgets for token usage, cache hit rate, expert calls, and latency percentiles.
 
-![Admin Monitoring](../assets/screenshots/moe-admin-monitoring.png)
+![System Monitoring](../assets/screenshots/admin_monitoring_system.png)
 
-### Dashboard — System Configuration
+### Live Monitoring — Active Processes
 
-![Admin Dashboard](../assets/screenshots/admin_dashboard.jpg)
+Real-time request table (5 s auto-refresh). User and IP columns are privacy-blurred.
 
-### Users & Roles
+![Live Monitoring — Active Processes](../assets/screenshots/admin_live_monitoring_active.png)
 
-![Users](../assets/screenshots/admin_users.jpg)
+### Live Monitoring — LLM Instances
+
+Per-node cards with loaded models, VRAM allocation, Ollama metrics, and the expandable model list.
+
+![Live Monitoring — LLM Instances](../assets/screenshots/admin_live_monitoring_llm.png)
+
+### Starfleet — Ambient Intelligence Dashboard
+
+LCARS-style dashboard with live node grid, active alert counters, Starfleet feature toggles, and Watchdog alert feed.
+
+![Starfleet Dashboard](../assets/screenshots/admin_starfleet.png)
+
+### Pipeline Transparency Log
+
+Per-request routing metadata with User / Model / Mode / Complexity / Expert-Domain badges.
+Filterable, sortable, CSV-exportable. Data blurred for privacy.
+
+![Pipeline Log](../assets/screenshots/admin_pipeline_log.png)
 
 ### Expert Templates
 
@@ -52,17 +57,17 @@ the background health-check to complete before capture.
 
 ![Profiles](../assets/screenshots/admin_profiles.jpg)
 
+### Users & Roles
+
+![Users](../assets/screenshots/admin_users.jpg)
+
 ### Inference Servers
 
 ![Servers](../assets/screenshots/admin_servers.jpg)
 
-### System Monitoring (legacy)
+### Tool Evaluation Log
 
-![Monitoring](../assets/screenshots/admin_monitoring.png)
-
-### Live Monitoring — Process History
-
-![Live Monitoring](../assets/screenshots/admin_live_monitoring.jpg)
+![Tool Eval](../assets/screenshots/admin_tool_eval.jpg)
 
 ### MCP Precision Tools
 
@@ -72,78 +77,63 @@ the background health-check to complete before capture.
 
 ![Skills](../assets/screenshots/admin_skills.png)
 
-### Tool Evaluation Log
-
-![Tool Eval](../assets/screenshots/admin_tool_eval.jpg)
-
 ---
 
 ## Grafana Dashboards
 
 ### MoE System Overview
 
-![Grafana MoE Overview](../assets/screenshots/grafana_moe_system_overview.jpg)
+![Grafana MoE Overview](../assets/screenshots/grafana_moe_system_overview.png)
 
 ### LLM & Expert Usage
 
-![Grafana LLM Usage](../assets/screenshots/grafana_llm_&_expert_usage.jpg)
+![Grafana LLM Usage](../assets/screenshots/grafana_llm_usage.png)
 
 ### Knowledge Base Health
 
-![Grafana Knowledge Base](../assets/screenshots/grafana_knowledge_base_health.jpg)
+Neo4j entity count, relation count, gap-queue depth, and per-template healing throughput.
 
-### Infrastructure & Resources
+![Grafana Knowledge Base](../assets/screenshots/grafana_knowledge_base_health.png)
 
-![Grafana Infrastructure](../assets/screenshots/grafana_infrastructure_&_resources.png)
+### GPU & Inference Nodes
+
+Real-time GPU utilisation, VRAM occupancy, and inference throughput across all heterogeneous nodes. Captured in kiosk mode.
+
+![Grafana GPU Nodes](../assets/screenshots/grafana_gpu_nodes.png)
 
 ### User Metrics
 
-![Grafana User Metrics](../assets/screenshots/grafana_moe_-_user_metriken.jpg)
+![Grafana User Metrics](../assets/screenshots/grafana_user_metrics.png)
 
-### Dashboard List
+### Grafana Home
 
-![Grafana Dashboard List](../assets/screenshots/grafana_dashboards.jpg)
+![Grafana Home](../assets/screenshots/grafana_home.png)
 
 ---
 
 ## Prometheus
 
-### Query Interface
-
-![Prometheus Home](../assets/screenshots/prometheus_home.png)
-
 ### Scrape Targets
 
-![Prometheus Targets](../assets/screenshots/prometheus_targets.jpg)
+All configured scrape jobs with health status (UP/DOWN) and last-scrape timing.
+
+![Prometheus Targets](../assets/screenshots/prometheus_targets.png)
 
 ---
 
-## Grafana — GPU & Inference Nodes
-
-Real-time GPU utilisation, VRAM occupancy, and per-model inference throughput across all
-heterogeneous nodes (RTX 4090, Tesla M60, Tesla M10, GT 1060). Captured in kiosk mode.
-
-![Grafana GPU & Inference Nodes](../assets/screenshots/grafana-gpu-nodes.png)
-
-## Grafana — Knowledge Base Health
-
-Neo4j entity count, relation count, gap-queue depth (`moe:ontology_gaps` ZCARD),
-and per-template healing throughput over the last 24 hours.
-
-![Grafana Knowledge Base Health](../assets/screenshots/grafana-knowledge.png)
-
 ## Dozzle — Log Viewer
 
-Container log aggregation across all MoE Sovereign services, accessible without
-SSH access. Useful for real-time debugging during ontology gap healing runs.
+Container log aggregation across all MoE Sovereign services, accessible without SSH access.
 
 ![Dozzle](../assets/screenshots/dozzle.png)
 
-## Neo4j — Knowledge Graph (500+ Entities)
+## Neo4j — Knowledge Graph
 
-Neo4j Browser showing a 500-entity subgraph excerpt: entities (Framework, Concept,
-Protocol, Tool) and their typed relations (IS_A, USES, IMPLEMENTS, PART_OF). The
-graph is the product of autonomous healing over multiple sessions.
+Neo4j Browser showing entity subgraph: nodes (Framework, Concept, Protocol, Tool) and typed relations (IS_A, USES, IMPLEMENTS, PART_OF).
+
+!!! note "Optional component"
+    Neo4j is optional since v2026.05. Skip it during `install.sh` for lightweight VMs
+    that only need expert templates and CC profiles.
 
 ![Neo4j Knowledge Graph](../assets/screenshots/neo4j-knowledge-graph.png)
 
@@ -153,12 +143,8 @@ graph is the product of autonomous healing over multiple sessions.
 
 ### Home
 
-![Docs Home](../assets/screenshots/docs_home.jpg)
+![Docs Home](../assets/screenshots/docs_home.png)
 
 ### Architecture Page
 
-![Docs Architecture](../assets/screenshots/docs_architecture.jpg)
-
-### Webserver & Reverse Proxy
-
-![Docs Webserver](../assets/screenshots/docs_webserver.jpg)
+![Docs Architecture](../assets/screenshots/docs_architecture.png)
