@@ -584,6 +584,8 @@ services:
     profiles: [authentik]
     restart: unless-stopped
     command: server
+    env_file:
+      - .env   # provides AUTHENTIK_BOOTSTRAP_EMAIL/PASSWORD directly
     environment:
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
       AUTHENTIK_REDIS__HOST: authentik-redis
@@ -591,8 +593,6 @@ services:
       AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
       AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:-}
-      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-}
-      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
       AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED:-false}
       TZ: ${TZ:-Europe/Berlin}
     volumes:
@@ -618,6 +618,8 @@ services:
     restart: unless-stopped
     command: worker
     user: root
+    env_file:
+      - .env   # provides AUTHENTIK_BOOTSTRAP_EMAIL/PASSWORD directly
     environment:
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
       AUTHENTIK_REDIS__HOST: authentik-redis
