@@ -599,6 +599,7 @@ services:
     volumes:
       - ${MOE_DATA_ROOT}/authentik/media:/media
       - ${MOE_DATA_ROOT}/authentik/custom-templates:/templates
+      - ${MOE_DATA_ROOT}/authentik/blueprints:/blueprints/custom:ro
     ports:
       - "${AUTHENTIK_HTTP_PORT:-9000}:9000"
       - "${AUTHENTIK_HTTPS_PORT:-9443}:9443"
@@ -631,6 +632,7 @@ services:
       - ${MOE_DATA_ROOT}/authentik/certs:/certs
       - ${MOE_DATA_ROOT}/authentik/media:/media
       - ${MOE_DATA_ROOT}/authentik/custom-templates:/templates
+      - ${MOE_DATA_ROOT}/authentik/blueprints:/blueprints/custom:ro
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     depends_on:
       authentik-postgresql:
