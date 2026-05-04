@@ -8,14 +8,15 @@ explains which API endpoint each one uses, and maps out feature compatibility.
 
 ## How It Works
 
-MoE Sovereign exposes two API endpoints:
+MoE Sovereign exposes three API endpoints:
 
 | Endpoint | Protocol | Used by |
 |----------|----------|---------|
 | `/v1/messages` | Anthropic Messages API | Claude Code |
-| `/v1/chat/completions` | OpenAI Chat Completions API | OpenCode, Claw Code, Codex CLI, Aider, Continue.dev, Cursor, Open WebUI |
+| `/v1/chat/completions` | OpenAI Chat Completions API | OpenCode, Aider, Continue.dev, Cursor, Open WebUI |
+| `/v1/responses` | OpenAI Responses API | Codex CLI, Continue.dev |
 
-Both endpoints route requests through the same MoE pipeline. The endpoint
+All endpoints route requests through the same MoE pipeline. The endpoint
 you use depends solely on what your agent expects — the processing behind
 it is identical.
 
@@ -167,7 +168,7 @@ agent. It supports custom base URLs for OpenAI-compatible backends.
 ### Quick Start
 
 ```bash
-export OPENAI_BASE_URL=https://your-moe-instance.example.com/v1
+export OPENAI_BASE_URL=https://your-moe-instance.example.com
 export OPENAI_API_KEY=moe-sk-xxxxxxxx...
 
 codex --model moe-reference-30b-balanced
@@ -175,11 +176,13 @@ codex --model moe-reference-30b-balanced
 
 ### Notes
 
-- Codex CLI expects a fully OpenAI-compatible backend. MoE Sovereign's
-  `/v1/chat/completions` endpoint satisfies this requirement.
-- Tool use and streaming are supported.
+- Codex CLI uses the **OpenAI Responses API** (`/v1/responses`) natively.
+  MoE Sovereign implements this endpoint with full SSE streaming including
+  `sequence_number`, `output_index`, and `content_index` as required by the spec.
+- `@filename` references and multi-turn conversation context are fully supported.
 - The `--model` flag selects the expert template by its model ID as reported
   by `/v1/models`.
+- Do **not** append `/v1` to `OPENAI_BASE_URL` for Codex CLI — it adds the path itself.
 
 ---
 
