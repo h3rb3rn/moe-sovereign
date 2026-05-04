@@ -684,9 +684,9 @@ _touch_as_user() {
   local f="$1"
   [[ -f "$f" ]] && return
   if [[ $EUID -eq 0 && "$DEPLOY_USER" != "root" ]]; then
-    sudo -u "$DEPLOY_USER" touch "$f" 2>/dev/null || _sudo touch "$f"
+    sudo -u "$DEPLOY_USER" touch "$f" 2>/dev/null || { _sudo touch "$f"; _sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "$f"; }
   else
-    touch "$f" 2>/dev/null || _sudo touch "$f"
+    touch "$f" 2>/dev/null || { _sudo touch "$f"; _sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "$f"; }
   fi
 }
 # dozzle-users.yml — moe-dozzle-init overwrites with bcrypt hash on first start
