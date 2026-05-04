@@ -1,6 +1,6 @@
 # Expert: medical_consult
 
-*Last updated: 2026-05-04 20:07*
+*Last updated: 2026-05-04 20:37*
 
 **Role:** Specialist physician (S3/AWMF/WHO)
 
