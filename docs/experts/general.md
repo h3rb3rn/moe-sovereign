@@ -1,6 +1,6 @@
 # Expert: general
 
-*Last updated: 2026-05-04 09:36*
+*Last updated: 2026-05-04 10:06*
 
 **Role:** Generalist expert for general requests
 

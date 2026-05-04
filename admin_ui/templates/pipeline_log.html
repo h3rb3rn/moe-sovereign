@@ -25,12 +25,28 @@
 <div class="card border-0 bg-body-tertiary mb-3 p-3">
   <div class="row g-2 align-items-end">
     <div class="col-sm-2">
-      <label class="form-label small mb-1">{{ t(request, 'lbl.from') }}</label>
-      <input type="date" id="f-from" class="form-control form-control-sm">
+      <label class="form-label small mb-1">User</label>
+      <input type="text" id="f-user" class="form-control form-control-sm" placeholder="Username…"
+             onkeydown="if(event.key==='Enter') applyFilters()">
+    </div>
+    <div class="col-sm-3">
+      <label class="form-label small mb-1">Model</label>
+      <input type="text" id="f-model" class="form-control form-control-sm" placeholder="Partial name…"
+             onkeydown="if(event.key==='Enter') applyFilters()">
     </div>
     <div class="col-sm-2">
-      <label class="form-label small mb-1">{{ t(request, 'lbl.to') }}</label>
-      <input type="date" id="f-to" class="form-control form-control-sm">
+      <label class="form-label small mb-1">Mode</label>
+      <select id="f-mode" class="form-select form-select-sm">
+        <option value="">All</option>
+        <option>default</option>
+        <option>local</option>
+        <option>local_7b</option>
+        <option>fast</option>
+        <option>deep</option>
+        <option>research</option>
+        <option>code</option>
+        <option>creative</option>
+      </select>
     </div>
     <div class="col-sm-2">
       <label class="form-label small mb-1">{{ t(request, 'lbl.complexity') }}</label>
@@ -42,15 +58,15 @@
         <option>memory_recall</option>
       </select>
     </div>
-    <div class="col-sm-2">
-      <label class="form-label small mb-1">Cache Hit</label>
+    <div class="col-sm-1">
+      <label class="form-label small mb-1">Cache</label>
       <select id="f-cache" class="form-select form-select-sm">
         <option value="">All</option>
         <option value="true">Hit</option>
         <option value="false">Miss</option>
       </select>
     </div>
-    <div class="col-sm-2">
+    <div class="col-sm-1">
       <label class="form-label small mb-1">{{ t(request, 'lbl.limit') }}</label>
       <select id="f-limit" class="form-select form-select-sm">
         <option value="50">50</option>
@@ -58,9 +74,24 @@
         <option value="500">500</option>
       </select>
     </div>
-    <div class="col-sm-2">
+    <div class="col-sm-1">
       <button class="btn btn-sm btn-primary w-100" onclick="applyFilters()">
-        <i class="bi bi-funnel me-1"></i>Filter
+        <i class="bi bi-funnel"></i>
+      </button>
+    </div>
+  </div>
+  <div class="row g-2 mt-1">
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.from') }}</label>
+      <input type="date" id="f-from" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.to') }}</label>
+      <input type="date" id="f-to" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-2">
+      <button class="btn btn-sm btn-outline-secondary btn-sm" onclick="clearFilters()">
+        <i class="bi bi-x-circle me-1"></i>Clear
       </button>
     </div>
   </div>
@@ -76,14 +107,14 @@
       <table class="table table-sm table-hover mb-0 align-middle" id="log-table">
         <thead class="table-dark small">
           <tr>
-            <th>{{ t(request, 'lbl.requested_at') }}</th>
-            <th>User</th>
-            <th>Model</th>
-            <th>Mode</th>
-            <th>Complexity</th>
+            <th class="sort-hd" data-col="requested_at" style="cursor:pointer" onclick="sortBy('requested_at')">{{ t(request, 'lbl.requested_at') }} <span id="si-requested_at">▼</span></th>
+            <th class="sort-hd" data-col="username" style="cursor:pointer" onclick="sortBy('username')">User <span id="si-username"></span></th>
+            <th class="sort-hd" data-col="model" style="cursor:pointer" onclick="sortBy('model')">Model <span id="si-model"></span></th>
+            <th class="sort-hd" data-col="moe_mode" style="cursor:pointer" onclick="sortBy('moe_mode')">Mode <span id="si-moe_mode"></span></th>
+            <th class="sort-hd" data-col="complexity_level" style="cursor:pointer" onclick="sortBy('complexity_level')">Complexity <span id="si-complexity_level"></span></th>
             <th>Experts</th>
-            <th>Tokens</th>
-            <th>Latency</th>
+            <th class="sort-hd" data-col="total_tokens" style="cursor:pointer" onclick="sortBy('total_tokens')">Tokens <span id="si-total_tokens"></span></th>
+            <th class="sort-hd" data-col="latency_ms" style="cursor:pointer" onclick="sortBy('latency_ms')">Latency <span id="si-latency_ms"></span></th>
             <th>Agentic</th>
             <th>Cache</th>
             <th>Status</th>
@@ -104,22 +135,56 @@
 </div>
 
 <script>
-let _offset = 0;
-let _total  = 0;
+let _offset  = 0;
+let _total   = 0;
+let _sortBy  = 'requested_at';
+let _sortDir = 'desc';
 
 function applyFilters() { _offset = 0; loadLog(); }
 
+function clearFilters() {
+  ['f-user','f-model','f-from','f-to'].forEach(id => document.getElementById(id).value = '');
+  ['f-mode','f-complexity','f-cache'].forEach(id => document.getElementById(id).value = '');
+  _offset = 0; loadLog();
+}
+
+function sortBy(col) {
+  if (_sortBy === col) {
+    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    _sortBy  = col;
+    _sortDir = 'desc';
+  }
+  _offset = 0;
+  updateSortIcons();
+  loadLog();
+}
+
+function updateSortIcons() {
+  document.querySelectorAll('[id^="si-"]').forEach(el => el.textContent = '');
+  const el = document.getElementById('si-' + _sortBy);
+  if (el) el.textContent = _sortDir === 'desc' ? ' ▼' : ' ▲';
+}
+
 function buildUrl(fmt) {
   const p = new URLSearchParams();
+  const user = document.getElementById('f-user').value.trim();
+  const mdl  = document.getElementById('f-model').value.trim();
+  const mode = document.getElementById('f-mode').value;
   const from = document.getElementById('f-from').value;
   const to   = document.getElementById('f-to').value;
   const cx   = document.getElementById('f-complexity').value;
   const ch   = document.getElementById('f-cache').value;
   const lim  = document.getElementById('f-limit').value;
+  if (user) p.set('username', user);
+  if (mdl)  p.set('model',    mdl);
+  if (mode) p.set('moe_mode', mode);
   if (from) p.set('from_date', from);
   if (to)   p.set('to_date',   to);
   if (cx)   p.set('complexity_level', cx);
   if (ch)   p.set('cache_hit', ch);
+  p.set('sort_by',  _sortBy);
+  p.set('sort_dir', _sortDir);
   p.set('limit',  fmt === 'csv' ? 10000 : lim);
   p.set('offset', _offset);
   if (fmt)  p.set('format', fmt);
