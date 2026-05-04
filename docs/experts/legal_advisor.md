@@ -1,6 +1,6 @@
 # Expert: legal_advisor
 
-*Last updated: 2026-05-04 08:51*
+*Last updated: 2026-05-04 09:36*
 
 **Role:** Legal advisor (German law)
 
