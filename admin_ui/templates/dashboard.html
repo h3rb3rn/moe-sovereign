@@ -78,8 +78,9 @@
         </div>
         <div class="card-body">
           <div class="mb-2">
-            <label class="form-label" for="SEARXNG_URL">SearXNG URL (Web-Suche)</label>
+            <label class="form-label" for="SEARXNG_URL">Web-Suche URL <span class="text-muted fw-normal small">(SearXNG, DuckDuckGo, Brave Search, …)</span></label>
             <input type="url" id="SEARXNG_URL" name="SEARXNG_URL" class="form-control font-monospace"
+                   placeholder="https://searxng.example.com  oder  https://duckduckgo.com"
                    value="{{ config.get('SEARXNG_URL','') }}">
           </div>
           <div class="mt-3">
