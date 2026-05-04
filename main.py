@@ -4862,6 +4862,7 @@ async def merger_node(state: AgentState):
         # Dynamic per-expert truncation: budget scales with expert count so
         # multi-expert synthesis retains enough of each response to synthesise.
         # With 1 expert: 3500 chars. With 2: 2800 each. With 4+: 2000 each.
+        # Floor is 2000 to keep merger token budget bounded.
         _n_experts    = len(expert_results)
         MAX_EXPERT_CHARS = max(2000, min(3500, 3500 - (_n_experts - 1) * 500))
         trimmed = []
@@ -4870,6 +4871,8 @@ async def merger_node(state: AgentState):
                 trimmed.append(er[:MAX_EXPERT_CHARS] + "\n[...truncated for merger efficiency]")
             else:
                 trimmed.append(er)
+        # For multi-expert synthesis: prepend a domain index so the judge
+        # immediately sees which domains are represented and can plan coverage.
         if _n_experts > 1:
             domain_index = ", ".join(
                 f"[{_expert_category(er) or 'general'}]" for er in expert_results
@@ -5266,6 +5269,8 @@ async def merger_node(state: AgentState):
                 for r in (state.get("expert_results") or []) if r
             )
             _answer_is_short = len(res_content_clean.split()) <= 5  # ≤5 words: single-token answers like "backtick", "Fred", "42"
+            # In research mode a short answer is NOT a reliability signal — complex research
+            # questions that need web lookups should still be re-checked even when compact.
             _is_research_mode = (state.get("mode") or "") == "research"
             _confidence_gate_passed = (
                 not _expert_is_leak
