@@ -976,16 +976,7 @@ echo ""
 echo "  --- Domain Configuration ---"
 prompt_input DOMAIN "Your public domain (e.g. moe-sovereign.org), or leave blank for local use" "${EXISTING_DOMAIN:-}" "false" "false"
 
-# Build public URLs from domain
-if [[ -n "$DOMAIN" ]]; then
-  DEFAULT_BASE_URL="https://${DOMAIN}:8088"
-  DEFAULT_ADMIN_URL="https://admin.${DOMAIN}"
-  DEFAULT_API_URL="https://api.${DOMAIN}"
-else
-  DEFAULT_BASE_URL="http://localhost:8088"
-  DEFAULT_ADMIN_URL=""
-  DEFAULT_API_URL=""
-fi
+# URL defaults resolved after Caddy selection (see below)
 
 echo ""
 echo "  --- Optional Components ---"
@@ -1020,15 +1011,19 @@ while true; do
   esac
 done
 
-# Public subdomain URLs — only relevant when Caddy is handling TLS termination
+# Public URLs — prompted only when Caddy+domain, otherwise localhost defaults
 if [[ "$INSTALL_CADDY" == "true" && -n "${DOMAIN:-}" ]]; then
   echo ""
   echo "  --- Public Subdomain URLs ---"
   echo "  Caddy will serve each service at the URL you confirm below."
   echo "  Press ENTER to accept the subdomain shown in [brackets]."
-  prompt_input DEFAULT_ADMIN_URL  "Admin UI URL"  "https://admin.${DOMAIN}"  "false" "false"
-  prompt_input DEFAULT_BASE_URL   "User portal URL" "https://${DOMAIN}"      "false" "false"
-  prompt_input DEFAULT_API_URL    "API URL"        "https://api.${DOMAIN}"   "false" "false"
+  prompt_input DEFAULT_ADMIN_URL  "Admin UI URL"    "https://admin.${DOMAIN}" "false" "false"
+  prompt_input DEFAULT_BASE_URL   "User portal URL" "https://${DOMAIN}"       "false" "false"
+  prompt_input DEFAULT_API_URL    "API URL"         "https://api.${DOMAIN}"   "false" "false"
+else
+  DEFAULT_ADMIN_URL="http://localhost:8088"
+  DEFAULT_BASE_URL="http://localhost:8088"
+  DEFAULT_API_URL="http://localhost:8000"
 fi
 
 # Authentik SSO — deploy built-in server
