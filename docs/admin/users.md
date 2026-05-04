@@ -2,7 +2,7 @@
 
 The user management section (`/users`) is the heart of the admin backend. All end users are created, configured, and monitored here.
 
-![User Management](../assets/screenshots/admin_users.jpg)
+![User Management](../assets/screenshots/admin_users.png)
 
 ## User Table
 

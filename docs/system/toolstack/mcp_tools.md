@@ -4,7 +4,7 @@
 
 The MCP server (`mcp_server/server.py`) is a FastAPI service that exposes 16 deterministic computation tools behind a unified REST API. It implements the **Model Context Protocol (MCP)** and is also directly callable via `/invoke`.
 
-![MCP Tools Admin View](../../assets/screenshots/admin_mcp_tools.jpg)
+![MCP Tools Admin View](../../assets/screenshots/admin_mcp_tools.png)
 
 ## Why Precision Tools instead of LLM computation?
 

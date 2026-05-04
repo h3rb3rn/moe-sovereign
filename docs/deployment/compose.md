@@ -57,21 +57,34 @@ flowchart TB
     class CD,DZ edge;
 ```
 
-## Launch
+## Optional components via Compose profiles
+
+Three services are behind explicit profiles and only start when the profile
+is active. `install.sh` sets `COMPOSE_PROFILES` in `.env` and passes
+`--profile <name>` automatically based on your answers during setup.
+
+| Profile | Services | When to enable |
+|---------|----------|---------------|
+| `neo4j` | `neo4j-knowledge` (~1.5 GB RAM) | GraphRAG, ontology curator, knowledge graph |
+| `caddy` | `moe-caddy` | Built-in TLS reverse proxy |
+| `authentik` | `authentik-server`, `authentik-worker`, `authentik-postgresql`, `authentik-redis` | Self-hosted SSO/OIDC |
 
 ```bash
-# team profile (all 19 services)
+# Core stack only (no Neo4j, no Caddy, no Authentik)
 sudo docker compose up -d
 
-# solo profile — smaller resource footprint, optional services off
-sudo docker compose -f docker-compose.yaml -f docker-compose.solo.yaml up -d
+# With Neo4j GraphRAG
+sudo docker compose --profile neo4j up -d
 
-# enterprise profile — omit data-tier services, connect to external clusters
-sudo docker compose -f docker-compose.yaml -f docker-compose.enterprise.yaml up -d
+# Full stack (Neo4j + Caddy + Authentik)
+sudo docker compose --profile neo4j --profile caddy --profile authentik up -d
 ```
 
-The profile overrides are additive: Compose merges the base file with the
-profile-specific file, so you never maintain two parallel copies.
+!!! note "podman-compose"
+    `podman-compose` does not auto-read `COMPOSE_PROFILES` from `.env`.
+    Always pass `--profile <name>` explicitly on the command line.
+
+## Launch
 
 ## Rebuilding after code changes
 
@@ -97,14 +110,15 @@ Compose enforces these with `${VAR:?…}` — `docker compose up` aborts
 with an explicit error if any are missing. `install.sh` /
 `bootstrap-macos.sh` write all of them automatically.
 
-| `.env` key | Used by |
-|---|---|
-| `POSTGRES_CHECKPOINT_PASSWORD` | terra_checkpoints, langgraph-app, moe-admin |
-| `MOE_USERDB_PASSWORD` | langgraph-app, moe-admin |
-| `REDIS_PASSWORD` | terra_cache, langgraph-app, moe-admin |
-| `NEO4J_PASS` | neo4j-knowledge, mcp-precision, langgraph-app |
-| `GF_SECURITY_ADMIN_PASSWORD` | moe-grafana |
-| `ADMIN_PASSWORD`, `ADMIN_SECRET_KEY` | moe-admin, moe-dozzle-init |
+| `.env` key | Used by | Required |
+|---|---|---|
+| `POSTGRES_CHECKPOINT_PASSWORD` | terra_checkpoints, langgraph-app, moe-admin | Always |
+| `MOE_USERDB_PASSWORD` | langgraph-app, moe-admin | Always |
+| `REDIS_PASSWORD` | terra_cache, langgraph-app, moe-admin | Always |
+| `NEO4J_PASS` | neo4j-knowledge | Only with `neo4j` profile — leave empty to disable GraphRAG |
+| `GF_SECURITY_ADMIN_PASSWORD` | moe-grafana | Always |
+| `ADMIN_PASSWORD`, `ADMIN_SECRET_KEY` | moe-admin | Always |
+| `AUTHENTIK_SECRET_KEY`, `AUTHENTIK_POSTGRESQL__PASSWORD` | authentik-* | Only with `authentik` profile |
 
 ### Host data roots (bind-mount sources)
 

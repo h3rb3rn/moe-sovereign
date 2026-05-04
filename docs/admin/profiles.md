@@ -2,7 +2,7 @@
 
 Claude Code Profiles control how **Claude Code** (Anthropic CLI / IDE extension) interacts with the MoE orchestrator. A profile defines model routing, pipeline mode, and response parameters.
 
-![Claude Code Profiles](../assets/screenshots/admin_profiles.jpg)
+![Claude Code Profiles](../assets/screenshots/admin_profiles.png)
 
 ## Concept
 

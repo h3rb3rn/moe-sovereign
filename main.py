@@ -5647,8 +5647,15 @@ builder.add_edge("critic", END)
 app_graph = None
 
 async def _init_graph_rag() -> None:
-    """Initialize the Neo4j GraphRAG Manager with retry logic."""
+    """Initialize the Neo4j GraphRAG Manager with retry logic.
+
+    Skipped immediately when NEO4J_URI or NEO4J_PASS is empty — this is the
+    intended state for lightweight deployments that don't include Neo4j.
+    """
     global graph_manager
+    if not NEO4J_URI or not NEO4J_PASS:
+        logger.info("ℹ️ Neo4j not configured (NEO4J_URI/NEO4J_PASS empty) — GraphRAG disabled")
+        return
     for attempt in range(6):
         try:
             mgr = GraphRAGManager(NEO4J_URI, NEO4J_USER, NEO4J_PASS)

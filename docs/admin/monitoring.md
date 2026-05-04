@@ -52,56 +52,55 @@ flowchart LR
 
 ### System Monitoring
 
-Fully populated dashboard after production traffic — all six system gauges, LLM server status row, Chart.js widgets for token usage, cache performance, expert-calls-by-category/model/mode, requests-by-mode donut, confidence distribution, and latency & ratings.
+Fully populated dashboard with the grouped navigation bar — six system gauges (ChromaDB, Neo4j entities/relations, ontology, planner patterns), LLM server status cards per inference node, and Chart.js widgets for token usage, cache performance, expert calls, and latency.
 
-![System Monitoring](../assets/screenshots/monitoring-dashboard.png)
-
-!!! note "Privacy"
-    Internal node identifiers in this screenshot (e.g. `NODE-XX`) are anonymised
-    placeholders. In a live deployment you will see your actual inference-server
-    names (as configured under **Configuration → Servers**).
+![System Monitoring](../assets/screenshots/admin_monitoring_system.png)
 
 ### Live Monitoring — Active Processes & History
 
-Real-time view with a running long task (top panel, `6.2 min` streaming request against an enterprise template) plus the recent history of completed requests.
+Real-time process table (5 s polling). User, IP, and request ID columns are blurred for privacy.
 
-![Live Monitoring — Active Processes](../assets/screenshots/admin_live_monitoring.png)
+![Live Monitoring — Active Processes](../assets/screenshots/admin_live_monitoring_active.png)
 
-!!! info "Redacted columns"
-    For the docs, the **User**, **Client IP**, **API-Key**, **Request ID**, and
-    **Template** columns are blurred. In your own install all columns are
-    visible to admins — the mask is purely a documentation-time privacy filter.
+### Live Monitoring — LLM Instances
 
-### Live Monitoring — LLM Instances tab
+Per-server cards: loaded models with VRAM / quantisation / TTL, Ollama metrics, and the expandable available-models list.
 
-Per-server card view: loaded models with VRAM / parameters / quantisation / family / TTL, Ollama metrics (in-progress, queued, loaded, total requests, avg latency, I/O volumes), and an expandable list of all installed models per node.
-
-![Live Monitoring — LLM Instances](../assets/screenshots/admin_llm_instances.png)
+![Live Monitoring — LLM Instances](../assets/screenshots/admin_live_monitoring_llm.png)
 
 !!! tip "Idle detection"
     Cards without any loaded models are labelled **"Kein Modell geladen (idle)"**
     — useful for spotting cold nodes during load-balancing reviews.
 
+### Starfleet — Ambient Intelligence Dashboard
+
+LCARS-style dashboard with live node grid (14/14 UP), active alerts, feature toggle table, and Watchdog alert feed.
+
+![Starfleet Dashboard](../assets/screenshots/admin_starfleet.png)
+
+### Pipeline Transparency Log
+
+Routing metadata per request — filterable by user, model, mode, complexity, date range, and cache hit. Columns are sortable (▼/▲). Data blurred for privacy.
+
+![Pipeline Log](../assets/screenshots/admin_pipeline_log.png)
+
 ### Grafana — MoE System Overview
 
-![Grafana MoE Overview](../assets/screenshots/grafana_moe_system_overview.jpg)
+![Grafana MoE Overview](../assets/screenshots/grafana_moe_system_overview.png)
 
 ### Grafana — LLM & Expert Usage
 
-![Grafana LLM Usage](../assets/screenshots/grafana_llm_&_expert_usage.jpg)
+![Grafana LLM Usage](../assets/screenshots/grafana_llm_usage.png)
 
 ### Grafana — Knowledge Base Health
 
-![Grafana Knowledge Base](../assets/screenshots/grafana_knowledge_base_health.jpg)
+![Grafana Knowledge Base](../assets/screenshots/grafana_knowledge_base_health.png)
 
 ### Grafana — GPU & Inference Nodes
 
-The `moe-gpu-nodes` dashboard (`grafana/dashboards/moe-gpu-nodes.json`) provides
-per-node, per-GPU panels for VRAM usage, GPU utilization, RAM, and disk. Data
-is scraped from node-exporter instances on each inference host via the
-`inference-nodes` Prometheus job.
+The `moe-gpu-nodes` dashboard provides per-node, per-GPU panels for VRAM usage, GPU utilization, RAM, and disk. Data is scraped from node-exporter instances via the `inference-nodes` Prometheus job.
 
-Key panels:
+![Grafana GPU Nodes](../assets/screenshots/grafana_gpu_nodes.png)
 
 | Panel | Metric |
 |-------|--------|
@@ -110,17 +109,13 @@ Key panels:
 | RAM Usage | `node_memory_MemTotal_bytes` - `node_memory_MemAvailable_bytes` |
 | Disk Usage | `node_filesystem_size_bytes` - `node_filesystem_avail_bytes` |
 
-### Grafana — Infrastructure & Resources
-
-![Grafana Infrastructure](../assets/screenshots/grafana_infrastructure_&_resources.png)
-
 ### Grafana — User Metrics
 
-![Grafana User Metrics](../assets/screenshots/grafana_moe_-_user_metriken.jpg)
+![Grafana User Metrics](../assets/screenshots/grafana_user_metrics.png)
 
 ### Prometheus — Scrape Targets
 
-![Prometheus Targets](../assets/screenshots/prometheus_targets.jpg)
+![Prometheus Targets](../assets/screenshots/prometheus_targets.png)
 
 ---
 
@@ -465,15 +460,34 @@ rounds occurred.
 | `agentic_rounds` | Number of Judge-triggered re-planning iterations |
 | `status` | `ok` or error indicator |
 
-### Filters
+### Filters & Sorting
 
-All filters are optional query parameters: `from_date`, `to_date`, `user_id`, `model`,
-`complexity_level`, `cache_hit`, `limit`, `offset`.
+All filters are optional. The UI exposes them as inputs at the top of the table; all are
+also available as query parameters on the API:
+
+| Filter | UI control | API param | Notes |
+|--------|-----------|-----------|-------|
+| User | Text input | `username` | Partial match (ILIKE) |
+| Model | Text input | `model` | Partial match — e.g. `wcc` finds all WCC templates |
+| Mode | Dropdown | `moe_mode` | Exact match |
+| Complexity | Dropdown | `complexity_level` | `trivial` / `moderate` / `complex` / `memory_recall` |
+| Cache | Dropdown | `cache_hit` | `true` / `false` |
+| Date from / to | Date picker | `from_date` / `to_date` | ISO date `YYYY-MM-DD` |
+| Limit | Dropdown | `limit` | 50 / 100 / 500 |
+
+**Sorting:** Click any column header (Time, User, Model, Mode, Complexity, Tokens, Latency)
+to sort ascending (▲) or descending (▼). Repeated clicks toggle direction. Sorting is
+server-side and respects pagination boundaries.
+
+API params: `sort_by` (one of `requested_at`, `model`, `moe_mode`, `username`,
+`total_tokens`, `latency_ms`, `complexity_level`) and `sort_dir` (`asc` / `desc`).
+
+**Clear all filters** via the Clear button below the date pickers.
 
 ### Export
 
 Append `?format=csv` for a CSV download suitable for BI tools. The export respects all
-active filters.
+active filters (limit is raised to 10 000 automatically for CSV).
 
 ### Schema migration
 
