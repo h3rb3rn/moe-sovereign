@@ -990,6 +990,21 @@ fi
 echo ""
 echo "  --- Optional Components ---"
 
+# Neo4j GraphRAG
+echo ""
+echo "  Neo4j powers GraphRAG (knowledge-graph enrichment) and the ontology curator."
+echo "  Requires ~1.5 GB RAM. Skip for small VMs that only need expert templates / CC profiles."
+INSTALL_NEO4J="true"
+while true; do
+  read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
+  _neo4j_choice="${_neo4j_choice:-Y}"
+  case "${_neo4j_choice,,}" in
+    y|yes) INSTALL_NEO4J="true";  break ;;
+    n|no)  INSTALL_NEO4J="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+
 # Caddy reverse proxy
 echo ""
 echo "  Caddy is a built-in TLS reverse proxy for this stack."
@@ -1173,6 +1188,7 @@ fi
   echo ""
   echo "# --- Compose profiles (controls optional services) ---"
   _env_profiles=()
+  [[ "$INSTALL_NEO4J"     == "true" ]] && _env_profiles+=(neo4j)
   [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
   [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
   printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
@@ -1201,9 +1217,16 @@ fi
   echo "# --- Infrastructure Passwords ---"
   printf 'REDIS_PASSWORD=%s\n'           "${GEN_REDIS_PASS}"
   printf 'REDIS_URL=redis://:%s@terra_cache:6379/0\n' "${GEN_REDIS_PASS}"
-  printf 'NEO4J_PASS=%s\n'              "${GEN_NEO4J_PASS}"
-  echo 'NEO4J_URI=bolt://neo4j-knowledge:7687'
-  echo 'NEO4J_USER=neo4j'
+  # NEO4J_URI empty when Neo4j is not installed — signals _init_graph_rag() to skip
+  if [[ "$INSTALL_NEO4J" == "true" ]]; then
+    printf 'NEO4J_PASS=%s\n' "${GEN_NEO4J_PASS}"
+    echo 'NEO4J_URI=bolt://neo4j-knowledge:7687'
+    echo 'NEO4J_USER=neo4j'
+  else
+    echo 'NEO4J_PASS='
+    echo 'NEO4J_URI='
+    echo 'NEO4J_USER=neo4j'
+  fi
   echo ""
   echo "# --- PostgreSQL ---"
   printf 'POSTGRES_CHECKPOINT_PASSWORD=%s\n' "${GEN_PG_LANGGRAPH_PASS}"
@@ -1439,6 +1462,7 @@ fi
 # Build explicit --profile flags: podman-compose does not auto-read COMPOSE_PROFILES
 # from .env; docker compose does. Passing --profile explicitly works for both.
 _PROFILE_ARGS=()
+[[ "$INSTALL_NEO4J"     == "true" ]] && _PROFILE_ARGS+=(--profile neo4j)
 [[ "$INSTALL_CADDY"     == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
 [[ "$INSTALL_AUTHENTIK" == "true" ]] && _PROFILE_ARGS+=(--profile authentik)
 
