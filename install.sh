@@ -849,6 +849,12 @@ echo ""
 ADMIN_USER=""
 ADMIN_PASSWORD=""
 DOMAIN=""
+GEN_OIDC_CLIENT_ID=""
+GEN_OIDC_CLIENT_SECRET=""
+GEN_OIDC_REDIRECT_URI=""
+GEN_OIDC_JWKS_URL=""
+GEN_OIDC_ISSUER=""
+GEN_OIDC_END_SESSION_URL=""
 
 # Helper: prompt with optional default
 prompt_input() {
@@ -906,6 +912,8 @@ EXISTING_PG_LANGGRAPH_PASS=""
 EXISTING_PG_USERDB_PASS=""
 EXISTING_MINIO_USER=""
 EXISTING_MINIO_PASS=""
+EXISTING_AUTHENTIK_SECRET=""
+EXISTING_AUTHENTIK_PG_PASS=""
 EXISTING_ADMIN_USER=""
 EXISTING_ADMIN_PASSWORD=""
 EXISTING_DOMAIN=""
@@ -930,6 +938,8 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   EXISTING_LIBRIS_DB_PASS=$(read_env LIBRIS_DB_PASSWORD)
   EXISTING_MINIO_USER=$(read_env MINIO_ROOT_USER)
   EXISTING_MINIO_PASS=$(read_env MINIO_ROOT_PASSWORD)
+  EXISTING_AUTHENTIK_SECRET=$(read_env AUTHENTIK_SECRET_KEY)
+  EXISTING_AUTHENTIK_PG_PASS=$(read_env AUTHENTIK_POSTGRESQL__PASSWORD)
   EXISTING_ADMIN_USER=$(read_env ADMIN_USER)
   EXISTING_ADMIN_PASSWORD=$(read_env ADMIN_PASSWORD)
   EXISTING_DOMAIN=$(read_env DOMAIN)
@@ -945,6 +955,8 @@ GEN_PG_USERDB_PASS="${EXISTING_PG_USERDB_PASS:-$(openssl rand -hex 16)}"
 GEN_LIBRIS_DB_PASS="${EXISTING_LIBRIS_DB_PASS:-$(openssl rand -hex 16)}"
 GEN_MINIO_USER="${EXISTING_MINIO_USER:-moeadmin}"
 GEN_MINIO_PASS="${EXISTING_MINIO_PASS:-$(openssl rand -hex 16)}"
+GEN_AUTHENTIK_SECRET="${EXISTING_AUTHENTIK_SECRET:-$(openssl rand -hex 32)}"
+GEN_AUTHENTIK_PG_PASS="${EXISTING_AUTHENTIK_PG_PASS:-$(openssl rand -hex 16)}"
 
 echo "  --- Admin Account ---"
 prompt_input ADMIN_USER     "Admin username"   "${EXISTING_ADMIN_USER:-admin}"
@@ -978,6 +990,21 @@ fi
 echo ""
 echo "  --- Optional Components ---"
 
+# Neo4j GraphRAG
+echo ""
+echo "  Neo4j powers GraphRAG (knowledge-graph enrichment) and the ontology curator."
+echo "  Requires ~1.5 GB RAM. Skip for small VMs that only need expert templates / CC profiles."
+INSTALL_NEO4J="true"
+while true; do
+  read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
+  _neo4j_choice="${_neo4j_choice:-Y}"
+  case "${_neo4j_choice,,}" in
+    y|yes) INSTALL_NEO4J="true";  break ;;
+    n|no)  INSTALL_NEO4J="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+
 # Caddy reverse proxy
 echo ""
 echo "  Caddy is a built-in TLS reverse proxy for this stack."
@@ -993,24 +1020,56 @@ while true; do
   esac
 done
 
-# Authentik SSO
+# Authentik SSO — deploy built-in server
 echo ""
-echo "  Authentik is a self-hosted SSO/OIDC provider."
-echo "  Skip if you handle authentication differently or plan to add it later."
-INSTALL_SSO="false"
-AUTHENTIK_URL_INPUT=""
+echo "  Authentik is a self-hosted SSO/OIDC provider (server + worker + DB + Redis)."
+echo "  Installs 4 containers inside this stack. Skip if you already run an external IdP."
+INSTALL_AUTHENTIK="false"
+AUTHENTIK_BOOTSTRAP_EMAIL_INPUT=""
+AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT=""
 while true; do
-  read -rp "  Configure Authentik SSO? [y/N]: " _sso_choice < /dev/tty
-  _sso_choice="${_sso_choice:-N}"
-  case "${_sso_choice,,}" in
-    y|yes) INSTALL_SSO="true";  break ;;
-    n|no)  INSTALL_SSO="false"; break ;;
+  read -rp "  Deploy Authentik SSO server? [y/N]: " _authentik_choice < /dev/tty
+  _authentik_choice="${_authentik_choice:-N}"
+  case "${_authentik_choice,,}" in
+    y|yes) INSTALL_AUTHENTIK="true";  break ;;
+    n|no)  INSTALL_AUTHENTIK="false"; break ;;
     *) echo "  Please enter y or n." ;;
   esac
 done
-if [[ "$INSTALL_SSO" == "true" ]]; then
-  prompt_input AUTHENTIK_URL_INPUT \
-    "Authentik base URL (e.g. https://auth.example.com)" "" "false" "true"
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  prompt_input AUTHENTIK_BOOTSTRAP_EMAIL_INPUT \
+    "Authentik bootstrap admin e-mail" "${ADMIN_EMAIL:-admin@example.com}" "false" "true"
+  prompt_input AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT \
+    "Authentik bootstrap admin password (min 10 chars)" "" "true" "true"
+fi
+
+# Authentik SSO — OIDC client configuration
+echo ""
+INSTALL_SSO="false"
+AUTHENTIK_URL_INPUT=""
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  # Auto-configure OIDC to point at the local Authentik instance
+  INSTALL_SSO="true"
+  if [[ -n "${DOMAIN:-}" ]]; then
+    AUTHENTIK_URL_INPUT="https://sso.${DOMAIN}"
+  else
+    AUTHENTIK_URL_INPUT="http://localhost:9000"
+  fi
+else
+  echo "  Configure OIDC against an existing Authentik (or other IdP)?"
+  while true; do
+    read -rp "  Configure Authentik/OIDC SSO? [y/N]: " _sso_choice < /dev/tty
+    _sso_choice="${_sso_choice:-N}"
+    case "${_sso_choice,,}" in
+      y|yes) INSTALL_SSO="true";  break ;;
+      n|no)  INSTALL_SSO="false"; break ;;
+      *) echo "  Please enter y or n." ;;
+    esac
+  done
+  if [[ "$INSTALL_SSO" == "true" ]]; then
+    prompt_input AUTHENTIK_URL_INPUT \
+      "Authentik base URL (e.g. https://auth.example.com)" "" "false" "true"
+  fi
 fi
 
 echo ""
@@ -1128,11 +1187,11 @@ fi
   echo "# After changes: sudo ${COMPOSE} up -d"
   echo ""
   echo "# --- Compose profiles (controls optional services) ---"
-  if [[ "$INSTALL_CADDY" == "true" ]]; then
-    echo 'COMPOSE_PROFILES=caddy'
-  else
-    echo 'COMPOSE_PROFILES='
-  fi
+  _env_profiles=()
+  [[ "$INSTALL_NEO4J"     == "true" ]] && _env_profiles+=(neo4j)
+  [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
+  [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
+  printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
   echo ""
   echo "# --- Container runtime socket + storage paths ---"
   echo "# Docker: DOCKER_SOCKET=/var/run/docker.sock, CONTAINER_STORAGE_ROOT=/var/lib/docker"
@@ -1158,9 +1217,16 @@ fi
   echo "# --- Infrastructure Passwords ---"
   printf 'REDIS_PASSWORD=%s\n'           "${GEN_REDIS_PASS}"
   printf 'REDIS_URL=redis://:%s@terra_cache:6379/0\n' "${GEN_REDIS_PASS}"
-  printf 'NEO4J_PASS=%s\n'              "${GEN_NEO4J_PASS}"
-  echo 'NEO4J_URI=bolt://neo4j-knowledge:7687'
-  echo 'NEO4J_USER=neo4j'
+  # NEO4J_URI empty when Neo4j is not installed — signals _init_graph_rag() to skip
+  if [[ "$INSTALL_NEO4J" == "true" ]]; then
+    printf 'NEO4J_PASS=%s\n' "${GEN_NEO4J_PASS}"
+    echo 'NEO4J_URI=bolt://neo4j-knowledge:7687'
+    echo 'NEO4J_USER=neo4j'
+  else
+    echo 'NEO4J_PASS='
+    echo 'NEO4J_URI='
+    echo 'NEO4J_USER=neo4j'
+  fi
   echo ""
   echo "# --- PostgreSQL ---"
   printf 'POSTGRES_CHECKPOINT_PASSWORD=%s\n' "${GEN_PG_LANGGRAPH_PASS}"
@@ -1278,14 +1344,26 @@ fi
   echo 'SMTP_SSL=false'
   echo ""
   echo "# --- SSO / OIDC (optional) ---"
-  printf 'AUTHENTIK_URL=%s\n' "${AUTHENTIK_URL_INPUT:-}"
-  echo 'OIDC_CLIENT_ID='
-  echo 'OIDC_CLIENT_SECRET='
-  echo 'OIDC_REDIRECT_URI='
-  echo 'OIDC_JWKS_URL='
-  echo 'OIDC_ISSUER='
-  echo 'OIDC_END_SESSION_URL='
+  printf 'AUTHENTIK_URL=%s\n'     "${AUTHENTIK_URL_INPUT:-}"
+  printf 'OIDC_CLIENT_ID=%s\n'    "${GEN_OIDC_CLIENT_ID:-}"
+  printf 'OIDC_CLIENT_SECRET=%s\n' "${GEN_OIDC_CLIENT_SECRET:-}"
+  printf 'OIDC_REDIRECT_URI=%s\n' "${GEN_OIDC_REDIRECT_URI:-}"
+  printf 'OIDC_JWKS_URL=%s\n'     "${GEN_OIDC_JWKS_URL:-}"
+  printf 'OIDC_ISSUER=%s\n'       "${GEN_OIDC_ISSUER:-}"
+  printf 'OIDC_END_SESSION_URL=%s\n' "${GEN_OIDC_END_SESSION_URL:-}"
   echo 'PUBLIC_SSO_URL='
+  echo ""
+  echo "# --- Authentik Server (only active when COMPOSE_PROFILES includes 'authentik') ---"
+  echo "AUTHENTIK_TAG=2026.2.1"
+  printf 'AUTHENTIK_SECRET_KEY=%s\n'           "${GEN_AUTHENTIK_SECRET}"
+  echo 'AUTHENTIK_POSTGRESQL__USER=authentik'
+  echo 'AUTHENTIK_POSTGRESQL__NAME=authentik'
+  printf 'AUTHENTIK_POSTGRESQL__PASSWORD=%s\n' "${GEN_AUTHENTIK_PG_PASS}"
+  printf 'AUTHENTIK_BOOTSTRAP_EMAIL=%s\n'      "${AUTHENTIK_BOOTSTRAP_EMAIL_INPUT:-}"
+  printf 'AUTHENTIK_BOOTSTRAP_PASSWORD=%s\n'   "${AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT:-}"
+  echo 'AUTHENTIK_HTTP_PORT=9000'
+  echo 'AUTHENTIK_HTTPS_PORT=9443'
+  echo 'AUTHENTIK_ERROR_REPORTING__ENABLED=false'
   echo ""
   echo "# --- Object Storage (MinIO) ---"
   echo "# MINIO_ENDPOINT: internal container URL (moe-storage:9000)"
@@ -1311,9 +1389,86 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-_compose pull ${_Q} 2>/dev/null || true
-_compose build ${_Q}
-_compose up -d
+
+# Create Authentik data directories (bind-mount sources must exist before compose up)
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  for _ak_dir in postgres redis media certs custom-templates blueprints; do
+    mkdir -p "${MOE_DATA_ROOT}/authentik/${_ak_dir}"
+  done
+  echo "  Authentik data directories created under ${MOE_DATA_ROOT}/authentik/ ✓"
+
+  # Build OIDC redirect URIs: always include localhost fallback
+  _ak_redirect_uris="http://localhost:8088/auth/callback"
+  if [[ -n "${DOMAIN:-}" ]]; then
+    _ak_redirect_uris="${_ak_redirect_uris}
+https://admin.${DOMAIN}/auth/callback
+https://portal.${DOMAIN}/auth/callback"
+  fi
+
+  # Write Authentik blueprint — applied automatically by the worker on first start.
+  # Creates the OAuth2/OIDC provider + MoE Sovereign application with pre-generated
+  # client credentials so no manual Authentik UI interaction is needed.
+  cat > "${MOE_DATA_ROOT}/authentik/blueprints/moe-sovereign.yaml" <<BLUEPRINT
+# Generated by install.sh — applied once by authentik-worker on first start.
+# Re-running install.sh regenerates this file with the current credentials.
+version: 1
+metadata:
+  name: MoE Sovereign OIDC
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    state: present
+    identifiers:
+      name: MoE Sovereign
+    attrs:
+      name: MoE Sovereign
+      client_type: confidential
+      client_id: moe-sovereign
+      client_secret: "${GEN_AUTHENTIK_SECRET}"
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      redirect_uris: |
+$(echo "${_ak_redirect_uris}" | sed 's/^/        /')
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      include_claims_in_id_token: true
+      issuer_mode: per_provider
+
+  - model: authentik_core.application
+    state: present
+    identifiers:
+      slug: moe-sovereign
+    attrs:
+      name: MoE Sovereign
+      slug: moe-sovereign
+      provider: !KeyOf moe-sovereign
+      meta_launch_url: "${AUTHENTIK_URL_INPUT}/if/user/"
+BLUEPRINT
+  echo "  Authentik blueprint written ✓"
+
+  # Pre-fill OIDC vars in the installer scope so they land in .env
+  GEN_OIDC_CLIENT_ID="moe-sovereign"
+  GEN_OIDC_CLIENT_SECRET="${GEN_AUTHENTIK_SECRET}"
+  if [[ -n "${DOMAIN:-}" ]]; then
+    GEN_OIDC_REDIRECT_URI="https://admin.${DOMAIN}/auth/callback"
+    GEN_OIDC_ISSUER="${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/"
+    GEN_OIDC_JWKS_URL="${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/jwks/"
+    GEN_OIDC_END_SESSION_URL="${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/end-session/"
+  else
+    GEN_OIDC_REDIRECT_URI="http://localhost:8088/auth/callback"
+    GEN_OIDC_ISSUER="${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/"
+    GEN_OIDC_JWKS_URL="${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/jwks/"
+    GEN_OIDC_END_SESSION_URL="${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/end-session/"
+  fi
+fi
+
+# Build explicit --profile flags: podman-compose does not auto-read COMPOSE_PROFILES
+# from .env; docker compose does. Passing --profile explicitly works for both.
+_PROFILE_ARGS=()
+[[ "$INSTALL_NEO4J"     == "true" ]] && _PROFILE_ARGS+=(--profile neo4j)
+[[ "$INSTALL_CADDY"     == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
+[[ "$INSTALL_AUTHENTIK" == "true" ]] && _PROFILE_ARGS+=(--profile authentik)
+
+_compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
+_compose "${_PROFILE_ARGS[@]}" build ${_Q}
+_compose "${_PROFILE_ARGS[@]}" up -d
 
 echo "  Containers started ✓"
 
@@ -1375,7 +1530,22 @@ else
   fi
 fi
 
-if [[ "$INSTALL_SSO" == "true" ]]; then
+if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
+  echo ""
+  if [[ -n "${DOMAIN:-}" ]]; then
+    echo "  Authentik:   https://sso.${DOMAIN}"
+  else
+    echo "  Authentik:   http://localhost:9000"
+  fi
+  echo "  Admin login: ${AUTHENTIK_BOOTSTRAP_EMAIL_INPUT}"
+  echo ""
+  echo "  OIDC is pre-configured via blueprint — no manual Authentik UI steps needed."
+  echo "  Client ID:   moe-sovereign"
+  echo "  Issuer:      ${AUTHENTIK_URL_INPUT}/application/o/moe-sovereign/"
+  echo ""
+  echo "  [!] Authentik needs ~60s to initialise and apply the blueprint on first start."
+  echo "      The Admin UI SSO login will work automatically once Authentik is ready."
+elif [[ "$INSTALL_SSO" == "true" ]]; then
   echo ""
   echo "  SSO/OIDC:    ${AUTHENTIK_URL_INPUT}"
   echo "  [!] Complete OIDC client registration in Authentik, then add"

@@ -2,7 +2,7 @@
 
 Expert Templates define **which LLMs in which configuration** are used for which task category. They are the central control instrument for MoE routing.
 
-![Expert Templates](../assets/screenshots/admin_expert_templates.jpg)
+![Expert Templates](../assets/screenshots/admin_expert_templates.png)
 
 ## Overview
 

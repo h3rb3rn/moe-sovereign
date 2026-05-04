@@ -8,6 +8,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-05-04 — OpenAI Responses API, Pipeline Transparency Log, Chess MCP, Optional Neo4j/Authentik
+
+> `impact: minor` · `breaking: no` · `domain: api, admin-ui, mcp, deployment, installer`
+
+### Added
+
+- **OpenAI Responses API (`/v1/responses`)**: Full Codex CLI compatibility (`wire_api = "responses"`).
+  Supports streaming (keepalive SSE every 15 s), non-streaming, `<think>` block filtering,
+  content-block arrays (`input_text`, `input_file`), and template routing via model name.
+- **Pipeline Transparency Log**: New `/v1/admin/pipeline-log` API endpoint + Admin UI page at
+  `/pipeline-log`. Records per-request routing metadata: complexity level, expert domains,
+  latency, agentic rounds, cache hit. Filterable by user (ILIKE), model (ILIKE), mode, date
+  range, complexity; sortable by all columns server-side. CSV export. `usage_log` schema
+  auto-migrated with 5 new columns.
+- **Chess MCP tools**: `chess_analyze_position` (Lichess cloud eval API, free, 342 M positions)
+  and `chess_legal_moves` (python-chess, FEN parsing). Used by the GAIA pipeline for chess tasks.
+- **Optional Neo4j** (`profiles: [neo4j]`): `install.sh` now asks "Install Neo4j GraphRAG? [Y/n]".
+  Saves ~1.5 GB RAM on lightweight VMs. Setting `NEO4J_URI=` skips `_init_graph_rag()` instantly.
+- **Optional Authentik server deployment** (`profiles: [authentik]`): `install.sh` deploys all
+  four Authentik containers on request, generates secrets, writes a blueprint for automatic
+  OIDC provider + application setup — no manual Authentik UI steps needed after install.
+- **GAIA benchmark improvements**: Tool-leak filter extended, counting prompt for enumeration
+  tasks, chess FEN auto-detection.
+
+### Fixed
+
+- **`/v1/responses` 404**: Duplicate `if __name__ == "__main__":` block caused uvicorn to start
+  before Responses API routes were registered.
+- **Pipeline Log 401/403**: Admin UI proxy sent invalid empty `Bearer ` header; fixed by passing
+  `SYSTEM_API_KEY` for internal admin calls.
+- **Codex template routing**: `_find_tmpl` now matches by `name` OR UUID — `/v1/models` exposes
+  template names, DB stores UUIDs, causing the wrong template to be selected silently.
+- **`/v1/models`**: Added `owned_by` and `created` fields required by OpenAI spec (suppresses
+  Codex CLI "Model metadata not found" for unknown model IDs).
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor |
+| `breaking` | no |
+| `domain` | API, Admin UI, MCP Server, Deployment, Installer |
+
+---
+
 ## 2026-04-27 — Tier-2 Semantic Memory (1M-Token Context Window) & MRCR-lite Benchmark
 
 > `impact: minor` · `breaking: no` · `domain: orchestrator, memory, benchmarks`
