@@ -3648,15 +3648,20 @@ async def pipeline_log_page(request: Request, _=Depends(require_login)):
 @app.get("/api/pipeline-log", dependencies=[Depends(require_login)])
 async def api_pipeline_log(
     limit: int = 100, offset: int = 0,
-    user_id: Optional[str] = None, model: Optional[str] = None,
+    user_id: Optional[str] = None, username: Optional[str] = None,
+    model: Optional[str] = None, moe_mode: Optional[str] = None,
     from_date: Optional[str] = None, to_date: Optional[str] = None,
     complexity_level: Optional[str] = None, cache_hit: Optional[str] = None,
+    sort_by: str = "requested_at", sort_dir: str = "desc",
     format: str = "json",
 ):
     """Proxy to orchestrator /v1/admin/pipeline-log — admin UI internal."""
-    params: dict = {"limit": limit, "offset": offset}
+    params: dict = {"limit": limit, "offset": offset,
+                    "sort_by": sort_by, "sort_dir": sort_dir}
     if user_id:          params["user_id"]          = user_id
+    if username:         params["username"]          = username
     if model:            params["model"]             = model
+    if moe_mode:         params["moe_mode"]          = moe_mode
     if from_date:        params["from_date"]         = from_date
     if to_date:          params["to_date"]           = to_date
     if complexity_level: params["complexity_level"]  = complexity_level

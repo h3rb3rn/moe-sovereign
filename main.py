@@ -9348,22 +9348,37 @@ async def get_tool_eval_log(limit: int = 50):
         return {"records": [], "total_lines": 0}
 
 
+_PL_SORT_COLS = {
+    "requested_at": "ul.requested_at",
+    "model":        "ul.model",
+    "moe_mode":     "ul.moe_mode",
+    "username":     "u.username",
+    "total_tokens": "ul.total_tokens",
+    "latency_ms":   "ul.latency_ms",
+    "complexity_level": "ul.complexity_level",
+}
+
 @app.get("/v1/admin/pipeline-log")
 async def pipeline_log(
     raw_request: Request,
     limit: int = 100,
     offset: int = 0,
     user_id: Optional[str] = None,
+    username: Optional[str] = None,
     model: Optional[str] = None,
+    moe_mode: Optional[str] = None,
     from_date: Optional[str] = None,
     to_date: Optional[str] = None,
     complexity_level: Optional[str] = None,
     cache_hit: Optional[bool] = None,
+    sort_by: str = "requested_at",
+    sort_dir: str = "desc",
     format: str = "json",
 ) -> Response:
     """Pipeline Transparency Log — query routing decisions, expert domains, and latency per request.
 
-    Supports filtering by user, model, date range, complexity level, and cache hit status.
+    Supports filtering by user, model, mode, date range, complexity level, and cache hit status.
+    Supports sorting by any column via sort_by/sort_dir.
     Returns JSON (default) or CSV for BI/export use. Auth: admin API key required.
     """
     raw_key = _extract_api_key(raw_request)
@@ -9387,9 +9402,15 @@ async def pipeline_log(
         if user_id:
             conditions.append("ul.user_id = %s")
             params.append(user_id)
+        if username:
+            conditions.append("u.username ILIKE %s")
+            params.append(f"%{username}%")
         if model:
-            conditions.append("ul.model = %s")
-            params.append(model)
+            conditions.append("ul.model ILIKE %s")
+            params.append(f"%{model}%")
+        if moe_mode:
+            conditions.append("ul.moe_mode = %s")
+            params.append(moe_mode)
         if from_date:
             conditions.append("ul.requested_at >= %s")
             params.append(from_date)
@@ -9404,6 +9425,8 @@ async def pipeline_log(
             params.append(cache_hit)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        _sort_col = _PL_SORT_COLS.get(sort_by, "ul.requested_at")
+        _sort_ord = "ASC" if sort_dir.lower() == "asc" else "DESC"
         params.extend([limit, offset])
 
         async with _userdb_pool.connection() as conn:
@@ -9417,7 +9440,7 @@ async def pipeline_log(
                         FROM usage_log ul
                         LEFT JOIN users u ON ul.user_id = u.id
                         {where}
-                        ORDER BY ul.requested_at DESC
+                        ORDER BY {_sort_col} {_sort_ord}
                         LIMIT %s OFFSET %s""",
                     params,
                 )
