@@ -986,6 +986,7 @@ _TOOL_GROUP_RESEARCH = frozenset({
     "pubchem_compound_search", "pubchem_advanced_search",
     "github_search_issues", "github_issue_events",
     "youtube_transcript",
+    "chess_analyze_position", "chess_legal_moves",  # chess position analysis via Lichess
 })
 # Data/Math: shown for numeric, statistical, or text-processing queries
 _TOOL_GROUP_DATA = frozenset({
@@ -1564,8 +1565,13 @@ def _extract_session_id(request: Request) -> Optional[str]:
 async def _log_usage_to_db(user_id: str, api_key_id: str, request_id: str,
                             model: str, moe_mode: str,
                             prompt_tokens: int, completion_tokens: int,
-                            status: str = "ok", session_id: str = None) -> None:
-    """Fire-and-forget Postgres usage log. Never raises exceptions."""
+                            status: str = "ok", session_id: str = None,
+                            latency_ms: Optional[int] = None,
+                            complexity_level: str = "",
+                            expert_domains: str = "",
+                            cache_hit: bool = False,
+                            agentic_rounds: int = 0) -> None:
+    """Fire-and-forget Postgres usage log with pipeline routing context. Never raises exceptions."""
     try:
         if _userdb_pool is None:
             return
@@ -1576,11 +1582,14 @@ async def _log_usage_to_db(user_id: str, api_key_id: str, request_id: str,
                 await cur.execute(
                     "INSERT INTO usage_log "
                     "(id,user_id,api_key_id,request_id,session_id,model,moe_mode,prompt_tokens,"
-                    "completion_tokens,total_tokens,status,requested_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
+                    "completion_tokens,total_tokens,status,requested_at,"
+                    "latency_ms,complexity_level,expert_domains,cache_hit,agentic_rounds) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
                     (uuid.uuid4().hex, user_id, api_key_id or None, request_id,
                      session_id or None, model, moe_mode, prompt_tokens, completion_tokens,
-                     prompt_tokens + completion_tokens, status, now_iso),
+                     prompt_tokens + completion_tokens, status, now_iso,
+                     latency_ms, complexity_level or None, expert_domains or None,
+                     cache_hit, agentic_rounds),
                 )
                 await cur.execute(
                     "UPDATE api_keys SET last_used_at=%s WHERE user_id=%s AND is_active=TRUE",
@@ -3801,6 +3810,7 @@ async def planner_node(state: AgentState):
             _depth_hint = (
                 "SEARCH STRATEGY (Depth 2 — use specialized tools directly):\n"
                 "  • Use youtube_transcript MCP tool for video content\n"
+                "  • Use chess_analyze_position MCP tool for chess positions — extract FEN from image first, then call the tool\n"
                 "  • Use pubchem_compound_search MCP tool for chemical/compound data\n"
                 "  • Use orcid_works_count MCP tool for academic publication counts\n"
                 "  • Use fetch_pdf_text MCP tool with a direct DOI or PDF URL\n"
@@ -6665,6 +6675,12 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
         PROM_REQUESTS.labels(mode=mode, cache_hit=str(cache_hit_flag).lower(), user_id=_uid).inc()
         PROM_RESPONSE_TIME.labels(mode=mode).observe(time.monotonic() - _t_start)
         # Usage-Tracking in SQLite + Valkey (fire-and-forget)
+        # Extract pipeline routing context for transparency log
+        _plan = data.get("plan") or []
+        _expert_domains = ",".join(sorted({
+            t.get("category", "") for t in _plan if isinstance(t, dict) and t.get("category")
+        }))
+        _agentic_rounds = int(data.get("agentic_round", 0))
         if _uid != "anon":
             asyncio.create_task(_log_usage_to_db(
                 user_id=_uid,
@@ -6675,6 +6691,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 prompt_tokens=p_tok,
                 completion_tokens=c_tok,
                 session_id=session_id,
+                latency_ms=int(total_s * 1000),
+                complexity_level=data.get("complexity_level", ""),
+                expert_domains=_expert_domains,
+                cache_hit=bool(cache_hit_flag),
+                agentic_rounds=_agentic_rounds,
             ))
             asyncio.create_task(_increment_user_budget(_uid, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
         if not _deregistered:
@@ -9310,6 +9331,111 @@ async def get_tool_eval_log(limit: int = 50):
         return {"records": records, "total_lines": len(lines)}
     except FileNotFoundError:
         return {"records": [], "total_lines": 0}
+
+
+@app.get("/v1/admin/pipeline-log")
+async def pipeline_log(
+    raw_request: Request,
+    limit: int = 100,
+    offset: int = 0,
+    user_id: Optional[str] = None,
+    model: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    complexity_level: Optional[str] = None,
+    cache_hit: Optional[bool] = None,
+    format: str = "json",
+) -> Response:
+    """Pipeline Transparency Log — query routing decisions, expert domains, and latency per request.
+
+    Supports filtering by user, model, date range, complexity level, and cache hit status.
+    Returns JSON (default) or CSV for BI/export use. Auth: admin API key required.
+    """
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+    if not user_ctx.get("is_admin"):
+        return JSONResponse(status_code=403, content={"error": "Admin access required"})
+
+    try:
+        if _userdb_pool is None:
+            return JSONResponse(status_code=503, content={"error": "Database unavailable"})
+
+        conditions: list[str] = []
+        params: list = []
+
+        if user_id:
+            conditions.append("ul.user_id = %s")
+            params.append(user_id)
+        if model:
+            conditions.append("ul.model = %s")
+            params.append(model)
+        if from_date:
+            conditions.append("ul.requested_at >= %s")
+            params.append(from_date)
+        if to_date:
+            conditions.append("ul.requested_at <= %s")
+            params.append(to_date + "T23:59:59")
+        if complexity_level:
+            conditions.append("ul.complexity_level = %s")
+            params.append(complexity_level)
+        if cache_hit is not None:
+            conditions.append("ul.cache_hit = %s")
+            params.append(cache_hit)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
+
+        async with _userdb_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""SELECT ul.request_id, ul.user_id, u.username,
+                               ul.model, ul.moe_mode, ul.session_id,
+                               ul.prompt_tokens, ul.completion_tokens, ul.total_tokens,
+                               ul.latency_ms, ul.complexity_level, ul.expert_domains,
+                               ul.cache_hit, ul.agentic_rounds, ul.status, ul.requested_at
+                        FROM usage_log ul
+                        LEFT JOIN users u ON ul.user_id = u.id
+                        {where}
+                        ORDER BY ul.requested_at DESC
+                        LIMIT %s OFFSET %s""",
+                    params,
+                )
+                rows = await cur.fetchall()
+                cols = [d.name for d in cur.description]
+
+                await cur.execute(
+                    f"SELECT COUNT(*) FROM usage_log ul {where}",
+                    params[:-2],
+                )
+                total = (await cur.fetchone())[0]
+
+        records = [dict(zip(cols, row)) for row in rows]
+
+        if format == "csv":
+            import io, csv as _csv
+            buf = io.StringIO()
+            writer = _csv.DictWriter(buf, fieldnames=cols)
+            writer.writeheader()
+            writer.writerows(records)
+            return Response(
+                content=buf.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=pipeline_log.csv"},
+            )
+
+        return JSONResponse({
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "records": records,
+        })
+    except Exception as e:
+        logger.warning("Pipeline log query failed: %s", e)
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # ─── OLLAMA COMPATIBILITY API (/api/*) ───────────────────────────────────────

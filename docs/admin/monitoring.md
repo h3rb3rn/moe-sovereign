@@ -1,11 +1,13 @@
 # Monitoring & Processes
 
-The admin backend provides three monitoring layers:
+The admin backend provides four monitoring layers:
 
 - **System Monitoring** (`/monitoring`) — aggregated Prometheus metrics and charts
 - **Live Monitoring** (`/live-monitoring`) — real-time process tracking with kill functionality
 - **Starfleet** (`/starfleet`) — ambient intelligence dashboard with proactive alerts,
   live node health, mission context, and feature toggles
+- **Pipeline Transparency Log** (`/pipeline-log`) — per-request routing decisions, expert domains,
+  complexity levels, latency, and agentic rounds; filterable and CSV-exportable
 
 > **Starfleet documentation:** [Starfleet — Ambient Intelligence](../system/starfleet.md)
 
@@ -434,3 +436,46 @@ All installed models with name, size (GB), parameter count, quantization.
 | `moe_ontology_gaps_total` | – | Gauge | Ontology gaps |
 
 All metrics are also directly accessible via Prometheus (`http://localhost:9090`) and Grafana (`http://localhost:3001`).
+
+---
+
+## Pipeline Transparency Log
+
+**URL:** `/pipeline-log`  
+**API:** `GET /v1/admin/pipeline-log` (admin key required) or `/api/pipeline-log` (session)
+
+The Pipeline Transparency Log records per-request routing metadata for every request processed
+by the MoE pipeline. It answers questions like: which expert domains were engaged, what
+complexity level was assigned, how long did the pipeline take, and how many agentic re-planning
+rounds occurred.
+
+### Available fields
+
+| Field | Description |
+|---|---|
+| `requested_at` | ISO timestamp of the request |
+| `user_id` / `username` | Requesting user |
+| `model` | Template/model used |
+| `moe_mode` | Pipeline mode (`default`, `research`, `code`, …) |
+| `complexity_level` | Planner complexity estimate (`trivial`, `moderate`, `complex`, `memory_recall`) |
+| `expert_domains` | Comma-separated expert categories engaged (e.g. `reasoning,web_researcher`) |
+| `prompt_tokens` / `completion_tokens` | Token counts |
+| `latency_ms` | End-to-end pipeline latency in milliseconds |
+| `cache_hit` | Whether the L0 Redis or L1 ChromaDB cache was hit |
+| `agentic_rounds` | Number of Judge-triggered re-planning iterations |
+| `status` | `ok` or error indicator |
+
+### Filters
+
+All filters are optional query parameters: `from_date`, `to_date`, `user_id`, `model`,
+`complexity_level`, `cache_hit`, `limit`, `offset`.
+
+### Export
+
+Append `?format=csv` for a CSV download suitable for BI tools. The export respects all
+active filters.
+
+### Schema migration
+
+The `usage_log` table is extended automatically on first startup with the new columns
+via `ALTER TABLE … ADD COLUMN IF NOT EXISTS` — no manual migration required.

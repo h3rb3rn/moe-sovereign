@@ -7,6 +7,7 @@
   "nav.skills":           "Skills",
   "nav.mcp_tools":        "MCP Tools",
   "nav.tool_eval":        "Tool Eval",
+  "nav.pipeline_log":     "Pipeline Log",
   "nav.federation":       "Föderation",
   "nav.quarantine":       "Quarantäne",
   "nav.templates":        "Templates",
@@ -935,6 +936,12 @@
   ,"dialog.import_merge_desc":         "Vorhandene Einträge bleiben unverändert"
   ,"dialog.import_replace_title":      "Vorhandene überschreiben"
   ,"dialog.import_replace_desc":       "Einträge mit gleichem Namen werden ersetzt"
+  ,"lbl.pipeline_log":                 "Pipeline Log"
+  ,"lbl.complexity":                   "Komplexität"
+  ,"lbl.from":                         "Von"
+  ,"lbl.to":                           "Bis"
+  ,"lbl.limit":                        "Limit"
+  ,"lbl.requested_at":                 "Zeitpunkt"
   ,"lbl.last_24h":                     "Letzte 24 Stunden"
 
   ,"starfleet_features":               "Starfleet-Funktionen"

@@ -135,7 +135,13 @@ CREATE TABLE IF NOT EXISTS usage_log (
     total_tokens      BIGINT NOT NULL DEFAULT 0,
     status            TEXT NOT NULL DEFAULT 'ok',
     notes             TEXT,
-    requested_at      TEXT NOT NULL
+    requested_at      TEXT NOT NULL,
+    -- Pipeline transparency fields (added for routing observability)
+    latency_ms        INTEGER,
+    complexity_level  TEXT,
+    expert_domains    TEXT,
+    cache_hit         BOOLEAN NOT NULL DEFAULT FALSE,
+    agentic_rounds    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -294,6 +300,13 @@ CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant ON tenant_memberships(t
 -- Memory preferences: idempotent column additions for existing deployments
 ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_prefer_fresh       BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_share_with_team    BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Pipeline transparency log: idempotent additions for existing deployments
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS latency_ms        INTEGER;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS complexity_level  TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS expert_domains    TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cache_hit         BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS agentic_rounds    INTEGER NOT NULL DEFAULT 0;
 """
 
 
