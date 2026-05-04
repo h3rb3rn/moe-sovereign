@@ -1311,9 +1311,14 @@ echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
 
 cd "${INSTALL_DIR}"
-_compose pull ${_Q} 2>/dev/null || true
-_compose build ${_Q}
-_compose up -d
+# Build explicit --profile flags: podman-compose does not auto-read COMPOSE_PROFILES
+# from .env; docker compose does. Passing --profile explicitly works for both.
+_PROFILE_ARGS=()
+[[ "$INSTALL_CADDY" == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
+
+_compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
+_compose "${_PROFILE_ARGS[@]}" build ${_Q}
+_compose "${_PROFILE_ARGS[@]}" up -d
 
 echo "  Containers started ✓"
 
