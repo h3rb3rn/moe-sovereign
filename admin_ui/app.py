@@ -3637,6 +3637,49 @@ async def tool_eval_page(request: Request, _=Depends(require_login)):
     })
 
 
+@app.get("/pipeline-log", response_class=HTMLResponse)
+async def pipeline_log_page(request: Request, _=Depends(require_login)):
+    """Pipeline Transparency Log — routing decisions and expert engagement per request."""
+    return TEMPLATES.TemplateResponse(request, "pipeline_log.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/pipeline-log", dependencies=[Depends(require_login)])
+async def api_pipeline_log(
+    limit: int = 100, offset: int = 0,
+    user_id: Optional[str] = None, model: Optional[str] = None,
+    from_date: Optional[str] = None, to_date: Optional[str] = None,
+    complexity_level: Optional[str] = None, cache_hit: Optional[str] = None,
+    format: str = "json",
+):
+    """Proxy to orchestrator /v1/admin/pipeline-log — admin UI internal."""
+    params: dict = {"limit": limit, "offset": offset}
+    if user_id:          params["user_id"]          = user_id
+    if model:            params["model"]             = model
+    if from_date:        params["from_date"]         = from_date
+    if to_date:          params["to_date"]           = to_date
+    if complexity_level: params["complexity_level"]  = complexity_level
+    if cache_hit:        params["cache_hit"]         = cache_hit
+    if format != "json": params["format"]            = format
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                f"{ORCHESTRATOR_URL}/v1/admin/pipeline-log",
+                params=params,
+            )
+            r.raise_for_status()
+            if format == "csv":
+                from fastapi.responses import Response as FR
+                return FR(content=r.content, media_type="text/csv",
+                          headers={"Content-Disposition": "attachment; filename=pipeline_log.csv"})
+            return r.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Orchestrator unreachable")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/api/tool-eval", dependencies=[Depends(require_login)])
 async def api_tool_eval(limit: int = 50):
     try:

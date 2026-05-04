@@ -503,6 +503,7 @@
   "info.skill_arguments":     "使用 $ARGUMENTS 作为传入参数的占位符",
   "info.skill_name_hint":     "仅小写字母、数字和连字符。变为 /名称",
   "info.mcp_desc":            "启用/停用 mcp-precision 容器的工具",
+  "info.pipeline_log_desc":   "路由透明度 — 每个请求使用的专家、复杂度级别、延迟和代理轮次。",
   "info.tool_eval_desc":      "最近的工具处理器调用 — 哪些模型调用工具？",
   "info.color_coding":        "颜色编码：≤30秒 · ≤120秒 · >120秒（疑似超时）",
   "info.no_profiles_enabled": "没有启用的配置文件 — 回退设置生效。",
@@ -935,6 +936,12 @@
   ,"dialog.import_merge_desc":         "现有条目保持不变"
   ,"dialog.import_replace_title":      "覆盖已有内容"
   ,"dialog.import_replace_desc":       "同名条目将被替换"
+  ,"lbl.pipeline_log":                 "流水线日志"
+  ,"lbl.complexity":                   "复杂度"
+  ,"lbl.from":                         "从"
+  ,"lbl.to":                           "至"
+  ,"lbl.limit":                        "限制"
+  ,"lbl.requested_at":                 "时间戳"
   ,"lbl.last_24h":                     "最近24小时"
 
   ,"starfleet_features":               "星际联邦功能"

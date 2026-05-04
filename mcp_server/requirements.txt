@@ -16,3 +16,4 @@ minio>=7.2.0
 python-pptx>=0.6.23
 youtube-transcript-api>=0.6.0
 ddgs>=0.1.0
+chess>=1.10.0

@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Log – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-journal-text section-icon text-success"></i>{{ t(request, 'page.pipeline_log') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.pipeline_log_desc') }}</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a id="csv-export-btn" href="/api/pipeline-log?format=csv&limit=10000" class="btn btn-outline-success btn-sm">
+      <i class="bi bi-download me-1"></i>CSV
+    </a>
+    <button class="btn btn-outline-secondary btn-sm" onclick="loadLog()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+  </div>
+</div>
+
+{# Filters #}
+<div class="card border-0 bg-body-tertiary mb-3 p-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.from') }}</label>
+      <input type="date" id="f-from" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.to') }}</label>
+      <input type="date" id="f-to" class="form-control form-control-sm">
+    </div>
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.complexity') }}</label>
+      <select id="f-complexity" class="form-select form-select-sm">
+        <option value="">All</option>
+        <option>trivial</option>
+        <option>moderate</option>
+        <option>complex</option>
+        <option>memory_recall</option>
+      </select>
+    </div>
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">Cache Hit</label>
+      <select id="f-cache" class="form-select form-select-sm">
+        <option value="">All</option>
+        <option value="true">Hit</option>
+        <option value="false">Miss</option>
+      </select>
+    </div>
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.limit') }}</label>
+      <select id="f-limit" class="form-select form-select-sm">
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+        <option value="500">500</option>
+      </select>
+    </div>
+    <div class="col-sm-2">
+      <button class="btn btn-sm btn-primary w-100" onclick="applyFilters()">
+        <i class="bi bi-funnel me-1"></i>Filter
+      </button>
+    </div>
+  </div>
+</div>
+
+{# Summary cards #}
+<div class="row g-2 mb-3" id="summary-row" style="display:none!important"></div>
+
+{# Table #}
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle" id="log-table">
+        <thead class="table-dark small">
+          <tr>
+            <th>{{ t(request, 'lbl.requested_at') }}</th>
+            <th>User</th>
+            <th>Model</th>
+            <th>Mode</th>
+            <th>Complexity</th>
+            <th>Experts</th>
+            <th>Tokens</th>
+            <th>Latency</th>
+            <th>Agentic</th>
+            <th>Cache</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="11" class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'loading') }}
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-between align-items-center small text-muted py-2">
+    <span id="log-count">—</span>
+    <div class="d-flex gap-1" id="pagination"></div>
+  </div>
+</div>
+
+<script>
+let _offset = 0;
+let _total  = 0;
+
+function applyFilters() { _offset = 0; loadLog(); }
+
+function buildUrl(fmt) {
+  const p = new URLSearchParams();
+  const from = document.getElementById('f-from').value;
+  const to   = document.getElementById('f-to').value;
+  const cx   = document.getElementById('f-complexity').value;
+  const ch   = document.getElementById('f-cache').value;
+  const lim  = document.getElementById('f-limit').value;
+  if (from) p.set('from_date', from);
+  if (to)   p.set('to_date',   to);
+  if (cx)   p.set('complexity_level', cx);
+  if (ch)   p.set('cache_hit', ch);
+  p.set('limit',  fmt === 'csv' ? 10000 : lim);
+  p.set('offset', _offset);
+  if (fmt)  p.set('format', fmt);
+  return '/api/pipeline-log?' + p.toString();
+}
+
+async function loadLog() {
+  document.getElementById('log-body').innerHTML =
+    '<tr><td colspan="11" class="text-center text-muted py-4">' +
+    '<div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+  try {
+    const r = await fetch(buildUrl(''));
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    _total = d.total;
+    renderTable(d.records);
+    renderPagination(parseInt(document.getElementById('f-limit').value));
+    document.getElementById('log-count').textContent =
+      `${d.total.toLocaleString()} requests (showing ${d.records.length})`;
+    document.getElementById('csv-export-btn').href = buildUrl('csv');
+  } catch (e) {
+    document.getElementById('log-body').innerHTML =
+      `<tr><td colspan="11" class="text-danger text-center py-3">${e.message}</td></tr>`;
+  }
+}
+
+function renderTable(rows) {
+  const expertColor = {
+    reasoning: 'text-warning', web_researcher: 'text-info', code_reviewer: 'text-primary',
+    medical_consult: 'text-danger', legal_advisor: 'text-success', math: 'text-secondary',
+    general: 'text-muted', translation: 'text-info', science: 'text-success',
+  };
+  const cxBadge = {
+    trivial: 'bg-secondary', moderate: 'bg-primary', complex: 'bg-warning text-dark',
+    memory_recall: 'bg-info text-dark',
+  };
+  const tbody = rows.map(r => {
+    const ts = r.requested_at ? r.requested_at.replace('T', ' ').substring(0, 19) : '—';
+    const domains = (r.expert_domains || '').split(',').filter(Boolean).map(d =>
+      `<span class="badge bg-dark border me-1 ${expertColor[d] || ''}" title="${d}">${d.replace('_', ' ')}</span>`
+    ).join('');
+    const cx = r.complexity_level || '';
+    const cxHtml = cx ? `<span class="badge ${cxBadge[cx] || 'bg-dark'}">${cx}</span>` : '<span class="text-muted">—</span>';
+    const lat = r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + 's' : '—';
+    const hit = r.cache_hit ?
+      '<span class="badge bg-success">hit</span>' :
+      '<span class="badge bg-outline-secondary text-muted border">miss</span>';
+    const st = r.status === 'ok' ?
+      '<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>' :
+      `<span class="text-danger" title="${r.status}"><i class="bi bi-x-circle-fill"></i></span>`;
+    return `<tr>
+      <td class="text-muted small text-nowrap">${ts}</td>
+      <td class="small">${r.username || r.user_id?.substring(0,8) || '—'}</td>
+      <td class="small text-truncate" style="max-width:120px" title="${r.model}">${r.model}</td>
+      <td><span class="badge bg-secondary">${r.moe_mode}</span></td>
+      <td>${cxHtml}</td>
+      <td>${domains || '<span class="text-muted">—</span>'}</td>
+      <td class="small text-nowrap">${(r.total_tokens||0).toLocaleString()}</td>
+      <td class="small">${lat}</td>
+      <td class="text-center">${r.agentic_rounds || 0}</td>
+      <td>${hit}</td>
+      <td>${st}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('log-body').innerHTML = tbody || '<tr><td colspan="11" class="text-center text-muted py-4">No records</td></tr>';
+}
+
+function renderPagination(limit) {
+  const pages = Math.ceil(_total / limit);
+  const cur   = Math.floor(_offset / limit);
+  const pg = document.getElementById('pagination');
+  pg.innerHTML = '';
+  if (pages <= 1) return;
+  const mkBtn = (label, off, disabled) => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-outline-secondary btn-sm';
+    b.innerHTML = label;
+    b.disabled  = disabled;
+    b.onclick   = () => { _offset = off; loadLog(); };
+    return b;
+  };
+  pg.append(mkBtn('«', 0, cur === 0));
+  pg.append(mkBtn('‹', Math.max(0, _offset - limit), cur === 0));
+  const span = document.createElement('span');
+  span.className = 'btn btn-sm disabled';
+  span.textContent = `${cur + 1} / ${pages}`;
+  pg.append(span);
+  pg.append(mkBtn('›', _offset + limit, cur >= pages - 1));
+  pg.append(mkBtn('»', (pages - 1) * limit, cur >= pages - 1));
+}
+
+loadLog();
+</script>
+{% endblock %}
