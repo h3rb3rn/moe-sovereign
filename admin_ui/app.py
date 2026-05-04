@@ -3663,10 +3663,13 @@ async def api_pipeline_log(
     if cache_hit:        params["cache_hit"]         = cache_hit
     if format != "json": params["format"]            = format
     try:
+        _sys_key = os.environ.get("SYSTEM_API_KEY", "")
+        _headers = {"Authorization": f"Bearer {_sys_key}"} if _sys_key else {}
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.get(
                 f"{ORCHESTRATOR_URL}/v1/admin/pipeline-log",
                 params=params,
+                headers=_headers,
             )
             r.raise_for_status()
             if format == "csv":

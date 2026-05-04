@@ -467,12 +467,19 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
         def _find_tmpl(tid: str):
             if tid in user_templates:
                 return user_templates[tid]
-            return next((t for t in templates if t.get("id") == tid), None)
+            # Match by UUID id OR human-readable name (used by Codex CLI / /v1/models)
+            return next((t for t in templates if t.get("id") == tid or t.get("name") == tid), None)
+        def _tmpl_in_allowed(tid: str) -> bool:
+            """True if tid (name or UUID) refers to a template the user is permitted to use."""
+            if tid in tmpl_ids:
+                return True
+            t = _find_tmpl(tid)
+            return bool(t and t.get("id") in tmpl_ids)
         if admin_override and override_tmpl_id:
             tmpl = _find_tmpl(override_tmpl_id)
         elif not tmpl_ids:
             return empty
-        elif override_tmpl_id and override_tmpl_id in tmpl_ids:
+        elif override_tmpl_id and _tmpl_in_allowed(override_tmpl_id):
             tmpl = _find_tmpl(override_tmpl_id)
         else:
             tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
@@ -6264,6 +6271,7 @@ async def list_models(raw_request: Request):
     _user_cc_json_m   = user_ctx.get("user_cc_profiles_json", "")
     has_cc            = bool(user_perms.get("cc_profile")) or bool(_user_cc_json_m and _user_cc_json_m not in ("{}", ""))  # CC aliases when permission granted or user has own profiles
 
+    _model_created = int(time.time())
     if allowed_templates:
         # User has templates assigned → only show templates (no generic modes)
         all_templates = _read_expert_templates()
@@ -6271,6 +6279,8 @@ async def list_models(raw_request: Request):
             {
                 "id":          t.get("name", t["id"]),   # Template name as model ID
                 "object":      "model",
+                "owned_by":    "moe-sovereign",
+                "created":     _model_created,
                 "description": t.get("description") or t.get("name", t["id"]),
             }
             for t in all_templates if t.get("id") in allowed_templates
@@ -6282,7 +6292,8 @@ async def list_models(raw_request: Request):
         _has_other_perms = bool(user_perms.get("model_endpoint") or user_perms.get("cc_profile"))
         if allowed_modes is not None or not _has_other_perms:
             main_models = [
-                {"id": cfg["model_id"], "object": "model", "description": cfg["description"]}
+                {"id": cfg["model_id"], "object": "model", "owned_by": "moe-sovereign",
+                 "created": _model_created, "description": cfg["description"]}
                 for cfg in MODES.values()
                 if allowed_modes is None or cfg["model_id"] in allowed_modes
             ]
@@ -6292,7 +6303,8 @@ async def list_models(raw_request: Request):
     existing_ids = {m["id"] for m in main_models}
     # Claude Code compatible model IDs — only for users with cc_profile permission
     claude_models = [
-        {"id": mid, "object": "model", "description": f"Claude Code compatible → MoE ({CLAUDE_CODE_TOOL_MODEL} for tools)"}
+        {"id": mid, "object": "model", "owned_by": "moe-sovereign", "created": _model_created,
+         "description": f"Claude Code compatible → MoE ({CLAUDE_CODE_TOOL_MODEL} for tools)"}
         for mid in sorted(CLAUDE_CODE_MODELS) if mid not in existing_ids
     ] if has_cc else []
     # Native LLMs — direct inference endpoints from model_endpoint permission (model@node)
@@ -6332,6 +6344,7 @@ async def list_models(raw_request: Request):
                         if mid not in seen and mid not in existing_ids:
                             seen.add(mid)
                             native_models.append({"id": mid, "object": "model",
+                                                  "owned_by": "moe-sovereign", "created": _model_created,
                                                   "description": f"Direkt via {node}"})
                 except Exception:
                     pass
@@ -6342,6 +6355,8 @@ async def list_models(raw_request: Request):
                 native_models.append({
                     "id":          model_id,
                     "object":      "model",
+                    "owned_by":    "moe-sovereign",
+                    "created":     _model_created,
                     "description": f"Direkt via {node}" if node else "Direktzugriff",
                 })
     return {"object": "list", "data": main_models + claude_models + native_models}
@@ -9354,10 +9369,12 @@ async def pipeline_log(
     raw_key = _extract_api_key(raw_request)
     if not raw_key:
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    _sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    _is_sys_key = bool(_sys_key and raw_key == _sys_key)
     user_ctx = await _validate_api_key(raw_key)
     if "error" in user_ctx:
         return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
-    if not user_ctx.get("is_admin"):
+    if not (_is_sys_key or user_ctx.get("is_admin")):
         return JSONResponse(status_code=403, content={"error": "Admin access required"})
 
     try:
