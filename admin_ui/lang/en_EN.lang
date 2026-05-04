@@ -7,6 +7,7 @@
   "nav.skills":           "Skills",
   "nav.mcp_tools":        "MCP Tools",
   "nav.tool_eval":        "Tool Eval",
+  "nav.pipeline_log":     "Pipeline Log",
   "nav.federation":       "Federation",
   "nav.quarantine":       "Quarantine",
   "nav.templates":        "Templates",
@@ -503,6 +504,7 @@
   "info.skill_arguments":     "Use $ARGUMENTS as placeholder for passed arguments",
   "info.skill_name_hint":     "Lowercase letters, digits and hyphens only. Becomes /name",
   "info.mcp_desc":            "Enable/disable tools of the mcp-precision container",
+  "info.pipeline_log_desc":   "Routing transparency — which experts were engaged, complexity levels, latencies and agentic rounds per request.",
   "info.tool_eval_desc":      "Recent tool handler calls — which models call tools vs. write prose?",
   "info.color_coding":        "Color coding: ≤30s · ≤120s · >120s (suspected timeout)",
   "info.no_profiles_enabled": "No profiles enabled — fallback settings apply.",
@@ -935,6 +937,12 @@
   ,"dialog.import_merge_desc":         "Existing entries remain unchanged"
   ,"dialog.import_replace_title":      "Overwrite existing"
   ,"dialog.import_replace_desc":       "Entries with the same name will be replaced"
+  ,"lbl.pipeline_log":                 "Pipeline Log"
+  ,"lbl.complexity":                   "Complexity"
+  ,"lbl.from":                         "From"
+  ,"lbl.to":                           "To"
+  ,"lbl.limit":                        "Limit"
+  ,"lbl.requested_at":                 "Timestamp"
   ,"lbl.last_24h":                     "Last 24 hours"
 
   ,"starfleet_features":               "Starfleet Features"

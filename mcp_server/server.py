@@ -3365,6 +3365,100 @@ def watchdog_alerts(limit: int = 10) -> str:
         return f"[watchdog_alerts error: {exc}]"
 
 
+@mcp.tool()
+def chess_analyze_position(fen: str, top_moves: int = 3) -> str:
+    """Analyze a chess position and return the best moves using Lichess cloud evaluation (Stockfish).
+
+    Uses the Lichess public API — no API key required. Returns top moves with centipawn scores.
+    Covers ~342 million positions evaluated at depth 20-99.
+
+    fen: FEN string of the chess position (e.g. 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1')
+    top_moves: Number of best moves to return (1-5, default 3)
+    """
+    fen = fen.strip()
+    if not fen:
+        return "[chess_analyze_position: empty FEN string]"
+
+    # Basic FEN validation: must have 6 space-separated parts
+    parts = fen.split()
+    if len(parts) < 4:
+        return f"[chess_analyze_position: invalid FEN — expected at least 4 parts, got {len(parts)}]"
+
+    top_moves = max(1, min(5, int(top_moves)))
+
+    try:
+        r = httpx.get(
+            "https://lichess.org/api/cloud-eval",
+            params={"fen": fen, "multiPv": top_moves},
+            headers={"Accept": "application/json"},
+            timeout=12.0,
+        )
+        if r.status_code == 404:
+            # Position not in Lichess cloud database — try with python-chess + stockfish fallback
+            return (
+                f"[chess_analyze_position: position not in Lichess cloud database. "
+                f"FEN: {fen}. Use the FEN to reason about legal moves directly.]"
+            )
+        if r.status_code != 200:
+            return f"[chess_analyze_position: Lichess API error {r.status_code}]"
+
+        data = r.json()
+        pvs = data.get("pvs", [])
+        if not pvs:
+            return f"[chess_analyze_position: no evaluation available for FEN: {fen}]"
+
+        side = parts[1] if len(parts) > 1 else "?"
+        side_str = "White" if side == "w" else "Black" if side == "b" else side
+        depth = data.get("depth", "?")
+
+        lines = [f"Position analysis (depth {depth}, {side_str} to move):"]
+        for i, pv in enumerate(pvs, 1):
+            moves = pv.get("moves", "").split()
+            best = moves[0] if moves else "?"
+            cp = pv.get("cp")
+            mate = pv.get("mate")
+            if mate is not None:
+                score = f"mate in {abs(mate)}"
+            elif cp is not None:
+                score = f"{cp/100:+.2f}" if side == "w" else f"{-cp/100:+.2f}"
+            else:
+                score = "?"
+            lines.append(f"  Move {i}: {best}  (eval: {score})  continuation: {' '.join(moves[:5])}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"[chess_analyze_position: error — {e}]"
+
+
+@mcp.tool()
+def chess_legal_moves(fen: str) -> str:
+    """Return all legal moves for a chess position given its FEN string.
+
+    Uses python-chess for exact legal move generation — no external API needed.
+    Returns moves in UCI notation (e.g. 'e2e4') and SAN notation (e.g. 'e4').
+
+    fen: FEN string of the chess position
+    """
+    try:
+        import chess
+        board = chess.Board(fen.strip())
+        legal = list(board.legal_moves)
+        san_moves = [board.san(m) for m in legal]
+        uci_moves = [m.uci() for m in legal]
+        side = "White" if board.turn == chess.WHITE else "Black"
+        in_check = board.is_check()
+        return (
+            f"{side} to move. {'In check. ' if in_check else ''}"
+            f"{len(legal)} legal moves:\n"
+            f"SAN: {', '.join(sorted(san_moves))}\n"
+            f"UCI: {', '.join(uci_moves)}"
+        )
+    except ImportError:
+        return "[chess_legal_moves: python-chess not installed — pip install chess]"
+    except Exception as e:
+        return f"[chess_legal_moves: error parsing FEN — {e}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -3421,6 +3515,9 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "wayback_fetch":           wayback_fetch,
     "crossref_lookup":         crossref_lookup,
     "openalex_search":         openalex_search,
+    # Chess analysis via Lichess public API + python-chess
+    "chess_analyze_position": chess_analyze_position,
+    "chess_legal_moves":      chess_legal_moves,
     # Starfleet Infra Tools (read-only — enabled via INFRA_MCP_ENABLED)
     "node_status":          node_status,
     "active_requests":      active_requests,
@@ -3468,6 +3565,8 @@ _TOOL_DESCRIPTIONS = {
     # External data sources
     "web_search_domain":       "Domain-restricted web search via SearXNG (site:github.com, site:arxiv.org, site:wikipedia.org, etc.). Use when general search fails and you need data from a specific known website.",
     "youtube_transcript":      "Fetch captions/transcript of a YouTube video by URL or video ID. Use for questions about video content, interviews, documentaries, lectures.",
+    "chess_analyze_position":  "Analyze a chess position (FEN string) via Lichess Stockfish cloud evaluation. Returns best moves with centipawn scores. Use when a chess position is given as FEN notation.",
+    "chess_legal_moves":       "Return all legal moves for a chess position given its FEN string (python-chess). Use to verify legal moves or enumerate options before analysis.",
     "github_search_issues":    "Search GitHub issues by repo, label, state, and text query. Use to find issues when you don't know the exact issue number (e.g. oldest regression issue in numpy/numpy with label 'Regression').",
     "github_issue_events":     "Fetch timeline events for a GitHub issue — use to find WHEN a label was added/removed. Essential for 'when was label X added to issue Y' questions. Returns event type, date, actor, and label name.",
     "pubchem_compound_search":  "Search PubChem compound database by name, CID, or molecular weight range. Returns CID, molecular weight, formula, IUPAC name. Use for chemistry/pharmacology/food-science questions.",

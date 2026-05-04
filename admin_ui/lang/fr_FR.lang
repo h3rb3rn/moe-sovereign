@@ -503,6 +503,7 @@
   "info.skill_arguments":     "Utilisez $ARGUMENTS comme espace réservé pour les arguments",
   "info.skill_name_hint":     "Lettres minuscules, chiffres et tirets uniquement. Devient /nom",
   "info.mcp_desc":            "Activer/désactiver les outils du conteneur mcp-precision",
+  "info.pipeline_log_desc":   "Transparence du routage — experts sollicités, niveaux de complexité, latences et rounds agentiques par requête.",
   "info.tool_eval_desc":      "Derniers appels d'outils — quels modèles appellent des outils vs. écrivent de la prose ?",
   "info.color_coding":        "Code couleur : ≤30s · ≤120s · >120s (délai suspecté)",
   "info.no_profiles_enabled": "Aucun profil activé — les paramètres de secours s'appliquent.",
@@ -935,6 +936,12 @@
   ,"dialog.import_merge_desc":         "Les entrées existantes restent inchangées"
   ,"dialog.import_replace_title":      "Écraser les existants"
   ,"dialog.import_replace_desc":       "Les entrées portant le même nom seront remplacées"
+  ,"lbl.pipeline_log":                 "Journal Pipeline"
+  ,"lbl.complexity":                   "Complexité"
+  ,"lbl.from":                         "De"
+  ,"lbl.to":                           "À"
+  ,"lbl.limit":                        "Limite"
+  ,"lbl.requested_at":                 "Horodatage"
   ,"lbl.last_24h":                     "Dernières 24 heures"
 
   ,"starfleet_features":               "Fonctionnalités Starfleet"

@@ -957,6 +957,22 @@ def _extract_gaia_answer(full_answer: str, question: str) -> str:  # noqa: ARG00
 # API call
 # --------------------------------------------------------------------------
 
+def _is_structurally_unsolvable(question: str, file_context: str, image_uri: str | None) -> str | None:
+    """Detect questions that cannot be answered without capabilities we don't have.
+
+    Returns a reason string if the question should be skipped immediately,
+    or None if it should proceed normally.
+    """
+    q_lower = question.lower()
+    # YouTube/video questions without transcript support
+    if image_uri is None and not file_context:
+        yt_markers = ("youtube.com/watch", "youtu.be/", "watch?v=", "the video at https")
+        if any(m in q_lower for m in yt_markers):
+            # youtube_transcript MCP tool exists — don't skip, let it try
+            return None
+    return None  # All other questions: attempt normally
+
+
 async def call_orchestrator(
     client: httpx.AsyncClient, question: str, timeout: int = 1800,
     file_context: str = "", image_uri: str | None = None,
@@ -964,19 +980,49 @@ async def call_orchestrator(
 ) -> dict:
     """Send a GAIA question to the MoE Sovereign API with optional file attachment context."""
     if image_uri:
-        # Multimodal message: image + text question
-        user_content = [
-            {"type": "text", "text": (
+        # Detect chess diagram questions — special prompt to extract FEN + call Lichess
+        _q_lower = question.lower()
+        _is_chess = any(w in _q_lower for w in ("chess", "chessboard", "check", "checkmate", "move for", "next move", "fen", "king", "queen", "rook", "bishop", "knight", "pawn"))
+        if _is_chess:
+            chess_preamble = (
+                "[ROUTE TO: reasoning — chess position analysis]\n"
+                "1. Examine the chessboard image carefully.\n"
+                "2. Identify all pieces and their positions.\n"
+                "3. Convert the position to FEN notation.\n"
+                "4. Use chess_analyze_position(fen=<FEN>) to find the best move.\n"
+                "5. Return ONLY the move in standard algebraic notation (e.g. 'Rd5' not 'R moves to d5').\n"
+                f"--- QUESTION ---\n{question}"
+            )
+        else:
+            chess_preamble = (
                 "[ROUTE TO: reasoning OR general — use vision to analyze the image]\n"
                 "Examine the image carefully and answer the question with the exact value only.\n"
                 f"--- QUESTION ---\n{question}"
-            )},
+            )
+        user_content = [
+            {"type": "text", "text": chess_preamble},
             {"type": "image_url", "image_url": {"url": image_uri}},
         ]
     elif file_context:
+        _q_lower = question.lower()
+        # Detect counting questions — special prompt to avoid off-by-one errors
+        _is_counting = any(w in _q_lower for w in (
+            "how many", "count", "number of", "total number", "how often",
+            "occurrences", "mentions", "slides", "rows", "columns", "pages",
+            "entries", "items", "times", "frequency",
+        ))
+        if _is_counting:
+            counting_hint = (
+                "COUNTING TASK: Go through the content systematically — enumerate EVERY matching item "
+                "one by one before giving the final count. Do not estimate. "
+                "If the content has sections/slides/sheets, count each one separately then sum. "
+            )
+        else:
+            counting_hint = ""
         user_content = (
             "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\n"
             "The file content is already provided below — do NOT ask for any document or file. "
+            f"{counting_hint}"
             "Analyze the attached data carefully and answer the question with the exact value only. "
             "Do not create files, do not generate documents — only extract the answer.\n\n"
             f"{file_context}"
@@ -1071,6 +1117,15 @@ async def call_orchestrator(
                 or bool(re.match(r'^\[web_search\s*:', _stripped, re.I))
                 or bool(re.match(r'^\[search\s*:', _stripped, re.I))
                 or bool(re.match(r'^\[tool\s*:', _stripped, re.I))
+                # Function-call style: parse_attachment(...), func_name(arg=...)
+                or bool(re.match(r'^[a-z_][a-z_0-9]*\(', _stripped))
+                # JSON type/analysis objects: {"type": "analysis", ...}
+                or (_stripped.startswith('{') and '"type"' in _stripped[:60] and ('"analysis"' in _stripped[:120] or '"error"' in _stripped[:120]))
+                # Attempt-prefix phrases that escaped _NO_ANSWER_PHRASES check
+                or bool(re.match(r'^(Attempt|Attempting|We need to call|Calling tool|Tool call|Search web\.?$)', _stripped, re.I))
+                # parse_attachment URL leak
+                or 'parse_attachment(' in _stripped
+                or 'fetch_attachment(' in _stripped
             )
             _is_no_answer = any(p in content.lower() for p in _NO_ANSWER_PHRASES)
             if _is_no_answer or raw_tool_call:
