@@ -1,6 +1,6 @@
 # Expert: vision
 
-*Last updated: 2026-05-04 10:06*
+*Last updated: 2026-05-04 10:21*
 
 **Role:** Image and document analysis
 

@@ -9448,7 +9448,7 @@ async def pipeline_log(
                 cols = [d.name for d in cur.description]
 
                 await cur.execute(
-                    f"SELECT COUNT(*) FROM usage_log ul {where}",
+                    f"SELECT COUNT(*) FROM usage_log ul LEFT JOIN users u ON ul.user_id = u.id {where}",
                     params[:-2],
                 )
                 total = (await cur.fetchone())[0]
