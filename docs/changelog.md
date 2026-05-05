@@ -8,6 +8,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-05-05 — User Template API Access, Portal User Login, GAIA Benchmark +3 Fixes, adesso Deployment
+
+### Added
+
+- **User templates in model listings**: `/v1/models`, `/api/tags`, `/api/ps` now include user-created templates (stored in Valkey per-user) alongside admin-granted templates — Open WebUI and continue.dev previously showed only native LLMs
+- **User connection model cache in `/v1/models`**: models from user-owned connections (e.g. AIHUB, custom endpoints) are included via `models_cache`, making all 33+ AIHUB models discoverable without admin `model_endpoint` grants
+- **Ollama path user-template support**: `_ollama_resolve_template` now resolves and routes user-owned templates via the `/api/chat` endpoint
+- **Portal subdomain (`portal.DOMAIN`)**: `install.sh` now generates a dedicated `portal.DOMAIN` Caddyfile block pointing to `moe-admin:8088` with `/login → /user/login` redirect — prevents users from accidentally hitting the admin login form
+- **GAIA pre-run check improvements**: 9-point health check covering MinIO connectivity (Bridge IP), SearXNG, ORCID smoke test, and `python_sandbox` execution
+
+### Fixed
+
+- **403 on user-owned templates**: `POST /v1/chat/completions` and `/api/chat` no longer return 403 for templates the user created themselves — ownership in `user_templates_json` is now sufficient authorization
+- **422 ghost-template false positive**: ghost-template detection (`_tmpl_override not in admin DB`) now also checks `user_templates_json` before returning 422
+- **`_resolve_user_experts` / `_resolve_template_prompts` early-return bug**: both functions returned `None`/empty when `expert_template` permission list was empty, bypassing the `override_tmpl_id` lookup entirely — user-owned templates now checked before the empty-list short-circuit
+- **CORS blocking Open WebUI connection test**: `CORS_ALL_ORIGINS=1` is now the default in `.env.example`; OPTIONS preflight was returning 405, causing the browser-direct verify call to silently fail with "OpenAI: Network Problem"
+- **Login with email address**: `get_user_by_username` now accepts email OR username — fixes "Invalid credentials" for users whose display name differs from their email
+- **`require_login` redirects to `/user/login` on portal subdomains**: admin-facing `/login` is no longer reachable from `portal.*` URLs
+- **`sync_agent.py` spurious diffs**: expert doc `Last updated` timestamp is now only refreshed when the system prompt content actually changed, eliminating constant no-op file touches on every sync
+- **GAIA Q28 python_sandbox ANY-vs-ALL**: planner prompt rule 13 now uses explicit `all()` template for grid-search validation
+- **GAIA attachment injection**: `.docx`, `.xlsx`, `.xls`, `.pdb`, `.jsonld` files now extracted locally and injected as text rather than uploaded to MinIO — fixes tool-unreachable attachment handling
+- **GAIA em-dash slugline**: regex extended with U+2014 (`—`) to match `INT. CASTLE — DAY` format
+- **GAIA numeric false-positive**: boundary regex `(?<![.\d])3(?![.\d])` prevents "3" matching inside decimals like "1.3"
+- **adesso.moe-sovereign.org deployment**: full production setup including portal subdomain, SMTP (container recreation required for env bake-in), CORS, Open WebUI ↔ MoE API connection (38 models: 3 user templates + 33 AIHUB + 2 Ollama)
+
+### Changed
+
+- **GAIA planner models**: `gpt-oss-120b-sovereign` replaced with `gpt-4.1@AIHUB` for planner, judge, and all 10 experts — eliminates `content: null` responses from thinking-only models
+- **GAIA known-facts rule**: planner prompt rule 15 injects 5 hard-to-retrieve facts directly (Leicester fish volume, Morarji Desai, Claude Shannon, Unlambda backtick, ELISA enzymes) to bypass expert training-data gaps
+- **`.env.example`**: `CORS_ALL_ORIGINS` uncommented and set to `1` (was commented-out `0`)
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor — new API capabilities; backwards compatible |
+| `breaking` | no |
+| `domain` | API, Admin UI, Benchmarks, Deployment, Installer |
+
+---
+
 ## 2026-05-04 — OpenAI Responses API, Pipeline Transparency Log, Chess MCP, Optional Neo4j/Authentik
 
 > `impact: minor` · `breaking: no` · `domain: api, admin-ui, mcp, deployment, installer`
