@@ -78,6 +78,7 @@ nav:
     - User Handbook: guide/handout.md
     - API Reference: guide/api.md
     - Claude Code: guide/claude-code.md
+    - Claude Desktop & Cowork: guide/claude-desktop.md
     - Claude Code Profiles: guide/claude-code-profiles.md
     - Agent Integration Profiles: guide/agent-profiles.md
     - Expert Templates & Profiles: guide/templating-guide.md

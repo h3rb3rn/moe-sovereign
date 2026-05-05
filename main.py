@@ -1542,6 +1542,7 @@ def _extract_session_id(request: Request) -> Optional[str]:
     """
     h = request.headers
     explicit = (
+        h.get("x-claude-code-session-id") or
         h.get("x-stainless-session-id") or
         h.get("x-session-id") or
         h.get("x-conversation-id") or
@@ -6270,6 +6271,26 @@ async def provider_status():
     return {ep: {**data, "now": _time.time()} for ep, data in _provider_rate_limits.items()}
 
 
+_CLAUDE_PRETTY_NAMES: dict[str, str] = {
+    "claude-opus-4-7":            "Claude Opus 4.7",
+    "claude-opus-4-6":            "Claude Opus 4.6",
+    "claude-sonnet-4-6":          "Claude Sonnet 4.6",
+    "claude-haiku-4-5-20251001":  "Claude Haiku 4.5",
+    "claude-opus-4-5":            "Claude Opus 4.5",
+    "claude-sonnet-4-5":          "Claude Sonnet 4.5",
+    "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
+    "claude-3-5-haiku-20241022":  "Claude 3.5 Haiku",
+    "claude-3-7-sonnet-20250219": "Claude 3.7 Sonnet",
+}
+
+
+def _model_display_name(model_id: str, description: str = "") -> str:
+    """Human-readable label for Claude Desktop's model picker (display_name field)."""
+    if model_id in _CLAUDE_PRETTY_NAMES:
+        return f"{_CLAUDE_PRETTY_NAMES[model_id]} → MoE (Gateway)"
+    return description or model_id
+
+
 @app.get("/v1/models")
 async def list_models(raw_request: Request):
     raw_key = _extract_api_key(raw_request)
@@ -6290,11 +6311,12 @@ async def list_models(raw_request: Request):
         all_templates = _read_expert_templates()
         main_models = [
             {
-                "id":          t.get("name", t["id"]),   # Template name as model ID
-                "object":      "model",
-                "owned_by":    "moe-sovereign",
-                "created":     _model_created,
-                "description": t.get("description") or t.get("name", t["id"]),
+                "id":           t.get("name", t["id"]),   # Template name as model ID
+                "object":       "model",
+                "owned_by":     "moe-sovereign",
+                "created":      _model_created,
+                "description":  t.get("description") or t.get("name", t["id"]),
+                "display_name": _model_display_name(t.get("name", t["id"]), t.get("description") or t.get("name", t["id"])),
             }
             for t in all_templates if t.get("id") in allowed_templates
         ]
@@ -6306,7 +6328,8 @@ async def list_models(raw_request: Request):
         if allowed_modes is not None or not _has_other_perms:
             main_models = [
                 {"id": cfg["model_id"], "object": "model", "owned_by": "moe-sovereign",
-                 "created": _model_created, "description": cfg["description"]}
+                 "created": _model_created, "description": cfg["description"],
+                 "display_name": _model_display_name(cfg["model_id"], cfg["description"])}
                 for cfg in MODES.values()
                 if allowed_modes is None or cfg["model_id"] in allowed_modes
             ]
@@ -6322,11 +6345,12 @@ async def list_models(raw_request: Request):
         pass
     user_tmpl_models = [
         {
-            "id":          cfg.get("name", uid),
-            "object":      "model",
-            "owned_by":    "moe-sovereign",
-            "created":     _model_created,
-            "description": cfg.get("description") or cfg.get("name", uid),
+            "id":           cfg.get("name", uid),
+            "object":       "model",
+            "owned_by":     "moe-sovereign",
+            "created":      _model_created,
+            "description":  cfg.get("description") or cfg.get("name", uid),
+            "display_name": _model_display_name(cfg.get("name", uid), cfg.get("description") or cfg.get("name", uid)),
         }
         for uid, cfg in _user_tmpls_m.items()
         if cfg.get("name", uid) not in existing_ids
@@ -6335,7 +6359,8 @@ async def list_models(raw_request: Request):
     # Claude Code compatible model IDs — only for users with cc_profile permission
     claude_models = [
         {"id": mid, "object": "model", "owned_by": "moe-sovereign", "created": _model_created,
-         "description": f"Claude Code compatible → MoE ({CLAUDE_CODE_TOOL_MODEL} for tools)"}
+         "description": f"Claude Code compatible → MoE ({CLAUDE_CODE_TOOL_MODEL} for tools)",
+         "display_name": _model_display_name(mid)}
         for mid in sorted(CLAUDE_CODE_MODELS) if mid not in existing_ids
     ] if has_cc else []
     # Native LLMs — direct inference endpoints from model_endpoint permission (model@node)
@@ -6376,7 +6401,8 @@ async def list_models(raw_request: Request):
                             seen.add(mid)
                             native_models.append({"id": mid, "object": "model",
                                                   "owned_by": "moe-sovereign", "created": _model_created,
-                                                  "description": f"Direkt via {node}"})
+                                                  "description": f"Direkt via {node}",
+                                                  "display_name": f"{_wc_m} ({node})"})
                 except Exception:
                     pass
                 continue
@@ -6384,11 +6410,12 @@ async def list_models(raw_request: Request):
             if model_id not in seen and model_id not in existing_ids:
                 seen.add(model_id)
                 native_models.append({
-                    "id":          model_id,
-                    "object":      "model",
-                    "owned_by":    "moe-sovereign",
-                    "created":     _model_created,
-                    "description": f"Direkt via {node}" if node else "Direktzugriff",
+                    "id":           model_id,
+                    "object":       "model",
+                    "owned_by":     "moe-sovereign",
+                    "created":      _model_created,
+                    "description":  f"Direkt via {node}" if node else "Direktzugriff",
+                    "display_name": f"{model_n} ({node})" if node else model_n,
                 })
     # User-created connections (model_cache already populated from the connection setup)
     _user_conns_m: dict = {}
@@ -6404,11 +6431,12 @@ async def list_models(raw_request: Request):
             if _mid not in _seen_conn:
                 _seen_conn.add(_mid)
                 conn_models.append({
-                    "id":          _mid,
-                    "object":      "model",
-                    "owned_by":    "moe-sovereign",
-                    "created":     _model_created,
-                    "description": f"Direkt via {_conn_name}",
+                    "id":           _mid,
+                    "object":       "model",
+                    "owned_by":     "moe-sovereign",
+                    "created":      _model_created,
+                    "description":  f"Direkt via {_conn_name}",
+                    "display_name": f"{_cm} ({_conn_name})",
                 })
     return {"object": "list", "data": main_models + user_tmpl_models + claude_models + native_models + conn_models}
 
@@ -8419,6 +8447,35 @@ async def anthropic_messages(request: Request):
         return JSONResponse(status_code=500, content={"error": {
             "type": "api_error", "message": f"Internal server error: {_exc}"
         }})
+
+
+@app.post("/v1/messages/count_tokens")
+async def count_tokens(request: Request):
+    """Token count estimation for Claude Desktop / Claude Code context budget (Anthropic Gateway spec).
+
+    Returns a rough estimate based on character count (chars / 3.5).
+    Not a substitute for exact tokenisation, but sufficient for context-budget warnings.
+    """
+    raw_key  = _extract_api_key(request)
+    user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "invalid_key"}
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": {
+            "message": "Invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"
+        }})
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": {
+            "message": "Invalid JSON body", "type": "invalid_request_error", "code": "invalid_body"
+        }})
+    messages = body.get("messages", [])
+    system   = body.get("system", "")
+    char_count = sum(
+        len(str(m.get("content", ""))) for m in messages
+    ) + len(str(system) if isinstance(system, str) else "".join(
+        b.get("text", "") for b in system if isinstance(b, dict)
+    ))
+    return {"input_tokens": max(1, int(char_count / 3.5))}
 
 
 _ONTOLOGY_RUN_KEY = "moe:maintenance:ontology:run"

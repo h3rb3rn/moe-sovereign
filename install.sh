@@ -87,13 +87,17 @@ echo ""
 # =============================================================================
 #  SECTION 1b: Re-run detection — UPDATE MODE
 # =============================================================================
-# If an existing .env and Docker volumes are found, this is an update run,
-# not a fresh install. We must NOT overwrite credentials: Postgres, Neo4j,
-# Redis and Grafana store their credentials inside their data volumes on
-# first init — regenerating .env would lock every service out of its data.
+# Trigger: existing .env + at least one data volume present.
+# We NEVER overwrite credentials: Postgres, Neo4j, Redis and Grafana write
+# their passwords into their data volumes on first init — regenerating .env
+# would lock every service out of its own data.
 #
-# Update mode: re-apply volume ownership, git pull, compose rebuild. Done.
-# No interactive prompts, no .env rewrite.
+# Update mode runs 4 steps — git pull is FIRST so subsequent steps always
+# work with the newest code and the newest .env.example:
+#   1. git pull                    (with dirty-tree guard and diverge recovery)
+#   2. .env migration              (add new keys from .env.example; skip secrets)
+#   3. Re-apply volume ownership   (fixes container UID mismatches)
+#   4. docker/podman compose build + up
 # Use an array so "docker compose" is two words regardless of IFS=$'\n\t'.
 _upd_rt=()
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
@@ -118,17 +122,27 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
   fi
   if [[ "${vol_count:-0}" -gt 0 ]]; then
 
+    # ── Read current version before any changes ───────────────────────────────
+    _upd_ver_before=""
+    if [[ -d "${INSTALL_DIR}/.git" ]]; then
+      _upd_ver_before=$(git -C "${INSTALL_DIR}" describe --tags --always 2>/dev/null \
+        || git -C "${INSTALL_DIR}" log -1 --format='%h (%s)' 2>/dev/null \
+        || echo "unknown")
+    fi
+
     echo ""
     echo "  =================================================================="
     echo "  UPDATE MODE — existing installation detected"
     echo "  =================================================================="
     echo "  Found .env at ${MOE_ENV_FILE}"
     echo "  Found ${vol_count} data volume(s) from a previous install."
+    echo "  Current version : ${_upd_ver_before:-unknown}"
     echo ""
     echo "  Credentials will NOT be changed. Running:"
-    echo "    1. Re-apply volume permissions (fixes container UID mismatches)"
-    echo "    2. git pull --ff-only"
-    echo "    3. ${_upd_rt[*]} build + up -d"
+    echo "    1. git pull (with dirty-tree and diverge handling)"
+    echo "    2. Migrate .env — add new keys from .env.example, preserve all existing values"
+    echo "    3. Re-apply volume permissions"
+    echo "    4. ${_upd_rt[*]} build + up -d"
     echo "  =================================================================="
     echo ""
 
@@ -138,46 +152,158 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       exit 1
     fi
 
-    # Read data roots from existing .env (same logic as Section 6)
+    # ── Helper: read a key from existing .env ────────────────────────────────
     _renv() { grep -E "^${1}=" "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-; }
-    _upd_data=$(_renv MOE_DATA_ROOT);   _upd_data="${_upd_data:-/opt/moe-infra}"
+
+    _upd_data=$(_renv MOE_DATA_ROOT);     _upd_data="${_upd_data:-/opt/moe-infra}"
     _upd_graf=$(_renv GRAFANA_DATA_ROOT); _upd_graf="${_upd_graf:-/opt/grafana}"
 
-    # ── .env migration: add keys introduced in newer installer versions ──────
-    # COMPOSE_PROFILES — added when moe-caddy moved behind a Compose profile.
-    # Detect whether Caddy was running before and preserve that intent.
+    # ── STEP 1: git pull (with dirty-tree and diverge handling) ──────────────
+    # Pull first so subsequent steps use the latest code and latest .env.example.
+    _skip_pull=0
+    if [[ -d "${INSTALL_DIR}/.git" ]]; then
+      _dirty=$(git -C "${INSTALL_DIR}" status --porcelain 2>/dev/null || true)
+      if [[ -n "$_dirty" ]]; then
+        echo ""
+        echo "  [!] Local modifications detected in ${INSTALL_DIR}:"
+        echo "$_dirty" | head -10 | sed 's/^/      /'
+        [[ $(echo "$_dirty" | wc -l) -gt 10 ]] && echo "      ... (truncated)"
+        echo ""
+        echo "  Choose how to handle local changes:"
+        echo "    s) Stash changes, then pull  (recommended — changes are saved)"
+        echo "    k) Keep changes — skip git pull"
+        echo "    a) Abort update"
+        read -rp "  Choice [s/k/a] (default: s): " _pull_choice < /dev/tty
+        _pull_choice="${_pull_choice:-s}"
+        case "${_pull_choice,,}" in
+          s|stash)
+            if git -C "${INSTALL_DIR}" stash push \
+                -m "install.sh update stash $(date +%Y%m%d-%H%M%S)" 2>/dev/null; then
+              echo "  Changes stashed ✓  (restore later: git -C ${INSTALL_DIR} stash pop)"
+            else
+              echo "  [!] Stash failed — skipping pull to preserve local changes."
+              _skip_pull=1
+            fi
+            ;;
+          k|keep)
+            echo "  Keeping local changes — skipping git pull."
+            _skip_pull=1
+            ;;
+          *)
+            echo "  Update aborted."
+            exit 1
+            ;;
+        esac
+      fi
+
+      if [[ ${_skip_pull} -eq 0 ]]; then
+        echo "  [1/4] Pulling latest code..."
+        if ! git -C "${INSTALL_DIR}" pull --ff-only 2>&1; then
+          # Fast-forward failed — branches may have diverged (e.g. force-push upstream)
+          echo ""
+          echo "  [!] Fast-forward pull failed — local and remote branches have diverged."
+          echo "      (This can happen after a force-push to the upstream repository.)"
+          echo ""
+          echo "  Options:"
+          echo "    r) Reset to origin  (discards local commits — data volumes are safe)"
+          echo "    k) Keep current code — skip pull"
+          echo "    a) Abort"
+          read -rp "  Choice [r/k/a] (default: k): " _ff_choice < /dev/tty
+          _ff_choice="${_ff_choice:-k}"
+          case "${_ff_choice,,}" in
+            r|reset)
+              _upd_branch=$(git -C "${INSTALL_DIR}" rev-parse --abbrev-ref HEAD \
+                2>/dev/null || echo "main")
+              git -C "${INSTALL_DIR}" fetch origin
+              git -C "${INSTALL_DIR}" reset --hard "origin/${_upd_branch}"
+              echo "  Reset to origin/${_upd_branch} ✓"
+              ;;
+            k|keep)
+              echo "  Keeping current code."
+              _skip_pull=1
+              ;;
+            *)
+              echo "  Update aborted."
+              exit 1
+              ;;
+          esac
+        fi
+      fi
+
+      _upd_ver_after=$(git -C "${INSTALL_DIR}" describe --tags --always 2>/dev/null \
+        || git -C "${INSTALL_DIR}" log -1 --format='%h (%s)' 2>/dev/null \
+        || echo "unknown")
+      if [[ "${_upd_ver_before}" != "${_upd_ver_after}" ]]; then
+        echo "  [1/4] Code updated: ${_upd_ver_before} → ${_upd_ver_after} ✓"
+      else
+        echo "  [1/4] Already at latest (${_upd_ver_after}) ✓"
+      fi
+    else
+      echo "  [1/4] ${INSTALL_DIR} is not a git repo — skipping pull."
+      _upd_ver_after="${_upd_ver_before:-unknown}"
+    fi
+
+    # ── STEP 2: .env migration ────────────────────────────────────────────────
+    # Runs after git pull so .env.example is the freshly-fetched version.
+    # Phase A: legacy hardcoded keys (kept for installs predating .env.example)
     if [[ -z "$(_renv COMPOSE_PROFILES)" ]]; then
       if docker ps -a --filter "name=moe-caddy" --format '{{.Names}}' 2>/dev/null \
           | grep -q "moe-caddy"; then
-        echo "  [migrate] moe-caddy detected → COMPOSE_PROFILES=caddy added to .env ✓"
         echo "COMPOSE_PROFILES=caddy" >> "${MOE_ENV_FILE}"
+        echo "  [migrate] COMPOSE_PROFILES=caddy (existing Caddy container detected) ✓"
       else
-        echo "  [migrate] No Caddy container → COMPOSE_PROFILES= (disabled) ✓"
         echo "COMPOSE_PROFILES=" >> "${MOE_ENV_FILE}"
+        echo "  [migrate] COMPOSE_PROFILES= (no Caddy container) ✓"
       fi
     fi
-
-    # CPU limits — added to prevent startup failures on 2-core systems.
     for _cpu_var in NEO4J_CPU_LIMIT LANGGRAPH_CPU_LIMIT KAFKA_CPU_LIMIT CHROMA_CPU_LIMIT; do
       if [[ -z "$(_renv ${_cpu_var})" ]]; then
         echo "${_cpu_var}=2" >> "${MOE_ENV_FILE}"
       fi
     done
-    # ────────────────────────────────────────────────────────────────────────
 
-    # Ensure directories exist (they should, but guard against partial installs)
+    # Phase B: generic sync from .env.example — add any key not yet in .env.
+    # Credential/secret keys get an empty placeholder so the admin is alerted;
+    # non-secret keys get the example default value directly.
+    _env_example="${INSTALL_DIR}/.env.example"
+    _migrated=0
+    if [[ -f "${_env_example}" ]]; then
+      while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue   # skip comments
+        [[ -z "${_line// }"            ]] && continue   # skip blank lines
+        _ekey="${_line%%=*}"
+        [[ -z "$_ekey"                 ]] && continue
+        if ! grep -qE "^${_ekey}=" "${MOE_ENV_FILE}" 2>/dev/null; then
+          if echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|TOKEN|_PASS$|_KEY$|PRIVATE)'; then
+            # Credential — leave empty; admin must set manually if needed
+            printf '%s=\n' "${_ekey}" >> "${MOE_ENV_FILE}"
+            echo "  [migrate] ${_ekey}= (credential — set manually if needed)"
+          else
+            _eval="${_line#*=}"
+            printf '%s\n' "${_line}" >> "${MOE_ENV_FILE}"
+            echo "  [migrate] ${_ekey}=${_eval}"
+          fi
+          (( _migrated++ )) || true
+        fi
+      done < "${_env_example}"
+    fi
+    if [[ ${_migrated} -gt 0 ]]; then
+      echo "  [2/4] .env migrated — ${_migrated} new key(s) added ✓"
+    else
+      echo "  [2/4] .env up to date ✓"
+    fi
+
+    # ── STEP 3: Re-apply container UID ownership ──────────────────────────────
     _sudo mkdir -p \
-      "${_upd_data}/kafka-data"       "${_upd_data}/neo4j-data"   \
-      "${_upd_data}/neo4j-logs"       "${_upd_data}/agent-logs"   \
-      "${_upd_data}/chroma-onnx-cache" "${_upd_data}/chroma-data" \
-      "${_upd_data}/redis-data"       "${_upd_data}/prometheus-data" \
-      "${_upd_data}/admin-logs"       "${_upd_data}/userdb"        \
-      "${_upd_data}/few-shot"         \
-      "${_upd_graf}/data"             "${_upd_graf}/dashboards"    \
+      "${_upd_data}/kafka-data"        "${_upd_data}/neo4j-data"   \
+      "${_upd_data}/neo4j-logs"        "${_upd_data}/agent-logs"   \
+      "${_upd_data}/chroma-onnx-cache" "${_upd_data}/chroma-data"  \
+      "${_upd_data}/redis-data"        "${_upd_data}/prometheus-data" \
+      "${_upd_data}/admin-logs"        "${_upd_data}/userdb"        \
+      "${_upd_data}/few-shot"          \
+      "${_upd_graf}/data"              "${_upd_graf}/dashboards"    \
       2>/dev/null || true
 
-    # Re-apply container UID ownership. For rootless Podman the user-namespace
-    # mapping means container UIDs don't equal host UIDs; use podman unshare.
     _upd_chown() {
       local uid="$1" gid="$2"; shift 2
       if [[ "${_upd_rt[0]}" == podman* ]]; then
@@ -186,37 +312,22 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
       fi
     }
-    # kafka (confluentinc/cp-kafka): appuser uid=1000
     _upd_chown 1000 1000   "${_upd_data}/kafka-data"
-    # entrypoint-chown dirs: pre-own as container root (see Section 6 comment)
-    _upd_chown 0 0         "${_upd_data}/langgraph-checkpoints"
-    _upd_chown 0 0         "${_upd_data}/redis-data"
-    _upd_chown 0 0         "${_upd_data}/neo4j-data"
-    _upd_chown 0 0         "${_upd_data}/neo4j-logs"
-    _upd_chown 0 0         "${_upd_data}/chroma-data"
-    _upd_chown 0 0         "${_upd_data}/chroma-onnx-cache"
-    # prometheus: runs as nobody uid=65534
+    _upd_chown 0    0      "${_upd_data}/langgraph-checkpoints"
+    _upd_chown 0    0      "${_upd_data}/redis-data"
+    _upd_chown 0    0      "${_upd_data}/neo4j-data"
+    _upd_chown 0    0      "${_upd_data}/neo4j-logs"
+    _upd_chown 0    0      "${_upd_data}/chroma-data"
+    _upd_chown 0    0      "${_upd_data}/chroma-onnx-cache"
     _upd_chown 65534 65534 "${_upd_data}/prometheus-data"
-    # langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
     _upd_chown 1001 0      "${_upd_data}/agent-logs"
-    # grafana: uid=472
-    _upd_chown 472 472     "${_upd_graf}/data" "${_upd_graf}/dashboards"
+    _upd_chown 472  472    "${_upd_graf}/data" "${_upd_graf}/dashboards"
 
-    echo "  [1/3] Volume permissions reset ✓"
+    echo "  [3/4] Volume permissions reset ✓"
 
-    # Pull latest code
-    if [[ -d "${INSTALL_DIR}/.git" ]]; then
-      echo "  [2/3] Pulling latest code..."
-      git -C "${INSTALL_DIR}" pull --ff-only \
-        || echo "  [!] git pull failed — continuing with current code."
-    else
-      echo "  [2/3] ${INSTALL_DIR} is not a git repo — skipping pull."
-    fi
-
-    # Rebuild images and restart containers
-    echo "  [3/3] Rebuilding containers..."
+    # ── STEP 4: Rebuild and restart containers ────────────────────────────────
+    echo "  [4/4] Rebuilding containers..."
     cd "${INSTALL_DIR}"
-    # _upd_rt may include "docker" which needs group membership — mirror _compose logic.
     _upd_group=""; [[ "${_upd_rt[0]}" == "docker" ]] && _upd_group="docker"
     _upd_q="";    [[ "${_upd_rt[0]}" == "docker" ]] && _upd_q="--quiet"
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
@@ -226,9 +337,9 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       "${_upd_rt[@]}" build ${_upd_q}
       "${_upd_rt[@]}" up -d
     fi
-    echo "        Containers started ✓"
+    echo "  Containers started ✓"
 
-    # Health check (same as Section 12)
+    # ── Health check ──────────────────────────────────────────────────────────
     echo ""
     echo "  Waiting for MoE Sovereign API to become ready..."
     _health_url="http://localhost:8002/metrics"
@@ -241,7 +352,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       if [[ ${_elapsed} -ge ${_max_wait} ]]; then
         echo ""
         echo "  [!] API did not respond within ${_max_wait}s."
-        echo "      Check logs: sudo ${_upd_rt[*]} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+        echo "      Check logs: sudo ${_upd_rt[*]} logs langgraph-app"
         break
       fi
       printf "."
@@ -249,9 +360,16 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       _elapsed=$(( _elapsed + _interval ))
     done
 
+    # ── Summary ───────────────────────────────────────────────────────────────
     echo ""
     echo "  =================================================================="
     echo "  MoE Sovereign updated successfully."
+    echo ""
+    if [[ "${_upd_ver_before:-unknown}" != "${_upd_ver_after:-unknown}" ]]; then
+      echo "  Version : ${_upd_ver_before:-unknown} → ${_upd_ver_after:-unknown}"
+    else
+      echo "  Version : ${_upd_ver_after:-unknown} (no code change)"
+    fi
     echo ""
     echo "  Logs:    sudo ${_upd_rt[*]} logs -f"
     echo "  Status:  sudo ${_upd_rt[*]} ps"
@@ -812,8 +930,23 @@ _git_as_user() {
 }
 
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
-  echo "  Existing installation found — pulling latest changes..."
-  _git_as_user -C "${INSTALL_DIR}" pull --ff-only
+  echo "  Existing repo found — pulling latest changes..."
+  # Guard against dirty working tree: stash silently on fresh-install path
+  # (no interactive prompts here — update mode handles the interactive case above).
+  _s7_dirty=$(git -C "${INSTALL_DIR}" status --porcelain 2>/dev/null || true)
+  if [[ -n "$_s7_dirty" ]]; then
+    echo "  [!] Local modifications found — stashing before pull..."
+    _git_as_user -C "${INSTALL_DIR}" stash push \
+      -m "install.sh section-7 stash $(date +%Y%m%d-%H%M%S)" 2>/dev/null \
+      || echo "  [!] Stash failed — attempting pull anyway."
+  fi
+  if ! _git_as_user -C "${INSTALL_DIR}" pull --ff-only 2>&1; then
+    echo "  [!] Fast-forward pull failed — resetting to origin..."
+    _s7_branch=$(git -C "${INSTALL_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    _git_as_user -C "${INSTALL_DIR}" fetch origin
+    _git_as_user -C "${INSTALL_DIR}" reset --hard "origin/${_s7_branch}"
+    echo "  Reset to origin/${_s7_branch} ✓"
+  fi
 else
   echo "  Cloning repository to ${INSTALL_DIR}..."
   _git_as_user clone "${MOE_REPO_URL}" "${INSTALL_DIR}"
