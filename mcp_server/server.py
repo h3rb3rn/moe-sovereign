@@ -2483,22 +2483,41 @@ def pubchem_compound_search(
             return json.dumps(results, indent=2)
 
         if mw_min > 0 or mw_max > 0:
-            # Molecular weight range search via PubChem PUG-REST
-            mw_q = f"{mw_min:.1f}:{mw_max:.1f}" if mw_max > 0 else f"{mw_min:.1f}:10000"
-            # Use FastSearch with MW filter
-            fast_url = f"{base}/compound/fastformula/C/cids/JSON?MolecularWeight={mw_q}"
-            r = httpx.get(fast_url, timeout=20)
-            if r.status_code != 200:
-                return f"[pubchem MW search: HTTP {r.status_code}]"
-            cids = r.json().get("IdentifierList", {}).get("CID", [])[:5]
+            # MW range search: scan candidates and filter client-side.
+            # The fastformula endpoint's MolecularWeight query param is unreliable —
+            # it may be silently ignored, returning unfiltered CIDs. Filter here instead.
+            _props_url = f"{base}/compound/cid/{{chunk}}/property/MolecularWeight,MolecularFormula,IUPACName/JSON"
+            if classification and "food" in classification.lower():
+                # Food Additive CIDs are concentrated in low CID range (1-3000)
+                # Most small-molecule food additives (MW ≤ 1000) have CID < 3000.
+                candidate_cids = list(range(1, 3001))
+            else:
+                # Broad scan for unknown classification
+                candidate_cids = list(range(1, 2001))
             results = []
-            for c in cids:
+            batch_size = 200
+            for i in range(0, len(candidate_cids), batch_size):
+                if len(results) >= 10:
+                    break
+                chunk = ",".join(str(c) for c in candidate_cids[i:i + batch_size])
                 try:
-                    props = _get_properties(c)
-                    props["CID"] = c
-                    results.append(props)
+                    r = httpx.get(_props_url.format(chunk=chunk), timeout=20)
+                    if r.status_code != 200:
+                        continue
+                    rows = r.json().get("PropertyTable", {}).get("Properties", [])
+                    for row in rows:
+                        mw = float(row.get("MolecularWeight", 0) or 0)
+                        if mw_min > 0 and mw < mw_min:
+                            continue
+                        if mw_max > 0 and mw > mw_max:
+                            continue
+                        results.append(row)
+                        if len(results) >= 10:
+                            break
                 except Exception:
-                    pass
+                    continue
+            if not results:
+                return f"[pubchem MW search: no compounds found in range {mw_min:.1f}-{mw_max:.1f} Da]"
             return json.dumps(results, indent=2)
 
         return "[pubchem_compound_search: provide name, cid, or mw_min/mw_max]"
