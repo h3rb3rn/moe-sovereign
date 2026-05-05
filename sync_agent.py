@@ -86,14 +86,24 @@ def sync_experts() -> int:
         name = src.stem
         names.append(name)
         content_raw = src.read_text(encoding="utf-8")
-        page = (
-            f"# Expert: {name}\n\n"
-            f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n\n"
+        dest = experts_dir / f"{name}.md"
+        # Only update timestamp when the prompt content actually changed
+        existing_ts = None
+        if dest.exists():
+            for line in dest.read_text(encoding="utf-8").splitlines():
+                if line.startswith("*Last updated:"):
+                    existing_ts = line
+                    break
+        body = (
             f"**Role:** {_EXPERT_DESC.get(name, '—')}\n\n"
             "## System Prompt\n\n"
             f"```\n{content_raw.strip()}\n```\n"
         )
-        atomic_write(experts_dir / f"{name}.md", page)
+        ts_line = existing_ts or f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+        if not dest.exists() or body not in dest.read_text(encoding="utf-8"):
+            ts_line = f"*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*"
+        page = f"# Expert: {name}\n\n{ts_line}\n\n{body}"
+        atomic_write(dest, page)
         count += 1
 
     # Index page
