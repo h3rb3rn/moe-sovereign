@@ -3,6 +3,12 @@
 Claude Code can use MoE Sovereign as an Anthropic backend.
 All requests from Claude Code are then routed through the MoE pipeline.
 
+!!! tip "Using Claude Desktop?"
+    If you run Claude Code **inside Claude Desktop** (or use Claude Cowork),
+    you can configure MoE Sovereign as a gateway once in the app and skip the
+    environment variables below. See [Claude Desktop & Cowork](claude-desktop.md)
+    for the one-command setup.
+
 ## Basic Configuration (.bashrc)
 
 ```bash

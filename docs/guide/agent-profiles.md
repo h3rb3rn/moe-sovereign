@@ -12,13 +12,47 @@ MoE Sovereign exposes three API endpoints:
 
 | Endpoint | Protocol | Used by |
 |----------|----------|---------|
-| `/v1/messages` | Anthropic Messages API | Claude Code |
+| `/v1/messages` | Anthropic Messages API | Claude Desktop, Claude Cowork, Claude Code |
+| `/v1/messages/count_tokens` | Anthropic Gateway spec | Claude Desktop, Claude Code |
 | `/v1/chat/completions` | OpenAI Chat Completions API | OpenCode, Aider, Continue.dev, Cursor, Open WebUI |
 | `/v1/responses` | OpenAI Responses API | Codex CLI, Continue.dev |
 
 All endpoints route requests through the same MoE pipeline. The endpoint
 you use depends solely on what your agent expects — the processing behind
 it is identical.
+
+---
+
+## Claude Desktop & Cowork
+
+[Claude Desktop](https://claude.ai/download) is Anthropic's native desktop
+application. Since Ollama v0.23 (May 2026), Anthropic exposed their
+**Third-Party Inference Gateway** spec — and MoE Sovereign implements it in full.
+
+```bash
+# Automated setup (macOS / Linux / WSL)
+bash scripts/setup-claude-desktop.sh
+```
+
+Or add manually to `claude_desktop_config.json`:
+
+```json
+{
+  "thirdPartyInference": {
+    "type":    "gateway",
+    "baseUrl": "https://your-moe-instance.example.com",
+    "apiKey":  "moe-sk-xxxxxxxx..."
+  }
+}
+```
+
+After restarting Claude Desktop, all inference (Claude Cowork and the embedded
+Claude Code CLI) routes through your MoE pipeline. Models with `claude-*` IDs
+appear in the `/model` picker with human-readable labels such as
+`Claude Sonnet 4.6 → MoE (Gateway)`.
+
+For the full setup guide including troubleshooting, see
+[Claude Desktop & Cowork](claude-desktop.md).
 
 ---
 
@@ -247,23 +281,25 @@ quality/speed trade-off.
 
 ## Compatibility Matrix
 
-| Feature | Claude Code | OpenCode | Claw Code | Codex CLI | Aider |
-|---------|:-----------:|:--------:|:---------:|:---------:|:-----:|
-| `/v1/messages` (Anthropic) | Yes | No | No | No | No |
-| `/v1/chat/completions` (OpenAI) | No | Yes | Yes | Yes | Yes |
-| Tool Use | Yes | Limited | Yes | Yes | Yes |
-| Streaming | Yes | Yes | Yes | Yes | Yes |
-| MoE Pipeline | Yes | Yes | Yes | Yes | Yes |
-| CC Profile Selection | Yes (via key) | No | No | No | No |
-| Expert Template Routing | Yes | Yes | Yes | Yes | Yes |
-| Thinking Blocks | Yes | No | No | No | No |
-| Image Inputs | Yes | No | No | No | No |
+| Feature | Claude Desktop / Cowork | Claude Code | OpenCode | Claw Code | Codex CLI | Aider |
+|---------|:-----------------------:|:-----------:|:--------:|:---------:|:---------:|:-----:|
+| `/v1/messages` (Anthropic) | Yes | Yes | No | No | No | No |
+| `/v1/messages/count_tokens` | Yes | Yes | No | No | No | No |
+| `/v1/chat/completions` (OpenAI) | No | No | Yes | Yes | Yes | Yes |
+| Tool Use | Yes | Yes | Limited | Yes | Yes | Yes |
+| Streaming | Yes | Yes | Yes | Yes | Yes | Yes |
+| MoE Pipeline | Yes | Yes | Yes | Yes | Yes | Yes |
+| CC Profile Selection | Yes (via key) | Yes (via key) | No | No | No | No |
+| Expert Template Routing | Yes | Yes | Yes | Yes | Yes | Yes |
+| Thinking Blocks | Yes | Yes | No | No | No | No |
+| Image Inputs | Yes | Yes | No | No | No | No |
+| Model Picker (`display_name`) | Yes | Yes | No | No | No | No |
 
 !!! note "Endpoint determines features"
-    Agents using the Anthropic `/v1/messages` endpoint (Claude Code) get access
-    to thinking blocks and the full CC Profile system. Agents using the OpenAI
-    `/v1/chat/completions` endpoint select their expert template via the model
-    name instead.
+    Agents using the Anthropic `/v1/messages` endpoint (Claude Desktop, Claude Code)
+    get access to thinking blocks, the full CC Profile system, and human-readable
+    model labels in the picker. Agents using the OpenAI `/v1/chat/completions`
+    endpoint select their expert template via the model name instead.
 
 ---
 

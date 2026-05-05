@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.3.0] - 2026-05-05
+
+### Added
+- **Claude Desktop & Cowork Gateway compatibility** (Anthropic Third-Party Inference spec):
+  - `display_name` field in all `/v1/models` entries — Claude Desktop displays human-readable names (e.g. "Claude Sonnet 4.6 → MoE (Gateway)") in the model picker
+  - `POST /v1/messages/count_tokens` endpoint — satisfies the Anthropic Gateway spec requirement; returns a character-based token estimate (chars / 3.5) used by Claude Code for context-budget warnings
+  - `X-Claude-Code-Session-Id` header now recognised in `_extract_session_id` (highest priority) for accurate session tracking from Claude Desktop
+  - `_model_display_name()` helper with curated pretty-names for all current Claude model IDs
+  - `scripts/setup-claude-desktop.sh` — interactive setup wizard that auto-configures `claude_desktop_config.json` on macOS, Linux, and WSL; checks connectivity, creates backup, merges gateway block
+
+### Changed
+- `/v1/models` response: all model objects now include the `display_name` field (templates, MoE modes, CC aliases, native node models, user connections)
+
+---
+
 ## [2.2.0] - 2026-04-25
 
 ### Added
