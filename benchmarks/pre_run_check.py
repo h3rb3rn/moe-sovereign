@@ -16,11 +16,22 @@ Usage:
 import asyncio
 import json
 import os
+import pathlib
 import subprocess
 import sys
 import time
 
 import httpx
+
+# Load benchmarks/.env if present — shell vars take precedence (override=False)
+_env_file = pathlib.Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            _v = _v.strip().strip('"').strip("'")  # strip outer quotes
+            os.environ.setdefault(_k.strip(), _v)
 
 API_BASE = os.environ.get("MOE_API_BASE", "http://localhost:8002")
 MCP_BASE = os.environ.get("MCP_BASE", "http://localhost:8003")
@@ -137,6 +148,8 @@ async def check_mcp_tools() -> bool:
         ("wayback_fetch",        'wayback_fetch("https://en.wikipedia.org/wiki/Python_(programming_language)", max_chars=100)', "snapshot_timestamp"),
         ("github_search_issues", 'github_search_issues(repo="numpy/numpy", labels="Regression", state="closed", max_results=1)', "issues"),
         ("duckduckgo_search",    'duckduckgo_search("Python", max_results=1)',      "results"),
+        ("orcid_works_count",    'orcid_works_count("0000-0002-1825-0097", before_year=2020)', "filtered_count"),
+        ("python_sandbox",       'python_sandbox("print(sum(range(10)))")',                   "45"),
     ]
     for tool, call, expected in tests:
         ok = _docker_exec_mcp(tool, call, expected)
@@ -201,10 +214,46 @@ def check_redis() -> bool:
         return check("Redis check", False, str(e)[:60])
 
 
-# ── 6. Runner import syntax ───────────────────────────────────────────────────
+# ── 6. MinIO connectivity ─────────────────────────────────────────────────────
+
+def check_minio() -> bool:
+    section("6. MinIO connectivity (GAIA attachment uploads)")
+    endpoint = os.environ.get("MINIO_ENDPOINT", "")
+    user     = os.environ.get("MINIO_ROOT_USER", "")
+    password = os.environ.get("MINIO_ROOT_PASSWORD", "")
+    if not endpoint:
+        print(f"  {WARN} MINIO_ENDPOINT not set — attachment uploads will use text-injection fallback")
+        return True
+    # Quick HTTP health check (MinIO S3 root returns 403 AccessDenied = server up)
+    proto = "https" if os.environ.get("MINIO_SECURE", "") else "http"
+    url = f"{proto}://{endpoint}/"
+    try:
+        import httpx as _httpx
+        r = _httpx.get(url, timeout=5)
+        reachable = r.status_code in (200, 403)
+        msg = f"HTTP {r.status_code} at {endpoint}"
+        if not reachable:
+            return check("MinIO reachable", False, msg + " — check MINIO_ENDPOINT")
+        check("MinIO reachable", True, msg)
+        # Verify credentials via minio Python client (proper S3 Signature-V4 auth)
+        if user and password:
+            bucket = os.environ.get("MINIO_DEFAULT_BUCKET", "moe-files")
+            try:
+                from minio import Minio
+                mc = Minio(endpoint, access_key=user, secret_key=password, secure=(proto == "https"))
+                exists = mc.bucket_exists(bucket)
+                return check("MinIO credentials", True, f"bucket '{bucket}' {'exists' if exists else 'not found (ok)'}")
+            except Exception as _ce:
+                return check("MinIO credentials", False, str(_ce)[:80])
+        return True
+    except Exception as e:
+        return check("MinIO reachable", False, f"{endpoint}: {str(e)[:60]}")
+
+
+# ── 7. Runner import syntax ───────────────────────────────────────────────────
 
 def check_runner_syntax() -> bool:
-    section("6. gaia_runner.py import syntax")
+    section("7. Runner import syntax")
     try:
         result = subprocess.run(
             [sys.executable, "-c", "import ast; ast.parse(open('benchmarks/gaia_runner.py').read())"],
@@ -228,10 +277,10 @@ def check_main_syntax() -> bool:
         return check("main.py AST parse", False, str(e)[:60])
 
 
-# ── 7. End-to-end mini question ───────────────────────────────────────────────
+# ── 8. End-to-end mini question ───────────────────────────────────────────────
 
 async def check_e2e() -> bool:
-    section("7. End-to-end: simple question through full pipeline")
+    section("8. End-to-end: simple question through full pipeline")
     if not API_KEY:
         print(f"  {WARN} No MOE_API_KEY — skipping E2E test")
         return True
@@ -274,6 +323,7 @@ async def main() -> None:
         await check_mcp_tools(),
         await check_planner_prompt(),
         check_redis(),
+        check_minio(),
         check_runner_syntax(),
         check_main_syntax(),
         await check_e2e(),

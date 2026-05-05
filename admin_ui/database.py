@@ -576,8 +576,9 @@ async def get_user_by_username(username: str) -> Optional[dict]:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT u.*, b.daily_limit, b.monthly_limit, b.total_limit "
-                "FROM users u LEFT JOIN token_budgets b ON u.id=b.user_id WHERE u.username=%s",
-                (username,),
+                "FROM users u LEFT JOIN token_budgets b ON u.id=b.user_id "
+                "WHERE u.username=%s OR u.email=%s",
+                (username, username),
             )
             return await cur.fetchone()
 
