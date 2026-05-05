@@ -381,6 +381,9 @@ def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str]
             return next((t for t in templates if t.get("id") == tid), None)
         if admin_override and override_tmpl_id:
             tmpl = _find_tmpl(override_tmpl_id)
+        elif override_tmpl_id and override_tmpl_id in user_templates:
+            # User-owned template: authorized by ownership, no admin expert_template permission needed
+            tmpl = user_templates[override_tmpl_id]
         elif not tmpl_ids:
             return None
         elif override_tmpl_id and override_tmpl_id in tmpl_ids:
@@ -477,6 +480,9 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             return bool(t and t.get("id") in tmpl_ids)
         if admin_override and override_tmpl_id:
             tmpl = _find_tmpl(override_tmpl_id)
+        elif override_tmpl_id and override_tmpl_id in user_templates:
+            # User-owned template: authorized by ownership, no admin expert_template permission needed
+            tmpl = user_templates[override_tmpl_id]
         elif not tmpl_ids:
             return empty
         elif override_tmpl_id and _tmpl_in_allowed(override_tmpl_id):
@@ -6308,6 +6314,24 @@ async def list_models(raw_request: Request):
             main_models = []
 
     existing_ids = {m["id"] for m in main_models}
+    # User-owned templates (stored in Valkey per-user, not in admin_expert_templates)
+    _user_tmpls_m: dict = {}
+    try:
+        _user_tmpls_m = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+    except Exception:
+        pass
+    user_tmpl_models = [
+        {
+            "id":          cfg.get("name", uid),
+            "object":      "model",
+            "owned_by":    "moe-sovereign",
+            "created":     _model_created,
+            "description": cfg.get("description") or cfg.get("name", uid),
+        }
+        for uid, cfg in _user_tmpls_m.items()
+        if cfg.get("name", uid) not in existing_ids
+    ]
+    existing_ids |= {m["id"] for m in user_tmpl_models}
     # Claude Code compatible model IDs — only for users with cc_profile permission
     claude_models = [
         {"id": mid, "object": "model", "owned_by": "moe-sovereign", "created": _model_created,
@@ -6366,7 +6390,27 @@ async def list_models(raw_request: Request):
                     "created":     _model_created,
                     "description": f"Direkt via {node}" if node else "Direktzugriff",
                 })
-    return {"object": "list", "data": main_models + claude_models + native_models}
+    # User-created connections (model_cache already populated from the connection setup)
+    _user_conns_m: dict = {}
+    try:
+        _user_conns_m = json.loads(user_ctx.get("user_connections_json", "{}") or "{}")
+    except Exception:
+        pass
+    conn_models: list = []
+    _seen_conn: set = existing_ids | {m["id"] for m in native_models}
+    for _conn_name, _conn_cfg in _user_conns_m.items():
+        for _cm in _conn_cfg.get("models_cache", []):
+            _mid = f"{_cm}@{_conn_name}"
+            if _mid not in _seen_conn:
+                _seen_conn.add(_mid)
+                conn_models.append({
+                    "id":          _mid,
+                    "object":      "model",
+                    "owned_by":    "moe-sovereign",
+                    "created":     _model_created,
+                    "description": f"Direkt via {_conn_name}",
+                })
+    return {"object": "list", "data": main_models + user_tmpl_models + claude_models + native_models + conn_models}
 
 @app.get("/graph/stats")
 async def graph_stats():
@@ -7050,9 +7094,15 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                         break
     _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
     # Template name match is NOT authorization — check expert_template permissions explicitly.
+    # Exception: user-owned templates (present in user_templates_json) are authorized by ownership.
     if _tmpl_override:
         _allowed_tmpls = user_perms.get("expert_template", [])
-        if _tmpl_override not in _allowed_tmpls:
+        _owned_tmpls: dict = {}
+        try:
+            _owned_tmpls = json.loads(_user_tmpls_json or "{}")
+        except Exception:
+            pass
+        if _tmpl_override not in _allowed_tmpls and _tmpl_override not in _owned_tmpls:
             return JSONResponse(status_code=403, content={"error": {
                 "message": f"Template '{request.model}' is not authorized for this API key",
                 "type": "permission_denied",
@@ -7067,10 +7117,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                                                user_templates_json=_user_tmpls_json,
                                                admin_override=False,
                                                user_connections_json=_user_conns_json)
-    # Ghost-template detection: template in permissions but absent from DB
+    # Ghost-template detection: template in permissions but absent from DB and not user-owned
     if _tmpl_override and not user_experts and not user_perms.get("expert_template") == []:
         _ghost_check = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
-        if _ghost_check is None:
+        if _ghost_check is None and _tmpl_override not in _owned_tmpls:
             logger.error("Ghost template detected: %s in permissions but not in DB", _tmpl_override)
             return JSONResponse(status_code=422, content={"error": {
                 "message": f"Template '{_tmpl_override}' is configured but no longer exists in the database",
@@ -9560,15 +9610,25 @@ def _ollama_options_to_oai(options: dict) -> dict:
     return result
 
 
-async def _ollama_resolve_template(model_name: str, user_perms: dict):
+async def _ollama_resolve_template(model_name: str, user_perms: dict, user_templates_json: str = "{}"):
     """Return (tmpl_id, tmpl_dict | None, error_response | None) for an Ollama model name."""
     all_tmpls   = _read_expert_templates()
     matched     = next((t for t in all_tmpls if t.get("name") == model_name or t.get("id") == model_name), None)
+    owned_tmpls: dict = {}
+    try:
+        owned_tmpls = json.loads(user_templates_json or "{}")
+    except Exception:
+        pass
     if not matched:
+        # Check user-owned templates before giving up
+        for ut_id, ut_cfg in owned_tmpls.items():
+            ut_name = ut_cfg.get("name", "")
+            if ut_name == model_name or ut_id == model_name:
+                return ut_id, ut_cfg, None
         return None, None, None  # No template match — will fall through to default MoE mode
     tmpl_id      = matched["id"]
     allowed      = user_perms.get("expert_template", [])
-    if tmpl_id not in allowed:
+    if tmpl_id not in allowed and tmpl_id not in owned_tmpls:
         return tmpl_id, matched, JSONResponse(status_code=403, content={
             "error": f"Template '{model_name}' is not authorized for this API key"
         })
@@ -9591,7 +9651,9 @@ async def _ollama_internal_stream(
     api_key_id = user_ctx.get("key_id", "")
     user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
 
-    tmpl_id, matched_tmpl, err = await _ollama_resolve_template(model_name, user_perms)
+    tmpl_id, matched_tmpl, err = await _ollama_resolve_template(
+        model_name, user_perms, user_ctx.get("user_templates_json", "{}")
+    )
     if err is not None:
         yield f"data: {json.dumps({'error': 'template_not_authorized'})}\n\n"
         return
@@ -9688,7 +9750,18 @@ async def ollama_tags(raw_request: Request):
     allowed    = user_perms.get("expert_template")
     now        = _ollama_now()
 
-    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    visible = list(templates if allowed is None else [t for t in templates if t.get("id") in allowed])
+    # Append user-owned templates (stored per-user in Valkey, not in admin DB)
+    _ut_tags: dict = {}
+    try:
+        _ut_tags = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+    except Exception:
+        pass
+    _visible_names = {t.get("name", t["id"]) for t in visible}
+    for _uid_t, _ucfg_t in _ut_tags.items():
+        _m = {"id": _uid_t, **_ucfg_t}
+        if _m.get("name", _uid_t) not in _visible_names:
+            visible.append(_m)
     return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
 
 
@@ -9708,7 +9781,18 @@ async def ollama_ps(raw_request: Request):
     now        = _ollama_now()
     expires    = (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
 
-    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    visible = list(templates if allowed is None else [t for t in templates if t.get("id") in allowed])
+    # Append user-owned templates (stored per-user in Valkey, not in admin DB)
+    _ut_ps: dict = {}
+    try:
+        _ut_ps = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+    except Exception:
+        pass
+    _vis_names_ps = {t.get("name", t["id"]) for t in visible}
+    for _uid_ps, _ucfg_ps in _ut_ps.items():
+        _m_ps = {"id": _uid_ps, **_ucfg_ps}
+        if _m_ps.get("name", _uid_ps) not in _vis_names_ps:
+            visible.append(_m_ps)
     models = []
     for t in visible:
         entry = _ollama_model_entry(t, now_iso=now)
@@ -10351,7 +10435,18 @@ async def ollama_tags(raw_request: Request):
     allowed    = user_perms.get("expert_template")
     now        = _ollama_now()
 
-    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    visible = list(templates if allowed is None else [t for t in templates if t.get("id") in allowed])
+    # Append user-owned templates (stored per-user in Valkey, not in admin DB)
+    _ut_tags: dict = {}
+    try:
+        _ut_tags = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+    except Exception:
+        pass
+    _visible_names = {t.get("name", t["id"]) for t in visible}
+    for _uid_t, _ucfg_t in _ut_tags.items():
+        _m = {"id": _uid_t, **_ucfg_t}
+        if _m.get("name", _uid_t) not in _visible_names:
+            visible.append(_m)
     return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
 
 
@@ -10371,7 +10466,18 @@ async def ollama_ps(raw_request: Request):
     now        = _ollama_now()
     expires    = (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
 
-    visible = templates if allowed is None else [t for t in templates if t.get("id") in allowed]
+    visible = list(templates if allowed is None else [t for t in templates if t.get("id") in allowed])
+    # Append user-owned templates (stored per-user in Valkey, not in admin DB)
+    _ut_ps: dict = {}
+    try:
+        _ut_ps = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+    except Exception:
+        pass
+    _vis_names_ps = {t.get("name", t["id"]) for t in visible}
+    for _uid_ps, _ucfg_ps in _ut_ps.items():
+        _m_ps = {"id": _uid_ps, **_ucfg_ps}
+        if _m_ps.get("name", _uid_ps) not in _vis_names_ps:
+            visible.append(_m_ps)
     models = []
     for t in visible:
         entry = _ollama_model_entry(t, now_iso=now)

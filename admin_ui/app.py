@@ -851,7 +851,9 @@ async def get_container_status() -> dict:
 
 def require_login(request: Request):
     if not request.session.get("authenticated"):
-        raise HTTPException(status_code=303, headers={"Location": "/login"})
+        host = request.headers.get("host", "")
+        target = "/user/login" if "portal." in host else "/login"
+        raise HTTPException(status_code=303, headers={"Location": target})
 
 
 def require_admin(request: Request):
