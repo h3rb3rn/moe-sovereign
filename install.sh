@@ -1156,12 +1156,22 @@ if [[ "$INSTALL_CADDY" == "true" ]]; then
           echo "}"
         fi
         echo ""
+        # portal.DOMAIN — user-facing login; /login blocked to prevent admin access
         echo "${_h_portal} {"
+        echo "    @admin_login path /login"
+        echo "    redir @admin_login /user/login 302"
+        echo "    @root path /"
+        echo "    redir @root /user/login 302"
+        echo "    reverse_proxy moe-admin:8088"
+        echo "}"
+        echo ""
+        # bare domain → portal
+        echo "${DOMAIN} {"
         echo "    handle /install.sh {"
         echo "        root * /srv"
         echo "        file_server"
         echo "    }"
-        echo "    redir * https://${_h_admin}{uri} 302"
+        echo "    redir * https://${_h_portal}{uri} 302"
         echo "}"
       } > "${CADDYFILE}"
       echo "[6/9] Caddyfile generated for domain '${DOMAIN}' ✓"
