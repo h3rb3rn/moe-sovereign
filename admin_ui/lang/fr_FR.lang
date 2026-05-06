@@ -221,6 +221,9 @@
   "lbl.reasoning_model":  "Modèle de raisonnement",
   "lbl.claude_models":    "IDs de modèles Claude acceptés",
   "lbl.searxng_url":      "URL SearXNG (recherche web)",
+  "hint.searxng_primary": "moteur de recherche principal — SearXNG recommandé",
+  "lbl.ddg_fallback":     "Activer le repli DuckDuckGo",
+  "hint.ddg_fallback":    "repli automatique sur l'API publique DuckDuckGo si le moteur principal ne retourne aucun résultat (aucune clé API requise)",
   "lbl.admin_preview":    "Aperçu admin",
   "lbl.impersonate_exit": "Retour Admin",
 

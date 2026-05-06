@@ -1347,6 +1347,7 @@ async def save_config(request: Request, _=Depends(require_login)):
     updates = {
         "INFERENCE_SERVERS":         servers_json,
         "SEARXNG_URL":               form.get("SEARXNG_URL", ""),
+        "WEB_SEARCH_FALLBACK_DDG":   "true" if form.get("WEB_SEARCH_FALLBACK_DDG") else "false",
         "JUDGE_MODEL":               form.get("JUDGE_MODEL", ""),
         "JUDGE_ENDPOINT":            form.get("JUDGE_ENDPOINT", ""),
         "PLANNER_MODEL":             form.get("PLANNER_MODEL", ""),
