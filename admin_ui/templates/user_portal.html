@@ -11,7 +11,7 @@
     })();
   </script>
   <title>
-    {% if page == "login" %}{{ t(request, 'page.login') }}{% elif page == "forgot_password" %}{{ t(request, 'page.forgot_pw') }}{% elif page == "reset_password" %}{{ t(request, 'page.reset_pw') }}{% elif page == "dashboard" %}{{ t(request, 'page.user_dashboard') }}{% elif page == "profile" %}{{ t(request, 'page.profile_pw') }}{% elif page == "usage" %}{{ t(request, 'page.usage') }}{% elif page == "billing" %}{{ t(request, 'page.billing') }}{% elif page == "keys" %}{{ t(request, 'page.api_keys') }}{% elif page == "cc_profiles" %}{{ t(request, 'page.cc_profiles') }}{% else %}User Portal{% endif %}
+    {% if page == "login" %}{{ t(request, 'page.login') }}{% elif page == "forgot_password" %}{{ t(request, 'page.forgot_pw') }}{% elif page == "reset_password" %}{{ t(request, 'page.reset_pw') }}{% elif page == "change_password" %}{{ t(request, 'page.change_password') }}{% elif page == "dashboard" %}{{ t(request, 'page.user_dashboard') }}{% elif page == "profile" %}{{ t(request, 'page.profile_pw') }}{% elif page == "usage" %}{{ t(request, 'page.usage') }}{% elif page == "billing" %}{{ t(request, 'page.billing') }}{% elif page == "keys" %}{{ t(request, 'page.api_keys') }}{% elif page == "cc_profiles" %}{{ t(request, 'page.cc_profiles') }}{% else %}User Portal{% endif %}
     – MoE Portal
   </title>
   <link rel="stylesheet" href="/static/css/bootstrap.min.css">
@@ -236,6 +236,47 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         </button>
       </form>
       {% endif %}
+    </div>
+  </div>
+</div>
+
+{% elif page == "change_password" %}
+<!-- ══════════════════════════════ PASSWORT ÄNDERN (PFLICHT) ════════════════ -->
+<div class="d-flex justify-content-center align-items-center" style="min-height:85vh">
+  <div class="card" style="max-width:440px;width:100%">
+    <div class="card-header bg-warning text-dark text-center py-3">
+      <i class="bi bi-shield-lock me-2"></i>{{ t(request, 'portal.pw_change_required') }}
+    </div>
+    <div class="card-body p-4">
+      <p class="text-muted small mb-4">
+        <i class="bi bi-info-circle me-1"></i>{{ t(request, 'portal.pw_change_hint') }}
+      </p>
+      {% if error %}
+      <div class="alert alert-danger py-2 small mb-3">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="/user/change-password">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="mb-3">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.new_password') }} <span class="text-muted">({{ t(request, 'lbl.min_8_chars') }})</span></label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock"></i></span>
+            <input type="password" class="form-control" name="new_password" minlength="8" autofocus required>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="form-label small fw-semibold">{{ t(request, 'lbl.confirm_password') }}</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+            <input type="password" class="form-control" name="confirm_pw" minlength="8" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-warning w-100 fw-semibold">
+          <i class="bi bi-check-lg me-1"></i>{{ t(request, 'page.change_password') }}
+        </button>
+      </form>
+      <div class="text-center mt-3">
+        <a href="/user/logout" class="small text-muted">{{ t(request, 'nav.logout') }}</a>
+      </div>
     </div>
   </div>
 </div>
