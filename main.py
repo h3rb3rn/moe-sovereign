@@ -4949,11 +4949,29 @@ async def merger_node(state: AgentState):
         if not compressed_web:
             compressed_web = web[:MAX_BLOCK_CHARS * 2]  # fallback if split produced nothing
         sections.append(f"WEB RESEARCH (current, with sources):\n{compressed_web}")
+    # Code-duplication guard: LLMs (especially gpt-4.1) interpret "integrate the strongest
+    # insights" literally when they receive two similar code implementations — they interleave
+    # both character-by-character, producing doubled output. Guard fires when any primary source
+    # (expert_results OR ensemble_results) contains code AND a secondary source does too.
+    _CODE_MARKERS = ("```", "<!DOCTYPE", "<html", "def ", "function ", "class ", "import ", "setInterval")
+    _primary_sources = list(expert_results) + list(ensemble_results)
+    _primary_has_code = any(any(m in s for m in _CODE_MARKERS) for s in _primary_sources)
+
     if cached:
-        sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:1000]}")
+        _cached_has_code = any(m in cached for m in _CODE_MARKERS)
+        if _primary_has_code and _cached_has_code:
+            logger.info("🛡️ PRIOR KNOWLEDGE suppressed: primary source + cache both contain code (prevents judge interleaving)")
+            await _report("🛡️ Prior knowledge suppressed (code duplication guard)")
+        else:
+            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:1000]}")
     soft_examples = state.get("soft_cache_examples") or ""
     if soft_examples:
-        sections.append(f"SIMILAR PREVIOUS ANSWERS (few-shot orientation, do not use as fact):\n{soft_examples}")
+        _soft_has_code = any(m in soft_examples for m in _CODE_MARKERS)
+        if _primary_has_code and _soft_has_code:
+            logger.info("🛡️ Soft-cache suppressed: primary source + cached snippet both contain code (prevents judge interleaving)")
+            await _report("🛡️ Soft-cache examples suppressed (code duplication guard)")
+        else:
+            sections.append(f"SIMILAR PREVIOUS ANSWERS (few-shot orientation, do not use as fact):\n{soft_examples}")
 
     conf_note = ""
     if low_conf_critical and mode != "code":  # Code mode does not need caveats
@@ -7598,6 +7616,31 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     effective_token = tool_token or JUDGE_TOKEN
     effective_node  = tool_node or "unknown"
     _node_timeout   = float(tool_timeout if tool_timeout is not None else JUDGE_TIMEOUT)
+
+    # Guard: empty model name causes inference servers to return HTTP 400.
+    # Happens when CLAUDE_CODE_TOOL_MODEL is unset and no CC profile overrides it.
+    if not effective_model or not effective_model.strip():
+        _no_model_err = (
+            "⚠️ No tool model configured. Set CLAUDE_CODE_TOOL_MODEL in .env "
+            "or configure a CC profile with a tool_model."
+        )
+        logger.warning("⚠️ _anthropic_tool_handler: effective_model is empty — returning config error")
+        asyncio.create_task(_deregister_active_request(chat_id))
+        if body.get("stream", False):
+            return StreamingResponse(
+                _anthropic_content_blocks_to_sse(
+                    [{"type": "text", "text": _no_model_err}],
+                    chat_id, body.get("model", "moe-orchestrator-agent"), 0, 0, "end_turn"
+                ),
+                media_type="text/event-stream"
+            )
+        return {
+            "id": chat_id, "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": _no_model_err}],
+            "model": body.get("model", "moe-orchestrator-agent"),
+            "stop_reason": "end_turn", "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0}
+        }
 
     payload: dict = {
         "model":      effective_model,
