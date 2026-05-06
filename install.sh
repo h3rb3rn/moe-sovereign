@@ -113,12 +113,22 @@ elif command -v podman &>/dev/null; then
 fi
 
 if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
+  # Volume detection: check both named volumes AND the data-root directory so
+  # the update path is also triggered on installs that pre-date named volumes.
   if [[ "${_upd_rt[0]}" == podman* ]]; then
     vol_count=$(podman volume ls -q 2>/dev/null \
       | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
   else
     vol_count=$(docker volume ls -q 2>/dev/null \
       | grep -cE '(terra_checkpoints|neo4j|redis|cache|grafana)' || true)
+  fi
+  # Fallback: if no named volumes found, check whether the data directory exists
+  # and contains container data (covers bind-mount installs and podman rootless).
+  if [[ "${vol_count:-0}" -eq 0 ]]; then
+    _upd_data_root="$(_renv MOE_DATA_ROOT)"
+    if [[ -n "$_upd_data_root" && -d "${_upd_data_root}/redis-data" ]]; then
+      vol_count=1
+    fi
   fi
   if [[ "${vol_count:-0}" -gt 0 ]]; then
 
@@ -943,11 +953,15 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
   # Guard against dirty working tree: stash silently on fresh-install path
   # (no interactive prompts here — update mode handles the interactive case above).
   _s7_dirty=$(git -C "${INSTALL_DIR}" status --porcelain 2>/dev/null || true)
+  _s7_stashed=0
   if [[ -n "$_s7_dirty" ]]; then
     echo "  [!] Local modifications found — stashing before pull..."
-    _git_as_user -C "${INSTALL_DIR}" stash push \
-      -m "install.sh section-7 stash $(date +%Y%m%d-%H%M%S)" 2>/dev/null \
-      || echo "  [!] Stash failed — attempting pull anyway."
+    if _git_as_user -C "${INSTALL_DIR}" stash push \
+        -m "install.sh section-7 stash $(date +%Y%m%d-%H%M%S)" 2>/dev/null; then
+      _s7_stashed=1
+    else
+      echo "  [!] Stash failed — attempting pull anyway."
+    fi
   fi
   if ! _git_as_user -C "${INSTALL_DIR}" pull --ff-only 2>&1; then
     echo "  [!] Fast-forward pull failed — resetting to origin..."
@@ -955,6 +969,18 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
     _git_as_user -C "${INSTALL_DIR}" fetch origin
     _git_as_user -C "${INSTALL_DIR}" reset --hard "origin/${_s7_branch}"
     echo "  Reset to origin/${_s7_branch} ✓"
+  fi
+  # Restore local modifications after pull. On conflict, always prefer the
+  # upstream (HEAD) version so the deployment runs the correct released code.
+  if [[ $_s7_stashed -eq 1 ]]; then
+    if ! _git_as_user -C "${INSTALL_DIR}" stash pop 2>/dev/null; then
+      echo "  [!] Stash pop conflict — keeping upstream versions for conflicted files."
+      _git_as_user -C "${INSTALL_DIR}" checkout HEAD -- \
+        $(git -C "${INSTALL_DIR}" diff --name-only --diff-filter=U 2>/dev/null) \
+        2>/dev/null || true
+      _git_as_user -C "${INSTALL_DIR}" reset HEAD 2>/dev/null || true
+    fi
+    echo "  Local modifications restored ✓"
   fi
 else
   echo "  Cloning repository to ${INSTALL_DIR}..."
