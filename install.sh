@@ -330,12 +330,21 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     cd "${INSTALL_DIR}"
     _upd_group=""; [[ "${_upd_rt[0]}" == "docker" ]] && _upd_group="docker"
     _upd_q="";    [[ "${_upd_rt[0]}" == "docker" ]] && _upd_q="--quiet"
+    # Read active compose profiles from .env so optional services (caddy, neo4j,
+    # authentik) are included in the update — compose up without --profile flags
+    # silently skips any service that declares a profile.
+    _upd_profiles=()
+    _prof_val="$(grep -E '^COMPOSE_PROFILES=' "${MOE_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    IFS=',' read -ra _prof_arr <<< "${_prof_val}"
+    for _p in "${_prof_arr[@]}"; do
+      [[ -n "$_p" ]] && _upd_profiles+=(--profile "$_p")
+    done
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
-      sg "$_upd_group" -c "${_upd_rt[*]} build ${_upd_q}"
-      sg "$_upd_group" -c "${_upd_rt[*]} up -d"
+      sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
+      sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} up -d"
     else
-      "${_upd_rt[@]}" build ${_upd_q}
-      "${_upd_rt[@]}" up -d
+      "${_upd_rt[@]}" "${_upd_profiles[@]}" build ${_upd_q}
+      "${_upd_rt[@]}" "${_upd_profiles[@]}" up -d
     fi
     echo "  Containers started ✓"
 
