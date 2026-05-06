@@ -221,6 +221,9 @@
   "lbl.reasoning_model":  "推理模型",
   "lbl.claude_models":    "接受的Claude模型ID",
   "lbl.searxng_url":      "SearXNG URL（网页搜索）",
+  "hint.searxng_primary": "主要搜索引擎 — 推荐使用 SearXNG",
+  "lbl.ddg_fallback":     "启用 DuckDuckGo 回退",
+  "hint.ddg_fallback":    "当主要搜索引擎无结果时自动回退至 DuckDuckGo 公共 API（无需 API 密钥）",
   "lbl.admin_preview":    "管理员预览",
   "lbl.impersonate_exit": "返回管理",
 
