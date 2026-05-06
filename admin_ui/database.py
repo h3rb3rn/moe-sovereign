@@ -300,6 +300,7 @@ CREATE INDEX IF NOT EXISTS idx_tenant_memberships_tenant ON tenant_memberships(t
 -- Memory preferences: idempotent column additions for existing deployments
 ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_prefer_fresh       BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS memory_share_with_team    BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change     BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Pipeline transparency log: idempotent additions for existing deployments
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS latency_ms        INTEGER;
@@ -543,8 +544,8 @@ async def create_user(
                     "INSERT INTO users "
                     "(id,username,email,display_name,hashed_password,is_active,is_admin,role,"
                     "first_name,last_name,street_address,postal_code,city,country,date_of_birth,gender,"
-                    "created_at,updated_at) "
-                    "VALUES (%s,%s,%s,%s,%s,TRUE,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "force_password_change,created_at,updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,TRUE,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE,%s,%s)",
                     (uid, username, email, display_name, hashed, bool(is_admin), role,
                      first_name, last_name, street_address, postal_code, city,
                      country or "", date_of_birth or None, gender or None,
@@ -656,7 +657,7 @@ async def update_password(user_id: str, new_password: str) -> None:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "UPDATE users SET hashed_password=%s, updated_at=%s WHERE id=%s",
+                "UPDATE users SET hashed_password=%s, force_password_change=FALSE, updated_at=%s WHERE id=%s",
                 (hashed, now_iso(), user_id),
             )
 

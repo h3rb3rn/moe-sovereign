@@ -3993,6 +3993,11 @@ def require_user_login(request: Request) -> str:
     """Dependency for User Portal routes. Falls back to admin session if present."""
     uid = request.session.get("user_id")
     if request.session.get("user_authenticated") and uid:
+        # Block access to any route other than change-password while flag is active
+        if request.session.get("must_change_password"):
+            path = request.url.path
+            if path not in ("/user/change-password", "/user/logout"):
+                raise HTTPException(status_code=303, headers={"Location": "/user/change-password"})
         return uid
     # Auto-authenticate admin users into the user portal using their admin user_id
     if request.session.get("authenticated") and request.session.get("admin_user_id"):
@@ -4355,6 +4360,9 @@ async def user_login_post(
         request.session["user_authenticated"] = True
         request.session["user_id"]            = user["id"]
         request.session["user_name"]          = user["username"]
+        if user.get("force_password_change"):
+            request.session["must_change_password"] = True
+            return RedirectResponse("/user/change-password", status_code=303)
         return RedirectResponse("/user/dashboard", status_code=303)
     return TEMPLATES.TemplateResponse(request, "user_portal.html", {
         "page":         "login",
@@ -4369,7 +4377,45 @@ async def user_logout(request: Request):
     request.session.pop("user_authenticated", None)
     request.session.pop("user_id", None)
     request.session.pop("user_name", None)
+    request.session.pop("must_change_password", None)
     return RedirectResponse("/user/login", status_code=303)
+
+
+@app.get("/user/change-password", response_class=HTMLResponse)
+async def user_change_password_get(request: Request, user_id: str = Depends(require_user_login)):
+    return TEMPLATES.TemplateResponse(request, "user_portal.html", {
+        "page":       "change_password",
+        "error":      None,
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.post("/user/change-password", response_class=HTMLResponse)
+async def user_change_password_post(
+    request: Request,
+    user_id:    str = Depends(require_user_login),
+    new_password: str = Form(...),
+    confirm_pw:   str = Form(...),
+    csrf_token:   str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    t_fn = make_t(get_lang(request))
+
+    def _err(key: str):
+        return TEMPLATES.TemplateResponse(request, "user_portal.html", {
+            "page":       "change_password",
+            "error":      t_fn(key),
+            "csrf_token": get_csrf_token(request),
+        }, status_code=422)
+
+    if len(new_password) < 8:
+        return _err("msg.pw_too_short")
+    if new_password != confirm_pw:
+        return _err("msg.pw_mismatch")
+
+    await db.update_password(user_id, new_password)
+    request.session.pop("must_change_password", None)
+    return RedirectResponse("/user/dashboard", status_code=303)
 
 
 @app.get("/user/forgot-password", response_class=HTMLResponse)
