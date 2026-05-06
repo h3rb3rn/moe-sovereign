@@ -459,6 +459,7 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
              "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
              "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
              "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
+             "search_fallback_ddg": _WEB_SEARCH_FALLBACK_DDG,
              "graphrag_max_chars": 0,
              "history_max_turns": 0, "history_max_chars": 0,
              "max_agentic_rounds": 0}
@@ -526,6 +527,8 @@ def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[
             "enable_cache":        tmpl.get("enable_cache", True),
             "enable_graphrag":     tmpl.get("enable_graphrag", True),
             "enable_web_research": tmpl.get("enable_web_research", True),
+            # DuckDuckGo fallback when SearXNG returns empty (template overrides global env)
+            "search_fallback_ddg": tmpl.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG),
             # Context window budget: 0 = auto-compute from judge model's known context window.
             # Set a positive integer to pin the char limit; -1 = model-aware auto (same as 0).
             "graphrag_max_chars":  int(tmpl.get("graphrag_max_chars", 0)),
@@ -2015,6 +2018,9 @@ search: Optional[SearxSearchWrapper] = (
 )
 if search is None:
     logger.info("SEARXNG_URL not set — web search disabled")
+# DuckDuckGo fallback: activates automatically when SearXNG returns empty.
+# Override via env (WEB_SEARCH_FALLBACK_DDG=false) or per template (search_fallback_ddg).
+_WEB_SEARCH_FALLBACK_DDG: bool = os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() not in ("0", "false", "no")
 graph_manager:  Optional[GraphRAGManager]  = None
 redis_client:   Optional[aioredis.Redis]   = None
 kafka_producer: Optional[AIOKafkaProducer] = None
@@ -2681,9 +2687,14 @@ async def _apply_semantic_memory(
 
 # _DOMAIN_SCORES, _domain_score, _reliability_label — see web_search.py
 
-async def _web_search_with_citations(query: str) -> str:
-    """Wrapper: forwards to web_search._web_search_with_citations_impl with app-level search singleton."""
-    return await _web_search_with_citations_impl(query, search)
+async def _web_search_with_citations(query: str, ddg_fallback: Optional[bool] = None) -> str:
+    """Wrapper: forwards to web_search._web_search_with_citations_impl with app-level search singleton.
+
+    ddg_fallback: None = use global WEB_SEARCH_FALLBACK_DDG env var;
+                  True/False = explicit per-call override (from template state).
+    """
+    use_ddg = _WEB_SEARCH_FALLBACK_DDG if ddg_fallback is None else ddg_fallback
+    return await _web_search_with_citations_impl(query, search, ddg_fallback=use_ddg)
 
 async def _store_response_metadata(
     response_id: str,
@@ -4215,7 +4226,9 @@ async def expert_worker(state: AgentState):
             )
             expert_base_url = url.rstrip("/").removesuffix("/v1")
             _expert_node_timeout = float(
-                selected.get("timeout", EXPERT_TIMEOUT) if not LITELLM_URL else EXPERT_TIMEOUT
+                selected.get("timeout", EXPERT_TIMEOUT)
+                if not LITELLM_URL and not model_cfg.get("_user_conn_url")
+                else EXPERT_TIMEOUT
             )
             _expert_temp = state.get("query_temperature")  # None = API default
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
@@ -4473,7 +4486,7 @@ async def research_node(state: AgentState):
                 pass
 
         await _report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
-        raw = await _web_search_with_citations(query)
+        raw = await _web_search_with_citations(query, ddg_fallback=state.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
         # Quality classification drives both the result flag and the cache TTL.
         # Poor results (empty or < 500 chars) are only cached for 30 min to prevent
         # poisoning subsequent runs with stale, low-signal snippets.
@@ -5446,7 +5459,7 @@ async def research_fallback_node(state: AgentState):
         query = item["query"][:180]
         cat_s = item["category"]
         await _report(f"🌐 Fallback search [{cat_s}]: '{query[:60]}'...")
-        raw = await _web_search_with_citations(query)
+        raw = await _web_search_with_citations(query, ddg_fallback=state.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
         if raw:
             await _report(f"🌐 [{cat_s}]: {len(raw)} chars fallback result")
             logger.info(f"🌐 Research Fallback [{cat_s}]: {len(raw)} chars")
@@ -7401,6 +7414,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "enable_cache": _tmpl_prompts.get("enable_cache", True),
          "enable_graphrag": _tmpl_prompts.get("enable_graphrag", True),
          "enable_web_research": _tmpl_prompts.get("enable_web_research", True),
+         "search_fallback_ddg": _tmpl_prompts.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG),
          "graphrag_max_chars": _tmpl_prompts.get("graphrag_max_chars", 0),
          "history_max_turns": _tmpl_prompts.get("history_max_turns", 0),
          "history_max_chars": _tmpl_prompts.get("history_max_chars", 0),
