@@ -26,6 +26,8 @@ SCANNED_FILES = [
     _ROOT / "routes" / "admin_benchmark.py",
     _ROOT / "routes" / "admin_ontology.py",
     _ROOT / "routes" / "admin_stats.py",
+    _ROOT / "routes" / "feedback.py",
+    _ROOT / "routes" / "ollama_compat.py",
 ]
 
 # Each entry: (HTTP_METHOD_LOWERCASE, "/path")

@@ -766,9 +766,9 @@ def _detect_file_skill(files: Optional[List], user_input: str,
 _CC_SYSTEM_PREFIX = ""
 _CC_STREAM_THINK  = False
 
-# Per-endpoint rate limit state (populated from response headers of AIHUB/external provider calls)
-# Format: {endpoint_name: {"remaining_tokens": int, "limit_tokens": int, "reset_time": float|None, "exhausted": bool, "updated_at": float}}
-_provider_rate_limits: dict = {}
+# _provider_rate_limits lives in state.py — imported here for backward compat
+import state as _state_prl
+_provider_rate_limits = _state_prl._provider_rate_limits  # same dict object
 
 
 def _update_rate_limit_headers(endpoint: str, headers, status_code: int = 200) -> None:
@@ -1605,6 +1605,10 @@ else:
     cache_collection = chroma_client.get_or_create_collection(name="moe_fact_cache", embedding_function=default_ef)
     # Second collection for semantic pre-routing: prototypical task queries per category
     route_collection = chroma_client.get_or_create_collection(name="task_type_prototypes", embedding_function=default_ef)
+
+import state as _state_ref
+_state_ref.cache_collection = cache_collection
+_state_ref.route_collection = route_collection
 
 # --- MODES ---
 # Control output format and behavior of the entire pipeline.
@@ -6105,6 +6109,8 @@ from routes.graph            import router as _graph_router
 from routes.admin_benchmark  import router as _admin_bench_router
 from routes.admin_ontology   import router as _admin_onto_router
 from routes.admin_stats      import router as _admin_stats_router
+from routes.feedback         import router as _feedback_router
+from routes.ollama_compat    import router as _ollama_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -6112,6 +6118,8 @@ app.include_router(_graph_router)
 app.include_router(_admin_bench_router)
 app.include_router(_admin_onto_router)
 app.include_router(_admin_stats_router)
+app.include_router(_feedback_router)
+app.include_router(_ollama_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -6352,7 +6360,6 @@ async def prometheus_metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/v1/provider-status")
 async def provider_status():
     """Rate-Limit-Status aller gecachten Provider-Endpunkte (Claude Code Integration)."""
     import time as _time
@@ -6901,7 +6908,6 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             asyncio.create_task(_deregister_active_request(chat_id))
         yield "data: [DONE]\n\n"
 
-@app.post("/v1/feedback")
 async def submit_feedback(req: FeedbackRequest):
     if not 1 <= req.rating <= 5:
         return {"status": "error", "message": "Rating must be between 1 and 5"}
@@ -6963,7 +6969,6 @@ class MemoryIngestRequest(BaseModel):
     confidence: float = 0.8
 
 
-@app.post("/v1/memory/ingest")
 async def memory_ingest(request: Request, body: MemoryIngestRequest):
     """
     Accepts a session summary from external hooks (e.g., Claude Code) and
@@ -9927,13 +9932,11 @@ async def _ollama_internal_stream(
         yield sse_line
 
 
-@app.get("/api/version")
 async def ollama_version():
     """Ollama version stub — clients use this to detect Ollama compatibility."""
     return {"version": "0.6.0"}
 
 
-@app.get("/api/tags")
 async def ollama_tags(raw_request: Request):
     """Return templates visible to this API key in Ollama model-list format."""
     raw_key = _extract_api_key(raw_request)
@@ -9963,7 +9966,6 @@ async def ollama_tags(raw_request: Request):
     return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
 
 
-@app.get("/api/ps")
 async def ollama_ps(raw_request: Request):
     """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
     raw_key = _extract_api_key(raw_request)
@@ -10000,7 +10002,6 @@ async def ollama_ps(raw_request: Request):
     return {"models": models}
 
 
-@app.post("/api/show")
 async def ollama_show(raw_request: Request):
     """Return template details in Ollama modelinfo format (no auth required for show)."""
     try:
@@ -10031,7 +10032,6 @@ async def ollama_show(raw_request: Request):
     }
 
 
-@app.post("/api/chat")
 async def ollama_chat(raw_request: Request):
     """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
     raw_key = _extract_api_key(raw_request)
@@ -10113,7 +10113,6 @@ async def ollama_chat(raw_request: Request):
     }
 
 
-@app.post("/api/generate")
 async def ollama_generate(raw_request: Request):
     """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
 
@@ -10203,7 +10202,6 @@ async def ollama_generate(raw_request: Request):
     }
 
 
-@app.post("/api/pull")
 async def ollama_pull(raw_request: Request):
     """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
     try:
@@ -10222,7 +10220,6 @@ async def ollama_pull(raw_request: Request):
     return StreamingResponse(_progress(), media_type="application/x-ndjson")
 
 
-@app.delete("/api/delete")
 async def ollama_delete():
     """Model deletion is not supported — managed via Admin UI."""
     return JSONResponse(status_code=400, content={
@@ -10230,10 +10227,6 @@ async def ollama_delete():
     })
 
 
-@app.post("/api/copy")
-@app.post("/api/push")
-@app.post("/api/embed")
-@app.post("/api/embeddings")
 async def ollama_not_supported():
     """Stub for Ollama endpoints not supported by MoE Sovereign."""
     return JSONResponse(status_code=400, content={
@@ -10612,13 +10605,11 @@ async def responses_api(raw_request: Request, request: _ResponsesRequest):
         return JSONResponse(status_code=500, content={"error": {"message": str(_ie)}})
 
 
-@app.get("/api/version")
 async def ollama_version():
     """Ollama version stub — clients use this to detect Ollama compatibility."""
     return {"version": "0.6.0"}
 
 
-@app.get("/api/tags")
 async def ollama_tags(raw_request: Request):
     """Return templates visible to this API key in Ollama model-list format."""
     raw_key = _extract_api_key(raw_request)
@@ -10648,7 +10639,6 @@ async def ollama_tags(raw_request: Request):
     return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
 
 
-@app.get("/api/ps")
 async def ollama_ps(raw_request: Request):
     """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
     raw_key = _extract_api_key(raw_request)
@@ -10685,7 +10675,6 @@ async def ollama_ps(raw_request: Request):
     return {"models": models}
 
 
-@app.post("/api/show")
 async def ollama_show(raw_request: Request):
     """Return template details in Ollama modelinfo format (no auth required for show)."""
     try:
@@ -10716,7 +10705,6 @@ async def ollama_show(raw_request: Request):
     }
 
 
-@app.post("/api/chat")
 async def ollama_chat(raw_request: Request):
     """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
     raw_key = _extract_api_key(raw_request)
@@ -10798,7 +10786,6 @@ async def ollama_chat(raw_request: Request):
     }
 
 
-@app.post("/api/generate")
 async def ollama_generate(raw_request: Request):
     """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
 
@@ -10888,7 +10875,6 @@ async def ollama_generate(raw_request: Request):
     }
 
 
-@app.post("/api/pull")
 async def ollama_pull(raw_request: Request):
     """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
     try:
@@ -10907,7 +10893,6 @@ async def ollama_pull(raw_request: Request):
     return StreamingResponse(_progress(), media_type="application/x-ndjson")
 
 
-@app.delete("/api/delete")
 async def ollama_delete():
     """Model deletion is not supported — managed via Admin UI."""
     return JSONResponse(status_code=400, content={
@@ -10915,10 +10900,6 @@ async def ollama_delete():
     })
 
 
-@app.post("/api/copy")
-@app.post("/api/push")
-@app.post("/api/embed")
-@app.post("/api/embeddings")
 async def ollama_not_supported():
     """Stub for Ollama endpoints not supported by MoE Sovereign."""
     return JSONResponse(status_code=400, content={
