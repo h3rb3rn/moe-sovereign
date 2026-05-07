@@ -58,7 +58,7 @@ def test_calculate_rejects_import_injection(capsys):
     only, so unsafe-but-valid Python expressions are rejected at the AST stage.
     """
     result = calculate("__import__('os').system('id')")
-    assert result.startswith("Fehler"), (
+    assert result.startswith("Error") or result.startswith("Fehler"), (
         f"Expected an error string, got: {result!r}"
     )
     # The string 'uid=' would appear in captured stdout if os.system ran.
@@ -71,7 +71,7 @@ def test_calculate_rejects_import_injection(capsys):
 def test_calculate_rejects_open_injection():
     """open() is not in the safe whitelist and must be refused."""
     result = calculate("open('/etc/passwd').read()")
-    assert result.startswith("Fehler") or "Error" in result or "error" in result.lower()
+    assert result.startswith("Error") or result.startswith("Fehler") or "Error" in result or "error" in result.lower()
 
 
 def test_calculate_percentage_notation():
@@ -155,7 +155,7 @@ def test_base64_invalid_mode():
 def test_base64_malformed_input_for_decode():
     """Non-base64 input for decode must return an error string, not raise."""
     result = base64_codec("!!!not-base64!!!", "decode")
-    assert result.startswith("Fehler") or "Error" in result
+    assert result.startswith("Error") or result.startswith("Fehler") or "Error" in result
 
 
 # ── date_diff() ───────────────────────────────────────────────────────────────
@@ -174,12 +174,12 @@ def test_date_diff_same_date():
 def test_date_diff_invalid_format_returns_error():
     """DD-MM-YYYY is not the expected format; must return an error string."""
     result = date_diff("31-01-2024", "2024-01-01")
-    assert result.startswith("Fehler")
+    assert result.startswith("Error") or result.startswith("Fehler")
 
 
 def test_date_diff_non_date_string_returns_error():
     result = date_diff("not-a-date", "2024-01-01")
-    assert result.startswith("Fehler")
+    assert result.startswith("Error") or result.startswith("Fehler")
 
 
 # ── gcd_lcm() ─────────────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ def test_statistics_calc_unknown_op_silently_skipped():
 
 def test_statistics_calc_empty_data_returns_error():
     result = statistics_calc("", "mean")
-    assert "Fehler" in result or "keine" in result.lower()
+    assert "Error" in result or "Fehler" in result or "keine" in result.lower()
 
 
 # ── subnet_calc() ─────────────────────────────────────────────────────────────
@@ -273,9 +273,9 @@ def test_subnet_calc_slash_30():
 
 def test_subnet_calc_invalid_cidr_returns_error():
     result = subnet_calc("999.999.0.0/24")
-    assert result.startswith("Fehler")
+    assert result.startswith("Error") or result.startswith("Fehler")
 
 
 def test_subnet_calc_non_cidr_string_returns_error():
     result = subnet_calc("not-an-ip")
-    assert result.startswith("Fehler")
+    assert result.startswith("Error") or result.startswith("Fehler")

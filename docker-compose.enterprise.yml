@@ -1,0 +1,191 @@
+# =============================================================================
+#  MoE Sovereign — Optional Enterprise Data Management Stack
+#
+#  Services: Apache NiFi (ETL), Marquez/OpenLineage (Lineage), lakeFS (Versioning)
+#
+#  Usage (standalone, after main stack is running):
+#    docker compose -f docker-compose.enterprise.yml up -d
+#
+#  Managed automatically by install.sh when INSTALL_ENTERPRISE_DATA_STACK=true.
+#  Requires moe-infra to be running so the external network exists.
+# =============================================================================
+
+services:
+
+  # ── Apache NiFi 1.x — Data Flow Automation ──────────────────────────────────
+  # Handles ETL pipelines: ingest from legacy sources, normalize, route to Kafka/Postgres.
+  moe-nifi:
+    image: apache/nifi:1.27.0
+    container_name: moe-nifi
+    restart: unless-stopped
+    environment:
+      NIFI_WEB_HTTP_HOST: "0.0.0.0"
+      NIFI_WEB_HTTP_PORT: "8080"
+      SINGLE_USER_CREDENTIALS_USERNAME: "${NIFI_ADMIN_USER:-admin}"
+      # Password must be ≥ 12 characters for NiFi single-user auth
+      SINGLE_USER_CREDENTIALS_PASSWORD: "${NIFI_ADMIN_PASSWORD:-nifi-changeme-pwd}"
+    ports:
+      - "${NIFI_HOST_PORT:-8181}:8080"
+    volumes:
+      - nifi_data:/opt/nifi/nifi-current/data
+      - nifi_conf:/opt/nifi/nifi-current/conf
+      - nifi_logs:/opt/nifi/nifi-current/logs
+    networks:
+      - moe_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/nifi/ -o /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # ── Marquez PostgreSQL — Lineage Metadata Store ──────────────────────────────
+  marquez-postgres:
+    image: postgres:16-alpine
+    container_name: marquez-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: marquez
+      POSTGRES_PASSWORD: "${MARQUEZ_POSTGRES_PASSWORD:-marquez-changeme}"
+      POSTGRES_DB: marquez
+    volumes:
+      - marquez_db_data:/var/lib/postgresql/data
+    networks:
+      - moe_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marquez -d marquez"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Marquez API — OpenLineage Backend ─────────────────────────────────────────
+  # Tracks data lineage: which Kafka topic produced which dataset, when, and from where.
+  moe-marquez:
+    image: marquezproject/marquez:latest
+    container_name: moe-marquez
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: marquez-postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: marquez
+      POSTGRES_USER: marquez
+      POSTGRES_PASSWORD: "${MARQUEZ_POSTGRES_PASSWORD:-marquez-changeme}"
+    ports:
+      - "${MARQUEZ_HOST_PORT:-5000}:5000"
+      - "${MARQUEZ_ADMIN_PORT:-5001}:5001"
+    depends_on:
+      marquez-postgres:
+        condition: service_healthy
+    networks:
+      - moe_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5000/api/v1/namespaces -o /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+
+  # ── Marquez Web — OpenLineage Dashboard ──────────────────────────────────────
+  marquez-web:
+    image: marquezproject/marquez-web:latest
+    container_name: marquez-web
+    restart: unless-stopped
+    environment:
+      MARQUEZ_HOST: moe-marquez
+      MARQUEZ_PORT: "5000"
+    ports:
+      - "${MARQUEZ_WEB_PORT:-3030}:3000"
+    depends_on:
+      moe-marquez:
+        condition: service_healthy
+    networks:
+      - moe_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  # ── lakeFS PostgreSQL — Version Control Metadata ──────────────────────────────
+  lakefs-postgres:
+    image: postgres:16-alpine
+    container_name: lakefs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lakefs
+      POSTGRES_PASSWORD: "${LAKEFS_DB_PASSWORD:-lakefs-changeme}"
+      POSTGRES_DB: lakefs
+    volumes:
+      - lakefs_db_data:/var/lib/postgresql/data
+    networks:
+      - moe_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lakefs -d lakefs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── lakeFS — Data Version Control (Git for data) ─────────────────────────────
+  # Uses MinIO (already in main stack) as S3-compatible object store backend.
+  # Enables branching: create isolated copies of knowledge snapshots for experiments.
+  moe-lakefs:
+    image: treeverse/lakefs:latest
+    container_name: moe-lakefs
+    restart: unless-stopped
+    command: ["run", "--local-settings"]
+    environment:
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: "http://moe-storage:9000"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-moeadmin}"
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+      LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION: "false"
+      LAKEFS_DATABASE_TYPE: postgres
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: "postgresql://lakefs:${LAKEFS_DB_PASSWORD:-lakefs-changeme}@lakefs-postgres:5432/lakefs"
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_ENCRYPT_SECRET:-changeme-must-be-32bytes-long!!}"
+      LAKEFS_INSTALLATION_USER_NAME: "${ADMIN_USER:-admin}"
+      LAKEFS_INSTALLATION_ACCESS_KEY_ID: "${LAKEFS_ACCESS_KEY_ID:-lakefs-access-key-changeme}"
+      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: "${LAKEFS_SECRET_ACCESS_KEY:-lakefs-secret-key-changeme}"
+    ports:
+      - "${LAKEFS_HOST_PORT:-8010}:8000"
+    depends_on:
+      lakefs-postgres:
+        condition: service_healthy
+    networks:
+      - moe_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/config -o /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+# =============================================================================
+volumes:
+  nifi_data:
+  nifi_conf:
+  nifi_logs:
+  marquez_db_data:
+  lakefs_db_data:
+
+networks:
+  moe_net:
+    name: moe-infra_default
+    external: true

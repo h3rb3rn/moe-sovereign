@@ -1223,7 +1223,7 @@ def lsp_query(file_path: str, action: str, symbol: str = "", line: int = 0, col:
 
 # ─── File Generation Tool ───────────────────────────────────────────────────
 
-_GENERATED_DIR = Path("/app/generated")
+_GENERATED_DIR = Path(os.getenv("MOE_GENERATED_DIR", "/app/generated"))
 _GENERATED_DIR.mkdir(exist_ok=True)
 
 # ─── MinIO helpers ──────────────────────────────────────────────────────────
