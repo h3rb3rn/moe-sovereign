@@ -18,7 +18,12 @@ _ONTOLOGY_RUN_KEY = "moe:maintenance:ontology:run"
 
 
 def _run_healer_task_ref():
-    """Lazy reference to main._run_healer_task to avoid circular import."""
+    """Return main._run_healer_task via lazy import to avoid circular dependency.
+
+    Python resolves the import from its module cache after the first call (O(1)),
+    so there is no runtime overhead. Moving _run_healer_task out of main.py would
+    require co-moving _set_healer_status and subprocess env logic — not worth it.
+    """
     import main as _main
     return _main._run_healer_task
 
