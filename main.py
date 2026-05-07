@@ -6104,12 +6104,14 @@ from routes.mission_context  import router as _mc_router
 from routes.graph            import router as _graph_router
 from routes.admin_benchmark  import router as _admin_bench_router
 from routes.admin_ontology   import router as _admin_onto_router
+from routes.admin_stats      import router as _admin_stats_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
 app.include_router(_graph_router)
 app.include_router(_admin_bench_router)
 app.include_router(_admin_onto_router)
+app.include_router(_admin_stats_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -9501,7 +9503,6 @@ async def benchmark_lock_status():
         return {"active": False, "error": str(e)[:100]}
 
 
-@app.get("/v1/admin/knowledge-stats")
 async def get_knowledge_stats():
     """Aggregate Neo4j counters for the stats dashboard."""
     try:
@@ -9558,7 +9559,6 @@ async def get_knowledge_stats():
     return stats
 
 
-@app.get("/v1/admin/ontology-gaps")
 async def get_ontology_gaps(limit: int = 30):
     """Shows most frequent terms from answers not in the ontology."""
     if redis_client is None:
@@ -9570,7 +9570,6 @@ async def get_ontology_gaps(limit: int = 30):
         return {"error": str(e)}
 
 
-@app.get("/v1/admin/planner-patterns")
 async def get_planner_patterns(limit: int = 20):
     """Shows proven planner patterns based on positive user feedback."""
     if redis_client is None:
@@ -9582,7 +9581,6 @@ async def get_planner_patterns(limit: int = 20):
         return {"error": str(e)}
 
 
-@app.get("/v1/admin/tool-eval")
 async def get_tool_eval_log(limit: int = 50):
     """Returns the last N records from tool_eval.jsonl as parsed JSON objects."""
     path = "/app/logs/tool_eval.jsonl"

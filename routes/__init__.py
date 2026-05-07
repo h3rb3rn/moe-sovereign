@@ -6,6 +6,7 @@ from .mission_context   import router as mission_context_router
 from .graph             import router as graph_router
 from .admin_benchmark   import router as admin_benchmark_router
 from .admin_ontology    import router as admin_ontology_router
+from .admin_stats       import router as admin_stats_router
 
 __all__ = [
     "health_router",
@@ -14,4 +15,5 @@ __all__ = [
     "graph_router",
     "admin_benchmark_router",
     "admin_ontology_router",
+    "admin_stats_router",
 ]

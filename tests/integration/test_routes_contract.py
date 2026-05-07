@@ -25,6 +25,7 @@ SCANNED_FILES = [
     _ROOT / "routes" / "graph.py",
     _ROOT / "routes" / "admin_benchmark.py",
     _ROOT / "routes" / "admin_ontology.py",
+    _ROOT / "routes" / "admin_stats.py",
 ]
 
 # Each entry: (HTTP_METHOD_LOWERCASE, "/path")
