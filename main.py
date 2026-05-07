@@ -50,7 +50,63 @@ from graph_rag.corrections import (
     ensure_schema as _ensure_correction_schema,
 )
 
-CORRECTION_MEMORY_ENABLED = os.getenv("CORRECTION_MEMORY_ENABLED", "true").lower() in ("1", "true", "yes")
+from config import (
+    # Runtime flags
+    CORRECTION_MEMORY_ENABLED, _EDGE_MODE, LOG_LEVEL,
+    # Kafka
+    KAFKA_BOOTSTRAP, KAFKA_TOPIC_INGEST, KAFKA_TOPIC_REQUESTS,
+    KAFKA_TOPIC_FEEDBACK, KAFKA_TOPIC_LINTING, KAFKA_TOPIC_AUDIT,
+    # Database
+    REDIS_URL, POSTGRES_CHECKPOINT_URL, MOE_USERDB_URL,
+    # Enterprise stack
+    _ENTERPRISE_ENABLED, NIFI_URL, MARQUEZ_URL, LAKEFS_ENDPOINT,
+    # OIDC
+    AUTHENTIK_URL, OIDC_JWKS_URL, OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_ENABLED,
+    # Neo4j
+    NEO4J_URI, NEO4J_USER, NEO4J_PASS,
+    # Inference
+    INFERENCE_SERVERS_LIST, URL_MAP, TOKEN_MAP, API_TYPE_MAP,
+    JUDGE_ENDPOINT_NAME, JUDGE_URL, JUDGE_TOKEN, JUDGE_MODEL,
+    GRAPH_INGEST_MODEL, GRAPH_INGEST_URL, GRAPH_INGEST_TOKEN,
+    PLANNER_MODEL, PLANNER_ENDPOINT, PLANNER_URL, PLANNER_TOKEN,
+    _JUDGE_BASE, _PLANNER_BASE,
+    EXPERTS, MCP_URL, GRAPH_VIA_MCP, MAX_GRAPH_CONTEXT_CHARS, LITELLM_URL,
+    # Shadow mode
+    BENCHMARK_SHADOW_TEMPLATE, BENCHMARK_SHADOW_RATE,
+    # Claude Code
+    CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL, CLAUDE_CODE_TOOL_ENDPOINT,
+    CLAUDE_CODE_MODE, CLAUDE_CODE_REASONING_MODEL, CLAUDE_CODE_REASONING_ENDPOINT,
+    CLAUDE_CODE_TOOL_CHOICE,
+    _CLAUDE_CODE_TOOL_URL, _CLAUDE_CODE_TOOL_TOKEN, _CLAUDE_CODE_REASONING_URL,
+    _DEFAULT_CLAUDE_CODE_MODELS,
+    # Thresholds & limits
+    MAX_EXPERT_OUTPUT_CHARS, CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD,
+    SOFT_CACHE_MAX_EXAMPLES, ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
+    EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
+    # History
+    HISTORY_MAX_TURNS, HISTORY_MAX_CHARS, HISTORY_MAX_ENTRIES,
+    # Timeouts
+    JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
+    JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
+    TOOL_MAX_TOKENS, REASONING_MAX_TOKENS,
+    PLANNER_RETRIES, PLANNER_MAX_TASKS, SSE_CHUNK_SIZE,
+    # Feedback
+    EVAL_CACHE_FLAG_THRESHOLD, FEEDBACK_POSITIVE_THRESHOLD, FEEDBACK_NEGATIVE_THRESHOLD,
+    # Web search
+    _SEARXNG_URL, _WEB_SEARCH_FALLBACK_DDG,
+    # AIHUB fallback
+    _AIHUB_FALLBACK_NODE, _AIHUB_FALLBACK_MODEL, _AIHUB_FALLBACK_MODEL_SECOND,
+    _N04_FALLBACK_NODE, _N04_FALLBACK_MODEL, _N04_FALLBACK_MODEL_SECOND,
+    _FALLBACK_ENABLED,
+    # Thompson / fuzzy / graph compress
+    THOMPSON_SAMPLING_ENABLED,
+    _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
+    _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
+    # HTTP limits & CORS
+    MAX_REQUEST_BODY_MB, CORS_ALL_ORIGINS, CORS_ORIGINS_RAW, MAX_REQUESTS_PER_MINUTE,
+    # Custom prompts
+    _CUSTOM_EXPERT_PROMPTS,
+)
 import starfleet_config as _starfleet
 import watchdog as _watchdog
 import mission_context as _mission_context
@@ -67,8 +123,7 @@ from langchain_community.utilities import SearxSearchWrapper
 from langgraph.graph import StateGraph, END
 from contextlib import asynccontextmanager
 
-_EDGE_MODE = os.getenv("ENVIRONMENT") == "edge_mobile"
-if not _EDGE_MODE:
+if not _EDGE_MODE:  # _EDGE_MODE imported from config
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     import chromadb
     from chromadb.utils import embedding_functions
@@ -82,8 +137,7 @@ from context_budget import graphrag_budget_chars, web_research_budget
 # Import Tier-2 semantic memory (warm context retrieval from ChromaDB)
 from memory_retrieval import get_memory_store, compute_evicted_turns
 
-# --- CONFIG & LOGGING ---
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# --- LOGGING (LOG_LEVEL imported from config) ---
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -106,12 +160,7 @@ def _log_tool_eval(record: dict) -> None:
     except Exception:
         pass
 
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_URL", "kafka://moe-kafka:9092").replace("kafka://", "")
-KAFKA_TOPIC_INGEST    = "moe.ingest"
-KAFKA_TOPIC_REQUESTS  = "moe.requests"
-KAFKA_TOPIC_FEEDBACK  = "moe.feedback"
-KAFKA_TOPIC_LINTING   = "moe.linting"
-KAFKA_TOPIC_AUDIT     = "moe.audit"
+# Kafka constants imported from config.py
 
 # Instruction appended to the merger_node system prompt to trigger synthesis persistence.
 # The LLM is asked to append a tagged JSON block only for genuinely novel insights.
@@ -137,34 +186,10 @@ PROVENANCE_INSTRUCTION = (
     "Keep tags minimal (max 5 per response)."
 )
 
-REDIS_URL  = os.getenv("REDIS_URL", "redis://terra_cache:6379")
-# LangGraph checkpoints are persisted to a dedicated Postgres instance.
-# Valkey-search/RediSearch is not available on this host (CPU without AVX2),
-# so AsyncPostgresSaver replaces the former AsyncRedisSaver checkpointer.
-POSTGRES_CHECKPOINT_URL = os.getenv("POSTGRES_CHECKPOINT_URL", "")
-
-# Enterprise Data Management Stack — optional, controlled by INSTALL_ENTERPRISE_DATA_STACK
-_ENTERPRISE_ENABLED = os.getenv("INSTALL_ENTERPRISE_DATA_STACK", "false").lower() == "true"
-NIFI_URL        = os.getenv("NIFI_URL", "")
-MARQUEZ_URL     = os.getenv("MARQUEZ_URL", "")
-LAKEFS_ENDPOINT = os.getenv("LAKEFS_ENDPOINT", "")
-# Set to True in lifespan if ENTERPRISE_ENABLED and at least one service responds.
-# All enterprise feature calls must check this flag first.
-_enterprise_reachable: bool = False
-
-MOE_USERDB_URL = os.getenv(
-    "MOE_USERDB_URL",
-    "postgresql://moe_admin@terra_checkpoints:5432/moe_userdb",
-)
-# Module-global connection pool; initialised in the lifespan handler.
-_userdb_pool: Optional[AsyncConnectionPool] = None
-
-# OIDC / Authentik
-AUTHENTIK_URL      = os.getenv("AUTHENTIK_URL", "")
-OIDC_JWKS_URL      = os.getenv("OIDC_JWKS_URL", f"{AUTHENTIK_URL}/application/o/moe-sovereign/jwks/" if AUTHENTIK_URL else "")
-OIDC_ISSUER        = os.getenv("OIDC_ISSUER", f"{AUTHENTIK_URL}/application/o/moe-sovereign/" if AUTHENTIK_URL else "")
-OIDC_CLIENT_ID     = os.getenv("OIDC_CLIENT_ID", "moe-infra")
-OIDC_ENABLED       = bool(AUTHENTIK_URL)
+# DB, enterprise, OIDC constants imported from config.py
+# Mutable globals (redis_client, _userdb_pool, etc.) live in state.py
+_enterprise_reachable: bool = False  # set by lifespan via _init_enterprise_stack()
+_userdb_pool: Optional[AsyncConnectionPool] = None  # set by lifespan
 
 # JWKS cache: (keys_dict, fetched_at)
 _jwks_cache: tuple = (None, 0.0)
@@ -298,65 +323,9 @@ def _read_cc_profiles() -> list:
     return fallback
 _read_cc_profiles._cache: dict = {"ts": 0.0, "data": None}
 
-NEO4J_URI  = os.getenv("NEO4J_URI",  "bolt://neo4j-knowledge:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASS = os.getenv("NEO4J_PASS")
-
-REDIS_URL = REDIS_URL  # keep original reference below
-
-# INFERENCE_SERVERS: JSON array [{"name":..,"url":..,"gpu_count":..}]
-# Configured via the Admin UI — no hardcoded defaults.
-_INF_SERVERS_RAW = os.getenv("INFERENCE_SERVERS", "")
-if _INF_SERVERS_RAW.strip():
-    try:
-        INFERENCE_SERVERS_LIST = json.loads(_INF_SERVERS_RAW)
-    except json.JSONDecodeError:
-        logger.warning("INFERENCE_SERVERS JSON is invalid — no inference servers loaded")
-        INFERENCE_SERVERS_LIST = []
-else:
-    INFERENCE_SERVERS_LIST = []
-
-# Filter out disabled servers
-INFERENCE_SERVERS_LIST = [s for s in INFERENCE_SERVERS_LIST if s.get("enabled", True)]
-URL_MAP      = {s["name"]: s["url"]                for s in INFERENCE_SERVERS_LIST if s.get("url")}
-TOKEN_MAP    = {s["name"]: s.get("token", "ollama") for s in INFERENCE_SERVERS_LIST}
-API_TYPE_MAP = {s["name"]: s.get("api_type", "ollama") for s in INFERENCE_SERVERS_LIST}
-JUDGE_ENDPOINT_NAME = os.getenv("JUDGE_ENDPOINT", "")
-JUDGE_URL   = URL_MAP.get(JUDGE_ENDPOINT_NAME) if JUDGE_ENDPOINT_NAME else None
-JUDGE_TOKEN = TOKEN_MAP.get(JUDGE_ENDPOINT_NAME, "ollama") if JUDGE_ENDPOINT_NAME else "ollama"
-# Graph ingest LLM — used exclusively by the background Kafka ingest consumer.
-# Falls back to the judge LLM when not explicitly configured.
-GRAPH_INGEST_MODEL    = os.getenv("GRAPH_INGEST_MODEL", "")
-_GRAPH_INGEST_EP_NAME = os.getenv("GRAPH_INGEST_ENDPOINT", "")
-GRAPH_INGEST_URL      = URL_MAP.get(_GRAPH_INGEST_EP_NAME) if _GRAPH_INGEST_EP_NAME else None
-GRAPH_INGEST_TOKEN    = TOKEN_MAP.get(_GRAPH_INGEST_EP_NAME, "ollama") if _GRAPH_INGEST_EP_NAME else "ollama"
-# Planner model — separate from the Judge/Merger/Critic LLM.
-# phi4:14b is compact (9 GB), very reliable for structured JSON output
-# and occupies no VRAM for parallel expert calls after unloading.
-PLANNER_MODEL    = os.getenv("PLANNER_MODEL", "phi4:14b")
-PLANNER_ENDPOINT = os.getenv("PLANNER_ENDPOINT", os.getenv("JUDGE_ENDPOINT", ""))
-PLANNER_URL      = URL_MAP.get(PLANNER_ENDPOINT) if PLANNER_ENDPOINT else None
-PLANNER_TOKEN    = TOKEN_MAP.get(PLANNER_ENDPOINT, "ollama") if PLANNER_ENDPOINT else "ollama"
-# Native Ollama API base URLs (without /v1) for keep_alive=0 unload calls
-_JUDGE_BASE    = (JUDGE_URL   or "").rstrip("/").removesuffix("/v1")
-_PLANNER_BASE  = (PLANNER_URL or "").rstrip("/").removesuffix("/v1")
-EXPERTS = json.loads(os.getenv("EXPERT_MODELS", "{}"))
-MCP_URL = os.getenv("MCP_URL", "http://mcp-precision:8003")
-# When True: graph_rag_node calls graph_query via MCP server instead of direct Neo4j
-GRAPH_VIA_MCP = os.getenv("GRAPH_VIA_MCP", "false").lower() in ("1", "true", "yes")
-# Maximum characters injected from the knowledge graph into planner/merger prompts.
-# Prevents context-window saturation on nodes with small LLMs (e.g. phi4:14b @ 8192 tokens).
-# Set to 0 to disable truncation.  Default: 6000 (~1500 tokens at 4 chars/token).
-MAX_GRAPH_CONTEXT_CHARS: int = int(os.getenv("MAX_GRAPH_CONTEXT_CHARS", "6000"))
-# Unified API Gateway: When set, all expert calls are routed through LiteLLM.
-# LiteLLM handles endpoint selection, retries (circuit breaker) and fallback chains.
-# Empty = direct access to Ollama nodes via _select_node() (fallback, backwards compatible).
-LITELLM_URL = os.getenv("LITELLM_URL", "").rstrip("/")
-# Shadow-Mode: sample production traffic against a candidate template for quality comparison.
-# Every BENCHMARK_SHADOW_RATE-th request is sent to BENCHMARK_SHADOW_TEMPLATE in parallel.
-# Responses are never shown to users — only stored for quality gate analysis.
-BENCHMARK_SHADOW_TEMPLATE: str = os.getenv("BENCHMARK_SHADOW_TEMPLATE", "")
-BENCHMARK_SHADOW_RATE: int     = int(os.getenv("BENCHMARK_SHADOW_RATE", "20"))
+# Neo4j, inference servers, benchmark constants imported from config.py
+if not INFERENCE_SERVERS_LIST and os.getenv("INFERENCE_SERVERS", "").strip():
+    logger.warning("INFERENCE_SERVERS JSON is invalid — no inference servers loaded")
 _shadow_request_counter: int   = 0
 
 # ─── Default role instruction for the Planner LLM ─────────────────────────────
@@ -896,40 +865,11 @@ def _detect_file_skill(files: Optional[List], user_input: str,
     return None
 
 
-# Claude Code / Anthropic-API-compatible model IDs that are accepted and routed internally.
-# Default set of Claude model ID prefixes recognized as Claude Code requests.
-# Configurable via CLAUDE_CODE_MODELS env var (comma-separated list).
-_DEFAULT_CLAUDE_CODE_MODELS = (
-    "claude-opus-4-6,claude-sonnet-4-6,claude-haiku-4-5-20251001,"
-    "claude-opus-4-5,claude-sonnet-4-5,claude-3-5-sonnet-20241022,"
-    "claude-3-5-haiku-20241022,claude-3-7-sonnet-20250219"
-)
-
+# Claude Code constants imported from config.py
 # ─── Claude Code Integration Profiles ────────────────────────────────────────
-# Load all profiles for per-user routing at request time.
-# Global CC defaults come exclusively from environment variables (set via Admin UI).
-# CC profiles are loaded dynamically via _read_cc_profiles() (60s cache from .env file)
-
-# Global CC defaults — configured in Admin UI and stored as env vars.
-CLAUDE_CODE_MODELS = {
-    m.strip()
-    for m in os.getenv("CLAUDE_CODE_MODELS", _DEFAULT_CLAUDE_CODE_MODELS).split(",")
-    if m.strip()
-}
-CLAUDE_CODE_TOOL_MODEL    = os.getenv("CLAUDE_CODE_TOOL_MODEL", "").strip().rstrip("*")
-CLAUDE_CODE_TOOL_ENDPOINT = os.getenv("CLAUDE_CODE_TOOL_ENDPOINT", os.getenv("JUDGE_ENDPOINT", ""))
-CLAUDE_CODE_MODE          = os.getenv("CLAUDE_CODE_MODE", "moe_orchestrated")
-CLAUDE_CODE_REASONING_MODEL    = os.getenv("CLAUDE_CODE_REASONING_MODEL", "")
-CLAUDE_CODE_REASONING_ENDPOINT = os.getenv("CLAUDE_CODE_REASONING_ENDPOINT", "")
+# Profiles loaded dynamically via _read_cc_profiles() (60s cache from .env file)
 _CC_SYSTEM_PREFIX = ""
 _CC_STREAM_THINK  = False
-CLAUDE_CODE_TOOL_CHOICE = os.getenv("CLAUDE_CODE_TOOL_CHOICE", "auto")
-
-_CLAUDE_CODE_TOOL_URL   = URL_MAP.get(CLAUDE_CODE_TOOL_ENDPOINT) or JUDGE_URL
-_CLAUDE_CODE_TOOL_TOKEN = TOKEN_MAP.get(CLAUDE_CODE_TOOL_ENDPOINT, "ollama")
-_CLAUDE_CODE_REASONING_URL = (
-    URL_MAP.get(CLAUDE_CODE_REASONING_ENDPOINT) if CLAUDE_CODE_REASONING_ENDPOINT else None
-)
 
 # Per-endpoint rate limit state (populated from response headers of AIHUB/external provider calls)
 # Format: {endpoint_name: {"remaining_tokens": int, "limit_tokens": int, "reset_time": float|None, "exhausted": bool, "updated_at": float}}
@@ -1084,58 +1024,7 @@ def _build_filtered_tool_desc(query: str, enable_graphrag: bool = False) -> str:
 # Categories handled by specialized nodes (not by expert LLMs)
 NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
 
-# Max chars per expert output towards merger (approx. 600 tokens)
-MAX_EXPERT_OUTPUT_CHARS = int(os.getenv("MAX_EXPERT_OUTPUT_CHARS", "2400"))
-
-# Threshold for cache-hit short-circuit (ChromaDB cosine distance)
-CACHE_HIT_THRESHOLD   = float(os.getenv("CACHE_HIT_THRESHOLD",   "0.15"))
-SOFT_CACHE_THRESHOLD  = float(os.getenv("SOFT_CACHE_THRESHOLD",  "0.50"))
-SOFT_CACHE_MAX_EXAMPLES = int(os.getenv("SOFT_CACHE_MAX_EXAMPLES", "2"))
-
-# Semantic pre-routing: maximum distance for direct expert routing (without planner)
-ROUTE_THRESHOLD = float(os.getenv("ROUTE_THRESHOLD", "0.18"))
-# Minimum gap between top-1 and top-2 match scores — prevents misrouting on ambiguous requests
-ROUTE_GAP       = float(os.getenv("ROUTE_GAP",       "0.10"))
-
-# Minimum response length to be cached in ChromaDB
-CACHE_MIN_RESPONSE_LEN = int(os.getenv("CACHE_MIN_RESPONSE_LEN", "150"))
-
-# Expert-Routing-Parameter
-EXPERT_TIER_BOUNDARY_B  = float(os.getenv("EXPERT_TIER_BOUNDARY_B", "20"))
-EXPERT_MIN_SCORE        = float(os.getenv("EXPERT_MIN_SCORE",        "0.3"))
-EXPERT_MIN_DATAPOINTS   = int(os.getenv("EXPERT_MIN_DATAPOINTS",     "5"))
-
-# Conversation history limits
-HISTORY_MAX_TURNS = int(os.getenv("HISTORY_MAX_TURNS", "4"))
-HISTORY_MAX_CHARS = int(os.getenv("HISTORY_MAX_CHARS", "3000"))
-
-# Monitoring history limit
-HISTORY_MAX_ENTRIES = int(os.getenv("HISTORY_MAX_ENTRIES", "5000"))
-
-# Timeouts (seconds)
-JUDGE_TIMEOUT   = int(os.getenv("JUDGE_TIMEOUT",   "900"))
-EXPERT_TIMEOUT  = int(os.getenv("EXPERT_TIMEOUT",  "900"))
-PLANNER_TIMEOUT = int(os.getenv("PLANNER_TIMEOUT", "300"))
-
-# Judge Refinement Loop
-JUDGE_REFINE_MAX_ROUNDS      = int(os.getenv("JUDGE_REFINE_MAX_ROUNDS",      "2"))
-JUDGE_REFINE_MIN_IMPROVEMENT = float(os.getenv("JUDGE_REFINE_MIN_IMPROVEMENT", "0.15"))
-
-# Token limits for the Anthropic tool handler — configured via Admin UI
-TOOL_MAX_TOKENS      = int(os.getenv("TOOL_MAX_TOKENS",      "8192"))
-REASONING_MAX_TOKENS = int(os.getenv("REASONING_MAX_TOKENS", "16384"))
-
-# Planner configuration
-PLANNER_RETRIES  = int(os.getenv("PLANNER_RETRIES",  "2"))
-PLANNER_MAX_TASKS = int(os.getenv("PLANNER_MAX_TASKS", "4"))
-
-# Streaming chunk size (chars per SSE partial packet)
-SSE_CHUNK_SIZE = int(os.getenv("SSE_CHUNK_SIZE", "50"))
-
-# Feedback and self-evaluation thresholds
-EVAL_CACHE_FLAG_THRESHOLD  = int(os.getenv("EVAL_CACHE_FLAG_THRESHOLD",  "2"))
-FEEDBACK_POSITIVE_THRESHOLD = int(os.getenv("FEEDBACK_POSITIVE_THRESHOLD", "4"))
-FEEDBACK_NEGATIVE_THRESHOLD = int(os.getenv("FEEDBACK_NEGATIVE_THRESHOLD", "2"))
+# Routing thresholds, timeouts, feedback thresholds imported from config.py
 
 # Confidence format instruction — mode-dependent (3A)
 _CONF_FORMAT_DEFAULT = (
@@ -1267,12 +1156,7 @@ DEFAULT_EXPERT_PROMPTS: Dict[str, str] = {
     ),
 }
 
-# Custom prompts set via Admin UI (CUSTOM_EXPERT_PROMPTS env-var, JSON)
-_CUSTOM_EXPERT_PROMPTS: Dict[str, str] = {}
-try:
-    _CUSTOM_EXPERT_PROMPTS = json.loads(os.getenv("CUSTOM_EXPERT_PROMPTS", "{}"))
-except Exception:
-    pass
+# _CUSTOM_EXPERT_PROMPTS imported from config.py
 
 def _get_expert_prompt(cat: str, user_experts: Optional[dict] = None) -> str:
     """Returns the system prompt for a category.
@@ -2009,8 +1893,7 @@ class FeedbackRequest(BaseModel):
 # AgentState is defined in pipeline/state.py and imported at the top of this file.
 # See that module for full field documentation grouped by purpose.
 
-# Zentrale Komponenten
-JUDGE_MODEL   = os.getenv("JUDGE_MODEL", "magistral:24b")
+# JUDGE_MODEL imported from config.py; LLM instances constructed here
 judge_llm     = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT)
 planner_llm   = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN, timeout=PLANNER_TIMEOUT)
 # Ingest LLM: dedicated model for background GraphRAG extraction.
@@ -2025,15 +1908,13 @@ ingest_llm = (
     if GRAPH_INGEST_MODEL and GRAPH_INGEST_URL
     else None  # resolved to judge_llm at call site
 )
-_SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip()
+# _SEARXNG_URL, _WEB_SEARCH_FALLBACK_DDG imported from config.py
 search: Optional[SearxSearchWrapper] = (
     SearxSearchWrapper(searx_host=_SEARXNG_URL) if _SEARXNG_URL else None
 )
 if search is None:
     logger.info("SEARXNG_URL not set — web search disabled")
-# DuckDuckGo fallback: activates automatically when SearXNG returns empty.
-# Override via env (WEB_SEARCH_FALLBACK_DDG=false) or per template (search_fallback_ddg).
-_WEB_SEARCH_FALLBACK_DDG: bool = os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() not in ("0", "false", "no")
+# Mutable globals — set by lifespan (graph_manager, redis_client, kafka_producer in state.py in next step)
 graph_manager:  Optional[GraphRAGManager]  = None
 redis_client:   Optional[aioredis.Redis]   = None
 kafka_producer: Optional[AIOKafkaProducer] = None
@@ -2070,16 +1951,7 @@ def _server_info(endpoint_name: str) -> dict:
 # be set for the fallback to activate — an empty string disables the fallback.
 # The node name must match an entry in INFERENCE_SERVERS (configured via admin UI).
 
-_AIHUB_FALLBACK_NODE         = os.getenv("AIHUB_FALLBACK_NODE", "")          # e.g. "N04-RTX"
-_AIHUB_FALLBACK_MODEL        = os.getenv("AIHUB_FALLBACK_MODEL", "")         # e.g. "qwen3.6:35b"
-_AIHUB_FALLBACK_MODEL_SECOND = os.getenv("AIHUB_FALLBACK_MODEL_SECOND", "")  # e.g. "gemma4:31b"
-
-# Keep legacy aliases so existing code references resolve without a sweep
-_N04_FALLBACK_NODE          = _AIHUB_FALLBACK_NODE
-_N04_FALLBACK_MODEL         = _AIHUB_FALLBACK_MODEL
-_N04_FALLBACK_MODEL_SECOND  = _AIHUB_FALLBACK_MODEL_SECOND
-
-_FALLBACK_ENABLED = bool(_AIHUB_FALLBACK_NODE and _AIHUB_FALLBACK_MODEL)
+# AIHUB fallback constants imported from config.py
 
 # Per-endpoint degraded state: {url → monotonic timestamp of last failure}
 _aihub_degraded: dict[str, float] = {}
@@ -2554,7 +2426,7 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
     return best[0]
 
 
-THOMPSON_SAMPLING_ENABLED = os.getenv("THOMPSON_SAMPLING_ENABLED", "true").lower() in ("1", "true", "yes")
+# THOMPSON_SAMPLING_ENABLED imported from config.py
 
 PROM_THOMPSON = Histogram("moe_thompson_sample", "Thompson-sampled expert score",
                           buckets=[.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0])
@@ -4170,8 +4042,7 @@ def _inject_prior_results(task: dict, prior_outputs: dict[str, str]) -> dict:
     return out
 
 
-_FUZZY_VECTOR_THRESHOLD = float(os.getenv("FUZZY_VECTOR_THRESHOLD", "0.30"))
-_FUZZY_GRAPH_THRESHOLD  = float(os.getenv("FUZZY_GRAPH_THRESHOLD",  "0.35"))
+# _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD imported from config.py
 
 
 async def fuzzy_router_node(state: AgentState):
@@ -4795,10 +4666,7 @@ def _extract_authoritative_domains(web_result_text: str) -> list[dict]:
 
 # ─── Context Compression Layer ────────────────────────────────────────────────
 
-# Env-configurable: compression is triggered when raw context exceeds budget × this factor.
-_GRAPH_COMPRESS_THRESHOLD_FACTOR = float(os.getenv("GRAPH_COMPRESS_THRESHOLD_FACTOR", "2.0"))
-_GRAPH_COMPRESS_LLM_MODEL        = os.getenv("GRAPH_COMPRESS_LLM", "")  # empty = skip LLM compress
-_GRAPH_COMPRESS_LLM_TIMEOUT      = float(os.getenv("GRAPH_COMPRESS_LLM_TIMEOUT", "3.0"))
+# _GRAPH_COMPRESS_* constants imported from config.py
 
 # Pattern to split graph context into per-entity blocks.
 # Blocks start with "Entity:" or the special section headers the manager emits.
@@ -5954,6 +5822,7 @@ async def _init_graph_rag() -> None:
             mgr = GraphRAGManager(NEO4J_URI, NEO4J_USER, NEO4J_PASS)
             await mgr.setup()
             graph_manager = mgr
+            import state as _state; _state.graph_manager = mgr
             if CORRECTION_MEMORY_ENABLED:
                 await _ensure_correction_schema(mgr.driver)
             # Initiale Ontologie-Entity-Anzahl setzen
@@ -6045,6 +5914,7 @@ async def _init_kafka() -> None:
         try:
             await producer.start()
             kafka_producer = producer
+            import state as _state; _state.kafka_producer = producer
             logger.info(f"✅ Kafka Producer connected ({KAFKA_BOOTSTRAP})")
             return
         except Exception as e:
@@ -6083,6 +5953,7 @@ async def _init_enterprise_stack() -> None:
             except Exception as exc:
                 logger.warning("⚠️ Enterprise stack — %s unreachable: %s", name, exc)
     _enterprise_reachable = reachable_count > 0
+    import state as _state; _state._enterprise_reachable = _enterprise_reachable
     if _enterprise_reachable:
         logger.info("✅ Enterprise Data Stack active (%d/3 services reachable)", reachable_count)
     else:
@@ -6233,8 +6104,10 @@ async def _gauge_updater_loop():
 
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
+    import state as _state
     global app_graph, redis_client, _userdb_pool
     redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+    _state.redis_client = redis_client  # expose to route modules via state.*
     logger.info("✅ Valkey client initialized")
     # moe_userdb pool: opened lazily, fails open so SQL-less startup is possible for tests
     try:
@@ -6251,6 +6124,7 @@ async def lifespan(app_: FastAPI):
     except Exception as e:
         logger.warning("moe_userdb pool nicht verbunden: %s", e)
         _userdb_pool = None
+    _state._userdb_pool = _userdb_pool
     # admin_ui.database has its own pool that backs sync_user_to_redis (used by
     # _db_fallback_key_lookup when a user's API key hash is not yet in Valkey).
     # Without this, the fallback silently errors and new or cache-evicted keys
@@ -6336,6 +6210,16 @@ async def lifespan(app_: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# ── APIRouter modules (extracted from main.py) ────────────────────────────────
+from routes.health          import router as _health_router
+from routes.watchdog        import router as _watchdog_router
+from routes.mission_context import router as _mc_router
+from routes.graph           import router as _graph_router
+app.include_router(_health_router)
+app.include_router(_watchdog_router)
+app.include_router(_mc_router)
+app.include_router(_graph_router)
+
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
 
@@ -6354,7 +6238,7 @@ app.add_middleware(_SecurityHeadersMiddleware)
 
 # ── Request Body Size Limit — protect against payload-based DoS ───────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BM2
-_MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_MB", "16")) * 1024 * 1024
+_MAX_BODY_BYTES = MAX_REQUEST_BODY_MB * 1024 * 1024  # MAX_REQUEST_BODY_MB from config.py
 
 class _BodySizeLimitMiddleware(_BM2):
     async def dispatch(self, request, call_next):
@@ -6370,9 +6254,8 @@ app.add_middleware(_BodySizeLimitMiddleware)
 
 # CORS for Open WebUI direct connections (browser-side)
 from fastapi.middleware.cors import CORSMiddleware
-_cors_all     = os.getenv("CORS_ALL_ORIGINS", "0") == "1"
-_cors_raw     = os.getenv("CORS_ORIGINS", "")
-_cors_origins = ["*"] if _cors_all else [o.strip() for o in _cors_raw.split(",") if o.strip()]
+_cors_all     = CORS_ALL_ORIGINS   # from config.py
+_cors_origins = ["*"] if _cors_all else [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
 if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
@@ -6399,7 +6282,7 @@ async def _check_ip_rate_limit(request: Request) -> bool:
         )
         _window = 60  # seconds
         _key    = f"moe:ratelimit:ip:{_ip}"
-        _limit  = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
+        _limit  = MAX_REQUESTS_PER_MINUTE  # from config.py
         _count  = await redis_client.incr(_key)
         if _count == 1:
             await redis_client.expire(_key, _window)
@@ -6408,16 +6291,12 @@ async def _check_ip_rate_limit(request: Request) -> bool:
         return True  # fails open on Redis errors
 
 
-@app.get("/health")
-async def health_check():
-    """Liveness probe for Docker HEALTHCHECK and load balancers."""
-    return {"status": "ok"}
+# /health, /metrics → routes/health.py
+# /api/watchdog/*, /api/starfleet/features → routes/watchdog.py
 
+# ── Starfleet: Watchdog Alerts (moved to routes/watchdog.py) ─────────────────
 
-# ── Starfleet: Watchdog Alerts ────────────────────────────────────────────────
-
-@app.get("/api/watchdog/alerts")
-async def watchdog_alerts_endpoint(limit: int = 20):
+async def watchdog_alerts_endpoint(limit: int = 20):  # kept for internal callers if any
     """Return recent watchdog alerts from Valkey (most recent first)."""
     if not await _starfleet.is_feature_enabled("watchdog", redis_client):
         return JSONResponse({"enabled": False, "alerts": []})
@@ -6433,26 +6312,22 @@ async def watchdog_alerts_endpoint(limit: int = 20):
     return {"enabled": True, "alerts": alerts}
 
 
-@app.get("/api/starfleet/features")
 async def starfleet_features_endpoint():
     """Return current state of all Starfleet feature toggles."""
     return await _starfleet.get_all_feature_states(redis_client)
 
 
-@app.get("/api/watchdog/config")
 async def watchdog_config_get():
     """Return the current watchdog configuration."""
     return await _watchdog._load_config(redis_client)
 
 
-@app.post("/api/watchdog/config")
 async def watchdog_config_set(request: Request):
     """Merge-update watchdog configuration (hot-reload, no restart needed)."""
     patch = await request.json()
     return await _watchdog.save_config(redis_client, patch)
 
 
-@app.delete("/api/watchdog/alerts")
 async def watchdog_alerts_clear():
     """Delete all stored watchdog alerts from Valkey."""
     if redis_client is not None:
@@ -6460,7 +6335,6 @@ async def watchdog_alerts_clear():
     return {"ok": True, "cleared": True}
 
 
-@app.get("/api/watchdog/node-status")
 async def watchdog_node_status():
     """Return real-time per-node status via direct live health checks (3 s timeout).
 
@@ -6557,7 +6431,6 @@ async def watchdog_node_status():
 
 # ── Starfleet: Mission Context ────────────────────────────────────────────────
 
-@app.get("/api/mission-context")
 async def mission_context_get():
     """Return the current persistent mission context."""
     if not await _starfleet.is_feature_enabled("mission_context", redis_client):
@@ -6565,7 +6438,6 @@ async def mission_context_get():
     return await _mission_context.get_context()
 
 
-@app.post("/api/mission-context")
 async def mission_context_set(request: Request):
     """Replace the mission context with the provided JSON body."""
     if not await _starfleet.is_feature_enabled("mission_context", redis_client):
@@ -6574,7 +6446,6 @@ async def mission_context_set(request: Request):
     return await _mission_context.set_context(data)
 
 
-@app.patch("/api/mission-context")
 async def mission_context_patch(request: Request):
     """Merge-update fields in the mission context."""
     if not await _starfleet.is_feature_enabled("mission_context", redis_client):
@@ -6583,7 +6454,6 @@ async def mission_context_patch(request: Request):
     return await _mission_context.patch_context(patch)
 
 
-@app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus scrape endpoint — returns all moe_* metrics."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -6765,21 +6635,18 @@ async def list_models(raw_request: Request):
                 })
     return {"object": "list", "data": main_models + user_tmpl_models + claude_models + native_models + conn_models}
 
-@app.get("/graph/stats")
 async def graph_stats():
     if graph_manager is None:
         return {"status": "unavailable"}
     stats = await graph_manager.get_stats()
     return {"status": "ok", **stats}
 
-@app.get("/graph/search")
 async def graph_search(q: str, limit: int = 10):
     if graph_manager is None:
         return {"status": "unavailable", "results": []}
     results = await graph_manager.search_entities(q, limit)
     return {"status": "ok", "query": q, "results": results}
 
-@app.get("/graph/knowledge/export")
 async def graph_knowledge_export(
     domains: Optional[str] = None,
     min_trust: float = 0.3,
@@ -6804,7 +6671,6 @@ async def graph_knowledge_export(
     )
 
 
-@app.post("/graph/knowledge/import")
 async def graph_knowledge_import(raw_request: Request):
     """Import a knowledge bundle into the graph."""
     if graph_manager is None:
@@ -6829,7 +6695,6 @@ async def graph_knowledge_import(raw_request: Request):
     return {"status": "ok", "dry_run": dry_run, **stats}
 
 
-@app.post("/graph/knowledge/import/validate")
 async def graph_knowledge_validate(raw_request: Request):
     """Dry-run import to preview what would be imported."""
     if graph_manager is None:

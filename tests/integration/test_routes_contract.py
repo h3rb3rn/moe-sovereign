@@ -19,6 +19,10 @@ _ROOT = Path(__file__).parents[2]
 # Add more files here as routes are extracted from main.py into APIRouter modules.
 SCANNED_FILES = [
     _ROOT / "main.py",
+    _ROOT / "routes" / "health.py",
+    _ROOT / "routes" / "watchdog.py",
+    _ROOT / "routes" / "mission_context.py",
+    _ROOT / "routes" / "graph.py",
 ]
 
 # Each entry: (HTTP_METHOD_LOWERCASE, "/path")
