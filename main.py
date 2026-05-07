@@ -1124,60 +1124,6 @@ PROM_GRAPH_DENSITY      = Gauge('moe_graph_density_ratio',             'Relation
 
 # --- USER AUTH & USAGE TRACKING ---
 
-async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
-    """Fallback: validate API key directly from Postgres (on Valkey cache miss) and sync."""
-    try:
-        if _userdb_pool is None:
-            return None
-        async with _userdb_pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT ak.*, u.is_active AS user_active, u.id AS uid "
-                    "FROM api_keys ak JOIN users u ON ak.user_id = u.id "
-                    "WHERE ak.key_hash=%s AND ak.is_active=TRUE AND u.is_active=TRUE",
-                    (key_hash,),
-                )
-                row = await cur.fetchone()
-        if not row:
-            return None
-        user_id = row["user_id"]
-        # Re-sync in Valkey so next requests are fast. Relies on admin_ui.database's
-        # own pool — initialised in lifespan(); logs loudly if that failed.
-        try:
-            from admin_ui.database import sync_user_to_redis as _sync
-            await _sync(user_id)
-        except Exception as _sync_err:
-            logger.warning("sync_user_to_redis failed in fallback for user %s: %s",
-                           user_id, _sync_err)
-        if redis_client:
-            data = await redis_client.hgetall(f"user:apikey:{key_hash}")
-            if data and data.get("is_active") == "1":
-                return data
-        return None
-    except Exception as e:
-        logger.warning(f"DB fallback auth error: {e}")
-        return None
-
-
-async def _fetch_jwks() -> Optional[dict]:
-    """Fetch and cache JWKS from Authentik (10 min TTL)."""
-    global _jwks_cache
-    with _cache_lock:
-        keys, fetched_at = _jwks_cache
-    if keys and (time.time() - fetched_at) < 600:
-        return keys
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(OIDC_JWKS_URL)
-            if r.status_code == 200:
-                with _cache_lock:
-                    _jwks_cache = (r.json(), time.time())
-                return r.json()
-    except Exception as e:
-        logger.warning("JWKS fetch failed: %s", e)
-    return keys  # return stale cache if available
-
-
 async def _validate_oidc_token(token: str) -> Optional[dict]:
     """Validate an OIDC JWT from Authentik and return user context dict."""
     if not OIDC_ENABLED:
@@ -1244,71 +1190,6 @@ async def _validate_oidc_token(token: str) -> Optional[dict]:
     except Exception as e:
         logger.debug("OIDC token validation failed: %s", e)
         return None
-
-
-async def _validate_api_key(raw_key: str) -> Optional[dict]:
-    """Validate API key or OIDC JWT.
-    - Tokens starting with 'moe-sk-': legacy API key path
-    - Other Bearer tokens: OIDC JWT path (if OIDC enabled)
-    Returns user-dict on success, {"error": "..."} on failure."""
-    if not raw_key:
-        return {"error": "invalid_key"}
-    # OIDC JWT path (tokens not starting with moe-sk-)
-    if OIDC_ENABLED and not raw_key.startswith("moe-sk-"):
-        oidc_ctx = await _validate_oidc_token(raw_key)
-        if oidc_ctx:
-            return oidc_ctx
-        return {"error": "invalid_key"}
-    # Legacy API key path
-    if not raw_key.startswith("moe-sk-"):
-        return {"error": "invalid_key"}
-    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    if redis_client is None:
-        return {"error": "invalid_key"}
-    try:
-        data = await redis_client.hgetall(f"user:apikey:{key_hash}")
-        if not data or data.get("is_active") != "1":
-            # Cache miss: check directly in DB and re-sync if needed
-            data = await _db_fallback_key_lookup(key_hash)
-            if not data:
-                return {"error": "invalid_key"}
-        # Budget-Check
-        from datetime import date
-        today = date.today().strftime("%Y-%m-%d")
-        month = date.today().strftime("%Y-%m")
-        uid   = data.get("user_id", "")
-        if data.get("budget_daily"):
-            used = int(await redis_client.get(f"user:{uid}:tokens:daily:{today}") or 0)
-            if used >= int(data["budget_daily"]):
-                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="daily").inc()
-                return {"error": "budget_exceeded", "limit_type": "daily"}
-        if data.get("budget_monthly"):
-            used = int(await redis_client.get(f"user:{uid}:tokens:monthly:{month}") or 0)
-            if used >= int(data["budget_monthly"]):
-                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="monthly").inc()
-                return {"error": "budget_exceeded", "limit_type": "monthly"}
-        if data.get("budget_total"):
-            used = int(await redis_client.get(f"user:{uid}:tokens:total") or 0)
-            if used >= int(data["budget_total"]):
-                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="total").inc()
-                return {"error": "budget_exceeded", "limit_type": "total"}
-        # Team budget check — pre-emptive, uses estimated 0 tokens to gate access
-        if uid and _userdb_pool is not None:
-            try:
-                from admin_ui.database import get_user_teams as _get_user_teams
-                from admin_ui.database import check_team_budget as _check_team_budget
-                for _team_id in await _get_user_teams(uid):
-                    _ok, _reason = await _check_team_budget(_team_id, 0)
-                    if not _ok:
-                        PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="team").inc()
-                        return {"error": "budget_exceeded", "limit_type": "team",
-                                "team_id": _team_id, "message": _reason}
-            except Exception as _be:
-                logger.debug(f"Team budget check skipped: {_be}")
-        return data
-    except Exception as e:
-        logger.warning(f"Auth error: {e}")
-        return {"error": "invalid_key"}
 
 
 def _extract_api_key(request: Request) -> Optional[str]:
@@ -6111,6 +5992,8 @@ from routes.admin_ontology   import router as _admin_onto_router
 from routes.admin_stats      import router as _admin_stats_router
 from routes.feedback         import router as _feedback_router
 from routes.ollama_compat    import router as _ollama_router
+from routes.models           import router as _models_router
+from routes.anthropic_compat import router as _anthropic_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -6120,6 +6003,8 @@ app.include_router(_admin_onto_router)
 app.include_router(_admin_stats_router)
 app.include_router(_feedback_router)
 app.include_router(_ollama_router)
+app.include_router(_models_router)
+app.include_router(_anthropic_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -6386,7 +6271,6 @@ def _model_display_name(model_id: str, description: str = "") -> str:
     return description or model_id
 
 
-@app.get("/v1/models")
 async def list_models(raw_request: Request):
     raw_key = _extract_api_key(raw_request)
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
@@ -8382,7 +8266,6 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
     }
 
 
-@app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages API — drop-in compatible with Claude Code CLI and Anthropic SDK.
 
@@ -8604,7 +8487,6 @@ async def anthropic_messages(request: Request):
         }})
 
 
-@app.post("/v1/messages/count_tokens")
 async def count_tokens(request: Request):
     """Token count estimation for Claude Desktop / Claude Code context budget (Anthropic Gateway spec).
 
@@ -9481,7 +9363,6 @@ _PL_SORT_COLS = {
     "complexity_level": "ul.complexity_level",
 }
 
-@app.get("/v1/admin/pipeline-log")
 async def pipeline_log(
     raw_request: Request,
     limit: int = 100,
@@ -10423,7 +10304,6 @@ async def _stream_responses_api(
     })
 
 
-@app.post("/v1/responses")
 async def responses_api(raw_request: Request, request: _ResponsesRequest):
     """OpenAI Responses API compatibility endpoint for Codex CLI."""
     response_id = f"resp_{uuid.uuid4().hex}"

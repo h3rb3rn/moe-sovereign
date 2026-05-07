@@ -9,6 +9,8 @@ from .admin_ontology    import router as admin_ontology_router
 from .admin_stats       import router as admin_stats_router
 from .feedback          import router as feedback_router
 from .ollama_compat     import router as ollama_compat_router
+from .models            import router as models_router
+from .anthropic_compat  import router as anthropic_compat_router
 
 __all__ = [
     "health_router",
@@ -20,4 +22,6 @@ __all__ = [
     "admin_stats_router",
     "feedback_router",
     "ollama_compat_router",
+    "models_router",
+    "anthropic_compat_router",
 ]

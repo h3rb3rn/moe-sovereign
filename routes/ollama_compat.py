@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from services.templates import _read_expert_templates
+from services.auth import _extract_api_key, _validate_api_key
 
 router = APIRouter()
 
@@ -69,18 +70,9 @@ def _ollama_messages_to_oai(messages: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Lazy auth + stream helpers (avoid circular import from main)
+# Lazy stream helper (avoid circular import — _ollama_internal_stream uses
+# the full pipeline which depends on many main.py internals)
 # ---------------------------------------------------------------------------
-
-def _extract_api_key(request):
-    import main as _m
-    return _m._extract_api_key(request)
-
-
-async def _validate_api_key(raw_key: str) -> dict:
-    import main as _m
-    return await _m._validate_api_key(raw_key)
-
 
 async def _ollama_internal_stream(user_ctx, model, oai_msgs, options) -> AsyncGenerator:
     import main as _m
