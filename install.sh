@@ -350,6 +350,39 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     for _p in "${_prof_arr[@]}"; do
       [[ -n "$_p" ]] && _upd_profiles+=(--profile "$_p")
     done
+    # Podman-compose does not recreate containers with network-namespace
+    # dependencies automatically. Bring the stack down first so every container
+    # is removed cleanly before the new image is started.
+    # Docker handles recreation in-place; the extra down is a no-op there.
+    if [[ "${_upd_rt[0]}" == podman* ]]; then
+      echo "  [4/4] Stopping existing containers (Podman)..."
+      "${_upd_rt[@]}" "${_upd_profiles[@]}" down 2>/dev/null || true
+
+      # After compose down, bind-mount data directories may be owned by UIDs
+      # that are outside the rootless Podman subuid range (e.g. host UID 999
+      # for Valkey, 70 for PostgreSQL). In rootless Podman without keep-id,
+      # container root (UID 0) maps to the current user (typically UID 1000).
+      # Files owned by any other host UID are inaccessible to container root,
+      # causing entrypoint chown calls to fail with "Operation not permitted".
+      #
+      # Fix: reset ownership to the current user (= container root) so the
+      # container entrypoints can re-apply their own UID/GID on startup.
+      _cur_uid="$(id -u)"
+      _cur_gid="$(id -g)"
+      for _vol_dir in \
+          "${_upd_data}/redis-data" \
+          "${_upd_data}/langgraph-checkpoints" \
+          "${_upd_data}/chroma-data" \
+          "${_upd_data}/neo4j-data" \
+          "${_upd_data}/neo4j-logs"; do
+        if [[ -d "$_vol_dir" ]]; then
+          _sudo chmod -R u+rwX "$_vol_dir" 2>/dev/null || true
+          _sudo chown -R "${_cur_uid}:${_cur_gid}" "$_vol_dir" 2>/dev/null || true
+        fi
+      done
+      echo "  Volume permissions reset for rootless Podman ✓"
+    fi
+
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
       sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
       sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} up -d"
