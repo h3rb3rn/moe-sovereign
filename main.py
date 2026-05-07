@@ -5162,15 +5162,25 @@ async def merger_node(state: AgentState):
         + (PROVENANCE_INSTRUCTION if _has_graph_ctx else "")
     )
 
-    # Inject output skill formatting instructions if planner suggested one
+    # Inject output skill formatting instructions if planner suggested one.
+    # Guard: suppress skill body when BOTH primary expert output AND the skill
+    # template contain code markers — the judge LLM otherwise interleaves the
+    # expert's code with identical patterns from the skill template, producing
+    # visible duplication (e.g. repeated bash find commands). The skill body is
+    # formatting guidance only; if the expert already produced code the format
+    # hint is redundant and harmful.
     _skill_body = state.get("output_skill_body", "")
     if _skill_body:
-        prompt += (
-            "\n\n--- OUTPUT FORMATTING SKILL ---\n"
-            "The planner selected a specific output format for this response. "
-            "Follow these formatting instructions:\n\n"
-            + _skill_body[:3000]
-        )
+        _skill_has_code = any(m in _skill_body for m in _CODE_MARKERS)
+        if _primary_has_code and _skill_has_code:
+            logger.info("🛡️ Skill body suppressed: expert output + skill template both contain code (prevents judge interleaving)")
+        else:
+            prompt += (
+                "\n\n--- OUTPUT FORMATTING SKILL ---\n"
+                "The planner selected a specific output format for this response. "
+                "Follow these formatting instructions:\n\n"
+                + _skill_body[:3000]
+            )
 
     # Determine expert domain early — used for both ChromaDB metadata and Kafka ingest payload
     _plan_cats_early = [t.get("category", "") for t in state.get("plan", []) if isinstance(t, dict)]
