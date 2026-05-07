@@ -8752,9 +8752,9 @@ async def clear_ontology_healer_status():
 # ─── Dedicated Ontology Gap Healer (permanent loop, single node) ─────────────
 
 _DEDICATED_HEALER_KEY = "moe:ontology:dedicated"
-_dedicated_healer_proc: "asyncio.subprocess.Process | None" = None
+# _dedicated_healer_proc lives in state.py
 # Mutex prevents concurrent auto-restart tasks (stream task + watchdog can both trigger).
-_dedicated_healer_restart_lock = asyncio.Lock()
+# _dedicated_healer_restart_lock lives in state.py
 
 
 async def _auto_resume_dedicated_healer() -> None:
@@ -8764,7 +8764,7 @@ async def _auto_resume_dedicated_healer() -> None:
     server finish binding before the healer subprocess sends its first request
     to the local API.
     """
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
     import time as _t
 
     await asyncio.sleep(5)  # wait for ASGI server to start serving
@@ -8826,7 +8826,7 @@ async def _auto_resume_dedicated_healer() -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        _dedicated_healer_proc = proc
+        state._dedicated_healer_proc = proc
         await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"pid": str(proc.pid)})
 
         # Early-exit check: if the process dies within 3 s, mark as stopped.
@@ -8847,7 +8847,7 @@ async def _auto_resume_dedicated_healer() -> None:
                 await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
                     "status": "stopped", "exit_code": str(rc),
                 })
-                _dedicated_healer_proc = None
+                state._dedicated_healer_proc = None
                 logger.error("❌ Dedicated healer exited immediately on resume (rc=%s)", rc)
                 return
             wt_task.cancel()
@@ -8877,144 +8877,8 @@ async def _auto_resume_dedicated_healer() -> None:
             pass
 
 
-async def _stream_dedicated_healer(
-    proc: "asyncio.subprocess.Process",
-    *,
-    first_line: "bytes | None" = None,
-) -> None:
-    """Read stdout from the dedicated healer loop and update Redis counters.
-
-    first_line: optional pre-read line from the early-exit detection in the
-    start endpoint — passed in to avoid dropping the first output token.
-    Writes a history entry to moe:maintenance:ontology:runs on completion.
-    """
-    import time as _t
-    import uuid as _uuid
-    stats: dict = {"processed": 0, "written": 0, "failed": 0}
-    assert proc.stdout is not None
-    start_ts = _t.time()
-
-    async def _handle(text: str) -> None:
-        if "✓" in text and "→" in text:
-            stats["written"] += 1
-        elif "?" in text and "→" in text:
-            stats["processed"] += 1
-        elif "✗" in text:
-            stats["failed"] += 1
-        await _set_healer_status_dedicated(last_activity_ts=str(_t.time()), **stats)
-
-    try:
-        if first_line:
-            await _handle(first_line.decode(errors="replace"))
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            await _handle(line.decode(errors="replace"))
-        rc = await proc.wait()
-    except Exception:
-        rc = -1
-    if redis_client is not None:
-        try:
-            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "stopped", "exit_code": str(rc),
-            })
-            # Persist run to the shared history list (same key as one-shot healer).
-            template = (cur or {}).get("template", "")
-            entry = json.dumps({
-                "run_id": str(_uuid.uuid4()),
-                "type": "dedicated",
-                "template": template,
-                "started_at": float((cur or {}).get("started_at", start_ts)),
-                "finished_at": _t.time(),
-                "exit_code": rc,
-                **stats,
-            })
-            await redis_client.lpush(_ONTOLOGY_RUNS_HISTORY_KEY, entry)
-            await redis_client.ltrim(_ONTOLOGY_RUNS_HISTORY_KEY, 0, 99)
-        except Exception:
-            pass
-
-    # Auto-restart: if the flag is set the user wants a permanent daemon loop.
-    # Re-spawn after a short pause so transient failures don't tight-loop.
-    await _dedicated_healer_auto_restart_if_needed(template_hint=(cur or {}).get("template", "") if redis_client else "")
-
-
 _HEALER_STALL_SECONDS = 300  # 5 minutes without output → stalled
 _HEALER_RESTART_DELAY_S = 30  # pause between auto-restarts
-
-
-async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> None:
-    """Re-spawn the dedicated healer if auto_restart=1 is set in Redis.
-
-    Called after a subprocess exits (clean or error). Waits HEALER_RESTART_DELAY_S
-    before spawning so rapid crash-loops don't thrash the system.
-    The restart lock ensures only one concurrent restart attempt runs at a time —
-    both the stream task and the watchdog can call this; without the lock they
-    would produce a restart storm.
-    """
-    import time as _t
-    global _dedicated_healer_proc
-
-    # Non-blocking: if another restart is already in flight, skip.
-    if _dedicated_healer_restart_lock.locked():
-        return
-    async with _dedicated_healer_restart_lock:
-        if redis_client is None:
-            return
-        try:
-            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-        except Exception:
-            return
-        if (cur or {}).get("auto_restart") != "1":
-            return
-
-        template = (cur or {}).get("template", "") or template_hint
-        if not template:
-            return
-
-        logger.info("🔄 Dedicated healer exited — auto-restart in %ds (template=%s)", _HEALER_RESTART_DELAY_S, template)
-        await asyncio.sleep(_HEALER_RESTART_DELAY_S)
-
-        # Bail if user stopped the healer while we were sleeping.
-        try:
-            cur2 = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-            if (cur2 or {}).get("auto_restart") != "1":
-                return
-        except Exception:
-            return
-
-        env = os.environ.copy()
-        env["TEMPLATE_POOL"] = template
-        env.setdefault("REQUEST_TIMEOUT", "900")
-        env.setdefault("MOE_API_BASE", "http://localhost:8000")
-        sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
-        if sys_key:
-            env["MOE_API_KEY"] = sys_key
-        try:
-            new_proc = await asyncio.create_subprocess_exec(
-                "python3", "/app/scripts/gap_healer_templates.py",
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            _dedicated_healer_proc = new_proc
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "running",
-                "stalled": "0",
-                "pid": str(new_proc.pid),
-                "started_at": str(_t.time()),
-                "last_activity_ts": str(_t.time()),
-                "processed": "0",
-                "written": "0",
-                "failed": "0",
-                "auto_restart": "1",
-            })
-            asyncio.create_task(_stream_dedicated_healer(new_proc))
-            logger.info("✅ Dedicated healer auto-restarted — PID %s", new_proc.pid)
-        except Exception as exc:
-            logger.error("❌ Dedicated healer auto-restart failed: %s", exc)
 
 
 async def _watchdog_dedicated_healer() -> None:
@@ -9025,7 +8889,7 @@ async def _watchdog_dedicated_healer() -> None:
     and the subprocess is restarted automatically.
     """
     import time as _t
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
 
     while True:
         await asyncio.sleep(60)
@@ -9082,7 +8946,7 @@ async def _watchdog_dedicated_healer() -> None:
             pass
 
         # Kill the stuck subprocess before restarting.
-        proc = _dedicated_healer_proc
+        proc = state._dedicated_healer_proc
         if proc is not None and proc.returncode is None:
             try:
                 proc.terminate()
@@ -9111,7 +8975,7 @@ async def _watchdog_dedicated_healer() -> None:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            _dedicated_healer_proc = new_proc
+            state._dedicated_healer_proc = new_proc
             await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
                 "status": "running",
                 "stalled": "0",
@@ -9125,16 +8989,18 @@ async def _watchdog_dedicated_healer() -> None:
             logger.error("❌ Dedicated healer restart failed: %s", exc)
 
 
-async def _set_healer_status_dedicated(**fields) -> None:
-    if redis_client is None:
-        return
-    try:
-        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={k: str(v) for k, v in fields.items()})
-    except Exception:
-        pass
+# _set_healer_status_dedicated, _stream_dedicated_healer,
+# _dedicated_healer_auto_restart_if_needed moved to services/healer.py
+from services.healer import (
+    _set_healer_status_dedicated,
+    _stream_dedicated_healer,
+    _dedicated_healer_auto_restart_if_needed,
+    _DEDICATED_HEALER_KEY,
+    _HEALER_STALL_SECONDS,
+    _HEALER_RESTART_DELAY_S,
+)
 
 
-@app.post("/v1/admin/ontology/dedicated/start")
 async def start_dedicated_healer(body: dict = None):
     """Start a permanent gap-healer loop pinned to a single curator template.
 
@@ -9143,7 +9009,7 @@ async def start_dedicated_healer(body: dict = None):
     endpoint returns ok=False with the exit code so the UI can show an error
     instead of silently marking status as 'running'.
     """
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
     import time as _t
     body = body or {}
     template = (body.get("template") or "").strip()
@@ -9151,7 +9017,7 @@ async def start_dedicated_healer(body: dict = None):
         return {"ok": False, "reason": "template_required"}
 
     # Reject if an in-memory process is still alive.
-    if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+    if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         return {"ok": False, "reason": "already_running"}
 
     # Also check Redis for a live process from a previous container run.
@@ -9195,7 +9061,7 @@ async def start_dedicated_healer(body: dict = None):
     except Exception as exc:
         return {"ok": False, "reason": "spawn_failed", "error": str(exc)[:200]}
 
-    _dedicated_healer_proc = proc
+    state._dedicated_healer_proc = proc
 
     # Write "starting" state immediately so the UI can show a spinner.
     if redis_client is not None:
@@ -9233,7 +9099,7 @@ async def start_dedicated_healer(body: dict = None):
                     await t
                 except asyncio.CancelledError:
                     pass
-            _dedicated_healer_proc = None
+            state._dedicated_healer_proc = None
             if redis_client is not None:
                 try:
                     await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
@@ -9271,24 +9137,23 @@ async def start_dedicated_healer(body: dict = None):
     return {"ok": True, "pid": proc.pid, "template": template}
 
 
-@app.post("/v1/admin/ontology/dedicated/stop")
 async def stop_dedicated_healer():
     """Stop the running dedicated healer loop."""
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
     import signal as _sig
 
     stopped = False
     # Try in-memory handle first
-    if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+    if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         try:
-            _dedicated_healer_proc.terminate()
-            await asyncio.wait_for(_dedicated_healer_proc.wait(), timeout=5.0)
+            state._dedicated_healer_proc.terminate()
+            await asyncio.wait_for(state._dedicated_healer_proc.wait(), timeout=5.0)
         except Exception:
             try:
-                _dedicated_healer_proc.kill()
+                state._dedicated_healer_proc.kill()
             except Exception:
                 pass
-        _dedicated_healer_proc = None
+        state._dedicated_healer_proc = None
         stopped = True
 
     # Also kill by PID from Redis (handles cross-restart cases)
@@ -9318,13 +9183,12 @@ async def stop_dedicated_healer():
     return {"ok": True, "stopped": stopped}
 
 
-@app.get("/v1/admin/ontology/dedicated/status")
 async def get_dedicated_healer_status():
     """Return the current state of the dedicated healer loop."""
     if redis_client is None:
         # Fallback to in-memory check
-        if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
-            return {"status": "running", "pid": _dedicated_healer_proc.pid}
+        if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
+            return {"status": "running", "pid": state._dedicated_healer_proc.pid}
         return {"status": "stopped"}
     try:
         data = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
@@ -9353,7 +9217,6 @@ async def get_dedicated_healer_status():
         return {"status": "unknown", "error": str(e)[:100]}
 
 
-@app.get("/v1/admin/ontology/dedicated/verify")
 async def verify_dedicated_healer():
     """Verify that the dedicated healer is genuinely running.
 
@@ -9381,7 +9244,7 @@ async def verify_dedicated_healer():
         except OSError:
             pass
     # Also trust the in-memory handle if PID lookup fails (same container).
-    if not pid_alive and _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+    if not pid_alive and state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         pid_alive = True
 
     # Scan moe:active:* for a live healer request.
