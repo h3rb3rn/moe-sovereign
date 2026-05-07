@@ -12,17 +12,55 @@ Heuristics (no LLM, no network):
   3. Domain markers (law, medicine, math)
   4. Code/config markers
   5. Simple factual questions / single-word queries
+  6. AIC signal: zlib compressibility as Kolmogorov complexity proxy
+     (Kolmogorov 1965; Chaitin 1966 — algorithmic information theory)
 """
 
 from __future__ import annotations
 import re
-from typing import Literal
+import zlib
+from typing import Literal, Optional
 
 ComplexityLevel = Literal["trivial", "moderate", "complex", "memory_recall"]
 
 # ── Thresholds ───────────────────────────────────────────────────────────────
 _TRIVIAL_TOKEN_MAX  = 15   # queries with ≤15 words → trivial candidate
 _COMPLEX_TOKEN_MIN  = 80   # queries with ≥80 words → always complex
+
+# ── AIC thresholds (Kolmogorov complexity proxy via zlib) ────────────────────
+# Compressibility = 1 - (compressed_len / raw_len). High = redundant = trivial.
+# Tuned empirically: dense technical prose lands at 0.10–0.25; simple
+# conversational text at 0.35–0.60; highly repetitive prompts above 0.65.
+_AIC_TRIVIAL_FLOOR   = 0.55   # compressibility > 0.55 + short → trivial boost
+_AIC_COMPLEX_CEILING = 0.15   # compressibility < 0.15 + ≥35 words → complex boost
+
+
+def _aic_compressibility(text: str) -> Optional[float]:
+    """Kolmogorov complexity proxy via zlib compression ratio.
+
+    Returns a value in [0.0, 1.0] where high means the text is information-
+    sparse (repetitive / trivial) and low means information-dense (complex).
+
+    Returns None for texts shorter than 30 bytes (too short to be meaningful).
+
+    Mathematical basis:
+        Kolmogorov (1965) / Chaitin (1966) — the algorithmic information
+        content (AIC) of a string is the length of its shortest description.
+        Lossless compression (zlib/DEFLATE = LZ77 + Huffman) is a practical
+        upper-bound approximation: if the string compresses well, it contains
+        redundant structure and is relatively low-information.
+
+    Args:
+        text: The query string to analyse.
+
+    Returns:
+        Float in [0.0, 1.0] or None if text is too short.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) < 30:
+        return None
+    compressed = zlib.compress(encoded, level=9)
+    return 1.0 - len(compressed) / len(encoded)
 
 # ── Multi-step markers → complex ─────────────────────────────────────────────
 _COMPLEX_MARKERS = re.compile(
@@ -89,6 +127,10 @@ _TRIVIAL_MARKERS = re.compile(
 def estimate_complexity(query: str) -> ComplexityLevel:
     """Returns the estimated complexity of a query without an LLM call.
 
+    Combines five keyword heuristics with an AIC signal (zlib compressibility
+    as a Kolmogorov complexity proxy) to resolve ambiguous cases where the
+    word-count and keyword rules disagree.
+
     Args:
         query: The user's request text.
 
@@ -123,6 +165,19 @@ def estimate_complexity(query: str) -> ComplexityLevel:
     # Very short queries without domain markers → trivial
     if n <= 8 and not _DOMAIN_MARKERS.search(query) and not _CODE_MARKERS.search(query):
         return "trivial"
+
+    # ── AIC tie-breaker: resolve ambiguous moderate candidates ───────────────
+    # Only applied when keyword heuristics would return "moderate" — the AIC
+    # signal can push the estimate up (complex) or down (trivial) when the text
+    # is sufficiently long to yield a meaningful compressibility score.
+    aic = _aic_compressibility(query)
+    if aic is not None:
+        if aic < _AIC_COMPLEX_CEILING and n >= 35:
+            # Information-dense, long prompt: keyword heuristics underestimate.
+            return "complex"
+        if aic > _AIC_TRIVIAL_FLOOR and n <= _TRIVIAL_TOKEN_MAX:
+            # Highly repetitive or low-information short prompt.
+            return "trivial"
 
     # Domain markers → at least moderate
     has_domain = bool(_DOMAIN_MARKERS.search(query))

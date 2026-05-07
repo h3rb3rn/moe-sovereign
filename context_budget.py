@@ -29,6 +29,10 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import re
+from typing import Optional
+
 # ── Char-to-token approximation ──────────────────────────────────────────────
 # Conservative estimate: 4 chars ≈ 1 token (English/German mixed text).
 CHARS_PER_TOKEN: int = 4
@@ -126,6 +130,83 @@ def get_model_context_window(model: str) -> int:
         if key.startswith(base + ":") or key == base:
             return val
     return 0
+
+
+async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
+                               timeout: float = 5.0) -> int:
+    """Query Ollama /api/show for a model's num_ctx parameter.
+
+    Returns the context window in tokens, or 0 if unavailable (server
+    unreachable, model not found, num_ctx not in parameters).
+    """
+    try:
+        import httpx
+        api_base = base_url.rstrip("/").removesuffix("/v1")
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{api_base}/api/show",
+                json={"model": model},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code != 200:
+                return 0
+            data = resp.json()
+            params = data.get("parameters", "") or ""
+            # parameters is a multi-line string: "num_ctx 32768\nstop ...\n..."
+            for line in params.splitlines():
+                m = re.match(r"^\s*num_ctx\s+(\d+)", line, re.IGNORECASE)
+                if m:
+                    return int(m.group(1))
+    except Exception:
+        pass
+    return 0
+
+
+async def get_model_ctx_async(
+    model: str,
+    base_url: str = "",
+    token: str = "ollama",
+    redis_client=None,
+    override: int = 0,
+) -> int:
+    """Resolve context window: override → Redis-cache → Ollama /api/show → static table.
+
+    Cache-Key: moe:ctx:{sha256(base_url)[:12]}:{model}  TTL: 3600s
+    Falls back gracefully at every step — never raises.
+    Returns 0 if completely unknown.
+    """
+    if override > 0:
+        return override
+
+    # Redis cache lookup
+    if redis_client and base_url:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:ctx:{url_hash}:{model}"
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return int(cached)
+        except Exception:
+            pass
+
+    # Dynamic fetch from Ollama (only for non-OpenAI endpoints)
+    fetched = 0
+    if base_url and token == "ollama":  # heuristic: Ollama uses "ollama" token
+        fetched = await fetch_ollama_num_ctx(model, base_url, token)
+
+    # Static table fallback
+    result = fetched or get_model_context_window(model)
+
+    # Cache the result
+    if redis_client and base_url and result > 0:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:ctx:{url_hash}:{model}"
+        try:
+            await redis_client.setex(cache_key, 3600, str(result))
+        except Exception:
+            pass
+
+    return result
 
 
 def graphrag_budget_chars(

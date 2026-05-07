@@ -266,24 +266,40 @@ function applyActiveFilter() {
   const filtered = hideHealer
     ? _activeReqs.filter(r => !(r.model || '').startsWith(HEALER_MODEL_PREFIX))
     : _activeReqs;
+  const hiddenCount = _activeReqs.length - filtered.length;
 
-  // Update badge to show visible count / total
+  // Badge always matches the visible row count so count and table are consistent.
   const badge = document.getElementById('badge-active');
   if (badge) {
-    badge.textContent = hideHealer && filtered.length !== _activeReqs.length
-      ? `${filtered.length} (${_activeReqs.length})`
-      : String(_activeReqs.length);
+    badge.textContent = hiddenCount > 0
+      ? `${filtered.length} (+${hiddenCount})`
+      : String(filtered.length);
+    badge.title = hiddenCount > 0
+      ? `${filtered.length} visible, ${hiddenCount} healer request(s) filtered`
+      : '';
   }
 
+  const emptyEl = document.getElementById('active-empty');
+  const tableEl = document.getElementById('active-table');
   if (filtered.length === 0) {
-    document.getElementById('active-empty').classList.remove('d-none');
-    document.getElementById('active-table').classList.add('d-none');
+    emptyEl.classList.remove('d-none');
+    tableEl.classList.add('d-none');
+    // Explain why the table is empty when healer requests are hidden.
+    if (hiddenCount > 0) {
+      emptyEl.innerHTML = `<i class="bi bi-funnel" style="font-size:2rem"></i>
+        <div class="mt-2">${hiddenCount} healer request(s) running — hidden by filter</div>`;
+    } else {
+      emptyEl.innerHTML = `<i class="bi bi-hourglass" style="font-size:2rem"></i>
+        <div class="mt-2">{{ t(request, 'empty.no_requests') }}</div>`;
+    }
     return;
   }
-  document.getElementById('active-empty').classList.add('d-none');
-  document.getElementById('active-table').classList.remove('d-none');
+  emptyEl.classList.add('d-none');
+  tableEl.classList.remove('d-none');
 
-  const rows = filtered.map(r => `
+  const rows = filtered.map(r => {
+    try {
+      return `
       <tr>
         <td class="text-nowrap">${fmtDateTime(r.started_at)}</td>
         <td class="text-nowrap"><span class="${durationClass(r.duration_s)}">${fmtDuration(r.duration_s)}</span></td>
@@ -299,7 +315,11 @@ function applyActiveFilter() {
                     onclick="killRequest('${escHtml(r.chat_id||'')}')">
               <i class="bi bi-x-circle me-1"></i>Kill
             </button></td>
-      </tr>`).join('');
+      </tr>`;
+    } catch(_e) {
+      return `<tr><td colspan="11" class="text-warning small py-1">Render error for request ${escHtml(r.chat_id||'?')}: ${escHtml(String(_e))}</td></tr>`;
+    }
+  }).join('');
   document.getElementById('active-tbody').innerHTML = rows;
 }
 

@@ -2228,6 +2228,7 @@ async def api_servers_models(request: Request, server: str, _=Depends(require_lo
                         "modified":       "",
                         "parameter_size": "",
                         "quantization":   "",
+                        "context_window": None,
                     }
                     for m in r.json().get("data", [])
                 ]
@@ -2236,6 +2237,20 @@ async def api_servers_models(request: Request, server: str, _=Depends(require_lo
                 r = await client.get(f"{base}/api/tags")
                 r.raise_for_status()
                 models = r.json().get("models", [])
+
+                # Enrich each model with context window via /api/show (parallel, 3s timeout)
+                async def _fetch_ctx(model_name: str) -> int:
+                    from context_budget import fetch_ollama_num_ctx, get_model_context_window
+                    # Try dynamic fetch first, fall back to static table
+                    ctx = await fetch_ollama_num_ctx(model_name, base, token=token, timeout=3.0)
+                    return ctx or get_model_context_window(model_name)
+
+                import asyncio as _aio
+                ctx_results = await _aio.gather(
+                    *[_fetch_ctx(m.get("name", "")) for m in models],
+                    return_exceptions=True,
+                )
+
                 return [
                     {
                         "name":           m.get("name", ""),
@@ -2243,8 +2258,9 @@ async def api_servers_models(request: Request, server: str, _=Depends(require_lo
                         "modified":       m.get("modified_at", ""),
                         "parameter_size": m.get("details", {}).get("parameter_size", ""),
                         "quantization":   m.get("details", {}).get("quantization_level", ""),
+                        "context_window": (ctx if isinstance(ctx, int) and ctx > 0 else None),
                     }
-                    for m in models
+                    for m, ctx in zip(models, ctx_results)
                 ]
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
@@ -4873,6 +4889,13 @@ async def user_create_key(
     # Show raw_key once via flash redirect
     request.session["new_api_key"] = raw_key
     return RedirectResponse("/user/keys?flash=Key+erstellt&flash_type=success", status_code=303)
+
+
+@app.post("/user/keys/clear-session-key")
+async def user_clear_session_key(request: Request, user_id: str = Depends(require_user_login)):
+    """Remove the one-time raw API key from the session after it has been displayed."""
+    request.session.pop("new_api_key", None)
+    return {"ok": True}
 
 
 @app.patch("/user/api/keys/{key_id}/label")

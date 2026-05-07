@@ -8,6 +8,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-05-07 — Formal Logic State Layer (de Vries 2007), AIC Complexity, Adaptive Thompson Sampling, Fuzzy Entity Deduplication
+
+### Added
+
+- **Formal Logic State Layer** (`pipeline/logic_types.py`, `pipeline/state.py`, `main.py`):
+  Three mathematically grounded logic layers over the LangGraph pipeline state, derived from
+  A. de Vries, *arXiv:0707.2161*, 2007:
+  - **Paraconsistent logic (§2):** `conflict_registry` (Annotated accumulator) captures divergent
+    expert outputs (SequenceMatcher ratio ≥ 0.35) as `ConflictEntry` records without discarding
+    either proposition. `resolve_conflicts_node` applies Strategy A (auto-dismiss below 0.5) and
+    Strategy B (judge LLM arbitration for safety-critical categories).
+  - **Intuitionistic logic / Heyting algebras (§3):** `ConstructiveProof[T]` generic Pydantic model
+    wraps any LLM-generated claim with `is_proven=False` (⊥) by default — only set to `True` by
+    an executor node performing sandbox run or test-suite verification.
+  - **Fuzzy T-norm routing (§4):** `fuzzy_router_node` derives `vector_confidence` and
+    `graph_confidence` ∈ [0,1] from planner output, then applies Gödel t-norm `min(a,b)` with a
+    complexity weight to produce programmatic `skip_research` / `enable_graphrag` decisions.
+    `goedel_tnorm` and `lukasiewicz_tnorm` available in `pipeline/logic_types.py`.
+
+- **GraphRAG paraconsistent conflict log** (`graph_rag/manager.py`):
+  When `extract_and_ingest` updates an existing Neo4j relation (version > 1) and confidence shifts
+  by ≥ 0.30, the conflict is written to Redis `moe:graph_conflict_log` (TTL 30 days) — preserving
+  the fact that a previously high-confidence triple is now contested across sources.
+
+- **AIC-based complexity estimation** (`complexity_estimator.py`):
+  `_aic_compressibility()` computes zlib compression ratio as a Kolmogorov complexity proxy
+  (Kolmogorov 1965; Chaitin 1966). Applied as a tie-breaker in `estimate_complexity()`:
+  information-dense prompts (ratio < 0.15, ≥ 35 words) → `complex`; redundant short prompts
+  (ratio > 0.55, ≤ 15 words) → `trivial`. Does not override definitive keyword matches.
+
+- **Infrastructure-adaptive Thompson Sampling** (`main.py`):
+  `_get_model_node_load()` reads `_ps_cache` (no extra API call) to derive node load [0.0, 1.0].
+  `_get_expert_score` inflates the Beta `β` parameter by `β × (1 + LOAD_PENALTY × load)` —
+  busy inference nodes draw lower Thompson samples, steering expert selection toward idle hardware.
+  Configurable via `THOMPSON_LOAD_PENALTY` env (default 2.0).
+
+- **Fuzzy entity name deduplication** (`graph_rag/manager.py`):
+  Before every Neo4j MERGE, incoming entity names are resolved via Ratcliff/Obershelp
+  SequenceMatcher (threshold 0.82, configurable) against a session-local prefix-batched index.
+  Alternate spellings across knowledge sources map to one canonical node, preventing duplicate
+  Neo4j entities for the same real-world concept.
+
+- **ARCHITECTURE.md formal logic section** (`docs/ARCHITECTURE.md`):
+  Comprehensive documentation of all six logic-grounded components with scientific attribution,
+  mathematical formulae, code examples, and a full reference list (de Vries 2007/2014, Gödel 1932,
+  Łukasiewicz 1920, Kolmogorov 1965, Chaitin 1966, Ratcliff/Metzener 1988).
+
+- **README.md** (`README.md`):
+  Key Capabilities #25–28 added. New "Research Basis" section acknowledges Prof. de Vries's
+  foundational work.
+
+| Metadata | Value |
+|---|---|
+| `impact` | minor — new capabilities; backwards compatible |
+| `breaking` | no |
+| `domain` | Pipeline, GraphRAG, Complexity Routing, Expert Scoring, Documentation |
+
+---
+
 ## 2026-05-05 — User Template API Access, Portal User Login, GAIA Benchmark +3 Fixes, adesso Deployment
 
 ### Added

@@ -14,6 +14,7 @@ from prometheus_client import (
 from datetime import datetime, timedelta, timezone
 from typing import List, Annotated, Dict, Any, TypedDict, Optional, Union, AsyncGenerator
 from pipeline.state import AgentState
+from pipeline.logic_types import goedel_tnorm, lukasiewicz_tnorm
 from web_search import (
     _domain_score,
     _reliability_label,
@@ -26,6 +27,8 @@ from parsing import (
     _parse_expert_gaps,
     _expert_category,
     _dedup_by_category,
+    _collect_conflicts,
+    _compute_routing_confidence,
     _truncate_history as _truncate_history_pure,
     _improvement_ratio,
     _oai_content_to_str,
@@ -2360,6 +2363,30 @@ _ps_cache: Dict[str, tuple] = {}
 _PS_CACHE_TTL = 5.0  # seconds — Ollama state does not change faster
 
 
+def _get_model_node_load(model: str) -> float:
+    """Return the infrastructure load [0.0, 1.0] of the server currently hosting `model`.
+
+    Reads the _ps_cache populated by _pick_inference_server (no additional API
+    calls). The load score is running_models / gpu_count, identical to the
+    load_score() computation in _pick_inference_server.
+
+    Used by _get_expert_score to construct an infrastructure-aware Beta prior:
+    busy nodes receive an inflated beta parameter, reducing their Thompson
+    sample and steering expert selection toward less-loaded hardware.
+
+    Returns 0.0 (no penalty) when the model is not found in any cached server,
+    which is the safe fallback for cold-start situations.
+    """
+    model_base = model.split(":")[0]
+    with _cache_lock:
+        for srv_name, (_, running) in _ps_cache.items():
+            if any(m.get("name", "").split(":")[0] == model_base for m in running):
+                srv = next((s for s in INFERENCE_SERVERS_LIST if s["name"] == srv_name), None)
+                if srv:
+                    return min(1.0, len(running) / max(int(srv.get("gpu_count", 1)), 1))
+    return 0.0
+
+
 def _estimate_model_vram_gb(model_name: str) -> float:
     """Estimate VRAM requirement in GB from model name.
 
@@ -2544,7 +2571,16 @@ async def _get_expert_score(model: str, category: str) -> float:
         if THOMPSON_SAMPLING_ENABLED:
             import random
             alpha = positive + 1
-            beta = (total - positive) + 1
+            beta  = (total - positive) + 1
+            # Infrastructure-adaptive prior (Bayesian maximum-entropy principle):
+            # Inflate beta by node load so busy servers draw lower Thompson
+            # samples, steering selection toward less-loaded hardware.
+            # At load=0.0: beta unchanged (idle node, no penalty).
+            # At load=1.0: beta *= (1 + _LOAD_PENALTY) — e.g. 3× at penalty=2.
+            # The Beta distribution remains well-defined for all positive (α, β).
+            _LOAD_PENALTY = float(os.getenv("THOMPSON_LOAD_PENALTY", "2.0"))
+            _node_load    = _get_model_node_load(model)
+            beta          = beta * (1.0 + _LOAD_PENALTY * _node_load)
             score = random.betavariate(alpha, beta)
             PROM_THOMPSON.observe(score)
             return score
@@ -4124,6 +4160,84 @@ def _inject_prior_results(task: dict, prior_outputs: dict[str, str]) -> dict:
     return out
 
 
+_FUZZY_VECTOR_THRESHOLD = float(os.getenv("FUZZY_VECTOR_THRESHOLD", "0.30"))
+_FUZZY_GRAPH_THRESHOLD  = float(os.getenv("FUZZY_GRAPH_THRESHOLD",  "0.35"))
+
+
+async def fuzzy_router_node(state: AgentState):
+    """Replace heuristic binary routing flags with fuzzy t-norm conjunction scores.
+
+    The planner currently sets skip_research and enable_graphrag as binary flags
+    derived from complexity heuristics. This node replaces that decision with a
+    quantitative approach: independent confidence scores are computed from the
+    plan content and combined via the Gödel t-norm (minimum) for a conservative
+    gate — both signals must be strong to activate a retrieval node.
+
+    Mathematical foundation:
+        Fuzzy logics as the most general framework — de Vries (2007),
+        arXiv:0707.2161. T-norm conjunction over [0,1]-valued truth degrees
+        replaces Boolean routing. Gödel t-norm T_G(a,b) = min(a,b) (Gödel
+        1932, discussed in de Vries 2007, §4); Łukasiewicz t-norm
+        T_Ł(a,b) = max(0, a+b-1) (Łukasiewicz 1920, de Vries 2007, §4).
+
+    Thresholds (configurable via env):
+        FUZZY_VECTOR_THRESHOLD (default 0.30): below → skip_research=True
+        FUZZY_GRAPH_THRESHOLD  (default 0.35): below → enable_graphrag=False
+    """
+    if state.get("cache_hit"):
+        return {}
+
+    plan             = state.get("plan") or []
+    complexity_level = state.get("complexity_level") or "moderate"
+    enable_graphrag  = state.get("enable_graphrag", True)
+    skip_research    = state.get("skip_research", False)
+
+    vector_conf, graph_conf = _compute_routing_confidence(
+        plan, complexity_level, enable_graphrag
+    )
+
+    # Complexity as a second signal: map to [0,1] for t-norm input
+    _complexity_weight = {"trivial": 0.1, "memory_recall": 0.0, "moderate": 0.5, "complex": 1.0}
+    complexity_score   = _complexity_weight.get(complexity_level, 0.5)
+
+    # Gödel t-norm: conservative gate — both signals must be strong
+    tnorm_vector = goedel_tnorm(vector_conf, complexity_score)
+    tnorm_graph  = goedel_tnorm(graph_conf,  complexity_score)
+
+    new_skip_research   = tnorm_vector < _FUZZY_VECTOR_THRESHOLD
+    new_enable_graphrag = tnorm_graph  >= _FUZZY_GRAPH_THRESHOLD
+
+    scores = {
+        "vector_confidence": vector_conf,
+        "graph_confidence":  graph_conf,
+        "tnorm_vector":      round(tnorm_vector, 3),
+        "tnorm_graph":       round(tnorm_graph, 3),
+        "method":            "goedel",
+        "vector_threshold":  _FUZZY_VECTOR_THRESHOLD,
+        "graph_threshold":   _FUZZY_GRAPH_THRESHOLD,
+    }
+
+    logger.info(
+        f"🔀 Fuzzy Router: vector={vector_conf:.2f}→T={tnorm_vector:.2f} "
+        f"({'skip' if new_skip_research else 'fetch'}) | "
+        f"graph={graph_conf:.2f}→T={tnorm_graph:.2f} "
+        f"({'skip' if not new_enable_graphrag else 'fetch'})"
+    )
+    await _report(
+        f"🔀 Fuzzy Router (Gödel t-norm): "
+        f"web={'✓' if not new_skip_research else '✗'} (score={tnorm_vector:.2f}) | "
+        f"graph={'✓' if new_enable_graphrag else '✗'} (score={tnorm_graph:.2f})"
+    )
+
+    return {
+        "vector_confidence":    vector_conf,
+        "graph_confidence":     graph_conf,
+        "fuzzy_routing_scores": scores,
+        "skip_research":        new_skip_research,
+        "enable_graphrag":      new_enable_graphrag,
+    }
+
+
 async def expert_worker(state: AgentState):
     if state.get("cache_hit"):
         return {"expert_results": []}
@@ -4196,14 +4310,35 @@ async def expert_worker(state: AgentState):
                         sys_prompt += f"\n\n{_corr_ctx}"
                 except Exception:
                     pass
-            # Embed conversation context before the current task
+            # Resolve per-expert context window: template override → Ollama API (cached) → static table
+            from context_budget import get_model_ctx_async as _ctx_async
+            _expert_ctx_override = int(model_cfg.get("context_window", 0) or 0)
+            _expert_ctx_window = await _ctx_async(
+                model=model_name,
+                base_url=url or "",
+                token=token,
+                redis_client=redis_client,
+                override=_expert_ctx_override,
+            )
+            # Derive per-expert output and input limits from context window
+            _expert_max_output = MAX_EXPERT_OUTPUT_CHARS
+            if _expert_ctx_window > 0:
+                # Reserve 25% of window for output, capped at global MAX_EXPERT_OUTPUT_CHARS
+                _expert_max_output = min(MAX_EXPERT_OUTPUT_CHARS, max(1000, _expert_ctx_window // 4))
+                # Truncate task_text if sys_prompt + task would overflow the context
+                _max_input_chars = max(2000, _expert_ctx_window * 3)  # 3 chars/token estimate
+                _available_task_chars = _max_input_chars - len(sys_prompt)
+                if len(task_text) > _available_task_chars > 0:
+                    task_text = task_text[:_available_task_chars] + "\n[…truncated for context window]"
+
+            logger.info(f"🚀 Expert {t_idx}.{e_idx} GPU#{gpu} [{model_name} / {cat}]")
+
+            # Build messages list: system + history + user turn (with optional image blocks)
             messages: List[Dict] = [{"role": "system", "content": sys_prompt}]
             if chat_history:
                 messages.extend(chat_history)
 
             # Attach images as multimodal content when present (OpenAI image_url format).
-            # Applies to all categories — even if the planner chooses "general" instead of "vision"
-            # a multimodal-capable model (e.g. gemma4) can still process the image.
             expert_images = state.get("images") or []
             if expert_images:
                 user_content: List[Dict] = [{"type": "text", "text": task_text}]
@@ -4216,10 +4351,10 @@ async def expert_worker(state: AgentState):
             else:
                 messages.append({"role": "user", "content": task_text})
 
-            logger.info(f"🚀 Expert {t_idx}.{e_idx} GPU#{gpu} [{model_name} / {cat}]")
             await _report(
                 f"🚀 Expert [{model_name} / {cat}] GPU#{gpu}\n"
                 f"  Task: {task_text}"
+                + (f" | ctx={_expert_ctx_window//1024}K" if _expert_ctx_window else "")
             )
             await _report(
                 f"📤 Expert [{model_name} / {cat}] System-Prompt:\n{sys_prompt}"
@@ -4246,8 +4381,8 @@ async def expert_worker(state: AgentState):
                 if _used_fallback:
                     await _report(f"⚠️ Expert [{cat}]: used N04-RTX fallback (AIHUB degraded)")
                 usage = _extract_usage(res)
-                content = res.content[:MAX_EXPERT_OUTPUT_CHARS]
-                if len(res.content) > MAX_EXPERT_OUTPUT_CHARS:
+                content = res.content[:_expert_max_output]
+                if len(res.content) > _expert_max_output:
                     content += "\n[…truncated]"
                 await _report(f"✅ Expert [{model_name} / {cat}]:\n{content}\n---")
                 # Token metrics
@@ -4274,7 +4409,14 @@ async def expert_worker(state: AgentState):
                     else:
                         asyncio.create_task(_ollama_unload(model_name, expert_base_url))
                 res_prefix = f"ENSEMBLE: {model_name.upper()}" if model_cfg.get("forced") else model_name.upper()
-                return {"res": f"[{res_prefix} / {cat}]: {content}", "model_cat": f"{model_name}::{cat}", **usage}
+                result = {"res": f"[{res_prefix} / {cat}]: {content}", "model_cat": f"{model_name}::{cat}", **usage}
+                # User-owned connection tokens are tracked separately for budget exclusion.
+                if model_cfg.get("_user_conn_url"):
+                    result["user_conn_prompt_tokens"]     = usage.get("prompt_tokens", 0)
+                    result["user_conn_completion_tokens"] = usage.get("completion_tokens", 0)
+                    result["prompt_tokens"]     = 0
+                    result["completion_tokens"] = 0
+                return result
             except Exception as e:
                 err = str(e)
                 # Distinguish real GPU errors (VRAM/CUDA) from network/timeout errors
@@ -4409,10 +4551,12 @@ async def expert_worker(state: AgentState):
 
     used = [r["model_cat"] for r in all_results if r.get("model_cat")]
     return {
-        "expert_results":     [r["res"] for r in all_results if "res" in r],
-        "expert_models_used": used,
-        "prompt_tokens":      sum(r.get("prompt_tokens",     0) for r in all_results),
-        "completion_tokens":  sum(r.get("completion_tokens", 0) for r in all_results),
+        "expert_results":              [r["res"] for r in all_results if "res" in r],
+        "expert_models_used":          used,
+        "prompt_tokens":               sum(r.get("prompt_tokens",               0) for r in all_results),
+        "completion_tokens":           sum(r.get("completion_tokens",           0) for r in all_results),
+        "user_conn_prompt_tokens":     sum(r.get("user_conn_prompt_tokens",     0) for r in all_results),
+        "user_conn_completion_tokens": sum(r.get("user_conn_completion_tokens", 0) for r in all_results),
     }
 
 async def research_node(state: AgentState):
@@ -4751,6 +4895,16 @@ async def merger_node(state: AgentState):
     _normal_raw     = [r for r in _all_expert_raw if not re.match(r'\[ENSEMBLE:', r)]
     expert_results  = _dedup_by_category(_normal_raw)
     ensemble_results = _ensemble_raw   # all ensemble results unfiltered to merger
+
+    # Paraconsistent conflict detection: collect divergent expert outputs before
+    # dedup discards them. Both propositions are preserved in conflict_registry
+    # rather than silently overwritten — de Vries (2007), arXiv:0707.2161, §2.
+    _new_conflicts = _collect_conflicts(_normal_raw)
+    if _new_conflicts:
+        _cats = sorted({c["category"] for c in _new_conflicts})
+        logger.info(f"⚖️  Conflict registry: {len(_new_conflicts)} paraconsistent conflicts in {_cats}")
+        await _report(f"⚖️ Paraconsistent conflicts detected: {', '.join(_cats)}")
+
     web            = state.get("web_research")    or ""
     cached         = state.get("cached_facts")    or ""
     math_res       = state.get("math_result")     or ""
@@ -4863,11 +5017,25 @@ async def merger_node(state: AgentState):
         # judge model context window > global MAX_GRAPH_CONTEXT_CHARS.
         _judge_model = state.get("judge_model_override") or JUDGE_MODEL
         _tpl_limit = state.get("graphrag_max_chars", 0)
+        # Use async context-window lookup (Redis-cache → Ollama → static table) for judge model
+        from context_budget import get_model_ctx_async as _ctx_async_grag
+        _judge_url = (state.get("judge_url_override") or JUDGE_URL or "").rstrip("/")
+        _judge_tok = (state.get("judge_token_override") or JUDGE_TOKEN or "ollama")
+        _judge_ctx = await _ctx_async_grag(model=_judge_model, base_url=_judge_url,
+                                           token=_judge_tok, redis_client=redis_client)
+        # Override static-table result with live value when available
         _effective_limit = graphrag_budget_chars(
             model=_judge_model,
             query_chars=len(state.get("input", "")),
             override_chars=_tpl_limit,
         )
+        # If async lookup found a larger (or known) context window, recompute
+        if _judge_ctx > 0 and _tpl_limit <= 0:
+            from context_budget import (MERGER_FIXED_TOKENS, MERGER_HEADROOM_TOKENS,
+                                        CHARS_PER_TOKEN, MIN_GRAPHRAG_CHARS)
+            _q_tok = (len(state.get("input", "")) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+            _avail = _judge_ctx - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - _q_tok
+            _effective_limit = max(MIN_GRAPHRAG_CHARS, _avail * CHARS_PER_TOKEN)
         # Final safety net: never exceed the global hard cap if set.
         if MAX_GRAPH_CONTEXT_CHARS > 0:
             _effective_limit = min(_effective_limit, MAX_GRAPH_CONTEXT_CHARS)
@@ -5430,8 +5598,9 @@ async def merger_node(state: AgentState):
         }
 
     return {
-        "final_response": res_content_clean,
+        "final_response":    res_content_clean,
         "provenance_sources": _provenance_sources,
+        "conflict_registry": _new_conflicts,
         **merger_usage,
         **_agentic_extra,
     }
@@ -5581,6 +5750,68 @@ def _should_replan(state: AgentState) -> str:
     return "planner"
 
 
+async def resolve_conflicts_node(state: AgentState):
+    """Evaluate the paraconsistent conflict registry and mark entries as resolved.
+
+    Paraconsistent logic (de Vries 2007, arXiv:0707.2161, §2) tolerates
+    contradictions — this node does not eliminate them but makes them explicit
+    so downstream nodes (critic, agentic re-planner) can act on them.
+
+    Resolution strategy is implemented by the user-facing TODO below.
+    Until resolved, all entries remain 'pending' and are visible in the
+    audit trail (conflict_registry in AgentState).
+    """
+    conflicts = state.get("conflict_registry") or []
+    pending   = [c for c in conflicts if c.get("resolution") == "pending"]
+    if not pending:
+        return {}
+
+    logger.info(f"⚖️  resolve_conflicts_node: {len(pending)} pending conflicts")
+    await _report(f"⚖️ Resolving {len(pending)} paraconsistent conflict(s)...")
+
+    # Strategy A: auto-dismiss low-divergence conflicts (formulaic variation, not real contradiction).
+    # Strategy B: escalate safety-critical conflicts to a judge LLM call.
+    # Mathematical basis: de Vries (2007), arXiv:0707.2161, §2 — paraconsistent resolution.
+    _DIVERGENCE_AUTO_DISMISS = 0.5
+    resolved: list = [c for c in conflicts if c.get("resolution") != "pending"]
+
+    for c in pending:
+        score    = c.get("divergence_score", 0.0)
+        category = c.get("category", "")
+
+        # Strategy A — low divergence: formulaic variation, not a real contradiction
+        if score < _DIVERGENCE_AUTO_DISMISS:
+            resolved.append({**c, "resolution": "dismissed", "resolved_by": "auto_low_divergence"})
+            logger.info(f"⚖️  [{category}] conflict dismissed (score={score:.2f} < {_DIVERGENCE_AUTO_DISMISS})")
+            continue
+
+        # Strategy B — safety-critical with significant divergence: ask judge to arbitrate
+        if category in _SAFETY_CRITICAL_CATS:
+            arbitration_prompt = (
+                f"Two experts in '{category}' produced conflicting answers. "
+                f"Evaluate both and determine which is more accurate, or synthesise if both are partially correct.\n\n"
+                f"EXPERT A:\n{c['proposition_a']}\n\n"
+                f"EXPERT B:\n{c['proposition_b']}\n\n"
+                f"Respond with: VERDICT: <A|B|SYNTHESIS> — <one-sentence rationale>"
+            )
+            try:
+                arb_res = await _invoke_judge_with_retry(state, arbitration_prompt)
+                verdict = arb_res.content.strip()[:300]
+                resolved.append({**c, "resolution": "resolved", "resolved_by": f"judge_arbitration: {verdict}"})
+                logger.info(f"⚖️  [{category}] conflict resolved by judge: {verdict[:80]}")
+                await _report(f"⚖️ [{category}] Judge verdict: {verdict[:120]}")
+            except Exception as _arb_err:
+                logger.warning(f"⚖️  [{category}] judge arbitration failed: {_arb_err}")
+                resolved.append({**c, "resolution": "dismissed", "resolved_by": "judge_unavailable"})
+            continue
+
+        # Non-safety-critical, high divergence: log and dismiss — no LLM cost warranted
+        resolved.append({**c, "resolution": "dismissed", "resolved_by": "unresolved_non_critical"})
+        logger.info(f"⚖️  [{category}] conflict dismissed (non-critical, score={score:.2f})")
+
+    return {"conflict_registry": resolved}
+
+
 async def critic_node(state: AgentState):
     """
     Fact-check for safety-critical domains (medical_consult, legal_advisor).
@@ -5660,25 +5891,29 @@ builder.add_node("mcp",                mcp_node)
 builder.add_node("graph_rag",          graph_rag_node)
 builder.add_node("research_fallback",  research_fallback_node)
 builder.add_node("thinking",           thinking_node)
+builder.add_node("fuzzy_router",       fuzzy_router_node)
 builder.add_node("merger",             merger_node)
+builder.add_node("resolve_conflicts",  resolve_conflicts_node)
 builder.add_node("critic",             critic_node)
 
 builder.set_entry_point("cache")
 builder.add_conditional_edges("cache", _route_cache, {"semantic_router": "semantic_router", "merger": "merger"})
 builder.add_edge("semantic_router", "planner")
-builder.add_edge("planner", "workers")
-builder.add_edge("planner", "research")
-builder.add_edge("planner", "math")
-builder.add_edge("planner", "mcp")
-builder.add_edge("planner", "graph_rag")
+builder.add_edge("planner", "fuzzy_router")
+builder.add_edge("fuzzy_router", "workers")
+builder.add_edge("fuzzy_router", "research")
+builder.add_edge("fuzzy_router", "math")
+builder.add_edge("fuzzy_router", "mcp")
+builder.add_edge("fuzzy_router", "graph_rag")
 builder.add_edge(["workers", "research", "math", "mcp", "graph_rag"], "research_fallback")
 builder.add_edge("research_fallback", "thinking")
 builder.add_edge("thinking", "merger")
 builder.add_conditional_edges(
     "merger",
     _should_replan,
-    {"planner": "planner", "critic": "critic"},
+    {"planner": "planner", "critic": "resolve_conflicts"},
 )
+builder.add_edge("resolve_conflicts", "critic")
 builder.add_edge("critic", END)
 
 # --- SERVER ---
@@ -6558,6 +6793,7 @@ async def _stream_native_llm(
     user_id: str,
     model_name: str,
     session_id: str = None,
+    is_user_conn: bool = False,
 ):
     """Direct proxy: forward request directly to inference endpoint, no MoE pipeline."""
     url     = endpoint["url"].rstrip("/") + "/chat/completions"
@@ -6625,7 +6861,9 @@ async def _stream_native_llm(
                 model=model_name, moe_mode="native",
                 prompt_tokens=p_tok, completion_tokens=c_tok, session_id=session_id,
             ))
-            asyncio.create_task(_increment_user_budget(user_id, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
+            # User-owned connections are billed by the user's own provider — exclude from MoE budget.
+            if not is_user_conn:
+                asyncio.create_task(_increment_user_budget(user_id, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
         asyncio.create_task(_deregister_active_request(chat_id))
         _did_deregister = True
         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok, 'tokens_per_second': tps, 'response_token_per_s': tps, 'prompt_token_per_s': prompt_tps, 'total_duration': total_dur_ns, 'load_duration': load_dur_ns, 'prompt_eval_count': p_tok, 'prompt_eval_duration': p_eval_dur_ns, 'eval_count': c_tok, 'eval_duration': eval_dur_ns, 'approximate_total': approx_total}})}\n\n"
@@ -6687,6 +6925,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             result_box["data"] = await app_graph.ainvoke(
                 {"input": user_input, "response_id": chat_id, "mode": mode,
                  "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
+                 "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
                  "chat_history": chat_history or [], "reasoning_trace": "",
                  "system_prompt": system_prompt, "images": images or [],
                  "user_id": user_id, "api_key_id": api_key_id,
@@ -6708,6 +6947,10 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "agentic_gap": "",
                  "attempted_queries": [],
                  "search_strategy_hint": "",
+                 "conflict_registry": [],
+                 "vector_confidence": 0.5,
+                 "graph_confidence": 0.5,
+                 "fuzzy_routing_scores": {},
                  "no_cache": no_cache},
                 config,
             )
@@ -6822,7 +7065,12 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 cache_hit=bool(cache_hit_flag),
                 agentic_rounds=_agentic_rounds,
             ))
-            asyncio.create_task(_increment_user_budget(_uid, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
+            # Deduct user-conn tokens: those are billed by the user's own provider.
+            _uc_p = data.get("user_conn_prompt_tokens", 0)
+            _uc_c = data.get("user_conn_completion_tokens", 0)
+            _bill_p = max(0, p_tok - _uc_p)
+            _bill_c = max(0, c_tok - _uc_c)
+            asyncio.create_task(_increment_user_budget(_uid, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
         if not _deregistered:
             asyncio.create_task(_deregister_active_request(chat_id))
         # Stop chunk WITHOUT usage (OpenAI spec: usage comes in its own chunk after)
@@ -7342,9 +7590,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     # Native LLM: forward directly to endpoint, no MoE pipeline
     if _native_endpoint:
+        _native_is_user_conn = bool(_native_endpoint.get("_user_conn"))
         if request.stream:
             return StreamingResponse(
-                _stream_native_llm(request, chat_id, _native_endpoint, user_id, request.model, session_id=session_id),
+                _stream_native_llm(request, chat_id, _native_endpoint, user_id, request.model,
+                                   session_id=session_id, is_user_conn=_native_is_user_conn),
                 media_type="text/event-stream",
             )
         # Non-streaming native: blockierender httpx-Call
@@ -7366,7 +7616,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 model=request.model, moe_mode="native",
                 prompt_tokens=_nu.get("prompt_tokens", 0), completion_tokens=_nu.get("completion_tokens", 0),
                 session_id=session_id))
-            asyncio.create_task(_increment_user_budget(user_id, _nu.get("total_tokens", 0), prompt_tokens=_nu.get("prompt_tokens", 0), completion_tokens=_nu.get("completion_tokens", 0)))
+            # User-owned connections are billed by the user's own provider — exclude from MoE budget.
+            if not _native_is_user_conn:
+                asyncio.create_task(_increment_user_budget(user_id, _nu.get("total_tokens", 0), prompt_tokens=_nu.get("prompt_tokens", 0), completion_tokens=_nu.get("completion_tokens", 0)))
         asyncio.create_task(_deregister_active_request(chat_id))
         _nj["id"] = chat_id
         return _nj
@@ -7419,6 +7671,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         {"input": user_input, "response_id": chat_id, "mode": mode,
          "user_id": user_id, "api_key_id": api_key_id,
          "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
+         "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
          "chat_history": history, "reasoning_trace": "", "system_prompt": system_prompt,
          "images": _user_images,
          "user_permissions": user_perms, "user_experts": user_experts,
@@ -7452,6 +7705,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "agentic_gap": "",
          "attempted_queries": [],
          "search_strategy_hint": "",
+         "conflict_registry": [],
+         "vector_confidence": 0.5,
+         "graph_confidence": 0.5,
+         "fuzzy_routing_scores": {},
          "no_cache": request.no_cache,
          # Pass explicit temperature into state so planner, judge and experts
          # can honour it. None means "use query-adaptive detection".
@@ -7468,7 +7725,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             moe_mode=mode, prompt_tokens=p_tok, completion_tokens=c_tok,
             session_id=session_id,
         ))
-        asyncio.create_task(_increment_user_budget(user_id, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
+        _uc_p = result.get("user_conn_prompt_tokens", 0)
+        _uc_c = result.get("user_conn_completion_tokens", 0)
+        _bill_p = max(0, p_tok - _uc_p)
+        _bill_c = max(0, c_tok - _uc_c)
+        asyncio.create_task(_increment_user_budget(user_id, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
     asyncio.create_task(_deregister_active_request(chat_id))
     resp = {
         "id":      chat_id,
@@ -7576,10 +7837,11 @@ async def _anthropic_content_blocks_to_sse(
     yield _sse_event("message_stop", {"type": "message_stop"})
 
 
-async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional[str] = None, tool_url: Optional[str] = None, tool_token: Optional[str] = None, tool_timeout: Optional[int] = None, tool_node: Optional[str] = None, user_id: str = "anon", api_key_id: str = "", session_id: str = None):
+async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional[str] = None, tool_url: Optional[str] = None, tool_token: Optional[str] = None, tool_timeout: Optional[int] = None, tool_node: Optional[str] = None, user_id: str = "anon", api_key_id: str = "", session_id: str = None, is_user_conn: bool = False):
     """Forwards tool-capable requests to an inference server and converts formats.
 
     tool_model/tool_url/tool_token: override default judge if specified (e.g. for Claude Code sessions).
+    is_user_conn: when True the tool endpoint is a user-owned connection — tokens are NOT charged to the MoE budget.
     tool_timeout: per-node timeout in seconds (fallback: JUDGE_TIMEOUT).
     tool_node: node name for Prometheus labels (e.g. "N04-RTX").
     """
@@ -7785,7 +8047,8 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
             user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
             model=effective_model, moe_mode="cc_tool",
             prompt_tokens=in_tok, completion_tokens=out_tok, session_id=session_id))
-        asyncio.create_task(_increment_user_budget(user_id, in_tok + out_tok, prompt_tokens=in_tok, completion_tokens=out_tok))
+        if not is_user_conn:
+            asyncio.create_task(_increment_user_budget(user_id, in_tok + out_tok, prompt_tokens=in_tok, completion_tokens=out_tok))
 
     # Format detection: raw Qwen tags in text content indicate missing tool schema
     _raw_text = msg.get("content") or ""
@@ -8159,6 +8422,7 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
         "input": user_input, "response_id": chat_id,
         "mode": "agent_orchestrated" if CLAUDE_CODE_MODE == "moe_orchestrated" else "agent",
         "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
+        "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
         "chat_history": history, "reasoning_trace": "", "system_prompt": system,
         "images": user_images,
         "user_permissions": user_permissions or {},
@@ -8241,7 +8505,11 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
                         user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
                         model="moe-orchestrator", moe_mode="cc_moe",
                         prompt_tokens=in_tok, completion_tokens=out_tok, session_id=session_id))
-                    asyncio.create_task(_increment_user_budget(user_id, in_tok + out_tok, prompt_tokens=in_tok, completion_tokens=out_tok))
+                    _uc_p = data.get("user_conn_prompt_tokens", 0)
+                    _uc_c = data.get("user_conn_completion_tokens", 0)
+                    _bill_p = max(0, in_tok - _uc_p)
+                    _bill_c = max(0, out_tok - _uc_c)
+                    asyncio.create_task(_increment_user_budget(user_id, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
 
                 for i in range(0, max(len(content), 1), SSE_CHUNK_SIZE):
                     yield _sse_event("content_block_delta", {
@@ -8275,7 +8543,11 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
             user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
             model="moe-orchestrator", moe_mode="cc_moe",
             prompt_tokens=_p_tok, completion_tokens=_c_tok, session_id=session_id))
-        asyncio.create_task(_increment_user_budget(user_id, _p_tok + _c_tok, prompt_tokens=_p_tok, completion_tokens=_c_tok))
+        _uc_p = result.get("user_conn_prompt_tokens", 0)
+        _uc_c = result.get("user_conn_completion_tokens", 0)
+        _bill_p = max(0, _p_tok - _uc_p)
+        _bill_c = max(0, _c_tok - _uc_c)
+        asyncio.create_task(_increment_user_budget(user_id, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
     asyncio.create_task(_deregister_active_request(chat_id))
     return {
         "id": chat_id, "type": "message", "role": "assistant",
@@ -8372,6 +8644,7 @@ async def anthropic_messages(request: Request):
             _effective_tool_endpoint = _user_cc_profile.get("tool_endpoint", CLAUDE_CODE_TOOL_ENDPOINT)
             _effective_tool_url      = URL_MAP.get(_effective_tool_endpoint)
             _effective_tool_token    = TOKEN_MAP.get(_effective_tool_endpoint, "ollama")
+            _effective_tool_is_user_conn = False  # tracks whether tool_url came from a user connection
             if not _effective_tool_url:
                 # Fallback: resolve tool_endpoint as a user private connection
                 _cc_conns: dict = {}
@@ -8381,8 +8654,9 @@ async def anthropic_messages(request: Request):
                     pass
                 _uc = _cc_conns.get(_effective_tool_endpoint)
                 if _uc:
-                    _effective_tool_url   = _uc["url"]
-                    _effective_tool_token = _uc.get("api_key") or "ollama"
+                    _effective_tool_url          = _uc["url"]
+                    _effective_tool_token        = _uc.get("api_key") or "ollama"
+                    _effective_tool_is_user_conn = True
                 else:
                     _effective_tool_url = _CLAUDE_CODE_TOOL_URL
             # CC profile can force an expert template (admin_override bypasses permission check)
@@ -8458,6 +8732,7 @@ async def anthropic_messages(request: Request):
                 user_id=_user_id,
                 api_key_id=_api_key_id,
                 session_id=session_id,
+                is_user_conn=_effective_tool_is_user_conn,
             )
 
         # All modes: tool calls always go to the tool model (precise function calling needed)
@@ -8473,6 +8748,7 @@ async def anthropic_messages(request: Request):
                     user_id=_user_id,
                     api_key_id=_api_key_id,
                     session_id=session_id,
+                    is_user_conn=_effective_tool_is_user_conn,
                 )
             return await _anthropic_tool_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
 

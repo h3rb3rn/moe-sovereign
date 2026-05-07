@@ -402,6 +402,7 @@ function buildExpertRows(prefix, existingExperts, availableLlms) {
     const active = !!catCfg;
     const models = catCfg ? (catCfg.models || []) : [];
     const sysPrompt = catCfg ? (catCfg.system_prompt || '') : '';
+    const ctxWin    = catCfg ? (catCfg.context_window || 0) : 0;
     const modelsHtml = _buildModelRows(prefix, cat, models, availableLlms);
     rows += `
     <tr id="${prefix}_row_${cat}" class="${active ? '' : 'table-secondary'}">
@@ -439,6 +440,13 @@ function buildExpertRows(prefix, existingExperts, availableLlms) {
             <textarea id="${prefix}_sptxt_${cat}" class="form-control form-control-sm font-monospace"
                       rows="4" placeholder="Empty = default prompt"
                       style="font-size:.78rem">${_escHtml(sysPrompt)}</textarea>
+          </div>
+          <div class="mt-1 d-flex align-items-center gap-1" title="Context window in tokens. 0 = auto-detect from model.">
+            <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+            <input type="number" id="${prefix}_ctx_${cat}" value="${ctxWin || ''}"
+                   class="form-control form-control-sm" style="font-size:.75rem;width:90px"
+                   min="0" step="1024" placeholder="auto">
+            <small class="text-muted" style="font-size:.68rem">ctx</small>
           </div>
         </div>
       </td>
@@ -582,8 +590,10 @@ function collectExperts(prefix) {
     }
     const sysPromptTxt = document.getElementById(`${prefix}_sptxt_${cat}`);
     const system_prompt = sysPromptTxt ? sysPromptTxt.value.trim() : '';
+    const ctxInput = document.getElementById(`${prefix}_ctx_${cat}`);
+    const context_window = ctxInput ? (parseInt(ctxInput.value) || 0) : 0;
     if (models.length > 0) {
-      experts[cat] = {system_prompt, models};
+      experts[cat] = {system_prompt, models, ...(context_window > 0 ? {context_window} : {})};
     }
   }
   return experts;

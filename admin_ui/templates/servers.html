@@ -98,6 +98,7 @@
                   <th>{{ t(request, 'table.model') }}</th>
                   <th style="width:65px" class="text-end">GB</th>
                   <th style="width:80px">{{ t(request, 'table.quant') }}</th>
+                  <th style="width:70px" class="text-end" title="Context window in tokens">Ctx</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -187,9 +188,11 @@ async function loadModels(idx, serverName) {
       tbody.innerHTML = '';
       models.forEach(m => {
         const tr = document.createElement('tr');
+        const ctxFmt = m.context_window ? (m.context_window >= 1000 ? `${Math.round(m.context_window/1024)}K` : String(m.context_window)) : '–';
         tr.innerHTML = `<td class="font-monospace" style="font-size:.82rem">${escHtml(m.name)}</td>
                         <td class="text-end" style="font-size:.82rem">${m.size_gb}</td>
-                        <td style="font-size:.78rem">${escHtml(m.quantization || '–')}</td>`;
+                        <td style="font-size:.78rem">${escHtml(m.quantization || '–')}</td>
+                        <td class="text-end text-muted" style="font-size:.78rem" title="${m.context_window ? m.context_window + ' tokens' : ''}">${ctxFmt}</td>`;
         tbody.appendChild(tr);
       });
       table.style.display = '';

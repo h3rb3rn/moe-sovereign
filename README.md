@@ -160,6 +160,10 @@ moe-infra/
 | **22** | Pipeline Transparency Log | Per-request routing log: expert domains engaged, complexity level, latency, cache hit, agentic rounds — queryable via `/v1/admin/pipeline-log` with CSV export for BI tools |
 | **23** | Chess Analysis via Lichess | MCP tool `chess_analyze_position` queries Lichess cloud Stockfish (342M positions, depth 20–99) for best moves given a FEN string — no local engine required |
 | **24** | Claude Desktop & Cowork Gateway | Full Anthropic Third-Party Inference Gateway spec: `display_name` in `/v1/models`, `/v1/messages/count_tokens` endpoint, `X-Claude-Code-Session-Id` tracking — compatible with Claude Desktop, Claude Cowork, and Claude Code out of the box. Run `scripts/setup-claude-desktop.sh` to auto-configure |
+| **25** | Formal Logic State Layer | Three-tier algebraic logic over the LangGraph state (de Vries 2007): **paraconsistent** conflict registry tolerates contradictory expert outputs without pipeline failure; **intuitionistic** `ConstructiveProof[T]` marks LLM claims as ⊥ until executor-verified; **fuzzy T-norm** routing replaces binary flags with continuous confidence scores — Gödel `min` and Łukasiewicz `max(0,a+b−1)` conjunctions configurable via env |
+| **26** | AIC Complexity Estimation | zlib compressibility as a Kolmogorov complexity proxy (Kolmogorov 1965) acts as a tie-breaker in `estimate_complexity()` — information-dense prompts (ratio < 0.15, ≥ 35 words) are upgraded to `complex`; redundant short prompts downgraded to `trivial`, without any LLM call |
+| **27** | Infrastructure-Adaptive Expert Scoring | Thompson Sampling Beta prior adjusted by real-time node load from `_ps_cache`: busy inference nodes receive an inflated β parameter — steering expert selection toward idle hardware automatically, without manual configuration |
+| **28** | Fuzzy Graph Entity Deduplication | Before every Neo4j MERGE, incoming entity names are resolved via Ratcliff/Obershelp SequenceMatcher (threshold 0.82) against a prefix-batched index — alternate spellings across knowledge sources (`"Einstein, Albert"` ↔ `"Albert Einstein"`) map to one canonical node instead of creating duplicates |
 
 ---
 
@@ -354,6 +358,24 @@ Local preview: `pip install mkdocs-material && mkdocs serve`
 |---|---|---|
 | [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | PDF | ~60 |
 | [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | PDF | ~63 |
+
+---
+
+## Research Basis
+
+The formal logic state layer (capabilities #25–28) is grounded in peer-reviewed
+mathematical logic research. We gratefully acknowledge the foundational contributions
+of **Prof. A. de Vries**, whose unified algebraic hierarchy of logics provides the
+theoretical framework for paraconsistent, intuitionistic, and fuzzy logic within
+this system:
+
+> A. de Vries, *"Algebraic hierarchy of logics unifying fuzzy logic and quantum logic"*,
+> arXiv:0707.2161 [math.LO], 2007. <https://arxiv.org/abs/0707.2161>
+
+Additional classical results used: Gödel t-norm (1932), Łukasiewicz t-norm (1920),
+Kolmogorov algorithmic information content (1965), Chaitin complexity bound (1966),
+Ratcliff/Obershelp string similarity (1988). Full attribution in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 

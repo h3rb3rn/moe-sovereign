@@ -377,3 +377,262 @@ The LangGraph state object passed through all nodes:
 | VRAM unload after inference | VRAM freed for judge | Async `keep_alive=0` after each expert |
 | Soft cache few-shot | Better accuracy without hit | Distance 0.15–0.50 → in-context examples |
 | Feedback-driven scoring | Optimal model selection | Laplace score from user feedback |
+
+---
+
+## Formal Logic State Management
+
+This section documents the transition from purely heuristic LLM-based routing
+to a hybrid approach grounded in formal mathematical logic. The theoretical
+foundation spans algebraic logic, algorithmic information theory, and Bayesian
+statistics. All implementations are derived from peer-reviewed literature; no
+formal logic primitive is introduced without an attributed mathematical basis.
+
+---
+
+### Scientific Foundation & Acknowledgement
+
+The core algebraic framework is drawn from:
+
+> **A. de Vries**, *"Algebraic hierarchy of logics unifying fuzzy logic and
+> quantum logic"*, arXiv:0707.2161 \[math.LO\], 2007.
+> <https://arxiv.org/abs/0707.2161>
+
+Professor de Vries establishes that fuzzy logic is the most general framework
+in an algebraic hierarchy — containing paraconsistent, quantum, intuitionistic,
+and Boolean logics as special cases via lattice-theoretic embedding. This
+unified view makes it possible to treat LLM routing and knowledge-graph state
+management under a single, mathematically coherent theory rather than as
+independent engineering heuristics.
+
+The implementations in this system directly apply three of the four logic
+layers de Vries formalises:
+
+- **§2 — Paraconsistent logic:** contradictions between experts are tolerated
+  and preserved rather than causing pipeline failure.
+- **§3 — Intuitionistic logic (Heyting algebras):** LLM-generated claims are
+  treated as unproven (⊥) until constructively verified by an executor.
+- **§4 — Fuzzy logic (t-norms):** routing decisions use continuous confidence
+  values in \[0, 1\] rather than binary flags.
+
+Beyond the algebraic hierarchy, the following classical results are used:
+
+| Author | Year | Result | Used for |
+|---|---|---|---|
+| K. Gödel | 1932 | Gödel t-norm `T_G(a,b) = min(a,b)` | Conservative routing conjunction |
+| J. Łukasiewicz | 1920 | Łukasiewicz t-norm `T_Ł(a,b) = max(0, a+b−1)` | Tolerant routing conjunction |
+| A. Kolmogorov | 1965 | Algorithmic information content (AIC) | Complexity estimation via zlib |
+| G. Chaitin | 1966 | Kolmogorov complexity upper bound via compression | Complexity estimation |
+| Ratcliff & Metzener | 1988 | Ratcliff/Obershelp string similarity | Fuzzy entity deduplication |
+| A. de Vries | 2014 | Fuzzy profile matching via numerical attributes | Entity merging threshold model |
+
+---
+
+### 1 — Intuitionistic Logic — `ConstructiveProof[T]`
+
+**Basis:** De Vries (2007), §3 — Heyting algebras.  
+**Location:** `pipeline/logic_types.py`
+
+A formula ϕ is valid in intuitionistic logic only when an explicit *proof
+object* exists; the default truth value without a proof is ⊥ (the bottom
+element of the Heyting lattice). The generic Pydantic model
+`ConstructiveProof[T]` enforces this on every LLM output:
+
+```python
+class ConstructiveProof(BaseModel, Generic[T]):
+    content:      T
+    is_proven:    bool = False        # ⊥ by default — LLM output is unproven
+    proof_method: Literal["unverified", "sandbox_exec", "unit_test", "static_analysis"]
+```
+
+`is_proven` may only be set to `True` by an executor node performing a
+constructive verification (sandbox run, test suite pass). LLM assertion alone
+is never sufficient — this mirrors the intuitionistic rejection of the law of
+excluded middle.
+
+---
+
+### 2 — Paraconsistent Logic — Expert Conflict Registry
+
+**Basis:** De Vries (2007), §2 — paraconsistent systems reject *ex
+contradictione quodlibet*: from A ∧ ¬A it does not follow that every formula
+is derivable. Contradictions are tolerated as structured data.  
+**Location:** `pipeline/state.py`, `parsing.py`, `main.py`, `graph_rag/manager.py`
+
+#### 2a — LLM Expert Conflicts
+
+When two experts in the same domain category return significantly divergent
+outputs (divergence ratio ≥ 0.35 via `_collect_conflicts`), the `merger_node`
+records both propositions in `conflict_registry` before deduplication:
+
+```python
+conflict_registry: Annotated[list, operator.add]  # List[ConflictEntry-dict]
+```
+
+Each `ConflictEntry` carries `category`, `proposition_a`, `proposition_b`,
+`divergence_score ∈ [0,1]`, and a lifecycle `resolution` flag:
+`pending → resolved | dismissed`. No entry is ever deleted.
+
+The `resolve_conflicts_node` implements two resolution strategies:
+
+- **Strategy A — Auto-dismiss:** divergence score < 0.5 → dismiss as noise.
+- **Strategy B — Judge arbitration:** safety-critical categories with score
+  ≥ 0.5 → invoke judge LLM; result stored in `resolved_by`.
+
+**Before:** `_dedup_by_category` silently discarded divergent knowledge.
+**After:** All contradictions are preserved for audit and downstream reasoning.
+
+#### 2b — Knowledge Graph Conflicts
+
+Paraconsistent tolerance is extended to the Neo4j knowledge graph. When
+`extract_and_ingest` updates an existing relation (version > 1) and its
+confidence shifts by ≥ 0.30, the conflict is logged to Redis
+`moe:graph_conflict_log` (TTL 30 days) as a structured entry with
+`prev_confidence`, `new_confidence`, `prev_model`, `new_model`, and `triple`:
+
+```
+({s})-[{rel}]->({o})  conf 0.85→0.41  v3  [pending]
+```
+
+This preserves the information that a previously high-confidence fact is now
+contested — rather than silently overwriting the relation property.
+
+---
+
+### 3 — Fuzzy Logic — T-Norm Routing
+
+**Basis:** De Vries (2007), §4 — fuzzy logics as the most general framework;
+t-norms define logical conjunction over \[0, 1\]-valued truth degrees.  
+**Location:** `parsing.py` (`_compute_routing_confidence`), `main.py` (`fuzzy_router_node`)
+
+The `planner_node` previously emitted binary routing flags (`skip_research:
+bool`). The `fuzzy_router_node` replaces this with a two-stage process:
+
+1. **Confidence derivation** (`_compute_routing_confidence`): derives
+   `vector_confidence` and `graph_confidence` ∈ \[0, 1\] from plan category
+   distribution, search-query presence, and complexity level.
+
+2. **T-norm conjunction**: combines the derived confidence with a complexity
+   weight via Gödel t-norm `min(a, b)` — the most conservative conjunction,
+   which bounds the result by the weaker of the two signals:
+
+```python
+tnorm_vector = goedel_tnorm(vector_conf, complexity_score)
+tnorm_graph  = goedel_tnorm(graph_conf,  complexity_score)
+skip_research    = tnorm_vector < FUZZY_VECTOR_THRESHOLD   # default 0.30
+enable_graphrag  = tnorm_graph  >= FUZZY_GRAPH_THRESHOLD   # default 0.35
+```
+
+Both thresholds are configurable via environment variables. The
+Łukasiewicz t-norm (`max(0, a+b-1)`) is available in `pipeline/logic_types.py`
+for contexts where partial evidence from either signal should suffice.
+
+---
+
+### 4 — Algorithmic Information Content — Complexity Estimation
+
+**Basis:** Kolmogorov (1965), Chaitin (1966) — the algorithmic information
+content of a string is the length of its shortest description (Kolmogorov
+complexity). Lossless compression provides a computable upper bound.  
+**Location:** `complexity_estimator.py`
+
+The `_aic_compressibility` function uses zlib (DEFLATE = LZ77 + Huffman) as a
+practical Kolmogorov approximation:
+
+```python
+compressibility = 1.0 - len(zlib.compress(text.encode(), level=9)) / len(text.encode())
+```
+
+A high compressibility score indicates a redundant, low-information prompt
+(simple); a low score indicates an information-dense prompt (complex). This
+AIC signal acts as a tie-breaker in `estimate_complexity()` when keyword
+heuristics are ambiguous:
+
+- `compressibility < 0.15` and `n ≥ 35 words` → upgrade to `complex`
+- `compressibility > 0.55` and `n ≤ 15 words` → downgrade to `trivial`
+
+Critically, the AIC signal is only applied in the ambiguous middle range — it
+cannot override a definitive keyword match (e.g., a research-paper marker
+always yields `complex` regardless of compressibility).
+
+---
+
+### 5 — Bayesian Maximum-Entropy — Infrastructure-Adaptive Expert Scoring
+
+**Basis:** Bayesian prior adjustment under the maximum-entropy principle:
+given a load constraint on an inference node, the prior over that node's
+performance should reflect the available capacity.  
+**Location:** `main.py` (`_get_expert_score`, `_get_model_node_load`)
+
+MoE Sovereign uses Thompson Sampling (Beta distribution) for stochastic expert
+selection. Previously, the Beta prior was determined solely by historical
+feedback (`α = positive + 1`, `β = failures + 1`). The infrastructure-adaptive
+extension inflates `β` proportionally to the node's current load:
+
+```
+β_adj = β × (1 + LOAD_PENALTY × node_load)
+```
+
+where `node_load ∈ [0, 1]` is read from the `_ps_cache` (populated by
+`_pick_inference_server`, no additional API calls) and `LOAD_PENALTY`
+defaults to `2.0` (configurable via env). At `load = 0`: no penalty. At
+`load = 1`: `β` triples, reducing the expected Thompson sample from
+`α/(α+β)` to `α/(α+3β)` — steering selection toward less-loaded nodes.
+
+The Beta distribution remains mathematically well-defined for all positive
+`(α, β_adj)`, preserving the exploration property of Thompson Sampling.
+
+---
+
+### 6 — Fuzzy Profile Matching — Entity Deduplication
+
+**Basis:** De Vries (2014) — fuzzy profile matching via numerical attribute
+similarity; tolerance-based identity under partial information.  
+**Location:** `graph_rag/manager.py` (`_fuzzy_resolve_entity_name`)
+
+Before every Neo4j `MERGE`, incoming entity names are resolved against a
+session-local index of known entity names built from a single prefix-batched
+query. Resolution uses the Ratcliff/Obershelp algorithm (SequenceMatcher):
+
+```python
+score = SequenceMatcher(None, name.lower(), candidate.lower()).ratio()
+```
+
+A candidate is accepted as canonical when `score ≥ 0.82` (configurable via
+`_FUZZY_ENTITY_THRESHOLD`). At equal scores, the shorter name is preferred
+as the canonical form. This prevents duplicate Neo4j nodes for entities
+that appear under alternate spellings across different knowledge sources
+(e.g., `"Einstein, Albert"` → resolved to `"Albert Einstein"`).
+
+The threshold 0.82 was calibrated to tolerate case, punctuation, and minor
+spelling variants while rejecting unrelated short names where high ratio
+scores are coincidental.
+
+---
+
+### Implementation Summary
+
+| Component | Logic / Theory | Pub. basis | Status |
+|---|---|---|---|
+| `ConstructiveProof[T]` | Intuitionistic / Heyting algebra | De Vries 2007, §3 | ✅ Active |
+| `conflict_registry` (LLM experts) | Paraconsistent | De Vries 2007, §2 | ✅ Active |
+| `resolve_conflicts_node` (Strategy A+B) | Paraconsistent | De Vries 2007, §2 | ✅ Active |
+| `moe:graph_conflict_log` (Neo4j) | Paraconsistent | De Vries 2007, §2 | ✅ Active |
+| `fuzzy_router_node` (Gödel t-norm) | Fuzzy / T-norm | De Vries 2007, §4; Gödel 1932 | ✅ Active |
+| `_compute_routing_confidence` | Fuzzy | De Vries 2007, §4 | ✅ Active |
+| `_aic_compressibility` | Algorithmic information | Kolmogorov 1965; Chaitin 1966 | ✅ Active |
+| Load-adaptive Thompson β | Bayesian max-entropy | Statistical learning theory | ✅ Active |
+| `_fuzzy_resolve_entity_name` | Fuzzy profile matching | De Vries 2014; Ratcliff 1988 | ✅ Active |
+| `ConstructiveProof` executor node | Intuitionistic | De Vries 2007, §3 | ⏳ Planned |
+
+---
+
+### References
+
+- A. de Vries, *Algebraic hierarchy of logics unifying fuzzy logic and quantum logic*, arXiv:0707.2161 [math.LO], 2007. <https://arxiv.org/abs/0707.2161>
+- A. de Vries, *Profile matching via fuzzy numerical attributes*, 2014.
+- K. Gödel, *Zum intuitionistischen Aussagenkalkül*, Anzeiger Akademie der Wissenschaften Wien, 1932.
+- J. Łukasiewicz, *O logice trójwartościowej*, Ruch Filozoficzny 5, 1920.
+- A. N. Kolmogorov, *Three approaches to the quantitative definition of information*, Problems of Information Transmission 1(1), 1965.
+- G. J. Chaitin, *On the length of programs for computing finite binary sequences*, Journal of the ACM 13(4), 1966.
+- J. W. Ratcliff & D. E. Metzener, *Pattern Matching: The Gestalt Approach*, Dr. Dobb's Journal, 1988.

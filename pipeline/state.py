@@ -24,6 +24,8 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Dict, List, TypedDict
 
+from pipeline.logic_types import ConflictEntry, ConstructiveProof  # noqa: F401
+
 
 class AgentState(TypedDict):
     # ── 1. Request identity & auth ────────────────────────────────────────────
@@ -65,6 +67,10 @@ class AgentState(TypedDict):
     # Both fields accumulate across all parallel node calls via operator.add.
     prompt_tokens: Annotated[int, operator.add]
     completion_tokens: Annotated[int, operator.add]
+    # Tokens from user-owned API connections (not counted toward MoE budget).
+    # Accumulated separately so budget call sites can deduct them from the total.
+    user_conn_prompt_tokens:     Annotated[int, operator.add]
+    user_conn_completion_tokens: Annotated[int, operator.add]
 
     # ── 5. Conversation context ───────────────────────────────────────────────
     chat_history: List[Dict]            # Prior user/assistant turns (truncated per history limits below)
@@ -118,7 +124,22 @@ class AgentState(TypedDict):
     search_strategy_hint: str          # Suggested next search approach from gap-detection LLM (e.g. "try site:github.com")
     discovered_domains: list           # Authoritative domains found in web results [{domain, context}] — offered to re-planner for targeted follow-up
 
-    # ── 12. Working memory hub ────────────────────────────────────────────────
+    # ── 12. Fuzzy logic routing scores ───────────────────────────────────────
+    # Confidence scores in [0.0, 1.0] for programmatic routing decisions.
+    # Computed by fuzzy_router_node via t-norm conjunction (Gödel or Łukasiewicz).
+    # Mathematical basis: de Vries (2007), arXiv:0707.2161, §4.
+    vector_confidence: float          # Degree to which this query needs vector/semantic search
+    graph_confidence: float           # Degree to which this query needs knowledge-graph retrieval
+    fuzzy_routing_scores: dict        # {vector, graph, tnorm_vector, tnorm_graph, method}
+
+    # ── 13. Formal logic state (Paraconsistent + Intuitionistic) ─────────────
+    # conflict_registry accumulates ConflictEntry dicts when two experts in the
+    # same category produce significantly divergent outputs. Entries are never
+    # deleted or overwritten — paraconsistent semantics tolerate contradictions.
+    # Mathematical basis: de Vries (2007), arXiv:0707.2161, Section 2.
+    conflict_registry: Annotated[list, operator.add]  # List[ConflictEntry-dict]
+
+    # ── 13. Working memory hub ────────────────────────────────────────────────
     # Structured persistence layer for tool results across agentic iterations.
     # Unlike agentic_history (unstructured prose), working_memory is keyed and
     # queryable so later iterations can reference specific facts by name.

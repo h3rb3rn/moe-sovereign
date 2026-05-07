@@ -143,6 +143,125 @@ def _expert_category(result: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+def _compute_routing_confidence(
+    plan: List[Dict],
+    complexity_level: str,
+    enable_graphrag: bool,
+) -> tuple[float, float]:
+    """Derive fuzzy routing confidence scores from the planner's output.
+
+    Returns independent confidence scores for vector search (web/semantic)
+    and knowledge-graph retrieval, suitable as inputs to t-norm conjunction
+    functions (Gödel or Łukasiewicz) for programmatic routing decisions.
+
+    Mathematical foundation:
+        Fuzzy logics as the most general framework in the algebraic hierarchy —
+        de Vries (2007), arXiv:0707.2161. Confidence values are truth degrees
+        in [0.0, 1.0] rather than binary on/off flags. T-norm conjunction then
+        determines whether a retrieval node is activated.
+
+    Gödel t-norm (min) and Łukasiewicz t-norm discussed as special cases in
+    de Vries (2007), §4; originally: Gödel (1932), Łukasiewicz (1920).
+
+    Args:
+        plan:            Planner output — list of task dicts.
+        complexity_level: 'trivial' | 'moderate' | 'complex' | 'memory_recall'
+        enable_graphrag: Current graphrag toggle from template config.
+
+    Returns:
+        Tuple (vector_confidence, graph_confidence), each in [0.0, 1.0].
+    """
+    _GRAPH_HEAVY_CATS = {"legal_advisor", "medical_consult", "science", "reasoning"}
+    _RESEARCH_CATS    = {"general", "research", "technical_support", "translation"}
+
+    # Base scores from complexity level
+    _complexity_vector: Dict[str, float] = {
+        "trivial":       0.1,
+        "memory_recall": 0.0,
+        "moderate":      0.5,
+        "complex":       0.9,
+    }
+    _complexity_graph: Dict[str, float] = {
+        "trivial":       0.1,
+        "memory_recall": 0.0,
+        "moderate":      0.4,
+        "complex":       0.7,
+    }
+
+    base_vector = _complexity_vector.get(complexity_level, 0.5)
+    base_graph  = _complexity_graph.get(complexity_level, 0.4)
+
+    if not plan:
+        return base_vector, base_graph
+
+    # Signal from plan content
+    categories   = [t.get("category", "") for t in plan]
+    has_search   = any(t.get("search_query") for t in plan)
+    n_graph_cats = sum(1 for c in categories if c in _GRAPH_HEAVY_CATS)
+    n_res_cats   = sum(1 for c in categories if c in _RESEARCH_CATS)
+    n_tasks      = max(len(plan), 1)
+
+    vector_signal = (0.4 if has_search else 0.0) + (n_res_cats / n_tasks) * 0.6
+    graph_signal  = (n_graph_cats / n_tasks) * 0.8 + (0.2 if enable_graphrag else 0.0)
+
+    vector_conf = min(1.0, (base_vector + vector_signal) / 2)
+    graph_conf  = min(1.0, (base_graph  + graph_signal)  / 2)
+
+    return round(vector_conf, 3), round(graph_conf, 3)
+
+
+def _collect_conflicts(raw_results: List[str], divergence_threshold: float = 0.35) -> List[Dict]:
+    """Detect and record paraconsistent conflicts between expert outputs.
+
+    When two experts in the same category produce significantly different
+    answers, classical logic would overwrite one. Paraconsistent logic
+    tolerates the contradiction: both propositions are recorded in the
+    conflict registry without either being discarded.
+
+    Mathematical basis:
+        de Vries (2007), arXiv:0707.2161, Section 2 — paraconsistent logics
+        reject the principle of explosion (ex contradictione quodlibet).
+        Contradictions A ∧ ¬A do not imply every formula; instead they are
+        preserved as structured entries for explicit resolution.
+
+    The Gödel t-norm (minimum) and Łukasiewicz t-norm mentioned as routing
+    primitives are classical results (Gödel 1932; Łukasiewicz 1920) that
+    de Vries 2007 discusses as special cases of the algebraic hierarchy.
+
+    Args:
+        raw_results:          All expert results before deduplication.
+        divergence_threshold: Minimum _improvement_ratio score to flag as a
+                              conflict. 0.35 = texts diverge by >35%.
+
+    Returns:
+        List of ConflictEntry-compatible dicts (category, proposition_a,
+        proposition_b, divergence_score, resolution, resolved_by).
+    """
+    by_category: Dict[str, List[str]] = {}
+    for r in raw_results:
+        cat = _expert_category(r)
+        if cat:
+            by_category.setdefault(cat, []).append(r)
+
+    conflicts: List[Dict] = []
+    for cat, results in by_category.items():
+        if len(results) < 2:
+            continue
+        for i in range(len(results)):
+            for j in range(i + 1, len(results)):
+                score = _improvement_ratio(results[i], results[j])
+                if score >= divergence_threshold:
+                    conflicts.append({
+                        "category":         cat,
+                        "proposition_a":    results[i][:600],
+                        "proposition_b":    results[j][:600],
+                        "divergence_score": round(score, 3),
+                        "resolution":       "pending",
+                        "resolved_by":      "",
+                    })
+    return conflicts
+
+
 def _dedup_by_category(expert_results: List[str]) -> List[str]:
     """Keeps only the result with highest confidence per category.
 

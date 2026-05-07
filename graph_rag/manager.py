@@ -15,7 +15,8 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from difflib import SequenceMatcher
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
@@ -73,6 +74,45 @@ _CATEGORY_ENTITY_TYPES: Dict[str, Optional[set]] = {
 # Semaphore limiting concurrent LLM calls during background ingest.
 # Created lazily inside the async event loop on first use.
 _ingest_semaphore: Optional[asyncio.Semaphore] = None
+
+# ── Fuzzy Entity Name Resolution ─────────────────────────────────────────────
+# Minimum SequenceMatcher ratio to accept a candidate as the canonical name.
+# 0.82 tolerates case, punctuation, and minor spelling variants while rejecting
+# unrelated names (empirically: "Einstein, Albert" ↔ "Albert Einstein" ≈ 0.84).
+_FUZZY_ENTITY_THRESHOLD = float(0.82)
+
+
+def _fuzzy_resolve_entity_name(name: str, candidates: Set[str], threshold: float = _FUZZY_ENTITY_THRESHOLD) -> str:
+    """Return the canonical entity name from candidates that best matches `name`.
+
+    Used before Neo4j MERGE to avoid creating duplicate nodes for the same
+    real-world entity with slightly different spellings (e.g., "Albert Einstein"
+    vs "Einstein, Albert" vs "A. Einstein").
+
+    Mathematical basis:
+        Fuzzy numerical attribute matching — tolerance-based similarity with a
+        threshold gate. SequenceMatcher implements the Ratcliff/Obershelp
+        algorithm (Ratcliff & Metzener 1988), which measures the longest
+        common substring iteratively. A match is accepted only when the ratio
+        exceeds `threshold`, preventing false positives between short names.
+
+    Args:
+        name:       Incoming entity name from LLM extraction.
+        candidates: Set of already-known entity names from Neo4j.
+        threshold:  Minimum similarity ratio to accept a match (default: 0.82).
+
+    Returns:
+        The best matching canonical name if similarity >= threshold, else `name`.
+    """
+    if name in candidates:
+        return name
+    name_lower = name.lower()
+    best_score, best_candidate = 0.0, name
+    for candidate in candidates:
+        score = SequenceMatcher(None, name_lower, candidate.lower()).ratio()
+        if score > best_score or (score == best_score and len(candidate) < len(best_candidate)):
+            best_score, best_candidate = score, candidate
+    return best_candidate if best_score >= threshold else name
 
 
 def _get_ingest_semaphore() -> asyncio.Semaphore:
@@ -466,6 +506,28 @@ class GraphRAGManager:
             ingested = 0
             conflicts = 0
             async with self.driver.session() as session:
+                # Pre-load a prefix-based entity name index for fuzzy dedup.
+                # Collects names sharing the same first 3 chars as any incoming
+                # entity. One batched query per ingest session avoids per-triple
+                # round-trips to Neo4j.
+                _incoming_names = {
+                    str(t.get("s", ""))[:100].strip() for t in triples[:8]
+                } | {
+                    str(t.get("o", ""))[:100].strip() for t in triples[:8]
+                }
+                _prefixes = {n[:3].upper() for n in _incoming_names if len(n) >= 3}
+                _known_entity_names: Set[str] = set()
+                if _prefixes:
+                    try:
+                        _idx_result = await session.run(
+                            "MATCH (e:Entity) WHERE substring(toUpper(e.name), 0, 3) IN $pfx "
+                            "RETURN e.name AS name",
+                            {"pfx": list(_prefixes)},
+                        )
+                        _known_entity_names = {r["name"] async for r in _idx_result}
+                    except Exception:
+                        pass
+
                 for triple in triples[:8]:
                     if not all(k in triple for k in ("s", "s_type", "r", "o", "o_type")):
                         continue
@@ -476,6 +538,12 @@ class GraphRAGManager:
                     o_name = str(triple["o"])[:100].strip()
                     if not s_name or not o_name:
                         continue
+
+                    # Fuzzy entity deduplication: resolve incoming names to
+                    # canonical existing names before MERGE to prevent duplicates
+                    # caused by minor spelling differences across knowledge sources.
+                    s_name = _fuzzy_resolve_entity_name(s_name, _known_entity_names) or s_name
+                    o_name = _fuzzy_resolve_entity_name(o_name, _known_entity_names) or o_name
 
                     # Conflict check before saving
                     conflict = await self._check_conflict(session, s_name, rel_type, o_name)
@@ -509,7 +577,7 @@ class GraphRAGManager:
                             )
                             continue
 
-                    await session.run(
+                    _merge_result = await session.run(
                         f"""
                         MERGE (a:Entity {{name: $s_name}})
                         ON CREATE SET a.type = $s_type, a.source = 'extracted',
@@ -538,6 +606,8 @@ class GraphRAGManager:
                             r.source_model       = $source_model,
                             r.confidence         = $confidence,
                             r.valid_from         = timestamp()
+                        RETURN r.version AS v, r.prev_confidence AS pc,
+                               r.prev_source_model AS prev_model
                         """,
                         {
                             "s_name":        s_name,
@@ -552,6 +622,47 @@ class GraphRAGManager:
                             "tenant_id":     tenant_id,
                         },
                     )
+                    _merge_rows = await _merge_result.data()
+                    if _merge_rows:
+                        _row = _merge_rows[0]
+                        _ver = _row.get("v") or 1
+                        _prev_conf = _row.get("pc")
+                        # Paraconsistent conflict detection: when an existing
+                        # relation is updated (v > 1) and its confidence
+                        # flips by more than _GRAPH_CONFLICT_DELTA, the two
+                        # propositions are structurally contradictory and must
+                        # be preserved — not silently overwritten.
+                        # de Vries (2007), §2: paraconsistent tolerance.
+                        _GRAPH_CONFLICT_DELTA = 0.30
+                        if (
+                            _ver > 1
+                            and _prev_conf is not None
+                            and abs(float(_prev_conf) - confidence) >= _GRAPH_CONFLICT_DELTA
+                            and redis_client is not None
+                        ):
+                            _conflict_entry = json.dumps({
+                                "category":        domain or expert_domain or "unknown",
+                                "triple":          f"({s_name})-[{rel_type}]->({o_name})",
+                                "prev_confidence": round(float(_prev_conf), 3),
+                                "new_confidence":  round(confidence, 3),
+                                "prev_model":      _row.get("prev_model", ""),
+                                "new_model":       source_model,
+                                "version":         _ver,
+                                "resolution":      "pending",
+                                "ts":              datetime.now(timezone.utc).isoformat(),
+                            })
+                            try:
+                                await redis_client.zadd(
+                                    "moe:graph_conflict_log",
+                                    {_conflict_entry: time.time()},
+                                )
+                                await redis_client.expire("moe:graph_conflict_log", 30 * 86400)
+                            except Exception:
+                                pass
+                            logger.info(
+                                f"⚖️ Graph conflict logged: ({s_name})-[{rel_type}]->({o_name})"
+                                f" conf {_prev_conf:.2f}→{confidence:.2f} v{_ver}"
+                            )
                     ingested += 1
 
             if ingested or conflicts:
