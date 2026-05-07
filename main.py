@@ -7007,7 +7007,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 lines.append(line)
             plan_text = "\n".join(lines) + "\n\n---\n\n"
             for i in range(0, len(plan_text), SSE_CHUNK_SIZE):
-                yield _chunk({"content": plan_text[i:i + 50]})
+                yield _chunk({"content": plan_text[i:i + SSE_CHUNK_SIZE]})
                 await asyncio.sleep(0.01)
 
     _t_first_token: Optional[float] = None
@@ -7018,7 +7018,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
         for i in range(0, len(content), SSE_CHUNK_SIZE):
             if _t_first_token is None:
                 _t_first_token = time.monotonic()
-            yield _chunk({"content": content[i:i + 50]})
+            yield _chunk({"content": content[i:i + SSE_CHUNK_SIZE]})
             await asyncio.sleep(0.01)
 
     # Finalize: stop chunk + separate usage chunk (OpenAI spec: choices=[] for usage)
@@ -7217,7 +7217,7 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
             return f"data: {json.dumps(p)}\n\n"
         yield _chunk({"role": "assistant", "content": ""})
         for i in range(0, len(content), SSE_CHUNK_SIZE):
-            yield _chunk({"content": content[i:i + 50]})
+            yield _chunk({"content": content[i:i + SSE_CHUNK_SIZE]})
             await asyncio.sleep(0.005)
         yield _chunk({}, finish_reason="stop", u=usage)
         yield "data: [DONE]\n\n"
@@ -7796,7 +7796,7 @@ async def _anthropic_content_blocks_to_sse(
             for i in range(0, max(len(text), 1), SSE_CHUNK_SIZE):
                 yield _sse_event("content_block_delta", {
                     "type": "content_block_delta", "index": idx,
-                    "delta": {"type": "text_delta", "text": text[i:i+50]}
+                    "delta": {"type": "text_delta", "text": text[i:i+SSE_CHUNK_SIZE]}
                 })
                 await asyncio.sleep(0.005)
             yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": idx})
@@ -7811,7 +7811,7 @@ async def _anthropic_content_blocks_to_sse(
             for i in range(0, max(len(thinking_text), 1), SSE_CHUNK_SIZE):
                 yield _sse_event("content_block_delta", {
                     "type": "content_block_delta", "index": idx,
-                    "delta": {"type": "thinking_delta", "thinking": thinking_text[i:i+50]}
+                    "delta": {"type": "thinking_delta", "thinking": thinking_text[i:i+SSE_CHUNK_SIZE]}
                 })
                 await asyncio.sleep(0.005)
             yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": idx})
@@ -8514,7 +8514,7 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
                 for i in range(0, max(len(content), 1), SSE_CHUNK_SIZE):
                     yield _sse_event("content_block_delta", {
                         "type": "content_block_delta", "index": 0,
-                        "delta": {"type": "text_delta", "text": content[i:i+50]}
+                        "delta": {"type": "text_delta", "text": content[i:i+SSE_CHUNK_SIZE]}
                     })
                     await asyncio.sleep(0.005)
 
