@@ -142,6 +142,16 @@ REDIS_URL  = os.getenv("REDIS_URL", "redis://terra_cache:6379")
 # Valkey-search/RediSearch is not available on this host (CPU without AVX2),
 # so AsyncPostgresSaver replaces the former AsyncRedisSaver checkpointer.
 POSTGRES_CHECKPOINT_URL = os.getenv("POSTGRES_CHECKPOINT_URL", "")
+
+# Enterprise Data Management Stack — optional, controlled by INSTALL_ENTERPRISE_DATA_STACK
+_ENTERPRISE_ENABLED = os.getenv("INSTALL_ENTERPRISE_DATA_STACK", "false").lower() == "true"
+NIFI_URL        = os.getenv("NIFI_URL", "")
+MARQUEZ_URL     = os.getenv("MARQUEZ_URL", "")
+LAKEFS_ENDPOINT = os.getenv("LAKEFS_ENDPOINT", "")
+# Set to True in lifespan if ENTERPRISE_ENABLED and at least one service responds.
+# All enterprise feature calls must check this flag first.
+_enterprise_reachable: bool = False
+
 MOE_USERDB_URL = os.getenv(
     "MOE_USERDB_URL",
     "postgresql://moe_admin@terra_checkpoints:5432/moe_userdb",
@@ -5162,15 +5172,25 @@ async def merger_node(state: AgentState):
         + (PROVENANCE_INSTRUCTION if _has_graph_ctx else "")
     )
 
-    # Inject output skill formatting instructions if planner suggested one
+    # Inject output skill formatting instructions if planner suggested one.
+    # Guard: suppress skill body when BOTH primary expert output AND the skill
+    # template contain code markers — the judge LLM otherwise interleaves the
+    # expert's code with identical patterns from the skill template, producing
+    # visible duplication (e.g. repeated bash find commands). The skill body is
+    # formatting guidance only; if the expert already produced code the format
+    # hint is redundant and harmful.
     _skill_body = state.get("output_skill_body", "")
     if _skill_body:
-        prompt += (
-            "\n\n--- OUTPUT FORMATTING SKILL ---\n"
-            "The planner selected a specific output format for this response. "
-            "Follow these formatting instructions:\n\n"
-            + _skill_body[:3000]
-        )
+        _skill_has_code = any(m in _skill_body for m in _CODE_MARKERS)
+        if _primary_has_code and _skill_has_code:
+            logger.info("🛡️ Skill body suppressed: expert output + skill template both contain code (prevents judge interleaving)")
+        else:
+            prompt += (
+                "\n\n--- OUTPUT FORMATTING SKILL ---\n"
+                "The planner selected a specific output format for this response. "
+                "Follow these formatting instructions:\n\n"
+                + _skill_body[:3000]
+            )
 
     # Determine expert domain early — used for both ChromaDB metadata and Kafka ingest payload
     _plan_cats_early = [t.get("category", "") for t in state.get("plan", []) if isinstance(t, dict)]
@@ -6034,6 +6054,44 @@ async def _init_kafka() -> None:
     logger.error("❌ Kafka unreachable after 12 attempts — Kafka disabled")
 
 
+async def _init_enterprise_stack() -> None:
+    """Check reachability of optional enterprise data services (NiFi, Marquez, lakeFS).
+
+    Sets _enterprise_reachable=True if INSTALL_ENTERPRISE_DATA_STACK=true AND at least
+    one service responds. No-ops silently when the stack is not configured.
+    """
+    global _enterprise_reachable
+    if not _ENTERPRISE_ENABLED:
+        return
+    checks = [
+        ("NiFi",    f"{NIFI_URL}/nifi/"              if NIFI_URL        else None),
+        ("Marquez", f"{MARQUEZ_URL}/api/v1/namespaces" if MARQUEZ_URL   else None),
+        ("lakeFS",  f"{LAKEFS_ENDPOINT}/api/v1/config" if LAKEFS_ENDPOINT else None),
+    ]
+    reachable_count = 0
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for name, url in checks:
+            if not url:
+                continue
+            try:
+                resp = await client.get(url)
+                if resp.status_code < 500:
+                    logger.info("✅ Enterprise stack — %s reachable (%s)", name, url)
+                    reachable_count += 1
+                else:
+                    logger.warning("⚠️ Enterprise stack — %s returned %s", name, resp.status_code)
+            except Exception as exc:
+                logger.warning("⚠️ Enterprise stack — %s unreachable: %s", name, exc)
+    _enterprise_reachable = reachable_count > 0
+    if _enterprise_reachable:
+        logger.info("✅ Enterprise Data Stack active (%d/3 services reachable)", reachable_count)
+    else:
+        logger.warning(
+            "⚠️ Enterprise Data Stack configured (INSTALL_ENTERPRISE_DATA_STACK=true) "
+            "but no services reachable — routing bypasses enterprise layer"
+        )
+
+
 # Tracks the set of models last seen loaded per Ollama server, so PROM_SERVER_MODEL_VRAM_BYTES
 # label series can be removed when a model unloads (otherwise /metrics grows unbounded).
 _last_loaded_models: Dict[str, set] = {}
@@ -6221,6 +6279,7 @@ async def lifespan(app_: FastAPI):
         _init_graph_rag(),
         _init_kafka(),
         _seed_task_type_prototypes(),
+        _init_enterprise_stack(),
     )
     # Kafka Consumer as persistent background task
     consumer_task  = asyncio.create_task(_kafka_consumer_loop())
@@ -7007,7 +7066,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 lines.append(line)
             plan_text = "\n".join(lines) + "\n\n---\n\n"
             for i in range(0, len(plan_text), SSE_CHUNK_SIZE):
-                yield _chunk({"content": plan_text[i:i + 50]})
+                yield _chunk({"content": plan_text[i:i + SSE_CHUNK_SIZE]})
                 await asyncio.sleep(0.01)
 
     _t_first_token: Optional[float] = None
@@ -7018,7 +7077,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
         for i in range(0, len(content), SSE_CHUNK_SIZE):
             if _t_first_token is None:
                 _t_first_token = time.monotonic()
-            yield _chunk({"content": content[i:i + 50]})
+            yield _chunk({"content": content[i:i + SSE_CHUNK_SIZE]})
             await asyncio.sleep(0.01)
 
     # Finalize: stop chunk + separate usage chunk (OpenAI spec: choices=[] for usage)
@@ -7217,7 +7276,7 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
             return f"data: {json.dumps(p)}\n\n"
         yield _chunk({"role": "assistant", "content": ""})
         for i in range(0, len(content), SSE_CHUNK_SIZE):
-            yield _chunk({"content": content[i:i + 50]})
+            yield _chunk({"content": content[i:i + SSE_CHUNK_SIZE]})
             await asyncio.sleep(0.005)
         yield _chunk({}, finish_reason="stop", u=usage)
         yield "data: [DONE]\n\n"
@@ -7796,7 +7855,7 @@ async def _anthropic_content_blocks_to_sse(
             for i in range(0, max(len(text), 1), SSE_CHUNK_SIZE):
                 yield _sse_event("content_block_delta", {
                     "type": "content_block_delta", "index": idx,
-                    "delta": {"type": "text_delta", "text": text[i:i+50]}
+                    "delta": {"type": "text_delta", "text": text[i:i+SSE_CHUNK_SIZE]}
                 })
                 await asyncio.sleep(0.005)
             yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": idx})
@@ -7811,7 +7870,7 @@ async def _anthropic_content_blocks_to_sse(
             for i in range(0, max(len(thinking_text), 1), SSE_CHUNK_SIZE):
                 yield _sse_event("content_block_delta", {
                     "type": "content_block_delta", "index": idx,
-                    "delta": {"type": "thinking_delta", "thinking": thinking_text[i:i+50]}
+                    "delta": {"type": "thinking_delta", "thinking": thinking_text[i:i+SSE_CHUNK_SIZE]}
                 })
                 await asyncio.sleep(0.005)
             yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": idx})
@@ -8514,7 +8573,7 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
                 for i in range(0, max(len(content), 1), SSE_CHUNK_SIZE):
                     yield _sse_event("content_block_delta", {
                         "type": "content_block_delta", "index": 0,
-                        "delta": {"type": "text_delta", "text": content[i:i+50]}
+                        "delta": {"type": "text_delta", "text": content[i:i+SSE_CHUNK_SIZE]}
                     })
                     await asyncio.sleep(0.005)
 
