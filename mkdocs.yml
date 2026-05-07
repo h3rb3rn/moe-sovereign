@@ -142,6 +142,8 @@ nav:
     - Object Storage (MinIO): system/storage.md
     - Webserver & Reverse Proxy: system/webserver.md
     - UI Screenshots: system/screenshots.md
+  - Formal Logic Layer:
+    - Formal Logic Architecture: ARCHITECTURE.md
   - Intelligence & Learning:
     - system/intelligence/index.md
     - Causal Learning Loop: system/intelligence/causal_learning.md

@@ -112,6 +112,10 @@ elif command -v podman &>/dev/null; then
   fi
 fi
 
+# Helper: read a key from existing .env — defined early so it's available
+# during volume detection (line ~128) as well as the full update block.
+_renv() { grep -E "^${1}=" "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-; }
+
 if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
   # Volume detection: check both named volumes AND the data-root directory so
   # the update path is also triggered on installs that pre-date named volumes.
@@ -161,9 +165,6 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       echo "[ERROR] Update mode requires sudo access for volume ownership."
       exit 1
     fi
-
-    # ── Helper: read a key from existing .env ────────────────────────────────
-    _renv() { grep -E "^${1}=" "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-; }
 
     _upd_data=$(_renv MOE_DATA_ROOT);     _upd_data="${_upd_data:-/opt/moe-infra}"
     _upd_graf=$(_renv GRAFANA_DATA_ROOT); _upd_graf="${_upd_graf:-/opt/grafana}"
