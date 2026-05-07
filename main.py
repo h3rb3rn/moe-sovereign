@@ -6931,7 +6931,6 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
-@app.post("/v1/chat/completions")
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
     session_id = _extract_session_id(raw_request)

@@ -69,3 +69,20 @@ async def responses_api(raw_request: Request):
     body = await raw_request.json()
     request = _m._ResponsesRequest(**body)
     return await _m.responses_api(raw_request, request)
+
+
+# ---------------------------------------------------------------------------
+# /v1/chat/completions — Core MoE pipeline (implementation in main.py)
+#
+# The 540-line handler and its ~20 supporting functions (stream_response,
+# resolve_user_experts, register_active_request, etc.) remain in main.py
+# until dedicated pipeline extraction in the final split phase.
+# ---------------------------------------------------------------------------
+
+@router.post("/v1/chat/completions")
+async def chat_completions(raw_request: Request):
+    """MoE Sovereign chat completions — OpenAI-compatible streaming endpoint."""
+    import main as _m
+    body    = await raw_request.json()
+    request = _m.ChatCompletionRequest(**body)
+    return await _m.chat_completions(raw_request, request)
