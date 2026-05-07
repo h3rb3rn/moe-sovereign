@@ -350,6 +350,15 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     for _p in "${_prof_arr[@]}"; do
       [[ -n "$_p" ]] && _upd_profiles+=(--profile "$_p")
     done
+    # Podman-compose does not recreate containers with network-namespace
+    # dependencies automatically. Bring the stack down first so every container
+    # is removed cleanly before the new image is started.
+    # Docker handles recreation in-place; the extra down is a no-op there.
+    if [[ "${_upd_rt[0]}" == podman* ]]; then
+      echo "  [4/4] Stopping existing containers (Podman)..."
+      "${_upd_rt[@]}" "${_upd_profiles[@]}" down 2>/dev/null || true
+    fi
+
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
       sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
       sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} up -d"
