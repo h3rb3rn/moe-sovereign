@@ -1495,10 +1495,15 @@ async def sync_user_to_redis(user_id: str) -> None:
 
     # User-eigene CC-Profile inline cachen
     user_cc = await list_user_cc_profiles(user_id)
-    user_cc_map = {
-        p["id"]: json.loads(p["config_json"])
-        for p in user_cc if p.get("is_active", True)
-    }
+    user_cc_map = {}
+    for p in user_cc:
+        if not p.get("is_active", True):
+            continue
+        try:
+            user_cc_map[p["id"]] = json.loads(p["config_json"])
+        except (json.JSONDecodeError, TypeError) as _e:
+            logger.warning("sync_user_to_redis: skipping CC profile %s with invalid config_json: %s",
+                           p.get("id", "?"), _e)
     user_cc_profiles_json = json.dumps(user_cc_map)
 
     # User-eigene API-Verbindungen cachen (mit entschlüsseltem Key für Orchestrator)
