@@ -6,6 +6,13 @@ MoE Sovereign is a LangGraph-based Multi-Model Orchestrator. Each incoming query
 
 All caching is multi-layered: semantic vector cache (ChromaDB), plan cache (Valkey), GraphRAG cache (Valkey), and performance-scored expert routing (Valkey). The API is fully OpenAI-compatible.
 
+!!! info "Formal Logic State Layer"
+    As of 2026-05-07, the pipeline state is grounded in formal algebraic logic theory
+    (A. de Vries, arXiv:0707.2161, 2007): **paraconsistent** conflict registry,
+    **intuitionistic** constructive proof validation, **fuzzy T-norm** routing,
+    AIC-based complexity estimation, and infrastructure-adaptive Thompson sampling.
+    See **[Formal Logic Architecture](../ARCHITECTURE.md)** for the full technical reference.
+
 ---
 
 ## LangGraph Pipeline
