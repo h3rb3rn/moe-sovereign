@@ -2721,16 +2721,8 @@ async def _report(msg: str) -> None:
         await q.put(msg)
 
 # ─── KAFKA HELPERS ───────────────────────────────────────────────────────────
-
-async def _kafka_publish(topic: str, payload: dict) -> None:
-    """Sends a JSON message to a Kafka topic. Fails silently if Kafka is not available."""
-    if kafka_producer is None:
-        return
-    try:
-        data = json.dumps(payload).encode()
-        await kafka_producer.send_and_wait(topic, data)
-    except Exception as e:
-        logger.warning(f"Kafka publish [{topic}] failed: {e}")
+# _kafka_publish is now the authoritative version in services/kafka.py
+from services.kafka import _kafka_publish
 
 
 async def _shadow_request(user_input: str, user_id: str, api_key: str) -> None:
@@ -6211,14 +6203,16 @@ async def lifespan(app_: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # ── APIRouter modules (extracted from main.py) ────────────────────────────────
-from routes.health          import router as _health_router
-from routes.watchdog        import router as _watchdog_router
-from routes.mission_context import router as _mc_router
-from routes.graph           import router as _graph_router
+from routes.health           import router as _health_router
+from routes.watchdog         import router as _watchdog_router
+from routes.mission_context  import router as _mc_router
+from routes.graph            import router as _graph_router
+from routes.admin_benchmark  import router as _admin_bench_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
 app.include_router(_graph_router)
+app.include_router(_admin_bench_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -9528,7 +9522,6 @@ _BENCHMARK_RESERVED_KEY  = "moe:benchmark_reserved"
 _BENCHMARK_LOCK_META_KEY = "moe:benchmark_lock_meta"
 
 
-@app.post("/v1/admin/benchmark/lock")
 async def benchmark_lock(body: dict = None):
     """Reserve all nodes used by a template exclusively for benchmark runs.
 
@@ -9578,7 +9571,6 @@ async def benchmark_lock(body: dict = None):
     return {"ok": True, "template": template_name, "reserved": sorted(nodes)}
 
 
-@app.delete("/v1/admin/benchmark/lock")
 async def benchmark_unlock():
     """Release all benchmark node reservations."""
     if redis_client is None:
@@ -9594,7 +9586,6 @@ async def benchmark_unlock():
     return {"ok": True, "released": released}
 
 
-@app.get("/v1/admin/benchmark/lock")
 async def benchmark_lock_status():
     """Return the current benchmark node reservation status."""
     if redis_client is None:

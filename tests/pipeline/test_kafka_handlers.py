@@ -56,9 +56,10 @@ def _make_msg(topic: str, value: dict):
 async def test_kafka_publish_sends_json_payload(monkeypatch):
     """_kafka_publish serializes dict to JSON bytes and sends to broker."""
     mock_producer = AsyncMock()
-    monkeypatch.setattr("main.kafka_producer", mock_producer)
+    # _kafka_publish now lives in services/kafka.py and reads state.kafka_producer
+    monkeypatch.setattr("state.kafka_producer", mock_producer)
 
-    from main import _kafka_publish
+    from services.kafka import _kafka_publish
     await _kafka_publish("moe.requests", {"response_id": "r-1", "cache_hit": False})
 
     mock_producer.send_and_wait.assert_called_once()
@@ -71,9 +72,9 @@ async def test_kafka_publish_sends_json_payload(monkeypatch):
 @pytest.mark.asyncio
 async def test_kafka_publish_silent_when_producer_is_none(monkeypatch):
     """_kafka_publish must not raise if Kafka is unavailable."""
-    monkeypatch.setattr("main.kafka_producer", None)
+    monkeypatch.setattr("state.kafka_producer", None)
 
-    from main import _kafka_publish
+    from services.kafka import _kafka_publish
     await _kafka_publish("moe.requests", {"key": "value"})  # no exception
 
 

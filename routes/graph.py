@@ -12,15 +12,7 @@ import state
 router = APIRouter()
 
 
-async def _kafka_publish(topic: str, payload: dict) -> None:
-    """Fire-and-forget Kafka publish; no-op when producer is unavailable."""
-    if state.kafka_producer is None:
-        return
-    try:
-        data = json.dumps(payload).encode()
-        await state.kafka_producer.send_and_wait(topic, data)
-    except Exception:
-        pass
+from services.kafka import _kafka_publish
 
 
 @router.get("/graph/stats")
