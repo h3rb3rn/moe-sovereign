@@ -6,17 +6,12 @@ import time
 from fastapi import APIRouter
 
 import state
+from services.templates import _read_expert_templates
 
 router = APIRouter()
 
 _BENCHMARK_RESERVED_KEY  = "moe:benchmark_reserved"
 _BENCHMARK_LOCK_META_KEY = "moe:benchmark_lock_meta"
-
-
-def _read_expert_templates():
-    """Proxy to main._read_expert_templates() to avoid circular import."""
-    import main as _main
-    return _main._read_expert_templates()
 
 
 @router.post("/v1/admin/benchmark/lock")

@@ -37,3 +37,17 @@ _enterprise_reachable: bool = False
 
 # Compiled LangGraph graph — set by lifespan() after checkpointer is ready
 app_graph = None  # type: Optional[Any]  # avoids langgraph import at module level
+
+# ChromaDB collections — set at module level in main.py (before lifespan)
+cache_collection = None   # "moe_fact_cache" — used by feedback, cache lookup
+route_collection = None   # "task_type_prototypes" — used by semantic routing
+
+# Provider rate-limit state populated from response headers at request time.
+# Format: {endpoint_name: {"remaining_tokens": int, "reset_time": float, ...}}
+_provider_rate_limits: dict = {}
+
+# Dedicated ontology gap-healer subprocess handle and restart lock.
+# Both mutated by routes/admin_ontology.py and background tasks in main.py.
+import asyncio as _asyncio
+_dedicated_healer_proc = None       # asyncio.subprocess.Process | None
+_dedicated_healer_restart_lock: _asyncio.Lock = _asyncio.Lock()

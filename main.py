@@ -208,120 +208,15 @@ _cache_lock = threading.Lock()   # guards _model_avail_cache, _ps_cache, _jwks_c
 _shadow_lock = threading.Lock()  # guards _shadow_request_counter increment
 
 
-def _read_expert_templates() -> list:
-    """Return the current expert-templates list.
-
-    Primary source: Postgres table ``admin_expert_templates`` (written by the
-    Admin UI). The Orchestrator used to read EXPERT_TEMPLATES from /app/.env,
-    but that blows past Linux MAX_ARG_STRLEN (128 kB) once enough templates
-    exist, crashing sibling containers on exec. The DB is now authoritative;
-    .env is a best-effort fallback for boot-time before DB is reachable.
-
-    Cached for 30 s — templates created in the Admin UI become visible within
-    half a minute without a container restart.
-    """
-    import time as _time
-    now = _time.monotonic()
-    cache = _read_expert_templates._cache
-    if now - cache["ts"] < 30 and cache["data"] is not None:
-        return cache["data"]
-
-    data = _load_templates_from_db_sync()
-    if data is None:
-        # Fallback: read .env directly (legacy path, rarely exercised now).
-        data = _load_templates_from_env_file()
-    if data is None:
-        data = json.loads(os.getenv("EXPERT_TEMPLATES", "[]"))
-
-    cache["ts"] = now
-    cache["data"] = data
-    return data
-_read_expert_templates._cache: dict = {"ts": 0.0, "data": None}
+# Template loaders moved to services/templates.py
+from services.templates import (
+    _read_expert_templates,
+    _load_templates_from_db_sync,
+    _load_templates_from_env_file,
+)
 
 
-def _load_templates_from_db_sync() -> Optional[list]:
-    """One-shot sync query against admin_expert_templates. Returns None on any
-    failure so the caller can fall back to .env."""
-    dsn = (
-        os.getenv("MOE_USERDB_URL")
-        or os.getenv("POSTGRES_CHECKPOINT_URL")
-        or ""
-    )
-    if not dsn:
-        return None
-    try:
-        with psycopg.connect(dsn, connect_timeout=3) as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    "SELECT id, name, description, config_json, is_active "
-                    "FROM admin_expert_templates ORDER BY created_at ASC"
-                )
-                rows = cur.fetchall()
-    except Exception:
-        return None
-    result: list = []
-    for row in rows:
-        cfg = row.get("config_json")
-        if isinstance(cfg, str):
-            try:
-                tmpl = json.loads(cfg)
-            except json.JSONDecodeError:
-                tmpl = {}
-        elif isinstance(cfg, dict):
-            tmpl = dict(cfg)
-        else:
-            tmpl = {}
-        tmpl["id"] = row["id"]
-        tmpl["name"] = row["name"]
-        tmpl["description"] = row.get("description", "")
-        tmpl["is_active"] = row.get("is_active", True)
-        result.append(tmpl)
-    return result
-
-
-def _load_templates_from_env_file() -> Optional[list]:
-    """Legacy .env parser — kept as fallback when the DB is unreachable."""
-    env_path = Path(os.getenv("ENV_FILE", "/app/.env"))
-    try:
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("EXPERT_TEMPLATES="):
-                raw = line[len("EXPERT_TEMPLATES="):].strip()
-                if raw.startswith('"') and raw.endswith('"'):
-                    raw = raw[1:-1].replace('\\\\', '\\').replace('\\"', '"')
-                parsed = json.loads(raw)
-                return parsed if isinstance(parsed, list) else None
-    except Exception:
-        return None
-    return None
-
-
-def _read_cc_profiles() -> list:
-    """Reads CLAUDE_CODE_PROFILES dynamically from /app/.env (not os.getenv).
-    Cached for 60 seconds to minimize disk I/O. This makes profiles
-    created in the Admin UI visible without a container restart."""
-    import time as _time
-    now = _time.monotonic()
-    cache = _read_cc_profiles._cache
-    if now - cache["ts"] < 60 and cache["data"] is not None:
-        return cache["data"]
-    env_path = Path(os.getenv("ENV_FILE", "/app/.env"))
-    try:
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("CLAUDE_CODE_PROFILES="):
-                raw = line[len("CLAUDE_CODE_PROFILES="):].strip()
-                if raw.startswith('"') and raw.endswith('"'):
-                    raw = raw[1:-1].replace('\\\\', '\\').replace('\\"', '"')
-                data = json.loads(raw)
-                cache["ts"] = now
-                cache["data"] = data
-                return data
-    except Exception:
-        pass
-    fallback = json.loads(os.getenv("CLAUDE_CODE_PROFILES", "[]"))
-    cache["ts"] = now
-    cache["data"] = fallback
-    return fallback
-_read_cc_profiles._cache: dict = {"ts": 0.0, "data": None}
+from services.templates import _read_cc_profiles
 
 # Neo4j, inference servers, benchmark constants imported from config.py
 if not INFERENCE_SERVERS_LIST and os.getenv("INFERENCE_SERVERS", "").strip():
@@ -871,9 +766,9 @@ def _detect_file_skill(files: Optional[List], user_input: str,
 _CC_SYSTEM_PREFIX = ""
 _CC_STREAM_THINK  = False
 
-# Per-endpoint rate limit state (populated from response headers of AIHUB/external provider calls)
-# Format: {endpoint_name: {"remaining_tokens": int, "limit_tokens": int, "reset_time": float|None, "exhausted": bool, "updated_at": float}}
-_provider_rate_limits: dict = {}
+# _provider_rate_limits lives in state.py — imported here for backward compat
+import state as _state_prl
+_provider_rate_limits = _state_prl._provider_rate_limits  # same dict object
 
 
 def _update_rate_limit_headers(endpoint: str, headers, status_code: int = 200) -> None:
@@ -1229,60 +1124,6 @@ PROM_GRAPH_DENSITY      = Gauge('moe_graph_density_ratio',             'Relation
 
 # --- USER AUTH & USAGE TRACKING ---
 
-async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
-    """Fallback: validate API key directly from Postgres (on Valkey cache miss) and sync."""
-    try:
-        if _userdb_pool is None:
-            return None
-        async with _userdb_pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT ak.*, u.is_active AS user_active, u.id AS uid "
-                    "FROM api_keys ak JOIN users u ON ak.user_id = u.id "
-                    "WHERE ak.key_hash=%s AND ak.is_active=TRUE AND u.is_active=TRUE",
-                    (key_hash,),
-                )
-                row = await cur.fetchone()
-        if not row:
-            return None
-        user_id = row["user_id"]
-        # Re-sync in Valkey so next requests are fast. Relies on admin_ui.database's
-        # own pool — initialised in lifespan(); logs loudly if that failed.
-        try:
-            from admin_ui.database import sync_user_to_redis as _sync
-            await _sync(user_id)
-        except Exception as _sync_err:
-            logger.warning("sync_user_to_redis failed in fallback for user %s: %s",
-                           user_id, _sync_err)
-        if redis_client:
-            data = await redis_client.hgetall(f"user:apikey:{key_hash}")
-            if data and data.get("is_active") == "1":
-                return data
-        return None
-    except Exception as e:
-        logger.warning(f"DB fallback auth error: {e}")
-        return None
-
-
-async def _fetch_jwks() -> Optional[dict]:
-    """Fetch and cache JWKS from Authentik (10 min TTL)."""
-    global _jwks_cache
-    with _cache_lock:
-        keys, fetched_at = _jwks_cache
-    if keys and (time.time() - fetched_at) < 600:
-        return keys
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(OIDC_JWKS_URL)
-            if r.status_code == 200:
-                with _cache_lock:
-                    _jwks_cache = (r.json(), time.time())
-                return r.json()
-    except Exception as e:
-        logger.warning("JWKS fetch failed: %s", e)
-    return keys  # return stale cache if available
-
-
 async def _validate_oidc_token(token: str) -> Optional[dict]:
     """Validate an OIDC JWT from Authentik and return user context dict."""
     if not OIDC_ENABLED:
@@ -1349,71 +1190,6 @@ async def _validate_oidc_token(token: str) -> Optional[dict]:
     except Exception as e:
         logger.debug("OIDC token validation failed: %s", e)
         return None
-
-
-async def _validate_api_key(raw_key: str) -> Optional[dict]:
-    """Validate API key or OIDC JWT.
-    - Tokens starting with 'moe-sk-': legacy API key path
-    - Other Bearer tokens: OIDC JWT path (if OIDC enabled)
-    Returns user-dict on success, {"error": "..."} on failure."""
-    if not raw_key:
-        return {"error": "invalid_key"}
-    # OIDC JWT path (tokens not starting with moe-sk-)
-    if OIDC_ENABLED and not raw_key.startswith("moe-sk-"):
-        oidc_ctx = await _validate_oidc_token(raw_key)
-        if oidc_ctx:
-            return oidc_ctx
-        return {"error": "invalid_key"}
-    # Legacy API key path
-    if not raw_key.startswith("moe-sk-"):
-        return {"error": "invalid_key"}
-    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    if redis_client is None:
-        return {"error": "invalid_key"}
-    try:
-        data = await redis_client.hgetall(f"user:apikey:{key_hash}")
-        if not data or data.get("is_active") != "1":
-            # Cache miss: check directly in DB and re-sync if needed
-            data = await _db_fallback_key_lookup(key_hash)
-            if not data:
-                return {"error": "invalid_key"}
-        # Budget-Check
-        from datetime import date
-        today = date.today().strftime("%Y-%m-%d")
-        month = date.today().strftime("%Y-%m")
-        uid   = data.get("user_id", "")
-        if data.get("budget_daily"):
-            used = int(await redis_client.get(f"user:{uid}:tokens:daily:{today}") or 0)
-            if used >= int(data["budget_daily"]):
-                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="daily").inc()
-                return {"error": "budget_exceeded", "limit_type": "daily"}
-        if data.get("budget_monthly"):
-            used = int(await redis_client.get(f"user:{uid}:tokens:monthly:{month}") or 0)
-            if used >= int(data["budget_monthly"]):
-                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="monthly").inc()
-                return {"error": "budget_exceeded", "limit_type": "monthly"}
-        if data.get("budget_total"):
-            used = int(await redis_client.get(f"user:{uid}:tokens:total") or 0)
-            if used >= int(data["budget_total"]):
-                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="total").inc()
-                return {"error": "budget_exceeded", "limit_type": "total"}
-        # Team budget check — pre-emptive, uses estimated 0 tokens to gate access
-        if uid and _userdb_pool is not None:
-            try:
-                from admin_ui.database import get_user_teams as _get_user_teams
-                from admin_ui.database import check_team_budget as _check_team_budget
-                for _team_id in await _get_user_teams(uid):
-                    _ok, _reason = await _check_team_budget(_team_id, 0)
-                    if not _ok:
-                        PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="team").inc()
-                        return {"error": "budget_exceeded", "limit_type": "team",
-                                "team_id": _team_id, "message": _reason}
-            except Exception as _be:
-                logger.debug(f"Team budget check skipped: {_be}")
-        return data
-    except Exception as e:
-        logger.warning(f"Auth error: {e}")
-        return {"error": "invalid_key"}
 
 
 def _extract_api_key(request: Request) -> Optional[str]:
@@ -1710,6 +1486,10 @@ else:
     cache_collection = chroma_client.get_or_create_collection(name="moe_fact_cache", embedding_function=default_ef)
     # Second collection for semantic pre-routing: prototypical task queries per category
     route_collection = chroma_client.get_or_create_collection(name="task_type_prototypes", embedding_function=default_ef)
+
+import state as _state_ref
+_state_ref.cache_collection = cache_collection
+_state_ref.route_collection = route_collection
 
 # --- MODES ---
 # Control output format and behavior of the entire pipeline.
@@ -6208,11 +5988,23 @@ from routes.watchdog         import router as _watchdog_router
 from routes.mission_context  import router as _mc_router
 from routes.graph            import router as _graph_router
 from routes.admin_benchmark  import router as _admin_bench_router
+from routes.admin_ontology   import router as _admin_onto_router
+from routes.admin_stats      import router as _admin_stats_router
+from routes.feedback         import router as _feedback_router
+from routes.ollama_compat    import router as _ollama_router
+from routes.models           import router as _models_router
+from routes.anthropic_compat import router as _anthropic_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
 app.include_router(_graph_router)
 app.include_router(_admin_bench_router)
+app.include_router(_admin_onto_router)
+app.include_router(_admin_stats_router)
+app.include_router(_feedback_router)
+app.include_router(_ollama_router)
+app.include_router(_models_router)
+app.include_router(_anthropic_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -6453,7 +6245,6 @@ async def prometheus_metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@app.get("/v1/provider-status")
 async def provider_status():
     """Rate-Limit-Status aller gecachten Provider-Endpunkte (Claude Code Integration)."""
     import time as _time
@@ -6480,7 +6271,6 @@ def _model_display_name(model_id: str, description: str = "") -> str:
     return description or model_id
 
 
-@app.get("/v1/models")
 async def list_models(raw_request: Request):
     raw_key = _extract_api_key(raw_request)
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
@@ -7002,7 +6792,6 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             asyncio.create_task(_deregister_active_request(chat_id))
         yield "data: [DONE]\n\n"
 
-@app.post("/v1/feedback")
 async def submit_feedback(req: FeedbackRequest):
     if not 1 <= req.rating <= 5:
         return {"status": "error", "message": "Rating must be between 1 and 5"}
@@ -7064,7 +6853,6 @@ class MemoryIngestRequest(BaseModel):
     confidence: float = 0.8
 
 
-@app.post("/v1/memory/ingest")
 async def memory_ingest(request: Request, body: MemoryIngestRequest):
     """
     Accepts a session summary from external hooks (e.g., Claude Code) and
@@ -7143,7 +6931,6 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
-@app.post("/v1/chat/completions")
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
     session_id = _extract_session_id(raw_request)
@@ -8478,7 +8265,6 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
     }
 
 
-@app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages API — drop-in compatible with Claude Code CLI and Anthropic SDK.
 
@@ -8700,7 +8486,6 @@ async def anthropic_messages(request: Request):
         }})
 
 
-@app.post("/v1/messages/count_tokens")
 async def count_tokens(request: Request):
     """Token count estimation for Claude Desktop / Claude Code context budget (Anthropic Gateway spec).
 
@@ -8813,7 +8598,6 @@ async def _run_healer_task(concurrency: int, batch_size: int, run_id: str) -> No
             pass
 
 
-@app.post("/v1/admin/ontology/trigger")
 async def trigger_ontology_healer(body: dict = None):
     """Kick off one gap-healer iteration in the background."""
     import uuid as _uuid
@@ -8832,7 +8616,6 @@ async def trigger_ontology_healer(body: dict = None):
     return {"ok": True, "run_id": run_id}
 
 
-@app.delete("/v1/admin/ontology/status")
 async def clear_ontology_healer_status():
     """Delete the healer run status from Redis (dismiss failed/stale entries)."""
     if redis_client is None:
@@ -8850,9 +8633,9 @@ async def clear_ontology_healer_status():
 # ─── Dedicated Ontology Gap Healer (permanent loop, single node) ─────────────
 
 _DEDICATED_HEALER_KEY = "moe:ontology:dedicated"
-_dedicated_healer_proc: "asyncio.subprocess.Process | None" = None
+# _dedicated_healer_proc lives in state.py
 # Mutex prevents concurrent auto-restart tasks (stream task + watchdog can both trigger).
-_dedicated_healer_restart_lock = asyncio.Lock()
+# _dedicated_healer_restart_lock lives in state.py
 
 
 async def _auto_resume_dedicated_healer() -> None:
@@ -8862,7 +8645,7 @@ async def _auto_resume_dedicated_healer() -> None:
     server finish binding before the healer subprocess sends its first request
     to the local API.
     """
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
     import time as _t
 
     await asyncio.sleep(5)  # wait for ASGI server to start serving
@@ -8924,7 +8707,7 @@ async def _auto_resume_dedicated_healer() -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        _dedicated_healer_proc = proc
+        state._dedicated_healer_proc = proc
         await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"pid": str(proc.pid)})
 
         # Early-exit check: if the process dies within 3 s, mark as stopped.
@@ -8945,7 +8728,7 @@ async def _auto_resume_dedicated_healer() -> None:
                 await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
                     "status": "stopped", "exit_code": str(rc),
                 })
-                _dedicated_healer_proc = None
+                state._dedicated_healer_proc = None
                 logger.error("❌ Dedicated healer exited immediately on resume (rc=%s)", rc)
                 return
             wt_task.cancel()
@@ -8975,144 +8758,8 @@ async def _auto_resume_dedicated_healer() -> None:
             pass
 
 
-async def _stream_dedicated_healer(
-    proc: "asyncio.subprocess.Process",
-    *,
-    first_line: "bytes | None" = None,
-) -> None:
-    """Read stdout from the dedicated healer loop and update Redis counters.
-
-    first_line: optional pre-read line from the early-exit detection in the
-    start endpoint — passed in to avoid dropping the first output token.
-    Writes a history entry to moe:maintenance:ontology:runs on completion.
-    """
-    import time as _t
-    import uuid as _uuid
-    stats: dict = {"processed": 0, "written": 0, "failed": 0}
-    assert proc.stdout is not None
-    start_ts = _t.time()
-
-    async def _handle(text: str) -> None:
-        if "✓" in text and "→" in text:
-            stats["written"] += 1
-        elif "?" in text and "→" in text:
-            stats["processed"] += 1
-        elif "✗" in text:
-            stats["failed"] += 1
-        await _set_healer_status_dedicated(last_activity_ts=str(_t.time()), **stats)
-
-    try:
-        if first_line:
-            await _handle(first_line.decode(errors="replace"))
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            await _handle(line.decode(errors="replace"))
-        rc = await proc.wait()
-    except Exception:
-        rc = -1
-    if redis_client is not None:
-        try:
-            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "stopped", "exit_code": str(rc),
-            })
-            # Persist run to the shared history list (same key as one-shot healer).
-            template = (cur or {}).get("template", "")
-            entry = json.dumps({
-                "run_id": str(_uuid.uuid4()),
-                "type": "dedicated",
-                "template": template,
-                "started_at": float((cur or {}).get("started_at", start_ts)),
-                "finished_at": _t.time(),
-                "exit_code": rc,
-                **stats,
-            })
-            await redis_client.lpush(_ONTOLOGY_RUNS_HISTORY_KEY, entry)
-            await redis_client.ltrim(_ONTOLOGY_RUNS_HISTORY_KEY, 0, 99)
-        except Exception:
-            pass
-
-    # Auto-restart: if the flag is set the user wants a permanent daemon loop.
-    # Re-spawn after a short pause so transient failures don't tight-loop.
-    await _dedicated_healer_auto_restart_if_needed(template_hint=(cur or {}).get("template", "") if redis_client else "")
-
-
 _HEALER_STALL_SECONDS = 300  # 5 minutes without output → stalled
 _HEALER_RESTART_DELAY_S = 30  # pause between auto-restarts
-
-
-async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> None:
-    """Re-spawn the dedicated healer if auto_restart=1 is set in Redis.
-
-    Called after a subprocess exits (clean or error). Waits HEALER_RESTART_DELAY_S
-    before spawning so rapid crash-loops don't thrash the system.
-    The restart lock ensures only one concurrent restart attempt runs at a time —
-    both the stream task and the watchdog can call this; without the lock they
-    would produce a restart storm.
-    """
-    import time as _t
-    global _dedicated_healer_proc
-
-    # Non-blocking: if another restart is already in flight, skip.
-    if _dedicated_healer_restart_lock.locked():
-        return
-    async with _dedicated_healer_restart_lock:
-        if redis_client is None:
-            return
-        try:
-            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-        except Exception:
-            return
-        if (cur or {}).get("auto_restart") != "1":
-            return
-
-        template = (cur or {}).get("template", "") or template_hint
-        if not template:
-            return
-
-        logger.info("🔄 Dedicated healer exited — auto-restart in %ds (template=%s)", _HEALER_RESTART_DELAY_S, template)
-        await asyncio.sleep(_HEALER_RESTART_DELAY_S)
-
-        # Bail if user stopped the healer while we were sleeping.
-        try:
-            cur2 = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-            if (cur2 or {}).get("auto_restart") != "1":
-                return
-        except Exception:
-            return
-
-        env = os.environ.copy()
-        env["TEMPLATE_POOL"] = template
-        env.setdefault("REQUEST_TIMEOUT", "900")
-        env.setdefault("MOE_API_BASE", "http://localhost:8000")
-        sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
-        if sys_key:
-            env["MOE_API_KEY"] = sys_key
-        try:
-            new_proc = await asyncio.create_subprocess_exec(
-                "python3", "/app/scripts/gap_healer_templates.py",
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            _dedicated_healer_proc = new_proc
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "running",
-                "stalled": "0",
-                "pid": str(new_proc.pid),
-                "started_at": str(_t.time()),
-                "last_activity_ts": str(_t.time()),
-                "processed": "0",
-                "written": "0",
-                "failed": "0",
-                "auto_restart": "1",
-            })
-            asyncio.create_task(_stream_dedicated_healer(new_proc))
-            logger.info("✅ Dedicated healer auto-restarted — PID %s", new_proc.pid)
-        except Exception as exc:
-            logger.error("❌ Dedicated healer auto-restart failed: %s", exc)
 
 
 async def _watchdog_dedicated_healer() -> None:
@@ -9123,7 +8770,7 @@ async def _watchdog_dedicated_healer() -> None:
     and the subprocess is restarted automatically.
     """
     import time as _t
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
 
     while True:
         await asyncio.sleep(60)
@@ -9180,7 +8827,7 @@ async def _watchdog_dedicated_healer() -> None:
             pass
 
         # Kill the stuck subprocess before restarting.
-        proc = _dedicated_healer_proc
+        proc = state._dedicated_healer_proc
         if proc is not None and proc.returncode is None:
             try:
                 proc.terminate()
@@ -9209,7 +8856,7 @@ async def _watchdog_dedicated_healer() -> None:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            _dedicated_healer_proc = new_proc
+            state._dedicated_healer_proc = new_proc
             await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
                 "status": "running",
                 "stalled": "0",
@@ -9223,16 +8870,18 @@ async def _watchdog_dedicated_healer() -> None:
             logger.error("❌ Dedicated healer restart failed: %s", exc)
 
 
-async def _set_healer_status_dedicated(**fields) -> None:
-    if redis_client is None:
-        return
-    try:
-        await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={k: str(v) for k, v in fields.items()})
-    except Exception:
-        pass
+# _set_healer_status_dedicated, _stream_dedicated_healer,
+# _dedicated_healer_auto_restart_if_needed moved to services/healer.py
+from services.healer import (
+    _set_healer_status_dedicated,
+    _stream_dedicated_healer,
+    _dedicated_healer_auto_restart_if_needed,
+    _DEDICATED_HEALER_KEY,
+    _HEALER_STALL_SECONDS,
+    _HEALER_RESTART_DELAY_S,
+)
 
 
-@app.post("/v1/admin/ontology/dedicated/start")
 async def start_dedicated_healer(body: dict = None):
     """Start a permanent gap-healer loop pinned to a single curator template.
 
@@ -9241,7 +8890,7 @@ async def start_dedicated_healer(body: dict = None):
     endpoint returns ok=False with the exit code so the UI can show an error
     instead of silently marking status as 'running'.
     """
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
     import time as _t
     body = body or {}
     template = (body.get("template") or "").strip()
@@ -9249,7 +8898,7 @@ async def start_dedicated_healer(body: dict = None):
         return {"ok": False, "reason": "template_required"}
 
     # Reject if an in-memory process is still alive.
-    if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+    if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         return {"ok": False, "reason": "already_running"}
 
     # Also check Redis for a live process from a previous container run.
@@ -9293,7 +8942,7 @@ async def start_dedicated_healer(body: dict = None):
     except Exception as exc:
         return {"ok": False, "reason": "spawn_failed", "error": str(exc)[:200]}
 
-    _dedicated_healer_proc = proc
+    state._dedicated_healer_proc = proc
 
     # Write "starting" state immediately so the UI can show a spinner.
     if redis_client is not None:
@@ -9331,7 +8980,7 @@ async def start_dedicated_healer(body: dict = None):
                     await t
                 except asyncio.CancelledError:
                     pass
-            _dedicated_healer_proc = None
+            state._dedicated_healer_proc = None
             if redis_client is not None:
                 try:
                     await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
@@ -9369,24 +9018,23 @@ async def start_dedicated_healer(body: dict = None):
     return {"ok": True, "pid": proc.pid, "template": template}
 
 
-@app.post("/v1/admin/ontology/dedicated/stop")
 async def stop_dedicated_healer():
     """Stop the running dedicated healer loop."""
-    global _dedicated_healer_proc
+    # state._dedicated_healer_proc is in state — no global needed
     import signal as _sig
 
     stopped = False
     # Try in-memory handle first
-    if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+    if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         try:
-            _dedicated_healer_proc.terminate()
-            await asyncio.wait_for(_dedicated_healer_proc.wait(), timeout=5.0)
+            state._dedicated_healer_proc.terminate()
+            await asyncio.wait_for(state._dedicated_healer_proc.wait(), timeout=5.0)
         except Exception:
             try:
-                _dedicated_healer_proc.kill()
+                state._dedicated_healer_proc.kill()
             except Exception:
                 pass
-        _dedicated_healer_proc = None
+        state._dedicated_healer_proc = None
         stopped = True
 
     # Also kill by PID from Redis (handles cross-restart cases)
@@ -9416,13 +9064,12 @@ async def stop_dedicated_healer():
     return {"ok": True, "stopped": stopped}
 
 
-@app.get("/v1/admin/ontology/dedicated/status")
 async def get_dedicated_healer_status():
     """Return the current state of the dedicated healer loop."""
     if redis_client is None:
         # Fallback to in-memory check
-        if _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
-            return {"status": "running", "pid": _dedicated_healer_proc.pid}
+        if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
+            return {"status": "running", "pid": state._dedicated_healer_proc.pid}
         return {"status": "stopped"}
     try:
         data = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
@@ -9451,7 +9098,6 @@ async def get_dedicated_healer_status():
         return {"status": "unknown", "error": str(e)[:100]}
 
 
-@app.get("/v1/admin/ontology/dedicated/verify")
 async def verify_dedicated_healer():
     """Verify that the dedicated healer is genuinely running.
 
@@ -9479,7 +9125,7 @@ async def verify_dedicated_healer():
         except OSError:
             pass
     # Also trust the in-memory handle if PID lookup fails (same container).
-    if not pid_alive and _dedicated_healer_proc is not None and _dedicated_healer_proc.returncode is None:
+    if not pid_alive and state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         pid_alive = True
 
     # Scan moe:active:* for a live healer request.
@@ -9606,7 +9252,6 @@ async def benchmark_lock_status():
         return {"active": False, "error": str(e)[:100]}
 
 
-@app.get("/v1/admin/knowledge-stats")
 async def get_knowledge_stats():
     """Aggregate Neo4j counters for the stats dashboard."""
     try:
@@ -9663,7 +9308,6 @@ async def get_knowledge_stats():
     return stats
 
 
-@app.get("/v1/admin/ontology-gaps")
 async def get_ontology_gaps(limit: int = 30):
     """Shows most frequent terms from answers not in the ontology."""
     if redis_client is None:
@@ -9675,7 +9319,6 @@ async def get_ontology_gaps(limit: int = 30):
         return {"error": str(e)}
 
 
-@app.get("/v1/admin/planner-patterns")
 async def get_planner_patterns(limit: int = 20):
     """Shows proven planner patterns based on positive user feedback."""
     if redis_client is None:
@@ -9687,7 +9330,6 @@ async def get_planner_patterns(limit: int = 20):
         return {"error": str(e)}
 
 
-@app.get("/v1/admin/tool-eval")
 async def get_tool_eval_log(limit: int = 50):
     """Returns the last N records from tool_eval.jsonl as parsed JSON objects."""
     path = "/app/logs/tool_eval.jsonl"
@@ -9720,7 +9362,6 @@ _PL_SORT_COLS = {
     "complexity_level": "ul.complexity_level",
 }
 
-@app.get("/v1/admin/pipeline-log")
 async def pipeline_log(
     raw_request: Request,
     limit: int = 100,
@@ -10034,13 +9675,11 @@ async def _ollama_internal_stream(
         yield sse_line
 
 
-@app.get("/api/version")
 async def ollama_version():
     """Ollama version stub — clients use this to detect Ollama compatibility."""
     return {"version": "0.6.0"}
 
 
-@app.get("/api/tags")
 async def ollama_tags(raw_request: Request):
     """Return templates visible to this API key in Ollama model-list format."""
     raw_key = _extract_api_key(raw_request)
@@ -10070,7 +9709,6 @@ async def ollama_tags(raw_request: Request):
     return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
 
 
-@app.get("/api/ps")
 async def ollama_ps(raw_request: Request):
     """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
     raw_key = _extract_api_key(raw_request)
@@ -10107,7 +9745,6 @@ async def ollama_ps(raw_request: Request):
     return {"models": models}
 
 
-@app.post("/api/show")
 async def ollama_show(raw_request: Request):
     """Return template details in Ollama modelinfo format (no auth required for show)."""
     try:
@@ -10138,7 +9775,6 @@ async def ollama_show(raw_request: Request):
     }
 
 
-@app.post("/api/chat")
 async def ollama_chat(raw_request: Request):
     """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
     raw_key = _extract_api_key(raw_request)
@@ -10220,7 +9856,6 @@ async def ollama_chat(raw_request: Request):
     }
 
 
-@app.post("/api/generate")
 async def ollama_generate(raw_request: Request):
     """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
 
@@ -10310,7 +9945,6 @@ async def ollama_generate(raw_request: Request):
     }
 
 
-@app.post("/api/pull")
 async def ollama_pull(raw_request: Request):
     """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
     try:
@@ -10329,7 +9963,6 @@ async def ollama_pull(raw_request: Request):
     return StreamingResponse(_progress(), media_type="application/x-ndjson")
 
 
-@app.delete("/api/delete")
 async def ollama_delete():
     """Model deletion is not supported — managed via Admin UI."""
     return JSONResponse(status_code=400, content={
@@ -10337,10 +9970,6 @@ async def ollama_delete():
     })
 
 
-@app.post("/api/copy")
-@app.post("/api/push")
-@app.post("/api/embed")
-@app.post("/api/embeddings")
 async def ollama_not_supported():
     """Stub for Ollama endpoints not supported by MoE Sovereign."""
     return JSONResponse(status_code=400, content={
@@ -10674,7 +10303,6 @@ async def _stream_responses_api(
     })
 
 
-@app.post("/v1/responses")
 async def responses_api(raw_request: Request, request: _ResponsesRequest):
     """OpenAI Responses API compatibility endpoint for Codex CLI."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -10719,13 +10347,11 @@ async def responses_api(raw_request: Request, request: _ResponsesRequest):
         return JSONResponse(status_code=500, content={"error": {"message": str(_ie)}})
 
 
-@app.get("/api/version")
 async def ollama_version():
     """Ollama version stub — clients use this to detect Ollama compatibility."""
     return {"version": "0.6.0"}
 
 
-@app.get("/api/tags")
 async def ollama_tags(raw_request: Request):
     """Return templates visible to this API key in Ollama model-list format."""
     raw_key = _extract_api_key(raw_request)
@@ -10755,7 +10381,6 @@ async def ollama_tags(raw_request: Request):
     return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
 
 
-@app.get("/api/ps")
 async def ollama_ps(raw_request: Request):
     """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
     raw_key = _extract_api_key(raw_request)
@@ -10792,7 +10417,6 @@ async def ollama_ps(raw_request: Request):
     return {"models": models}
 
 
-@app.post("/api/show")
 async def ollama_show(raw_request: Request):
     """Return template details in Ollama modelinfo format (no auth required for show)."""
     try:
@@ -10823,7 +10447,6 @@ async def ollama_show(raw_request: Request):
     }
 
 
-@app.post("/api/chat")
 async def ollama_chat(raw_request: Request):
     """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
     raw_key = _extract_api_key(raw_request)
@@ -10905,7 +10528,6 @@ async def ollama_chat(raw_request: Request):
     }
 
 
-@app.post("/api/generate")
 async def ollama_generate(raw_request: Request):
     """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
 
@@ -10995,7 +10617,6 @@ async def ollama_generate(raw_request: Request):
     }
 
 
-@app.post("/api/pull")
 async def ollama_pull(raw_request: Request):
     """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
     try:
@@ -11014,7 +10635,6 @@ async def ollama_pull(raw_request: Request):
     return StreamingResponse(_progress(), media_type="application/x-ndjson")
 
 
-@app.delete("/api/delete")
 async def ollama_delete():
     """Model deletion is not supported — managed via Admin UI."""
     return JSONResponse(status_code=400, content={
@@ -11022,10 +10642,6 @@ async def ollama_delete():
     })
 
 
-@app.post("/api/copy")
-@app.post("/api/push")
-@app.post("/api/embed")
-@app.post("/api/embeddings")
 async def ollama_not_supported():
     """Stub for Ollama endpoints not supported by MoE Sovereign."""
     return JSONResponse(status_code=400, content={
