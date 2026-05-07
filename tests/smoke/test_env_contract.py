@@ -18,7 +18,8 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).parents[2]
-_MAIN_PY = _ROOT / "main.py"
+_MAIN_PY    = _ROOT / "main.py"
+_CONFIG_PY  = _ROOT / "config.py"
 _ENV_EXAMPLE = _ROOT / ".env.example"
 
 # Env vars that are legitimately not in .env.example:
@@ -68,7 +69,8 @@ _KNOWN_UNDOCUMENTED = {
 
 
 def _vars_used_in_main() -> set[str]:
-    src = _MAIN_PY.read_text(encoding="utf-8")
+    src = (_MAIN_PY.read_text(encoding="utf-8")
+           + _CONFIG_PY.read_text(encoding="utf-8"))
     return set(re.findall(r'os\.getenv\("([A-Z_][A-Z0-9_]*)(?:"|\s*,)', src))
 
 
