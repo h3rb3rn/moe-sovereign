@@ -208,120 +208,15 @@ _cache_lock = threading.Lock()   # guards _model_avail_cache, _ps_cache, _jwks_c
 _shadow_lock = threading.Lock()  # guards _shadow_request_counter increment
 
 
-def _read_expert_templates() -> list:
-    """Return the current expert-templates list.
-
-    Primary source: Postgres table ``admin_expert_templates`` (written by the
-    Admin UI). The Orchestrator used to read EXPERT_TEMPLATES from /app/.env,
-    but that blows past Linux MAX_ARG_STRLEN (128 kB) once enough templates
-    exist, crashing sibling containers on exec. The DB is now authoritative;
-    .env is a best-effort fallback for boot-time before DB is reachable.
-
-    Cached for 30 s — templates created in the Admin UI become visible within
-    half a minute without a container restart.
-    """
-    import time as _time
-    now = _time.monotonic()
-    cache = _read_expert_templates._cache
-    if now - cache["ts"] < 30 and cache["data"] is not None:
-        return cache["data"]
-
-    data = _load_templates_from_db_sync()
-    if data is None:
-        # Fallback: read .env directly (legacy path, rarely exercised now).
-        data = _load_templates_from_env_file()
-    if data is None:
-        data = json.loads(os.getenv("EXPERT_TEMPLATES", "[]"))
-
-    cache["ts"] = now
-    cache["data"] = data
-    return data
-_read_expert_templates._cache: dict = {"ts": 0.0, "data": None}
+# Template loaders moved to services/templates.py
+from services.templates import (
+    _read_expert_templates,
+    _load_templates_from_db_sync,
+    _load_templates_from_env_file,
+)
 
 
-def _load_templates_from_db_sync() -> Optional[list]:
-    """One-shot sync query against admin_expert_templates. Returns None on any
-    failure so the caller can fall back to .env."""
-    dsn = (
-        os.getenv("MOE_USERDB_URL")
-        or os.getenv("POSTGRES_CHECKPOINT_URL")
-        or ""
-    )
-    if not dsn:
-        return None
-    try:
-        with psycopg.connect(dsn, connect_timeout=3) as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    "SELECT id, name, description, config_json, is_active "
-                    "FROM admin_expert_templates ORDER BY created_at ASC"
-                )
-                rows = cur.fetchall()
-    except Exception:
-        return None
-    result: list = []
-    for row in rows:
-        cfg = row.get("config_json")
-        if isinstance(cfg, str):
-            try:
-                tmpl = json.loads(cfg)
-            except json.JSONDecodeError:
-                tmpl = {}
-        elif isinstance(cfg, dict):
-            tmpl = dict(cfg)
-        else:
-            tmpl = {}
-        tmpl["id"] = row["id"]
-        tmpl["name"] = row["name"]
-        tmpl["description"] = row.get("description", "")
-        tmpl["is_active"] = row.get("is_active", True)
-        result.append(tmpl)
-    return result
-
-
-def _load_templates_from_env_file() -> Optional[list]:
-    """Legacy .env parser — kept as fallback when the DB is unreachable."""
-    env_path = Path(os.getenv("ENV_FILE", "/app/.env"))
-    try:
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("EXPERT_TEMPLATES="):
-                raw = line[len("EXPERT_TEMPLATES="):].strip()
-                if raw.startswith('"') and raw.endswith('"'):
-                    raw = raw[1:-1].replace('\\\\', '\\').replace('\\"', '"')
-                parsed = json.loads(raw)
-                return parsed if isinstance(parsed, list) else None
-    except Exception:
-        return None
-    return None
-
-
-def _read_cc_profiles() -> list:
-    """Reads CLAUDE_CODE_PROFILES dynamically from /app/.env (not os.getenv).
-    Cached for 60 seconds to minimize disk I/O. This makes profiles
-    created in the Admin UI visible without a container restart."""
-    import time as _time
-    now = _time.monotonic()
-    cache = _read_cc_profiles._cache
-    if now - cache["ts"] < 60 and cache["data"] is not None:
-        return cache["data"]
-    env_path = Path(os.getenv("ENV_FILE", "/app/.env"))
-    try:
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("CLAUDE_CODE_PROFILES="):
-                raw = line[len("CLAUDE_CODE_PROFILES="):].strip()
-                if raw.startswith('"') and raw.endswith('"'):
-                    raw = raw[1:-1].replace('\\\\', '\\').replace('\\"', '"')
-                data = json.loads(raw)
-                cache["ts"] = now
-                cache["data"] = data
-                return data
-    except Exception:
-        pass
-    fallback = json.loads(os.getenv("CLAUDE_CODE_PROFILES", "[]"))
-    cache["ts"] = now
-    cache["data"] = fallback
-    return fallback
-_read_cc_profiles._cache: dict = {"ts": 0.0, "data": None}
+from services.templates import _read_cc_profiles
 
 # Neo4j, inference servers, benchmark constants imported from config.py
 if not INFERENCE_SERVERS_LIST and os.getenv("INFERENCE_SERVERS", "").strip():
@@ -6208,11 +6103,13 @@ from routes.watchdog         import router as _watchdog_router
 from routes.mission_context  import router as _mc_router
 from routes.graph            import router as _graph_router
 from routes.admin_benchmark  import router as _admin_bench_router
+from routes.admin_ontology   import router as _admin_onto_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
 app.include_router(_graph_router)
 app.include_router(_admin_bench_router)
+app.include_router(_admin_onto_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -8813,7 +8710,6 @@ async def _run_healer_task(concurrency: int, batch_size: int, run_id: str) -> No
             pass
 
 
-@app.post("/v1/admin/ontology/trigger")
 async def trigger_ontology_healer(body: dict = None):
     """Kick off one gap-healer iteration in the background."""
     import uuid as _uuid
@@ -8832,7 +8728,6 @@ async def trigger_ontology_healer(body: dict = None):
     return {"ok": True, "run_id": run_id}
 
 
-@app.delete("/v1/admin/ontology/status")
 async def clear_ontology_healer_status():
     """Delete the healer run status from Redis (dismiss failed/stale entries)."""
     if redis_client is None:

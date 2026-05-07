@@ -5,6 +5,7 @@ from .watchdog          import router as watchdog_router
 from .mission_context   import router as mission_context_router
 from .graph             import router as graph_router
 from .admin_benchmark   import router as admin_benchmark_router
+from .admin_ontology    import router as admin_ontology_router
 
 __all__ = [
     "health_router",
@@ -12,4 +13,5 @@ __all__ = [
     "mission_context_router",
     "graph_router",
     "admin_benchmark_router",
+    "admin_ontology_router",
 ]
