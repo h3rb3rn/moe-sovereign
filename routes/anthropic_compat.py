@@ -11,6 +11,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from services.auth import _extract_api_key, _validate_api_key
+from services.pipeline import (
+    chat_completions as _chat_completions_impl,
+    anthropic_messages as _anthropic_messages_impl,
+    responses_api as _responses_api_impl,
+    ChatCompletionRequest, _ResponsesRequest,
+)
 
 router = APIRouter()
 
@@ -22,8 +28,7 @@ router = APIRouter()
 @router.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages API — drop-in compatible with Claude Code CLI and Anthropic SDK."""
-    import main as _m
-    return await _m.anthropic_messages(request)
+    return await _anthropic_messages_impl(request)
 
 
 # ---------------------------------------------------------------------------
@@ -65,24 +70,14 @@ async def count_tokens(request: Request):
 @router.post("/v1/responses")
 async def responses_api(raw_request: Request):
     """OpenAI Responses API compatibility endpoint for Codex CLI."""
-    import main as _m
-    body = await raw_request.json()
-    request = _m._ResponsesRequest(**body)
-    return await _m.responses_api(raw_request, request)
+    body    = await raw_request.json()
+    request = _ResponsesRequest(**body)
+    return await _responses_api_impl(raw_request, request)
 
-
-# ---------------------------------------------------------------------------
-# /v1/chat/completions — Core MoE pipeline (implementation in main.py)
-#
-# The 540-line handler and its ~20 supporting functions (stream_response,
-# resolve_user_experts, register_active_request, etc.) remain in main.py
-# until dedicated pipeline extraction in the final split phase.
-# ---------------------------------------------------------------------------
 
 @router.post("/v1/chat/completions")
 async def chat_completions(raw_request: Request):
     """MoE Sovereign chat completions — OpenAI-compatible streaming endpoint."""
-    import main as _m
     body    = await raw_request.json()
-    request = _m.ChatCompletionRequest(**body)
-    return await _m.chat_completions(raw_request, request)
+    request = ChatCompletionRequest(**body)
+    return await _chat_completions_impl(raw_request, request)

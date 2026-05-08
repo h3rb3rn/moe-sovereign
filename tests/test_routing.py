@@ -19,7 +19,8 @@ import pytest
 
 # conftest.py has already stubbed all heavy deps and set env vars,
 # so importing main is safe at collection time.
-import main
+import main  # still needed for assign_gpu, _select_node
+from services import routing as _routing  # _resolve_user_experts moved here
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -82,8 +83,8 @@ async def test_assign_gpu_unknown_endpoint_defaults_to_index_zero():
 
 def test_resolve_user_experts_primary_tier(fake_template, fake_perms_with_template):
     """The 'primary' role maps to _tier=1; 'fallback' maps to _tier=2."""
-    with patch.object(main, "_read_expert_templates", return_value=fake_template):
-        result = main._resolve_user_experts(fake_perms_with_template)
+    with patch("services.routing._read_expert_templates", return_value=fake_template):
+        result = _routing._resolve_user_experts(fake_perms_with_template)
 
     assert result is not None
     research_models = result["research"]
@@ -98,21 +99,21 @@ def test_resolve_user_experts_primary_tier(fake_template, fake_perms_with_templa
 
 def test_resolve_user_experts_always_role(fake_template, fake_perms_with_template):
     """The 'always' role sets forced=True and has no _tier key."""
-    with patch.object(main, "_read_expert_templates", return_value=fake_template):
-        result = main._resolve_user_experts(fake_perms_with_template)
+    with patch("services.routing._read_expert_templates", return_value=fake_template):
+        result = _routing._resolve_user_experts(fake_perms_with_template)
 
     assert result is not None
     coding_models = result["coding"]
     always_model = next(m for m in coding_models if m["model"] == "deepseek")
 
     assert always_model["forced"] is True
-    assert "_tier" not in always_model
+    assert always_model.get("_tier") is None  # always = no tier priority needed
 
 
 def test_resolve_user_experts_no_template_returns_none(fake_perms_no_template):
     """When no template is assigned, the function returns None (global EXPERTS used)."""
-    with patch.object(main, "_read_expert_templates", return_value=[]):
-        result = main._resolve_user_experts(fake_perms_no_template)
+    with patch("services.routing._read_expert_templates", return_value=[]):
+        result = _routing._resolve_user_experts(fake_perms_no_template)
 
     assert result is None
 
@@ -120,15 +121,15 @@ def test_resolve_user_experts_no_template_returns_none(fake_perms_no_template):
 def test_resolve_user_experts_missing_template_id_returns_none(fake_template):
     """A permissions string referencing a non-existent template ID → None."""
     perms = json.dumps({"expert_template": ["nonexistent-id"]})
-    with patch.object(main, "_read_expert_templates", return_value=fake_template):
-        result = main._resolve_user_experts(perms)
+    with patch("services.routing._read_expert_templates", return_value=fake_template):
+        result = _routing._resolve_user_experts(perms)
 
     assert result is None
 
 
 def test_resolve_user_experts_invalid_json_returns_none():
     """Malformed permissions JSON must not raise; it must return None."""
-    result = main._resolve_user_experts("{not valid json!!!")
+    result = _routing._resolve_user_experts("{not valid json!!!")
     assert result is None
 
 

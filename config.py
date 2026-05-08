@@ -217,7 +217,10 @@ _N04_FALLBACK_NODE         = _AIHUB_FALLBACK_NODE
 _N04_FALLBACK_MODEL        = _AIHUB_FALLBACK_MODEL
 _N04_FALLBACK_MODEL_SECOND = _AIHUB_FALLBACK_MODEL_SECOND
 
-_FALLBACK_ENABLED = bool(_AIHUB_FALLBACK_NODE and _AIHUB_FALLBACK_MODEL)
+_FALLBACK_ENABLED    = bool(_AIHUB_FALLBACK_NODE and _AIHUB_FALLBACK_MODEL)
+_AIHUB_RETRY_COUNT   = 3    # retries before declaring endpoint degraded
+_AIHUB_RETRY_DELAY   = 2.0  # seconds between retries (short — transient instability)
+_AIHUB_DEGRADED_TTL  = 300  # 5 min blackout window after auth/quota failure
 
 # =============================================================================
 # Thompson sampling
@@ -249,3 +252,182 @@ MAX_REQUESTS_PER_MINUTE = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
 # =============================================================================
 
 _CUSTOM_EXPERT_PROMPTS: dict = json.loads(os.getenv("CUSTOM_EXPERT_PROMPTS", "{}"))
+
+# =============================================================================
+# Output modes (model ID → pipeline behaviour)
+# =============================================================================
+
+MODES: dict = {
+    "default": {
+        "model_id":      "moe-orchestrator",
+        "description":   "Complete answers with explanations (default)",
+        "expert_suffix": "",
+        "merger_prefix": (
+            "Synthesize the following information into a clear, complete answer.\n"
+            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low) > cache.\n"
+            "Ignore contradictory expert statements when MCP or graph data are available.\n"
+            "Act as cross-domain validator: compare all numerical values in the expert answers "
+            "with the original request. In case of discrepancies, the original value has absolute priority. "
+            "If an expert ignored a subtask, name the gap explicitly instead of filling it with "
+            "hallucinations.\n"
+            "CRITICAL: If the original question has multiple parts (a), (b), (c), you MUST address "
+            "EVERY part in your synthesis. Each expert may have answered a different part — combine "
+            "them all. When an MCP tool provided a calculation result, copy the result VERBATIM.\n"
+            "MULTI-EXPERT SYNTHESIS: When multiple expert responses are present, treat them as "
+            "complementary domain perspectives — do NOT pick one and ignore the others. "
+            "Each expert covers a different angle; your job is to integrate ALL angles into a "
+            "single coherent answer. If experts contradict each other, name the contradiction "
+            "explicitly and state which view is better supported by available evidence. "
+            "If an expert's domain is irrelevant to the question, skip it silently.\n"
+            "LANGUAGE: Always answer in the same language as the original question."
+        ),
+    },
+    "code": {
+        "model_id":      "moe-orchestrator-code",
+        "description":   "Source code only — no explanations, no prose",
+        "expert_suffix": (
+            "\n\nIMPORTANT: Answer EXCLUSIVELY with runnable source code. "
+            "No introduction, no explanations, no conclusion. "
+            "Inline comments in code are allowed. "
+            "Add as first line: # CONFIDENCE: high | medium | low"
+        ),
+        "merger_prefix": (
+            "Return ONLY the finished, complete, runnable source code. "
+            "Absolutely no prose, no introduction, no explanations, no conclusion. "
+            "Combine and deduplicate the expert code suggestions into the best result. "
+            "Code only."
+        ),
+    },
+    "concise": {
+        "model_id":      "moe-orchestrator-concise",
+        "description":   "Short, precise answers without rambling",
+        "expert_suffix": (
+            "\n\nAnswer very briefly and precisely. Maximum 4 sentences. "
+            "No repetitions, no introduction, no conclusion."
+        ),
+        "merger_prefix": (
+            "Synthesize into a short, precise answer. "
+            "Maximum 120 words. No introduction, no conclusion, no repetitions. "
+            "Priority: MCP > knowledge graph > experts > web."
+        ),
+        "skip_think": False,
+    },
+    "agent": {
+        "model_id":        "moe-orchestrator-agent",
+        "description":     "Coding agent mode — for OpenCode, Continue.dev and AI coding tools (OpenAI-compatible)",
+        "expert_suffix":   (
+            "\n\nYou are a precise coding agent. Answer technically exact and directly actionable. "
+            "Use markdown code blocks for all code. No unnecessary explanations unless explicitly asked."
+        ),
+        "merger_prefix":   (
+            "Synthesize the expert code analyses into one precise, actionable response. "
+            "Use markdown code blocks for all code. Be concise and direct. "
+            "Do not add preamble or boilerplate. Start with the solution immediately. "
+            "Priority: code_reviewer > technical_support."
+        ),
+        "skip_think":       True,
+        "force_categories": ["code_reviewer", "technical_support"],
+    },
+    "agent_orchestrated": {
+        "model_id":    "moe-orchestrator-agent-orchestrated",
+        "description": "Claude Code — full planner, all experts, force_think (maximum quality)",
+        "expert_suffix": (
+            "\n\nYou are a precise coding agent. Answer technically exact and directly actionable. "
+            "Use markdown code blocks for all code. No unnecessary explanations unless explicitly asked."
+        ),
+        "merger_prefix": (
+            "Synthesize the expert analyses into one precise, actionable response. "
+            "Use markdown code blocks for all code. Be concise and direct. "
+            "Do not add preamble or boilerplate. Start with the solution immediately. "
+            "Priority: code_reviewer > technical_support > general."
+        ),
+        "skip_think":  True,
+        "force_think": True,
+    },
+    "research": {
+        "model_id":    "moe-orchestrator-research",
+        "description": "Deep research — multiple parallel web searches, structured research report",
+        "expert_suffix": (
+            "\n\nYou support a structured deep research. "
+            "Analyze the topic from your domain perspective. "
+            "Explicitly name: established knowledge, open questions and research gaps. "
+            "Cite sources when known."
+        ),
+        "merger_prefix": (
+            "Create a structured research report from the following sources.\n"
+            "Use exactly this outline:\n\n"
+            "## Summary\n[2-3 sentence key statement]\n\n"
+            "## Main Findings\n[Most important insights as bullet points]\n\n"
+            "## Details\n[In-depth analysis with all relevant information]\n\n"
+            "## Sources\n[All cited web sources with [N] numbers]\n\n"
+            "Priority: web research > knowledge graph > experts (high/medium) > web > experts (low).\n"
+            "Ignore contradictory expert statements when web research data is available."
+        ),
+        "force_think": True,
+    },
+    "report": {
+        "model_id":    "moe-orchestrator-report",
+        "description": "Professional report — full pipeline, structured markdown report",
+        "expert_suffix": (
+            "\n\nYou deliver inputs for a professional technical report. "
+            "Write objectively, precisely and in report style. "
+            "Clearly separate facts from evaluations. "
+            "Structure your contribution with short paragraphs."
+        ),
+        "merger_prefix": (
+            "Create a professional technical report in Markdown format.\n"
+            "Use exactly this structure:\n\n"
+            "# [Meaningful title]\n\n"
+            "## Executive Summary\n[3-5 sentences — key message for decision makers]\n\n"
+            "## Background\n[Context, relevance, initial situation]\n\n"
+            "## Main Findings\n[Most important insights, backed by experts and research]\n\n"
+            "## Analysis\n[In-depth evaluation, connections, implications]\n\n"
+            "## Conclusion\n[Conclusions and, if applicable, recommendations for action]\n\n"
+            "## Sources\n[All cited sources]\n\n"
+            "Tone: objective, professional, suitable for authorities or companies.\n"
+            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low)."
+        ),
+        "force_think": True,
+    },
+    "plan": {
+        "model_id":    "moe-orchestrator-plan",
+        "description": "Plan & Execute — shows execution plan, runs all tasks in parallel",
+        "expert_suffix": (
+            "\n\nYou deliver inputs for comprehensive planning. "
+            "Be complete and precise. Explicitly name what you know and what is uncertain."
+        ),
+        "merger_prefix": (
+            "Synthesize all expert inputs and research into a complete, "
+            "structured answer.\n"
+            "Consider all available sources. Prioritize accuracy over brevity.\n"
+            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low).\n"
+            "Ignore contradictory expert statements when MCP or graph data are available."
+        ),
+        "force_think": True,
+    },
+}
+
+_MODEL_ID_TO_MODE: dict = {v["model_id"]: k for k, v in MODES.items()}
+
+# =============================================================================
+# Claude model display names (for model picker UI)
+# =============================================================================
+
+_CLAUDE_PRETTY_NAMES: dict = {
+    "claude-opus-4-7":            "Claude Opus 4.7",
+    "claude-opus-4-6":            "Claude Opus 4.6",
+    "claude-sonnet-4-6":          "Claude Sonnet 4.6",
+    "claude-haiku-4-5-20251001":  "Claude Haiku 4.5",
+    "claude-opus-4-5":            "Claude Opus 4.5",
+    "claude-sonnet-4-5":          "Claude Sonnet 4.5",
+    "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
+    "claude-3-5-haiku-20241022":  "Claude 3.5 Haiku",
+    "claude-3-7-sonnet-20250219": "Claude 3.7 Sonnet",
+}
+
+
+def _model_display_name(model_id: str, description: str = "") -> str:
+    """Human-readable label for the model picker (display_name field)."""
+    if model_id in _CLAUDE_PRETTY_NAMES:
+        return f"{_CLAUDE_PRETTY_NAMES[model_id]} → MoE (Gateway)"
+    return description or model_id
