@@ -1,0 +1,952 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Embedded & RTOS — FreeRTOS/Zephyr, Hard/Soft Real-Time, Priority Inversion, ISR, MISRA-C, Power Management, Secure Boot, IoT Protocols.",
+  "filters": {
+    "domains": [
+      "technical_support",
+      "code_reviewer"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "Embedded System",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Eingebettetes System",
+        "Microcontroller System",
+        "MCU System"
+      ]
+    },
+    {
+      "name": "Embedded RTOS",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RTOS",
+        "Real-Time Operating System",
+        "Echtzeit-Betriebssystem"
+      ]
+    },
+    {
+      "name": "FreeRTOS",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "FreeRTOS Kernel",
+        "AWS FreeRTOS"
+      ]
+    },
+    {
+      "name": "Zephyr RTOS",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Zephyr Project",
+        "Linux Foundation Zephyr"
+      ]
+    },
+    {
+      "name": "RT-Thread",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RT-Thread RTOS",
+        "Chinese RTOS"
+      ]
+    },
+    {
+      "name": "VxWorks",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wind River VxWorks",
+        "Commercial RTOS"
+      ]
+    },
+    {
+      "name": "Hard Real-Time",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Harte Echtzeit",
+        "Hard RT",
+        "Deadline-critical RT"
+      ]
+    },
+    {
+      "name": "Soft Real-Time",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Weiche Echtzeit",
+        "Soft RT",
+        "Best-effort Latency"
+      ]
+    },
+    {
+      "name": "WCET",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Worst-Case Execution Time",
+        "Schlimmstmögliche Ausführungszeit"
+      ]
+    },
+    {
+      "name": "Priority Inversion",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Prioritätsumkehr",
+        "Priority Inversion Bug"
+      ]
+    },
+    {
+      "name": "Priority Inheritance",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Prioritätsvererbung",
+        "PIP",
+        "Priority Inheritance Protocol"
+      ]
+    },
+    {
+      "name": "Rate Monotonic Scheduling",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RMS",
+        "Rate-monotonic Algorithm",
+        "Liu-Layland"
+      ]
+    },
+    {
+      "name": "Earliest Deadline First",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "EDF",
+        "Earliest-Deadline-First Scheduling"
+      ]
+    },
+    {
+      "name": "Interrupt Service Routine",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ISR",
+        "Interrupt Handler",
+        "IRQ Handler"
+      ]
+    },
+    {
+      "name": "Top-Half Bottom-Half",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Bottom Half",
+        "Tasklet",
+        "Deferred Procedure Call"
+      ]
+    },
+    {
+      "name": "Bare-Metal Programming",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Bare Metal",
+        "MCU Bare-Metal",
+        "No-OS Programming"
+      ]
+    },
+    {
+      "name": "Memory-Mapped IO",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MMIO",
+        "Register Access",
+        "Memory-Mapped Register"
+      ]
+    },
+    {
+      "name": "DMA",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Direct Memory Access",
+        "DMA Controller",
+        "DMA Transfer"
+      ]
+    },
+    {
+      "name": "Watchdog Timer",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WDT",
+        "Hardware Watchdog",
+        "Lockup Detection"
+      ]
+    },
+    {
+      "name": "Power Management",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Energieverwaltung",
+        "Sleep Mode",
+        "Low-Power Mode"
+      ]
+    },
+    {
+      "name": "Sleep Mode",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Light Sleep",
+        "Deep Sleep",
+        "Standby Mode"
+      ]
+    },
+    {
+      "name": "Tickless Kernel",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Tickless RTOS",
+        "Tickless Idle",
+        "Power-saving Scheduler"
+      ]
+    },
+    {
+      "name": "Stack Overflow Detection",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Stack Painting",
+        "Stack Canary Embedded"
+      ]
+    },
+    {
+      "name": "Static Memory Allocation",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Statische Speicherzuteilung",
+        "No malloc Embedded",
+        "MISRA C Memory"
+      ]
+    },
+    {
+      "name": "Memory Pool",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Static Memory Pool",
+        "Pre-allocated Pool",
+        "Block Allocator"
+      ]
+    },
+    {
+      "name": "Cooperative Multitasking",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cooperative Scheduling",
+        "Yield-based Multitasking"
+      ]
+    },
+    {
+      "name": "Preemptive Multitasking",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Preemptive Scheduling",
+        "Time-sliced Multitasking"
+      ]
+    },
+    {
+      "name": "Mutex Embedded",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RTOS Mutex",
+        "Embedded Mutex",
+        "Mutex with PIP"
+      ]
+    },
+    {
+      "name": "Semaphore Embedded",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RTOS Semaphore",
+        "Counting Semaphore Embedded",
+        "Binary Semaphore Embedded"
+      ]
+    },
+    {
+      "name": "Critical Section",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Atomic Section",
+        "Disable Interrupts",
+        "Race-free Block"
+      ]
+    },
+    {
+      "name": "MISRA C",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "MISRA-C",
+        "Automotive C Coding Standard",
+        "Safety-critical C"
+      ]
+    },
+    {
+      "name": "CERT C",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "CERT Secure Coding C",
+        "Secure C Standard"
+      ]
+    },
+    {
+      "name": "Embedded C",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "MCU C",
+        "Embedded C Programming",
+        "C99 Embedded"
+      ]
+    },
+    {
+      "name": "HAL",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Hardware Abstraction Layer",
+        "MCU HAL",
+        "STM32 HAL"
+      ]
+    },
+    {
+      "name": "Bootloader",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MCU Bootloader",
+        "Embedded Bootloader",
+        "MCUboot"
+      ]
+    },
+    {
+      "name": "OTA Update Embedded",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Over-the-Air Update",
+        "Firmware Update",
+        "Dual-Bank Flash"
+      ]
+    },
+    {
+      "name": "Firmware Image Signing",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Signed Firmware",
+        "Secure Boot",
+        "Image Verification"
+      ]
+    },
+    {
+      "name": "Secure Boot",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Secure Boot Chain",
+        "Verified Boot",
+        "Root of Trust"
+      ]
+    },
+    {
+      "name": "Real-Time Constraint",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Echtzeit-Anforderung",
+        "Deadline Constraint"
+      ]
+    },
+    {
+      "name": "CAN Bus",
+      "type": "Protocol",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Controller Area Network",
+        "Automotive CAN",
+        "CAN Protocol"
+      ]
+    },
+    {
+      "name": "MQTT",
+      "type": "Protocol",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MQTT Broker",
+        "MQTT-SN",
+        "IoT Messaging Protocol"
+      ]
+    },
+    {
+      "name": "CoAP",
+      "type": "Protocol",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Constrained Application Protocol",
+        "RFC 7252",
+        "IoT REST"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "Embedded RTOS",
+      "predicate": "IS_A",
+      "object": "Embedded System",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "FreeRTOS",
+      "predicate": "IS_A",
+      "object": "Embedded RTOS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Zephyr RTOS",
+      "predicate": "IS_A",
+      "object": "Embedded RTOS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "RT-Thread",
+      "predicate": "IS_A",
+      "object": "Embedded RTOS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "VxWorks",
+      "predicate": "IS_A",
+      "object": "Embedded RTOS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hard Real-Time",
+      "predicate": "RELATED_TO",
+      "object": "Soft Real-Time",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hard Real-Time",
+      "predicate": "RELATED_TO",
+      "object": "WCET",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Real-Time Constraint",
+      "predicate": "RELATED_TO",
+      "object": "Hard Real-Time",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Priority Inversion",
+      "predicate": "RELATED_TO",
+      "object": "Priority Inheritance",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Priority Inheritance",
+      "predicate": "RELATED_TO",
+      "object": "Mutex Embedded",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Rate Monotonic Scheduling",
+      "predicate": "IS_A",
+      "object": "Algorithm",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Earliest Deadline First",
+      "predicate": "IS_A",
+      "object": "Algorithm",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Interrupt Service Routine",
+      "predicate": "RELATED_TO",
+      "object": "Top-Half Bottom-Half",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Memory-Mapped IO",
+      "predicate": "RELATED_TO",
+      "object": "Bare-Metal Programming",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "DMA",
+      "predicate": "RELATED_TO",
+      "object": "Memory-Mapped IO",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Watchdog Timer",
+      "predicate": "RELATED_TO",
+      "object": "Hard Real-Time",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Power Management",
+      "predicate": "USES",
+      "object": "Sleep Mode",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Power Management",
+      "predicate": "USES",
+      "object": "Tickless Kernel",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Tickless Kernel",
+      "predicate": "RELATED_TO",
+      "object": "Battery Optimization",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Static Memory Allocation",
+      "predicate": "USES",
+      "object": "Memory Pool",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Static Memory Allocation",
+      "predicate": "RELATED_TO",
+      "object": "MISRA C",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cooperative Multitasking",
+      "predicate": "RELATED_TO",
+      "object": "Preemptive Multitasking",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Mutex Embedded",
+      "predicate": "USES",
+      "object": "Priority Inheritance",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Mutex Embedded",
+      "predicate": "RELATED_TO",
+      "object": "Mutex",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Semaphore Embedded",
+      "predicate": "RELATED_TO",
+      "object": "Mutex Embedded",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Critical Section",
+      "predicate": "RELATED_TO",
+      "object": "Mutex Embedded",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "MISRA C",
+      "predicate": "RELATED_TO",
+      "object": "Embedded C",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "CERT C",
+      "predicate": "RELATED_TO",
+      "object": "Embedded C",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "HAL",
+      "predicate": "RELATED_TO",
+      "object": "Embedded System",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Bootloader",
+      "predicate": "RELATED_TO",
+      "object": "Embedded System",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OTA Update Embedded",
+      "predicate": "RELATED_TO",
+      "object": "Bootloader",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OTA Update Embedded",
+      "predicate": "RELATED_TO",
+      "object": "Firmware Image Signing",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Firmware Image Signing",
+      "predicate": "RELATED_TO",
+      "object": "Digital Signature",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Firmware Image Signing",
+      "predicate": "RELATED_TO",
+      "object": "Secure Boot",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Secure Boot",
+      "predicate": "RELATED_TO",
+      "object": "Bootloader",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CAN Bus",
+      "predicate": "IS_A",
+      "object": "Protocol",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "MQTT",
+      "predicate": "IS_A",
+      "object": "Protocol",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CoAP",
+      "predicate": "IS_A",
+      "object": "Protocol",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stack Overflow Detection",
+      "predicate": "RELATED_TO",
+      "object": "Defensive Programming",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "Priority Inversion und seine berühmte Folge: Mars Pathfinder (1997) hatte regelmäßige Watchdog-Resets im Mars-Orbit. Ursache: Low-Priority-Task hielt Mutex, Mid-Priority-Task preemptierte ihn, High-Priority-Task blockierte auf Mutex — klassisches unbounded Priority Inversion. Fix per Software-Update: Priority Inheritance Protocol auf den Mutex aktiviert. Heute: jeder RTOS-Mutex MUSS PIP unterstützen, sonst keine deterministischen Deadlines.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Priority Inversion",
+        "Priority Inheritance",
+        "Mutex Embedded",
+        "Hard Real-Time"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Static Allocation als MISRA-C-Regel: malloc() ist in safety-critical Code (Automotive, Medical, Avionics) verboten — Heap-Fragmentation kann zu Out-of-Memory in nicht-vorhersagbaren Zeitpunkten führen. Alternative: alle Buffers, Queues, Tasks zur Compile-Zeit allokiert. Memory Pools für variable Allokation mit fester Block-Größe. Code-Review: jede malloc()/new in Safety-Code ist Blocker.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Static Memory Allocation",
+        "Memory Pool",
+        "MISRA C",
+        "Embedded C"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "ISR Top-Half / Bottom-Half Pattern: Interrupt Service Routine MUSS so kurz wie möglich sein (typisch <50µs) — sonst werden andere Interrupts maskiert und Latenz steigt. Pattern: Top-Half (in ISR) liest Hardware-Register, setzt Flag oder schickt Message in Queue, kehrt zurück. Bottom-Half (in normaler Task-Context oder Tasklet) verarbeitet Daten asynchron. Linux nennt das ISR + Tasklet/Workqueue.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Interrupt Service Routine",
+        "Top-Half Bottom-Half",
+        "WCET",
+        "Hard Real-Time"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Rate Monotonic Scheduling Liu-Layland-Bound: Bei N Tasks mit Periode T_i und WCET C_i ist das System schedulable wenn Σ(C_i/T_i) ≤ N(2^(1/N) - 1). Für N=∞ konvergiert die Bound gegen ln(2) ≈ 0.693 — also 69% CPU-Auslastung garantiert schedulable. Höhere Auslastungen brauchen exact Response-Time-Analysis. EDF ist optimal (Auslastung bis 100% schedulable), aber Implementation-Overhead höher als RMS.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Rate Monotonic Scheduling",
+        "Earliest Deadline First",
+        "WCET",
+        "Hard Real-Time",
+        "Real-Time Constraint"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Watchdog Timer als Last-Resort-Recovery: WDT ist Hardware-Counter der Reset triggert wenn Software ihn nicht regelmäßig zurücksetzt. Bei Deadlock, Endlosschleife, Stack Overflow rettet er das System. Anti-Pattern: WDT in einem regulären Task-Loop kicken — dann erkennt er nur dass Task läuft, nicht ob er korrekt arbeitet. Best Practice: jeder kritische Task setzt eigenes Flag, Watchdog-Task prüft alle Flags und kickt nur wenn alle gesetzt.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Watchdog Timer",
+        "Hard Real-Time",
+        "Stack Overflow Detection",
+        "Embedded RTOS"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Tickless Kernel für Battery-Optimierung: Klassischer RTOS hat 1ms System-Tick — CPU wakeupt 1000x/Sekunde, auch wenn nichts zu tun ist. Tickless Idle: Scheduler berechnet nächsten Wake-up-Zeitpunkt (nächster Timer/Deadline), programmiert Hardware-Timer, schickt CPU in Deep Sleep bis dahin. Battery-Lebensdauer-Steigerung 5-50x bei Workloads mit langen Idle-Phasen (Sensors, Wearables).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Tickless Kernel",
+        "Power Management",
+        "Sleep Mode",
+        "Battery Optimization",
+        "FreeRTOS"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Secure Boot Chain für Firmware-Integrität: Stage 0 (immutable ROM bootloader) verifiziert Stage 1 Bootloader mit Public-Key. Stage 1 verifiziert Application-Image. Bei Kompromittierung des Application-Image wird Boot abgebrochen. Hardware Root of Trust = Pre-fused Public Key in ROM. OTA-Updates müssen mit Private-Key signiert werden. ARM TrustZone, Intel Boot Guard, Apple Secure Enclave implementieren das.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Secure Boot",
+        "Bootloader",
+        "Firmware Image Signing",
+        "OTA Update Embedded",
+        "Digital Signature"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    }
+  ],
+  "stats": {
+    "entities": 42,
+    "relations": 39,
+    "syntheses": 7,
+    "scrubbed": 0
+  }
+}

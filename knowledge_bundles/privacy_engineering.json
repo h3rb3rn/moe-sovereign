@@ -1,0 +1,1022 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Privacy Engineering Patterns — GDPR, DPIA, PII Detection, Pseudonymization, Differential Privacy, Federated Learning, Data Subject Rights.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "GDPR",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DSGVO",
+        "Datenschutz-Grundverordnung",
+        "EU GDPR",
+        "General Data Protection Regulation"
+      ]
+    },
+    {
+      "name": "CCPA",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "California Consumer Privacy Act",
+        "California Privacy Rights"
+      ]
+    },
+    {
+      "name": "Privacy by Design",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "PbD",
+        "Datenschutz durch Technikgestaltung",
+        "Article 25 GDPR"
+      ]
+    },
+    {
+      "name": "Privacy by Default",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Datenschutz als Voreinstellung",
+        "Default-Privacy"
+      ]
+    },
+    {
+      "name": "Data Minimization",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Datensparsamkeit",
+        "Minimal Data Collection",
+        "Article 5(1)(c) GDPR"
+      ]
+    },
+    {
+      "name": "Purpose Limitation",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Zweckbindung",
+        "Article 5(1)(b) GDPR",
+        "Use Restriction"
+      ]
+    },
+    {
+      "name": "Storage Limitation",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Speicherbegrenzung",
+        "Retention Limit",
+        "Article 5(1)(e) GDPR"
+      ]
+    },
+    {
+      "name": "Lawful Basis",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Rechtsgrundlage",
+        "Article 6 GDPR",
+        "Legal Basis for Processing"
+      ]
+    },
+    {
+      "name": "Consent",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Einwilligung",
+        "Article 7 GDPR",
+        "Granular Consent"
+      ]
+    },
+    {
+      "name": "Legitimate Interest",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Berechtigtes Interesse",
+        "Article 6(1)(f) GDPR",
+        "LIA"
+      ]
+    },
+    {
+      "name": "DPIA",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Data Protection Impact Assessment",
+        "Datenschutz-Folgenabschätzung",
+        "Article 35 GDPR"
+      ]
+    },
+    {
+      "name": "Personal Data",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Personenbezogene Daten",
+        "PII",
+        "Personal Information"
+      ]
+    },
+    {
+      "name": "Special Category Data",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Besondere Kategorien Personenbezogener Daten",
+        "Sensitive Data",
+        "Article 9 GDPR"
+      ]
+    },
+    {
+      "name": "PII Detection",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "PII Scanning",
+        "PII Identification",
+        "Microsoft Presidio"
+      ]
+    },
+    {
+      "name": "PII Redaction",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "PII Maskierung",
+        "Data Redaction",
+        "Replace with [REDACTED]"
+      ]
+    },
+    {
+      "name": "Pseudonymization",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Pseudonymisierung",
+        "Article 4(5) GDPR",
+        "Reversible Tokenization"
+      ]
+    },
+    {
+      "name": "Anonymization",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Anonymisierung",
+        "Irreversible Removal",
+        "K-Anonymity"
+      ]
+    },
+    {
+      "name": "K-Anonymity",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "k-Anonymität",
+        "Sweeney k-Anonymity",
+        "Suppression + Generalization"
+      ]
+    },
+    {
+      "name": "L-Diversity",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "l-Diversity",
+        "Distinct l-Diversity",
+        "Sensitive Value Diversity"
+      ]
+    },
+    {
+      "name": "T-Closeness",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "t-Closeness",
+        "Distribution Distance",
+        "Earth Mover's Distance"
+      ]
+    },
+    {
+      "name": "Differential Privacy",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DP",
+        "Differentielle Privatsphäre",
+        "Epsilon Differential Privacy"
+      ]
+    },
+    {
+      "name": "Epsilon Budget",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Privacy Budget",
+        "ε-Budget",
+        "Cumulative Privacy Loss"
+      ]
+    },
+    {
+      "name": "Federated Learning",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Federated ML",
+        "Decentralized Training",
+        "FedAvg"
+      ]
+    },
+    {
+      "name": "Tokenization",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Format-preserving Tokenization",
+        "Secure Tokenization",
+        "PCI Tokenization"
+      ]
+    },
+    {
+      "name": "Homomorphic Encryption",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "FHE",
+        "Partially Homomorphic Encryption",
+        "Compute on Encrypted Data"
+      ]
+    },
+    {
+      "name": "Secure Multi-Party Computation",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MPC",
+        "SMPC",
+        "Garbled Circuits"
+      ]
+    },
+    {
+      "name": "Right to Access",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Auskunftsrecht",
+        "Article 15 GDPR",
+        "Data Subject Access Request"
+      ]
+    },
+    {
+      "name": "Right to Erasure",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Recht auf Löschung",
+        "Right to be Forgotten",
+        "Article 17 GDPR"
+      ]
+    },
+    {
+      "name": "Right to Portability",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Recht auf Datenübertragbarkeit",
+        "Article 20 GDPR",
+        "Data Export"
+      ]
+    },
+    {
+      "name": "Data Subject Access Request",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DSAR",
+        "Auskunftsanfrage",
+        "Article 15 Request"
+      ]
+    },
+    {
+      "name": "Cookie Consent",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cookie Banner",
+        "ePrivacy Cookie",
+        "TCF v2"
+      ]
+    },
+    {
+      "name": "Privacy Notice",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Datenschutzerklärung",
+        "Privacy Policy",
+        "Article 13 GDPR"
+      ]
+    },
+    {
+      "name": "Data Processor",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Auftragsverarbeiter",
+        "Article 28 GDPR Processor"
+      ]
+    },
+    {
+      "name": "Data Controller",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Verantwortlicher",
+        "GDPR Controller"
+      ]
+    },
+    {
+      "name": "Data Processing Agreement",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Auftragsverarbeitungsvertrag",
+        "DPA",
+        "AVV"
+      ]
+    },
+    {
+      "name": "International Data Transfer",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Drittlandtransfer",
+        "Schrems II",
+        "Standard Contractual Clauses",
+        "SCC"
+      ]
+    },
+    {
+      "name": "Standard Contractual Clauses",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SCCs",
+        "EU SCCs 2021",
+        "Standardvertragsklauseln"
+      ]
+    },
+    {
+      "name": "Data Retention Policy",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Aufbewahrungsfrist",
+        "TTL Privacy",
+        "Retention Schedule"
+      ]
+    },
+    {
+      "name": "Data Encryption at Rest",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Storage Encryption",
+        "Disk Encryption",
+        "TDE Transparent Data Encryption"
+      ]
+    },
+    {
+      "name": "Data Encryption in Transit",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "TLS Encryption",
+        "Transit Encryption",
+        "End-to-End Encryption"
+      ]
+    },
+    {
+      "name": "Privacy-Preserving Analytics",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Privacy-Aware Analytics",
+        "Aggregated-only Reporting"
+      ]
+    },
+    {
+      "name": "Right to Object",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Widerspruchsrecht",
+        "Article 21 GDPR",
+        "Opt-Out Right"
+      ]
+    },
+    {
+      "name": "Data Breach Notification",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Datenpannen-Meldung",
+        "72-hour Breach Notification",
+        "Article 33 GDPR"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Privacy by Design",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Data Minimization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Purpose Limitation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Storage Limitation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Lawful Basis",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "DPIA",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Right to Access",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Right to Erasure",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Right to Portability",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Right to Object",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GDPR",
+      "predicate": "DEFINES",
+      "object": "Data Breach Notification",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Privacy by Design",
+      "predicate": "RELATED_TO",
+      "object": "Privacy by Default",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Privacy by Default",
+      "predicate": "RELATED_TO",
+      "object": "Data Minimization",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Lawful Basis",
+      "predicate": "RELATED_TO",
+      "object": "Consent",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Lawful Basis",
+      "predicate": "RELATED_TO",
+      "object": "Legitimate Interest",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Special Category Data",
+      "predicate": "IS_A",
+      "object": "Personal Data",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "PII Detection",
+      "predicate": "RELATED_TO",
+      "object": "Personal Data",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "PII Redaction",
+      "predicate": "RELATED_TO",
+      "object": "PII Detection",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Pseudonymization",
+      "predicate": "RELATED_TO",
+      "object": "Anonymization",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Anonymization",
+      "predicate": "USES",
+      "object": "K-Anonymity",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "K-Anonymity",
+      "predicate": "RELATED_TO",
+      "object": "L-Diversity",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "L-Diversity",
+      "predicate": "RELATED_TO",
+      "object": "T-Closeness",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Differential Privacy",
+      "predicate": "USES",
+      "object": "Epsilon Budget",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Federated Learning",
+      "predicate": "RELATED_TO",
+      "object": "Differential Privacy",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Tokenization",
+      "predicate": "RELATED_TO",
+      "object": "Pseudonymization",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Homomorphic Encryption",
+      "predicate": "RELATED_TO",
+      "object": "Differential Privacy",
+      "confidence": 0.7,
+      "trust_score": 0.7,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Secure Multi-Party Computation",
+      "predicate": "RELATED_TO",
+      "object": "Federated Learning",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Subject Access Request",
+      "predicate": "IMPLEMENTS",
+      "object": "Right to Access",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cookie Consent",
+      "predicate": "RELATED_TO",
+      "object": "Consent",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Processing Agreement",
+      "predicate": "RELATED_TO",
+      "object": "Data Processor",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Processing Agreement",
+      "predicate": "RELATED_TO",
+      "object": "Data Controller",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "International Data Transfer",
+      "predicate": "USES",
+      "object": "Standard Contractual Clauses",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Retention Policy",
+      "predicate": "IMPLEMENTS",
+      "object": "Storage Limitation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Encryption at Rest",
+      "predicate": "RELATED_TO",
+      "object": "Symmetric Encryption",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Encryption in Transit",
+      "predicate": "RELATED_TO",
+      "object": "TLS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Privacy-Preserving Analytics",
+      "predicate": "USES",
+      "object": "Differential Privacy",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Privacy-Preserving Analytics",
+      "predicate": "USES",
+      "object": "Anonymization",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Personal Data",
+      "predicate": "RELATED_TO",
+      "object": "Sensitive Data Exposure",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "DPIA",
+      "predicate": "RELATED_TO",
+      "object": "Threat Modeling",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Privacy Notice",
+      "predicate": "RELATED_TO",
+      "object": "Consent",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "Pseudonymisierung vs. Anonymisierung — der GDPR-kritische Unterschied: Pseudonymisierte Daten bleiben personenbezogen (Schlüssel kann Zuordnung wiederherstellen), unterliegen weiterhin GDPR. Anonymisierte Daten sind irreversibel von Personen entkoppelt, fallen aus GDPR raus. K-Anonymity (k≥5) + L-Diversity ist Mindeststandard für echte Anonymisierung. Im Code-Review: 'pseudonymisiert' wird oft fälschlich als 'anonymisiert' bezeichnet, was rechtlich falsch ist.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Pseudonymization",
+        "Anonymization",
+        "K-Anonymity",
+        "L-Diversity",
+        "GDPR",
+        "Personal Data"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Right to Erasure (Article 17 GDPR) — die technische Falle: Naive User-Löschung (DELETE FROM users WHERE id=X) verletzt oft GDPR weil User-Daten denormalisiert in Logs, Backups, Analytics-Warehouses, ML-Trainingsdaten, Search-Indizes existieren. Korrekte Implementation: (1) Catalog aller Stellen wo User-Data ist (Data Lineage), (2) Soft-Delete mit deleted_at + Background-Cleanup-Jobs für derived stores, (3) Retention auch für Backups. Fristverletzung: 30 Tage.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Right to Erasure",
+        "GDPR",
+        "Data Lineage",
+        "Soft Delete",
+        "Data Retention Policy"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Differential Privacy — der Epsilon-Budget-Trade-off: ε (Epsilon) misst maximalen Privacy-Verlust pro Query. ε=0 = perfekte Privatsphäre (komplett zufällige Antwort, nutzlos), ε=∞ = keine Privatsphäre. Apple/Google nutzen ε=1-2 pro Tag pro User, akademische Standards: ε≤1. Cumulative Budget über Zeit ist wichtig — nach Budget-Verbrauch keine weiteren Queries möglich, sonst Re-Identifikation möglich.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Differential Privacy",
+        "Epsilon Budget",
+        "Privacy-Preserving Analytics",
+        "K-Anonymity"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Lawful Basis-Wahl strukturiert das ganze Privacy-Programm: Consent (Article 6(1)(a)) ist mächtig aber widerrufbar — bei Widerruf muss Verarbeitung sofort stoppen UND vergangene Daten gelöscht werden. Legitimate Interest (6(1)(f)) erfordert dokumentierte LIA (Legitimate Interest Assessment) mit Balancing-Test. Vertragserfüllung (6(1)(b)) für Kerngeschäft, Legal Obligation (6(1)(c)) für Compliance. Falsche Basis = systematischer GDPR-Verstoß.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Lawful Basis",
+        "Consent",
+        "Legitimate Interest",
+        "GDPR",
+        "Privacy Notice"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Data Minimization in der Praxis: ML-Engineering-Anti-Pattern ist 'sammle alles, entscheide später'. GDPR-konform: (1) Use-Case definieren, (2) minimal nötige Felder identifizieren, (3) NICHT-erforderliche Felder NICHT erfassen. Im Code-Review: SELECT * aus User-Tables für Analytics ist verdächtig — Spalten-Whitelist erforderlich. Auch: Aggregation auf Application-Level statt rohe PII ins Warehouse.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Data Minimization",
+        "Purpose Limitation",
+        "Personal Data",
+        "Privacy by Design"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Schrems II und International Data Transfers: Nach Schrems II (2020) sind US-Cloud-Provider problematisch wegen US-Surveillance-Laws (FISA 702, EO 12333). Pure Standard Contractual Clauses (SCCs) reichen nicht — Transfer Impact Assessment (TIA) + Supplementary Measures (Encryption mit EU-only Key Custody, Pseudonymization vor Transfer) zwingend. Technische Konsequenz: AWS/Azure/GCP EU-Regionen ohne EU-only Key-Custody sind 2026 weiterhin Compliance-Risiko.",
+      "insight_type": "synthesis",
+      "entities": [
+        "International Data Transfer",
+        "Standard Contractual Clauses",
+        "GDPR",
+        "Data Encryption at Rest",
+        "Pseudonymization"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Data Breach Notification 72-Stunden-Frist (Article 33): Bei Erkennen eines Data Breaches MUSS Aufsichtsbehörde innerhalb 72h informiert werden — auch wenn noch keine vollständigen Details vorliegen. Bei hohem Risiko für Betroffene: zusätzlich direkte Benachrichtigung. Code-Review-Implikation: Logging muss Breach-Erkennung ermöglichen (Anomalie-Detection, Access-Anomalien), Incident-Response-Runbook MUSS Breach-Notification-Prozess enthalten.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Data Breach Notification",
+        "GDPR",
+        "Postmortem",
+        "Runbook",
+        "Threat Modeling"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Federated Learning für Privacy-Preserving ML: Statt Trainingsdaten zentral zu sammeln, wird das Modell zu den Daten gebracht — Clients trainieren lokal, schicken nur Gradient-Updates. Aggregator (Server) kombiniert via FedAvg. Trotzdem nicht perfekt: Gradient-Updates können Rückschlüsse auf Training-Data erlauben (Model Inversion Attacks). Production-Setup: Federated Learning + Differential Privacy auf Updates + Secure Aggregation via MPC.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Federated Learning",
+        "Differential Privacy",
+        "Secure Multi-Party Computation",
+        "Privacy by Design"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "DPIA als Mandatory-Step: Article 35 GDPR verlangt DPIA bei high-risk Processing — Profiling, Special Category Data, Large-Scale Public Monitoring. Engineering-Dimension: DPIA muss Datenflüsse dokumentieren (Data Flow Diagram), Risiken modellieren (analog Threat Modeling), Mitigations spezifizieren. Output: Required vor Go-Live, sonst Article 36 Consultation mit Aufsichtsbehörde nötig (kostet Wochen). Im Code-Review: neue Features mit Personal Data ohne DPIA = Compliance-Risk.",
+      "insight_type": "synthesis",
+      "entities": [
+        "DPIA",
+        "GDPR",
+        "Special Category Data",
+        "Threat Modeling",
+        "Privacy by Design"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "PII Detection im Logging — der versteckte Leak: Application-Logs enthalten oft unbeabsichtigt PII (Stack-Traces mit User-Email, Request-Body-Dumps, Error-Messages). Defense: (1) Strukturiertes Logging mit definierten Feldern, (2) PII-Detection-Library wie Microsoft Presidio im Logging-Pipeline, (3) Log-Sanitizer als Middleware. Logs gelten als Personal Data und unterliegen Retention. NIE 'log everything und filtere später' — reaktiv ist GDPR-Verstoß.",
+      "insight_type": "synthesis",
+      "entities": [
+        "PII Detection",
+        "PII Redaction",
+        "Personal Data",
+        "Structured Logging",
+        "Sensitive Data Exposure"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    }
+  ],
+  "stats": {
+    "entities": 43,
+    "relations": 40,
+    "syntheses": 10,
+    "scrubbed": 0
+  }
+}

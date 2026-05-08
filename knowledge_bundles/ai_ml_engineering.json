@@ -1,0 +1,1186 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "AI/ML Engineering Patterns — RAG, Agents, Tool Use, Prompt Engineering, LLM Evaluation, Inference Optimization.",
+  "filters": {
+    "domains": [
+      "technical_support",
+      "code_reviewer"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "Retrieval Augmented Generation",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RAG",
+        "RAG Pipeline",
+        "Retrieval-augmented LLM"
+      ]
+    },
+    {
+      "name": "Hybrid Search",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "BM25 + Vector Search",
+        "Sparse + Dense Retrieval",
+        "Hybrid Retrieval"
+      ]
+    },
+    {
+      "name": "Reranking",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cross-Encoder Reranking",
+        "Reciprocal Rank Fusion",
+        "RRF",
+        "Cohere Rerank"
+      ]
+    },
+    {
+      "name": "Vector Database",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Qdrant",
+        "Weaviate",
+        "Milvus",
+        "Pinecone",
+        "ChromaDB",
+        "Vector Store"
+      ]
+    },
+    {
+      "name": "Approximate Nearest Neighbor",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ANN",
+        "HNSW",
+        "IVF",
+        "FAISS",
+        "Approximate kNN"
+      ]
+    },
+    {
+      "name": "HNSW Index",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Hierarchical Navigable Small World",
+        "HNSW Graph Index",
+        "Vector Index"
+      ]
+    },
+    {
+      "name": "Chunking Strategy",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Document Chunking",
+        "Recursive Character Split",
+        "Semantic Chunking"
+      ]
+    },
+    {
+      "name": "Semantic Chunking",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Embedding-based Chunking",
+        "Topic-aware Chunking",
+        "LLM Chunking"
+      ]
+    },
+    {
+      "name": "Embedding Model",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "sentence-transformers",
+        "OpenAI text-embedding-3",
+        "BGE-M3",
+        "Cohere Embed"
+      ]
+    },
+    {
+      "name": "Cosine Similarity",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cosine Distance",
+        "Vector Similarity Score"
+      ]
+    },
+    {
+      "name": "Prompt Template",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Prompt Engineering Template",
+        "Jinja Prompt",
+        "LangChain PromptTemplate"
+      ]
+    },
+    {
+      "name": "Few-Shot Prompting",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Few-Shot Learning",
+        "In-Context Examples",
+        "Few-Shot Demonstration"
+      ]
+    },
+    {
+      "name": "Chain-of-Thought",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "CoT Prompting",
+        "Reasoning Steps",
+        "Step-by-Step Prompting"
+      ]
+    },
+    {
+      "name": "Self-Consistency",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Self-Consistency Sampling",
+        "Majority Vote LLM",
+        "Multi-Sample Reasoning"
+      ]
+    },
+    {
+      "name": "ReAct Pattern",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Reasoning + Acting",
+        "ReAct Agent",
+        "Thought-Action-Observation Loop"
+      ]
+    },
+    {
+      "name": "Tool Use",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Function Calling",
+        "LLM Tool Use",
+        "OpenAI Tool Calls",
+        "Anthropic Tool Use"
+      ]
+    },
+    {
+      "name": "Agent Loop",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ReAct Loop",
+        "Agent Orchestration",
+        "Plan-Execute-Reflect Loop"
+      ]
+    },
+    {
+      "name": "Multi-Agent System",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MAS",
+        "Agent Swarm",
+        "Multi-Agent Orchestration",
+        "MoE Agent Collaboration"
+      ]
+    },
+    {
+      "name": "Mixture of Experts",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MoE",
+        "Sparse MoE",
+        "Expert Routing Architecture"
+      ]
+    },
+    {
+      "name": "Context Window",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Context Length",
+        "Token Window",
+        "LLM Context Limit"
+      ]
+    },
+    {
+      "name": "Context Compression",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Prompt Compression",
+        "LLMLingua",
+        "Summarization-based Compression"
+      ]
+    },
+    {
+      "name": "Sliding Window Context",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Conversation Buffer Window",
+        "Last-N Messages",
+        "Token Budget Window"
+      ]
+    },
+    {
+      "name": "Hallucination",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LLM Halluzination",
+        "Confabulation",
+        "Faithfulness Issue"
+      ]
+    },
+    {
+      "name": "Grounding",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Source Grounding",
+        "Citation Generation",
+        "Reference-anchored Output"
+      ]
+    },
+    {
+      "name": "LLM Evaluation",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LLM-as-Judge",
+        "G-Eval",
+        "RAGAS",
+        "TruLens"
+      ]
+    },
+    {
+      "name": "Faithfulness Score",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Answer Faithfulness",
+        "Grounding Score",
+        "RAGAS Faithfulness"
+      ]
+    },
+    {
+      "name": "Answer Relevance",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Query Relevance Score",
+        "RAGAS Answer Relevance"
+      ]
+    },
+    {
+      "name": "Context Precision",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Retrieval Precision",
+        "RAGAS Context Precision"
+      ]
+    },
+    {
+      "name": "Prompt Injection",
+      "type": "Security",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Prompt Injection Attack",
+        "Indirect Prompt Injection",
+        "LLM Jailbreak"
+      ]
+    },
+    {
+      "name": "Jailbreak",
+      "type": "Security",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LLM Jailbreak",
+        "DAN Prompt",
+        "Safety Bypass"
+      ]
+    },
+    {
+      "name": "Output Parser",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LLM Output Parser",
+        "Structured Output",
+        "JSON Mode",
+        "Pydantic Output Parser"
+      ]
+    },
+    {
+      "name": "Constrained Decoding",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "JSON Schema Decoding",
+        "Outlines",
+        "Guidance",
+        "Grammar-constrained Generation"
+      ]
+    },
+    {
+      "name": "Token Streaming",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SSE Streaming LLM",
+        "Stream Tokens",
+        "Server-Sent Events LLM"
+      ]
+    },
+    {
+      "name": "Quantization",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "INT8 Quantization",
+        "INT4 Quantization",
+        "GPTQ",
+        "AWQ",
+        "GGUF"
+      ]
+    },
+    {
+      "name": "LoRA",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Low-Rank Adaptation",
+        "Parameter-efficient Fine-Tuning",
+        "PEFT"
+      ]
+    },
+    {
+      "name": "Distillation",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Knowledge Distillation",
+        "Teacher-Student Model",
+        "Model Compression"
+      ]
+    },
+    {
+      "name": "Speculative Decoding",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Draft Model + Verifier",
+        "Speculative Sampling",
+        "Inference Acceleration"
+      ]
+    },
+    {
+      "name": "KV Cache",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Key-Value Cache",
+        "Attention Cache",
+        "Inference KV Cache"
+      ]
+    },
+    {
+      "name": "Prompt Caching",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Anthropic Prompt Caching",
+        "Prefix Cache",
+        "Cached System Prompt"
+      ]
+    },
+    {
+      "name": "Embedding Cache",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Vector Cache",
+        "Embedding Memoization",
+        "Cached Embeddings"
+      ]
+    },
+    {
+      "name": "Self-Reflection",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Reflexion Pattern",
+        "Self-Critique",
+        "Iterative Refinement"
+      ]
+    },
+    {
+      "name": "Plan-and-Execute",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Planner-Executor Pattern",
+        "LLM Planner Agent",
+        "Hierarchical Agent"
+      ]
+    },
+    {
+      "name": "Sub-Agent Delegation",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Agent-as-Tool",
+        "Hierarchical Agents",
+        "Sub-Agent Spawning"
+      ]
+    },
+    {
+      "name": "Guardrails",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LLM Guardrails",
+        "NeMo Guardrails",
+        "Output Filter",
+        "Input Validator LLM"
+      ]
+    },
+    {
+      "name": "Red Teaming",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LLM Red Team",
+        "Adversarial Testing LLM",
+        "Safety Testing"
+      ]
+    },
+    {
+      "name": "Embedding Drift",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Vector Drift",
+        "Embedding Model Version Drift"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "Retrieval Augmented Generation",
+      "predicate": "USES",
+      "object": "Vector Database",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Retrieval Augmented Generation",
+      "predicate": "USES",
+      "object": "Embedding Model",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Retrieval Augmented Generation",
+      "predicate": "USES",
+      "object": "Chunking Strategy",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Retrieval Augmented Generation",
+      "predicate": "RELATED_TO",
+      "object": "Hallucination",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hybrid Search",
+      "predicate": "EXTENDS",
+      "object": "Retrieval Augmented Generation",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hybrid Search",
+      "predicate": "USES",
+      "object": "Vector Database",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Reranking",
+      "predicate": "RELATED_TO",
+      "object": "Hybrid Search",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Vector Database",
+      "predicate": "USES",
+      "object": "HNSW Index",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Vector Database",
+      "predicate": "USES",
+      "object": "Approximate Nearest Neighbor",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "HNSW Index",
+      "predicate": "IS_A",
+      "object": "Approximate Nearest Neighbor",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Chunking Strategy",
+      "predicate": "RELATED_TO",
+      "object": "Context Window",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Semantic Chunking",
+      "predicate": "EXTENDS",
+      "object": "Chunking Strategy",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Embedding Model",
+      "predicate": "USES",
+      "object": "Cosine Similarity",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Few-Shot Prompting",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Chain-of-Thought",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Chain-of-Thought",
+      "predicate": "RELATED_TO",
+      "object": "Self-Consistency",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Self-Consistency",
+      "predicate": "EXTENDS",
+      "object": "Chain-of-Thought",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ReAct Pattern",
+      "predicate": "USES",
+      "object": "Tool Use",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ReAct Pattern",
+      "predicate": "USES",
+      "object": "Chain-of-Thought",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Agent Loop",
+      "predicate": "USES",
+      "object": "ReAct Pattern",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Agent Loop",
+      "predicate": "USES",
+      "object": "Tool Use",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Multi-Agent System",
+      "predicate": "USES",
+      "object": "Agent Loop",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Multi-Agent System",
+      "predicate": "USES",
+      "object": "Sub-Agent Delegation",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Mixture of Experts",
+      "predicate": "RELATED_TO",
+      "object": "Multi-Agent System",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Plan-and-Execute",
+      "predicate": "EXTENDS",
+      "object": "Agent Loop",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Sub-Agent Delegation",
+      "predicate": "RELATED_TO",
+      "object": "Plan-and-Execute",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Self-Reflection",
+      "predicate": "RELATED_TO",
+      "object": "Chain-of-Thought",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Context Compression",
+      "predicate": "RELATED_TO",
+      "object": "Context Window",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Sliding Window Context",
+      "predicate": "RELATED_TO",
+      "object": "Context Window",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hallucination",
+      "predicate": "RELATED_TO",
+      "object": "Grounding",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Grounding",
+      "predicate": "RELATED_TO",
+      "object": "Retrieval Augmented Generation",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Grounding",
+      "predicate": "RELATED_TO",
+      "object": "Faithfulness Score",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LLM Evaluation",
+      "predicate": "USES",
+      "object": "Faithfulness Score",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LLM Evaluation",
+      "predicate": "USES",
+      "object": "Answer Relevance",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LLM Evaluation",
+      "predicate": "USES",
+      "object": "Context Precision",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Prompt Injection",
+      "predicate": "IS_A",
+      "object": "Security",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Jailbreak",
+      "predicate": "IS_A",
+      "object": "Security",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Prompt Injection",
+      "predicate": "RELATED_TO",
+      "object": "Jailbreak",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Guardrails",
+      "predicate": "RELATED_TO",
+      "object": "Prompt Injection",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Red Teaming",
+      "predicate": "RELATED_TO",
+      "object": "Jailbreak",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Output Parser",
+      "predicate": "RELATED_TO",
+      "object": "Constrained Decoding",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Constrained Decoding",
+      "predicate": "RELATED_TO",
+      "object": "Hallucination",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Token Streaming",
+      "predicate": "RELATED_TO",
+      "object": "Server-Sent Events",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Quantization",
+      "predicate": "RELATED_TO",
+      "object": "Distillation",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LoRA",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LoRA",
+      "predicate": "RELATED_TO",
+      "object": "Distillation",
+      "confidence": 0.7,
+      "trust_score": 0.7,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Speculative Decoding",
+      "predicate": "USES",
+      "object": "KV Cache",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Prompt Caching",
+      "predicate": "RELATED_TO",
+      "object": "KV Cache",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Embedding Cache",
+      "predicate": "RELATED_TO",
+      "object": "Vector Database",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Embedding Drift",
+      "predicate": "RELATED_TO",
+      "object": "Embedding Model",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Tool Use",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Faithfulness Score",
+      "predicate": "IS_A",
+      "object": "Tech_Concept",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "RAG-Pipeline kanonische Architektur: Document → Chunking → Embedding → Vector DB → Query → Hybrid Retrieval (BM25 + Cosine) → Reranking (Cross-Encoder) → Context Assembly → LLM mit Grounding-Anweisung. Häufigster Fehler: kein Reranking — Top-20 Retrieval-Treffer haben bei reiner Embedding-Distanz ~30% Precision, mit Cross-Encoder-Rerank steigt sie auf ~70%.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Retrieval Augmented Generation",
+        "Hybrid Search",
+        "Reranking",
+        "Vector Database",
+        "Chunking Strategy"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Chunking-Strategy bestimmt RAG-Qualität: Fixed-Size-Chunking (z.B. 512 Tokens) bricht oft mid-sentence — Semantic Chunking (Embedding-distance basiert) oder strukturelles Chunking (Markdown-Header) ist überlegen. Faustregel: Chunk-Size = 25-50% der Embedding-Model-Max-Tokens, Overlap = 10-20%. Zu klein → fehlender Kontext, zu groß → diluted Embeddings.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Chunking Strategy",
+        "Semantic Chunking",
+        "Embedding Model",
+        "Context Window"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Hallucination-Mitigation in RAG: (1) Grounding-Prompt — 'Nutze NUR die bereitgestellten Quellen, sage \"weiß ich nicht\" wenn nicht enthalten'. (2) Faithfulness-Score über LLM-as-Judge. (3) Citation-Generation mit Quelle pro Statement. (4) Constrained Decoding wenn Output strukturiert sein muss. Kombination > Einzelmaßnahme — keine Maßnahme allein eliminiert Halluzinationen.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Hallucination",
+        "Grounding",
+        "Faithfulness Score",
+        "Constrained Decoding",
+        "LLM Evaluation"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Prompt Injection als unterschätzter Angriff: Indirect Prompt Injection ist gefährlicher als direkter Jailbreak — bösartige Anweisungen in retrieved Documents, Webseiten oder Tool-Outputs werden vom LLM als legitime Instruktionen behandelt. Defense: Trust-Boundaries zwischen System-Prompt und User/Document-Content, separate Modelle für Klassifikation vs. Ausführung, Output-Filter (Guardrails).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Prompt Injection",
+        "Jailbreak",
+        "Guardrails",
+        "Defense in Depth",
+        "Red Teaming"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Agent Loop Anti-Patterns: (1) Unbegrenzte Iteration ohne Termination-Condition → Endlosschleifen. (2) Tool-Errors werden ignoriert → Agent sieht Fehler nicht und wiederholt. (3) Context grows linear — nach 10 Iterationen ist Context voll, Agent vergisst Anfang. Fix: Max-Iterations-Limit, Error-Surface-Anchor im Prompt, Sliding-Window oder Summarization für lange Loops.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Agent Loop",
+        "ReAct Pattern",
+        "Tool Use",
+        "Sliding Window Context",
+        "Self-Reflection"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "LLM-as-Judge für Eval-Pipelines: Wenn ein Modell A's Output von Modell B bewertet wird, müssen Bias-Effekte beachtet werden — Modelle bevorzugen ihre eigenen Ausgaben (Self-Preference), längere Antworten (Length-Bias) und Antworten in Position 1 (Position-Bias). Mitigation: Pairwise Comparison statt Score, Random-Order, Multiple-Judge-Ensemble, anonymisierte Outputs (Modell-Identität entfernen).",
+      "insight_type": "synthesis",
+      "entities": [
+        "LLM Evaluation",
+        "Faithfulness Score",
+        "Answer Relevance",
+        "Context Precision"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Prompt Caching Geld-Effekt (Anthropic): System-Prompts mit RAG-Context werden bei Anthropic mit cache_control-Marker bis zu 90% billiger und schneller. Voraussetzung: Cache-Prefix > 1024 Tokens, identischer Prefix über Requests. Strategie: Static Sections (System-Prompt, Tool-Definitions, RAG-Context) als gecachten Prefix, dynamische Variations (User-Query) am Ende. Cache-TTL: 5 Minuten — bei längeren Pausen Cache-Miss.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Prompt Caching",
+        "KV Cache",
+        "Context Window",
+        "Token Streaming"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Speculative Decoding Mathematik: Draft-Modell (klein, schnell) generiert N Tokens, Target-Modell (groß, akkurat) verifiziert sie parallel in einem Forward-Pass. Bei Acceptance-Rate r ist Speedup ≈ (1+r·N)/(1+α·N) wo α das Kosten-Ratio ist. Praktische Speedups: 2-3x ohne Qualitätsverlust, da Verifizierung Ausgabeverteilung garantiert identisch hält.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Speculative Decoding",
+        "KV Cache",
+        "Quantization",
+        "Distillation"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Constrained Decoding für JSON-Output: Bei strukturiertem Output (JSON, SQL, Code) reduziert grammatik-basierte Generierung (Outlines, Guidance, Anthropic Tool Use) die Halluzinations-Rate auf nahe Null für Schema-Konformität. Trade-off: leichter Qualitätsverlust in semantischer Korrektheit, weil Modell gezwungen wird, valide Tokens zu wählen — manchmal entstehen syntaktisch-korrekte aber inhaltlich-unsinnige Outputs.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Constrained Decoding",
+        "Output Parser",
+        "Hallucination",
+        "Tool Use"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Embedding Drift als Vector-DB-Falle: Wenn ein Embedding-Modell upgrade/wechselt (text-embedding-ada-002 → text-embedding-3-small), sind alte und neue Vektoren NICHT kompatibel. Lösung: Versionierter Index mit blue-green Migration — neuer Index wird parallel befüllt, dann Cutover. NIEMALS gemischte Vektoren in einem Index — Cosine-Similarity wird semantisch wertlos.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Embedding Drift",
+        "Embedding Model",
+        "Vector Database",
+        "Blue-Green Deployment"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    }
+  ],
+  "stats": {
+    "entities": 46,
+    "relations": 52,
+    "syntheses": 10,
+    "scrubbed": 0
+  }
+}

@@ -1,0 +1,681 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "WebAssembly Patterns — Wasm core, WASI Preview 2, Component Model, WIT, sandboxing, edge functions, language toolchains.",
+  "filters": {
+    "domains": [
+      "code_reviewer",
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "WebAssembly",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "WASM",
+        "Wasm Bytecode",
+        "Portable Binary Format"
+      ]
+    },
+    {
+      "name": "WAT",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "WebAssembly Text Format",
+        "Wasm Text Representation",
+        "S-Expression Format"
+      ]
+    },
+    {
+      "name": "WASI",
+      "type": "Protocol",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WebAssembly System Interface",
+        "WASI Preview 1",
+        "WASI Preview 2"
+      ]
+    },
+    {
+      "name": "WASI Preview 2",
+      "type": "Protocol",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WASI 0.2",
+        "Component Model WASI"
+      ]
+    },
+    {
+      "name": "WASM Component Model",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Component Model",
+        "WIT Interface Types",
+        "Wasm Components"
+      ]
+    },
+    {
+      "name": "WIT",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WebAssembly Interface Type",
+        "WIT Interface Definition"
+      ]
+    },
+    {
+      "name": "WASM Module",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm Module",
+        ".wasm Binary",
+        "Compiled Wasm Unit"
+      ]
+    },
+    {
+      "name": "WASM Memory",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Linear Memory",
+        "Wasm Linear Memory",
+        "WebAssembly.Memory"
+      ]
+    },
+    {
+      "name": "WASM Table",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm Function Table",
+        "Indirect Call Table"
+      ]
+    },
+    {
+      "name": "Wasmtime",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasmtime Runtime",
+        "Bytecode Alliance Wasmtime"
+      ]
+    },
+    {
+      "name": "Wasmer",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasmer Runtime",
+        "Wasmer Edge Runtime"
+      ]
+    },
+    {
+      "name": "WAMR",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WebAssembly Micro Runtime",
+        "Embedded Wasm Runtime"
+      ]
+    },
+    {
+      "name": "Browser Wasm",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "WebAssembly in Browser",
+        "V8 Wasm",
+        "SpiderMonkey Wasm"
+      ]
+    },
+    {
+      "name": "Wasm Edge Function",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cloudflare Wasm Workers",
+        "Fastly Compute@Edge",
+        "Wasm at the Edge"
+      ]
+    },
+    {
+      "name": "AssemblyScript",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "TypeScript-like Wasm",
+        "AS Compiler"
+      ]
+    },
+    {
+      "name": "Emscripten",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "C/C++ to Wasm Compiler",
+        "LLVM Wasm Backend"
+      ]
+    },
+    {
+      "name": "Rust Wasm",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "wasm-bindgen",
+        "wasm-pack",
+        "wasm32-unknown-unknown"
+      ]
+    },
+    {
+      "name": "Go Wasm",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "TinyGo Wasm",
+        "Go GOOS=js"
+      ]
+    },
+    {
+      "name": "WASM Sandbox",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm Capability-Based Security",
+        "Wasm Isolation",
+        "Sandboxed Execution"
+      ]
+    },
+    {
+      "name": "Capability-based Security",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Capability Security",
+        "Object-Capability Model",
+        "WASI Capabilities"
+      ]
+    },
+    {
+      "name": "WASM SIMD",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm SIMD128",
+        "Vector Instructions Wasm"
+      ]
+    },
+    {
+      "name": "WASM Threads",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm Multi-threading",
+        "SharedArrayBuffer Wasm",
+        "Atomics Wasm"
+      ]
+    },
+    {
+      "name": "WASM GC",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm GC Proposal",
+        "Garbage-Collected Wasm Types"
+      ]
+    },
+    {
+      "name": "WASM Tail Call",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wasm Tail Call Proposal",
+        "return_call Instruction"
+      ]
+    },
+    {
+      "name": "Spin",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Fermyon Spin",
+        "Wasm Microservices Framework"
+      ]
+    },
+    {
+      "name": "Wasm Workers Server",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "wws",
+        "Suborbital Wasm Workers"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "WAT",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASI",
+      "predicate": "EXTENDS",
+      "object": "WebAssembly",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WASI Preview 2",
+      "predicate": "EXTENDS",
+      "object": "WASI",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WASM Component Model",
+      "predicate": "USES",
+      "object": "WIT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WASM Component Model",
+      "predicate": "USES",
+      "object": "WASI Preview 2",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WASM Module",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM Memory",
+      "predicate": "RELATED_TO",
+      "object": "WASM Module",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM Table",
+      "predicate": "RELATED_TO",
+      "object": "WASM Module",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Wasmtime",
+      "predicate": "USES",
+      "object": "WASI",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Wasmer",
+      "predicate": "USES",
+      "object": "WASI",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WAMR",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WAMR",
+      "predicate": "RELATED_TO",
+      "object": "Embedded RTOS",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Browser Wasm",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Wasm Edge Function",
+      "predicate": "USES",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Wasm Edge Function",
+      "predicate": "RELATED_TO",
+      "object": "Edge Computing",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "AssemblyScript",
+      "predicate": "RELATED_TO",
+      "object": "TypeScript",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "AssemblyScript",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Emscripten",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Rust Wasm",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Go Wasm",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM Sandbox",
+      "predicate": "USES",
+      "object": "Capability-based Security",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Capability-based Security",
+      "predicate": "RELATED_TO",
+      "object": "Principle of Least Privilege",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WASM Sandbox",
+      "predicate": "RELATED_TO",
+      "object": "Zero Trust",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WASM SIMD",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM Threads",
+      "predicate": "RELATED_TO",
+      "object": "WebAssembly",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM Threads",
+      "predicate": "RELATED_TO",
+      "object": "Race Condition",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM GC",
+      "predicate": "RELATED_TO",
+      "object": "Garbage Collection",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WASM Tail Call",
+      "predicate": "RELATED_TO",
+      "object": "Tail Call Optimization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Spin",
+      "predicate": "USES",
+      "object": "WASI",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Spin",
+      "predicate": "USES",
+      "object": "WASM Component Model",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Wasm Workers Server",
+      "predicate": "USES",
+      "object": "WebAssembly",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "WASI Preview 1 vs Preview 2 — der Component-Model-Cut: Preview 1 (2019) bot POSIX-ähnliche I/O über Capabilities. Preview 2 (2024) führt Component Model + WIT (Interface Types) ein — erlaubt Cross-Language-Components: Rust-Component kann TypeScript-Component konsumieren ohne ABI-Glue. Adoption-Status 2026: Preview 2 ist Standard für neue Projekte, Preview 1 noch in Edge-Runtimes. Migration erfordert Komponentisierung.",
+      "insight_type": "synthesis",
+      "entities": [
+        "WASI",
+        "WASI Preview 2",
+        "WASM Component Model",
+        "WIT"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "WebAssembly als Sandbox-Choice für Plugins: Klassische Plugin-Architekturen (.so, .dll, JavaScript Eval) geben Plugins volle Host-Rechte — Security-Albtraum. Wasm gibt Plugins NUR explizit deklarierte Capabilities (File-System nur über WASI fd_*-Interface mit Whitelist). Microsoft (Word Online), Figma (Plugins), Shopify (Functions) nutzen Wasm als Plugin-Sandbox. Cold-Start <1ms via Wasmtime — schneller als Container.",
+      "insight_type": "synthesis",
+      "entities": [
+        "WebAssembly",
+        "WASM Sandbox",
+        "Capability-based Security",
+        "Cold Start"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Wasm vs Container — die Performance-Story: Container Cold-Start: 100ms-2s. Wasm Cold-Start: 0.1-1ms (Wasmtime). Memory: Wasm-Module 50KB-5MB, Container 50MB-500MB. Concurrency: 10000 Wasm-Instanzen pro Host vs 100 Container. Use-Case-Match: Wasm gewinnt bei hoher Concurrency / kurzer Laufzeit (Edge Functions, Plugins). Container gewinnt bei langlaufenden Services mit komplexem Stack.",
+      "insight_type": "synthesis",
+      "entities": [
+        "WebAssembly",
+        "Wasm Edge Function",
+        "Cold Start",
+        "Edge Computing",
+        "Serverless Architecture"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Rust + Wasm als Production-Combo: Rust kompiliert nativ zu wasm32-unknown-unknown ohne Runtime-Overhead (im Gegensatz zu JavaScript/Python die VM mitbringen). wasm-bindgen generiert JS-Bindings für Browser-Use, wasm-pack publisht zu npm. Wasm-Bundles oft <100KB. Im Browser: 2-5x schneller als JS für rechenintensive Tasks (Image-Processing, Crypto, ML-Inference). Cloudflare Workers, Fastly nutzen das.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Rust Wasm",
+        "WebAssembly",
+        "Browser Wasm",
+        "Wasm Edge Function"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "WASM Linear Memory als Security-Aspekt: Wasm-Module hat einen einzigen Memory-Buffer (Linear Memory) mit definierter Größe. Out-of-bounds Access wird vom Runtime gefangen (Trap), nicht zum Host-Crash. ABER: Innerhalb der Linear Memory ist KEIN Memory-Safety — C-Code mit Pointer-Arithmetik kann Module-internen Heap korrumpieren. Für trusted Code (Rust, AssemblyScript) ist das OK, für untrusted C-Code zusätzliche Sandboxing-Strategien nötig.",
+      "insight_type": "synthesis",
+      "entities": [
+        "WASM Memory",
+        "WebAssembly",
+        "WASM Sandbox",
+        "Buffer Overflow"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Component Model als Microservice-Alternative: WIT-Interfaces definieren typed Interfaces zwischen Components — wie gRPC, aber In-Process statt Network. Komposition: Component A imports Logger-Interface, Component B exports Logger-Interface, Linker verdrahtet sie. Vorteil: keine Network-Hops, bessere Performance, gleiche Modularität wie Microservices. Spin (Fermyon) und wasmCloud bauen darauf.",
+      "insight_type": "synthesis",
+      "entities": [
+        "WASM Component Model",
+        "WIT",
+        "Spin",
+        "Microservices",
+        "Sidecar Pattern"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    }
+  ],
+  "stats": {
+    "entities": 26,
+    "relations": 31,
+    "syntheses": 6,
+    "scrubbed": 0
+  }
+}

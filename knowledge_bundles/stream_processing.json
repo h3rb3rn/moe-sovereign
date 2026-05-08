@@ -1,0 +1,982 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Stream Processing Patterns — Flink, Kafka Streams, Watermarks, Windowing, Late Data, Exactly-Once, State Management.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "Stream Processing",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Streaming Architecture",
+        "Real-time Data Processing"
+      ]
+    },
+    {
+      "name": "Apache Flink",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Flink",
+        "Stream Processor",
+        "Stateful Stream Processing"
+      ]
+    },
+    {
+      "name": "Kafka Streams",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Streams API",
+        "KStream",
+        "KTable"
+      ]
+    },
+    {
+      "name": "Apache Spark Streaming",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Structured Streaming",
+        "Spark Streaming",
+        "Micro-Batch Streaming"
+      ]
+    },
+    {
+      "name": "Apache Beam",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Beam SDK",
+        "Unified Batch+Stream API",
+        "Dataflow Model"
+      ]
+    },
+    {
+      "name": "Tumbling Window",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Fixed Window",
+        "Non-overlapping Window",
+        "Tumbling Time Window"
+      ]
+    },
+    {
+      "name": "Sliding Window",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Hopping Window",
+        "Sliding Time Window",
+        "Overlapping Window"
+      ]
+    },
+    {
+      "name": "Session Window",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Sitzungsfenster",
+        "Activity-based Window",
+        "Gap-based Window"
+      ]
+    },
+    {
+      "name": "Global Window",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Single Window",
+        "Unbounded Window",
+        "Custom Trigger Window"
+      ]
+    },
+    {
+      "name": "Event Time",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Event Timestamp",
+        "Producer Time",
+        "Origin Time"
+      ]
+    },
+    {
+      "name": "Processing Time",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wall-Clock Time",
+        "Ingestion Time",
+        "Operator Time"
+      ]
+    },
+    {
+      "name": "Stream Watermark",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Watermark",
+        "Progress Marker Stream",
+        "Lateness Boundary"
+      ]
+    },
+    {
+      "name": "Late Data",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Spätdaten",
+        "Out-of-Order Events",
+        "Delayed Records"
+      ]
+    },
+    {
+      "name": "Allowed Lateness",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Late Data Tolerance",
+        "Lateness Buffer",
+        "Window Lateness"
+      ]
+    },
+    {
+      "name": "Side Output",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Late Data Side Output",
+        "Tagged Output",
+        "Multi-output Operator"
+      ]
+    },
+    {
+      "name": "Trigger",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Window Trigger",
+        "Firing Trigger",
+        "Output Trigger"
+      ]
+    },
+    {
+      "name": "Checkpoint",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Flink Checkpoint",
+        "State Snapshot",
+        "Distributed Checkpoint"
+      ]
+    },
+    {
+      "name": "Savepoint",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Flink Savepoint",
+        "Manual State Snapshot",
+        "Migration Savepoint"
+      ]
+    },
+    {
+      "name": "Exactly-Once Semantics",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "EOS",
+        "Exactly-once Delivery",
+        "Effectively Once"
+      ]
+    },
+    {
+      "name": "At-Least-Once Semantics",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ALO",
+        "At Least Once Delivery",
+        "Duplicate-Risk Semantics"
+      ]
+    },
+    {
+      "name": "At-Most-Once Semantics",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "AMO",
+        "Best-Effort Delivery",
+        "Loss-Risk Semantics"
+      ]
+    },
+    {
+      "name": "State Backend",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RocksDB Backend",
+        "MemoryStateBackend",
+        "FsStateBackend"
+      ]
+    },
+    {
+      "name": "Keyed State",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Per-Key State",
+        "Partitioned State"
+      ]
+    },
+    {
+      "name": "Operator State",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Non-keyed State",
+        "List State",
+        "Broadcast State"
+      ]
+    },
+    {
+      "name": "Broadcast State",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Broadcast Pattern",
+        "Replicated State Across Operators"
+      ]
+    },
+    {
+      "name": "Stream Join",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Window Join",
+        "Interval Join",
+        "Stream-Stream Join"
+      ]
+    },
+    {
+      "name": "Stream-Table Duality",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Streams Duality",
+        "Stream is Changelog of Table",
+        "Table is Snapshot of Stream"
+      ]
+    },
+    {
+      "name": "KTable",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Streams KTable",
+        "Materialized Stream",
+        "Changelog Table"
+      ]
+    },
+    {
+      "name": "KStream",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Streams Stream",
+        "Append-only Record Stream"
+      ]
+    },
+    {
+      "name": "Stateful Stream",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Stateful Operator",
+        "Aggregating Stream"
+      ]
+    },
+    {
+      "name": "Stateless Stream",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Stateless Operator",
+        "Map/Filter/FlatMap"
+      ]
+    },
+    {
+      "name": "Backpressure Stream",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Stream Backpressure",
+        "Flink Backpressure",
+        "Reactive Pull"
+      ]
+    },
+    {
+      "name": "Watermark Strategy",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Bounded Out-of-Orderness",
+        "Punctuated Watermark",
+        "Periodic Watermark"
+      ]
+    },
+    {
+      "name": "Idempotent Producer",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Idempotent Producer",
+        "enable.idempotence=true"
+      ]
+    },
+    {
+      "name": "Transactional Producer",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Transactional",
+        "transactional.id",
+        "Atomic Multi-Partition Write"
+      ]
+    },
+    {
+      "name": "Compacted Topic",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kafka Log Compaction",
+        "Key-based Retention",
+        "Latest-Value-per-Key Topic"
+      ]
+    },
+    {
+      "name": "Schema Evolution Stream",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Forward Compatibility",
+        "Backward Compatibility",
+        "Full Compatibility"
+      ]
+    },
+    {
+      "name": "Dead Letter Topic",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DLT",
+        "Kafka DLQ Topic",
+        "Poison Pill Handling"
+      ]
+    },
+    {
+      "name": "Materialize",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Materialize.io",
+        "Streaming SQL DB",
+        "Differential Dataflow"
+      ]
+    },
+    {
+      "name": "Apache Pulsar",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Pulsar",
+        "Tiered Storage Streaming",
+        "Multi-Tenancy Streaming"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "Stream Processing",
+      "predicate": "USES",
+      "object": "Apache Flink",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream Processing",
+      "predicate": "USES",
+      "object": "Kafka Streams",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream Processing",
+      "predicate": "USES",
+      "object": "Apache Spark Streaming",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Beam",
+      "predicate": "RELATED_TO",
+      "object": "Apache Flink",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Beam",
+      "predicate": "RELATED_TO",
+      "object": "Apache Spark Streaming",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Tumbling Window",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Sliding Window",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Session Window",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Global Window",
+      "predicate": "IS_A",
+      "object": "Pattern",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Sliding Window",
+      "predicate": "RELATED_TO",
+      "object": "Tumbling Window",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream Watermark",
+      "predicate": "RELATED_TO",
+      "object": "Late Data",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream Watermark",
+      "predicate": "RELATED_TO",
+      "object": "Event Time",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Allowed Lateness",
+      "predicate": "RELATED_TO",
+      "object": "Late Data",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Side Output",
+      "predicate": "RELATED_TO",
+      "object": "Late Data",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Trigger",
+      "predicate": "RELATED_TO",
+      "object": "Tumbling Window",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Trigger",
+      "predicate": "RELATED_TO",
+      "object": "Sliding Window",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Checkpoint",
+      "predicate": "RELATED_TO",
+      "object": "Apache Flink",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Savepoint",
+      "predicate": "EXTENDS",
+      "object": "Checkpoint",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Exactly-Once Semantics",
+      "predicate": "RELATED_TO",
+      "object": "Idempotent Producer",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Exactly-Once Semantics",
+      "predicate": "RELATED_TO",
+      "object": "Transactional Producer",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Exactly-Once Semantics",
+      "predicate": "RELATED_TO",
+      "object": "Checkpoint",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "At-Least-Once Semantics",
+      "predicate": "RELATED_TO",
+      "object": "Retry Pattern",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "State Backend",
+      "predicate": "RELATED_TO",
+      "object": "Apache Flink",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "State Backend",
+      "predicate": "RELATED_TO",
+      "object": "Checkpoint",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Keyed State",
+      "predicate": "RELATED_TO",
+      "object": "Stateful Stream",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Operator State",
+      "predicate": "RELATED_TO",
+      "object": "Stateful Stream",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Broadcast State",
+      "predicate": "IS_A",
+      "object": "Operator State",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream-Table Duality",
+      "predicate": "RELATED_TO",
+      "object": "KTable",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream-Table Duality",
+      "predicate": "RELATED_TO",
+      "object": "KStream",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "KTable",
+      "predicate": "RELATED_TO",
+      "object": "Compacted Topic",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Stream Join",
+      "predicate": "USES",
+      "object": "Sliding Window",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Backpressure Stream",
+      "predicate": "IS_A",
+      "object": "Backpressure",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Watermark Strategy",
+      "predicate": "RELATED_TO",
+      "object": "Stream Watermark",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Idempotent Producer",
+      "predicate": "RELATED_TO",
+      "object": "Kafka Producer Config",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Transactional Producer",
+      "predicate": "EXTENDS",
+      "object": "Idempotent Producer",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Compacted Topic",
+      "predicate": "RELATED_TO",
+      "object": "KTable",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Compacted Topic",
+      "predicate": "RELATED_TO",
+      "object": "Apache Kafka",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Schema Evolution Stream",
+      "predicate": "RELATED_TO",
+      "object": "Schema Registry",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Dead Letter Topic",
+      "predicate": "RELATED_TO",
+      "object": "Dead Letter Queue",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Materialize",
+      "predicate": "RELATED_TO",
+      "object": "Streaming SQL",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Pulsar",
+      "predicate": "RELATED_TO",
+      "object": "Apache Kafka",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "Event Time vs Processing Time — der wichtigste Unterschied: Event Time ist der Zeitstempel im Event-Producer (z.B. Sensor erzeugt Reading um 10:00:00). Processing Time ist wann der Stream-Operator das Event sieht (z.B. 10:00:05 wegen Network-Lag). Korrekte Aggregation MUSS Event Time verwenden — sonst kommt Late Data falsch ins falsche Window. Watermark-Strategy ist die Mechanik, mit der das Framework Event Time tracked.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Event Time",
+        "Processing Time",
+        "Stream Watermark",
+        "Late Data",
+        "Watermark Strategy"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Window-Typen-Wahl: Tumbling (5min nicht-überlappend) für aggregierte Reports — minutely revenue. Sliding (5min Window, 1min Slide) für rollierende Metriken — moving averages. Session (gap=30min Inaktivität) für User-Behavior — Web-Sessions. Global mit Custom Trigger für komplexe State Machines. Faustregel: Tumbling 90%, Sliding wenn Glättung nötig, Session wenn User-Aktivitäts-basiert.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Tumbling Window",
+        "Sliding Window",
+        "Session Window",
+        "Global Window",
+        "Trigger"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Late Data Strategien: (1) Drop — einfach aber datenarmer. (2) Update — Window neu berechnen wenn Late Data eintrifft, kostet State. (3) Side Output — Late Data in separaten Stream für späteres Reconciliation. Allowed Lateness definiert wie lange ein Window nach Watermark noch akzeptiert. Standard für E-Commerce: Allowed Lateness 1h + Side Output für Datenqualitäts-Monitoring.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Late Data",
+        "Allowed Lateness",
+        "Side Output",
+        "Stream Watermark",
+        "Watermark Strategy"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Exactly-Once Semantics ist nicht magisch — es ist Effectively-Once: Side-Effects (DB-Writes, External-API-Calls) müssen idempotent sein, sonst kann nichts EOS garantieren. Flink+Kafka EOS funktioniert weil Kafka Transactional Producer + Flink Two-Phase-Commit Sink Atomicity sicherstellen. Bei nicht-transaktionalen Sinks (REST-API): Idempotency Keys auf Application-Level zwingend.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Exactly-Once Semantics",
+        "Idempotent Producer",
+        "Transactional Producer",
+        "Idempotency Key",
+        "Two-Phase Commit"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Stream-Table Duality (Jay Kreps): A Stream IS the changelog of a table, a Table IS a snapshot of a stream. Praktische Implikation in Kafka Streams: KStream = jeder Record ist ein Event (Append-only). KTable = letzter Wert pro Key überlebt (Compacted). KTable backing Topic muss compacted sein, sonst gehen Updates verloren bei Restart.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Stream-Table Duality",
+        "KStream",
+        "KTable",
+        "Compacted Topic",
+        "Event Sourcing"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Checkpoint vs Savepoint: Checkpoint = automatic, regular (alle 30s typisch), gelöscht bei Job-Abschluss. Savepoint = manual triggered, erhalten, für Migrations/Upgrades. Job-Upgrade-Workflow: Savepoint nehmen → alten Job stoppen → neuen Job vom Savepoint starten. Bei Schema-Change: kompatible Savepoints (nur additive Changes), sonst State-Migration nötig.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Checkpoint",
+        "Savepoint",
+        "Apache Flink",
+        "State Backend"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Watermark Lateness vs Latency Trade-off: Großzügige Bounded-Out-of-Orderness (z.B. 1 Minute) toleriert späte Events aber verzögert Window-Output um eine Minute. Strikte Watermarks (5s) geben Output schnell aber verlieren Late Data. Faustregel: P99 Network-Lag + Buffer messen, dann als Bounded-Out-of-Orderness setzen. Periodic Watermark default ist OK, Punctuated nur wenn Events selbst Watermark-Hint enthalten.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Watermark Strategy",
+        "Stream Watermark",
+        "Late Data",
+        "Allowed Lateness"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Compacted Topic als Materialized State: Kafka Log Compaction behält pro Key nur den neuesten Wert — Topic wird so zur dauerhaften, replizierten Key-Value-Store. KTable backing, Configuration-Storage, User-Profile-Cache nutzen das Pattern. Wichtig: Tombstone (null-value) löscht Key. Compaction läuft asynchron im Background — temporär können doppelte Keys sichtbar sein.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Compacted Topic",
+        "KTable",
+        "Apache Kafka",
+        "Stream-Table Duality",
+        "Caching"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Dead Letter Topic Pattern für Stream-Resilienz: Poison Pills (Records die wiederholt fehlschlagen) blockieren ohne DLT die Partition unendlich. Pattern: Try-Catch um Deserialization + Business-Logic, bei Failure → DLT mit Original-Record + Error-Context + Stack-Trace. DLT separat monitorbar, manuelles Re-Processing möglich. Ohne DLT: ein bad Record kann den ganzen Consumer-Stream blockieren.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Dead Letter Topic",
+        "Dead Letter Queue",
+        "Retry Pattern",
+        "Apache Kafka",
+        "Idempotent Consumer"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    }
+  ],
+  "stats": {
+    "entities": 40,
+    "relations": 41,
+    "syntheses": 9,
+    "scrubbed": 0
+  }
+}
