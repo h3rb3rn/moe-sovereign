@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Optional
 
-from config import URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG
+from config import URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG, INFERENCE_SERVERS_LIST
 from services.templates import _read_expert_templates
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -209,3 +209,18 @@ def _resolve_template_prompts(
         }
     except Exception:
         return empty
+
+
+def _server_info(endpoint_name: str) -> dict:
+    """Return the full server configuration for a given endpoint name."""
+    return next((s for s in INFERENCE_SERVERS_LIST if s["name"] == endpoint_name), {})
+
+
+def _is_endpoint_error(exc: Exception) -> bool:
+    """Return True when the exception signals an external endpoint is unavailable (auth/quota)."""
+    s = str(exc).lower()
+    return any(k in s for k in (
+        "401", "unauthorized", "403", "forbidden",
+        "429", "rate limit", "quota exceeded",
+        "authentication", "x-api-key",
+    ))

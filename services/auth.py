@@ -218,3 +218,37 @@ def _extract_api_key(request: Request) -> Optional[str]:
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return request.headers.get("x-api-key", "").strip() or None
+
+
+def _extract_session_id(request: Request) -> Optional[str]:
+    """Extract or derive a session ID for semantic memory continuity.
+
+    Priority: explicit headers → conversation fingerprint (hash of first 3 user messages).
+    Supported explicit headers: x-claude-code-session-id, x-stainless-session-id,
+    x-session-id, x-conversation-id, x-request-id.
+    """
+    import json as _json
+    import hashlib as _hashlib
+    h = request.headers
+    explicit = (
+        h.get("x-claude-code-session-id") or h.get("x-stainless-session-id") or
+        h.get("x-session-id") or h.get("x-conversation-id") or h.get("x-request-id")
+    )
+    if explicit:
+        return explicit
+    try:
+        body_bytes = request.state._body if hasattr(request.state, "_body") else None
+        if body_bytes:
+            body = _json.loads(body_bytes)
+            user_msgs = [
+                str(m.get("content", ""))[:200]
+                for m in body.get("messages", []) if m.get("role") == "user"
+            ][:3]
+            if user_msgs:
+                user_id = request.state.user_id if hasattr(request.state, "user_id") else ""
+                seed = user_id + "".join(user_msgs)
+                fp = _hashlib.sha256(seed.encode()).hexdigest()[:24]
+                return f"fp-{fp}"
+    except Exception:
+        pass
+    return None

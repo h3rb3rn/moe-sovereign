@@ -13,8 +13,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from fastapi import Request
+
 import state
-from config import HISTORY_MAX_ENTRIES
+from config import HISTORY_MAX_ENTRIES, MAX_REQUESTS_PER_MINUTE
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -178,3 +180,22 @@ async def _increment_user_budget(
                 await _deduct_team_budget(_team_id, effective)
         except Exception as _tbe:
             logger.debug("Team budget deduct failed: %s", _tbe)
+
+
+async def _check_ip_rate_limit(request: Request) -> bool:
+    """Token-bucket rate limit per client IP using Redis. Fails open on error."""
+    if state.redis_client is None:
+        return True
+    try:
+        _ip = (
+            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or request.headers.get("x-real-ip", "")
+            or (request.client.host if request.client else "unknown")
+        )
+        _key   = f"moe:ratelimit:ip:{_ip}"
+        _count = await state.redis_client.incr(_key)
+        if _count == 1:
+            await state.redis_client.expire(_key, 60)
+        return _count <= MAX_REQUESTS_PER_MINUTE
+    except Exception:
+        return True
