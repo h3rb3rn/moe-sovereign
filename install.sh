@@ -324,7 +324,17 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       fi
     }
     _upd_chown 1000 1000   "${_upd_data}/kafka-data"
-    _upd_chown 0    0      "${_upd_data}/langgraph-checkpoints"
+    # postgres:17-alpine runs as UID 70 internally. With rootless Podman, container
+    # UID 0 maps to the invoking host user and the entrypoint can chmod to 70 inside,
+    # so 0:0 is correct on disk. With rootful Docker, container UID 0 == host root;
+    # the postgres process (UID 70) then cannot read root-owned data files, causing
+    # FATAL: could not open file "global/pg_filenode.map": Permission denied on
+    # every reconnect. Pick the host-side UID that matches the engine's mapping.
+    if [[ "${_upd_rt[0]}" == podman* ]]; then
+      _upd_chown 0  0  "${_upd_data}/langgraph-checkpoints"
+    else
+      _upd_chown 70 70 "${_upd_data}/langgraph-checkpoints"
+    fi
     _upd_chown 0    0      "${_upd_data}/redis-data"
     _upd_chown 0    0      "${_upd_data}/neo4j-data"
     _upd_chown 0    0      "${_upd_data}/neo4j-logs"
