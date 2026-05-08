@@ -408,11 +408,36 @@ async def _stream_responses_api(
 
 async def responses_api(raw_request: Request, request: _ResponsesRequest):
     """OpenAI Responses API compatibility endpoint for Codex CLI."""
+    from services.lineage import (
+        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
+        dataset_user_query, dataset_response,
+    )
     response_id = f"resp_{uuid.uuid4().hex}"
+    _ol_run_id = await _ol_start(
+        "responses_api",
+        inputs=[dataset_user_query("")],
+        extra_facets={"requestModel": {"_producer": "https://github.com/h3rb3rn/moe-sovereign",
+                                       "_schemaURL": "moe-sovereign://requestModel",
+                                       "model": request.model, "stream": request.stream}},
+    )
 
     if request.stream:
+        # Streaming: COMPLETE/FAIL fires when the inner generator drains.
+        _inner = _stream_responses_api(raw_request, request, response_id)
+
+        async def _lineage_wrapped_stream():
+            try:
+                async for _chunk in _inner:
+                    yield _chunk
+            except Exception as _se:
+                await _ol_fail(_ol_run_id, job_name="responses_api", error=str(_se))
+                raise
+            else:
+                await _ol_complete(_ol_run_id, job_name="responses_api",
+                                   outputs=[dataset_response(response_id)])
+
         return StreamingResponse(
-            _stream_responses_api(raw_request, request, response_id),
+            _lineage_wrapped_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -424,6 +449,8 @@ async def responses_api(raw_request: Request, request: _ResponsesRequest):
             raw_request, request, messages
         )
         ts = int(time.time())
+        await _ol_complete(_ol_run_id, job_name="responses_api",
+                           outputs=[dataset_response(response_id)])
         return JSONResponse({
             "id": response_id,
             "object": "response",
@@ -447,6 +474,7 @@ async def responses_api(raw_request: Request, request: _ResponsesRequest):
         })
     except Exception as _ie:
         logger.warning("Responses API non-streaming pipeline failed: %s", _ie)
+        await _ol_fail(_ol_run_id, job_name="responses_api", error=str(_ie))
         return JSONResponse(status_code=500, content={"error": {"message": str(_ie)}})
 
 
