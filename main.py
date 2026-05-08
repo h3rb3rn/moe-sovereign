@@ -644,8 +644,8 @@ async def _kafka_consumer_loop() -> None:
 from prompts import _ROUTE_PROTOTYPES
 
 
-# LangGraph nodes moved to graph/nodes.py
-from graph.nodes import (
+# LangGraph nodes moved to thematic submodules under graph/
+from graph import (
     _seed_task_type_prototypes,
     cache_lookup_node, semantic_router_node,
     _validate_tool_result, mcp_node,
@@ -1493,6 +1493,11 @@ from services.pipeline import (
     _anthropic_reasoning_handler, _ollama_internal_stream,
     ChatCompletionRequest, _ResponsesRequest, responses_api,
     _invoke_pipeline_for_responses, _stream_responses_api,
+)
+
+# Lifespan-task healers (background loops kicked off in lifespan())
+from services.healer import (
+    _auto_resume_dedicated_healer, _watchdog_dedicated_healer,
 )
 
 
