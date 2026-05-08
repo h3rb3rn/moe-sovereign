@@ -51,3 +51,10 @@ _provider_rate_limits: dict = {}
 import asyncio as _asyncio
 _dedicated_healer_proc = None       # asyncio.subprocess.Process | None
 _dedicated_healer_restart_lock: _asyncio.Lock = _asyncio.Lock()
+
+# MCP tool descriptions populated at startup by _load_mcp_tool_descriptions().
+# Mutable runtime state — read by graph/nodes.py and main.py:_build_filtered_tool_desc.
+MCP_TOOLS_DESCRIPTION: str            = ""   # full plain-text block for the planner
+_MCP_TOOLS_DICT: dict[str, str]        = {}  # per-tool descriptions for domain filtering
+MCP_TOOL_SCHEMAS: dict                 = {}  # per-tool arg schemas for pre-call validation
+AGENTIC_CODE_TOOLS_DESCRIPTION: str   = ""   # repo_map / read_file_chunked / lsp_query block

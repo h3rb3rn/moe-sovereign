@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
 
 import state
-import main as _m
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
@@ -52,6 +51,30 @@ from services.routing import (
 )
 from services.kafka import _kafka_publish
 from services.tracking import _increment_user_budget
+from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
+from services.helpers import (
+    _log_tool_eval,
+    _update_rate_limit_headers, _check_rate_limit_exhausted,
+    _conf_format_for_mode, _get_expert_prompt,
+    _truncate_history, _apply_semantic_memory,
+    _web_search_with_citations,
+    _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
+    _report,
+    _shadow_request, _shadow_lock,
+)
+from services.templates import _read_expert_templates, _read_cc_profiles
+from services.skills import _build_skill_catalog
+from prompts import (
+    SYNTHESIS_PERSISTENCE_INSTRUCTION,
+    PROVENANCE_INSTRUCTION,
+    DEFAULT_PLANNER_ROLE,
+)
+from prompts import _ROUTE_PROTOTYPES, _RESEARCH_DETECT
+from parsing import (
+    _oai_content_to_str, _anthropic_content_to_text,
+    _extract_images, _extract_oai_images,
+    _anthropic_to_openai_messages, _anthropic_tools_to_openai,
+)
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -69,7 +92,7 @@ async def _seed_task_type_prototypes() -> None:
         # Use upsert (add-or-update) directly — eliminates the TOCTOU race between
         # the existence check and the subsequent add when multiple instances start up.
         docs, ids, metas = [], [], []
-        for category, queries in _m._ROUTE_PROTOTYPES.items():
+        for category, queries in _ROUTE_PROTOTYPES.items():
             for i, query in enumerate(queries):
                 docs.append(query)
                 ids.append(f"proto_{category}_{i}")
@@ -92,7 +115,7 @@ async def cache_lookup_node(state_: AgentState):
     # Non-default modes bypass the cache — format mismatch would deliver wrong answers
     if state_.get("mode", "default") != "default":
         return {"cached_facts": "", "cache_hit": False}
-    await _m._report("🔍 Cache-Lookup...")
+    await _report("🔍 Cache-Lookup...")
     # Normalized query for similarity search — pipeline input stays unchanged
     _cache_query = re.sub(r'\s+', ' ', state_["input"].lower().strip().rstrip('?!.,;'))
 
@@ -110,7 +133,7 @@ async def cache_lookup_node(state_: AgentState):
                 if len(_l0_text) > 50:
                     PROM_CACHE_HITS.inc()
                     logger.info(f"⚡ L0 query-hash cache hit ({len(_l0_text)} chars)")
-                    await _m._report(f"⚡ L0 cache hit — instant response")
+                    await _report(f"⚡ L0 cache hit — instant response")
                     return {"cached_facts": _l0_text, "cache_hit": True}
         except Exception as _l0e:
             logger.debug(f"L0 cache check failed: {_l0e}")
@@ -131,11 +154,11 @@ async def cache_lookup_node(state_: AgentState):
                 hit = True
                 PROM_CACHE_HITS.inc()
                 logger.info(f"✅ Cache hit (distance={dist:.3f}) — skipping pipeline")
-                await _m._report(f"✅ Cache hit (similarity {1-dist:.2f}) — pipeline skipped")
+                await _report(f"✅ Cache hit (similarity {1-dist:.2f}) — pipeline skipped")
             break
     if not hit:
         PROM_CACHE_MISSES.inc()
-        await _m._report("📭 No cache hit — starting full pipeline")
+        await _report("📭 No cache hit — starting full pipeline")
     # Soft hits (0.15 < dist < 0.50): collect as few-shot examples
     soft_examples = []
     if res['documents'] and res['documents'][0]:
@@ -152,7 +175,7 @@ async def cache_lookup_node(state_: AgentState):
                 break
     soft_ctx = "\n\n---\n\n".join(soft_examples) if soft_examples else ""
     if soft_ctx:
-        await _m._report(f"💡 {len(soft_examples)} similar previous answer(s) loaded as context")
+        await _report(f"💡 {len(soft_examples)} similar previous answer(s) loaded as context")
     return {"cached_facts": cached, "cache_hit": hit, "soft_cache_examples": soft_ctx}
 
 
@@ -189,7 +212,7 @@ async def semantic_router_node(state_: AgentState):
                 f"🧭 Semantic Router: direct routing → '{category}' "
                 f"(dist={top_dist:.3f}, gap={gap:.3f})"
             )
-            await _m._report(
+            await _report(
                 f"🧭 Semantic Router: Fast-Path → expert '{category}' "
                 f"(similarity {1-top_dist:.2f}, uniqueness {gap:.2f})"
             )
@@ -231,7 +254,7 @@ async def mcp_node(state_: AgentState):
             return {"mcp_result": ""}
 
     tool_names = [t.get("mcp_tool") for t in precision_tasks]
-    await _m._report(f"⚙️ MCP Precision Tools: {', '.join(tool_names)}")
+    await _report(f"⚙️ MCP Precision Tools: {', '.join(tool_names)}")
     logger.info(f"--- [NODE] MCP ({len(precision_tasks)} Tools parallel) ---")
 
     # Working Memory accumulators — carry over facts from previous iterations
@@ -251,7 +274,7 @@ async def mcp_node(state_: AgentState):
         if tool == "calculate" and "formula" in args and "expression" not in args:
             args["expression"] = args.pop("formula")
         # Pre-call schema validation — catch missing required args before HTTP round-trip
-        _schema = _m.MCP_TOOL_SCHEMAS.get(tool, {})
+        _schema = state.MCP_TOOL_SCHEMAS.get(tool, {})
         _missing = [f for f in _schema.get("required", []) if f not in args]
         if _missing:
             logger.info(f"🔧 MCP pre-validation: {tool} missing {_missing} — asking judge to fix")
@@ -270,7 +293,7 @@ async def mcp_node(state_: AgentState):
                     logger.info(f"🔧 MCP pre-validation: args corrected for {tool}")
             except Exception as _pve:
                 logger.debug(f"MCP pre-validation fix failed for {tool}: {_pve}")
-        await _m._report(f"⚙️ MCP-Call: {tool}\nArgs: {json.dumps(args, ensure_ascii=False, indent=2)}")
+        await _report(f"⚙️ MCP-Call: {tool}\nArgs: {json.dumps(args, ensure_ascii=False, indent=2)}")
         _mcp_t0 = time.monotonic()
         try:
             resp = await client.post(f"{MCP_URL}/invoke", json={"tool": tool, "args": args})
@@ -279,8 +302,8 @@ async def mcp_node(state_: AgentState):
             _mcp_dt = round(time.monotonic() - _mcp_t0, 3)
             if "error" in data:
                 err_str = data['error']
-                await _m._report(f"⚙️ MCP error [{tool}]: {err_str}")
-                _m._log_tool_eval({
+                await _report(f"⚙️ MCP error [{tool}]: {err_str}")
+                _log_tool_eval({
                     "ts": _ts_now(), "source": "mcp_node",
                     "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),
                     "tool": tool, "args": args, "task": desc, "result": None,
@@ -308,7 +331,7 @@ async def mcp_node(state_: AgentState):
                     data2 = resp2.json()
                     if "error" not in data2:
                         result_str2 = data2.get("result", "")
-                        await _m._report(f"⚙️ MCP retry OK [{tool}]:\n{result_str2}")
+                        await _report(f"⚙️ MCP retry OK [{tool}]:\n{result_str2}")
                         valid, _ = _validate_tool_result(result_str2, tool)
                         if valid:
                             wm_key = f"{tool}:{json.dumps(corrected_args)[:60]}"
@@ -319,9 +342,9 @@ async def mcp_node(state_: AgentState):
                     logger.debug(f"MCP arg-correction retry failed for {tool}: {retry_exc}")
                 return f"[{desc}] Error: {err_str}"
             result_str = data.get('result', '')
-            await _m._report(f"⚙️ MCP result [{tool}]:\n{result_str}")
+            await _report(f"⚙️ MCP result [{tool}]:\n{result_str}")
             logger.info(f"🔧 MCP: [{desc}] {result_str[:120]}")
-            _m._log_tool_eval({
+            _log_tool_eval({
                 "ts": _ts_now(), "source": "mcp_node",
                 "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),
                 "tool": tool, "args": args, "task": desc, "result": result_str[:500],
@@ -340,8 +363,8 @@ async def mcp_node(state_: AgentState):
         except Exception as e:
             _mcp_dt = round(time.monotonic() - _mcp_t0, 3)
             logger.error(f"MCP Tool '{tool}' failed: {e}")
-            await _m._report(f"⚙️ MCP exception [{tool}]: {e}")
-            _m._log_tool_eval({
+            await _report(f"⚙️ MCP exception [{tool}]: {e}")
+            _log_tool_eval({
                 "ts": _ts_now(), "source": "mcp_node",
                 "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),
                 "tool": tool, "args": args, "task": desc, "result": None,
@@ -357,7 +380,7 @@ async def mcp_node(state_: AgentState):
         results = await asyncio.gather(*[call_tool(client, t) for t in precision_tasks])
 
     combined = "\n".join(results)
-    await _m._report(f"⚙️ MCP: {len(results)} result(s) received")
+    await _report(f"⚙️ MCP: {len(results)} result(s) received")
     logger.info(f"🔧 MCP: {combined[:300]}")
     if _wm:
         logger.info(f"📝 Working Memory: {len(_wm)} facts extracted")
@@ -393,10 +416,10 @@ async def graph_rag_node(state_: AgentState):
     # public external facts (papers, databases, media) rather than internal ontology.
     # We still run if the plan explicitly includes knowledge_healing (graph needed).
     _has_knowledge_healing = "knowledge_healing" in categories
-    _is_public_fact_query = bool(_m._RESEARCH_DETECT.search(state_.get("input", "")))
+    _is_public_fact_query = bool(_RESEARCH_DETECT.search(state_.get("input", "")))
     if _is_public_fact_query and not _has_knowledge_healing:
         logger.info("⚡ GraphRAG skipped (public-fact query — internal graph not relevant)")
-        await _m._report("⚡ GraphRAG: skipped (external research query)")
+        await _report("⚡ GraphRAG: skipped (external research query)")
         return {"graph_context": ""}
 
     # GraphRAG-Cache (Valkey, TTL=3600s)
@@ -408,12 +431,12 @@ async def graph_rag_node(state_: AgentState):
             if _cached_ctx:
                 _cached_ctx_str = _cached_ctx if isinstance(_cached_ctx, str) else _cached_ctx.decode()
                 logger.info(f"🔗 GraphRAG cache hit (Valkey) — {len(_cached_ctx_str)} chars")
-                await _m._report(f"🔗 GraphRAG: context from Valkey cache ({len(_cached_ctx_str)} chars)")
+                await _report(f"🔗 GraphRAG: context from Valkey cache ({len(_cached_ctx_str)} chars)")
                 return {"graph_context": _cached_ctx_str}
         except Exception as _ge:
             logger.debug(f"GraphRAG cache read error: {_ge}")
 
-    await _m._report("🔗 GraphRAG — knowledge graph query (Neo4j)...")
+    await _report("🔗 GraphRAG — knowledge graph query (Neo4j)...")
     try:
         if GRAPH_VIA_MCP:
             # Flange: MCP server as graph-as-a-tool (accessible to external agents)
@@ -440,11 +463,11 @@ async def graph_rag_node(state_: AgentState):
                     "your answer.]\n\n" + ctx
                 )
             logger.info(f"📊 GraphRAG: {len(ctx)} chars context found (via_mcp={GRAPH_VIA_MCP})")
-            await _m._report(f"🔗 GraphRAG: {len(ctx)} chars structured context")
+            await _report(f"🔗 GraphRAG: {len(ctx)} chars structured context")
             if state.redis_client is not None:
                 asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, ctx))
         else:
-            await _m._report("🔗 GraphRAG: no matching context found")
+            await _report("🔗 GraphRAG: no matching context found")
 
         # Domain-filtered ChromaDB retrieval using planner-extracted metadata_filters
         _meta_filters = state_.get("metadata_filters") or {}
@@ -501,10 +524,10 @@ async def math_node_wrapper(state_: AgentState):
     if not has_math or has_precision:
         return {"math_result": ""}
     logger.debug("--- [NODE] MATH CALCULATION ---")
-    await _m._report("🧮 Math module (SymPy)...")
+    await _report("🧮 Math module (SymPy)...")
     from math_node import math_node
     result = await math_node(state_)
-    await _m._report("🧮 Math computation complete")
+    await _report("🧮 Math computation complete")
     return {"math_result": result["math_result"]}
 
 
@@ -567,6 +590,8 @@ def _detect_query_temperature(query: str) -> float:
 
 
 async def planner_node(state_: AgentState):
+    # Lazy import to avoid circular: main imports from graph/nodes; this call happens at runtime.
+    from main import _build_filtered_tool_desc
     _output_skill = ""  # Initialize early to prevent UnboundLocalError
     # Cache hit: no LLM call needed
     if state_.get("cache_hit"):
@@ -579,7 +604,7 @@ async def planner_node(state_: AgentState):
 
     # Emit pending reports (e.g. skill resolution) from state
     for _pr in (state_.get("pending_reports") or []):
-        await _m._report(_pr)
+        await _report(_pr)
 
     # ── Agentic loop: read config from template state ───────────────────────
     _agentic_iteration  = state_.get("agentic_iteration") or 0
@@ -595,7 +620,7 @@ async def planner_node(state_: AgentState):
     # Include a short config fingerprint so the plan cache auto-invalidates when
     # the MCP tool set or planner prompt changes between deployments.
     _cfg_fp = _hashlib.md5(
-        f"{len(_m.MCP_TOOLS_DESCRIPTION)}:{(state_.get('planner_prompt') or '')[:80]}"
+        f"{len(state.MCP_TOOLS_DESCRIPTION)}:{(state_.get('planner_prompt') or '')[:80]}"
         .encode()
     ).hexdigest()[:6]
     # Include chat_history presence in key: same query needs different plan
@@ -608,7 +633,7 @@ async def planner_node(state_: AgentState):
             if _cached_plan_raw:
                 _cached_plan = json.loads(_cached_plan_raw)
                 logger.info(f"📋 Planner cache hit (Valkey) — skipping LLM")
-                await _m._report("📋 Planner: plan loaded from Valkey cache")
+                await _report("📋 Planner: plan loaded from Valkey cache")
                 return {"plan": _cached_plan, "prompt_tokens": 0, "completion_tokens": 0}
         except Exception as _pe:
             logger.debug(f"Planner cache read error: {_pe}")
@@ -672,7 +697,7 @@ async def planner_node(state_: AgentState):
     # Agent mode: force code_reviewer + technical_support directly, no LLM planner
     if state_.get("mode") == "agent":
         logger.info("📋 Agent mode: forcing code_reviewer + technical_support")
-        await _m._report("📋 Agent mode: code experts activated...")
+        await _report("📋 Agent mode: code experts activated...")
         return {
             "plan": [
                 {"task": state_["input"], "category": "code_reviewer"},
@@ -690,7 +715,7 @@ async def planner_node(state_: AgentState):
     _user_experts_map = state_.get("user_experts") or {}
     if _complexity == "memory_recall" and "memory_recall" in _user_experts_map:
         logger.info("🧠 memory_recall fast-path: dedicated expert configured, LLM planner skipped")
-        await _m._report("🧠 Memory Expert: Analysiere Konversationshistorie...")
+        await _report("🧠 Memory Expert: Analysiere Konversationshistorie...")
         return {
             **_complexity_state_update,
             "plan": [{"task": state_["input"], "category": "memory_recall"}],
@@ -699,7 +724,7 @@ async def planner_node(state_: AgentState):
         }
 
     logger.debug("--- [NODE] PLANNER ---")
-    await _m._report("📋 Planner analyzing request...")
+    await _report("📋 Planner analyzing request...")
     # agentic_coder is an optional category — it only appears when the template has it enabled
     # or the mode requires it. DEFAULT_EXPERT_PROMPTS contains the fallback prompt.
     expert_categories = list(EXPERTS.keys())
@@ -762,13 +787,13 @@ async def planner_node(state_: AgentState):
     _agentic_code_block = (
         f"\nCODE NAVIGATION TOOLS (only for 'agentic_coder' category — NOT for other experts!):\n"
         f"Use these tools when code files are to be analyzed/edited.\n"
-        f"{_m.AGENTIC_CODE_TOOLS_DESCRIPTION}\n"
+        f"{state.AGENTIC_CODE_TOOLS_DESCRIPTION}\n"
         f"Format: {{\"task\": \"...\", \"category\": \"precision_tools\", "
         f"\"mcp_tool\": \"repo_map|read_file_chunked|lsp_query\", \"mcp_args\": {{...}}}}\n"
         f"THEN use agentic_coder expert for analysis/implementation.\n"
-    ) if _inject_agentic and _m.AGENTIC_CODE_TOOLS_DESCRIPTION else ""
+    ) if _inject_agentic and state.AGENTIC_CODE_TOOLS_DESCRIPTION else ""
 
-    _planner_role = (state_.get("planner_prompt") or "").strip() or _m.DEFAULT_PLANNER_ROLE
+    _planner_role = (state_.get("planner_prompt") or "").strip() or DEFAULT_PLANNER_ROLE
 
     # ── Agentic re-plan: inject gap context and clear stale single-string results ──
     _agentic_context_block = ""
@@ -864,7 +889,7 @@ async def planner_node(state_: AgentState):
             "Generate DIFFERENT search queries or use specialized MCP tools instead of repeating web search.\n"
             "=== END AGENTIC CONTEXT ===\n"
         )
-        await _m._report(
+        await _report(
             f"🔄 Agentic Loop — Iteration {_agentic_iteration}/{_agentic_max_rounds} (Depth {_depth})\n"
             f"📌 Still open: {_gap[:120]}"
         )
@@ -886,7 +911,7 @@ Use for: game rules · algorithm specifications · protocols/standards · anythi
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{_m._build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False)) if state_.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - unit_convert: unit conversions"}
+{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False)) if state_.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - unit_convert: unit conversions"}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
@@ -919,7 +944,7 @@ RULES:
 - NEVER just keywords or questions as tasks — always concrete task descriptions!
 - OPTIONAL: Add a "metadata_filters" key to the FIRST task object when the domain is unambiguous, to scope downstream memory retrieval. Use string values only. Omit when unsure.
   Example: {{"task": "...", "category": "code_reviewer", "metadata_filters": {{"expert_domain": "code_reviewer", "project": "frontend"}}}}
-{_m._build_skill_catalog()}
+{_build_skill_catalog()}
 {_quality_hint}{success_hint}{_few_shot_hint}
 EXAMPLE calculation:
 Request: "What subnet mask for 10.42.155.160/27 with 14 hosts?"
@@ -943,7 +968,7 @@ WRONG:   ["Docker", "Container", "Virtualization"]
 Request: {state_['input']}
 
 JSON array:"""
-    await _m._report(f"📋 Planner prompt ({len(prompt)} chars):\n{prompt}")
+    await _report(f"📋 Planner prompt ({len(prompt)} chars):\n{prompt}")
     total_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
     plan: Optional[list] = None
     from parsing import _extract_usage, _extract_json
@@ -957,7 +982,7 @@ JSON array:"""
             timeout=PLANNER_TIMEOUT, label="Planner",
         )
         if _planner_fb:
-            await _m._report("⚠️ Planner: used local fallback (primary endpoint degraded)")
+            await _report("⚠️ Planner: used local fallback (primary endpoint degraded)")
         u = _extract_usage(res)
         total_usage["prompt_tokens"]     += u["prompt_tokens"]
         total_usage["completion_tokens"] += u["completion_tokens"]
@@ -987,13 +1012,13 @@ JSON array:"""
             plan = _sanitize_plan(raw, state_["input"])
             categories = [t.get("category", "?") for t in plan]
             logger.info(f"📋 Plan ({len(plan)} Tasks): {json.dumps(plan, ensure_ascii=False)}")
-            await _m._report(f"📋 Plan: {len(plan)} Task(s) → {', '.join(categories)}")
+            await _report(f"📋 Plan: {len(plan)} Task(s) → {', '.join(categories)}")
             for _pt in plan:
                 _desc = (_pt.get("task") or "")[:80]
                 _ptcat = _pt.get("category", "?")
                 _extra = "…" if len(_pt.get("task", "")) > 80 else ""
-                await _m._report(f"  • [{_ptcat}] {_desc}{_extra}")
-            await _m._report(
+                await _report(f"  • [{_ptcat}] {_desc}{_extra}")
+            await _report(
                 f"📋 Planner done — {total_usage['prompt_tokens']} prompt tok / "
                 f"{total_usage['completion_tokens']} completion tok"
             )
@@ -1001,10 +1026,10 @@ JSON array:"""
         except Exception:
             if attempt == 0:
                 logger.warning(f"Planner parse error (attempt 1) — retry. Output: {res.content[:200]!r}")
-                await _m._report("⚠️ Planner: JSON error — retrying...")
+                await _report("⚠️ Planner: JSON error — retrying...")
                 continue
             logger.warning(f"Planner could not parse JSON — fallback. Output: {res.content[:200]!r}")
-            await _m._report("⚠️ Planner-Fallback: general")
+            await _report("⚠️ Planner-Fallback: general")
             plan = [{"task": state_["input"], "category": "general"}]
             _extracted_filters = {}
     # Unload planner model — unless the same model is immediately needed as expert.
@@ -1178,7 +1203,7 @@ async def fuzzy_router_node(state_: AgentState):
         f"graph={graph_conf:.2f}→T={tnorm_graph:.2f} "
         f"({'skip' if not new_enable_graphrag else 'fetch'})"
     )
-    await _m._report(
+    await _report(
         f"🔀 Fuzzy Router (Godel t-norm): "
         f"web={'✓' if not new_skip_research else '✗'} (score={tnorm_vector:.2f}) | "
         f"graph={'✓' if new_enable_graphrag else '✗'} (score={tnorm_graph:.2f})"
@@ -1252,9 +1277,9 @@ async def expert_worker(state_: AgentState):
             mode        = state_.get("mode", "default")
             mode_cfg    = MODES.get(mode, MODES["default"])
             sys_prompt = (
-                _m._get_expert_prompt(cat, state_.get("user_experts"))
+                _get_expert_prompt(cat, state_.get("user_experts"))
                 + mode_cfg["expert_suffix"]
-                + _m._conf_format_for_mode(mode)
+                + _conf_format_for_mode(mode)
             )
             # Agent mode: embed file/code context from the client's system message
             agent_ctx = state_.get("system_prompt", "")
@@ -1313,12 +1338,12 @@ async def expert_worker(state_: AgentState):
             else:
                 messages.append({"role": "user", "content": task_text})
 
-            await _m._report(
+            await _report(
                 f"🚀 Expert [{model_name} / {cat}] GPU#{gpu}\n"
                 f"  Task: {task_text}"
                 + (f" | ctx={_expert_ctx_window//1024}K" if _expert_ctx_window else "")
             )
-            await _m._report(
+            await _report(
                 f"📤 Expert [{model_name} / {cat}] System-Prompt:\n{sys_prompt}"
             )
             expert_base_url = url.rstrip("/").removesuffix("/v1")
@@ -1342,19 +1367,19 @@ async def expert_worker(state_: AgentState):
                     label=f"Expert[{cat}]",
                 )
                 if _used_fallback:
-                    await _m._report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
+                    await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)
                 content = res.content[:_expert_max_output]
                 if len(res.content) > _expert_max_output:
                     content += "\n[…truncated]"
-                await _m._report(f"✅ Expert [{model_name} / {cat}]:\n{content}\n---")
+                await _report(f"✅ Expert [{model_name} / {cat}]:\n{content}\n---")
                 # Token metrics
                 _uid = state_.get("user_id", "anon")
                 PROM_TOKENS.labels(model=model_name, token_type="prompt",      node=endpoint, user_id=_uid).inc(usage.get("prompt_tokens", 0))
                 PROM_TOKENS.labels(model=model_name, token_type="completion",  node=endpoint, user_id=_uid).inc(usage.get("completion_tokens", 0))
                 # Confidence automatically as performance signal → no waiting for user feedback needed
                 conf = _parse_expert_confidence(content)
-                await _m._report(
+                await _report(
                     f"  → [{model_name}/{cat}] Confidence: {conf or '?'} | "
                     f"{usage.get('prompt_tokens', 0)}→{usage.get('completion_tokens', 0)} tok"
                 )
@@ -1389,11 +1414,11 @@ async def expert_worker(state_: AgentState):
                 if is_vram:
                     PROM_EXPERT_FAILURES.labels(model=model_name, reason="vram").inc()
                     logger.error(f"❌ VRAM/HTTP error GPU#{gpu} {model_name}: {e}")
-                    await _m._report(f"❌ Expert {model_name}: GPU/HTTP error")
+                    await _report(f"❌ Expert {model_name}: GPU/HTTP error")
                     return {"res": f"[{model_name} ERROR]: VRAM/HTTP", "model_cat": None}
                 PROM_EXPERT_FAILURES.labels(model=model_name, reason="error").inc()
                 logger.error(f"❌ Expert {model_name}: {e}")
-                await _m._report(f"❌ Expert {model_name}: error")
+                await _report(f"❌ Expert {model_name}: error")
                 return {"res": f"[{model_name} ERROR]: {e}", "model_cat": None}
 
     async def run_task(i: int, task: dict) -> List[dict]:
@@ -1438,10 +1463,10 @@ async def expert_worker(state_: AgentState):
 
         if forced_experts:
             forced_names = ", ".join(e["model"] for e in forced_experts)
-            await _m._report(f"🔀 Forced-Ensemble [{cat}]: {forced_names}")
+            await _report(f"🔀 Forced-Ensemble [{cat}]: {forced_names}")
         if tier1:
             t1_names = ", ".join(e["model"] for _, e in tier1)
-            await _m._report(f"⚡ T1 [{cat}]: {t1_names}")
+            await _report(f"⚡ T1 [{cat}]: {t1_names}")
 
         if parallel_batch:
             combined = await asyncio.gather(*parallel_batch)
@@ -1459,14 +1484,14 @@ async def expert_worker(state_: AgentState):
                 if t1_has_high or not tier2:
                     if t1_has_high:
                         logger.info(f"✅ T1 [{cat}]: high confidence — T2 skipped")
-                        await _m._report(f"✅ T1 [{cat}]: high confidence — T2 skipped")
+                        await _report(f"✅ T1 [{cat}]: high confidence — T2 skipped")
                     return task_results
             elif not tier2:
                 return task_results
 
         if tier2:
             t2_names = ", ".join(e["model"] for _, e in tier2)
-            await _m._report(f"🔬 T2 [{cat}]: {t2_names} (T1 insufficient)")
+            await _report(f"🔬 T2 [{cat}]: {t2_names} (T1 insufficient)")
             t2_results = await asyncio.gather(
                 *[run_single(e, task, i + 1, len(forced_experts) + len(tier1) + j + 1)
                   for j, (_, e) in enumerate(tier2)]
@@ -1494,7 +1519,7 @@ async def expert_worker(state_: AgentState):
 
         if has_deps and len(levels) > 1:
             level_ids = [t.get("id", f"task{i}") for i, t in level]
-            await _m._report(
+            await _report(
                 f"⛓️ Dependency level {lvl_idx + 1}/{len(levels)}: "
                 f"running {len(level)} task(s) in parallel — [{', '.join(level_ids)}]"
             )
@@ -1592,8 +1617,8 @@ async def research_node(state_: AgentState):
             except Exception:
                 pass
 
-        await _m._report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
-        raw = await _m._web_search_with_citations(query, ddg_fallback=state_.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
+        await _report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
+        raw = await _web_search_with_citations(query, ddg_fallback=state_.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
         # Quality classification drives both the result flag and the cache TTL.
         # Poor results (empty or < 500 chars) are only cached for 30 min to prevent
         # poisoning subsequent runs with stale, low-signal snippets.
@@ -1608,7 +1633,7 @@ async def research_node(state_: AgentState):
             _effective_ttl = 0  # do not cache empty results
 
         if raw:
-            await _m._report(f"🌐 Search [{idx+1}] result ({len(raw)} chars, quality={quality})")
+            await _report(f"🌐 Search [{idx+1}] result ({len(raw)} chars, quality={quality})")
             if state.redis_client is not None and _effective_ttl > 0:
                 try:
                     await state.redis_client.set(_cache_key, raw.encode("utf-8"), ex=_effective_ttl)
@@ -1616,14 +1641,14 @@ async def research_node(state_: AgentState):
                     pass
             return raw, query, quality
 
-        await _m._report(f"🌐 Search [{idx+1}]: no result (SearXNG unreachable or empty)")
+        await _report(f"🌐 Search [{idx+1}]: no result (SearXNG unreachable or empty)")
         return "", query, "empty"
 
     if mode in ("research", "plan") or _is_agentic_replan:
         # Deep research mode OR agentic re-plan: run ALL tasks in parallel for maximum coverage.
         # In agentic re-plan we need every available search result to resolve the gap.
         logger.info(f"--- [NODE] WEB RESEARCH (MULTI — {len(research_tasks)} queries, agentic={_is_agentic_replan}) ---")
-        await _m._report(f"🌐 {'Agentic re-search' if _is_agentic_replan else 'Deep research'}: {len(research_tasks)} parallel search(es)...")
+        await _report(f"🌐 {'Agentic re-search' if _is_agentic_replan else 'Deep research'}: {len(research_tasks)} parallel search(es)...")
 
         raw_results = await asyncio.gather(*[
             _fetch_one(t, i, len(research_tasks)) for i, t in enumerate(research_tasks)
@@ -1642,7 +1667,7 @@ async def research_node(state_: AgentState):
         ]
         _all_domains = _prev_domains + _new_domains
 
-        await _m._report(
+        await _report(
             f"🌐 Multi-search complete: {len(combined)} chars total ({sum(1 for r, _, _ in raw_results if r)} hits)"
             if combined else "🌐 Multi-search: no results"
         )
@@ -1808,7 +1833,7 @@ async def _compress_graph_context_llm(ctx: str, budget: int) -> Optional[str]:
     """
     from langchain_openai import ChatOpenAI
     model = _GRAPH_COMPRESS_LLM_MODEL
-    if not model or _m.judge_llm is None:
+    if not model or judge_llm is None:
         return None
     try:
         compress_prompt = (
@@ -1819,8 +1844,8 @@ async def _compress_graph_context_llm(ctx: str, budget: int) -> Optional[str]:
         )
         _compress_llm = ChatOpenAI(
             model=model,
-            base_url=_m.judge_llm.openai_api_base,
-            api_key=_m.judge_llm.openai_api_key,
+            base_url=judge_llm.openai_api_base,
+            api_key=judge_llm.openai_api_key,
             timeout=_GRAPH_COMPRESS_LLM_TIMEOUT,
         )
         result = await asyncio.wait_for(
@@ -1844,7 +1869,7 @@ async def merger_node(state_: AgentState):
     # Cache hit: direct answer, no LLM call needed
     if state_.get("cache_hit"):
         logger.info("--- [NODE] MERGER (cache hit, direct return) ---")
-        await _m._report("💨 Merger: cached response delivered directly")
+        await _report("💨 Merger: cached response delivered directly")
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
             "response_id": state_.get("response_id", ""),
             "input":       state_["input"][:300],
@@ -1854,7 +1879,7 @@ async def merger_node(state_: AgentState):
         return {"final_response": state_.get("cached_facts", "")}
 
     logger.info("--- [NODE] MERGER & INGEST ---")
-    await _m._report("🔀 Merger analyzing expert confidence...")
+    await _report("🔀 Merger analyzing expert confidence...")
 
     _all_expert_raw = state_.get("expert_results") or []
     _ensemble_raw   = [r for r in _all_expert_raw if re.match(r'\[ENSEMBLE:', r)]
@@ -1869,7 +1894,7 @@ async def merger_node(state_: AgentState):
     if _new_conflicts:
         _cats = sorted({c["category"] for c in _new_conflicts})
         logger.info(f"⚖️  Conflict registry: {len(_new_conflicts)} paraconsistent conflicts in {_cats}")
-        await _m._report(f"⚖️ Paraconsistent conflicts detected: {', '.join(_cats)}")
+        await _report(f"⚖️ Paraconsistent conflicts detected: {', '.join(_cats)}")
 
     web            = state_.get("web_research")    or ""
     cached         = state_.get("cached_facts")    or ""
@@ -1889,7 +1914,7 @@ async def merger_node(state_: AgentState):
     if low_conf_critical:
         cats = sorted({_expert_category(r) for r in low_conf_critical})
         logger.info(f"⚠️ Low confidence in: {cats}")
-        await _m._report(f"⚠️ Low confidence: {', '.join(cats)}")
+        await _report(f"⚠️ Low confidence: {', '.join(cats)}")
 
     # ── Judge Refinement Loop: improve low-confidence expert responses ────────
     if JUDGE_REFINE_MAX_ROUNDS > 0 and expert_results:
@@ -1897,7 +1922,7 @@ async def merger_node(state_: AgentState):
             low_conf_list = [r for r in expert_results if _parse_expert_confidence(r) == "low"]
             if not low_conf_list:
                 break
-            await _m._report(f"🔄 Refinement round {_refine_round + 1}/{JUDGE_REFINE_MAX_ROUNDS}: "
+            await _report(f"🔄 Refinement round {_refine_round + 1}/{JUDGE_REFINE_MAX_ROUNDS}: "
                           f"{len(low_conf_list)} low-confidence experts")
             # Judge generates feedback — enriched with web/graph context
             _ctx_snippet = ""
@@ -1914,13 +1939,13 @@ async def merger_node(state_: AgentState):
                 + "\n\nFormat: [CATEGORY]: <improvement hints with concrete facts>"
             )
             try:
-                await _m._report(f"🔄 Judge refinement prompt (round {_refine_round + 1}):\n{gap_prompt}")
+                await _report(f"🔄 Judge refinement prompt (round {_refine_round + 1}):\n{gap_prompt}")
                 _gap_res = await _invoke_judge_with_retry(state_, gap_prompt)
                 gap_feedback_text = _gap_res.content.strip()
                 # Persist refinement reason in state for causal-path logging
                 state_["judge_reason"] = gap_feedback_text[:500]
                 state_["judge_refined"] = True
-                await _m._report(f"🔄 Judge refinement response (round {_refine_round + 1}):\n{gap_feedback_text}")
+                await _report(f"🔄 Judge refinement response (round {_refine_round + 1}):\n{gap_feedback_text}")
             except Exception as _ge:
                 logger.warning(f"⚠️ Refinement judge feedback round {_refine_round + 1}: {_ge}")
                 break
@@ -1942,7 +1967,7 @@ async def merger_node(state_: AgentState):
                 old_conf  = _parse_expert_confidence(old_result)
                 ratio     = _improvement_ratio(old_result, refined)
                 logger.info(f"🔄 Refinement [{_cat}]: {old_conf} → {new_conf}, Δ={ratio:.2f}")
-                await _m._report(f"🔄 [{_cat}]: {old_conf} → {new_conf} (Δ{ratio:.0%})")
+                await _report(f"🔄 [{_cat}]: {old_conf} → {new_conf} (Δ{ratio:.0%})")
                 if ratio >= JUDGE_REFINE_MIN_IMPROVEMENT:
                     _prefix = old_result.split("]:", 1)[0].lstrip("[")
                     new_expert_results = [
@@ -1966,11 +1991,11 @@ async def merger_node(state_: AgentState):
                         ))
             expert_results = new_expert_results
             if not any_improvement:
-                await _m._report(f"⏹️ Refinement stopped: no significant improvement "
+                await _report(f"⏹️ Refinement stopped: no significant improvement "
                               f"(< {JUDGE_REFINE_MIN_IMPROVEMENT:.0%})")
                 break
 
-    await _m._report("🔀 Merger synthesizing final response...")
+    await _report("🔀 Merger synthesizing final response...")
 
     # ── 3B: Confidence-aware merger instruction ────────────────────────────
     mode     = state_.get("mode", "default")
@@ -2099,7 +2124,7 @@ async def merger_node(state_: AgentState):
         _cached_has_code = any(m in cached for m in _CODE_MARKERS)
         if _primary_has_code and _cached_has_code:
             logger.info("🛡️ PRIOR KNOWLEDGE suppressed: primary source + cache both contain code (prevents judge interleaving)")
-            await _m._report("🛡️ Prior knowledge suppressed (code duplication guard)")
+            await _report("🛡️ Prior knowledge suppressed (code duplication guard)")
         else:
             sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:1000]}")
     soft_examples = state_.get("soft_cache_examples") or ""
@@ -2107,7 +2132,7 @@ async def merger_node(state_: AgentState):
         _soft_has_code = any(m in soft_examples for m in _CODE_MARKERS)
         if _primary_has_code and _soft_has_code:
             logger.info("🛡️ Soft-cache suppressed: primary source + cached snippet both contain code (prevents judge interleaving)")
-            await _m._report("🛡️ Soft-cache examples suppressed (code duplication guard)")
+            await _report("🛡️ Soft-cache examples suppressed (code duplication guard)")
         else:
             sections.append(f"SIMILAR PREVIOUS ANSWERS (few-shot orientation, do not use as fact):\n{soft_examples}")
 
@@ -2128,8 +2153,8 @@ async def merger_node(state_: AgentState):
         merger_prefix
         + conf_note + "\n\n"
         + "\n\n---\n\n".join(sections)
-        + _m.SYNTHESIS_PERSISTENCE_INSTRUCTION
-        + (_m.PROVENANCE_INSTRUCTION if _has_graph_ctx else "")
+        + SYNTHESIS_PERSISTENCE_INSTRUCTION
+        + (PROVENANCE_INSTRUCTION if _has_graph_ctx else "")
     )
 
     # Inject output skill formatting instructions if planner suggested one.
@@ -2170,7 +2195,7 @@ async def merger_node(state_: AgentState):
         _details_m = re.search(r'DETAILS:\n?(.*)', _raw_fp, re.DOTALL)
         fast_resp = _details_m.group(1).strip() if _details_m else _raw_fp.strip()
         logger.info(f"⚡ Fast-Path: single high-confidence expert → direct response ({len(fast_resp)} chars)")
-        await _m._report(f"⚡ Fast-Path: single high-confidence expert ({len(fast_resp)} chars)")
+        await _report(f"⚡ Fast-Path: single high-confidence expert ({len(fast_resp)} chars)")
         if len(fast_resp) > CACHE_MIN_RESPONSE_LEN and not state_.get("no_cache", False):
             # Deterministic ID (SHA-256 of content) prevents duplicate entries under
             # concurrent writes — upsert is idempotent if same response races twice.
@@ -2191,11 +2216,11 @@ async def merger_node(state_: AgentState):
                     asyncio.create_task(state.redis_client.setex(f"moe:qcache:{_q_hash}", 1800, fast_resp))
                 except Exception:
                     pass
-            asyncio.create_task(_m._store_response_metadata(
+            asyncio.create_task(_store_response_metadata(
                 state_.get("response_id", ""), state_["input"],
                 state_.get("expert_models_used", []), _fp_cid,
                 plan=state_.get("plan", []), cost_tier=state_.get("cost_tier", "")))
-            asyncio.create_task(_m._self_evaluate(
+            asyncio.create_task(_self_evaluate(
                 state_.get("response_id", ""), state_["input"], fast_resp, _fp_cid,
                 template_name=state_.get("template_name", ""),
                 complexity=state_.get("complexity_level", ""),
@@ -2208,15 +2233,15 @@ async def merger_node(state_: AgentState):
         }))
         return {"final_response": fast_resp, "prompt_tokens": 0, "completion_tokens": 0}
 
-    await _m._report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
+    await _report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
     try:
         res = await _invoke_judge_with_retry(state_, prompt, temperature=state_.get("query_temperature"))
     except Exception as e:
         logger.error(f"❌ Merger Judge LLM error: {e}")
-        await _m._report(f"❌ Merger: Judge LLM unreachable ({e})")
+        await _report(f"❌ Merger: Judge LLM unreachable ({e})")
         fallback = "\n\n".join(s for s in sections[1:] if s)  # raw sections as emergency response
         return {"final_response": fallback or "Error: Merger could not generate a response."}
-    await _m._report(f"🔀 Merger response ({len(res.content)} chars):\n{res.content}")
+    await _report(f"🔀 Merger response ({len(res.content)} chars):\n{res.content}")
     merger_usage = _extract_usage(res)
     _uid = state_.get("user_id", "anon")
     PROM_TOKENS.labels(model=JUDGE_MODEL, token_type="prompt",      node="merger", user_id=_uid).inc(merger_usage.get("prompt_tokens", 0))
@@ -2225,13 +2250,13 @@ async def merger_node(state_: AgentState):
                      res.content.startswith("[Judge unavailable"))
     if _judge_failed:
         logger.error("❌ Merger: Judge LLM returned empty/error response (VRAM/OOM?)")
-        await _m._report("❌ Merger: empty or failed answer from judge — possible VRAM exhaustion")
+        await _report("❌ Merger: empty or failed answer from judge — possible VRAM exhaustion")
         # Best expert response as fallback
         best = next((r for r in expert_results if _parse_expert_confidence(r) == "high"), None) \
                or (expert_results[0] if expert_results else None)
         fallback = best or "No answer available — please try again."
         return {"final_response": fallback, **merger_usage}
-    await _m._report(f"✅ Response complete ({len(res.content)} chars)")
+    await _report(f"✅ Response complete ({len(res.content)} chars)")
 
     # Parse and strip any SYNTHESIS_INSIGHT block from the LLM output.
     # The clean content is shown to the user; the insight is persisted to Neo4j separately.
@@ -2333,7 +2358,7 @@ async def merger_node(state_: AgentState):
                 pass
         # Save response metadata for feedback tracking in Valkey (non-blocking)
         asyncio.create_task(
-            _m._store_response_metadata(
+            _store_response_metadata(
                 state_.get("response_id", ""),
                 state_["input"],
                 state_.get("expert_models_used", []),
@@ -2343,7 +2368,7 @@ async def merger_node(state_: AgentState):
             )
         )
         # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)
-        asyncio.create_task(_m._self_evaluate(
+        asyncio.create_task(_self_evaluate(
             state_.get("response_id", ""), state_["input"], res_content_clean, chroma_doc_id,
             template_name=state_.get("template_name", ""),
             complexity=state_.get("complexity_level", ""),
@@ -2624,18 +2649,18 @@ async def research_fallback_node(state_: AgentState):
     searches = [{"query": strategy_hint, "category": cat}]
 
     logger.info(f"--- [NODE] RESEARCH FALLBACK (strategy: '{strategy_hint[:60]}') ---")
-    await _m._report(f"🔍 Research fallback — new strategy: '{strategy_hint[:60]}'")
+    await _report(f"🔍 Research fallback — new strategy: '{strategy_hint[:60]}'")
 
     async def _search_one(item: dict) -> str:
         query = item["query"][:180]
         cat_s = item["category"]
-        await _m._report(f"🌐 Fallback search [{cat_s}]: '{query[:60]}'...")
-        raw = await _m._web_search_with_citations(query, ddg_fallback=state_.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
+        await _report(f"🌐 Fallback search [{cat_s}]: '{query[:60]}'...")
+        raw = await _web_search_with_citations(query, ddg_fallback=state_.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
         if raw:
-            await _m._report(f"🌐 [{cat_s}]: {len(raw)} chars fallback result")
+            await _report(f"🌐 [{cat_s}]: {len(raw)} chars fallback result")
             logger.info(f"🌐 Research Fallback [{cat_s}]: {len(raw)} chars")
             return f"[Research Fallback / {cat_s}]:\n{raw[:2000]}"
-        await _m._report(f"⚠️ Fallback search [{cat_s}] returned empty")
+        await _report(f"⚠️ Fallback search [{cat_s}] returned empty")
         return ""
 
     results = await asyncio.gather(*[_search_one(s) for s in searches])
@@ -2683,7 +2708,7 @@ async def thinking_node(state_: AgentState):
         return {"reasoning_trace": ""}
 
     logger.info("--- [NODE] THINKING (Chain-of-Thought) ---")
-    await _m._report("🧠 Reasoning: strukturierte Analyse des Problems...")
+    await _report("🧠 Reasoning: strukturierte Analyse des Problems...")
 
     sections = [f"QUESTION: {state_['input']}"]
     if expert_results:
@@ -2707,12 +2732,12 @@ async def thinking_node(state_: AgentState):
         + "\n\n".join(sections)
     )
 
-    await _m._report(f"🧠 Reasoning-Prompt:\n{reasoning_prompt}")
+    await _report(f"🧠 Reasoning-Prompt:\n{reasoning_prompt}")
     try:
         res   = await _invoke_judge_with_retry(state_, reasoning_prompt)
         usage = _extract_usage(res)
         trace = res.content.strip()
-        await _m._report(f"🧠 Reasoning result ({len(trace)} chars):\n{trace}")
+        await _report(f"🧠 Reasoning result ({len(trace)} chars):\n{trace}")
         logger.info(f"🧠 Reasoning Trace: {trace[:200]}")
         return {"reasoning_trace": trace, **usage}
     except Exception as e:
@@ -2754,7 +2779,7 @@ async def resolve_conflicts_node(state_: AgentState):
         return {}
 
     logger.info(f"⚖️  resolve_conflicts_node: {len(pending)} pending conflicts")
-    await _m._report(f"⚖️ Resolving {len(pending)} paraconsistent conflict(s)...")
+    await _report(f"⚖️ Resolving {len(pending)} paraconsistent conflict(s)...")
 
     # Strategy A: auto-dismiss low-divergence conflicts (formulaic variation, not real contradiction).
     # Strategy B: escalate safety-critical conflicts to a judge LLM call.
@@ -2786,7 +2811,7 @@ async def resolve_conflicts_node(state_: AgentState):
                 verdict = arb_res.content.strip()[:300]
                 resolved.append({**c, "resolution": "resolved", "resolved_by": f"judge_arbitration: {verdict}"})
                 logger.info(f"⚖️  [{category}] conflict resolved by judge: {verdict[:80]}")
-                await _m._report(f"⚖️ [{category}] Judge verdict: {verdict[:120]}")
+                await _report(f"⚖️ [{category}] Judge verdict: {verdict[:120]}")
             except Exception as _arb_err:
                 logger.warning(f"⚖️  [{category}] judge arbitration failed: {_arb_err}")
                 resolved.append({**c, "resolution": "dismissed", "resolved_by": "judge_unavailable"})
@@ -2821,7 +2846,7 @@ async def critic_node(state_: AgentState):
         return {"final_response": final_response}
 
     logger.info(f"--- [NODE] CRITIC (fact-check: {active}) ---")
-    await _m._report(f"🔎 Critic: fact-check for {', '.join(sorted(active))}...")
+    await _report(f"🔎 Critic: fact-check for {', '.join(sorted(active))}...")
 
     critic_prompt = (
         f"You are a critical reviewer for {', '.join(sorted(active))} answers.\n"
@@ -2839,25 +2864,25 @@ async def critic_node(state_: AgentState):
         "   You may append a brief [Correction-Note: ...] at the very end only.\n"
     )
 
-    await _m._report(f"🔎 Critic-Prompt:\n{critic_prompt}")
+    await _report(f"🔎 Critic-Prompt:\n{critic_prompt}")
     try:
         res          = await _invoke_judge_with_retry(state_, critic_prompt)
         usage        = _extract_usage(res)
         critic_out   = res.content.strip()
-        await _m._report(f"🔎 Critic response:\n{critic_out}")
+        await _report(f"🔎 Critic response:\n{critic_out}")
 
         # Guard: if the judge refused (content filter / VRAM), keep the merger answer unchanged.
         if critic_out.startswith("[Judge unavailable") or not critic_out:
             logger.warning("⚠️ Critic: judge refused — preserving merger answer unchanged")
-            await _m._report("⚠️ Critic: judge refused (content filter?) — merger answer preserved")
+            await _report("⚠️ Critic: judge refused (content filter?) — merger answer preserved")
             return {"final_response": final_response}
 
         if critic_out.upper().startswith("CONFIRMED"):
-            await _m._report("✅ Critic: answer confirmed correct")
+            await _report("✅ Critic: answer confirmed correct")
             logger.info("✅ Critic: no errors found")
             return {"final_response": final_response, **usage}
 
-        await _m._report(f"⚠️ Critic: answer corrected ({len(critic_out)} chars)")
+        await _report(f"⚠️ Critic: answer corrected ({len(critic_out)} chars)")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         return {"final_response": critic_out, **usage}
     except Exception as e:

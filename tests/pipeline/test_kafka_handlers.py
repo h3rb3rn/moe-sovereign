@@ -88,8 +88,8 @@ async def test_ingest_handler_calls_extract_and_ingest(monkeypatch):
     mock_gm = AsyncMock()
     mock_gm.extract_and_ingest = AsyncMock()
     mock_gm._extract_terms = MagicMock(return_value=[])
-    monkeypatch.setattr("main.graph_manager", mock_gm)
-    monkeypatch.setattr("main.redis_client", None)   # skip gap detection
+    monkeypatch.setattr("state.graph_manager", mock_gm)
+    monkeypatch.setattr("state.redis_client", None)   # skip gap detection
     monkeypatch.setattr("main.ingest_llm", MagicMock())
     monkeypatch.setattr("main.judge_llm", MagicMock())
 
@@ -120,8 +120,8 @@ async def test_ingest_handler_skips_curator_payloads(monkeypatch):
     mock_gm = AsyncMock()
     mock_gm.extract_and_ingest = AsyncMock()
     mock_gm._extract_terms = MagicMock(return_value=[])
-    monkeypatch.setattr("main.graph_manager", mock_gm)
-    monkeypatch.setattr("main.redis_client", None)
+    monkeypatch.setattr("state.graph_manager", mock_gm)
+    monkeypatch.setattr("state.redis_client", None)
     monkeypatch.setattr("main.ingest_llm", MagicMock())
     monkeypatch.setattr("main.judge_llm", MagicMock())
 
@@ -147,8 +147,8 @@ async def test_ingest_handler_skips_curator_payloads(monkeypatch):
 @pytest.mark.asyncio
 async def test_requests_handler_has_no_side_effects(monkeypatch):
     """moe.requests messages are logged but cause no external calls."""
-    monkeypatch.setattr("main.graph_manager", None)
-    monkeypatch.setattr("main.redis_client", None)
+    monkeypatch.setattr("state.graph_manager", None)
+    monkeypatch.setattr("state.redis_client", None)
 
     msg = _make_msg("moe.requests", {
         "response_id": "r-99",
@@ -180,8 +180,8 @@ async def test_feedback_positive_saves_planner_pattern(monkeypatch):
     mock_redis.hgetall = AsyncMock(
         return_value={"plan_cats": '["research","coding"]'}
     )
-    monkeypatch.setattr("main.redis_client", mock_redis)
-    monkeypatch.setattr("main.graph_manager", None)
+    monkeypatch.setattr("state.redis_client", mock_redis)
+    monkeypatch.setattr("state.graph_manager", None)
 
     msg = _make_msg("moe.feedback", {
         "response_id": "r-abc",
@@ -205,8 +205,8 @@ async def test_feedback_positive_saves_planner_pattern(monkeypatch):
 async def test_feedback_negative_does_not_save_pattern(monkeypatch):
     """Negative feedback (positive=False) must NOT write to moe:planner_success."""
     mock_redis = AsyncMock()
-    monkeypatch.setattr("main.redis_client", mock_redis)
-    monkeypatch.setattr("main.graph_manager", None)
+    monkeypatch.setattr("state.redis_client", mock_redis)
+    monkeypatch.setattr("state.graph_manager", None)
 
     msg = _make_msg("moe.feedback", {
         "response_id": "r-bad",
