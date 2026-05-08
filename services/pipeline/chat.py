@@ -106,8 +106,20 @@ class ChatCompletionRequest(BaseModel):
 
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     from main import stream_response, _is_openwebui_internal, _handle_internal_direct, _stream_native_llm
+    from services.lineage import (
+        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
+        dataset_user_query, dataset_response,
+    )
+    _ = _ol_fail  # used below in streaming wrapper
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
     session_id = _extract_session_id(raw_request)
+    _ol_run_id = await _ol_start(
+        "chat_completion",
+        inputs=[dataset_user_query(session_id or "")],
+        extra_facets={"requestModel": {"_producer": "https://github.com/h3rb3rn/moe-sovereign",
+                                       "_schemaURL": "moe-sovereign://requestModel",
+                                       "model": request.model}},
+    )
 
     # IP-based rate limit (pre-auth, guards against credential bruteforce & DoS)
     if not await _check_ip_rate_limit(raw_request):
@@ -500,6 +512,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 asyncio.create_task(_increment_user_budget(user_id, _nu.get("total_tokens", 0), prompt_tokens=_nu.get("prompt_tokens", 0), completion_tokens=_nu.get("completion_tokens", 0)))
         asyncio.create_task(_deregister_active_request(chat_id))
         _nj["id"] = chat_id
+        await _ol_complete(_ol_run_id, job_name="chat_completion",
+                           outputs=[dataset_response(chat_id)])
         return _nj
 
     _moe_resp_headers = {}
@@ -521,8 +535,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             pass
 
     if request.stream:
-        return StreamingResponse(
-            stream_response(user_input, chat_id, mode, chat_history=history,
+        _inner = stream_response(user_input, chat_id, mode, chat_history=history,
                             system_prompt=system_prompt, user_id=user_id,
                             user_permissions=user_perms, user_experts=user_experts,
                             planner_prompt=_tmpl_prompts["planner_prompt"],
@@ -542,7 +555,23 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                                 if request.max_agentic_rounds is not None
                                 else _tmpl_prompts.get("max_agentic_rounds", 0)
                             ),
-                            no_cache=request.no_cache),
+                            no_cache=request.no_cache)
+
+        async def _lineage_wrapped_stream():
+            """Wrap the upstream generator so COMPLETE/FAIL fires when streaming ends."""
+            try:
+                async for _chunk in _inner:
+                    yield _chunk
+            except Exception as _stream_err:
+                await _ol_fail(_ol_run_id, job_name="chat_completion",
+                               error=str(_stream_err))
+                raise
+            else:
+                await _ol_complete(_ol_run_id, job_name="chat_completion",
+                                   outputs=[dataset_response(chat_id)])
+
+        return StreamingResponse(
+            _lineage_wrapped_stream(),
             media_type="text/event-stream",
             headers=_moe_resp_headers or None,
         )
@@ -626,6 +655,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _prov = result.get("provenance_sources")
     if _prov:
         resp["metadata"] = {"sources": _prov}
+    await _ol_complete(_ol_run_id, job_name="chat_completion",
+                       outputs=[dataset_response(chat_id)])
     if _moe_resp_headers:
         return JSONResponse(content=resp, headers=_moe_resp_headers)
     return resp

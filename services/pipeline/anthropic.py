@@ -908,12 +908,23 @@ async def anthropic_messages(request: Request):
         ANTHROPIC_API_KEY=<any>        # not validated
         CLAUDE_MODEL=claude-sonnet-4-6  (or other claude-* ID)
     """
+    from services.lineage import (
+        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
+        dataset_user_query, dataset_response,
+    )
     body       = await request.json()
     chat_id    = f"msg_{uuid.uuid4().hex[:24]}"
     session_id = _extract_session_id(request)
     messages   = body.get("messages", [])
     tools      = body.get("tools", [])
     model     = body.get("model", "")
+    _ol_run_id = await _ol_start(
+        "anthropic_messages",
+        inputs=[dataset_user_query(session_id or "")],
+        extra_facets={"requestModel": {"_producer": "https://github.com/h3rb3rn/moe-sovereign",
+                                       "_schemaURL": "moe-sovereign://requestModel",
+                                       "model": model, "hasTools": bool(tools)}},
+    )
 
     # Auth
     raw_key  = _extract_api_key(request)
@@ -1069,7 +1080,7 @@ async def anthropic_messages(request: Request):
         # All modes: tool calls always go to the tool model (precise function calling needed)
         if tools or has_tool_results:
             if is_claude_code:
-                return await _anthropic_tool_handler(
+                _result = await _anthropic_tool_handler(
                     body, chat_id,
                     tool_model=_effective_tool_model,
                     tool_url=_effective_tool_url,
@@ -1081,33 +1092,37 @@ async def anthropic_messages(request: Request):
                     session_id=session_id,
                     is_user_conn=_effective_tool_is_user_conn,
                 )
-            return await _anthropic_tool_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
-
+            else:
+                _result = await _anthropic_tool_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
         # Mode 2: MoE Reasoning — reasoning expert with <think> parsing and thinking blocks
-        if _effective_cc_mode == "moe_reasoning":
-            return await _anthropic_reasoning_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
-
+        elif _effective_cc_mode == "moe_reasoning":
+            _result = await _anthropic_reasoning_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
         # Mode 3 + fallback: MoE Orchestrated — full planner, all experts
-        return await _anthropic_moe_handler(body, chat_id,
-                                             user_permissions=_user_perms,
-                                             user_experts=_user_experts,
-                                             planner_prompt=_user_tmpl_prompts["planner_prompt"],
-                                             judge_prompt=_user_tmpl_prompts["judge_prompt"],
-                                             judge_model_override=_user_tmpl_prompts["judge_model_override"],
-                                             judge_url_override=_user_tmpl_prompts["judge_url_override"],
-                                             judge_token_override=_user_tmpl_prompts["judge_token_override"],
-                                             planner_model_override=_user_tmpl_prompts["planner_model_override"],
-                                             planner_url_override=_user_tmpl_prompts["planner_url_override"],
-                                             planner_token_override=_user_tmpl_prompts["planner_token_override"],
-                                             user_id=_user_id,
-                                             api_key_id=_api_key_id,
-                                             session_id=session_id,
-                                             enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False),
-                                             cross_session_enabled=_user_tmpl_prompts.get("enable_cross_session_memory", False),
-                                             cross_session_scopes=_user_tmpl_prompts.get("cross_session_scopes", ["private"]))
+        else:
+            _result = await _anthropic_moe_handler(body, chat_id,
+                                                 user_permissions=_user_perms,
+                                                 user_experts=_user_experts,
+                                                 planner_prompt=_user_tmpl_prompts["planner_prompt"],
+                                                 judge_prompt=_user_tmpl_prompts["judge_prompt"],
+                                                 judge_model_override=_user_tmpl_prompts["judge_model_override"],
+                                                 judge_url_override=_user_tmpl_prompts["judge_url_override"],
+                                                 judge_token_override=_user_tmpl_prompts["judge_token_override"],
+                                                 planner_model_override=_user_tmpl_prompts["planner_model_override"],
+                                                 planner_url_override=_user_tmpl_prompts["planner_url_override"],
+                                                 planner_token_override=_user_tmpl_prompts["planner_token_override"],
+                                                 user_id=_user_id,
+                                                 api_key_id=_api_key_id,
+                                                 session_id=session_id,
+                                                 enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False),
+                                                 cross_session_enabled=_user_tmpl_prompts.get("enable_cross_session_memory", False),
+                                                 cross_session_scopes=_user_tmpl_prompts.get("cross_session_scopes", ["private"]))
+        await _ol_complete(_ol_run_id, job_name="anthropic_messages",
+                           outputs=[dataset_response(chat_id)])
+        return _result
     except Exception as _exc:
         logger.error("Messages-Endpoint unbehandelte Exception (chat_id=%s): %s", chat_id, _exc, exc_info=True)
         asyncio.create_task(_deregister_active_request(chat_id))
+        await _ol_fail(_ol_run_id, job_name="anthropic_messages", error=str(_exc))
         return JSONResponse(status_code=500, content={"error": {
             "type": "api_error", "message": f"Internal server error: {_exc}"
         }})

@@ -90,6 +90,16 @@ async def merger_node(state_: AgentState):
     from parsing import _extract_usage, _parse_expert_confidence, _expert_category, _dedup_by_category, _collect_conflicts, _improvement_ratio
     from metrics import PROM_TOKENS
     from config import KAFKA_TOPIC_REQUESTS
+    from services.lineage import (
+        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
+        dataset_response,
+    )
+    _ol_merger_run = await _ol_start(
+        "merger_node",
+        extra_facets={"templateName": {"_producer": "https://github.com/h3rb3rn/moe-sovereign",
+                                       "_schemaURL": "moe-sovereign://templateName",
+                                       "name": state_.get("template_name", "default")}},
+    )
 
     # Cache hit: direct answer, no LLM call needed
     if state_.get("cache_hit"):
@@ -101,6 +111,8 @@ async def merger_node(state_: AgentState):
             "cache_hit":   True,
             "ts":          datetime.now().isoformat(),
         }))
+        await _ol_complete(_ol_merger_run, job_name="merger_node",
+                           outputs=[dataset_response(state_.get("response_id", "cache"))])
         return {"final_response": state_.get("cached_facts", "")}
 
     logger.info("--- [NODE] MERGER & INGEST ---")
@@ -456,6 +468,8 @@ async def merger_node(state_: AgentState):
             "fast_path":   True,
             "ts":          datetime.now().isoformat(),
         }))
+        await _ol_complete(_ol_merger_run, job_name="merger_node",
+                           outputs=[dataset_response(state_.get("response_id", "fast"))])
         return {"final_response": fast_resp, "prompt_tokens": 0, "completion_tokens": 0}
 
     await _report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
@@ -465,6 +479,7 @@ async def merger_node(state_: AgentState):
         logger.error(f"❌ Merger Judge LLM error: {e}")
         await _report(f"❌ Merger: Judge LLM unreachable ({e})")
         fallback = "\n\n".join(s for s in sections[1:] if s)  # raw sections as emergency response
+        await _ol_fail(_ol_merger_run, job_name="merger_node", error=str(e))
         return {"final_response": fallback or "Error: Merger could not generate a response."}
     await _report(f"🔀 Merger response ({len(res.content)} chars):\n{res.content}")
     merger_usage = _extract_usage(res)
@@ -480,6 +495,7 @@ async def merger_node(state_: AgentState):
         best = next((r for r in expert_results if _parse_expert_confidence(r) == "high"), None) \
                or (expert_results[0] if expert_results else None)
         fallback = best or "No answer available — please try again."
+        await _ol_fail(_ol_merger_run, job_name="merger_node", error="judge_empty_or_error")
         return {"final_response": fallback, **merger_usage}
     await _report(f"✅ Response complete ({len(res.content)} chars)")
 
@@ -830,6 +846,8 @@ async def merger_node(state_: AgentState):
             "agentic_iteration":    _agentic_iter + 1 if _agentic_gap != "COMPLETE" else _agentic_iter,
         }
 
+    await _ol_complete(_ol_merger_run, job_name="merger_node",
+                       outputs=[dataset_response(state_.get("response_id", "synthesis"))])
     return {
         "final_response":    res_content_clean,
         "provenance_sources": _provenance_sources,
