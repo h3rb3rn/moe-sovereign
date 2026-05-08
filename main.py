@@ -980,6 +980,55 @@ async def _gauge_updater_loop():
             logger.debug(f"Gauge updater error: {e}")
 
 
+# ─── LangGraph pipeline definition ─────────────────────────────────────────────
+# Topology mirrors commit 4d5b9674 (fuzzy t-norm routing) plus 6da692c7
+# (paraconsistent conflict registry). Nodes are imported from the graph/ package
+# above; this block wires them into a StateGraph that lifespan() compiles with
+# the appropriate checkpointer.
+builder = StateGraph(AgentState)
+builder.add_node("cache",              cache_lookup_node)
+builder.add_node("semantic_router",    semantic_router_node)
+builder.add_node("planner",            planner_node)
+builder.add_node("fuzzy_router",       fuzzy_router_node)
+builder.add_node("workers",            expert_worker)
+builder.add_node("research",           research_node)
+builder.add_node("math",               math_node_wrapper)
+builder.add_node("mcp",                mcp_node)
+builder.add_node("graph_rag",          graph_rag_node)
+builder.add_node("research_fallback",  research_fallback_node)
+builder.add_node("thinking",           thinking_node)
+builder.add_node("merger",             merger_node)
+builder.add_node("resolve_conflicts",  resolve_conflicts_node)
+builder.add_node("critic",             critic_node)
+
+builder.set_entry_point("cache")
+builder.add_conditional_edges(
+    "cache", _route_cache,
+    {"semantic_router": "semantic_router", "merger": "merger"},
+)
+builder.add_edge("semantic_router", "planner")
+builder.add_edge("planner", "fuzzy_router")
+builder.add_edge("fuzzy_router", "workers")
+builder.add_edge("fuzzy_router", "research")
+builder.add_edge("fuzzy_router", "math")
+builder.add_edge("fuzzy_router", "mcp")
+builder.add_edge("fuzzy_router", "graph_rag")
+builder.add_edge(
+    ["workers", "research", "math", "mcp", "graph_rag"],
+    "research_fallback",
+)
+builder.add_edge("research_fallback", "thinking")
+builder.add_edge("thinking", "merger")
+builder.add_conditional_edges(
+    "merger", _should_replan,
+    {"planner": "planner", "critic": "resolve_conflicts"},
+)
+builder.add_edge("resolve_conflicts", "critic")
+builder.add_edge("critic", END)
+
+app_graph = None
+
+
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     import state as _state
