@@ -205,19 +205,38 @@ _WEB_SEARCH_FALLBACK_DDG: bool = (
 )
 
 # =============================================================================
-# AIHUB fallback
+# Primary endpoint fallback
+# When the primary (external) inference endpoint is degraded (auth/quota errors),
+# the orchestrator falls back to a configured local node.
+# Generic env vars: FALLBACK_NODE / FALLBACK_MODEL / FALLBACK_MODEL_SECOND
+# Legacy env var names (AIHUB_FALLBACK_*) are still accepted for backward compat.
 # =============================================================================
 
-_AIHUB_FALLBACK_NODE         = os.getenv("AIHUB_FALLBACK_NODE", "")
-_AIHUB_FALLBACK_MODEL        = os.getenv("AIHUB_FALLBACK_MODEL", "")
-_AIHUB_FALLBACK_MODEL_SECOND = os.getenv("AIHUB_FALLBACK_MODEL_SECOND", "")
+_FALLBACK_NODE         = (
+    os.getenv("FALLBACK_NODE") or os.getenv("AIHUB_FALLBACK_NODE", "")
+)
+_FALLBACK_MODEL        = (
+    os.getenv("FALLBACK_MODEL") or os.getenv("AIHUB_FALLBACK_MODEL", "")
+)
+_FALLBACK_MODEL_SECOND = (
+    os.getenv("FALLBACK_MODEL_SECOND") or os.getenv("AIHUB_FALLBACK_MODEL_SECOND", "")
+)
+_FALLBACK_ENABLED      = bool(_FALLBACK_NODE and _FALLBACK_MODEL)
 
-# Legacy aliases kept for backward compat with existing code references
-_N04_FALLBACK_NODE         = _AIHUB_FALLBACK_NODE
-_N04_FALLBACK_MODEL        = _AIHUB_FALLBACK_MODEL
-_N04_FALLBACK_MODEL_SECOND = _AIHUB_FALLBACK_MODEL_SECOND
+# URL substring patterns that identify external (non-local) endpoints.
+# Used to decide whether to apply the retry + fallback logic.
+# Set EXTERNAL_ENDPOINT_PATTERNS to a comma-separated list to override.
+_EXTERNAL_ENDPOINT_PATTERNS: list[str] = [
+    p.strip().lower()
+    for p in os.getenv("EXTERNAL_ENDPOINT_PATTERNS", "").split(",")
+    if p.strip()
+]
 
-_FALLBACK_ENABLED = bool(_AIHUB_FALLBACK_NODE and _AIHUB_FALLBACK_MODEL)
+# Retry / degraded-window settings for any external endpoint.
+# Tune via env vars; defaults are conservative for transient instability.
+_ENDPOINT_RETRY_COUNT  = int(os.getenv("ENDPOINT_RETRY_COUNT",  "3"))
+_ENDPOINT_RETRY_DELAY  = float(os.getenv("ENDPOINT_RETRY_DELAY", "2.0"))
+_ENDPOINT_DEGRADED_TTL = int(os.getenv("ENDPOINT_DEGRADED_TTL", "300"))
 
 # =============================================================================
 # Thompson sampling

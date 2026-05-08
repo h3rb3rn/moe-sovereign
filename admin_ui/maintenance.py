@@ -103,7 +103,7 @@ def _repin_dead_node(obj: Any, dead: str, alive: str) -> None:
 
 
 def _template_suffix(name: str) -> Optional[str]:
-    """For 'moe-ontology-curator-n04-rtx' → 'N04-RTX'. Returns None if not curator."""
+    """For 'moe-ontology-curator-mynode' → 'MYNODE'. Returns None if not curator."""
     prefix = "moe-ontology-curator-"
     if not name.startswith(prefix):
         return None

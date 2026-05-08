@@ -3301,7 +3301,7 @@ def node_status(node_name: str = "") -> str:
     Reads live data from the MoE orchestrator's Starfleet API.
     Includes: up/down state, currently loaded models, recent alerts per node.
 
-    node_name: Optional node name (e.g. 'N04-RTX'). Leave empty for all nodes.
+    node_name: Optional node name (e.g. 'MY-NODE'). Leave empty for all nodes.
     """
     if not _INFRA_MCP_ENABLED:
         return _infra_disabled_response("node_status")

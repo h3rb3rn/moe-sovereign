@@ -97,10 +97,10 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-oss:20b":          32_768,
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
-    # ── AIHUB sovereign (H200 cloud) ─────────────────────────────────────────
+    # ── Large sovereign cloud models ─────────────────────────────────────────
     "gpt-oss-120b-sovereign":   32_768,
     "qwen-3.5-122b-sovereign":  32_768,
-    # ── Local fallback models (N04-RTX) ───────────────────────────────────────
+    # ── Local fallback models ─────────────────────────────────────────────────
     "qwen3.6:35b":              32_768,
     "qwen3.6":                  32_768,
     "gemma4:31b":                8_192,

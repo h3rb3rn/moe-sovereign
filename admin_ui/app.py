@@ -5725,7 +5725,7 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
         for m in models_cache:
             if not m:
                 continue
-            # Strip stale @suffixes from deleted nodes (AIHUB_NFF, AIHUB_VR, etc.)
+            # Strip stale @suffixes from deleted nodes (e.g. model@OLD_ENDPOINT)
             # to prevent cumulative contamination on every permitted-models call.
             base_model = m.rsplit("@", 1)[0] if "@" in m else m
             if not base_model:
