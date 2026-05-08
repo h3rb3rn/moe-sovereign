@@ -142,55 +142,12 @@ from memory_retrieval import get_memory_store, compute_evicted_turns
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("MOE-SOVEREIGN")
 
-# --- TOOL-EVAL LOGGING (rotating JSONL, one record per tool handler call) ---
-import logging.handlers as _log_handlers
-os.makedirs("/app/logs", exist_ok=True)
-_tool_eval_logger = logging.getLogger("tool-eval")
-_tool_eval_logger.setLevel(logging.INFO)
-_tool_eval_logger.propagate = False
-_teh = _log_handlers.RotatingFileHandler(
-    "/app/logs/tool_eval.jsonl", maxBytes=50 * 1024 * 1024, backupCount=5, encoding="utf-8"
+import state
+from prompts import (
+    SYNTHESIS_PERSISTENCE_INSTRUCTION,
+    PROVENANCE_INSTRUCTION,
+    DEFAULT_PLANNER_ROLE,
 )
-_teh.setFormatter(logging.Formatter("%(message)s"))
-_tool_eval_logger.addHandler(_teh)
-
-def _log_tool_eval(record: dict) -> None:
-    """Append a structured JSON record to tool_eval.jsonl. Never raises."""
-    try:
-        _tool_eval_logger.info(json.dumps(record, ensure_ascii=False, default=str))
-    except Exception:
-        pass
-
-# Kafka constants imported from config.py
-
-# Instruction appended to the merger_node system prompt to trigger synthesis persistence.
-# The LLM is asked to append a tagged JSON block only for genuinely novel insights.
-SYNTHESIS_PERSISTENCE_INSTRUCTION = (
-    "\n\nSYNTHESIS PERSISTENCE: If your response contains a novel multi-source comparison, "
-    "logical inference, or non-trivial synthesis (not a simple factual lookup), append "
-    "exactly ONE block at the very end of your response:\n"
-    "<SYNTHESIS_INSIGHT>\n"
-    '{"summary": "<one concise sentence>", '
-    '"entities": ["entity1", "entity2"], '
-    '"insight_type": "comparison|synthesis|inference"}\n'
-    "</SYNTHESIS_INSIGHT>\n"
-    "Omit this block entirely for direct factual answers or simple retrievals."
-)
-
-# Instruction appended to merger prompt to trigger inline source attribution.
-# Tags factual claims derived from the knowledge graph for provenance tracking.
-PROVENANCE_INSTRUCTION = (
-    "\n\nSOURCE ATTRIBUTION: When your answer includes a factual claim that comes "
-    "directly from the Knowledge Graph section above, mark it with [REF:entity_name] "
-    "immediately after the claim. Use the exact entity name from the graph context. "
-    "Only tag claims derived from the graph — do not tag general knowledge or web results. "
-    "Keep tags minimal (max 5 per response)."
-)
-
-# DB, enterprise, OIDC constants imported from config.py
-# Mutable globals (redis_client, _userdb_pool, etc.) live in state.py
-_enterprise_reachable: bool = False  # set by lifespan via _init_enterprise_stack()
-_userdb_pool: Optional[AsyncConnectionPool] = None  # set by lifespan
 
 # JWKS cache: (keys_dict, fetched_at)
 _jwks_cache: tuple = (None, 0.0)
@@ -204,7 +161,7 @@ _jwks_cache: tuple = (None, 0.0)
 #       blocks the event loop longer than the locked section itself (a few ns);
 #   (b) asyncio.Lock would require async with, which is heavier and unnecessary
 #       for pure-synchronous dict updates.
-_shadow_lock = threading.Lock()  # guards _shadow_request_counter increment
+# _shadow_lock + _shadow_request_counter live in services/helpers.py
 # _gpu_lock and _cache_lock live in services/inference.py (guards inference caches)
 
 
@@ -221,18 +178,7 @@ from services.templates import _read_cc_profiles
 # Neo4j, inference servers, benchmark constants imported from config.py
 if not INFERENCE_SERVERS_LIST and os.getenv("INFERENCE_SERVERS", "").strip():
     logger.warning("INFERENCE_SERVERS JSON is invalid — no inference servers loaded")
-_shadow_request_counter: int   = 0
-
-# ─── Default role instruction for the Planner LLM ─────────────────────────────
-# Can be overridden per Expert Template via planner_prompt field.
-DEFAULT_PLANNER_ROLE = (
-    "You are the orchestrator of a Mixture-of-Experts system.\n"
-    "Decompose the following request into 1–4 subtasks.\n\n"
-    "Mandatorily extract all numerical constraints and technical parameters from the request "
-    "(e.g. model sizes, MTU values, protocol overheads, chemical doses, bitrates). "
-    "Integrate these as IMMUTABLE_CONSTANTS directly into each subtask description for the experts, "
-    "so experts cannot hallucinate default values."
-)
+# DEFAULT_PLANNER_ROLE moved to prompts.py
 
 
 # _resolve_user_experts, _resolve_template_prompts moved to services/routing.py
@@ -244,6 +190,18 @@ from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
     _check_ip_rate_limit,
+)
+
+# Helper functions moved to services/helpers.py
+from services.helpers import (
+    _log_tool_eval, _tool_eval_logger,
+    _update_rate_limit_headers, _check_rate_limit_exhausted,
+    _conf_format_for_mode, _get_expert_prompt,
+    _truncate_history, _apply_semantic_memory,
+    _web_search_with_citations,
+    _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
+    _report, _progress_queue,
+    _shadow_request, _shadow_lock,
 )
 from services.auth import _extract_session_id
 
@@ -270,86 +228,31 @@ import state as _state_prl
 _provider_rate_limits = _state_prl._provider_rate_limits  # same dict object
 
 
-def _update_rate_limit_headers(endpoint: str, headers, status_code: int = 200) -> None:
-    """Parse OpenAI-style x-ratelimit-* headers and cache rate limit state per endpoint."""
-    import time as _time, re as _re
-    now = _time.time()
-    entry = _provider_rate_limits.get(endpoint, {})
-    remaining_raw = headers.get("x-ratelimit-remaining-tokens")
-    limit_raw     = headers.get("x-ratelimit-limit-tokens")
-    reset_raw     = headers.get("x-ratelimit-reset-tokens")
-    if remaining_raw is not None:
-        try: entry["remaining_tokens"] = int(float(remaining_raw))
-        except (ValueError, TypeError): pass
-    if limit_raw is not None:
-        try: entry["limit_tokens"] = int(float(limit_raw))
-        except (ValueError, TypeError): pass
-    if reset_raw is not None:
-        try:
-            m = _re.match(r'P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?$', reset_raw)
-            if m:
-                d, h, mi, s = (float(x or 0) for x in m.groups())
-                entry["reset_time"] = now + d*86400 + h*3600 + mi*60 + s
-            else:
-                ts = float(reset_raw)
-                entry["reset_time"] = ts if ts > 1e9 else now + ts
-        except (ValueError, TypeError): pass
-    if status_code == 429:
-        entry["exhausted"] = True
-        if "reset_time" not in entry:
-            entry["reset_time"] = now + 60  # default: retry after 60s
-    else:
-        if entry.get("remaining_tokens", 1) > 0:
-            entry["exhausted"] = False
-    entry["updated_at"] = now
-    _provider_rate_limits[endpoint] = entry
-
-
-def _check_rate_limit_exhausted(endpoint: str) -> bool:
-    """Return True if endpoint is known rate-limited and reset time has not yet passed."""
-    import time as _time
-    entry = _provider_rate_limits.get(endpoint)
-    if not entry or not entry.get("exhausted"):
-        return False
-    return _time.time() < entry.get("reset_time", 0)
-
-
-# MCP tool descriptions for the planner (loaded at startup)
-MCP_TOOLS_DESCRIPTION = ""
-# Per-tool description dict for domain-filtered planner injection: {name: description}
-_MCP_TOOLS_DICT: dict[str, str] = {}
-# MCP tool schemas for pre-call arg validation: {tool_name: {required: [...], args: {...}}}
-MCP_TOOL_SCHEMAS: dict = {}
-
-# Code-navigation tools — not included in MCP_TOOLS_DESCRIPTION,
-# only injected into the planner prompt when agentic_coder is active.
+# MCP runtime state lives in state.py — populated by _load_mcp_tool_descriptions().
+# Code-navigation tool names — used by _load_mcp_tool_descriptions to split
+# AGENTIC_CODE_TOOLS_DESCRIPTION from the general MCP_TOOLS_DESCRIPTION block.
 _AGENTIC_TOOL_NAMES = {"repo_map", "read_file_chunked", "lsp_query"}
-AGENTIC_CODE_TOOLS_DESCRIPTION = ""
 
 # ── Tool groups for domain-filtered planner injection ────────────────────────
 # Core: always shown — fundamental precision + web access
 _TOOL_GROUP_CORE = frozenset({
-    # Web research — always available; these are the backbone of every research task
     "web_researcher", "web_search_domain", "fetch_pdf_text",
     "wikipedia_get_section",
-    # Deterministic entity/fact lookup — prefer over web search for structured data
     "wikidata_search", "wikidata_sparql",
-    # JS-capable browser + alternative search — generic enough for any research query
     "web_browser", "duckduckgo_search",
-    # Math / utility — domain-agnostic
     "calculate", "python_sandbox",
     "date_diff", "date_add", "unit_convert",
 })
 # Research: shown when query contains paper/author/database/species/media markers
 _TOOL_GROUP_RESEARCH = frozenset({
     "semantic_scholar_search", "pubmed_search",
-    "crossref_lookup", "openalex_search",   # academic publication databases
+    "crossref_lookup", "openalex_search",
     "orcid_works_count",
-    "wayback_fetch",                         # historical snapshots (ORCID, archived pages)
+    "wayback_fetch",
     "pubchem_compound_search", "pubchem_advanced_search",
     "github_search_issues", "github_issue_events",
     "youtube_transcript",
-    "chess_analyze_position", "chess_legal_moves",  # chess position analysis via Lichess
+    "chess_analyze_position", "chess_legal_moves",
 })
 # Data/Math: shown for numeric, statistical, or text-processing queries
 _TOOL_GROUP_DATA = frozenset({
@@ -368,24 +271,8 @@ _TOOL_GROUP_FILES = frozenset({
     "graph_query", "graph_ingest", "graph_provenance", "graph_analyze",
 })
 
-_RESEARCH_DETECT = re.compile(
-    r'\b(paper|article|study|studies|journal|published|author|researcher|professor|'
-    r'arxiv|doi|isbn|pubchem|orcid|database|dataset|classification|compound|'
-    r'species|genus|wikipedia|museum|collection|archive|standard|transcript|'
-    r'video|episode|season|channel|github|issue|repo)\b', re.I,
-)
-_LEGAL_DETECT = re.compile(
-    r'\b(§+\s*\d+|bgh|bverfg|bfh|bsg|bgh|hgb|bdb|stvo|dsgvo|gdpr|'
-    r'vertrag|gesetz|recht|klage|straf|gmbh|ag\b|ug\b|insolvenz|'
-    r'law|legal|statute|regulation|compliance|contract|court)\b', re.I,
-)
-_DATA_DETECT = re.compile(
-    r'\b(berechne?|calculate|compute|average|median|stdev|hash|base64|'
-    r'regex|cidr|subnet|subnet|ip.address|convert|unit|statistic|prozent|percent)\b', re.I,
-)
-_FILE_DETECT = re.compile(
-    r'\b(attachment|datei|file|upload|image|foto|bild|pdf|spreadsheet|csv|graph|ontology)\b', re.I,
-)
+# Routing detection regexes moved to prompts.py
+from prompts import _RESEARCH_DETECT, _LEGAL_DETECT, _DATA_DETECT, _FILE_DETECT
 
 
 def _build_filtered_tool_desc(query: str, enable_graphrag: bool = False) -> str:
@@ -395,8 +282,8 @@ def _build_filtered_tool_desc(query: str, enable_graphrag: bool = False) -> str:
     when the query contains matching markers.  Falls back to the global
     MCP_TOOLS_DESCRIPTION if the per-tool dict is not yet populated.
     """
-    if not _MCP_TOOLS_DICT:
-        return MCP_TOOLS_DESCRIPTION
+    if not state._MCP_TOOLS_DICT:
+        return state.MCP_TOOLS_DESCRIPTION
 
     active = set(_TOOL_GROUP_CORE)
     if _RESEARCH_DETECT.search(query):
@@ -410,164 +297,18 @@ def _build_filtered_tool_desc(query: str, enable_graphrag: bool = False) -> str:
 
     lines = [
         f"  - {name}: {desc}"
-        for name, desc in _MCP_TOOLS_DICT.items()
+        for name, desc in state._MCP_TOOLS_DICT.items()
         if name in active
     ]
-    return "\n".join(lines) if lines else MCP_TOOLS_DESCRIPTION
+    return "\n".join(lines) if lines else state.MCP_TOOLS_DESCRIPTION
 
 # Categories handled by specialized nodes (not by expert LLMs)
 NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
 
 # Routing thresholds, timeouts, feedback thresholds imported from config.py
 
-# Confidence format instruction — mode-dependent (3A)
-_CONF_FORMAT_DEFAULT = (
-    "\n\nAlways structure your answer EXACTLY in this format:\n"
-    "CORE_FINDING: [1-2 sentence main statement]\n"
-    "CONFIDENCE: high | medium | low\n"
-    "  high = established expert knowledge, clear source situation\n"
-    "  medium = domain knowledge available, exceptions or nuances possible\n"
-    "  low = data gaps, outdated knowledge, genuine uncertainty\n"
-    "GAPS: [open sub-questions for other experts | none]\n"
-    "REFERRAL: [expert category if handoff needed | —]\n"
-    "DETAILS:\n"
-    "[full answer here]"
-)
-_CONF_FORMAT_CODE = (
-    "\n\nInsert a comment as the very first line:\n"
-    "# CONFIDENCE: high | medium | low\n"
-    "Then ONLY source code."
-)
-_CONF_FORMAT_CONCISE = (
-    "\n\nBegin with: CONFIDENCE: high | medium | low — then your brief answer."
-)
+# _CONF_FORMAT_* constants moved to prompts.py
 
-def _conf_format_for_mode(mode: str) -> str:
-    if mode == "code":    return _CONF_FORMAT_CODE
-    if mode == "concise": return _CONF_FORMAT_CONCISE
-    if mode in ("agent", "agent_orchestrated"):  return ""   # No CONFIDENCE block — coding agents need clean output
-    if mode == "research": return ""   # Research uses its own report structure
-    return _CONF_FORMAT_DEFAULT
-
-# Categories where low confidence triggers a web fallback (3C)
-_SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
-
-# System prompts per expert role — define identity and behavior
-DEFAULT_EXPERT_PROMPTS: Dict[str, str] = {
-    "memory_recall": (
-        "You are a conversation memory expert. Your ONLY source of information is the "
-        "conversation history provided in this context — not the internet, not training data.\n"
-        "Rules:\n"
-        "1. Read ALL previous turns carefully and completely before answering.\n"
-        "2. For multi-part questions (e.g. 'What is X AND what is Y?'): answer EVERY "
-        "part explicitly. Use a structured list if there are 3+ items. Include exact "
-        "values (numbers, names, versions) as stated — never paraphrase or round.\n"
-        "   IMPORTANT: facts about the same entity may appear in DIFFERENT user turns. "
-        "Scan ALL turns to find each requested fact — do not stop after the first match.\n"
-        "3. When a fact was corrected or updated — whether explicit ('Korrektur:', "
-        "'Correction:', 'Update:') or implicit ('wurde auf X erhöht', 'ist jetzt X', "
-        "'wurde geändert auf', 'was changed to', 'is now', 'has been updated to') — "
-        "use ONLY the most recent value. Later statements always supersede earlier ones.\n"
-        "4. If a specific fact was NOT mentioned in this conversation, say exactly: "
-        "'Diese Information wurde in unserem Gespräch nicht erwähnt.' "
-        "(or in English: 'This information was not mentioned in our conversation.')\n"
-        "5. Never guess, infer, or use external knowledge. Only recall from conversation.\n"
-        "6. Be complete: a partial answer that omits requested facts is incorrect."
-    ),
-    "general": (
-        "You are a versatile, fact-based expert. "
-        "Answer precisely, in a structured manner. "
-        "Stick to verifiable facts."
-    ),
-    "math": (
-        "You are a mathematics and physics expert. "
-        "Always show the complete solution steps. "
-        "Use LaTeX notation for formulas. "
-        "Verify your result by back-substitution."
-    ),
-    "technical_support": (
-        "You are an experienced IT engineer and DevOps specialist. "
-        "Answer with concrete, executable solution steps. "
-        "Name relevant commands, configurations and error codes."
-    ),
-    "creative_writer": (
-        "You are a creative author and copywriter. "
-        "Write vividly, originally and with stylistic confidence. "
-        "Adapt tone and register to the context."
-    ),
-    "code_reviewer": (
-        "You are a senior software engineer focused on code quality and security. "
-        "Identify bugs, security vulnerabilities, performance issues and improvement potential. "
-        "Return concrete, improved code and explain why."
-    ),
-    "medical_consult": (
-        "You are an experienced physician. "
-        "Provide well-founded, objective medical information based on current guidelines. "
-        "Always clearly emphasize that consulting a doctor is essential."
-    ),
-    "legal_advisor": (
-        "You are an experienced lawyer specializing in German law. "
-        "Explain the legal situation clearly, in a structured manner, with reference to relevant laws (§§). "
-        "Point out the necessity of individual legal advice."
-    ),
-    "translation": (
-        "You are a professional translator with native-level proficiency in German, English, French and Spanish. "
-        "Translate precisely, idiomatically and faithfully to context. "
-        "Preserve the tone, register and technical terminology of the original. "
-        "Note cultural particularities when relevant."
-    ),
-    "reasoning": (
-        "You are an analytical thinker specialized in complex multi-step problems. "
-        "Decompose problems into explicit sub-steps, show your chain of thought. "
-        "Explicitly name assumptions, uncertainties and alternative interpretations. "
-        "Arrive at a clear, well-reasoned conclusion."
-    ),
-    "vision": (
-        "You are a vision AI expert for image and document analysis. "
-        "Describe content, context and relevant details systematically and in a structured manner. "
-        "For text in images: transcribe completely and verbatim. "
-        "For diagrams/charts: extract data points and explain the message. "
-        "For screenshots: identify UI elements, errors and states precisely."
-    ),
-    "data_analyst": (
-        "You are a data science and data analysis expert. "
-        "Analyze data structures, patterns and relationships with statistical precision. "
-        "Write Python code (pandas, numpy, matplotlib/seaborn) when visualization or transformation is requested. "
-        "Interpret results and name statistical limitations."
-    ),
-    "science": (
-        "You are a natural scientist with expertise in chemistry, biology, physics and environmental sciences. "
-        "Explain concepts precisely based on current research and recognized theories. "
-        "Distinguish established knowledge from active research areas. "
-        "Use correct technical terminology; explain foreign terms at first occurrence."
-    ),
-    "agentic_coder": (
-        "You are a context manager for code tasks on systems with limited VRAM. "
-        "ABSOLUTE RULE: NEVER read entire files. Context window: 4096–8192 tokens. "
-        "Mandatory workflow: 1) repo_map → overview, 2) read_file_chunked → targeted max. 50 lines, "
-        "3) lsp_query → signatures/references. Plan first, then read minimally. "
-        "Answer with code and line numbers, no filler text."
-    ),
-}
-
-# _CUSTOM_EXPERT_PROMPTS imported from config.py
-
-def _get_expert_prompt(cat: str, user_experts: Optional[dict] = None) -> str:
-    """Returns the system prompt for a category.
-    Priority: Template system prompt > Custom (Admin UI) > Default > general fallback.
-    Tool injection: appends context-dependent tool definitions to the prompt.
-    """
-    from tool_injector import inject_tools
-    if user_experts:
-        cat_models = user_experts.get(cat, [])
-        if cat_models and cat_models[0].get("_system_prompt"):
-            return inject_tools(cat_models[0]["_system_prompt"], cat)
-    base = (_CUSTOM_EXPERT_PROMPTS.get(cat)
-            or DEFAULT_EXPERT_PROMPTS.get(cat)
-            or DEFAULT_EXPERT_PROMPTS["general"])
-    return inject_tools(base, cat)
-
-# All PROM_* metrics imported from metrics.py (single registry, no duplicate names)
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_BUDGET_EXCEEDED, PROM_EXPERT_CALLS,
     PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
@@ -622,8 +363,8 @@ async def _validate_oidc_token(token: str) -> Optional[dict]:
         is_admin   = "moe-admins" in groups
         # Try to look up local user for budget/permission context
         try:
-            if _userdb_pool is not None:
-                async with _userdb_pool.connection() as conn:
+            if state._userdb_pool is not None:
+                async with state._userdb_pool.connection() as conn:
                     async with conn.cursor(row_factory=dict_row) as cur:
                         await cur.execute(
                             "SELECT * FROM users WHERE username=%s OR email=%s LIMIT 1",
@@ -717,31 +458,12 @@ class FeedbackRequest(BaseModel):
 # AgentState is defined in pipeline/state.py and imported at the top of this file.
 # See that module for full field documentation grouped by purpose.
 
-# JUDGE_MODEL imported from config.py; LLM instances constructed here
-judge_llm     = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT)
-planner_llm   = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN, timeout=PLANNER_TIMEOUT)
-# Ingest LLM: dedicated model for background GraphRAG extraction.
-# Falls back to judge_llm when GRAPH_INGEST_MODEL is not configured.
-ingest_llm = (
-    ChatOpenAI(
-        model=GRAPH_INGEST_MODEL,
-        base_url=GRAPH_INGEST_URL,
-        api_key=GRAPH_INGEST_TOKEN,
-        timeout=JUDGE_TIMEOUT,
-    )
-    if GRAPH_INGEST_MODEL and GRAPH_INGEST_URL
-    else None  # resolved to judge_llm at call site
-)
-# _SEARXNG_URL, _WEB_SEARCH_FALLBACK_DDG imported from config.py
-search: Optional[SearxSearchWrapper] = (
-    SearxSearchWrapper(searx_host=_SEARXNG_URL) if _SEARXNG_URL else None
-)
-if search is None:
-    logger.info("SEARXNG_URL not set — web search disabled")
-# Mutable globals — set by lifespan (graph_manager, redis_client, kafka_producer in state.py in next step)
-graph_manager:  Optional[GraphRAGManager]  = None
-redis_client:   Optional[aioredis.Redis]   = None
-kafka_producer: Optional[AIOKafkaProducer] = None
+# LLM instances and SearxNG search singleton moved to services/llm_instances.py
+from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
+# Mutable globals — set by lifespan (state.graph_manager, state.redis_client, state.kafka_producer in state.py in next step)
+state.graph_manager:  Optional[GraphRAGManager]  = None
+state.redis_client:   Optional[aioredis.Redis]   = None
+state.kafka_producer: Optional[AIOKafkaProducer] = None
 
 # Inference helpers moved to services/inference.py
 from services.inference import (
@@ -755,269 +477,7 @@ from services.inference import (
 )
 # _dedup_by_category — see parsing.py
 
-def _truncate_history(messages: List[Dict], max_turns: int = None, max_chars: int = None) -> List[Dict]:
-    """Wrapper: forwards to parsing._truncate_history_pure with app-level defaults and Prometheus counters."""
-    return _truncate_history_pure(
-        messages, max_turns, max_chars,
-        default_max_turns=HISTORY_MAX_TURNS,
-        default_max_chars=HISTORY_MAX_CHARS,
-        prom_unlimited=PROM_HISTORY_UNLIMITED,
-        prom_compressed=PROM_HISTORY_COMPRESSED,
-    )
-
-
-async def _apply_semantic_memory(
-    raw_history: List[Dict],
-    kept_history: List[Dict],
-    user_input: str,
-    session_id: Optional[str],
-    enabled: bool,
-    user_id: str = "",
-    team_ids: Optional[List[str]] = None,
-    cross_session_enabled: bool = False,
-    cross_session_scopes: Optional[List[str]] = None,
-    # Template-level memory tuning
-    n_results: int = 0,
-    ttl_hours: int = 0,
-    # User preference overrides (loaded from DB)
-    prefer_fresh: bool = False,
-    share_with_team: bool = False,
-) -> List[Dict]:
-    """Store evicted turns (Tier-2 write) and inject relevant past turns as warm context.
-
-    Privacy hierarchy:
-      - session: only current session turns (default)
-      - private cross-session: all sessions owned by user_id (scope=private)
-      - team cross-session: sessions shared within user's teams (scope=team)
-      - shared cross-session: tenant-visible knowledge (scope=shared)
-
-    User flags:
-      prefer_fresh     — disables cross-session; each session starts clean
-      share_with_team  — stores turns as scope=team so team members can retrieve them
-    """
-    if not enabled or not session_id:
-        return kept_history
-
-    from memory_retrieval import SCOPE_PRIVATE, SCOPE_TEAM, _N_RESULTS
-    store      = get_memory_store()
-    _team_ids  = team_ids or []
-    _scopes    = cross_session_scopes or [SCOPE_PRIVATE]
-    _n         = n_results or _N_RESULTS
-    store_scope = SCOPE_TEAM if (share_with_team and _team_ids) else SCOPE_PRIVATE
-
-    # Write: embed evicted turns in background (non-blocking)
-    evicted = compute_evicted_turns(raw_history, kept_history)
-    if evicted:
-        async def _store_bg() -> None:
-            n = await store.store_turns(
-                session_id, evicted,
-                user_id=user_id,
-                team_id=_team_ids[0] if _team_ids else "",
-                scope=store_scope,
-                ttl_hours=ttl_hours,
-            )
-            if n:
-                PROM_SEMANTIC_MEMORY_STORED.inc(n)
-        asyncio.create_task(_store_bg())
-
-    # Read: current-session retrieval (always)
-    current_turns = await store.retrieve_relevant(session_id, user_input, n_results=_n)
-
-    # Read: cross-session retrieval (if enabled, user_id known, and user hasn't opted out)
-    cross_turns: List[Dict] = []
-    if cross_session_enabled and user_id and not prefer_fresh:
-        cross_turns = await store.retrieve_cross_session(
-            session_id=session_id,
-            query=user_input,
-            user_id=user_id,
-            team_ids=_team_ids,
-            allowed_scopes=_scopes,
-        )
-
-    # Merge
-    retrieved = store.merge_session_results(current_turns, cross_turns)
-    if not retrieved:
-        return kept_history
-
-    warm_block = store.build_warm_context_block(retrieved)
-    if not warm_block:
-        return kept_history
-
-    PROM_SEMANTIC_MEMORY_HITS.inc()
-    cross_count = sum(1 for t in retrieved if t.get("cross"))
-    logger.info(
-        f"💾 Semantic memory: {len(retrieved)} warm turns "
-        f"({len(retrieved)-cross_count} session, {cross_count} cross-session) "
-        f"session={session_id[:8]}…"
-    )
-
-    warm_messages: List[Dict] = [
-        {"role": "user",      "content": warm_block},
-        {"role": "assistant", "content": "[Acknowledged: I have access to these earlier conversation turns.]"},
-    ]
-    return warm_messages + kept_history
-
-
-# _DOMAIN_SCORES, _domain_score, _reliability_label — see web_search.py
-
-async def _web_search_with_citations(query: str, ddg_fallback: Optional[bool] = None) -> str:
-    """Wrapper: forwards to web_search._web_search_with_citations_impl with app-level search singleton.
-
-    ddg_fallback: None = use global WEB_SEARCH_FALLBACK_DDG env var;
-                  True/False = explicit per-call override (from template state).
-    """
-    use_ddg = _WEB_SEARCH_FALLBACK_DDG if ddg_fallback is None else ddg_fallback
-    return await _web_search_with_citations_impl(query, search, ddg_fallback=use_ddg)
-
-async def _store_response_metadata(
-    response_id: str,
-    user_input: str,
-    expert_models_used: List[str],
-    chroma_doc_id: str,
-    plan: Optional[List[Dict]] = None,
-    cost_tier: str = "",
-) -> None:
-    """Stores response metadata for later feedback in Valkey (TTL 7 days)."""
-    if redis_client is None:
-        return
-    try:
-        meta = {
-            "input":               user_input[:300],
-            "expert_models_used":  json.dumps(expert_models_used),
-            "chroma_doc_id":       chroma_doc_id,
-            "ts":                  datetime.now().isoformat(),
-            "plan_cats":           json.dumps([t.get("category", "") for t in (plan or [])]),
-            "cost_tier":           cost_tier,
-        }
-        key = f"moe:response:{response_id}"
-        await redis_client.hset(key, mapping=meta)
-        await redis_client.expire(key, 60 * 60 * 24 * 7)  # 7 Tage
-    except Exception as e:
-        logger.warning(f"Failed to save response metadata: {e}")
-
-async def _self_evaluate(
-    response_id: str,
-    question: str,
-    answer: str,
-    chroma_id: str,
-    template_name: str = "",
-    complexity: str = "",
-) -> None:
-    """Judge LLM evaluates its own response async — does not block the response to the user."""
-    try:
-        eval_prompt = (
-            "Rate the following answer on a scale of 1–5.\n"
-            "1=incomplete/wrong, 3=adequate, 5=complete/correct\n\n"
-            f"QUESTION: {question[:200]}\n\n"
-            f"ANSWER: {answer[:600]}\n\n"
-            "Reply ONLY with: SELF_RATING: N"
-        )
-        eval_res = await judge_llm.ainvoke(eval_prompt)
-        m = re.search(r'SELF_RATING:\s*([1-5])', eval_res.content)
-        score = int(m.group(1)) if m else 3
-        PROM_SELF_EVAL.observe(score)
-        if redis_client:
-            await redis_client.hset(f"moe:response:{response_id}", "self_score", score)
-        asyncio.create_task(_telemetry.record_self_score(
-            _userdb_pool, response_id, score, template_name=template_name, complexity=complexity
-        ))
-        # Cost-tier learning loop: track low-quality responses routed as local_7b.
-        # If the downgrade rate > 20% for a category, it signals the tier is too low.
-        if redis_client and score <= 2:
-            try:
-                _meta = await redis_client.hgetall(f"moe:response:{response_id}")
-                _tier = _meta.get("cost_tier", "") if isinstance(_meta, dict) else ""
-                if _tier == "local_7b":
-                    _plan_cats = json.loads(_meta.get("plan_cats", "[]") if isinstance(_meta, dict) else "[]")
-                    for _cat in set(_plan_cats):
-                        if _cat:
-                            await redis_client.zincrby("moe:cost:downgrade", 1, f"local_7b:{_cat}")
-                            await redis_client.expire("moe:cost:downgrade", 60 * 60 * 24 * 180)
-                    logger.info(f"📉 Cost-tier downgrade recorded for local_7b (score={score})")
-            except Exception:
-                pass
-        # Down-weight low-rated answers in the cache
-        if score <= EVAL_CACHE_FLAG_THRESHOLD and chroma_id:
-            await asyncio.to_thread(cache_collection.update, ids=[chroma_id], metadatas=[{"flagged": True, "self_score": score}])
-            logger.info(f"⚠️ Self-rating {score}/5 — cache entry {chroma_id} flagged")
-        else:
-            logger.debug(f"🧐 Self-rating {score}/5 for response {response_id}")
-    except Exception as e:
-        logger.debug(f"Self-evaluation failed: {e}")
-
-
-async def _neo4j_terms_exist(terms: List[str]) -> set:
-    """Checks which terms are already present as entities in Neo4j (batch check)."""
-    if graph_manager is None:
-        return set()
-    try:
-        async with graph_manager.driver.session() as session:
-            result = await session.run(
-                "UNWIND $terms AS t "
-                "MATCH (e:Entity) WHERE toLower(e.name) = toLower(t) OR toLower(e.aliases_str) CONTAINS toLower(t) "
-                "RETURN DISTINCT toLower(t) AS found",
-                {"terms": terms}
-            )
-            return {r["found"] async for r in result}
-    except Exception as e:
-        logger.debug(f"_neo4j_terms_exist failed: {e}")
-        return set()
-
-
-# ─── PROGRESS REPORTING ──────────────────────────────────────────────────────
-# Any node can call _report() → message appears in the <think> block of the stream.
-
-_progress_queue: contextvars.ContextVar[Optional[asyncio.Queue]] = \
-    contextvars.ContextVar("_progress_queue", default=None)
-
-async def _report(msg: str) -> None:
-    q = _progress_queue.get()
-    if q is not None:
-        await q.put(msg)
-
-# ─── KAFKA HELPERS ───────────────────────────────────────────────────────────
-# _kafka_publish is now the authoritative version in services/kafka.py
 from services.kafka import _kafka_publish
-
-
-async def _shadow_request(user_input: str, user_id: str, api_key: str) -> None:
-    """Sends a fire-and-forget shadow request to the BENCHMARK_SHADOW_TEMPLATE.
-
-    The response is discarded from the user perspective but stored in Kafka
-    (moe.requests) with shadow=True for quality gate analysis.
-    Called every BENCHMARK_SHADOW_RATE-th production request.
-    """
-    if not BENCHMARK_SHADOW_TEMPLATE or not api_key:
-        return
-    try:
-        payload = {
-            "model":    BENCHMARK_SHADOW_TEMPLATE,
-            "messages": [{"role": "user", "content": user_input[:1000]}],
-            "stream":   False,
-        }
-        timeout = httpx.Timeout(120.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            r = await client.post(
-                "http://localhost:8002/v1/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            shadow_resp = ""
-            if r.status_code == 200:
-                data = r.json()
-                shadow_resp = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-        # Log shadow result to Kafka for comparator analysis
-        asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
-            "shadow":          True,
-            "shadow_template": BENCHMARK_SHADOW_TEMPLATE,
-            "user_id":         user_id,
-            "input":           user_input[:300],
-            "answer":          shadow_resp[:500],
-            "ts":              datetime.now().isoformat(),
-        }))
-        logger.debug(f"🔬 Shadow request completed ({len(shadow_resp)} chars)")
-    except Exception as e:
-        logger.debug(f"Shadow request failed (non-critical): {e}")
 
 
 async def _kafka_consumer_loop() -> None:
@@ -1069,7 +529,7 @@ async def _kafka_consumer_loop() -> None:
                         or "ontology-curator" in _src_model
                         or "ontology_gap_healer" in _src_model
                     )
-                    if graph_manager is not None:
+                    if state.graph_manager is not None:
                         _llm_for_ingest = ingest_llm if ingest_llm is not None else judge_llm
                         _source_expert  = payload.get("source_expert", "")
                         # Persist synthesis insight as a :Synthesis node if present
@@ -1082,7 +542,7 @@ async def _kafka_consumer_loop() -> None:
                                 _s=_synthesis, _d=_syn_domain, _m=_syn_src, _c=_syn_conf,
                                 _ed=_source_expert
                             ):
-                                _itype = await graph_manager.ingest_synthesis(
+                                _itype = await state.graph_manager.ingest_synthesis(
                                     _s, domain=_d, source_model=_m, confidence=_c,
                                     expert_domain=_ed
                                 )
@@ -1096,7 +556,7 @@ async def _kafka_consumer_loop() -> None:
                         # they write entities directly to Neo4j via ingest_synthesis
                         # and do not require a second extraction pass on the global judge.
                         if not _is_curator:
-                            await graph_manager.extract_and_ingest(
+                            await state.graph_manager.extract_and_ingest(
                                 payload.get("input", ""),
                                 payload.get("answer", ""),
                                 _llm_for_ingest,
@@ -1106,21 +566,21 @@ async def _kafka_consumer_loop() -> None:
                                 knowledge_type=payload.get("knowledge_type", "factual"),
                                 expert_domain=_source_expert,
                                 tenant_id=payload.get("tenant_id"),
-                                redis_client=redis_client,
+                                redis_client=state.redis_client,
                             )
                     # Detect ontology gaps: terms not present in Neo4j.
                     # Skip when the request came from an ontology curator template —
                     # those responses are classifications of existing gaps, not
                     # sources of new ones. Counting them would produce a self-
                     # replenishing loop (resolve one, add five).
-                    if redis_client is not None and graph_manager is not None and not _is_curator:
+                    if state.redis_client is not None and state.graph_manager is not None and not _is_curator:
                         try:
-                            terms = graph_manager._extract_terms(payload.get("answer", ""))
+                            terms = state.graph_manager._extract_terms(payload.get("answer", ""))
                             if terms:
                                 existing = await _neo4j_terms_exist(terms)
                                 gaps = [t for t in terms if t not in existing]
                                 if gaps:
-                                    pipe = redis_client.pipeline()
+                                    pipe = state.redis_client.pipeline()
                                     for gap in gaps[:5]:
                                         pipe.zincrby("moe:ontology_gaps", 1, gap)
                                     pipe.expire("moe:ontology_gaps", 60 * 60 * 24 * 90)  # 90 Tage
@@ -1137,26 +597,26 @@ async def _kafka_consumer_loop() -> None:
                 elif msg.topic == KAFKA_TOPIC_FEEDBACK:
                     payload = msg.value
                     # Positive feedback → save planner pattern
-                    if payload.get("positive") and redis_client is not None:
+                    if payload.get("positive") and state.redis_client is not None:
                         try:
                             rid = payload.get("response_id", "")
-                            meta = await redis_client.hgetall(f"moe:response:{rid}")
+                            meta = await state.redis_client.hgetall(f"moe:response:{rid}")
                             plan_cats = json.loads(meta.get("plan_cats", "[]"))
                             if plan_cats:
                                 sig = "+".join(sorted(set(plan_cats)))
-                                await redis_client.zincrby("moe:planner_success", 1, sig)
-                                await redis_client.expire("moe:planner_success", 60 * 60 * 24 * 180)  # 180 days
+                                await state.redis_client.zincrby("moe:planner_success", 1, sig)
+                                await state.redis_client.expire("moe:planner_success", 60 * 60 * 24 * 180)  # 180 days
                                 logger.debug(f"📈 Planner pattern saved: {sig}")
                         except Exception as e:
                             logger.debug(f"Planner pattern save failed: {e}")
                 elif msg.topic == KAFKA_TOPIC_LINTING:
-                    if graph_manager is not None:
+                    if state.graph_manager is not None:
                         _llm_for_lint = ingest_llm if ingest_llm is not None else judge_llm
                         async def _run_linting_tracked(_llm=_llm_for_lint):
                             PROM_LINTING_RUNS.inc()
                             try:
                                 _result = await asyncio.wait_for(
-                                    graph_manager.run_graph_linting(
+                                    state.graph_manager.run_graph_linting(
                                         _llm, kafka_publish_fn=_kafka_publish,
                                     ),
                                     timeout=600,  # 10-minute hard cap — prevents Kafka consumer stall
@@ -1180,68 +640,8 @@ async def _kafka_consumer_loop() -> None:
 
 # Prototype queries per category — stored once at startup in ChromaDB.
 # New categories from EXPERT_MODELS are automatically included.
-_ROUTE_PROTOTYPES: Dict[str, List[str]] = {
-    "math": [
-        "Calculate the integral of x² dx",
-        "What is the solution to 3x + 5 = 20?",
-        "Calculate the square root of 144",
-        "What is 15% of 280?",
-        "Solve the quadratic equation x²-4x+3=0",
-    ],
-    "code_reviewer": [
-        "Check this Python code for bugs",
-        "What is wrong with this JavaScript function?",
-        "Optimize this SQL query",
-        "Refactor this C++ code",
-        "Find security vulnerabilities in this PHP script",
-    ],
-    "technical_support": [
-        "How do I install Docker on Ubuntu?",
-        "Configure Nginx as a reverse proxy",
-        "Explain how Kubernetes works",
-        "How do I set up an SSL certificate?",
-        "What is the difference between TCP and UDP?",
-    ],
-    "medical_consult": [
-        "What are the side effects of ibuprofen?",
-        "What are the symptoms of a heart attack?",
-        "How is type 2 diabetes treated?",
-        "Interactions between metformin and aspirin",
-        "What does elevated blood pressure mean?",
-    ],
-    "legal_advisor": [
-        "What does §242 BGB regulate?",
-        "How does the right of termination work in Germany?",
-        "What are my rights as a tenant under tenancy law?",
-        "Explain the GDPR principles",
-        "What is a restraining order?",
-    ],
-    "creative_writer": [
-        "Write a short story about a robot",
-        "Write a poem about autumn",
-        "Create a creative product description text",
-        "Write a dialogue script for a scene",
-    ],
-    "research": [
-        "Research the latest developments in quantum computing",
-        "Summarize the current state of AI research",
-        "What are the latest climate research findings?",
-        "Analyze the economic situation in Germany 2024",
-    ],
-    "precision_tools": [
-        "Calculate the SHA256 hash of 'hello world'",
-        "Convert 100 km/h to m/s",
-        "What is the difference in days between 01/01/2020 and 07/15/2024?",
-        "Which subnets does 192.168.1.0/24 contain?",
-        "Extract all email addresses from this text",
-    ],
-    "general": [
-        "What is the capital of France?",
-        "Explain the concept of the theory of relativity to me",
-        "How did the universe originate?",
-        "What is the difference between AI and ML?",
-    ],
-}
+# _ROUTE_PROTOTYPES moved to prompts.py
+from prompts import _ROUTE_PROTOTYPES
 
 
 # LangGraph nodes moved to graph/nodes.py
@@ -1266,7 +666,7 @@ async def _init_graph_rag() -> None:
     Skipped immediately when NEO4J_URI or NEO4J_PASS is empty — this is the
     intended state for lightweight deployments that don't include Neo4j.
     """
-    global graph_manager
+    # state.graph_manager lives in state.py
     if not NEO4J_URI or not NEO4J_PASS:
         logger.info("ℹ️ Neo4j not configured (NEO4J_URI/NEO4J_PASS empty) — GraphRAG disabled")
         return
@@ -1300,7 +700,6 @@ async def _load_mcp_tool_descriptions():
 
     Also populates MCP_TOOL_SCHEMAS for pre-call argument validation.
     """
-    global MCP_TOOLS_DESCRIPTION, AGENTIC_CODE_TOOLS_DESCRIPTION, MCP_TOOL_SCHEMAS, _MCP_TOOLS_DICT
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{MCP_URL}/tools")
@@ -1314,20 +713,20 @@ async def _load_mcp_tool_descriptions():
                     agentic_lines.append(line)
                 else:
                     general_lines.append(line)
-                    _MCP_TOOLS_DICT[t['name']] = t['description']
+                    state._MCP_TOOLS_DICT[t['name']] = t['description']
                 # Store schema for pre-call validation
-                MCP_TOOL_SCHEMAS[t["name"]] = {
+                state.MCP_TOOL_SCHEMAS[t["name"]] = {
                     "required": t.get("required_args", t.get("required", [])),
                     "args": t.get("args", t.get("parameters", {})),
                 }
-            MCP_TOOLS_DESCRIPTION = "\n".join(general_lines)
-            AGENTIC_CODE_TOOLS_DESCRIPTION = "\n".join(agentic_lines)
+            state.MCP_TOOLS_DESCRIPTION = "\n".join(general_lines)
+            state.AGENTIC_CODE_TOOLS_DESCRIPTION = "\n".join(agentic_lines)
             logger.info(
                 f"✅ MCP server: {len(tools)} tools loaded ({len(agentic_lines)} code-nav exclusive)"
             )
     except Exception as e:
         logger.warning(f"⚠️ MCP server unreachable ({e}) — planner without tool descriptions")
-        MCP_TOOLS_DESCRIPTION = (
+        state.MCP_TOOLS_DESCRIPTION = (
             "  - calculate: Exact arithmetic and formulas\n"
             "  - solve_equation: Solve algebraic equations\n"
             "  - date_diff: Difference between two dates\n"
@@ -1349,7 +748,7 @@ async def _load_mcp_tool_descriptions():
             "  - legal_get_paragraph: Exact legal text of a section/article (BGB/StGB/GG etc.)\n"
             "  - legal_fulltext_search: Full-text search within a German federal law"
         )
-        AGENTIC_CODE_TOOLS_DESCRIPTION = (
+        state.AGENTIC_CODE_TOOLS_DESCRIPTION = (
             "  - repo_map: AST/regex skeleton of a repo (file paths + classes/functions)\n"
             "  - read_file_chunked: Paginated file reading (start_line/end_line, max 200 lines)\n"
             "  - lsp_query: Python LSP features: signature, find_references, completions (.py only)"
@@ -1358,7 +757,7 @@ async def _load_mcp_tool_descriptions():
 
 async def _init_kafka() -> None:
     """Start the Kafka producer with retry logic."""
-    global kafka_producer
+    # state.kafka_producer lives in state.py
     producer = AIOKafkaProducer(
         bootstrap_servers=KAFKA_BOOTSTRAP,
         value_serializer=lambda v: v,  # we already pass bytes
@@ -1383,7 +782,7 @@ async def _init_enterprise_stack() -> None:
     Sets _enterprise_reachable=True if INSTALL_ENTERPRISE_DATA_STACK=true AND at least
     one service responds. No-ops silently when the stack is not configured.
     """
-    global _enterprise_reachable
+    # _enterprise_reachable lives in state.py
     if not _ENTERPRISE_ENABLED:
         return
     checks = [
@@ -1405,9 +804,8 @@ async def _init_enterprise_stack() -> None:
                     logger.warning("⚠️ Enterprise stack — %s returned %s", name, resp.status_code)
             except Exception as exc:
                 logger.warning("⚠️ Enterprise stack — %s unreachable: %s", name, exc)
-    _enterprise_reachable = reachable_count > 0
-    import state as _state; _state._enterprise_reachable = _enterprise_reachable
-    if _enterprise_reachable:
+    state._enterprise_reachable = reachable_count > 0
+    if state._enterprise_reachable:
         logger.info("✅ Enterprise Data Stack active (%d/3 services reachable)", reachable_count)
     else:
         logger.warning(
@@ -1432,9 +830,9 @@ async def _gauge_updater_loop():
             except Exception:
                 pass
             # Neo4j: entities, relations, synthesis nodes, flagged relations
-            if graph_manager is not None:
+            if state.graph_manager is not None:
                 try:
-                    stats = await graph_manager.get_stats()
+                    stats = await state.graph_manager.get_stats()
                     _ents = stats.get("entities", 0)
                     _rels = stats.get("relations", 0)
                     PROM_GRAPH_ENTITIES.set(_ents)
@@ -1446,11 +844,11 @@ async def _gauge_updater_loop():
                 except Exception:
                     pass
             # Valkey: planner patterns, ontology gaps, active request count
-            if redis_client is not None:
+            if state.redis_client is not None:
                 try:
-                    PROM_PLANNER_PATS.set(await redis_client.zcard("moe:planner_success"))
-                    PROM_ONTOLOGY_GAPS.set(await redis_client.zcard("moe:ontology_gaps"))
-                    active_keys = await redis_client.keys("moe:active:*")
+                    PROM_PLANNER_PATS.set(await state.redis_client.zcard("moe:planner_success"))
+                    PROM_ONTOLOGY_GAPS.set(await state.redis_client.zcard("moe:ontology_gaps"))
+                    active_keys = await state.redis_client.keys("moe:active:*")
                     PROM_ACTIVE_REQUESTS.set(len(active_keys))
                 except Exception:
                     pass
@@ -1503,18 +901,18 @@ async def _gauge_updater_loop():
                                         # Model Registry: register warm models in Valkey
                                         # for floating node discovery.
                                         # Skip registration for blocked or floating-disabled servers.
-                                        if redis_client and _current_names:
+                                        if state.redis_client and _current_names:
                                             try:
                                                 _skip = False
-                                                _blk = await redis_client.sismember("moe:blocked_servers", _sname)
-                                                _fld = await redis_client.sismember("moe:floating_disabled_servers", _sname)
+                                                _blk = await state.redis_client.sismember("moe:blocked_servers", _sname)
+                                                _fld = await state.redis_client.sismember("moe:floating_disabled_servers", _sname)
                                                 _skip = bool(_blk or _fld)
                                                 if not _skip:
                                                     _now = time.time()
                                                     for _mn in _current_names:
                                                         _reg_key = f"moe:model_registry:{_mn.split(':')[0]}"
-                                                        await redis_client.zadd(_reg_key, {_sname: _now})
-                                                        await redis_client.expire(_reg_key, 120)  # 2 min TTL
+                                                        await state.redis_client.zadd(_reg_key, {_sname: _now})
+                                                        await state.redis_client.expire(_reg_key, 120)  # 2 min TTL
                                             except Exception:
                                                 pass
                                     else:
@@ -1558,26 +956,24 @@ async def _gauge_updater_loop():
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     import state as _state
-    global app_graph, redis_client, _userdb_pool
-    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-    _state.redis_client = redis_client  # expose to route modules via state.*
+    global app_graph
+    state.redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)  # expose to route modules via state.*
     logger.info("✅ Valkey client initialized")
     # moe_userdb pool: opened lazily, fails open so SQL-less startup is possible for tests
     try:
-        _userdb_pool = AsyncConnectionPool(
+        state._userdb_pool = AsyncConnectionPool(
             MOE_USERDB_URL,
             min_size=1,
             max_size=5,
             open=False,
             kwargs={"autocommit": False},
         )
-        await _userdb_pool.open()
-        await _userdb_pool.wait()
+        await state._userdb_pool.open()
+        await state._userdb_pool.wait()
         logger.info("✅ moe_userdb pool verbunden (%s)", MOE_USERDB_URL.split("@")[-1])
     except Exception as e:
         logger.warning("moe_userdb pool nicht verbunden: %s", e)
-        _userdb_pool = None
-    _state._userdb_pool = _userdb_pool
+        state._userdb_pool = None
     # admin_ui.database has its own pool that backs sync_user_to_redis (used by
     # _db_fallback_key_lookup when a user's API key hash is not yet in Valkey).
     # Without this, the fallback silently errors and new or cache-evicted keys
@@ -1589,9 +985,9 @@ async def lifespan(app_: FastAPI):
     except Exception as e:
         logger.warning("admin_ui.database pool not initialized: %s", e)
     # Clean up orphaned active-request keys from the previous process
-    _stale_keys = await redis_client.keys("moe:active:*")
+    _stale_keys = await state.redis_client.keys("moe:active:*")
     if _stale_keys:
-        await redis_client.delete(*_stale_keys)
+        await state.redis_client.delete(*_stale_keys)
         logger.info(f"🧹 {len(_stale_keys)} orphaned moe:active:* keys deleted on startup")
     # Initialize semaphores in event loop context
     await _init_semaphores()
@@ -1599,7 +995,7 @@ async def lifespan(app_: FastAPI):
     await _ensure_skill_registry_schema()
     await _bootstrap_skill_registry()
     # Ensure causal-path columns exist in routing_telemetry
-    await _telemetry.ensure_causal_columns(_userdb_pool)
+    await _telemetry.ensure_causal_columns(state._userdb_pool)
     # Start init tasks in parallel
     await asyncio.gather(
         _load_mcp_tool_descriptions(),
@@ -1616,9 +1012,9 @@ async def lifespan(app_: FastAPI):
     # Starfleet: proactive watchdog alert loop
     if _starfleet.is_feature_enabled_sync("watchdog"):
         asyncio.create_task(_watchdog.watchdog_loop(
-            redis_client=redis_client,
+            redis_client=state.redis_client,
             inference_servers=INFERENCE_SERVERS_LIST,
-            kafka_producer=kafka_producer,
+            kafka_producer=state.kafka_producer,
             prom_server_up=PROM_SERVER_UP,
             prom_loaded_models=PROM_SERVER_LOADED_MODELS,
             prom_vram_bytes=PROM_SERVER_VRAM_BYTES,
@@ -1648,17 +1044,17 @@ async def lifespan(app_: FastAPI):
     # Cleanup
     gauge_task.cancel()
     consumer_task.cancel()
-    if kafka_producer is not None:
-        await kafka_producer.stop()
+    if state.kafka_producer is not None:
+        await state.kafka_producer.stop()
         logger.info("🔌 Kafka Producer stopped")
-    if graph_manager is not None:
-        await graph_manager.close()
+    if state.graph_manager is not None:
+        await state.graph_manager.close()
         logger.info("🔌 Neo4j connection closed")
-    if redis_client is not None:
-        await redis_client.aclose()
+    if state.redis_client is not None:
+        await state.redis_client.aclose()
         logger.info("🔌 Valkey client closed")
-    if _userdb_pool is not None:
-        await _userdb_pool.close()
+    if state._userdb_pool is not None:
+        await state._userdb_pool.close()
         logger.info("🔌 moe_userdb pool closed")
 
 app = FastAPI(lifespan=lifespan)

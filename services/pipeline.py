@@ -74,10 +74,22 @@ from services.tracking import (
     _deregister_active_request, _increment_user_budget,
     _check_ip_rate_limit,
 )
+from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
+from services.helpers import (
+    _log_tool_eval,
+    _update_rate_limit_headers, _check_rate_limit_exhausted,
+    _conf_format_for_mode, _get_expert_prompt,
+    _truncate_history, _apply_semantic_memory,
+    _web_search_with_citations,
+    _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
+    _report,
+    _shadow_request, _shadow_lock,
+)
+from services.templates import _read_expert_templates, _read_cc_profiles
+from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
+from services.skills import _build_skill_catalog
 
-# Lazy reference to main.py for globals not yet extracted to services/.
-# Python caches module imports — this is O(1) after first access.
-import main as _m
+# All main.py globals have been extracted to services/, prompts/, and state — no _m alias needed.
 
 # ---------------------------------------------------------------------------
 # Pydantic request models (defined here — used by chat_completions and routes)
@@ -135,7 +147,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _req_at = _req_raw.rindex("@") if "@" in _req_raw else -1
     _req_model_base = _req_raw[:_req_at] if _req_at >= 0 else _req_raw
     _req_node_hint  = _req_raw[_req_at + 1:] if _req_at >= 0 else None
-    _all_tmpls = _m._read_expert_templates()
+    _all_tmpls = _read_expert_templates()
     _matched_tmpl = next((t for t in _all_tmpls if t.get("name") == request.model), None)
     _tmpl_override: Optional[str] = _matched_tmpl["id"] if _matched_tmpl else None
     mode = _MODEL_ID_TO_MODE.get(request.model, "default")
@@ -312,7 +324,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     # Extract system message (coding agents send file/codebase context here)
     system_msgs   = [m for m in request.messages if m.role == "system"]
-    system_prompt = _m._oai_content_to_str(system_msgs[0].content) if system_msgs else ""
+    system_prompt = _oai_content_to_str(system_msgs[0].content) if system_msgs else ""
 
     # Mission Context injection — prepend compact project summary to the system prompt
     # when enabled system-wide AND the active template does not opt out.
@@ -340,19 +352,20 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Last user message as the actual query
     user_msgs  = [m for m in request.messages if m.role in ("user", "assistant")]
     last_user  = next((m for m in reversed(request.messages) if m.role == "user"), None)
-    _user_images = _m._extract_oai_images(last_user.content) if last_user else []
+    _user_images = _extract_oai_images(last_user.content) if last_user else []
     allowed_skills = user_perms.get("skill")  # None = all allowed (backwards compatible)
-    _raw_user_input = _m._oai_content_to_str(last_user.content) if last_user else ""
+    _raw_user_input = _oai_content_to_str(last_user.content) if last_user else ""
     user_input = await _resolve_skill_secure(_raw_user_input, allowed_skills, user_id=user_id, session_id=session_id)
     # Shadow-Mode: sample every BENCHMARK_SHADOW_RATE-th request to the candidate template.
     # Fire-and-forget — never blocks the production response.
     if BENCHMARK_SHADOW_TEMPLATE:
-        with _m._shadow_lock:
-            _m._shadow_request_counter += 1
-            _fire_shadow = (_m._shadow_request_counter % BENCHMARK_SHADOW_RATE == 0)
+        import services.helpers as _h
+        with _shadow_lock:
+            _h._shadow_request_counter += 1
+            _fire_shadow = (_h._shadow_request_counter % BENCHMARK_SHADOW_RATE == 0)
         if _fire_shadow:
-            asyncio.create_task(_m._shadow_request(_raw_user_input, user_id, raw_key or ""))
-            logger.debug(f"🔬 Shadow request enqueued (counter={_m._shadow_request_counter})")
+            asyncio.create_task(_shadow_request(_raw_user_input, user_id, raw_key or ""))
+            logger.debug(f"🔬 Shadow request enqueued (counter={_h._shadow_request_counter})")
 
     _pending_reports: List[str] = []
     if user_input != _raw_user_input:
@@ -392,7 +405,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # but is not present on the host (e.g. gemma4:31b@MY_ENDPOINT even though it is not installed).
     # Skipped for user-owned connections — their models_cache already served that check.
     if _native_endpoint and not _native_endpoint.get("_user_conn"):
-        _avail_models = await _m._get_available_models(_native_endpoint["node"])
+        _avail_models = await _get_available_models_svc(_native_endpoint["node"])
         if _avail_models is not None and _native_endpoint["model"] not in _avail_models:
             _avail_list = sorted(_avail_models)
             logger.warning(
@@ -429,13 +442,13 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Conversation history: only user/assistant messages (no system messages)
     # Multimodal content is extracted as text (history for MoE pipeline is text-only)
     raw_history = [
-        {"role": m.role, "content": _m._oai_content_to_str(m.content)}
+        {"role": m.role, "content": _oai_content_to_str(m.content)}
         for m in request.messages
         if m.role in ("user", "assistant") and m != last_user
     ]
     _hist_turns = _tmpl_prompts.get("history_max_turns", 0) or None
     _hist_chars = _tmpl_prompts.get("history_max_chars", 0) or None
-    history = _m._truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
+    history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
     _sm_team_ids: List[str] = []
     _sm_user_prefs: dict = {}
     if _tmpl_prompts.get("enable_semantic_memory") and user_id:
@@ -744,8 +757,8 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
         else "text"
     )
 
-    oai_messages = _m._anthropic_to_openai_messages(messages, system)
-    oai_tools    = _m._anthropic_tools_to_openai(tools) if tools else None
+    oai_messages = _anthropic_to_openai_messages(messages, system)
+    oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
     effective_model = tool_model or JUDGE_MODEL
     effective_url   = tool_url   or JUDGE_URL
@@ -802,7 +815,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     # Pre-check: if this endpoint is known to be rate-limited, fail fast instead of timing out.
     # This prevents Claude Code CLI from making 10 retry attempts and risking a DDoS ban.
     _tool_ep = CLAUDE_CODE_TOOL_ENDPOINT if (effective_url == _CLAUDE_CODE_TOOL_URL) else None
-    if _tool_ep and _m._check_rate_limit_exhausted(_tool_ep):
+    if _tool_ep and _check_rate_limit_exhausted(_tool_ep):
         _rl_entry = _provider_rate_limits.get(_tool_ep, {})
         _reset_str = ""
         if _rl_entry.get("reset_time"):
@@ -828,7 +841,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
             )
             # Parse and cache rate limit headers from the provider response
             if _tool_ep:
-                _m._update_rate_limit_headers(_tool_ep, resp.headers, resp.status_code)
+                _update_rate_limit_headers(_tool_ep, resp.headers, resp.status_code)
             if resp.status_code == 429:
                 _rl_entry = _provider_rate_limits.get(_tool_ep or "", {})
                 _reset_str = ""
@@ -945,9 +958,9 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
             _json_candidates = [_parsed] if isinstance(_parsed, dict) else (_parsed if isinstance(_parsed, list) else [])
         except (json.JSONDecodeError, ValueError):
             # Try to find individual JSON objects (handles trailing text)
-            for _m in re.finditer(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', _probe):
+            for _match in re.finditer(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', _probe):
                 try:
-                    _json_candidates.append(json.loads(_m.group()))
+                    _json_candidates.append(json.loads(_match.group()))
                 except Exception:
                     pass
         for _cand in _json_candidates:
@@ -1087,7 +1100,7 @@ async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = 
             return StreamingResponse(_empty(), media_type="text/event-stream")
         return empty_resp
 
-    oai_messages = _m._anthropic_to_openai_messages(messages, system)
+    oai_messages = _anthropic_to_openai_messages(messages, system)
 
     # Determine model/node — explicit override takes precedence over dynamic selection
     _reasoning_node_name = "unknown"
@@ -1108,7 +1121,7 @@ async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = 
             scored.sort(key=lambda x: -x[0])
             best = scored[0][1]
             reasoning_model = best["model"]
-            node = await _m._select_node(reasoning_model, best.get("endpoints") or [best.get("endpoint", "")])
+            node = await _select_node_svc(reasoning_model, best.get("endpoints") or [best.get("endpoint", "")])
             reasoning_url   = node.get("url") or URL_MAP.get(node["name"])
             reasoning_token = node.get("token", "ollama")
             _reasoning_node_name = node.get("name", "unknown")
@@ -1248,7 +1261,7 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
 
     last_user_content = last_user.get("content", "")
     allowed_skills = (user_permissions or {}).get("skill")
-    _raw_cc_input = _m._anthropic_content_to_text(last_user_content)
+    _raw_cc_input = _anthropic_content_to_text(last_user_content)
     user_input  = await _resolve_skill_secure(_raw_cc_input, allowed_skills, user_id=user_id, session_id=session_id)
     _cc_pending_reports: List[str] = []
     if user_input != _raw_cc_input:
@@ -1258,14 +1271,14 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
         _cc_pending_reports.append(
             f"🎯 Skill /{_csname} resolved (args: '{_csargs}', {len(user_input)} chars):\n{user_input}"
         )
-    user_images = _m._extract_images(last_user_content)
+    user_images = _extract_images(last_user_content)
     history_raw = [
         {"role": m["role"],
-         "content": _m._anthropic_content_to_text(m.get("content", ""))}
+         "content": _anthropic_content_to_text(m.get("content", ""))}
         for m in messages[:-1]
         if m.get("role") in ("user", "assistant")
     ]
-    history = _m._truncate_history(history_raw)
+    history = _truncate_history(history_raw)
     _sm_team_ids_h: List[str] = []
     _sm_prefs_h:   dict      = {}
     if enable_semantic_memory and user_id and user_id != "anon":
@@ -1442,7 +1455,7 @@ async def anthropic_messages(request: Request):
         - tool_use / tool_result  → devstral:24b (code specialist, robust function calling)
         - pure text requests      → MoE agent pipeline (mode=agent)
     - Standard MoE sessions:
-        - tools / tool_results    → _m.judge_llm (magistral:24b)
+        - tools / tool_results    → judge_llm (magistral:24b)
         - pure text requests      → MoE agent pipeline
 
     Configuration for Claude Code:
@@ -1501,7 +1514,7 @@ async def anthropic_messages(request: Request):
             if not profile_id:
                 return None
             return (_user_cc_map.get(profile_id)
-                    or next((p for p in _m._read_cc_profiles() if p.get("id") == profile_id), None))
+                    or next((p for p in _read_cc_profiles() if p.get("id") == profile_id), None))
 
         _key_profile_id     = user_ctx.get("key_cc_profile_id", "") or ""
         _default_profile_id = user_ctx.get("default_cc_profile_id", "") or ""
@@ -1509,7 +1522,7 @@ async def anthropic_messages(request: Request):
             _resolve_cc_profile(_key_profile_id)
             or _resolve_cc_profile(_default_profile_id)
             or next((v for pid in _cc_profile_ids for v in [_user_cc_map.get(pid)] if v), None)
-            or next((p for p in _m._read_cc_profiles() if p.get("id") in _cc_profile_ids and p.get("enabled", True)), None)
+            or next((p for p in _read_cc_profiles() if p.get("id") in _cc_profile_ids and p.get("enabled", True)), None)
         )
         if _user_cc_profile:
             _effective_cc_mode       = _user_cc_profile.get("moe_mode", CLAUDE_CODE_MODE)
@@ -1579,7 +1592,7 @@ async def anthropic_messages(request: Request):
         _cc_tmpl_id_for_display = _user_cc_profile.get("expert_template_id") if _user_cc_profile else None
         if _cc_tmpl_id_for_display:
             _cc_backend_model = next(
-                (t.get("name", _cc_tmpl_id_for_display) for t in _m._read_expert_templates()
+                (t.get("name", _cc_tmpl_id_for_display) for t in _read_expert_templates()
                  if t.get("id") == _cc_tmpl_id_for_display),
                 _cc_tmpl_id_for_display
             )
@@ -2112,242 +2125,6 @@ async def verify_dedicated_healer():
     }
 
 
-# ─── Benchmark Node Reservation ──────────────────────────────────────────────
-
-_m._BENCHMARK_RESERVED_KEY  = "moe:benchmark_reserved"
-_m._BENCHMARK_LOCK_META_KEY = "moe:benchmark_lock_meta"
-
-
-async def benchmark_unlock():
-    """Release all benchmark node reservations."""
-    if state.redis_client is None:
-        return {"ok": False, "reason": "redis_unavailable"}
-    meta = await redis_client.hgetall(_m._BENCHMARK_LOCK_META_KEY) or {}
-    try:
-        released = json.loads(meta.get("nodes", "[]"))
-    except Exception:
-        released = []
-    await redis_client.delete(_m._BENCHMARK_RESERVED_KEY)
-    await redis_client.delete(_m._BENCHMARK_LOCK_META_KEY)
-    logger.info(f"🔓 Benchmark lock released: nodes={released}")
-    return {"ok": True, "released": released}
-
-
-async def get_knowledge_stats():
-    """Aggregate Neo4j counters for the stats dashboard."""
-    try:
-        from neo4j import AsyncGraphDatabase
-        uri = os.environ.get("NEO4J_URI", "bolt://neo4j-knowledge:7687")
-        user = os.environ.get("NEO4J_USER", "neo4j")
-        pwd = os.environ.get("NEO4J_PASSWORD") or os.environ.get("NEO4J_PASS") or ""
-        driver = AsyncGraphDatabase.driver(uri, auth=(user, pwd))
-    except Exception as e:
-        return {"error": f"neo4j init: {e}"}
-    stats: dict = {}
-    try:
-        async with driver.session() as s:
-            r = await s.run("MATCH (e:Entity) RETURN count(e) AS n")
-            stats["entities_total"] = (await r.single())["n"]
-            r = await s.run("MATCH ()-[r]->() RETURN count(r) AS n")
-            stats["relations_total"] = (await r.single())["n"]
-            r = await s.run(
-                "MATCH (e:Entity) WHERE e.created_at >= datetime() - duration('P1D') "
-                "RETURN count(e) AS n"
-            )
-            stats["entities_last_24h"] = (await r.single())["n"]
-            r = await s.run(
-                "MATCH (e:Entity) WHERE e.created_at >= datetime() - duration('P7D') "
-                "RETURN count(e) AS n"
-            )
-            stats["entities_last_7d"] = (await r.single())["n"]
-            r = await s.run(
-                "MATCH (e:Entity) WHERE e.source IS NOT NULL "
-                "RETURN e.source AS source, count(e) AS n ORDER BY n DESC LIMIT 10"
-            )
-            stats["entities_by_source"] = [
-                {"source": rec["source"], "n": rec["n"]} async for rec in r
-            ]
-            r = await s.run(
-                "MATCH (e:Entity) WHERE e.type IS NOT NULL "
-                "RETURN e.type AS type, count(e) AS n ORDER BY n DESC LIMIT 10"
-            )
-            stats["top_types"] = [
-                {"type": rec["type"], "n": rec["n"]} async for rec in r
-            ]
-            r = await s.run(
-                "MATCH (e:Entity) WHERE e.curator_template IS NOT NULL "
-                "RETURN e.curator_template AS template, count(e) AS n "
-                "ORDER BY n DESC LIMIT 20"
-            )
-            stats["entities_by_curator"] = [
-                {"template": rec["template"], "n": rec["n"]} async for rec in r
-            ]
-    except Exception as e:
-        stats["error"] = str(e)
-    finally:
-        await driver.close()
-    return stats
-
-
-async def get_planner_patterns(limit: int = 20):
-    """Shows proven planner patterns based on positive user feedback."""
-    if state.redis_client is None:
-        return {"error": "Valkey not available"}
-    try:
-        patterns = await redis_client.zrevrange("moe:planner_success", 0, limit - 1, withscores=True)
-        return {"patterns": [{"signature": sig, "count": int(score)} for sig, score in patterns]}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-_PL_SORT_COLS = {
-    "requested_at": "ul.requested_at",
-    "model":        "ul.model",
-    "moe_mode":     "ul.moe_mode",
-    "username":     "u.username",
-    "total_tokens": "ul.total_tokens",
-    "latency_ms":   "ul.latency_ms",
-    "complexity_level": "ul.complexity_level",
-}
-
-async def pipeline_log(
-    raw_request: Request,
-    limit: int = 100,
-    offset: int = 0,
-    user_id: Optional[str] = None,
-    username: Optional[str] = None,
-    model: Optional[str] = None,
-    moe_mode: Optional[str] = None,
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None,
-    complexity_level: Optional[str] = None,
-    cache_hit: Optional[bool] = None,
-    sort_by: str = "requested_at",
-    sort_dir: str = "desc",
-    format: str = "json",
-) -> Response:
-    """Pipeline Transparency Log — query routing decisions, expert domains, and latency per request.
-
-    Supports filtering by user, model, mode, date range, complexity level, and cache hit status.
-    Supports sorting by any column via sort_by/sort_dir.
-    Returns JSON (default) or CSV for BI/export use. Auth: admin API key required.
-    """
-    raw_key = _extract_api_key(raw_request)
-    if not raw_key:
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    _sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
-    _is_sys_key = bool(_sys_key and raw_key == _sys_key)
-    user_ctx = await _validate_api_key(raw_key)
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
-    if not (_is_sys_key or user_ctx.get("is_admin")):
-        return JSONResponse(status_code=403, content={"error": "Admin access required"})
-
-    try:
-        if state._userdb_pool is None:
-            return JSONResponse(status_code=503, content={"error": "Database unavailable"})
-
-        conditions: list[str] = []
-        params: list = []
-
-        if user_id:
-            conditions.append("ul.user_id = %s")
-            params.append(user_id)
-        if username:
-            conditions.append("u.username ILIKE %s")
-            params.append(f"%{username}%")
-        if model:
-            conditions.append("ul.model ILIKE %s")
-            params.append(f"%{model}%")
-        if moe_mode:
-            conditions.append("ul.moe_mode = %s")
-            params.append(moe_mode)
-        if from_date:
-            conditions.append("ul.requested_at >= %s")
-            params.append(from_date)
-        if to_date:
-            conditions.append("ul.requested_at <= %s")
-            params.append(to_date + "T23:59:59")
-        if complexity_level:
-            conditions.append("ul.complexity_level = %s")
-            params.append(complexity_level)
-        if cache_hit is not None:
-            conditions.append("ul.cache_hit = %s")
-            params.append(cache_hit)
-
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        _sort_col = _PL_SORT_COLS.get(sort_by, "ul.requested_at")
-        _sort_ord = "ASC" if sort_dir.lower() == "asc" else "DESC"
-        params.extend([limit, offset])
-
-        async with _userdb_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"""SELECT ul.request_id, ul.user_id, u.username,
-                               ul.model, ul.moe_mode, ul.session_id,
-                               ul.prompt_tokens, ul.completion_tokens, ul.total_tokens,
-                               ul.latency_ms, ul.complexity_level, ul.expert_domains,
-                               ul.cache_hit, ul.agentic_rounds, ul.status, ul.requested_at
-                        FROM usage_log ul
-                        LEFT JOIN users u ON ul.user_id = u.id
-                        {where}
-                        ORDER BY {_sort_col} {_sort_ord}
-                        LIMIT %s OFFSET %s""",
-                    params,
-                )
-                rows = await cur.fetchall()
-                cols = [d.name for d in cur.description]
-
-                await cur.execute(
-                    f"SELECT COUNT(*) FROM usage_log ul LEFT JOIN users u ON ul.user_id = u.id {where}",
-                    params[:-2],
-                )
-                total = (await cur.fetchone())[0]
-
-        records = [dict(zip(cols, row)) for row in rows]
-
-        if format == "csv":
-            import io, csv as _csv
-            buf = io.StringIO()
-            writer = _csv.DictWriter(buf, fieldnames=cols)
-            writer.writeheader()
-            writer.writerows(records)
-            return Response(
-                content=buf.getvalue(),
-                media_type="text/csv",
-                headers={"Content-Disposition": "attachment; filename=pipeline_log.csv"},
-            )
-
-        return JSONResponse({
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "records": records,
-        })
-    except Exception as e:
-        logger.warning("Pipeline log query failed: %s", e)
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-
-# ─── OLLAMA COMPATIBILITY API (/api/*) ───────────────────────────────────────
-#
-# Translates the Ollama wire-protocol to the MoE pipeline and back.
-# Auth: same Bearer-Token (moe-sk-*) as /v1/.
-# Streaming: NDJSON (one JSON object per line, \n-separated) — not SSE.
-#
-# Supported:
-#   GET  /api/version   – version stub
-#   GET  /api/tags      – model list in Ollama format (auth required)
-#   GET  /api/ps        – templates as "loaded" models
-#   POST /api/show      – template details
-#   POST /api/chat      – main chat endpoint (streaming NDJSON or single JSON)
-#   POST /api/generate  – single-turn prompt (routes through /api/chat logic)
-#   POST /api/pull      – fake pull-progress stream
-#   DELETE /api/delete  – 400 stub (managed via Admin UI)
-#   POST /api/copy|push|embed – 400 stubs
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def _ollama_now() -> str:
     """Return current UTC time in Ollama's nanosecond ISO8601 format."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
@@ -2406,7 +2183,7 @@ def _ollama_options_to_oai(options: dict) -> dict:
 
 async def _ollama_resolve_template(model_name: str, user_perms: dict, user_templates_json: str = "{}"):
     """Return (tmpl_id, tmpl_dict | None, error_response | None) for an Ollama model name."""
-    all_tmpls   = _m._read_expert_templates()
+    all_tmpls   = _read_expert_templates()
     matched     = next((t for t in all_tmpls if t.get("name") == model_name or t.get("id") == model_name), None)
     owned_tmpls: dict = {}
     try:
@@ -2480,7 +2257,7 @@ async def _ollama_internal_stream(
     if last_user:
         raw_content = last_user.get("content", "")
         if isinstance(raw_content, list):
-            _user_images = _m._extract_oai_images(raw_content)
+            _user_images = _extract_oai_images(raw_content)
 
     raw_history = [
         {"role": m.get("role"), "content": m.get("content", "") if isinstance(m.get("content"), str) else ""}
@@ -2489,7 +2266,7 @@ async def _ollama_internal_stream(
     ]
     _hist_turns = tmpl_prompts.get("history_max_turns", 0) or None
     _hist_chars = tmpl_prompts.get("history_max_chars", 0) or None
-    history = _m._truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
+    history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
 
     asyncio.create_task(_register_active_request(
         chat_id=chat_id, user_id=user_id, model=model_name,
@@ -2522,314 +2299,6 @@ async def _ollama_internal_stream(
     ):
         yield sse_line
 
-
-async def ollama_version():
-    """Ollama version stub — clients use this to detect Ollama compatibility."""
-    return {"version": "0.6.0"}
-
-
-async def ollama_tags(raw_request: Request):
-    """Return templates visible to this API key in Ollama model-list format."""
-    raw_key = _extract_api_key(raw_request)
-    if not raw_key:
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    user_ctx = await _validate_api_key(raw_key)
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
-
-    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
-    templates  = _m._read_expert_templates()
-    allowed    = user_perms.get("expert_template")
-    now        = _ollama_now()
-
-    visible = list(templates if allowed is None else [t for t in templates if t.get("id") in allowed])
-    # Append user-owned templates (stored per-user in Valkey, not in admin DB)
-    _ut_tags: dict = {}
-    try:
-        _ut_tags = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
-    except Exception:
-        pass
-    _visible_names = {t.get("name", t["id"]) for t in visible}
-    for _uid_t, _ucfg_t in _ut_tags.items():
-        _m = {"id": _uid_t, **_ucfg_t}
-        if _m.get("name", _uid_t) not in _visible_names:
-            visible.append(_m)
-    return {"models": [_ollama_model_entry(t, now_iso=now) for t in visible]}
-
-
-async def ollama_ps(raw_request: Request):
-    """Return templates as 'loaded' models (no real VRAM tracking in MoE)."""
-    raw_key = _extract_api_key(raw_request)
-    if not raw_key:
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    user_ctx = await _validate_api_key(raw_key)
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
-
-    user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
-    templates  = _m._read_expert_templates()
-    allowed    = user_perms.get("expert_template")
-    now        = _ollama_now()
-    expires    = (datetime.now(timezone.utc) + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.%f000Z")
-
-    visible = list(templates if allowed is None else [t for t in templates if t.get("id") in allowed])
-    # Append user-owned templates (stored per-user in Valkey, not in admin DB)
-    _ut_ps: dict = {}
-    try:
-        _ut_ps = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
-    except Exception:
-        pass
-    _vis_names_ps = {t.get("name", t["id"]) for t in visible}
-    for _uid_ps, _ucfg_ps in _ut_ps.items():
-        _m_ps = {"id": _uid_ps, **_ucfg_ps}
-        if _m_ps.get("name", _uid_ps) not in _vis_names_ps:
-            visible.append(_m_ps)
-    models = []
-    for t in visible:
-        entry = _ollama_model_entry(t, now_iso=now)
-        entry["expires_at"] = expires
-        entry["size_vram"]  = 0
-        models.append(entry)
-    return {"models": models}
-
-
-async def ollama_show(raw_request: Request):
-    """Return template details in Ollama modelinfo format (no auth required for show)."""
-    try:
-        body = await raw_request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
-    model_name = body.get("model", body.get("name", ""))
-    templates  = _m._read_expert_templates()
-    tmpl = next(
-        (t for t in templates if t.get("name") == model_name or t.get("id") == model_name),
-        None,
-    )
-    if not tmpl:
-        return JSONResponse(status_code=404, content={"error": f"model '{model_name}' not found"})
-    return {
-        "modelfile":  f"# MoE Sovereign Template: {tmpl.get('name', '')}",
-        "parameters": "",
-        "template":   "{{ .Prompt }}",
-        "details": {
-            "family":             "moe",
-            "parameter_size":     tmpl.get("description", ""),
-            "quantization_level": "MoE",
-        },
-        "model_info": {
-            "general.name":        tmpl.get("name", ""),
-            "general.description": tmpl.get("description", ""),
-        },
-    }
-
-
-async def ollama_chat(raw_request: Request):
-    """Ollama /api/chat — translates Ollama chat format to the MoE pipeline."""
-    raw_key = _extract_api_key(raw_request)
-    if not raw_key:
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    user_ctx = await _validate_api_key(raw_key)
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
-
-    try:
-        body = await raw_request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
-
-    model    = body.get("model", "")
-    stream   = body.get("stream", True)
-    options  = body.get("options", {})
-    oai_msgs = _ollama_messages_to_oai(body.get("messages", []))
-
-    async def _ndjson_stream():
-        total_tokens = 0
-        async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
-            sse_line = sse_line.strip()
-            if not sse_line or sse_line.startswith(":"):
-                continue  # skip SSE keep-alives and empty lines
-            if sse_line.startswith("data: "):
-                payload = sse_line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
-                content = delta.get("content", "")
-                if content:
-                    total_tokens += 1
-                yield json.dumps({
-                    "model":      model,
-                    "created_at": _ollama_now(),
-                    "message":    {"role": "assistant", "content": content},
-                    "done":       False,
-                }) + "\n"
-        yield json.dumps({
-            "model":           model,
-            "created_at":      _ollama_now(),
-            "message":         {"role": "assistant", "content": ""},
-            "done":            True,
-            "done_reason":     "stop",
-            "total_duration":  0,
-            "eval_count":      total_tokens,
-        }) + "\n"
-
-    if stream:
-        return StreamingResponse(_ndjson_stream(), media_type="application/x-ndjson")
-
-    # Non-streaming: collect all content, return single response object
-    content_parts = []
-    async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
-        sse_line = sse_line.strip()
-        if not sse_line or sse_line.startswith(":"):
-            continue
-        if sse_line.startswith("data: "):
-            payload = sse_line[6:]
-            if payload == "[DONE]":
-                break
-            try:
-                chunk = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-            content_parts.append(delta.get("content", ""))
-    return {
-        "model":       model,
-        "created_at":  _ollama_now(),
-        "message":     {"role": "assistant", "content": "".join(content_parts)},
-        "done":        True,
-        "done_reason": "stop",
-    }
-
-
-async def ollama_generate(raw_request: Request):
-    """Ollama /api/generate — single-turn prompt, routed as chat through the MoE pipeline.
-
-    Response uses key 'response' (not 'message.content') per Ollama spec.
-    """
-    raw_key = _extract_api_key(raw_request)
-    if not raw_key:
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    user_ctx = await _validate_api_key(raw_key)
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
-
-    try:
-        body = await raw_request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
-
-    model   = body.get("model", "")
-    prompt  = body.get("prompt", "")
-    system  = body.get("system", "")
-    stream  = body.get("stream", True)
-    options = body.get("options", {})
-
-    oai_msgs = []
-    if system:
-        oai_msgs.append({"role": "system", "content": system})
-    oai_msgs.append({"role": "user", "content": prompt})
-
-    async def _gen_stream():
-        total_tokens = 0
-        async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
-            sse_line = sse_line.strip()
-            if not sse_line or sse_line.startswith(":"):
-                continue
-            if sse_line.startswith("data: "):
-                payload = sse_line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
-                content = delta.get("content", "")
-                if content:
-                    total_tokens += 1
-                yield json.dumps({
-                    "model":      model,
-                    "created_at": _ollama_now(),
-                    "response":   content,
-                    "done":       False,
-                }) + "\n"
-        yield json.dumps({
-            "model":           model,
-            "created_at":      _ollama_now(),
-            "response":        "",
-            "done":            True,
-            "done_reason":     "stop",
-            "total_duration":  0,
-            "eval_count":      total_tokens,
-        }) + "\n"
-
-    if stream:
-        return StreamingResponse(_gen_stream(), media_type="application/x-ndjson")
-
-    content_parts = []
-    async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
-        sse_line = sse_line.strip()
-        if not sse_line or sse_line.startswith(":"):
-            continue
-        if sse_line.startswith("data: "):
-            payload = sse_line[6:]
-            if payload == "[DONE]":
-                break
-            try:
-                chunk = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-            content_parts.append(delta.get("content", ""))
-    return {
-        "model":       model,
-        "created_at":  _ollama_now(),
-        "response":    "".join(content_parts),
-        "done":        True,
-        "done_reason": "stop",
-    }
-
-
-async def ollama_pull(raw_request: Request):
-    """Fake pull-progress stream — MoE models are managed via Admin UI, not downloaded."""
-    try:
-        body = await raw_request.json()
-    except Exception:
-        body = {}
-    do_stream = body.get("stream", True)
-    if not do_stream:
-        return {"status": "success"}
-
-    async def _progress():
-        for status in ["pulling manifest", "verifying sha256 digest", "writing manifest", "success"]:
-            yield json.dumps({"status": status}) + "\n"
-            await asyncio.sleep(0.05)
-
-    return StreamingResponse(_progress(), media_type="application/x-ndjson")
-
-
-async def ollama_delete():
-    """Model deletion is not supported — managed via Admin UI."""
-    return JSONResponse(status_code=400, content={
-        "error": "Model deletion is managed via Admin UI"
-    })
-
-
-async def ollama_not_supported():
-    """Stub for Ollama endpoints not supported by MoE Sovereign."""
-    return JSONResponse(status_code=400, content={
-        "error": "Not supported by MoE Sovereign"
-    })
-
-
-# ─── End of OLLAMA COMPATIBILITY API ─────────────────────────────────────────
-
-
-# Converts OpenAI Responses API (/v1/responses) to Chat Completions internally.
-# Required by Codex CLI (wire_api = "responses").
 
 class _ResponsesRequest(BaseModel):
     model: str

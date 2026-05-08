@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI  # noqa: F811 — type hints only
 
-import main as _m
+from services.llm_instances import judge_llm, planner_llm
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -354,7 +354,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT)
-    return _m.judge_llm
+    return judge_llm
 
 
 async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
@@ -377,7 +377,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT)
-    return _m.planner_llm
+    return planner_llm
 
 
 async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentState") -> Optional[str]:
