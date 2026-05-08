@@ -21,6 +21,7 @@ from fastapi import Request
 
 import state
 from config import OIDC_ENABLED, OIDC_JWKS_URL, OIDC_CLIENT_ID, OIDC_ISSUER
+from metrics import PROM_BUDGET_EXCEEDED
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -178,23 +179,20 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
         today = date.today().strftime("%Y-%m-%d")
         month = date.today().strftime("%Y-%m")
         uid   = data.get("user_id", "")
-        def _prom_budget():
-            import main as _m
-            return _m.PROM_BUDGET_EXCEEDED
         if data.get("budget_daily"):
             used = int(await state.redis_client.get(f"user:{uid}:tokens:daily:{today}") or 0)
             if used >= int(data["budget_daily"]):
-                _prom_budget().labels(user_id=uid, limit_type="daily").inc()
+                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="daily").inc()
                 return {"error": "budget_exceeded", "limit_type": "daily"}
         if data.get("budget_monthly"):
             used = int(await state.redis_client.get(f"user:{uid}:tokens:monthly:{month}") or 0)
             if used >= int(data["budget_monthly"]):
-                _prom_budget().labels(user_id=uid, limit_type="monthly").inc()
+                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="monthly").inc()
                 return {"error": "budget_exceeded", "limit_type": "monthly"}
         if data.get("budget_total"):
             used = int(await state.redis_client.get(f"user:{uid}:tokens:total") or 0)
             if used >= int(data["budget_total"]):
-                _prom_budget().labels(user_id=uid, limit_type="total").inc()
+                PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="total").inc()
                 return {"error": "budget_exceeded", "limit_type": "total"}
         if uid and state._userdb_pool is not None:
             try:
@@ -203,7 +201,7 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
                 for _team_id in await _get_user_teams(uid):
                     _ok, _reason = await _check_team_budget(_team_id, 0)
                     if not _ok:
-                        _prom_budget().labels(user_id=uid, limit_type="team").inc()
+                        PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="team").inc()
                         return {"error": "budget_exceeded", "limit_type": "team",
                                 "team_id": _team_id, "message": _reason}
             except Exception as _be:
