@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+import logging
 import time
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("MOE-SOVEREIGN")
 
 from config import (
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL,
@@ -23,6 +26,24 @@ router = APIRouter()
 @router.get("/v1/models")
 async def list_models(raw_request: Request):
     raw_key  = _extract_api_key(raw_request)
+    # ── Diagnostic auth log (remove after debugging missing-API-key issue) ──
+    _auth_hdr   = raw_request.headers.get("authorization", "")
+    _xapi_hdr   = raw_request.headers.get("x-api-key", "")
+    _hdr_source = (
+        "authorization-bearer" if _auth_hdr.lower().startswith("bearer ") else
+        "x-api-key"             if _xapi_hdr else
+        "authorization-other"   if _auth_hdr else
+        "none"
+    )
+    _key_prefix = (raw_key or "")[:10]
+    _key_len    = len(raw_key or "")
+    _is_moe_sk  = bool(raw_key and raw_key.startswith("moe-sk-"))
+    _origin_ip  = raw_request.client.host if raw_request.client else "?"
+    logger.warning(
+        "🔍 models-auth-debug ip=%s hdr_source=%s key_prefix=%r key_len=%d is_moe_sk=%s",
+        _origin_ip, _hdr_source, _key_prefix, _key_len, _is_moe_sk,
+    )
+    # ── End diagnostic block ───────────────────────────────────────────────
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
     if "error" in user_ctx:
         return JSONResponse(status_code=401, content={"error": {

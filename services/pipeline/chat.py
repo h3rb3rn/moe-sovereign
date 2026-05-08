@@ -130,6 +130,25 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     # Auth
     raw_key  = _extract_api_key(raw_request)
+    # ── Diagnostic auth log (remove after debugging missing-API-key issue) ──
+    # Never logs the key itself, only its prefix shape and which header it came from.
+    _auth_hdr   = raw_request.headers.get("authorization", "")
+    _xapi_hdr   = raw_request.headers.get("x-api-key", "")
+    _hdr_source = (
+        "authorization-bearer" if _auth_hdr.lower().startswith("bearer ") else
+        "x-api-key"             if _xapi_hdr else
+        "authorization-other"   if _auth_hdr else
+        "none"
+    )
+    _key_prefix = (raw_key or "")[:10]
+    _key_len    = len(raw_key or "")
+    _is_moe_sk  = bool(raw_key and raw_key.startswith("moe-sk-"))
+    _origin_ip  = raw_request.client.host if raw_request.client else "?"
+    logger.warning(
+        "🔍 chat-auth-debug ip=%s hdr_source=%s key_prefix=%r key_len=%d is_moe_sk=%s model=%r",
+        _origin_ip, _hdr_source, _key_prefix, _key_len, _is_moe_sk, request.model,
+    )
+    # ── End diagnostic block ───────────────────────────────────────────────
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "invalid_key"}
     if "error" in user_ctx:
         if user_ctx["error"] == "budget_exceeded":
@@ -137,6 +156,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "message": f"Budget exceeded ({user_ctx.get('limit_type', 'unknown')} limit reached)",
                 "type": "insufficient_quota", "code": "budget_exceeded"
             }})
+        # Diagnostic: surface why _validate_api_key rejected the key
+        logger.warning(
+            "🔍 chat-auth-rejected ip=%s reason=%s key_len=%d is_moe_sk=%s",
+            _origin_ip, user_ctx.get("error", "?"), _key_len, _is_moe_sk,
+        )
         return JSONResponse(status_code=401, content={"error": {
             "message": "Invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"
         }})
