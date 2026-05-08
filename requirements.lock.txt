@@ -94,7 +94,7 @@ PyJWT==2.12.1
 PyPika==0.51.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
-python-multipart==0.0.26
+python-multipart==0.0.27
 python-ulid==3.1.0
 pytz==2026.1.post1
 PyYAML==6.0.3
