@@ -12,28 +12,12 @@ from fastapi.responses import JSONResponse
 from config import (
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL,
     INFERENCE_SERVERS_LIST, URL_MAP, TOKEN_MAP,
+    MODES, _model_display_name,
 )
 from services.auth import _extract_api_key, _validate_api_key
 from services.templates import _read_expert_templates
 
 router = APIRouter()
-
-# Lazy accessors for main.py constants that are not in config yet
-def _modes():
-    import main as _m
-    return _m.MODES
-
-def _claude_pretty_names():
-    import main as _m
-    return _m._CLAUDE_PRETTY_NAMES
-
-
-def _model_display_name(model_id: str, description: str = "") -> str:
-    """Human-readable label for Claude Desktop's model picker."""
-    names = _claude_pretty_names()
-    if model_id in names:
-        return f"{names[model_id]} → MoE (Gateway)"
-    return description or model_id
 
 
 @router.get("/v1/models")
@@ -55,7 +39,6 @@ async def list_models(raw_request: Request):
                          or bool(_user_cc_json_m and _user_cc_json_m not in ("{}", "")))
 
     _model_created = int(time.time())
-    MODES = _modes()
 
     if allowed_templates:
         all_templates = _read_expert_templates()

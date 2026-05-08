@@ -235,202 +235,12 @@ DEFAULT_PLANNER_ROLE = (
 )
 
 
-def _resolve_user_experts(permissions_json: str, override_tmpl_id: Optional[str] = None,
-                           user_templates_json: str = "{}", admin_override: bool = False,
-                           user_connections_json: str = "{}") -> Optional[dict]:
-    """Returns an EXPERTS-compatible dict from the assigned expert template.
-    New template format: {cat: {system_prompt, models:[{model,endpoint,required}]}}
-    Legacy format (migrated): {cat: {model, endpoint}} is also supported.
-    Returns None if no template is assigned → global EXPERTS are used.
-    override_tmpl_id: If set, this template is loaded directly (model-ID routing).
-    admin_override: If True, override_tmpl_id is loaded without permission check.
-    user_templates_json: Inline JSON map {tmpl_id: config} for user-owned templates (from Valkey).
-    """
-    try:
-        perms = json.loads(permissions_json or "{}")
-        tmpl_ids = perms.get("expert_template", [])
-        templates = _read_expert_templates()
-        user_templates: dict = json.loads(user_templates_json or "{}")
-        # Merge: user templates are looked up by ID prefix 'user:'
-        def _find_tmpl(tid: str):
-            if tid in user_templates:
-                return user_templates[tid]
-            return next((t for t in templates if t.get("id") == tid), None)
-        if admin_override and override_tmpl_id:
-            tmpl = _find_tmpl(override_tmpl_id)
-        elif override_tmpl_id and override_tmpl_id in user_templates:
-            # User-owned template: authorized by ownership, no admin expert_template permission needed
-            tmpl = user_templates[override_tmpl_id]
-        elif not tmpl_ids:
-            return None
-        elif override_tmpl_id and override_tmpl_id in tmpl_ids:
-            tmpl = _find_tmpl(override_tmpl_id)
-            if tmpl is None:
-                logger.warning("Ghost template in _resolve_user_experts: %s in perms but not in DB/cache", override_tmpl_id)
-        else:
-            tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
-            if tmpl is None:
-                logger.warning("Ghost templates: all permitted templates missing from DB: %s", tmpl_ids)
-        if not tmpl:
-            return None
-        result: dict = {}
-        for cat, cat_cfg in tmpl.get("experts", {}).items():
-            if isinstance(cat_cfg, dict) and "models" in cat_cfg:
-                # New format
-                models_list = []
-                for m in cat_cfg.get("models", []):
-                    role = m.get("role")  # new format: "primary"|"fallback"|"always"
-                    if role is None:      # backward compat for old required=bool format
-                        role = "always" if m.get("required", True) else "primary"
-                    if role == "always":
-                        forced, model_tier = True, None
-                    elif role == "fallback":
-                        forced, model_tier = False, 2
-                    else:  # "primary"
-                        forced, model_tier = False, 1
-                    entry = {
-                        "model":          m.get("model", ""),
-                        "endpoint":       m.get("endpoint", ""),
-                        "forced":         forced,
-                        "enabled":        True,
-                        "_system_prompt": cat_cfg.get("system_prompt", ""),
-                    }
-                    if not forced:
-                        entry["_tier"] = model_tier
-                    models_list.append(entry)
-                result[cat] = models_list
-            elif isinstance(cat_cfg, dict) and "model" in cat_cfg:
-                # Legacy format (fallback)
-                result[cat] = [{
-                    "model":    cat_cfg.get("model", ""),
-                    "endpoint": cat_cfg.get("endpoint", ""),
-                    "forced":   True,
-                    "enabled":  True,
-                    "_system_prompt": "",
-                }]
-        # Inject URL/token for experts referencing user-owned connections
-        user_conns = json.loads(user_connections_json or "{}")
-        if user_conns:
-            for _models_list in result.values():
-                for _entry in _models_list:
-                    _ep = _entry.get("endpoint", "")
-                    if _ep and _ep not in URL_MAP and _ep in user_conns:
-                        _conn = user_conns[_ep]
-                        _entry["_user_conn_url"]      = _conn["url"]
-                        _entry["_user_conn_token"]    = _conn.get("api_key") or "ollama"
-                        _entry["_user_conn_api_type"] = _conn.get("api_type", "openai")
-        return result if result else None
-    except Exception:
-        return None
-
-
-def _resolve_template_prompts(permissions_json: str, override_tmpl_id: Optional[str] = None,
-                               user_templates_json: str = "{}", admin_override: bool = False,
-                               user_connections_json: str = "{}") -> dict:
-    """Returns planner_prompt, judge_prompt and optional model overrides from the user's Expert Template.
-    Model fields are stored as 'model@endpoint' strings; URL/token are resolved from INFERENCE_SERVERS.
-    admin_override: If True, override_tmpl_id is loaded without permission check.
-    user_templates_json: Inline JSON map {tmpl_id: config} for user-owned templates (from Valkey).
-    """
-    empty = {"planner_prompt": "", "judge_prompt": "",
-             "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
-             "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
-             "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
-             "search_fallback_ddg": _WEB_SEARCH_FALLBACK_DDG,
-             "graphrag_max_chars": 0,
-             "history_max_turns": 0, "history_max_chars": 0,
-             "max_agentic_rounds": 0}
-    try:
-        perms    = json.loads(permissions_json or "{}")
-        tmpl_ids = perms.get("expert_template", [])
-        templates = _read_expert_templates()
-        user_templates: dict = json.loads(user_templates_json or "{}")
-        def _find_tmpl(tid: str):
-            if tid in user_templates:
-                return user_templates[tid]
-            # Match by UUID id OR human-readable name (used by Codex CLI / /v1/models)
-            return next((t for t in templates if t.get("id") == tid or t.get("name") == tid), None)
-        def _tmpl_in_allowed(tid: str) -> bool:
-            """True if tid (name or UUID) refers to a template the user is permitted to use."""
-            if tid in tmpl_ids:
-                return True
-            t = _find_tmpl(tid)
-            return bool(t and t.get("id") in tmpl_ids)
-        if admin_override and override_tmpl_id:
-            tmpl = _find_tmpl(override_tmpl_id)
-        elif override_tmpl_id and override_tmpl_id in user_templates:
-            # User-owned template: authorized by ownership, no admin expert_template permission needed
-            tmpl = user_templates[override_tmpl_id]
-        elif not tmpl_ids:
-            return empty
-        elif override_tmpl_id and _tmpl_in_allowed(override_tmpl_id):
-            tmpl = _find_tmpl(override_tmpl_id)
-        else:
-            tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
-        if not tmpl:
-            return empty
-
-        def _split_model_ep(val: str) -> tuple:
-            """'model@endpoint' → (model, endpoint)"""
-            if val and "@" in val:
-                at = val.rindex("@")
-                return val[:at], val[at + 1:]
-            return val or "", ""
-
-        judge_m, judge_ep   = _split_model_ep(tmpl.get("judge_model", ""))
-        planner_m, planner_ep = _split_model_ep(tmpl.get("planner_model", ""))
-
-        def _resolve_ep_url(ep: str) -> tuple:
-            """Resolve endpoint name to (url, token): global URL_MAP first, user connections second."""
-            if ep in URL_MAP:
-                return URL_MAP[ep], TOKEN_MAP.get(ep, "ollama")
-            _uc = json.loads(user_connections_json or "{}")
-            if ep in _uc:
-                return _uc[ep]["url"], _uc[ep].get("api_key") or "ollama"
-            return "", "ollama"
-
-        judge_url,   judge_tok   = _resolve_ep_url(judge_ep)   if judge_ep   else ("", "ollama")
-        planner_url, planner_tok = _resolve_ep_url(planner_ep) if planner_ep else ("", "ollama")
-        return {
-            "planner_prompt":        tmpl.get("planner_prompt", ""),
-            "judge_prompt":          tmpl.get("judge_prompt", ""),
-            "judge_model_override":  judge_m,
-            "judge_url_override":    judge_url,
-            "judge_token_override":  judge_tok,
-            "planner_model_override": planner_m,
-            "planner_url_override":  planner_url,
-            "planner_token_override": planner_tok,
-            # Service toggles: allow templates to disable pipeline components
-            "enable_cache":        tmpl.get("enable_cache", True),
-            "enable_graphrag":     tmpl.get("enable_graphrag", True),
-            "enable_web_research": tmpl.get("enable_web_research", True),
-            # DuckDuckGo fallback when SearXNG returns empty (template overrides global env)
-            "search_fallback_ddg": tmpl.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG),
-            # Context window budget: 0 = auto-compute from judge model's known context window.
-            # Set a positive integer to pin the char limit; -1 = model-aware auto (same as 0).
-            "graphrag_max_chars":  int(tmpl.get("graphrag_max_chars", 0)),
-            # Per-template history compression: 0 = global default, -1 = unlimited (no compression).
-            "history_max_turns":   int(tmpl.get("history_max_turns", 0)),
-            "history_max_chars":   int(tmpl.get("history_max_chars", 0)),
-            # When true: activate thinking_node (chain-of-thought) before routing, equivalent
-            # to mode="agent_orchestrated" — set in template config_json as force_think: true.
-            "force_think":         bool(tmpl.get("force_think", False)),
-            # Agentic re-planning loop: 0 = disabled (single-pass), N = max re-plan iterations.
-            "max_agentic_rounds":  int(tmpl.get("max_agentic_rounds", 0)),
-            # Tier-2 semantic memory: embed evicted turns in ChromaDB, retrieve relevant context.
-            "enable_mission_context":        bool(tmpl.get("enable_mission_context", False)),
-            "enable_semantic_memory":       bool(tmpl.get("enable_semantic_memory", False)),
-            # Per-template memory tuning (0 = use global env-var default)
-            "semantic_memory_n_results":    int(tmpl.get("semantic_memory_n_results", 0)),
-            "semantic_memory_ttl_hours":    int(tmpl.get("semantic_memory_ttl_hours", 0)),
-            # Cross-session: retrieve relevant turns from past sessions of the same user.
-            # Scopes: "private" (own sessions), "team" (team-shared), "shared" (tenant-visible).
-            "enable_cross_session_memory":  bool(tmpl.get("enable_cross_session_memory", False)),
-            "cross_session_scopes":         list(tmpl.get("cross_session_scopes", ["private"])),
-            "cross_session_ttl_days":       int(tmpl.get("cross_session_ttl_days", 0)),
-        }
-    except Exception:
-        return empty
+# _resolve_user_experts, _resolve_template_prompts moved to services/routing.py
+from services.routing import _resolve_user_experts, _resolve_template_prompts
+from services.tracking import (
+    _log_usage_to_db, _register_active_request,
+    _deregister_active_request, _increment_user_budget,
+)
 
 
 # ─── Server-side Skill Resolution ──────────────────────────────────────────
@@ -1068,59 +878,25 @@ def _get_expert_prompt(cat: str, user_experts: Optional[dict] = None) -> str:
             or DEFAULT_EXPERT_PROMPTS["general"])
     return inject_tools(base, cat)
 
-# --- PROMETHEUS METRICS ---
-PROM_TOKENS          = Counter('moe_tokens_total',             'Total tokens processed',      ['model', 'token_type', 'node', 'user_id'])
-PROM_REQUESTS        = Counter('moe_requests_total',           'Total requests',              ['mode', 'cache_hit', 'user_id'])
-PROM_BUDGET_EXCEEDED = Counter('moe_budget_exceeded_total',    'Budget limit exceeded',       ['user_id', 'limit_type'])
-PROM_EXPERT_CALLS    = Counter('moe_expert_calls_total',       'Expert model calls',          ['model', 'category', 'node'])
-PROM_CONFIDENCE      = Counter('moe_expert_confidence_total',  'Expert confidence level',     ['level', 'category'])
-PROM_CACHE_HITS      = Counter('moe_cache_hits_total',         'Cache hits')
-PROM_CACHE_MISSES    = Counter('moe_cache_misses_total',       'Cache misses')
-PROM_RESPONSE_TIME   = Histogram('moe_response_duration_seconds', 'Response duration',         ['mode'],
-                                 buckets=[1, 2, 5, 10, 20, 30, 60, 120])
-PROM_SELF_EVAL       = Histogram('moe_self_eval_score',        'Self-evaluation score',       buckets=[1,2,3,4,5,6])
-PROM_FEEDBACK        = Histogram('moe_feedback_score',         'User feedback score',         buckets=[1,2,3,4,5,6])
-PROM_CHROMA_DOCS     = Gauge('moe_chroma_documents_total',     'Documents in ChromaDB cache')
-PROM_GRAPH_ENTITIES  = Gauge('moe_graph_entities_total',       'Entities in Neo4j')
-PROM_GRAPH_RELATIONS = Gauge('moe_graph_relations_total',      'Relations in Neo4j')
-PROM_PLANNER_PATS    = Gauge('moe_planner_patterns_total',     'Successful planner patterns')
-PROM_ONTOLOGY_GAPS   = Gauge('moe_ontology_gaps_total',        'Ontology gap terms')
-PROM_ONTOLOGY_ENTS   = Gauge('moe_ontology_entities_total',    'Ontology entities (static)')
-PROM_TOOL_CALL_DURATION = Histogram(
-    'moe_tool_call_duration_seconds', 'Duration of individual tool model calls',
-    ['node', 'model', 'phase'],
-    buckets=[1, 2, 5, 10, 20, 30, 60, 120, 300, 600]
+# All PROM_* metrics imported from metrics.py (single registry, no duplicate names)
+from metrics import (
+    PROM_TOKENS, PROM_REQUESTS, PROM_BUDGET_EXCEEDED, PROM_EXPERT_CALLS,
+    PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
+    PROM_RESPONSE_TIME, PROM_SELF_EVAL, PROM_FEEDBACK, PROM_COMPLEXITY,
+    PROM_CHROMA_DOCS, PROM_GRAPH_ENTITIES, PROM_GRAPH_RELATIONS,
+    PROM_GRAPH_DENSITY, PROM_SYNTHESIS_NODES, PROM_FLAGGED_RELS,
+    PROM_SYNTHESIS_CREATED, PROM_LINTING_RUNS, PROM_LINTING_ORPHANS,
+    PROM_LINTING_CONFLICTS, PROM_LINTING_DECAY, PROM_QUARANTINE_ADDED,
+    PROM_ACTIVE_REQUESTS, PROM_SERVER_UP, PROM_SERVER_MODELS,
+    PROM_SERVER_LOADED_MODELS, PROM_SERVER_VRAM_BYTES, PROM_SERVER_MODEL_VRAM_BYTES,
+    PROM_PLANNER_PATS, PROM_ONTOLOGY_GAPS, PROM_ONTOLOGY_ENTS,
+    PROM_TOOL_CALL_DURATION, PROM_TOOL_TIMEOUTS, PROM_TOOL_FORMAT_ERRORS,
+    PROM_TOOL_CALL_SUCCESS,
+    PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
+    PROM_SEMANTIC_MEMORY_STORED, PROM_SEMANTIC_MEMORY_HITS,
+    PROM_CORRECTIONS_STORED, PROM_CORRECTIONS_INJECTED,
+    PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES,
 )
-PROM_TOOL_TIMEOUTS      = Counter('moe_tool_call_timeout_total',       'Timeout errors in tool model calls',         ['node', 'model'])
-PROM_TOOL_FORMAT_ERRORS = Counter('moe_tool_call_format_errors_total', 'Malformed tool call responses',              ['node', 'model', 'format'])
-PROM_TOOL_CALL_SUCCESS  = Counter('moe_tool_call_success_total',       'Successful tool call responses',             ['node', 'model'])
-PROM_COMPLEXITY         = Counter('moe_complexity_routing_total',       'Request complexity routing',                 ['level'])
-# --- LIVE STATUS METRICS ---
-PROM_ACTIVE_REQUESTS    = Gauge('moe_active_requests',                 'Active requests in progress')
-PROM_SERVER_UP          = Gauge('moe_inference_server_up',             'Inference server reachable (1=up, 0=down)',   ['server'])
-PROM_SERVER_MODELS      = Gauge('moe_available_models_total',          'Available models per inference server',       ['server'])
-# Ollama runtime metrics scraped via /api/ps (no native /metrics endpoint upstream).
-PROM_SERVER_LOADED_MODELS    = Gauge('moe_inference_server_loaded_models', 'Currently loaded models in VRAM (Ollama /api/ps)', ['server'])
-PROM_SERVER_VRAM_BYTES       = Gauge('moe_inference_server_vram_bytes',    'Total VRAM bytes used by loaded models',           ['server'])
-PROM_SERVER_MODEL_VRAM_BYTES = Gauge('moe_inference_server_model_vram_bytes', 'VRAM bytes used by a specific loaded model',    ['server', 'model'])
-PROM_SYNTHESIS_NODES    = Gauge('moe_graph_synthesis_nodes_total',     'Synthesis-Nodes in Neo4j (:Synthesis)')
-PROM_FLAGGED_RELS       = Gauge('moe_graph_flagged_relations_total',   'Flagged relations in Neo4j (r.flagged=true)')
-PROM_LINTING_RUNS       = Counter('moe_linting_runs_total',            'Total graph linting runs')
-PROM_LINTING_ORPHANS    = Counter('moe_linting_orphans_deleted_total', 'Orphaned nodes deleted by linting')
-PROM_LINTING_CONFLICTS  = Counter('moe_linting_conflicts_resolved_total', 'Conflicts resolved by linting')
-PROM_LINTING_DECAY      = Counter('moe_linting_decay_deleted_total', 'Relations deleted by confidence decay')
-PROM_QUARANTINE_ADDED   = Counter('moe_quarantine_added_total', 'Triples quarantined by blast-radius check')
-PROM_SYNTHESIS_CREATED  = Counter('moe_synthesis_persisted_total',     'Synthesis nodes persisted',               ['domain', 'insight_type'])
-# --- RL FLYWHEEL & CONTEXT WINDOW METRICS ---
-PROM_HISTORY_COMPRESSED      = Counter('moe_history_compressed_total',      'History compression events (turns truncated)')
-PROM_HISTORY_UNLIMITED       = Counter('moe_history_unlimited_total',       'Requests with compression disabled (per-template)')
-PROM_SEMANTIC_MEMORY_STORED  = Counter('moe_semantic_memory_stored_total',  'Conversation turns stored in Tier-2 semantic memory')
-PROM_SEMANTIC_MEMORY_HITS    = Counter('moe_semantic_memory_hits_total',    'Warm context blocks injected from semantic memory')
-PROM_CORRECTIONS_STORED = Counter('moe_corrections_stored_total',      'Correction memory entries written to Neo4j',   ['source'])
-PROM_CORRECTIONS_INJECTED = Counter('moe_corrections_injected_total',  'Correction memory entries injected into expert prompts', ['category'])
-PROM_JUDGE_REFINED      = Counter('moe_judge_refinement_total',        'Judge refinement rounds executed',             ['outcome'])
-PROM_EXPERT_FAILURES    = Counter('moe_expert_failures_total',         'Expert invocation failures (VRAM, timeout, error)', ['model', 'reason'])
-PROM_GRAPH_DENSITY      = Gauge('moe_graph_density_ratio',             'Relations per entity (graph connectivity measure)')
 
 # --- USER AUTH & USAGE TRACKING ---
 
@@ -1252,114 +1028,6 @@ def _extract_session_id(request: Request) -> Optional[str]:
     return None
 
 
-async def _log_usage_to_db(user_id: str, api_key_id: str, request_id: str,
-                            model: str, moe_mode: str,
-                            prompt_tokens: int, completion_tokens: int,
-                            status: str = "ok", session_id: str = None,
-                            latency_ms: Optional[int] = None,
-                            complexity_level: str = "",
-                            expert_domains: str = "",
-                            cache_hit: bool = False,
-                            agentic_rounds: int = 0) -> None:
-    """Fire-and-forget Postgres usage log with pipeline routing context. Never raises exceptions."""
-    try:
-        if _userdb_pool is None:
-            return
-        from datetime import datetime, timezone
-        now_iso = datetime.now(timezone.utc).isoformat()
-        async with _userdb_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "INSERT INTO usage_log "
-                    "(id,user_id,api_key_id,request_id,session_id,model,moe_mode,prompt_tokens,"
-                    "completion_tokens,total_tokens,status,requested_at,"
-                    "latency_ms,complexity_level,expert_domains,cache_hit,agentic_rounds) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
-                    (uuid.uuid4().hex, user_id, api_key_id or None, request_id,
-                     session_id or None, model, moe_mode, prompt_tokens, completion_tokens,
-                     prompt_tokens + completion_tokens, status, now_iso,
-                     latency_ms, complexity_level or None, expert_domains or None,
-                     cache_hit, agentic_rounds),
-                )
-                await cur.execute(
-                    "UPDATE api_keys SET last_used_at=%s WHERE user_id=%s AND is_active=TRUE",
-                    (now_iso, user_id),
-                )
-    except Exception as e:
-        logger.warning(f"Usage log failed: {e}")
-
-
-async def _register_active_request(chat_id: str, user_id: str, model: str,
-                                    moe_mode: str, req_type: str,
-                                    template_name: str = "", client_ip: str = "",
-                                    backend_model: str = "", backend_host: str = "",
-                                    api_key_id: str = "") -> None:
-    """Registers a running request in Valkey for live monitoring."""
-    if redis_client is None:
-        return
-    try:
-        # Look up key label and key prefix from DB for live monitoring
-        _key_label = ""
-        _key_prefix = ""
-        if api_key_id and _userdb_pool is not None:
-            try:
-                async with _userdb_pool.connection() as _conn:
-                    async with _conn.cursor(row_factory=dict_row) as _cur:
-                        await _cur.execute(
-                            "SELECT label, key_prefix FROM api_keys WHERE id=%s",
-                            (api_key_id,),
-                        )
-                        _row = await _cur.fetchone()
-                        if _row:
-                            _key_label  = _row["label"] or ""
-                            _key_prefix = _row["key_prefix"] or ""
-            except Exception:
-                pass
-        meta = {
-            "chat_id":       chat_id,
-            "user_id":       user_id,
-            "model":         model,
-            "moe_mode":      moe_mode,
-            "type":          req_type,
-            "template_name": template_name,
-            "client_ip":     client_ip,
-            "backend_model": backend_model,
-            "backend_host":  backend_host,
-            "api_key_id":    api_key_id,
-            "key_label":     _key_label,
-            "key_prefix":    _key_prefix,
-            "started_at":    datetime.utcnow().isoformat() + "Z",
-        }
-        await redis_client.set(f"moe:active:{chat_id}", json.dumps(meta), ex=7200)
-    except Exception as e:
-        logger.debug(f"Active request registration failed: {e}")
-
-
-async def _deregister_active_request(chat_id: str) -> None:
-    """Remove a completed request from Valkey live monitoring and write it to the history."""
-    if redis_client is None:
-        return
-    try:
-        key = f"moe:active:{chat_id}"
-        raw = await redis_client.get(key)
-        if raw:
-            try:
-                meta = json.loads(raw)
-                meta["status"] = "completed"
-                meta["ended_at"] = datetime.now(timezone.utc).isoformat()
-                score = datetime.now(timezone.utc).timestamp()
-                await redis_client.zadd("moe:admin:completed", {json.dumps(meta, default=str): score})
-                await redis_client.zremrangebyrank("moe:admin:completed", 0, -(HISTORY_MAX_ENTRIES + 1))
-            except Exception as _he:
-                logger.warning("History entry failed: %s", _he)
-        await redis_client.delete(key)
-    except Exception as e:
-        logger.debug(f"Active request deregister failed: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Model availability check with short cache (avoids spam against the nodes)
-# ---------------------------------------------------------------------------
 _model_avail_cache: Dict[str, tuple] = {}  # {node: (monotonic_ts, frozenset[model_names])}
 _MODEL_AVAIL_TTL = 60.0  # seconds
 
@@ -1399,59 +1067,6 @@ async def _get_available_models(node: str) -> Optional[frozenset]:
         return None
 
 
-async def _increment_user_budget(user_id: str, tokens: int,
-                                  prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
-    """Increments the Valkey budget counter for a user (with cost factor of the assigned template).
-    Tracks total, input, and output tokens separately."""
-    if not user_id or user_id == "anon" or redis_client is None:
-        return
-    from datetime import date
-    today = date.today().strftime("%Y-%m-%d")
-    month = date.today().strftime("%Y-%m")
-    try:
-        # Apply template cost factor (default 1.0 = neutral)
-        cost_factor = 1.0
-        cf_raw = await redis_client.get(f"user:{user_id}:cost_factor")
-        if cf_raw:
-            cost_factor = float(cf_raw)
-        effective_tokens = max(1, round(tokens * cost_factor))
-        eff_prompt     = round(prompt_tokens * cost_factor)
-        eff_completion = round(completion_tokens * cost_factor)
-        pipe = redis_client.pipeline()
-        # Total counter (for budget limits)
-        pipe.incrby(f"user:{user_id}:tokens:daily:{today}", effective_tokens)
-        pipe.expire(f"user:{user_id}:tokens:daily:{today}", 48 * 3600)
-        pipe.incrby(f"user:{user_id}:tokens:monthly:{month}", effective_tokens)
-        pipe.expire(f"user:{user_id}:tokens:monthly:{month}", 35 * 86400)
-        pipe.incrby(f"user:{user_id}:tokens:total", effective_tokens)
-        # Input-Token-Counter
-        if eff_prompt > 0:
-            pipe.incrby(f"user:{user_id}:tokens:daily:{today}:input", eff_prompt)
-            pipe.expire(f"user:{user_id}:tokens:daily:{today}:input", 48 * 3600)
-            pipe.incrby(f"user:{user_id}:tokens:monthly:{month}:input", eff_prompt)
-            pipe.expire(f"user:{user_id}:tokens:monthly:{month}:input", 35 * 86400)
-            pipe.incrby(f"user:{user_id}:tokens:total:input", eff_prompt)
-        # Output-Token-Counter
-        if eff_completion > 0:
-            pipe.incrby(f"user:{user_id}:tokens:daily:{today}:output", eff_completion)
-            pipe.expire(f"user:{user_id}:tokens:daily:{today}:output", 48 * 3600)
-            pipe.incrby(f"user:{user_id}:tokens:monthly:{month}:output", eff_completion)
-            pipe.expire(f"user:{user_id}:tokens:monthly:{month}:output", 35 * 86400)
-            pipe.incrby(f"user:{user_id}:tokens:total:output", eff_completion)
-        await pipe.execute()
-    except Exception as e:
-        logger.warning(f"Budget counter failed: {e}")
-    # Deduct from all team budgets the user belongs to (fire-and-forget)
-    if _userdb_pool is not None:
-        try:
-            from admin_ui.database import get_user_teams as _get_user_teams
-            from admin_ui.database import deduct_team_budget as _deduct_team_budget
-            for _team_id in await _get_user_teams(user_id):
-                await _deduct_team_budget(_team_id, effective_tokens)
-        except Exception as _tbe:
-            logger.debug(f"Team budget deduct failed: {_tbe}")
-
-# --- CONCURRENCY CONTROL (per endpoint, dynamic from INFERENCE_SERVERS_LIST) ---
 _endpoint_semaphores: Dict[str, asyncio.Semaphore] = {}
 _endpoint_gpu_indices: Dict[str, int] = {}
 
@@ -1491,161 +1106,8 @@ import state as _state_ref
 _state_ref.cache_collection = cache_collection
 _state_ref.route_collection = route_collection
 
-# --- MODES ---
-# Control output format and behavior of the entire pipeline.
-# Open WebUI displays each entry as a separate model.
-MODES: Dict[str, Dict] = {
-    "default": {
-        "model_id":       "moe-orchestrator",
-        "description":    "Complete answers with explanations (default)",
-        "expert_suffix":  "",
-        "merger_prefix":  (
-            "Synthesize the following information into a clear, complete answer.\n"
-            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low) > cache.\n"
-            "Ignore contradictory expert statements when MCP or graph data are available.\n"
-            "Act as cross-domain validator: compare all numerical values in the expert answers "
-            "with the original request. In case of discrepancies, the original value has absolute priority. "
-            "If an expert ignored a subtask, name the gap explicitly instead of filling it with "
-            "hallucinations.\n"
-            "CRITICAL: If the original question has multiple parts (a), (b), (c), you MUST address "
-            "EVERY part in your synthesis. Each expert may have answered a different part — combine "
-            "them all. When an MCP tool provided a calculation result, copy the result VERBATIM.\n"
-            "MULTI-EXPERT SYNTHESIS: When multiple expert responses are present, treat them as "
-            "complementary domain perspectives — do NOT pick one and ignore the others. "
-            "Each expert covers a different angle; your job is to integrate ALL angles into a "
-            "single coherent answer. If experts contradict each other, name the contradiction "
-            "explicitly and state which view is better supported by available evidence. "
-            "If an expert's domain is irrelevant to the question, skip it silently.\n"
-            "LANGUAGE: Always answer in the same language as the original question."
-        ),
-    },
-    "code": {
-        "model_id":       "moe-orchestrator-code",
-        "description":    "Source code only — no explanations, no prose",
-        "expert_suffix":  (
-            "\n\nIMPORTANT: Answer EXCLUSIVELY with runnable source code. "
-            "No introduction, no explanations, no conclusion. "
-            "Inline comments in code are allowed. "
-            "Add as first line: # CONFIDENCE: high | medium | low"
-        ),
-        "merger_prefix":  (
-            "Return ONLY the finished, complete, runnable source code. "
-            "Absolutely no prose, no introduction, no explanations, no conclusion. "
-            "Combine and deduplicate the expert code suggestions into the best result. "
-            "Code only."
-        ),
-    },
-    "concise": {
-        "model_id":       "moe-orchestrator-concise",
-        "description":    "Short, precise answers without rambling",
-        "expert_suffix":  (
-            "\n\nAnswer very briefly and precisely. Maximum 4 sentences. "
-            "No repetitions, no introduction, no conclusion."
-        ),
-        "merger_prefix":  (
-            "Synthesize into a short, precise answer. "
-            "Maximum 120 words. No introduction, no conclusion, no repetitions. "
-            "Priority: MCP > knowledge graph > experts > web."
-        ),
-        "skip_think": False,
-    },
-    "agent": {
-        "model_id":        "moe-orchestrator-agent",
-        "description":     "Coding agent mode — for OpenCode, Continue.dev and AI coding tools (OpenAI-compatible)",
-        "expert_suffix":   (
-            "\n\nYou are a precise coding agent. Answer technically exact and directly actionable. "
-            "Use markdown code blocks for all code. No unnecessary explanations unless explicitly asked."
-        ),
-        "merger_prefix":   (
-            "Synthesize the expert code analyses into one precise, actionable response. "
-            "Use markdown code blocks for all code. Be concise and direct. "
-            "Do not add preamble or boilerplate. Start with the solution immediately. "
-            "Priority: code_reviewer > technical_support."
-        ),
-        "skip_think":      True,     # No <think> block — OpenCode/Continue.dev render it as raw text
-        "force_categories": ["code_reviewer", "technical_support"],
-    },
-    "agent_orchestrated": {
-        "model_id":        "moe-orchestrator-agent-orchestrated",
-        "description":     "Claude Code — full planner, all experts, force_think (maximum quality)",
-        "expert_suffix":   (
-            "\n\nYou are a precise coding agent. Answer technically exact and directly actionable. "
-            "Use markdown code blocks for all code. No unnecessary explanations unless explicitly asked."
-        ),
-        "merger_prefix":   (
-            "Synthesize the expert analyses into one precise, actionable response. "
-            "Use markdown code blocks for all code. Be concise and direct. "
-            "Do not add preamble or boilerplate. Start with the solution immediately. "
-            "Priority: code_reviewer > technical_support > general."
-        ),
-        "skip_think":      True,     # no <think> SSE wrapper (Claude Code renders it as raw text)
-        "force_think":     True,     # thinking_node active in pipeline for better synthesis
-        # no force_categories → planner decides freely, load distributes across all nodes
-    },
-    "research": {
-        "model_id":    "moe-orchestrator-research",
-        "description": "Deep research — multiple parallel web searches, structured research report",
-        "expert_suffix": (
-            "\n\nYou support a structured deep research. "
-            "Analyze the topic from your domain perspective. "
-            "Explicitly name: established knowledge, open questions and research gaps. "
-            "Cite sources when known."
-        ),
-        "merger_prefix": (
-            "Create a structured research report from the following sources.\n"
-            "Use exactly this outline:\n\n"
-            "## Summary\n[2-3 sentence key statement]\n\n"
-            "## Main Findings\n[Most important insights as bullet points]\n\n"
-            "## Details\n[In-depth analysis with all relevant information]\n\n"
-            "## Sources\n[All cited web sources with [N] numbers]\n\n"
-            "Priority: web research > knowledge graph > experts (high/medium) > experts (low).\n"
-            "Ignore contradictory expert statements when web research data is available."
-        ),
-        "force_think": True,
-    },
-    "report": {
-        "model_id":    "moe-orchestrator-report",
-        "description": "Professional report — full pipeline, structured markdown report",
-        "expert_suffix": (
-            "\n\nYou deliver inputs for a professional technical report. "
-            "Write objectively, precisely and in report style. "
-            "Clearly separate facts from evaluations. "
-            "Structure your contribution with short paragraphs."
-        ),
-        "merger_prefix": (
-            "Create a professional technical report in Markdown format.\n"
-            "Use exactly this structure:\n\n"
-            "# [Meaningful title]\n\n"
-            "## Executive Summary\n[3-5 sentences — key message for decision makers]\n\n"
-            "## Background\n[Context, relevance, initial situation]\n\n"
-            "## Main Findings\n[Most important insights, backed by experts and research]\n\n"
-            "## Analysis\n[In-depth evaluation, connections, implications]\n\n"
-            "## Conclusion\n[Conclusions and, if applicable, recommendations for action]\n\n"
-            "## Sources\n[All cited sources]\n\n"
-            "Tone: objective, professional, suitable for authorities or companies.\n"
-            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low)."
-        ),
-        "force_think": True,
-    },
-    "plan": {
-        "model_id":    "moe-orchestrator-plan",
-        "description": "Plan & Execute — shows execution plan, runs all tasks in parallel",
-        "expert_suffix": (
-            "\n\nYou deliver inputs for comprehensive planning. "
-            "Be complete and precise. Explicitly name what you know and what is uncertain."
-        ),
-        "merger_prefix": (
-            "Synthesize all expert inputs and research into a complete, "
-            "structured answer.\n"
-            "Consider all available sources. Prioritize accuracy over brevity.\n"
-            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low).\n"
-            "Ignore contradictory expert statements when MCP or graph data are available."
-        ),
-        "force_think": True,
-    },
-}
-# Model ID → mode key lookup
-_MODEL_ID_TO_MODE: Dict[str, str] = {v["model_id"]: k for k, v in MODES.items()}
+# MODES, _MODEL_ID_TO_MODE imported from config.py
+from config import MODES, _MODEL_ID_TO_MODE
 
 # --- API SCHEMAS ---
 class Message(BaseModel):
@@ -2208,8 +1670,7 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
 
 # THOMPSON_SAMPLING_ENABLED imported from config.py
 
-PROM_THOMPSON = Histogram("moe_thompson_sample", "Thompson-sampled expert score",
-                          buckets=[.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0])
+from metrics import PROM_THOMPSON
 
 
 async def _get_expert_score(model: str, category: str) -> float:
@@ -6082,43 +5543,15 @@ async def _check_ip_rate_limit(request: Request) -> bool:
 
 # ── Starfleet: Watchdog Alerts (moved to routes/watchdog.py) ─────────────────
 
-async def watchdog_alerts_endpoint(limit: int = 20):  # kept for internal callers if any
-    """Return recent watchdog alerts from Valkey (most recent first)."""
-    if not await _starfleet.is_feature_enabled("watchdog", redis_client):
-        return JSONResponse({"enabled": False, "alerts": []})
-    if redis_client is None:
-        return JSONResponse({"enabled": True, "alerts": [], "error": "Valkey unavailable"})
-    raw = await redis_client.lrange(_watchdog.VALKEY_ALERT_KEY, 0, max(0, limit - 1))
-    alerts = []
-    for item in raw:
-        try:
-            alerts.append(json.loads(item))
-        except Exception:
-            pass
-    return {"enabled": True, "alerts": alerts}
-
-
 async def starfleet_features_endpoint():
     """Return current state of all Starfleet feature toggles."""
     return await _starfleet.get_all_feature_states(redis_client)
-
-
-async def watchdog_config_get():
-    """Return the current watchdog configuration."""
-    return await _watchdog._load_config(redis_client)
 
 
 async def watchdog_config_set(request: Request):
     """Merge-update watchdog configuration (hot-reload, no restart needed)."""
     patch = await request.json()
     return await _watchdog.save_config(redis_client, patch)
-
-
-async def watchdog_alerts_clear():
-    """Delete all stored watchdog alerts from Valkey."""
-    if redis_client is not None:
-        await redis_client.delete(_watchdog.VALKEY_ALERT_KEY)
-    return {"ok": True, "cleared": True}
 
 
 async def watchdog_node_status():
@@ -6217,13 +5650,6 @@ async def watchdog_node_status():
 
 # ── Starfleet: Mission Context ────────────────────────────────────────────────
 
-async def mission_context_get():
-    """Return the current persistent mission context."""
-    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
-        return JSONResponse({"enabled": False})
-    return await _mission_context.get_context()
-
-
 async def mission_context_set(request: Request):
     """Replace the mission context with the provided JSON body."""
     if not await _starfleet.is_feature_enabled("mission_context", redis_client):
@@ -6232,204 +5658,20 @@ async def mission_context_set(request: Request):
     return await _mission_context.set_context(data)
 
 
-async def mission_context_patch(request: Request):
-    """Merge-update fields in the mission context."""
-    if not await _starfleet.is_feature_enabled("mission_context", redis_client):
-        return JSONResponse({"enabled": False}, status_code=409)
-    patch = await request.json()
-    return await _mission_context.patch_context(patch)
-
-
 async def prometheus_metrics():
     """Prometheus scrape endpoint — returns all moe_* metrics."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-async def provider_status():
-    """Rate-Limit-Status aller gecachten Provider-Endpunkte (Claude Code Integration)."""
-    import time as _time
-    return {ep: {**data, "now": _time.time()} for ep, data in _provider_rate_limits.items()}
+# _CLAUDE_PRETTY_NAMES, _model_display_name imported from config.py
+from config import _CLAUDE_PRETTY_NAMES, _model_display_name
 
-
-_CLAUDE_PRETTY_NAMES: dict[str, str] = {
-    "claude-opus-4-7":            "Claude Opus 4.7",
-    "claude-opus-4-6":            "Claude Opus 4.6",
-    "claude-sonnet-4-6":          "Claude Sonnet 4.6",
-    "claude-haiku-4-5-20251001":  "Claude Haiku 4.5",
-    "claude-opus-4-5":            "Claude Opus 4.5",
-    "claude-sonnet-4-5":          "Claude Sonnet 4.5",
-    "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
-    "claude-3-5-haiku-20241022":  "Claude 3.5 Haiku",
-    "claude-3-7-sonnet-20250219": "Claude 3.7 Sonnet",
-}
-
-
-def _model_display_name(model_id: str, description: str = "") -> str:
-    """Human-readable label for Claude Desktop's model picker (display_name field)."""
-    if model_id in _CLAUDE_PRETTY_NAMES:
-        return f"{_CLAUDE_PRETTY_NAMES[model_id]} → MoE (Gateway)"
-    return description or model_id
-
-
-async def list_models(raw_request: Request):
-    raw_key = _extract_api_key(raw_request)
-    user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": {
-            "message": "Invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"
-        }})
-    user_perms        = json.loads(user_ctx.get("permissions_json", "{}"))
-    allowed_modes     = user_perms.get("moe_mode")        # None = all allowed (backward-compat)
-    allowed_templates = user_perms.get("expert_template") # list of template IDs or None
-    _user_cc_json_m   = user_ctx.get("user_cc_profiles_json", "")
-    has_cc            = bool(user_perms.get("cc_profile")) or bool(_user_cc_json_m and _user_cc_json_m not in ("{}", ""))  # CC aliases when permission granted or user has own profiles
-
-    _model_created = int(time.time())
-    if allowed_templates:
-        # User has templates assigned → only show templates (no generic modes)
-        all_templates = _read_expert_templates()
-        main_models = [
-            {
-                "id":           t.get("name", t["id"]),   # Template name as model ID
-                "object":       "model",
-                "owned_by":     "moe-sovereign",
-                "created":      _model_created,
-                "description":  t.get("description") or t.get("name", t["id"]),
-                "display_name": _model_display_name(t.get("name", t["id"]), t.get("description") or t.get("name", t["id"])),
-            }
-            for t in all_templates if t.get("id") in allowed_templates
-        ]
-    else:
-        # No templates → show generic modes (filtered by moe_mode permission)
-        # If the user has other explicit permissions (model_endpoint, cc_profile) but no moe_mode,
-        # do not show MoE modes (only legacy users without any permissions see all modes)
-        _has_other_perms = bool(user_perms.get("model_endpoint") or user_perms.get("cc_profile"))
-        if allowed_modes is not None or not _has_other_perms:
-            main_models = [
-                {"id": cfg["model_id"], "object": "model", "owned_by": "moe-sovereign",
-                 "created": _model_created, "description": cfg["description"],
-                 "display_name": _model_display_name(cfg["model_id"], cfg["description"])}
-                for cfg in MODES.values()
-                if allowed_modes is None or cfg["model_id"] in allowed_modes
-            ]
-        else:
-            main_models = []
-
-    existing_ids = {m["id"] for m in main_models}
-    # User-owned templates (stored in Valkey per-user, not in admin_expert_templates)
-    _user_tmpls_m: dict = {}
-    try:
-        _user_tmpls_m = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
-    except Exception:
-        pass
-    user_tmpl_models = [
-        {
-            "id":           cfg.get("name", uid),
-            "object":       "model",
-            "owned_by":     "moe-sovereign",
-            "created":      _model_created,
-            "description":  cfg.get("description") or cfg.get("name", uid),
-            "display_name": _model_display_name(cfg.get("name", uid), cfg.get("description") or cfg.get("name", uid)),
-        }
-        for uid, cfg in _user_tmpls_m.items()
-        if cfg.get("name", uid) not in existing_ids
-    ]
-    existing_ids |= {m["id"] for m in user_tmpl_models}
-    # Claude Code compatible model IDs — only for users with cc_profile permission
-    claude_models = [
-        {"id": mid, "object": "model", "owned_by": "moe-sovereign", "created": _model_created,
-         "description": f"Claude Code compatible → MoE ({CLAUDE_CODE_TOOL_MODEL} for tools)",
-         "display_name": _model_display_name(mid)}
-        for mid in sorted(CLAUDE_CODE_MODELS) if mid not in existing_ids
-    ] if has_cc else []
-    # Native LLMs — direct inference endpoints from model_endpoint permission (model@node)
-    # Model ID as "model@node" for unique host assignment in OpenWebUI
-    native_models = []
-    _api_type_map = {s["name"]: s.get("api_type", "ollama") for s in INFERENCE_SERVERS_LIST}
-    allowed_endpoints = user_perms.get("model_endpoint")
-    if allowed_endpoints:
-        seen: set = set()
-        for entry in allowed_endpoints:
-            model_n, _, node = entry.partition("@")
-            if not model_n:
-                continue
-            if model_n == "*":
-                # Node wildcard: fetch all currently available models from the node live
-                if node not in URL_MAP:
-                    continue
-                try:
-                    _api_type = _api_type_map.get(node, "ollama")
-                    _wc_url = URL_MAP[node].rstrip("/")
-                    _wc_token = TOKEN_MAP.get(node, "ollama")
-                    async with httpx.AsyncClient(timeout=5) as _wc_client:
-                        if _api_type == "ollama":
-                            _wc_r = await _wc_client.get(
-                                f"{_wc_url}/api/tags",
-                                headers={"Authorization": f"Bearer {_wc_token}"},
-                            )
-                            _wc_models = [m["name"] for m in (_wc_r.json().get("models") or [])] if _wc_r.status_code == 200 else []
-                        else:
-                            _wc_r = await _wc_client.get(
-                                f"{_wc_url}/v1/models",
-                                headers={"Authorization": f"Bearer {_wc_token}"},
-                            )
-                            _wc_models = [m["id"] for m in (_wc_r.json().get("data") or [])] if _wc_r.status_code == 200 else []
-                    for _wc_m in _wc_models:
-                        mid = f"{_wc_m}@{node}"
-                        if mid not in seen and mid not in existing_ids:
-                            seen.add(mid)
-                            native_models.append({"id": mid, "object": "model",
-                                                  "owned_by": "moe-sovereign", "created": _model_created,
-                                                  "description": f"Direkt via {node}",
-                                                  "display_name": f"{_wc_m} ({node})"})
-                except Exception:
-                    pass
-                continue
-            model_id = f"{model_n}@{node}" if node else model_n
-            if model_id not in seen and model_id not in existing_ids:
-                seen.add(model_id)
-                native_models.append({
-                    "id":           model_id,
-                    "object":       "model",
-                    "owned_by":     "moe-sovereign",
-                    "created":      _model_created,
-                    "description":  f"Direkt via {node}" if node else "Direktzugriff",
-                    "display_name": f"{model_n} ({node})" if node else model_n,
-                })
-    # User-created connections (model_cache already populated from the connection setup)
-    _user_conns_m: dict = {}
-    try:
-        _user_conns_m = json.loads(user_ctx.get("user_connections_json", "{}") or "{}")
-    except Exception:
-        pass
-    conn_models: list = []
-    _seen_conn: set = existing_ids | {m["id"] for m in native_models}
-    for _conn_name, _conn_cfg in _user_conns_m.items():
-        for _cm in _conn_cfg.get("models_cache", []):
-            _mid = f"{_cm}@{_conn_name}"
-            if _mid not in _seen_conn:
-                _seen_conn.add(_mid)
-                conn_models.append({
-                    "id":           _mid,
-                    "object":       "model",
-                    "owned_by":     "moe-sovereign",
-                    "created":      _model_created,
-                    "description":  f"Direkt via {_conn_name}",
-                    "display_name": f"{_cm} ({_conn_name})",
-                })
-    return {"object": "list", "data": main_models + user_tmpl_models + claude_models + native_models + conn_models}
 
 async def graph_stats():
     if graph_manager is None:
         return {"status": "unavailable"}
     stats = await graph_manager.get_stats()
     return {"status": "ok", **stats}
-
-async def graph_search(q: str, limit: int = 10):
-    if graph_manager is None:
-        return {"status": "unavailable", "results": []}
-    results = await graph_manager.search_entities(q, limit)
-    return {"status": "ok", "query": q, "results": results}
 
 async def graph_knowledge_export(
     domains: Optional[str] = None,
@@ -6453,30 +5695,6 @@ async def graph_knowledge_export(
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-async def graph_knowledge_import(raw_request: Request):
-    """Import a knowledge bundle into the graph."""
-    if graph_manager is None:
-        return JSONResponse(status_code=503, content={"error": "GraphRAG unavailable"})
-    try:
-        body = await raw_request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
-    bundle = body.get("bundle", body)
-    dry_run = body.get("dry_run", False)
-    source_tag = body.get("source_tag", "community_import")
-    trust_floor = float(body.get("trust_floor", 0.5))
-    if "@context" not in bundle and "entities" not in bundle:
-        return JSONResponse(status_code=400, content={"error": "Not a valid knowledge bundle"})
-    stats = await graph_manager.import_knowledge_bundle(
-        bundle=bundle,
-        source_tag=source_tag,
-        trust_floor=trust_floor,
-        dry_run=dry_run,
-        kafka_publish_fn=_kafka_publish,
-    )
-    return {"status": "ok", "dry_run": dry_run, **stats}
 
 
 async def graph_knowledge_validate(raw_request: Request):
@@ -6791,58 +6009,6 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
         if not _deregistered:
             asyncio.create_task(_deregister_active_request(chat_id))
         yield "data: [DONE]\n\n"
-
-async def submit_feedback(req: FeedbackRequest):
-    if not 1 <= req.rating <= 5:
-        return {"status": "error", "message": "Rating must be between 1 and 5"}
-    if redis_client is None:
-        return {"status": "error", "message": "Valkey not available"}
-
-    meta = await redis_client.hgetall(f"moe:response:{req.response_id}")
-    if not meta:
-        return {"status": "error", "message": "Response ID not found or expired"}
-
-    positive = req.rating >= FEEDBACK_POSITIVE_THRESHOLD
-    negative = req.rating <= FEEDBACK_NEGATIVE_THRESHOLD
-
-    PROM_FEEDBACK.observe(req.rating)
-    # Update expert performance counter
-    for model_cat in json.loads(meta.get("expert_models_used", "[]")):
-        if "::" in model_cat:
-            model, cat = model_cat.split("::", 1)
-            await _record_expert_outcome(model, cat, positive)
-
-    # Flag ChromaDB entry on negative feedback
-    chroma_doc_id = meta.get("chroma_doc_id", "")
-    if negative and chroma_doc_id:
-        try:
-            await asyncio.to_thread(cache_collection.update, ids=[chroma_doc_id], metadatas=[{"flagged": True}])
-            logger.info(f"🚫 Cache entry {chroma_doc_id} flagged")
-        except Exception as e:
-            logger.warning(f"ChromaDB update failed: {e}")
-
-    # Flag corresponding Neo4j triples
-    if graph_manager is not None:
-        user_input = meta.get("input", "")
-        if negative and user_input:
-            n = await graph_manager.mark_triples_unverified(user_input)
-            if n:
-                logger.info(f"⚠️ {n} GraphRAG-Tripel als flagged markiert")
-        elif positive and user_input:
-            n = await graph_manager.verify_triples(user_input)
-            if n:
-                logger.info(f"✅ {n} GraphRAG-Tripel als verified markiert")
-
-    asyncio.create_task(_telemetry.record_user_feedback(_userdb_pool, req.response_id, req.rating))
-    asyncio.create_task(_kafka_publish(KAFKA_TOPIC_FEEDBACK, {
-        "response_id": req.response_id,
-        "rating":      req.rating,
-        "positive":    positive,
-        "ts":          datetime.now().isoformat(),
-    }))
-    logger.info(f"📬 Feedback {req.response_id}: rating={req.rating} positive={positive}")
-    return {"status": "ok", "response_id": req.response_id, "rating": req.rating, "positive": positive}
-
 
 class MemoryIngestRequest(BaseModel):
     """Request body for the /v1/memory/ingest endpoint."""
@@ -8486,34 +7652,6 @@ async def anthropic_messages(request: Request):
         }})
 
 
-async def count_tokens(request: Request):
-    """Token count estimation for Claude Desktop / Claude Code context budget (Anthropic Gateway spec).
-
-    Returns a rough estimate based on character count (chars / 3.5).
-    Not a substitute for exact tokenisation, but sufficient for context-budget warnings.
-    """
-    raw_key  = _extract_api_key(request)
-    user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "invalid_key"}
-    if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": {
-            "message": "Invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"
-        }})
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": {
-            "message": "Invalid JSON body", "type": "invalid_request_error", "code": "invalid_body"
-        }})
-    messages = body.get("messages", [])
-    system   = body.get("system", "")
-    char_count = sum(
-        len(str(m.get("content", ""))) for m in messages
-    ) + len(str(system) if isinstance(system, str) else "".join(
-        b.get("text", "") for b in system if isinstance(b, dict)
-    ))
-    return {"input_tokens": max(1, int(char_count / 3.5))}
-
-
 _ONTOLOGY_RUN_KEY = "moe:maintenance:ontology:run"
 _ONTOLOGY_RUNS_HISTORY_KEY = "moe:maintenance:ontology:runs"
 
@@ -8596,24 +7734,6 @@ async def _run_healer_task(concurrency: int, batch_size: int, run_id: str) -> No
             await redis_client.ltrim(_ONTOLOGY_RUNS_HISTORY_KEY, 0, 99)
         except Exception:
             pass
-
-
-async def trigger_ontology_healer(body: dict = None):
-    """Kick off one gap-healer iteration in the background."""
-    import uuid as _uuid
-    body = body or {}
-    if redis_client is not None:
-        try:
-            cur = await redis_client.hgetall(_ONTOLOGY_RUN_KEY)
-            if cur and cur.get("status") == "running":
-                return {"ok": False, "reason": "already_running", "status": cur}
-        except Exception:
-            pass
-    concurrency = max(1, min(32, int(body.get("concurrency") or 4)))
-    batch_size = max(1, min(200, int(body.get("batch_size") or 20)))
-    run_id = _uuid.uuid4().hex[:12]
-    asyncio.create_task(_run_healer_task(concurrency, batch_size, run_id))
-    return {"ok": True, "run_id": run_id}
 
 
 async def clear_ontology_healer_status():
@@ -8882,142 +8002,6 @@ from services.healer import (
 )
 
 
-async def start_dedicated_healer(body: dict = None):
-    """Start a permanent gap-healer loop pinned to a single curator template.
-
-    Waits up to 3 s for the subprocess to emit its first output line. If the
-    process exits within those 3 s it is considered a start failure and the
-    endpoint returns ok=False with the exit code so the UI can show an error
-    instead of silently marking status as 'running'.
-    """
-    # state._dedicated_healer_proc is in state — no global needed
-    import time as _t
-    body = body or {}
-    template = (body.get("template") or "").strip()
-    if not template:
-        return {"ok": False, "reason": "template_required"}
-
-    # Reject if an in-memory process is still alive.
-    if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
-        return {"ok": False, "reason": "already_running"}
-
-    # Also check Redis for a live process from a previous container run.
-    if redis_client is not None:
-        try:
-            cur = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-            if cur and cur.get("status") in ("running", "starting"):
-                pid = int(cur.get("pid", 0))
-                if pid:
-                    try:
-                        os.kill(pid, 0)
-                        return {"ok": False, "reason": "already_running", "pid": pid}
-                    except OSError:
-                        pass  # stale — fall through to clean start
-        except Exception:
-            pass
-
-    # Always wipe stale Redis state so the UI starts from a clean slate.
-    if redis_client is not None:
-        try:
-            await redis_client.delete(_DEDICATED_HEALER_KEY)
-        except Exception:
-            pass
-
-    env = os.environ.copy()
-    env["TEMPLATE_POOL"] = template
-    env.setdefault("REQUEST_TIMEOUT", "900")
-    env.setdefault("MOE_API_BASE", "http://localhost:8000")
-    # Prefer SYSTEM_API_KEY, fall back to MOE_API_KEY — either way the subprocess needs one.
-    sys_key = (os.environ.get("SYSTEM_API_KEY", "") or os.environ.get("MOE_API_KEY", "")).strip()
-    if sys_key:
-        env["MOE_API_KEY"] = sys_key
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "python3", "/app/scripts/gap_healer_templates.py",
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except Exception as exc:
-        return {"ok": False, "reason": "spawn_failed", "error": str(exc)[:200]}
-
-    state._dedicated_healer_proc = proc
-
-    # Write "starting" state immediately so the UI can show a spinner.
-    if redis_client is not None:
-        try:
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "starting",
-                "template": template,
-                "pid": str(proc.pid),
-                "started_at": str(_t.time()),
-                "processed": "0",
-                "written": "0",
-                "failed": "0",
-                "stalled": "0",
-                "auto_restart": "1",
-            })
-        except Exception:
-            pass
-
-    # Early-exit detection: race between first stdout line and process exit.
-    first_line: "bytes | None" = None
-    try:
-        first_line_task = asyncio.create_task(proc.stdout.readline())
-        wait_task = asyncio.create_task(proc.wait())
-        done, pending = await asyncio.wait(
-            {first_line_task, wait_task},
-            timeout=3.0,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if wait_task in done:
-            # Process died before producing any output — start failed.
-            rc = wait_task.result()
-            for t in pending:
-                t.cancel()
-                try:
-                    await t
-                except asyncio.CancelledError:
-                    pass
-            state._dedicated_healer_proc = None
-            if redis_client is not None:
-                try:
-                    await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                        "status": "stopped", "exit_code": str(rc),
-                    })
-                except Exception:
-                    pass
-            return {"ok": False, "reason": "process_exited_immediately", "exit_code": rc}
-
-        # Process is still alive — cancel wait_task, preserve first line if available.
-        wait_task.cancel()
-        try:
-            await wait_task
-        except asyncio.CancelledError:
-            pass
-        if first_line_task in done:
-            first_line = first_line_task.result() or None
-        else:
-            first_line_task.cancel()
-            try:
-                await first_line_task
-            except asyncio.CancelledError:
-                pass
-    except Exception:
-        pass  # Timeout or unexpected — continue anyway, process may be alive
-
-    # Confirmed running — update Redis and hand off to the streaming task.
-    if redis_client is not None:
-        try:
-            await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "running"})
-        except Exception:
-            pass
-
-    asyncio.create_task(_stream_dedicated_healer(proc, first_line=first_line))
-    return {"ok": True, "pid": proc.pid, "template": template}
-
-
 async def stop_dedicated_healer():
     """Stop the running dedicated healer loop."""
     # state._dedicated_healer_proc is in state — no global needed
@@ -9062,40 +8046,6 @@ async def stop_dedicated_healer():
             pass
 
     return {"ok": True, "stopped": stopped}
-
-
-async def get_dedicated_healer_status():
-    """Return the current state of the dedicated healer loop."""
-    if redis_client is None:
-        # Fallback to in-memory check
-        if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
-            return {"status": "running", "pid": state._dedicated_healer_proc.pid}
-        return {"status": "stopped"}
-    try:
-        data = await redis_client.hgetall(_DEDICATED_HEALER_KEY)
-        if not data:
-            return {"status": "stopped"}
-
-        # Verify the process is still alive
-        import time as _t
-        if data.get("status") in ("running", "stalled"):
-            pid = int(data.get("pid", 0))
-            if pid:
-                try:
-                    os.kill(pid, 0)
-                except OSError:
-                    # Process gone — mark as stopped
-                    await redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "stopped"})
-                    data["status"] = "stopped"
-
-        # Compute staleness for the caller.
-        last_ts = float(data.get("last_activity_ts") or 0)
-        age = round(_t.time() - last_ts) if last_ts else None
-        data["activity_age_seconds"] = str(age) if age is not None else ""
-        data["stalled"] = data.get("stalled", "0")
-        return dict(data)
-    except Exception as e:
-        return {"status": "unknown", "error": str(e)[:100]}
 
 
 async def verify_dedicated_healer():
@@ -9168,55 +8118,6 @@ _BENCHMARK_RESERVED_KEY  = "moe:benchmark_reserved"
 _BENCHMARK_LOCK_META_KEY = "moe:benchmark_lock_meta"
 
 
-async def benchmark_lock(body: dict = None):
-    """Reserve all nodes used by a template exclusively for benchmark runs.
-
-    While the lock is active, any request whose model/template differs from the
-    reserved template receives HTTP 503. Fails open if Redis is unavailable.
-    """
-    body = body or {}
-    template_name = (body.get("template") or "").strip()
-    if not template_name:
-        return {"ok": False, "reason": "template_required"}
-
-    templates = _read_expert_templates()
-    tmpl = next((t for t in templates if t.get("name") == template_name or t.get("id") == template_name), None)
-    if not tmpl:
-        return {"ok": False, "reason": "template_not_found", "template": template_name}
-
-    # _read_expert_templates() returns the parsed config_json merged into tmpl,
-    # so tmpl itself is the config (keys: experts, planner_endpoint, name, id …).
-    cfg = tmpl
-
-    nodes: set = set()
-    for cat_cfg in cfg.get("experts", {}).values():
-        for m in cat_cfg.get("models", []):
-            ep = (m.get("endpoint") or "").strip()
-            if ep:
-                nodes.add(ep)
-    # Include top-level planner/judge endpoint overrides when present
-    for key in ("planner_endpoint", "judge_endpoint"):
-        ep = (cfg.get(key) or "").strip()
-        if ep:
-            nodes.add(ep)
-
-    if not nodes:
-        return {"ok": False, "reason": "no_nodes_found_in_template"}
-    if redis_client is None:
-        return {"ok": False, "reason": "redis_unavailable"}
-
-    import time as _t
-    await redis_client.delete(_BENCHMARK_RESERVED_KEY)
-    await redis_client.sadd(_BENCHMARK_RESERVED_KEY, *nodes)
-    await redis_client.hset(_BENCHMARK_LOCK_META_KEY, mapping={
-        "template":  template_name,
-        "nodes":     json.dumps(sorted(nodes)),
-        "locked_at": str(_t.time()),
-    })
-    logger.info(f"🔒 Benchmark lock acquired: template={template_name}, nodes={sorted(nodes)}")
-    return {"ok": True, "template": template_name, "reserved": sorted(nodes)}
-
-
 async def benchmark_unlock():
     """Release all benchmark node reservations."""
     if redis_client is None:
@@ -9230,26 +8131,6 @@ async def benchmark_unlock():
     await redis_client.delete(_BENCHMARK_LOCK_META_KEY)
     logger.info(f"🔓 Benchmark lock released: nodes={released}")
     return {"ok": True, "released": released}
-
-
-async def benchmark_lock_status():
-    """Return the current benchmark node reservation status."""
-    if redis_client is None:
-        return {"active": False, "reason": "redis_unavailable"}
-    try:
-        raw = await redis_client.smembers(_BENCHMARK_RESERVED_KEY)
-        reserved = sorted(v if isinstance(v, str) else v.decode() for v in raw)
-        meta = await redis_client.hgetall(_BENCHMARK_LOCK_META_KEY) or {}
-        if not reserved:
-            return {"active": False}
-        return {
-            "active":     True,
-            "template":   meta.get("template", ""),
-            "nodes":      reserved,
-            "locked_at":  meta.get("locked_at", ""),
-        }
-    except Exception as e:
-        return {"active": False, "error": str(e)[:100]}
 
 
 async def get_knowledge_stats():
@@ -9308,17 +8189,6 @@ async def get_knowledge_stats():
     return stats
 
 
-async def get_ontology_gaps(limit: int = 30):
-    """Shows most frequent terms from answers not in the ontology."""
-    if redis_client is None:
-        return {"error": "Valkey not available"}
-    try:
-        gaps = await redis_client.zrevrange("moe:ontology_gaps", 0, limit - 1, withscores=True)
-        return {"gaps": [{"term": g, "count": int(s)} for g, s in gaps]}
-    except Exception as e:
-        return {"error": str(e)}
-
-
 async def get_planner_patterns(limit: int = 20):
     """Shows proven planner patterns based on positive user feedback."""
     if redis_client is None:
@@ -9328,28 +8198,6 @@ async def get_planner_patterns(limit: int = 20):
         return {"patterns": [{"signature": sig, "count": int(score)} for sig, score in patterns]}
     except Exception as e:
         return {"error": str(e)}
-
-
-async def get_tool_eval_log(limit: int = 50):
-    """Returns the last N records from tool_eval.jsonl as parsed JSON objects."""
-    path = "/app/logs/tool_eval.jsonl"
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        records = []
-        for line in reversed(lines):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
-            if len(records) >= limit:
-                break
-        return {"records": records, "total_lines": len(lines)}
-    except FileNotFoundError:
-        return {"records": [], "total_lines": 0}
 
 
 _PL_SORT_COLS = {
