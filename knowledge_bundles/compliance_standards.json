@@ -1,0 +1,1079 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Compliance Standards — SOC 2, ISO 27001, HIPAA, PCI DSS, NIST CSF, FedRAMP, audit logs, RTO/RPO, encryption, key management, EU CRA.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "SOC 2",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SOC 2 Type II",
+        "AICPA SOC 2",
+        "Service Organization Control 2"
+      ]
+    },
+    {
+      "name": "ISO 27001",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ISO/IEC 27001:2022",
+        "ISMS Standard",
+        "Information Security Management"
+      ]
+    },
+    {
+      "name": "ISO 27017",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cloud Security Standard",
+        "ISO/IEC 27017:2015"
+      ]
+    },
+    {
+      "name": "ISO 27018",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cloud Privacy Standard",
+        "ISO/IEC 27018:2019"
+      ]
+    },
+    {
+      "name": "HIPAA",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Health Insurance Portability and Accountability Act",
+        "US Health Privacy Law"
+      ]
+    },
+    {
+      "name": "PCI DSS",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Payment Card Industry Data Security Standard",
+        "PCI DSS 4.0"
+      ]
+    },
+    {
+      "name": "PCI DSS Level 1",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "PCI L1 Merchant",
+        "Largest Merchants Tier"
+      ]
+    },
+    {
+      "name": "FedRAMP",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Federal Risk and Authorization Management Program",
+        "US Federal Cloud Compliance"
+      ]
+    },
+    {
+      "name": "FISMA",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Federal Information Security Management Act",
+        "US Federal Security Law"
+      ]
+    },
+    {
+      "name": "NIST Cybersecurity Framework",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "NIST CSF",
+        "NIST Framework",
+        "Identify Protect Detect Respond Recover"
+      ]
+    },
+    {
+      "name": "NIST 800-53",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "NIST SP 800-53",
+        "Federal Security Controls"
+      ]
+    },
+    {
+      "name": "CIS Benchmarks",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Center for Internet Security Benchmarks",
+        "CIS Hardening"
+      ]
+    },
+    {
+      "name": "Audit Log",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Audit-Trail",
+        "Compliance Log",
+        "Immutable Audit Log"
+      ]
+    },
+    {
+      "name": "Audit Trail",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Audit Log Trail",
+        "Activity Log",
+        "Tamper-evident Log"
+      ]
+    },
+    {
+      "name": "Access Review",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Periodic Access Review",
+        "Access Recertification",
+        "Quarterly Access Audit"
+      ]
+    },
+    {
+      "name": "Separation of Duties",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SoD",
+        "Segregation of Duties",
+        "Two-Person Rule SoD"
+      ]
+    },
+    {
+      "name": "Change Management",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Change Advisory Board",
+        "CAB",
+        "ITIL Change Management"
+      ]
+    },
+    {
+      "name": "Incident Response",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "IR",
+        "Security Incident Response",
+        "Incident Response Plan"
+      ]
+    },
+    {
+      "name": "Disaster Recovery",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DR",
+        "Disaster Recovery Plan",
+        "DRP",
+        "Recovery Time Objective"
+      ]
+    },
+    {
+      "name": "Business Continuity",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "BCP",
+        "Business Continuity Plan",
+        "Continuity of Operations"
+      ]
+    },
+    {
+      "name": "Recovery Time Objective",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RTO",
+        "Time-to-Recover",
+        "DR RTO"
+      ]
+    },
+    {
+      "name": "Recovery Point Objective",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RPO",
+        "Acceptable Data Loss Window",
+        "DR RPO"
+      ]
+    },
+    {
+      "name": "Encryption at Rest Compliance",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Data-at-Rest Encryption",
+        "AES-256 Storage",
+        "Compliance Storage Encryption"
+      ]
+    },
+    {
+      "name": "Key Management Service",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "KMS",
+        "AWS KMS",
+        "GCP KMS",
+        "Azure Key Vault"
+      ]
+    },
+    {
+      "name": "HSM",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Hardware Security Module",
+        "FIPS 140-2",
+        "Tamper-resistant Crypto Hardware"
+      ]
+    },
+    {
+      "name": "FIPS 140-2",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "FIPS 140-2 Level 2 3",
+        "NIST FIPS 140-2",
+        "Cryptographic Module Validation"
+      ]
+    },
+    {
+      "name": "FIPS 140-3",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "FIPS 140-3",
+        "ISO/IEC 19790:2012",
+        "Cryptographic Module 2026"
+      ]
+    },
+    {
+      "name": "Penetration Test",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Pen-Test",
+        "External Pentest",
+        "Annual Penetration Test"
+      ]
+    },
+    {
+      "name": "Vulnerability Management",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "VM Program",
+        "CVE Management",
+        "Patch Management"
+      ]
+    },
+    {
+      "name": "Risk Assessment",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Risiko-Bewertung",
+        "Risk Analysis",
+        "Annual Risk Assessment"
+      ]
+    },
+    {
+      "name": "Risk Register",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Risiko-Register",
+        "Risk Inventory",
+        "Risk Catalog"
+      ]
+    },
+    {
+      "name": "Compliance Audit",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "External Audit",
+        "SOC 2 Audit",
+        "ISO 27001 Audit"
+      ]
+    },
+    {
+      "name": "Internal Audit",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Internal Audit Function",
+        "Self-Audit",
+        "Pre-Audit Check"
+      ]
+    },
+    {
+      "name": "Trust Service Criteria",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "TSC",
+        "SOC 2 TSC",
+        "Security Availability Confidentiality Privacy Processing Integrity"
+      ]
+    },
+    {
+      "name": "Statement of Applicability",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SoA ISO 27001",
+        "Anwendbarkeitserklärung"
+      ]
+    },
+    {
+      "name": "Annex A Controls",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ISO 27001 Annex A",
+        "93 Controls ISO 27001:2022"
+      ]
+    },
+    {
+      "name": "Continuous Monitoring",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ConMon",
+        "Continuous Compliance Monitoring",
+        "Drata Vanta"
+      ]
+    },
+    {
+      "name": "Drata",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Drata Compliance Automation",
+        "SOC 2 Automation"
+      ]
+    },
+    {
+      "name": "Vanta",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Vanta Compliance Platform",
+        "SOC 2 / ISO Automation"
+      ]
+    },
+    {
+      "name": "Privacy Shield",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "EU-US Privacy Shield (invalidated)",
+        "Schrems II Successor"
+      ]
+    },
+    {
+      "name": "Data Processing Addendum",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DPA Compliance",
+        "Vendor DPA",
+        "GDPR DPA"
+      ]
+    },
+    {
+      "name": "Cyber Resilience Act",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "EU CRA",
+        "Cyber Resilience Act 2024",
+        "EU Software Security Law"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "ISO 27001",
+      "predicate": "DEFINES",
+      "object": "Annex A Controls",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ISO 27001",
+      "predicate": "DEFINES",
+      "object": "Statement of Applicability",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ISO 27017",
+      "predicate": "EXTENDS",
+      "object": "ISO 27001",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ISO 27018",
+      "predicate": "EXTENDS",
+      "object": "ISO 27001",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ISO 27018",
+      "predicate": "RELATED_TO",
+      "object": "GDPR",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SOC 2",
+      "predicate": "DEFINES",
+      "object": "Trust Service Criteria",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SOC 2",
+      "predicate": "RELATED_TO",
+      "object": "ISO 27001",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "PCI DSS",
+      "predicate": "RELATED_TO",
+      "object": "PCI DSS Level 1",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "PCI DSS",
+      "predicate": "RELATED_TO",
+      "object": "Encryption at Rest Compliance",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "HIPAA",
+      "predicate": "RELATED_TO",
+      "object": "Encryption at Rest Compliance",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "HIPAA",
+      "predicate": "RELATED_TO",
+      "object": "Audit Log",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "FedRAMP",
+      "predicate": "RELATED_TO",
+      "object": "FISMA",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "FedRAMP",
+      "predicate": "RELATED_TO",
+      "object": "NIST 800-53",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "FISMA",
+      "predicate": "RELATED_TO",
+      "object": "NIST 800-53",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "NIST Cybersecurity Framework",
+      "predicate": "RELATED_TO",
+      "object": "NIST 800-53",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CIS Benchmarks",
+      "predicate": "RELATED_TO",
+      "object": "ISO 27001",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Audit Log",
+      "predicate": "RELATED_TO",
+      "object": "Audit Trail",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Audit Log",
+      "predicate": "RELATED_TO",
+      "object": "Event Sourcing",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Audit Trail",
+      "predicate": "RELATED_TO",
+      "object": "Structured Logging",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Access Review",
+      "predicate": "RELATED_TO",
+      "object": "Principle of Least Privilege",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Access Review",
+      "predicate": "RELATED_TO",
+      "object": "RBAC",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Separation of Duties",
+      "predicate": "RELATED_TO",
+      "object": "Two Person Rule",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Separation of Duties",
+      "predicate": "RELATED_TO",
+      "object": "Principle of Least Privilege",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Change Management",
+      "predicate": "RELATED_TO",
+      "object": "Pull Request",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Change Management",
+      "predicate": "RELATED_TO",
+      "object": "Code Review",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Incident Response",
+      "predicate": "RELATED_TO",
+      "object": "Postmortem",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Incident Response",
+      "predicate": "RELATED_TO",
+      "object": "Runbook",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Incident Response",
+      "predicate": "RELATED_TO",
+      "object": "Data Breach Notification",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Disaster Recovery",
+      "predicate": "USES",
+      "object": "Recovery Time Objective",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Disaster Recovery",
+      "predicate": "USES",
+      "object": "Recovery Point Objective",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Disaster Recovery",
+      "predicate": "RELATED_TO",
+      "object": "Business Continuity",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Encryption at Rest Compliance",
+      "predicate": "USES",
+      "object": "Key Management Service",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Key Management Service",
+      "predicate": "RELATED_TO",
+      "object": "HSM",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "HSM",
+      "predicate": "RELATED_TO",
+      "object": "FIPS 140-2",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "FIPS 140-3",
+      "predicate": "EXTENDS",
+      "object": "FIPS 140-2",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "HSM",
+      "predicate": "RELATED_TO",
+      "object": "FIPS 140-3",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Penetration Test",
+      "predicate": "RELATED_TO",
+      "object": "Penetration Testing",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Vulnerability Management",
+      "predicate": "RELATED_TO",
+      "object": "CVE",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Vulnerability Management",
+      "predicate": "RELATED_TO",
+      "object": "CVSS",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Vulnerability Management",
+      "predicate": "RELATED_TO",
+      "object": "Dependency Vulnerability",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Risk Assessment",
+      "predicate": "RELATED_TO",
+      "object": "Risk Register",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Risk Assessment",
+      "predicate": "RELATED_TO",
+      "object": "Threat Modeling",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Compliance Audit",
+      "predicate": "RELATED_TO",
+      "object": "Internal Audit",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Continuous Monitoring",
+      "predicate": "USES",
+      "object": "Drata",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Continuous Monitoring",
+      "predicate": "USES",
+      "object": "Vanta",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Continuous Monitoring",
+      "predicate": "RELATED_TO",
+      "object": "SOC 2",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Continuous Monitoring",
+      "predicate": "RELATED_TO",
+      "object": "ISO 27001",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cyber Resilience Act",
+      "predicate": "RELATED_TO",
+      "object": "SBOM",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cyber Resilience Act",
+      "predicate": "RELATED_TO",
+      "object": "GDPR",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Processing Addendum",
+      "predicate": "RELATED_TO",
+      "object": "Data Processing Agreement",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "SOC 2 vs ISO 27001 — die Compliance-Wahl: SOC 2 (USA-fokussiert) ist Audit-basiert über Trust Service Criteria — Type I = Design-Audit, Type II = Operating-Effectiveness über 6-12 Monate. ISO 27001 (international) ist Zertifizierung mit ISMS + Risk Management + 93 Annex-A-Controls. Pragmatisch: SOC 2 für US-Enterprise-Kunden, ISO 27001 für EU/Global. Beide kostet typisch 50-150k€ pro Jahr; Tools wie Drata/Vanta reduzieren Aufwand 60-70%.",
+      "insight_type": "synthesis",
+      "entities": [
+        "SOC 2",
+        "ISO 27001",
+        "Trust Service Criteria",
+        "Annex A Controls",
+        "Continuous Monitoring"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "PCI DSS Level 1 (>6M Transaktionen/Jahr) — die teuerste Compliance: Quartals-Pen-Tests, jährlicher externer QSA-Audit, Network-Segmentation pflicht, Tokenization für PAN, kein PAN auf Application-Servern. Engineering-Dimension: Card Data Environment (CDE) muss strikt isoliert sein — alle Komponenten die Karten-Daten sehen sind in PCI-Scope. Strategie: Tokenization (z.B. Stripe Vault) reduziert CDE auf wenige Services und damit Audit-Scope drastisch.",
+      "insight_type": "synthesis",
+      "entities": [
+        "PCI DSS",
+        "PCI DSS Level 1",
+        "Encryption at Rest Compliance",
+        "Tokenization",
+        "Penetration Test"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "HIPAA Technical Safeguards (45 CFR 164.312): Access Control (RBAC + automatic logoff), Audit Controls (immutable Audit Logs), Integrity (Mechanisms to ensure ePHI not altered), Authentication (verify user identity), Transmission Security (encryption in transit). PHI bei Cloud-Provider erfordert BAA (Business Associate Agreement). AWS/Azure/GCP haben HIPAA-eligible Services — jedes Service einzeln prüfen, nicht 'Cloud is HIPAA-compliant'.",
+      "insight_type": "synthesis",
+      "entities": [
+        "HIPAA",
+        "RBAC",
+        "Audit Log",
+        "Encryption at Rest Compliance",
+        "Data Encryption in Transit"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Audit Log als rechtliche Anforderung: SOC 2/ISO 27001/HIPAA/PCI/GDPR verlangen alle Audit Logs für Access und State-Changes. Anforderungen: (1) Immutable (append-only, kein Update/Delete), (2) Tamper-evident (Hash-Chain oder cryptographic Sigs), (3) Retention (typisch 1-7 Jahre), (4) Time-synchronized (NTP), (5) Filterable für DSAR. Implementation: Kafka mit Kompaktierung deaktiviert + S3 mit Object Lock, oder Event Sourcing Database.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Audit Log",
+        "Audit Trail",
+        "Event Sourcing",
+        "Structured Logging",
+        "HIPAA",
+        "SOC 2"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "RTO vs RPO als Backup-Strategie-Treiber: RTO (Recovery Time Objective) = Wie schnell muss System wieder online sein? RPO (Recovery Point Objective) = Wie viel Datenverlust akzeptabel? Beispiele: Banking RTO=4h RPO=0 (Synchronous Replication zwingend). E-Commerce RTO=1h RPO=15min (Hourly Backups + Streaming). Internal Tools RTO=24h RPO=24h (Daily Backups). Strategie ergibt sich aus Business-Impact-Analyse (BIA), nicht IT-Wunschdenken.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Recovery Time Objective",
+        "Recovery Point Objective",
+        "Disaster Recovery",
+        "Business Continuity"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Continuous Compliance Monitoring (Drata, Vanta): Statt punktueller Audits werden Controls durchgehend automatisiert geprüft — IAM-Konfigurationen, Endpoint-Protection-Status, MFA-Coverage, Backup-Successrate, Audit-Log-Volume, Vulnerability-SLAs. Auditoren akzeptieren das als Evidence. Kosten: 30-100k€/Jahr Tooling, aber spart 200-400 Stunden Audit-Vorbereitung. Automation Coverage typisch 80-90%, der Rest manuelle Evidence (z.B. Background Checks).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Continuous Monitoring",
+        "Drata",
+        "Vanta",
+        "SOC 2",
+        "ISO 27001",
+        "Compliance Audit"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Separation of Duties (SoD) im Engineering: Klassisch — wer Code schreibt darf nicht selbst Production deployen, wer Datenbank-Schemas ändert darf nicht User-Daten anschauen. Pragmatisch im Modern DevOps: Code-Author commits, mindestens 1 anderer Reviewer approved (Two-Person Rule), automatisierte CI/CD deployt — KEIN Mensch hat manuelle Prod-Access. Break-Glass-Procedure für Notfälle mit Audit-Trail und Post-Hoc-Review.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Separation of Duties",
+        "Two Person Rule",
+        "Code Review",
+        "Pull Request",
+        "Principle of Least Privilege"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "EU Cyber Resilience Act (CRA) ab 2027: Pflicht für jedes 'Produkt mit digitalen Elementen' im EU-Markt — Software, Hardware, Firmware. Anforderungen: SBOM, Vulnerability Disclosure Process, Security-by-Design, Updates für 'erwartete Lebensdauer' (typisch 5-10 Jahre), 24h CVE-Disclosure-Pflicht. Strafen analog GDPR (bis 15M€ oder 2.5% Umsatz). Open-Source-Maintainer in 'kommerzieller Tätigkeit' sind potenziell betroffen — Definition noch unklar.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Cyber Resilience Act",
+        "SBOM",
+        "Vulnerability Management",
+        "Software Supply Chain",
+        "GDPR"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    }
+  ],
+  "stats": {
+    "entities": 42,
+    "relations": 50,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}

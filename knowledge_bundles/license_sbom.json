@@ -1,0 +1,1040 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "License Management & SBOM — OSS Licenses (MIT/Apache/GPL/AGPL/BSL/SSPL), CycloneDX/SPDX, SLSA, Sigstore, CVE/CVSS/OSV, Supply Chain.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "MIT License",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MIT",
+        "MIT-Lizenz",
+        "Permissive License"
+      ]
+    },
+    {
+      "name": "Apache 2.0 License",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Apache License 2.0",
+        "ASF License",
+        "Apache-2.0"
+      ]
+    },
+    {
+      "name": "BSD License",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "BSD-3-Clause",
+        "BSD-2-Clause",
+        "Berkeley Software Distribution License"
+      ]
+    },
+    {
+      "name": "ISC License",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ISC",
+        "Internet Systems Consortium License"
+      ]
+    },
+    {
+      "name": "GPL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "GNU General Public License",
+        "Copyleft License",
+        "GPL-2.0",
+        "GPL-3.0"
+      ]
+    },
+    {
+      "name": "LGPL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lesser GPL",
+        "Library GPL",
+        "LGPL-2.1",
+        "LGPL-3.0"
+      ]
+    },
+    {
+      "name": "AGPL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Affero GPL",
+        "Network Copyleft",
+        "AGPL-3.0"
+      ]
+    },
+    {
+      "name": "MPL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Mozilla Public License",
+        "MPL-2.0",
+        "Weak Copyleft"
+      ]
+    },
+    {
+      "name": "Unlicense",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Public Domain Equivalent License",
+        "WTFPL Alternative"
+      ]
+    },
+    {
+      "name": "CC0",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Creative Commons Zero",
+        "Public Domain Dedication"
+      ]
+    },
+    {
+      "name": "BSL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Business Source License",
+        "Time-bombed License",
+        "MariaDB BSL"
+      ]
+    },
+    {
+      "name": "SSPL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Server Side Public License",
+        "MongoDB SSPL",
+        "Network-Copyleft"
+      ]
+    },
+    {
+      "name": "Elastic License",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ELv2",
+        "Elastic License 2.0",
+        "Source-available License"
+      ]
+    },
+    {
+      "name": "Permissive License",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Permissive Open Source",
+        "Liberal License",
+        "Non-Copyleft"
+      ]
+    },
+    {
+      "name": "Copyleft License",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Strong Copyleft",
+        "Reciprocal License"
+      ]
+    },
+    {
+      "name": "Weak Copyleft",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "File-level Copyleft",
+        "MPL Weak Copyleft"
+      ]
+    },
+    {
+      "name": "Source-available License",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Non-OSI License",
+        "Restricted Source License"
+      ]
+    },
+    {
+      "name": "License Compatibility",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "License Compatibility Matrix",
+        "License Conflict"
+      ]
+    },
+    {
+      "name": "License Compliance",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "OSS License Compliance",
+        "Open-Source Compliance Program"
+      ]
+    },
+    {
+      "name": "SBOM",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Software Bill of Materials",
+        "Software-Stückliste",
+        "Dependency Manifest"
+      ]
+    },
+    {
+      "name": "CycloneDX",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "CycloneDX SBOM",
+        "OWASP CycloneDX",
+        "BOM XML/JSON"
+      ]
+    },
+    {
+      "name": "SPDX",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SPDX Specification",
+        "Software Package Data Exchange",
+        "SPDX License IDs"
+      ]
+    },
+    {
+      "name": "Syft",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Anchore Syft",
+        "Container SBOM Scanner",
+        "syft cli"
+      ]
+    },
+    {
+      "name": "Grype",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Anchore Grype",
+        "Vulnerability Scanner",
+        "Container Vulnerability Scanner"
+      ]
+    },
+    {
+      "name": "Trivy",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Aqua Trivy",
+        "Container Vulnerability Scanner",
+        "IaC Scanner"
+      ]
+    },
+    {
+      "name": "Snyk",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Snyk Open Source",
+        "Snyk SCA",
+        "Dependency Scanner"
+      ]
+    },
+    {
+      "name": "Dependabot",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "GitHub Dependabot",
+        "Dependency Updates",
+        "Automated PR Bumps"
+      ]
+    },
+    {
+      "name": "Renovate",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Renovate Bot",
+        "Dependency Update Tool"
+      ]
+    },
+    {
+      "name": "FOSSA",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "FOSSA License Compliance",
+        "OSS License Scanning"
+      ]
+    },
+    {
+      "name": "License Header",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SPDX-License-Identifier",
+        "Source File License Header"
+      ]
+    },
+    {
+      "name": "NOTICE File",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Apache NOTICE",
+        "Attribution File",
+        "Required NOTICE"
+      ]
+    },
+    {
+      "name": "License Scanning",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "OSS License Scan",
+        "License Audit",
+        "License Inventory"
+      ]
+    },
+    {
+      "name": "Vulnerability Database",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "NVD",
+        "GitHub Advisory Database",
+        "OSV",
+        "OSS Index"
+      ]
+    },
+    {
+      "name": "CVE",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Common Vulnerabilities and Exposures",
+        "CVE-ID",
+        "MITRE CVE"
+      ]
+    },
+    {
+      "name": "CVSS",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Common Vulnerability Scoring System",
+        "CVSS v3.1",
+        "CVSS v4"
+      ]
+    },
+    {
+      "name": "OSV",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Open Source Vulnerability Database",
+        "Google OSV",
+        "OSV Schema"
+      ]
+    },
+    {
+      "name": "Software Supply Chain",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Supply Chain Security",
+        "OSS Supply Chain"
+      ]
+    },
+    {
+      "name": "Sigstore",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Sigstore Cosign",
+        "Software Signing",
+        "Keyless Signing"
+      ]
+    },
+    {
+      "name": "SLSA Framework",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Supply-chain Levels for Software Artifacts",
+        "SLSA Level 1-4"
+      ]
+    },
+    {
+      "name": "Reproducible Build SBOM",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Build Provenance",
+        "Reproducible SBOM"
+      ]
+    },
+    {
+      "name": "License Policy",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Allowed Licenses Policy",
+        "Forbidden Licenses Policy",
+        "License Allowlist"
+      ]
+    },
+    {
+      "name": "Tivoization",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "GPL-Tivoization",
+        "Hardware-locked GPL Bypass"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "MIT License",
+      "predicate": "IS_A",
+      "object": "Permissive License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache 2.0 License",
+      "predicate": "IS_A",
+      "object": "Permissive License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "BSD License",
+      "predicate": "IS_A",
+      "object": "Permissive License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ISC License",
+      "predicate": "IS_A",
+      "object": "Permissive License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GPL",
+      "predicate": "IS_A",
+      "object": "Copyleft License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "AGPL",
+      "predicate": "EXTENDS",
+      "object": "GPL",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LGPL",
+      "predicate": "EXTENDS",
+      "object": "GPL",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LGPL",
+      "predicate": "IS_A",
+      "object": "Weak Copyleft",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "MPL",
+      "predicate": "IS_A",
+      "object": "Weak Copyleft",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "BSL",
+      "predicate": "IS_A",
+      "object": "Source-available License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SSPL",
+      "predicate": "IS_A",
+      "object": "Source-available License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Elastic License",
+      "predicate": "IS_A",
+      "object": "Source-available License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Unlicense",
+      "predicate": "RELATED_TO",
+      "object": "CC0",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "License Compatibility",
+      "predicate": "RELATED_TO",
+      "object": "License Compliance",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SBOM",
+      "predicate": "USES",
+      "object": "CycloneDX",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SBOM",
+      "predicate": "USES",
+      "object": "SPDX",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CycloneDX",
+      "predicate": "RELATED_TO",
+      "object": "SPDX",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Syft",
+      "predicate": "IMPLEMENTS",
+      "object": "SBOM",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Trivy",
+      "predicate": "USES",
+      "object": "Vulnerability Database",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Trivy",
+      "predicate": "RELATED_TO",
+      "object": "Grype",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Grype",
+      "predicate": "USES",
+      "object": "Vulnerability Database",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Snyk",
+      "predicate": "USES",
+      "object": "Vulnerability Database",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Dependabot",
+      "predicate": "RELATED_TO",
+      "object": "Renovate",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Dependabot",
+      "predicate": "RELATED_TO",
+      "object": "Dependency Vulnerability",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Renovate",
+      "predicate": "RELATED_TO",
+      "object": "Dependency Vulnerability",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "FOSSA",
+      "predicate": "IMPLEMENTS",
+      "object": "License Scanning",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "License Header",
+      "predicate": "USES",
+      "object": "SPDX",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "NOTICE File",
+      "predicate": "RELATED_TO",
+      "object": "Apache 2.0 License",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CVE",
+      "predicate": "RELATED_TO",
+      "object": "Vulnerability Database",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CVSS",
+      "predicate": "RELATED_TO",
+      "object": "CVE",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OSV",
+      "predicate": "RELATED_TO",
+      "object": "Vulnerability Database",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OSV",
+      "predicate": "RELATED_TO",
+      "object": "CVE",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Software Supply Chain",
+      "predicate": "USES",
+      "object": "SBOM",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Software Supply Chain",
+      "predicate": "USES",
+      "object": "Sigstore",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Software Supply Chain",
+      "predicate": "USES",
+      "object": "SLSA Framework",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Software Supply Chain",
+      "predicate": "RELATED_TO",
+      "object": "Supply Chain Attack",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Sigstore",
+      "predicate": "RELATED_TO",
+      "object": "Signed Commits",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SLSA Framework",
+      "predicate": "RELATED_TO",
+      "object": "Reproducible Build",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Reproducible Build SBOM",
+      "predicate": "RELATED_TO",
+      "object": "Reproducible Build",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Reproducible Build SBOM",
+      "predicate": "USES",
+      "object": "SBOM",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "License Policy",
+      "predicate": "RELATED_TO",
+      "object": "License Compliance",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "License Policy",
+      "predicate": "USES",
+      "object": "License Scanning",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "License Compliance",
+      "predicate": "RELATED_TO",
+      "object": "License Compatibility",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Vulnerability Database",
+      "predicate": "RELATED_TO",
+      "object": "Dependency Vulnerability",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Tivoization",
+      "predicate": "RELATED_TO",
+      "object": "GPL",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Tivoization",
+      "predicate": "RELATED_TO",
+      "object": "AGPL",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "License-Compatibility-Matrix für die häufigsten Kombinationen: MIT/BSD/Apache → kombinierbar mit allem inkl. proprietary. GPL → kombiniert mit allem aber zwingt das Gesamtwerk unter GPL (wenn distributed). LGPL → dynamische Verlinkung in proprietary OK, statische Verlinkung zwingt LGPL für Gesamtwerk. AGPL → Network-Copyleft: SaaS-Use zählt als Distribution, zwingt zur Source-Offenlegung. Apache 2.0 + GPLv2 sind INKOMPATIBEL (Patent-Klausel-Konflikt), Apache 2.0 + GPLv3 OK.",
+      "insight_type": "synthesis",
+      "entities": [
+        "License Compatibility",
+        "MIT License",
+        "Apache 2.0 License",
+        "GPL",
+        "LGPL",
+        "AGPL",
+        "License Compliance"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "AGPL als versteckte SaaS-Falle: GPL erfasst nur Distribution (Versand von Binaries/Source). AGPL erweitert: Network-Use (Hosten als Service) zählt als Distribution. Wenn Du AGPL-Code in SaaS einbindest, MUSST Du den modifizierten Source-Code an Deine Web-Nutzer offenlegen. MongoDB Pre-2018 war AGPL — viele Cloud-Provider mussten Source ihrer Distributionen offenlegen, was zur SSPL-Erfindung führte.",
+      "insight_type": "synthesis",
+      "entities": [
+        "AGPL",
+        "SSPL",
+        "Source-available License",
+        "License Compliance"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "SBOM als Compliance-Pflicht: US Executive Order 14028 (2021) und EU CRA (Cyber Resilience Act, 2024) verlangen SBOMs für Software-Lieferungen an Behörden bzw. EU-Vertrieb. Format: SPDX (ISO/IEC 5962:2021) oder CycloneDX (OWASP). Inhalt: alle direkten + transitiven Dependencies, Versionen, Lizenzen, Hashes, Supplier. Generation: Syft, Trivy, GitHub-Dependency-Graph. SBOM ohne Vulnerability-Scanning ist nutzlos — Kombination mit Grype/Trivy/Snyk ist Standard.",
+      "insight_type": "synthesis",
+      "entities": [
+        "SBOM",
+        "CycloneDX",
+        "SPDX",
+        "Syft",
+        "Software Supply Chain",
+        "License Compliance"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "SLSA Framework Levels: SLSA 1 = Build-Process dokumentiert. SLSA 2 = Build versioniert in Source-Control + Authenticated Provenance. SLSA 3 = Source und Build Platform sind Hardened (kein Tampering). SLSA 4 = Hermetic Build + Two-Person Review für Code-Changes. SLSA Level zeigt Reife der Supply-Chain-Sicherheit. Open-Source-Projekte sollten min. SLSA 2 erreichen, kritische Infrastruktur SLSA 3+.",
+      "insight_type": "synthesis",
+      "entities": [
+        "SLSA Framework",
+        "Software Supply Chain",
+        "Reproducible Build",
+        "Sigstore",
+        "Signed Commits"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Sigstore als Keyless Signing für OSS: Traditionelle Code-Signing mit Long-lived Keys ist OSS-unfreundlich (Private Keys leaken, Schlüssel-Rotation komplex). Sigstore nutzt OIDC + Short-lived Certificates + transparenten Public Log (Rekor). Maintainer signt mit GitHub-Account, Verifier prüft gegen Rekor-Log. Cosign signt Container, npm-Packages, generic Artifacts. PyPI, npm und Container Registries integrieren Sigstore zunehmend.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Sigstore",
+        "Signed Commits",
+        "Software Supply Chain",
+        "Supply Chain Attack"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "License-Policy als Engineering-Gate: CI muss alle Dependencies gegen Allow/Block-List prüfen. Typische Allow-List: MIT, Apache-2.0, BSD-2/3-Clause, ISC, MPL-2.0. Typische Block-List: GPL (außer separat distribution-fähig), AGPL (für SaaS), SSPL, Elastic v2 (für Mehrkunden-SaaS), unklare/missing Licenses. Tools: license-checker (npm), pip-licenses (Python), go-licenses (Go), FOSSA Enterprise.",
+      "insight_type": "synthesis",
+      "entities": [
+        "License Policy",
+        "License Compliance",
+        "License Scanning",
+        "FOSSA",
+        "License Compatibility"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "BSL/SSPL/Elastic License als 'Open-Core-Trojaner': Diese Source-available Licenses sind NICHT OSI-zertifiziert — stehen in keiner OSS-Definition. Erlauben Lese-Zugang zum Source, verbieten aber kommerzielle SaaS-Konkurrenz. Im Code-Review: solche Dependencies sind RESTRICTIVE, nicht OSS — können bei Cloud-Deployment und SaaS-Provisioning Lizenzgebühren auslösen. Oft schaltet ein Vendor (Elastic, MongoDB, HashiCorp) post-hoc von OSS auf BSL/SSPL.",
+      "insight_type": "synthesis",
+      "entities": [
+        "BSL",
+        "SSPL",
+        "Elastic License",
+        "Source-available License",
+        "License Compliance"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "CVSS Scores als Priorisierungs-Heuristik: CVSS Base Score 0-10. Critical (9-10): sofortige Action erforderlich, oft RCE oder Auth-Bypass. High (7-8.9): geplant innerhalb 2 Wochen patchen. Medium (4-6.9): innerhalb 30-90 Tage. Low (0.1-3.9): Best Practice patchen aber nicht zeitkritisch. CVSS Base ignoriert Environment-Faktoren — Temporal/Environmental Scoring berücksichtigen Exploit-Verfügbarkeit und eigene Asset-Sensitivität. SLA-typisch: Critical in 24h, High in 7d.",
+      "insight_type": "synthesis",
+      "entities": [
+        "CVSS",
+        "CVE",
+        "Dependency Vulnerability",
+        "Vulnerability Database",
+        "SAST",
+        "DAST"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    }
+  ],
+  "stats": {
+    "entities": 42,
+    "relations": 46,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}

@@ -1,0 +1,841 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Accessibility Patterns — WCAG 2.2 AA, ARIA, Keyboard Navigation, Screen Readers, Color Contrast, EAA Compliance.",
+  "filters": {
+    "domains": [
+      "code_reviewer"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "WCAG 2.2",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Web Content Accessibility Guidelines",
+        "WCAG 2 Level AA",
+        "WCAG Conformance"
+      ]
+    },
+    {
+      "name": "WCAG Level A",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Minimum Conformance",
+        "WCAG Single-A"
+      ]
+    },
+    {
+      "name": "WCAG Level AA",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Standard Conformance",
+        "WCAG Double-A",
+        "EN 301 549 Equivalent"
+      ]
+    },
+    {
+      "name": "WCAG Level AAA",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Enhanced Conformance",
+        "WCAG Triple-A"
+      ]
+    },
+    {
+      "name": "ARIA",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Accessible Rich Internet Applications",
+        "WAI-ARIA"
+      ]
+    },
+    {
+      "name": "ARIA Role",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "role attribute",
+        "ARIA role=button",
+        "Landmark Role"
+      ]
+    },
+    {
+      "name": "ARIA Label",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "aria-label",
+        "aria-labelledby",
+        "Accessible Name"
+      ]
+    },
+    {
+      "name": "ARIA Live Region",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "aria-live=polite",
+        "aria-live=assertive",
+        "Live Update Announcement"
+      ]
+    },
+    {
+      "name": "Semantic HTML",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Semantische HTML5",
+        "<button> over <div>",
+        "Native Semantics"
+      ]
+    },
+    {
+      "name": "Keyboard Navigation",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Tastaturnavigation",
+        "Tab Order",
+        "Focus Management"
+      ]
+    },
+    {
+      "name": "Focus Trap",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Modal Focus Trap",
+        "Tab-Cycle in Modal"
+      ]
+    },
+    {
+      "name": "Focus Visible",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        ":focus-visible",
+        "Keyboard-only Focus Indicator"
+      ]
+    },
+    {
+      "name": "Skip Link",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Skip to Content",
+        "Bypass Block",
+        "Skip Navigation"
+      ]
+    },
+    {
+      "name": "Screen Reader",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "NVDA",
+        "JAWS",
+        "VoiceOver",
+        "TalkBack"
+      ]
+    },
+    {
+      "name": "Color Contrast",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "WCAG Contrast Ratio",
+        "4.5:1 AA Text",
+        "3:1 AA Large Text"
+      ]
+    },
+    {
+      "name": "Color Contrast Tool",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lighthouse Contrast",
+        "axe Contrast Checker",
+        "WebAIM Contrast"
+      ]
+    },
+    {
+      "name": "Alt Text",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "alt-Attribut",
+        "Alternative Text",
+        "Image Description"
+      ]
+    },
+    {
+      "name": "Decorative Image",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "alt=\"\"",
+        "role=presentation",
+        "Skip Decorative Images"
+      ]
+    },
+    {
+      "name": "Form Label Association",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "<label for=>",
+        "aria-labelledby Form",
+        "Implicit Label"
+      ]
+    },
+    {
+      "name": "Error Identification",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "aria-invalid",
+        "aria-describedby",
+        "Form Error Announcement"
+      ]
+    },
+    {
+      "name": "Reduced Motion",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "prefers-reduced-motion",
+        "Vestibular Safety",
+        "Animation Toggle"
+      ]
+    },
+    {
+      "name": "High Contrast Mode",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Windows High Contrast",
+        "forced-colors",
+        "High Contrast CSS"
+      ]
+    },
+    {
+      "name": "Touch Target Size",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Mindest-Touch-Größe",
+        "44x44 px Apple",
+        "48dp Material"
+      ]
+    },
+    {
+      "name": "Heading Hierarchy",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "h1-h6 Struktur",
+        "Hierarchical Headings",
+        "Document Outline"
+      ]
+    },
+    {
+      "name": "Landmark",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "ARIA Landmark",
+        "<main>",
+        "<nav>",
+        "<aside>",
+        "<header>",
+        "<footer>"
+      ]
+    },
+    {
+      "name": "Axe Core",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "axe-core",
+        "Deque axe",
+        "Automated A11y Testing"
+      ]
+    },
+    {
+      "name": "Lighthouse Accessibility",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lighthouse a11y Audit",
+        "Chrome DevTools A11y"
+      ]
+    },
+    {
+      "name": "Pa11y",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Pa11y CLI",
+        "Pa11y CI"
+      ]
+    },
+    {
+      "name": "WCAG Success Criterion",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "WCAG SC",
+        "WCAG Erfolgskriterium"
+      ]
+    },
+    {
+      "name": "POUR Principles",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Perceivable Operable Understandable Robust",
+        "WCAG Foundations"
+      ]
+    },
+    {
+      "name": "Section 508",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "US Section 508",
+        "ADA Compliance Federal",
+        "Rehabilitation Act"
+      ]
+    },
+    {
+      "name": "EN 301 549",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "European Accessibility Standard",
+        "EU Web Accessibility Directive"
+      ]
+    },
+    {
+      "name": "EAA",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "European Accessibility Act",
+        "EU 2025 Accessibility Law"
+      ]
+    },
+    {
+      "name": "Tab Index",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "tabindex",
+        "tabindex=0",
+        "tabindex=-1",
+        "Focusable Elements"
+      ]
+    },
+    {
+      "name": "Visible Focus Indicator",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Focus Outline",
+        ":focus Style",
+        "Custom Focus Ring"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "WCAG 2.2",
+      "predicate": "DEFINES",
+      "object": "WCAG Level A",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WCAG 2.2",
+      "predicate": "DEFINES",
+      "object": "WCAG Level AA",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WCAG 2.2",
+      "predicate": "DEFINES",
+      "object": "WCAG Level AAA",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WCAG 2.2",
+      "predicate": "DEFINES",
+      "object": "POUR Principles",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ARIA",
+      "predicate": "USES",
+      "object": "ARIA Role",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ARIA",
+      "predicate": "USES",
+      "object": "ARIA Label",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ARIA",
+      "predicate": "USES",
+      "object": "ARIA Live Region",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Semantic HTML",
+      "predicate": "RELATED_TO",
+      "object": "ARIA",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Semantic HTML",
+      "predicate": "RELATED_TO",
+      "object": "Heading Hierarchy",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Keyboard Navigation",
+      "predicate": "USES",
+      "object": "Focus Visible",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Keyboard Navigation",
+      "predicate": "USES",
+      "object": "Tab Index",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Focus Trap",
+      "predicate": "RELATED_TO",
+      "object": "Keyboard Navigation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Skip Link",
+      "predicate": "RELATED_TO",
+      "object": "Keyboard Navigation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Skip Link",
+      "predicate": "RELATED_TO",
+      "object": "Landmark",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Color Contrast",
+      "predicate": "USES",
+      "object": "Color Contrast Tool",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Alt Text",
+      "predicate": "RELATED_TO",
+      "object": "Screen Reader",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Decorative Image",
+      "predicate": "RELATED_TO",
+      "object": "Alt Text",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Form Label Association",
+      "predicate": "RELATED_TO",
+      "object": "Screen Reader",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Error Identification",
+      "predicate": "RELATED_TO",
+      "object": "ARIA",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Error Identification",
+      "predicate": "RELATED_TO",
+      "object": "Form Label Association",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Reduced Motion",
+      "predicate": "IS_A",
+      "object": "Principle",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "High Contrast Mode",
+      "predicate": "RELATED_TO",
+      "object": "Color Contrast",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Touch Target Size",
+      "predicate": "RELATED_TO",
+      "object": "Touch Target Size",
+      "confidence": 0.7,
+      "trust_score": 0.7,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Heading Hierarchy",
+      "predicate": "USES",
+      "object": "Semantic HTML",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Landmark",
+      "predicate": "USES",
+      "object": "Semantic HTML",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Axe Core",
+      "predicate": "IMPLEMENTS",
+      "object": "WCAG 2.2",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Lighthouse Accessibility",
+      "predicate": "IMPLEMENTS",
+      "object": "WCAG 2.2",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Pa11y",
+      "predicate": "IMPLEMENTS",
+      "object": "WCAG 2.2",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WCAG Level AA",
+      "predicate": "RELATED_TO",
+      "object": "EN 301 549",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WCAG Level AA",
+      "predicate": "RELATED_TO",
+      "object": "Section 508",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "WCAG Level AA",
+      "predicate": "RELATED_TO",
+      "object": "EAA",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Visible Focus Indicator",
+      "predicate": "RELATED_TO",
+      "object": "Focus Visible",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Visible Focus Indicator",
+      "predicate": "RELATED_TO",
+      "object": "Keyboard Navigation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "ARIA Cardinal Rule: Wenn ein natives HTML-Element existiert, das die gewünschte Semantik hat, NUTZE ES (statt <div role='button'>). Native Elements bringen alle a11y-Features gratis: Keyboard-Handling, Focus-Management, Form-Submission, Screen-Reader-Announcement. ARIA ist ein Polyfill für custom Components, kein Ersatz für Semantic HTML. \"No ARIA is better than bad ARIA\" — W3C Authoring Practices.",
+      "insight_type": "synthesis",
+      "entities": [
+        "ARIA",
+        "Semantic HTML",
+        "ARIA Role",
+        "Keyboard Navigation"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.99
+    },
+    {
+      "text": "Color Contrast WCAG AA: 4.5:1 für normalen Text, 3:1 für large Text (>18pt regular oder >14pt bold), 3:1 für UI-Components und Graphical Objects. Im Code-Review: Color-Picker-Tools (Lighthouse, axe DevTools, WebAIM Contrast Checker) sind Pflicht — Augenmaß reicht nicht. Besonders kritisch: Light-Mode Placeholder-Text, disabled-Buttons, Brand-Colors auf weißem Hintergrund.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Color Contrast",
+        "Color Contrast Tool",
+        "WCAG Level AA"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Keyboard-Only-Test als Minimal-A11y-Check: Bevor Code committed wird, einmal mit Tab/Shift-Tab/Enter/Escape navigieren ohne Maus. Findings die so aufgedeckt werden: missing Focus Indicator, Focus Trap fehlend in Modals, Skip-Link missing, custom Components nicht fokussierbar (tabindex fehlt), Click-Handler ohne Keydown-Handler. Reicht nicht für Compliance, fängt aber 60% der Findings.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Keyboard Navigation",
+        "Focus Visible",
+        "Focus Trap",
+        "Skip Link",
+        "Tab Index"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "ARIA Live Regions für dynamische Updates: aria-live='polite' announce nicht-kritische Updates (Toast, Save-Confirmation), aria-live='assertive' für kritische (Form-Errors, Connection Lost). NIE assertive für Marketing-Banner — überschreibt User-Aktion. role='status' ist polite, role='alert' ist assertive. Auch wichtig: aria-atomic='true' macht ganze Region announced, nicht nur Diff.",
+      "insight_type": "synthesis",
+      "entities": [
+        "ARIA Live Region",
+        "ARIA",
+        "Screen Reader",
+        "Error Identification"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Heading-Hierarchie als Document Outline: Screen-Reader-User navigieren via H-Keys durch Headings. Reihenfolge MUSS hierarchisch sein (h1 → h2 → h3, kein h1 → h3). Genau ein h1 pro Seite (= Page Title in Content). Visual Style != Semantic Level — wenn h2-Level visuell wie h4 aussehen soll, CSS nutzen, NICHT <h4>. Faustregel: Tab-Outline der Page mit nur Headings sollte alleinstehend Sinn ergeben.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Heading Hierarchy",
+        "Semantic HTML",
+        "Landmark",
+        "Screen Reader"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Form-Accessibility-Checkliste: (1) Jedes Input hat Label (<label for> oder aria-labelledby). (2) Required-Felder mit aria-required oder required-Attribut. (3) Validation-Errors mit aria-invalid + aria-describedby auf Error-Message. (4) Error-Messages in Live-Region announced. (5) Submit-Button beschreibt Action ('Order Place', nicht 'Submit'). (6) Group related fields mit <fieldset><legend>.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Form Label Association",
+        "Error Identification",
+        "ARIA Label",
+        "ARIA Live Region",
+        "Semantic HTML"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Reduced Motion als Vestibular Safety: prefers-reduced-motion CSS-Media-Query muss respektiert werden — aufwändige Animationen können bei vestibulären Störungen Übelkeit/Schwindel verursachen. Pattern: @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } } als Reset, dann opt-in-Animations für Nutzer ohne Reduced-Motion.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Reduced Motion",
+        "WCAG Level AA",
+        "WCAG Success Criterion"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Automatisierte vs. Manuelle A11y-Tests: axe-core/Lighthouse fängt ~30-40% aller WCAG-Failures (alles was rein syntaktisch/strukturell prüfbar ist). Die anderen 60% brauchen manuelle Tests: Sinnvolle Alt-Texte, Logical Tab Order, Label-Quality, Color-Contrast in dynamischem Content. Test-Pyramide: Axe in CI (block on fail), manuelle Audit-Sessions monatlich, User Testing mit echten Screenreader-Usern jährlich.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Axe Core",
+        "Lighthouse Accessibility",
+        "Pa11y",
+        "WCAG 2.2"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "EAA Compliance ab 2025: European Accessibility Act fordert WCAG-AA-Konformität für alle digitalen Produkte/Services im EU-Markt (Banking, E-Commerce, Transport, eBooks). Strafen analog GDPR. Code-Review-Implikation: A11y ist NICHT nice-to-have, sondern legal requirement. CI-Gate auf axe-Failures + manuelles Audit als Definition-of-Done für User-facing Features sind Mindeststandard.",
+      "insight_type": "synthesis",
+      "entities": [
+        "EAA",
+        "WCAG Level AA",
+        "Axe Core",
+        "Definition of Done"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    }
+  ],
+  "stats": {
+    "entities": 35,
+    "relations": 33,
+    "syntheses": 9,
+    "scrubbed": 0
+  }
+}

@@ -1,0 +1,1046 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Data Engineering Patterns — ETL/ELT, Star Schema, dbt, Airflow, Lakehouse, CDC, Data Contracts, Lineage.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "ETL",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Extract Transform Load",
+        "Klassische Data-Pipeline",
+        "Batch ETL"
+      ]
+    },
+    {
+      "name": "ELT",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Extract Load Transform",
+        "Modern Data Stack",
+        "Warehouse-Transform"
+      ]
+    },
+    {
+      "name": "Data Warehouse",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DWH",
+        "Snowflake",
+        "BigQuery",
+        "Redshift",
+        "Analytical Database"
+      ]
+    },
+    {
+      "name": "Data Lake",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Schema-on-Read Storage",
+        "S3 Data Lake",
+        "Raw Data Repository"
+      ]
+    },
+    {
+      "name": "Lakehouse",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Data Lakehouse",
+        "Delta Lake",
+        "Apache Iceberg",
+        "Hudi"
+      ]
+    },
+    {
+      "name": "Star Schema",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Star Schema Modeling",
+        "Fact + Dimension Tables",
+        "Dimensional Model"
+      ]
+    },
+    {
+      "name": "Snowflake Schema",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Snowflake Schema Modeling",
+        "Normalized Dimensions",
+        "Multi-level Hierarchies"
+      ]
+    },
+    {
+      "name": "Slowly Changing Dimension",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SCD Type 1",
+        "SCD Type 2",
+        "SCD Type 3",
+        "Dimension History"
+      ]
+    },
+    {
+      "name": "Fact Table",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Faktentabelle",
+        "Measure Table",
+        "Star Schema Fact"
+      ]
+    },
+    {
+      "name": "Dimension Table",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Dimensionstabelle",
+        "Lookup Table",
+        "Star Schema Dimension"
+      ]
+    },
+    {
+      "name": "Surrogate Key",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Synthetic Key",
+        "DWH Surrogate Key",
+        "Auto-Increment Dimension Key"
+      ]
+    },
+    {
+      "name": "Slowly Changing Dimension Type 2",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SCD2",
+        "Effective-Dated History",
+        "Historie über Versionierung"
+      ]
+    },
+    {
+      "name": "dbt",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Data Build Tool",
+        "dbt Core",
+        "dbt Cloud",
+        "SQL Transformation"
+      ]
+    },
+    {
+      "name": "Apache Airflow",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Airflow",
+        "DAG Orchestrator",
+        "Workflow Scheduler"
+      ]
+    },
+    {
+      "name": "Dagster",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Dagster Asset Pipeline",
+        "Data Asset Orchestrator"
+      ]
+    },
+    {
+      "name": "Prefect",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Prefect Flow",
+        "Modern Workflow Orchestration"
+      ]
+    },
+    {
+      "name": "DAG",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Directed Acyclic Graph",
+        "Pipeline DAG",
+        "Task Dependency Graph"
+      ]
+    },
+    {
+      "name": "Idempotent Pipeline",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Idempotente Pipeline",
+        "Re-runnable Job",
+        "Replayable Pipeline"
+      ]
+    },
+    {
+      "name": "Backfill",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Historical Backfill",
+        "Pipeline Backfill",
+        "Range Re-execution"
+      ]
+    },
+    {
+      "name": "Watermark",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Late-Data Watermark",
+        "Pipeline High-Watermark",
+        "Progress Marker"
+      ]
+    },
+    {
+      "name": "Change Data Capture",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "CDC",
+        "Debezium",
+        "Binlog Streaming",
+        "Logical Replication"
+      ]
+    },
+    {
+      "name": "Data Lineage",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lineage",
+        "OpenLineage",
+        "Data Provenance",
+        "Marquez"
+      ]
+    },
+    {
+      "name": "Data Contract",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Data Contract Spec",
+        "Schema Contract",
+        "Producer-Consumer Contract"
+      ]
+    },
+    {
+      "name": "Data Quality",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DQ",
+        "Great Expectations",
+        "Soda",
+        "Data Validation"
+      ]
+    },
+    {
+      "name": "Great Expectations",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "GE Suite",
+        "Expectation Suite",
+        "DQ Library"
+      ]
+    },
+    {
+      "name": "Data Mesh",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Decentralized Data Architecture",
+        "Domain Data Ownership",
+        "Data as Product"
+      ]
+    },
+    {
+      "name": "Data Vault",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Data Vault 2.0",
+        "Hub Link Satellite",
+        "Linstedt Modeling"
+      ]
+    },
+    {
+      "name": "Medallion Architecture",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Bronze Silver Gold",
+        "Databricks Medallion",
+        "Layered Lakehouse"
+      ]
+    },
+    {
+      "name": "Bronze Layer",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Raw Layer",
+        "Landing Zone",
+        "Source Mirror"
+      ]
+    },
+    {
+      "name": "Silver Layer",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cleansed Layer",
+        "Conformed Data",
+        "Validated Layer"
+      ]
+    },
+    {
+      "name": "Gold Layer",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Business Layer",
+        "Aggregated Facts",
+        "Reporting Layer"
+      ]
+    },
+    {
+      "name": "Apache Spark",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Spark",
+        "Spark SQL",
+        "PySpark",
+        "Distributed Compute"
+      ]
+    },
+    {
+      "name": "Delta Lake",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Delta Format",
+        "ACID on Parquet",
+        "Time-Travel Tables"
+      ]
+    },
+    {
+      "name": "Apache Iceberg",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Iceberg Table Format",
+        "Hidden Partitioning",
+        "Schema Evolution"
+      ]
+    },
+    {
+      "name": "Apache Parquet",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Parquet",
+        "Columnar Storage",
+        "Snappy Compression"
+      ]
+    },
+    {
+      "name": "Apache Avro",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Avro Schema",
+        "Row-based Binary Format"
+      ]
+    },
+    {
+      "name": "Schema Registry",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Confluent Schema Registry",
+        "Schema Evolution Management",
+        "Avro Registry"
+      ]
+    },
+    {
+      "name": "Data Catalog",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DataHub",
+        "Amundsen",
+        "Atlas",
+        "Metadata Catalog"
+      ]
+    },
+    {
+      "name": "Reverse ETL",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Operational Analytics",
+        "Hightouch",
+        "Census",
+        "Warehouse-to-SaaS"
+      ]
+    },
+    {
+      "name": "Streaming SQL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ksqlDB",
+        "Materialize",
+        "Continuous Query"
+      ]
+    },
+    {
+      "name": "Materialized View",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Materialisierte Sicht",
+        "Pre-computed Aggregate",
+        "Refreshable View"
+      ]
+    },
+    {
+      "name": "Star Join",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Star Schema Join",
+        "Fact-Dimension Join Optimization"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "ETL",
+      "predicate": "RELATED_TO",
+      "object": "ELT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ELT",
+      "predicate": "RELATED_TO",
+      "object": "Data Warehouse",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Warehouse",
+      "predicate": "RELATED_TO",
+      "object": "Data Lake",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Lakehouse",
+      "predicate": "EXTENDS",
+      "object": "Data Lake",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Lakehouse",
+      "predicate": "RELATED_TO",
+      "object": "Data Warehouse",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Lakehouse",
+      "predicate": "USES",
+      "object": "Delta Lake",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Lakehouse",
+      "predicate": "USES",
+      "object": "Apache Iceberg",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Star Schema",
+      "predicate": "USES",
+      "object": "Fact Table",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Star Schema",
+      "predicate": "USES",
+      "object": "Dimension Table",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Snowflake Schema",
+      "predicate": "EXTENDS",
+      "object": "Star Schema",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Slowly Changing Dimension",
+      "predicate": "RELATED_TO",
+      "object": "Dimension Table",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Slowly Changing Dimension Type 2",
+      "predicate": "IS_A",
+      "object": "Slowly Changing Dimension",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Surrogate Key",
+      "predicate": "RELATED_TO",
+      "object": "Dimension Table",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "dbt",
+      "predicate": "RELATED_TO",
+      "object": "ELT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "dbt",
+      "predicate": "RELATED_TO",
+      "object": "Data Warehouse",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Airflow",
+      "predicate": "USES",
+      "object": "DAG",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Dagster",
+      "predicate": "RELATED_TO",
+      "object": "Apache Airflow",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Prefect",
+      "predicate": "RELATED_TO",
+      "object": "Apache Airflow",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Idempotent Pipeline",
+      "predicate": "RELATED_TO",
+      "object": "Backfill",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Idempotent Pipeline",
+      "predicate": "RELATED_TO",
+      "object": "Idempotency",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Watermark",
+      "predicate": "RELATED_TO",
+      "object": "Backfill",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Change Data Capture",
+      "predicate": "RELATED_TO",
+      "object": "Apache Kafka",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Change Data Capture",
+      "predicate": "RELATED_TO",
+      "object": "Streaming SQL",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Lineage",
+      "predicate": "RELATED_TO",
+      "object": "Data Catalog",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Contract",
+      "predicate": "RELATED_TO",
+      "object": "Schema Registry",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Quality",
+      "predicate": "USES",
+      "object": "Great Expectations",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Great Expectations",
+      "predicate": "IMPLEMENTS",
+      "object": "Data Quality",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Mesh",
+      "predicate": "RELATED_TO",
+      "object": "Bounded Context",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Mesh",
+      "predicate": "RELATED_TO",
+      "object": "Domain-Driven Design",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Medallion Architecture",
+      "predicate": "USES",
+      "object": "Bronze Layer",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Medallion Architecture",
+      "predicate": "USES",
+      "object": "Silver Layer",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Medallion Architecture",
+      "predicate": "USES",
+      "object": "Gold Layer",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Medallion Architecture",
+      "predicate": "RELATED_TO",
+      "object": "Lakehouse",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Spark",
+      "predicate": "RELATED_TO",
+      "object": "Apache Parquet",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Delta Lake",
+      "predicate": "USES",
+      "object": "Apache Parquet",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Iceberg",
+      "predicate": "USES",
+      "object": "Apache Parquet",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Parquet",
+      "predicate": "IS_A",
+      "object": "Tech_Concept",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Apache Avro",
+      "predicate": "RELATED_TO",
+      "object": "Schema Registry",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Reverse ETL",
+      "predicate": "RELATED_TO",
+      "object": "ELT",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Streaming SQL",
+      "predicate": "RELATED_TO",
+      "object": "Apache Kafka",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Materialized View",
+      "predicate": "RELATED_TO",
+      "object": "Caching",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Materialized View",
+      "predicate": "RELATED_TO",
+      "object": "Star Schema",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Star Join",
+      "predicate": "RELATED_TO",
+      "object": "Star Schema",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Data Vault",
+      "predicate": "RELATED_TO",
+      "object": "Star Schema",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "ETL vs ELT — Entscheidung anhand des Compute-Orts: ETL transformiert vor dem Laden im Warehouse (z.B. Talend, Informatica), nötig wenn Quellen sensitive Daten enthalten oder Compute lokal ist. ELT lädt erst, transformiert im Warehouse via SQL/dbt — Standard für moderne MPP-Warehouses (Snowflake, BigQuery, Redshift). Modern Data Stack ist fast immer ELT, weil Warehouse-Compute günstiger als ETL-Tool-Lizenzen.",
+      "insight_type": "synthesis",
+      "entities": [
+        "ETL",
+        "ELT",
+        "Data Warehouse",
+        "dbt"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Star vs Snowflake Schema — der Performance-Trade-off: Star-Schema dupliziert Dimensionsdaten (denormalisiert), Snowflake normalisiert Dimensionen in mehrere Tabellen. Star ist Query-Performance-optimal (ein Join pro Dimension), kostet aber Speicher. Snowflake spart Speicher, kostet aber zusätzliche Joins. Modern: Star Schema dominiert, weil Spaltenbasierte Storage (Parquet) Speicher kostet wenig macht.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Star Schema",
+        "Snowflake Schema",
+        "Fact Table",
+        "Dimension Table",
+        "Star Join"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "SCD Type 2 als Standard für Dimension-Historie: Type 1 (Overwrite) verliert Historie. Type 2 (neue Zeile mit valid_from / valid_to) erhält jede Änderung — Standard für Audit und temporale Analysen. Implementation in dbt: snapshots-Feature mit strategy='timestamp' oder 'check'. Surrogate Keys MÜSSEN benutzt werden (Business Key allein reicht nicht, da mehrere Versionen den gleichen Business Key haben).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Slowly Changing Dimension Type 2",
+        "Surrogate Key",
+        "dbt",
+        "Dimension Table"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Idempotente Pipeline als Hard-Requirement: Eine Pipeline MUSS bei mehrfacher Ausführung mit gleichem Input den gleichen Output erzeugen. Sonst sind Backfills, Recoveries und Reruns unmöglich. Patterns: (1) DELETE WHERE date=X + INSERT statt INSERT INTO ohne Filter. (2) MERGE/UPSERT auf Natural Key. (3) Idempotency Key in Source Events. (4) Watermark-basiertes Re-Processing.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Idempotent Pipeline",
+        "Backfill",
+        "Watermark",
+        "Idempotency Key",
+        "Idempotency"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Medallion Architecture (Databricks): Bronze = roh wie aus Source, immutable, mit Append-only-Logik. Silver = cleansed, deduped, conformed types, joined references. Gold = business-ready aggregates, denormalisiert, optimiert für Reporting. Vorteil: klare Trennung von Concerns + Replayability. Nachteil: mehr Storage. CDC-Events landen typisch in Bronze, dbt-Models bauen Silver/Gold.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Medallion Architecture",
+        "Bronze Layer",
+        "Silver Layer",
+        "Gold Layer",
+        "Lakehouse",
+        "Change Data Capture"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Data Lineage als Audit-Pflicht: GDPR und SOC 2 verlangen Nachweis welche Daten woher kommen. OpenLineage-Standard (Marquez als Implementation) trackt Job-Runs, Datasets und ihre Beziehungen automatisch via dbt/Airflow/Spark-Integrationen. Im Code-Review: Pipeline ohne Lineage-Tracking ist ein Audit-Risiko, wenn PII durchläuft.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Data Lineage",
+        "Data Catalog",
+        "GDPR",
+        "Apache Airflow"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Schema Evolution mit Apache Iceberg: Hidden Partitioning macht Partition-Pruning unsichtbar für Queries — keine WHERE partition_date kompiliert nötig. Schema Evolution (ADD/DROP/RENAME Column) ist sicher, weil Iceberg Column-IDs statt Namen verwendet. Reorganization (Rewrite) erlaubt Compaction und Sortierung ohne Service-Downtime. Verglichen mit Hive-Tables: keine Manifest-Korruption bei Schema-Änderungen.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Apache Iceberg",
+        "Apache Parquet",
+        "Schema Registry",
+        "Data Contract"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Data Contract als Producer-Consumer-Schnittstelle: Wie API-Contracts haben Datasets Schemas, SLAs und Owner. dbt's source.yml + tests + meta.contract.enforced erzwingen Contracts auf Spalten-Level. Schema-Registry validiert Avro/Protobuf-Events. Bei Verletzung: Build fails — Producer kann breaking change nicht ohne Coordination deployen. Data Mesh stützt sich darauf.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Data Contract",
+        "Schema Registry",
+        "Data Mesh",
+        "dbt",
+        "Hyrum's Law"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Reverse ETL für Operational Analytics: Klassische ETL bewegt Daten in Warehouse für Analytik. Reverse ETL holt aggregierte Insights aus dem Warehouse zurück in operative SaaS-Tools (Salesforce, HubSpot, Intercom). Use-Cases: Customer Health Scores, Lead-Scoring, Churn-Risk-Flags. Tools: Hightouch, Census. Verhindert dass Engineering für jede Marketing-Frage SQL schreiben muss.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Reverse ETL",
+        "Data Warehouse",
+        "ELT",
+        "Materialized View"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    }
+  ],
+  "stats": {
+    "entities": 42,
+    "relations": 44,
+    "syntheses": 9,
+    "scrubbed": 0
+  }
+}

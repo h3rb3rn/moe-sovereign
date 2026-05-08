@@ -1,0 +1,1089 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Knowledge Graph Patterns — RDF/OWL/SPARQL, Property Graph/Cypher, Embeddings, Graph Algorithms (PageRank, Community Detection), GraphRAG.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "RDF",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Resource Description Framework",
+        "RDF Triple",
+        "Subject-Predicate-Object"
+      ]
+    },
+    {
+      "name": "RDF Triple",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Triple",
+        "(s,p,o) Triple",
+        "Statement RDF"
+      ]
+    },
+    {
+      "name": "RDFS",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RDF Schema",
+        "RDFS Vocabulary",
+        "rdfs:subClassOf"
+      ]
+    },
+    {
+      "name": "OWL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Web Ontology Language",
+        "OWL 2",
+        "OWL Description Logic"
+      ]
+    },
+    {
+      "name": "OWL DL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "OWL Description Logic Profile",
+        "Decidable OWL"
+      ]
+    },
+    {
+      "name": "SPARQL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SPARQL Query Language",
+        "SPARQL 1.1",
+        "SELECT WHERE Triple Pattern"
+      ]
+    },
+    {
+      "name": "SHACL",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Shapes Constraint Language",
+        "SHACL Validation",
+        "Graph Shape Constraint"
+      ]
+    },
+    {
+      "name": "Property Graph",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Labeled Property Graph",
+        "LPG",
+        "Neo4j Property Graph"
+      ]
+    },
+    {
+      "name": "Cypher Query Language",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Cypher",
+        "openCypher",
+        "MATCH (n)-[r]->(m)"
+      ]
+    },
+    {
+      "name": "Gremlin",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Gremlin Traversal",
+        "Apache TinkerPop",
+        "Imperative Graph Query"
+      ]
+    },
+    {
+      "name": "Knowledge Graph",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "KG",
+        "Wissensgraph",
+        "Semantic Graph"
+      ]
+    },
+    {
+      "name": "Ontology",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Domain Ontology",
+        "Vocabulary Ontology"
+      ]
+    },
+    {
+      "name": "Triple Store",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Triplestore",
+        "RDF Database",
+        "GraphDB",
+        "Stardog",
+        "Virtuoso",
+        "Apache Jena Fuseki"
+      ]
+    },
+    {
+      "name": "Graph Database",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Neo4j Graph DB",
+        "ArangoDB",
+        "JanusGraph",
+        "Amazon Neptune"
+      ]
+    },
+    {
+      "name": "Entity Linking",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Entity Resolution",
+        "Named Entity Linking",
+        "NEL",
+        "Wikidata Entity Linking"
+      ]
+    },
+    {
+      "name": "Entity Resolution",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Record Linkage",
+        "Deduplication",
+        "Identity Resolution"
+      ]
+    },
+    {
+      "name": "Knowledge Graph Embedding",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "KG Embedding",
+        "TransE",
+        "ComplEx",
+        "RotatE",
+        "Vector Representation Graph"
+      ]
+    },
+    {
+      "name": "Node2Vec",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Node2Vec Embedding",
+        "Graph Random Walk Embedding"
+      ]
+    },
+    {
+      "name": "PageRank",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Google PageRank",
+        "Centrality Algorithm",
+        "Random Walk Eigenvector"
+      ]
+    },
+    {
+      "name": "Personalized PageRank",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "PPR",
+        "Topic-Sensitive PageRank",
+        "Random Walk with Restart"
+      ]
+    },
+    {
+      "name": "Community Detection",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Graph Clustering",
+        "Louvain",
+        "Leiden Algorithm",
+        "Label Propagation"
+      ]
+    },
+    {
+      "name": "Louvain Algorithm",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Modularity Maximization",
+        "Louvain Community Detection"
+      ]
+    },
+    {
+      "name": "Leiden Algorithm",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Leiden Community Detection",
+        "Improved Louvain"
+      ]
+    },
+    {
+      "name": "Shortest Path Algorithm",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Path Finding",
+        "Graph Shortest Path"
+      ]
+    },
+    {
+      "name": "Centrality Measures",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Betweenness Centrality",
+        "Closeness Centrality",
+        "Eigenvector Centrality"
+      ]
+    },
+    {
+      "name": "Graph Neural Network",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "GNN",
+        "GCN Graph Convolutional Network",
+        "GraphSAGE"
+      ]
+    },
+    {
+      "name": "Graph Algorithms",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Graph Analytics Algorithms",
+        "Network Algorithms"
+      ]
+    },
+    {
+      "name": "Property Path",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SPARQL Property Path",
+        "Cypher Variable-length",
+        "Variable-Length Path"
+      ]
+    },
+    {
+      "name": "Inference Engine",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Reasoner",
+        "OWL Reasoner",
+        "HermiT",
+        "Pellet"
+      ]
+    },
+    {
+      "name": "Schema.org",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Schema.org Vocabulary",
+        "JSON-LD Markup",
+        "Microdata Schema"
+      ]
+    },
+    {
+      "name": "JSON-LD",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "JSON for Linked Data",
+        "@context",
+        "Linked Data JSON"
+      ]
+    },
+    {
+      "name": "Linked Data",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LOD",
+        "Linked Open Data",
+        "Berners-Lee 5-Stars"
+      ]
+    },
+    {
+      "name": "DBpedia",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DBpedia Knowledge Base",
+        "Wikipedia LOD"
+      ]
+    },
+    {
+      "name": "Wikidata",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Wikidata Knowledge Base",
+        "Q-IDs",
+        "Wikidata Entity"
+      ]
+    },
+    {
+      "name": "Vector Embedding Graph",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Graph Embedding Pattern",
+        "Hybrid Vector-Graph"
+      ]
+    },
+    {
+      "name": "Graph RAG",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "GraphRAG",
+        "Knowledge-Graph-augmented RAG",
+        "Microsoft GraphRAG"
+      ]
+    },
+    {
+      "name": "Triple Pattern Matching",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Triple Pattern",
+        "(s,p,o) Pattern",
+        "SPARQL Triple Pattern"
+      ]
+    },
+    {
+      "name": "Reification",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "RDF Reification",
+        "Statement-about-Statement"
+      ]
+    },
+    {
+      "name": "Named Graph",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Quad",
+        "Graph Identifier",
+        "Context Graph",
+        "RDF Quad"
+      ]
+    },
+    {
+      "name": "Graph Schema Migration",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Schema Evolution Graph",
+        "Migration Cypher",
+        "APOC Migration"
+      ]
+    },
+    {
+      "name": "Cypher Index",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Neo4j Index",
+        "B-tree Index Cypher",
+        "Range Index Cypher",
+        "Text Index Cypher"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "RDF Triple",
+      "predicate": "IS_A",
+      "object": "RDF",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "RDFS",
+      "predicate": "EXTENDS",
+      "object": "RDF",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OWL",
+      "predicate": "EXTENDS",
+      "object": "RDFS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OWL DL",
+      "predicate": "IS_A",
+      "object": "OWL",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SPARQL",
+      "predicate": "USES",
+      "object": "RDF Triple",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SPARQL",
+      "predicate": "USES",
+      "object": "Triple Pattern Matching",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SHACL",
+      "predicate": "RELATED_TO",
+      "object": "RDF",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "SHACL",
+      "predicate": "RELATED_TO",
+      "object": "Input Validation",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cypher Query Language",
+      "predicate": "USES",
+      "object": "Property Graph",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Gremlin",
+      "predicate": "USES",
+      "object": "Property Graph",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Knowledge Graph",
+      "predicate": "USES",
+      "object": "Ontology",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Knowledge Graph",
+      "predicate": "USES",
+      "object": "Triple Store",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Knowledge Graph",
+      "predicate": "USES",
+      "object": "Graph Database",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Triple Store",
+      "predicate": "USES",
+      "object": "RDF",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Triple Store",
+      "predicate": "USES",
+      "object": "SPARQL",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Database",
+      "predicate": "USES",
+      "object": "Property Graph",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Database",
+      "predicate": "USES",
+      "object": "Cypher Query Language",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Entity Linking",
+      "predicate": "RELATED_TO",
+      "object": "Entity Resolution",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Entity Linking",
+      "predicate": "RELATED_TO",
+      "object": "Fuzzy Entity Deduplication",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Knowledge Graph Embedding",
+      "predicate": "RELATED_TO",
+      "object": "Embedding Model",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Knowledge Graph Embedding",
+      "predicate": "USES",
+      "object": "Vector Embedding Graph",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Node2Vec",
+      "predicate": "IS_A",
+      "object": "Knowledge Graph Embedding",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "PageRank",
+      "predicate": "IS_A",
+      "object": "Centrality Measures",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Personalized PageRank",
+      "predicate": "EXTENDS",
+      "object": "PageRank",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Community Detection",
+      "predicate": "USES",
+      "object": "Louvain Algorithm",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Louvain Algorithm",
+      "predicate": "RELATED_TO",
+      "object": "Leiden Algorithm",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Shortest Path Algorithm",
+      "predicate": "RELATED_TO",
+      "object": "Dijkstra Algorithm",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Centrality Measures",
+      "predicate": "IS_A",
+      "object": "Algorithm",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Neural Network",
+      "predicate": "USES",
+      "object": "Knowledge Graph Embedding",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Algorithms",
+      "predicate": "USES",
+      "object": "PageRank",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Algorithms",
+      "predicate": "USES",
+      "object": "Community Detection",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Algorithms",
+      "predicate": "USES",
+      "object": "Shortest Path Algorithm",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Algorithms",
+      "predicate": "USES",
+      "object": "Centrality Measures",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Property Path",
+      "predicate": "RELATED_TO",
+      "object": "SPARQL",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Property Path",
+      "predicate": "RELATED_TO",
+      "object": "Cypher Query Language",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Inference Engine",
+      "predicate": "RELATED_TO",
+      "object": "OWL",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Schema.org",
+      "predicate": "RELATED_TO",
+      "object": "JSON-LD",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "JSON-LD",
+      "predicate": "RELATED_TO",
+      "object": "RDF",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "JSON-LD",
+      "predicate": "RELATED_TO",
+      "object": "Linked Data",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Linked Data",
+      "predicate": "USES",
+      "object": "RDF",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "DBpedia",
+      "predicate": "USES",
+      "object": "Linked Data",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Wikidata",
+      "predicate": "USES",
+      "object": "Linked Data",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "DBpedia",
+      "predicate": "RELATED_TO",
+      "object": "Wikidata",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph RAG",
+      "predicate": "USES",
+      "object": "Knowledge Graph",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph RAG",
+      "predicate": "USES",
+      "object": "Retrieval Augmented Generation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph RAG",
+      "predicate": "USES",
+      "object": "Vector Embedding Graph",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Reification",
+      "predicate": "RELATED_TO",
+      "object": "RDF Triple",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Named Graph",
+      "predicate": "RELATED_TO",
+      "object": "RDF",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cypher Index",
+      "predicate": "RELATED_TO",
+      "object": "Database Index",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Cypher Index",
+      "predicate": "RELATED_TO",
+      "object": "B-Tree Index",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Graph Schema Migration",
+      "predicate": "RELATED_TO",
+      "object": "Database Migration",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "RDF Triple Store vs Property Graph — die Architektur-Wahl: RDF (Neo4j RDF*, Stardog, Apache Jena) gewinnt bei Multi-Source-Datenintegration, Open World Assumption, Reasoning via OWL. Property Graph (Neo4j) gewinnt bei Performance für Traversal-Queries, einfacherem Modell (Properties auf Edges), Cypher-Syntax. Faustregel: Wenn Reasoning + heterogene Datenquellen → RDF. Wenn analytische Queries + Property-rich → Property Graph.",
+      "insight_type": "synthesis",
+      "entities": [
+        "RDF",
+        "Property Graph",
+        "Triple Store",
+        "Graph Database",
+        "SPARQL",
+        "Cypher Query Language"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "SPARQL Property Path und Cypher Variable-Length Patterns sind isomorph: SPARQL ?a foaf:knows+ ?b matched 1+ Hops; Cypher (a)-[:KNOWS*1..]->(b) gleichbedeutend. Beide erlauben transitive Traversierung ohne expliziten Hop-Count. Performance-Falle: ohne Hop-Limit bei großen Graphen Path-Explosion. Best Practice: Hop-Limit setzen, Indizes auf häufig gefilterte Properties.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Property Path",
+        "SPARQL",
+        "Cypher Query Language",
+        "Cypher Index"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Knowledge Graph Embedding als Brücke zu LLMs: TransE (head + relation = tail), ComplEx (komplex-wertige Embeddings für asymmetrische Relations), RotatE (Rotation in komplexem Raum) erzeugen Vektor-Repräsentationen aus Triples. Use-Cases: Link Prediction, Triple Classification, Entity Similarity. Kombination mit Vector-DB ermöglicht Hybrid-Search: semantische Ähnlichkeit + strukturelle Pfade.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Knowledge Graph Embedding",
+        "Node2Vec",
+        "Graph Neural Network",
+        "Vector Embedding Graph",
+        "Graph RAG"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Microsoft GraphRAG-Pattern: Statt naive Chunk-basierte RAG werden zuerst Entities und Relations aus Source-Dokumenten extrahiert (LLM-basiert), dann als Knowledge Graph gespeichert. Bei Query: (1) Entity-Matching im Graph, (2) Subgraph-Extraktion via Community Detection, (3) Subgraph-Summary als RAG-Context. Liefert bessere Multi-Hop-Reasoning-Qualität als pure Vector-RAG, kostet aber Ingest-Zeit + Build-Aufwand.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Graph RAG",
+        "Knowledge Graph",
+        "Community Detection",
+        "Retrieval Augmented Generation",
+        "Entity Linking"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Personalized PageRank als RAG-Retrieval: Klassisches PageRank rankt Nodes global. Personalized PageRank biased Random Walks zu User-spezifischen Entities (z.B. Query-Entities) — gibt Top-N strukturell-relevante Nodes zurück. In Graph RAG: kombiniert mit Vector-Similarity als Hybrid-Retrieval. Algo: Random Walk with Restart, alpha=0.15 typisch. Effizient mit Pre-computed Approximations (Push-based PPR).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Personalized PageRank",
+        "PageRank",
+        "Graph Algorithms",
+        "Graph RAG",
+        "Hybrid Search"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "Entity Resolution als ML-Problem: Naive String-Matching ('Apple Inc' = 'Apple Computer Inc') versagt. Modern: (1) Block-Generation (Locality-Sensitive Hashing für Kandidaten), (2) Pairwise Similarity (String-, Embedding-, Knowledge-Features), (3) Klassifikation (Match/Non-Match), (4) Clustering (transitive Resolution). Tools: Dedupe.io, Splink, Zingg. Im Knowledge Graph kritisch — sonst werden gleiche Real-World-Entities als verschiedene Knoten gespeichert.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Entity Resolution",
+        "Entity Linking",
+        "Fuzzy Entity Deduplication",
+        "Knowledge Graph"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "OWL Reasoning Trade-off: OWL Full ist undecidable (Reasoning kann nicht terminieren), OWL DL ist decidable aber EXPTIME-complete, OWL EL polynomial, OWL RL polynomial mit Rule-based Reasoning. Praktische Wahl: OWL EL für Medical Ontologies (SNOMED CT), OWL RL für Inference auf großen Datasets. RDFS-only ist oft genug für Subclass/Subproperty Inference. Reasoner: HermiT, Pellet, ELK (für EL).",
+      "insight_type": "synthesis",
+      "entities": [
+        "OWL",
+        "OWL DL",
+        "RDFS",
+        "Inference Engine",
+        "Ontology"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "SHACL für Graph-Validation: SHACL Shapes definieren Constraints auf RDF-Daten (analog JSON Schema für JSON). Beispiel: 'Jede Person muss mindestens eine foaf:name Property haben'. Validation-Report listet Violations auf. Im Code-Review für Knowledge-Graph-Pipelines: SHACL als CI-Gate gegen Daten-Schema-Drift, ähnlich wie dbt-tests im Data-Eng. Alternative für Property Graphs: APOC + Cypher-basierte Constraints.",
+      "insight_type": "synthesis",
+      "entities": [
+        "SHACL",
+        "RDF",
+        "Input Validation",
+        "Data Contract",
+        "Graph Schema Migration"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    }
+  ],
+  "stats": {
+    "entities": 41,
+    "relations": 51,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}

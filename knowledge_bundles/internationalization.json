@@ -1,0 +1,788 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Internationalization Patterns — i18n/l10n, Locale, ICU MessageFormat, Pluralization, RTL, Time Zones, Currency, Unicode.",
+  "filters": {
+    "domains": [
+      "code_reviewer",
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "Internationalization",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "i18n",
+        "Internationalisierung",
+        "Locale-aware Software"
+      ]
+    },
+    {
+      "name": "Localization",
+      "type": "Action",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "l10n",
+        "Lokalisierung",
+        "Translation + Cultural Adaptation"
+      ]
+    },
+    {
+      "name": "Locale",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "BCP 47 Locale",
+        "en-US",
+        "de-DE",
+        "Language-Region Code"
+      ]
+    },
+    {
+      "name": "ICU MessageFormat",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Unicode ICU",
+        "ICU Format",
+        "MessageFormat 2"
+      ]
+    },
+    {
+      "name": "Pluralization",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Plural Forms",
+        "Plural Rules",
+        "CLDR Plural Categories"
+      ]
+    },
+    {
+      "name": "CLDR",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Common Locale Data Repository",
+        "Unicode CLDR"
+      ]
+    },
+    {
+      "name": "Plural Rules",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "zero one two few many other",
+        "Plural Categories"
+      ]
+    },
+    {
+      "name": "Gender-aware Translation",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Genderspezifische Übersetzung",
+        "Grammatical Gender",
+        "ICU select"
+      ]
+    },
+    {
+      "name": "RTL Layout",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Right-to-Left",
+        "Bidi Layout",
+        "Arabic Hebrew Layout"
+      ]
+    },
+    {
+      "name": "Bidirectional Text",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Bidi Algorithm",
+        "Unicode Bidi",
+        "Mixed LTR-RTL"
+      ]
+    },
+    {
+      "name": "Logical Properties CSS",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "margin-inline-start",
+        "padding-block",
+        "Direction-agnostic CSS"
+      ]
+    },
+    {
+      "name": "Date Format",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Date Formatting",
+        "Intl.DateTimeFormat",
+        "Locale Date Pattern"
+      ]
+    },
+    {
+      "name": "Number Format",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Number Formatting",
+        "Intl.NumberFormat",
+        "Decimal Separator",
+        "Thousand Separator"
+      ]
+    },
+    {
+      "name": "Currency Format",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Currency Formatting",
+        "ISO 4217 Currency Code",
+        "Position of Symbol"
+      ]
+    },
+    {
+      "name": "Time Zone Handling",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Zeitzone",
+        "IANA TZ Database",
+        "tz database",
+        "America/Los_Angeles"
+      ]
+    },
+    {
+      "name": "UTC Storage",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Always Store UTC",
+        "Convert at Display",
+        "UTC Best Practice"
+      ]
+    },
+    {
+      "name": "Daylight Saving Time",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "DST",
+        "Sommerzeit",
+        "DST Transition"
+      ]
+    },
+    {
+      "name": "Translation Memory",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "TM",
+        "Translation Database",
+        "Reuse Translations"
+      ]
+    },
+    {
+      "name": "Translation Management System",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "TMS",
+        "Lokalise",
+        "Crowdin",
+        "Phrase",
+        "Transifex"
+      ]
+    },
+    {
+      "name": "Gettext",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "GNU Gettext",
+        ".po files",
+        ".mo files",
+        "msgid msgstr"
+      ]
+    },
+    {
+      "name": "FormatJS",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "react-intl",
+        "JavaScript i18n",
+        "FormatJS Library"
+      ]
+    },
+    {
+      "name": "i18next",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "i18next.js",
+        "JavaScript i18n Framework"
+      ]
+    },
+    {
+      "name": "Pseudo-Localization",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Pseudo-Loc",
+        "Łéëɹñ Pseudo",
+        "i18n Testing"
+      ]
+    },
+    {
+      "name": "String Externalization",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "External Strings",
+        "No Hardcoded Strings",
+        "Translation Keys"
+      ]
+    },
+    {
+      "name": "Translation Key",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "i18n Key",
+        "translation.key.path"
+      ]
+    },
+    {
+      "name": "Locale Fallback",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Fallback Locale",
+        "en-GB → en",
+        "Fallback Chain"
+      ]
+    },
+    {
+      "name": "Encoding UTF-8",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "UTF-8 Encoding",
+        "Unicode UTF-8",
+        "Variable-width Encoding"
+      ]
+    },
+    {
+      "name": "Surrogate Pair",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "UTF-16 Surrogate",
+        "Astral Plane Character",
+        "Emoji Encoding"
+      ]
+    },
+    {
+      "name": "Grapheme Cluster",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "User-perceived Character",
+        "Unicode Grapheme",
+        "👨‍👩‍👧‍👦 Family Emoji"
+      ]
+    },
+    {
+      "name": "Unicode Normalization",
+      "type": "Algorithm",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "NFC",
+        "NFD",
+        "NFKC",
+        "NFKD"
+      ]
+    },
+    {
+      "name": "Locale-aware Sorting",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Collation",
+        "Locale Compare",
+        "Intl.Collator"
+      ]
+    },
+    {
+      "name": "Plural Forms Russian",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Russisch Plural",
+        "3 forms (one few many)"
+      ]
+    },
+    {
+      "name": "Translation File Format",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        ".json i18n",
+        ".po Gettext",
+        ".xliff",
+        ".strings iOS",
+        ".xml Android"
+      ]
+    },
+    {
+      "name": "Right-to-Left CSS",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "dir=rtl",
+        "[dir=rtl] selectors",
+        "RTL Stylesheet"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "Localization",
+      "predicate": "EXTENDS",
+      "object": "Internationalization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Locale",
+      "predicate": "RELATED_TO",
+      "object": "Localization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ICU MessageFormat",
+      "predicate": "USES",
+      "object": "Pluralization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ICU MessageFormat",
+      "predicate": "USES",
+      "object": "Gender-aware Translation",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Pluralization",
+      "predicate": "USES",
+      "object": "Plural Rules",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Pluralization",
+      "predicate": "USES",
+      "object": "CLDR",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Plural Rules",
+      "predicate": "RELATED_TO",
+      "object": "CLDR",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "RTL Layout",
+      "predicate": "USES",
+      "object": "Logical Properties CSS",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "RTL Layout",
+      "predicate": "RELATED_TO",
+      "object": "Bidirectional Text",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Right-to-Left CSS",
+      "predicate": "RELATED_TO",
+      "object": "RTL Layout",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Date Format",
+      "predicate": "USES",
+      "object": "Locale",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Number Format",
+      "predicate": "USES",
+      "object": "Locale",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Currency Format",
+      "predicate": "USES",
+      "object": "Locale",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Time Zone Handling",
+      "predicate": "RELATED_TO",
+      "object": "UTC Storage",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Time Zone Handling",
+      "predicate": "RELATED_TO",
+      "object": "Daylight Saving Time",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Translation Memory",
+      "predicate": "RELATED_TO",
+      "object": "Translation Management System",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Gettext",
+      "predicate": "RELATED_TO",
+      "object": "Translation File Format",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "FormatJS",
+      "predicate": "USES",
+      "object": "ICU MessageFormat",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "i18next",
+      "predicate": "RELATED_TO",
+      "object": "FormatJS",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Pseudo-Localization",
+      "predicate": "RELATED_TO",
+      "object": "Internationalization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "String Externalization",
+      "predicate": "USES",
+      "object": "Translation Key",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "String Externalization",
+      "predicate": "RELATED_TO",
+      "object": "Magic Number",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Locale Fallback",
+      "predicate": "RELATED_TO",
+      "object": "Locale",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Encoding UTF-8",
+      "predicate": "RELATED_TO",
+      "object": "Surrogate Pair",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Surrogate Pair",
+      "predicate": "RELATED_TO",
+      "object": "Grapheme Cluster",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Unicode Normalization",
+      "predicate": "RELATED_TO",
+      "object": "Encoding UTF-8",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Locale-aware Sorting",
+      "predicate": "USES",
+      "object": "Locale",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Plural Forms Russian",
+      "predicate": "IS_A",
+      "object": "Plural Rules",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Internationalization",
+      "predicate": "IS_A",
+      "object": "Principle",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "UTC-Storage als unverhandelbare Regel: Timestamps NIEMALS in lokaler Zeitzone speichern. Storage = UTC, Display = User-Zeitzone via Frontend-Conversion. Häufigster Bug: 'created_at = now()' speichert Server-lokal — bei Server-Migration in andere Zeitzone werden alte Timestamps falsch interpretiert. Postgres: TIMESTAMP WITH TIME ZONE. JavaScript: new Date().toISOString(). Auch: Daylight Saving Transitions können doppelte oder fehlende Stunden erzeugen.",
+      "insight_type": "synthesis",
+      "entities": [
+        "UTC Storage",
+        "Time Zone Handling",
+        "Daylight Saving Time",
+        "Date Format"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "Pluralization geht über singular/plural hinaus: Russisch hat 3 Plural-Formen (one/few/many: 1 яблоко, 2 яблока, 5 яблок), Polnisch ähnlich, Arabisch hat 6 (zero/one/two/few/many/other). Naive 'count === 1 ? singular : plural' bricht in 80% aller Sprachen. Lösung: ICU MessageFormat mit Plural-Rules aus CLDR. JavaScript: Intl.PluralRules. Code-Review-Smell: harkodierte 'item' / 'items' Strings.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Pluralization",
+        "Plural Rules",
+        "CLDR",
+        "ICU MessageFormat",
+        "Plural Forms Russian"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.99
+    },
+    {
+      "text": "RTL-Layout per Logical Properties: Statt margin-left/right: margin-inline-start/end. Statt left/right: inset-inline-start/end. Statt text-align: left: text-align: start. CSS Logical Properties (Browser-Support seit 2020 universal) erlauben einen Stylesheet für LTR und RTL. Alte Codebases mit hartkodiertem 'left'/'right' brauchen RTL-Mirroring-Plugin (rtlcss) — fehleranfällig.",
+      "insight_type": "synthesis",
+      "entities": [
+        "RTL Layout",
+        "Logical Properties CSS",
+        "Right-to-Left CSS",
+        "Bidirectional Text"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Grapheme Cluster vs Code Point vs Byte — Stringlänge ist mehrdeutig: '👨‍👩‍👧‍👦'.length === 11 in JavaScript (UTF-16 Code Units), aber 1 Grapheme Cluster (User-perceived Character). Python str.length zeigt Code Points (8). Bytes: 25. Im Code-Review: Längen-Validation für User-Input MUSS Grapheme Cluster zählen (Intl.Segmenter in JS, regex \\X in modern regex), sonst werden Emoji unfair abgeschnitten oder ungültig gemacht.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Grapheme Cluster",
+        "Surrogate Pair",
+        "Encoding UTF-8",
+        "Unicode Normalization"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Pseudo-Localization als CI-Test: Vor Übersetzung läuft Pseudo-Loc — alle Strings werden in Pseudo-Translated ('[Łéëɹñ Mörë]') konvertiert mit 30% Längen-Aufblähung (Deutsch ist im Schnitt 30% länger als Englisch). UI-Probleme (Truncation, Layout-Breaking, hardcoded Strings) werden VOR echter Translation sichtbar. Tools: pseudo-loc npm package, Lokalise Pseudo-Loc.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Pseudo-Localization",
+        "String Externalization",
+        "Internationalization",
+        "Translation Key"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "ICU MessageFormat als kanonische Lösung für Variable-in-Translation: 'You have {count, plural, =0 {no items} one {# item} other {# items}}' deckt Plural ab. {gender, select, female {she} male {he} other {they}} deckt Gender ab. Nested Forms möglich. Komplexer als printf-Strings, aber einzige robuste Lösung für 200+ Sprachen mit deren Grammatikregeln. FormatJS (React) und ICU4J (Java) sind Production-Libraries.",
+      "insight_type": "synthesis",
+      "entities": [
+        "ICU MessageFormat",
+        "Pluralization",
+        "Gender-aware Translation",
+        "FormatJS"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Locale-aware Sorting: 'a, ä, b, c' — naive ASCII-Sort gibt 'a, b, c, ä' (ä = 228). Locale-aware Compare: in Deutsch ä ≈ a, in Schwedisch ä = letzter Buchstabe. JavaScript: arr.sort((a,b) => a.localeCompare(b, 'de')). Datenbank: COLLATE \"de_DE.utf8\" in Postgres. Im Code-Review: User-facing Sorts ohne Locale sind Bug bei nicht-ASCII-Inhalten.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Locale-aware Sorting",
+        "Locale",
+        "Encoding UTF-8"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.9
+    },
+    {
+      "text": "Translation Key Convention: Hierarchische Keys (settings.profile.email_label) sind besser als flach (email_label). Kontext im Key encodieren — 'date.short.may' und 'name.may' sind unterschiedlich, auch wenn beide 'May' sind. Vermeide Englisch-im-Key bei Codebase-Übergabe an non-EN-Teams — better neutral 'login.button' als 'sign_in_btn'. Translation-Tools (Crowdin/Lokalise) zeigen Keys als Kontext für Übersetzer.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Translation Key",
+        "String Externalization",
+        "Translation Management System"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.9
+    }
+  ],
+  "stats": {
+    "entities": 34,
+    "relations": 29,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}

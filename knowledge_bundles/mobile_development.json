@@ -1,0 +1,880 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Mobile Development Patterns — iOS (SwiftUI, UIKit, Combine), Android (Compose, Coroutines, Lifecycle), Battery, Permissions, Offline-First.",
+  "filters": {
+    "domains": [
+      "code_reviewer",
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "SwiftUI",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS SwiftUI",
+        "Declarative iOS UI",
+        "@State",
+        "@ObservedObject"
+      ]
+    },
+    {
+      "name": "UIKit",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS UIKit",
+        "ViewController-based UI"
+      ]
+    },
+    {
+      "name": "Jetpack Compose",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android Compose",
+        "Declarative Android UI",
+        "@Composable"
+      ]
+    },
+    {
+      "name": "Android XML Layout",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "View System Android",
+        "Imperative Android UI"
+      ]
+    },
+    {
+      "name": "Kotlin Coroutines",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Coroutines",
+        "suspend fun",
+        "CoroutineScope",
+        "Structured Concurrency"
+      ]
+    },
+    {
+      "name": "Swift Concurrency",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "async/await Swift",
+        "Structured Concurrency Swift",
+        "Actor Swift",
+        "Task Swift"
+      ]
+    },
+    {
+      "name": "Combine Framework",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS Combine",
+        "Reactive iOS",
+        "Publisher Subscriber Swift"
+      ]
+    },
+    {
+      "name": "RxJava RxSwift",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Rx Mobile",
+        "ReactiveX Mobile",
+        "Observable Mobile"
+      ]
+    },
+    {
+      "name": "Activity Lifecycle",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android Lifecycle",
+        "onCreate onStart onResume onPause onStop onDestroy"
+      ]
+    },
+    {
+      "name": "Fragment Lifecycle",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android Fragment Lifecycle",
+        "Fragment Manager"
+      ]
+    },
+    {
+      "name": "ViewModel Android",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android ViewModel",
+        "Lifecycle-aware ViewModel",
+        "Configuration Change Survivor"
+      ]
+    },
+    {
+      "name": "LiveData",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android LiveData",
+        "Lifecycle-aware Observable"
+      ]
+    },
+    {
+      "name": "StateFlow",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kotlin StateFlow",
+        "Hot Flow State",
+        "MutableStateFlow"
+      ]
+    },
+    {
+      "name": "React Native",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "RN",
+        "JavaScript Mobile",
+        "Cross-platform Mobile JS"
+      ]
+    },
+    {
+      "name": "Flutter",
+      "type": "Framework",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Dart Flutter",
+        "Skia-based Cross-Platform UI"
+      ]
+    },
+    {
+      "name": "Battery Optimization",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Mobile Battery",
+        "Doze Mode",
+        "Background Restrictions"
+      ]
+    },
+    {
+      "name": "Background Work",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WorkManager Android",
+        "Background Tasks iOS",
+        "Deferred Background Execution"
+      ]
+    },
+    {
+      "name": "WorkManager",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android WorkManager",
+        "Persistent Background Work"
+      ]
+    },
+    {
+      "name": "Push Notification",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "FCM",
+        "APNs",
+        "Firebase Cloud Messaging",
+        "Apple Push Notification"
+      ]
+    },
+    {
+      "name": "Deep Linking",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Universal Links iOS",
+        "App Links Android",
+        "URL Scheme Mobile"
+      ]
+    },
+    {
+      "name": "App Lifecycle iOS",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS App States",
+        "Active Inactive Background Suspended"
+      ]
+    },
+    {
+      "name": "MVVM Mobile",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Model-View-ViewModel",
+        "Mobile MVVM Pattern"
+      ]
+    },
+    {
+      "name": "MVI",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Model-View-Intent",
+        "Unidirectional State Mobile"
+      ]
+    },
+    {
+      "name": "Clean Architecture Mobile",
+      "type": "Architecture",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Mobile Clean Architecture",
+        "Use-Case Layer Mobile"
+      ]
+    },
+    {
+      "name": "Mobile Testing Pyramid",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Espresso",
+        "XCUITest",
+        "Mobile UI Tests"
+      ]
+    },
+    {
+      "name": "Espresso",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android Espresso",
+        "UI Testing Android"
+      ]
+    },
+    {
+      "name": "XCUITest",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS UI Test",
+        "XCTest UI"
+      ]
+    },
+    {
+      "name": "App Store Review",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS App Review",
+        "Apple Review Guidelines"
+      ]
+    },
+    {
+      "name": "Play Store Review",
+      "type": "Action",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Google Play Review",
+        "Play Console Review"
+      ]
+    },
+    {
+      "name": "ProGuard R8",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Android Code Shrinking",
+        "R8 Optimization",
+        "Obfuscation Android"
+      ]
+    },
+    {
+      "name": "App Bundle",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "AAB",
+        "Android App Bundle",
+        "Dynamic Delivery"
+      ]
+    },
+    {
+      "name": "Offline-First Mobile",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Offline Mobile",
+        "Local-First Mobile",
+        "Sync on Reconnect"
+      ]
+    },
+    {
+      "name": "Mobile Crash Reporting",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Crashlytics",
+        "Bugsnag",
+        "Sentry Mobile"
+      ]
+    },
+    {
+      "name": "Memory Management iOS",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "ARC iOS",
+        "Automatic Reference Counting",
+        "Retain Cycle"
+      ]
+    },
+    {
+      "name": "Retain Cycle",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Strong Reference Cycle",
+        "Memory Leak iOS",
+        "weak/unowned"
+      ]
+    },
+    {
+      "name": "Mobile Permission",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Runtime Permission Android",
+        "Info.plist Permission iOS",
+        "Permission Request"
+      ]
+    },
+    {
+      "name": "Biometric Auth",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Face ID",
+        "Touch ID",
+        "BiometricPrompt Android",
+        "LocalAuthentication iOS"
+      ]
+    },
+    {
+      "name": "Mobile Keychain",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "iOS Keychain",
+        "Android Keystore",
+        "Secure Mobile Storage"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "SwiftUI",
+      "predicate": "RELATED_TO",
+      "object": "Combine Framework",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "UIKit",
+      "predicate": "RELATED_TO",
+      "object": "SwiftUI",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Jetpack Compose",
+      "predicate": "USES",
+      "object": "Kotlin Coroutines",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Jetpack Compose",
+      "predicate": "RELATED_TO",
+      "object": "StateFlow",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Kotlin Coroutines",
+      "predicate": "RELATED_TO",
+      "object": "Async/Await",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Swift Concurrency",
+      "predicate": "RELATED_TO",
+      "object": "Async/Await",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Swift Concurrency",
+      "predicate": "RELATED_TO",
+      "object": "Actor Model",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Combine Framework",
+      "predicate": "RELATED_TO",
+      "object": "Reactive Programming",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "RxJava RxSwift",
+      "predicate": "RELATED_TO",
+      "object": "Reactive Programming",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ViewModel Android",
+      "predicate": "RELATED_TO",
+      "object": "Activity Lifecycle",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ViewModel Android",
+      "predicate": "RELATED_TO",
+      "object": "MVVM Mobile",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "LiveData",
+      "predicate": "RELATED_TO",
+      "object": "ViewModel Android",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "StateFlow",
+      "predicate": "RELATED_TO",
+      "object": "ViewModel Android",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "StateFlow",
+      "predicate": "EXTENDS",
+      "object": "LiveData",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Background Work",
+      "predicate": "USES",
+      "object": "WorkManager",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "WorkManager",
+      "predicate": "RELATED_TO",
+      "object": "Battery Optimization",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Push Notification",
+      "predicate": "RELATED_TO",
+      "object": "Background Work",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "MVI",
+      "predicate": "EXTENDS",
+      "object": "MVVM Mobile",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "MVVM Mobile",
+      "predicate": "RELATED_TO",
+      "object": "MVC",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Clean Architecture Mobile",
+      "predicate": "RELATED_TO",
+      "object": "Clean Architecture",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Espresso",
+      "predicate": "IMPLEMENTS",
+      "object": "End-to-End Test",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "XCUITest",
+      "predicate": "IMPLEMENTS",
+      "object": "End-to-End Test",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Mobile Testing Pyramid",
+      "predicate": "RELATED_TO",
+      "object": "Test Pyramid",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "ProGuard R8",
+      "predicate": "RELATED_TO",
+      "object": "Tree Shaking",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "App Bundle",
+      "predicate": "RELATED_TO",
+      "object": "Code Splitting",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Offline-First Mobile",
+      "predicate": "RELATED_TO",
+      "object": "Service Worker",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Offline-First Mobile",
+      "predicate": "RELATED_TO",
+      "object": "Eventual Consistency",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Mobile Crash Reporting",
+      "predicate": "RELATED_TO",
+      "object": "Postmortem",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Retain Cycle",
+      "predicate": "RELATED_TO",
+      "object": "Memory Management iOS",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Retain Cycle",
+      "predicate": "RELATED_TO",
+      "object": "Memory Leak",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Memory Management iOS",
+      "predicate": "RELATED_TO",
+      "object": "Garbage Collection",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Biometric Auth",
+      "predicate": "RELATED_TO",
+      "object": "Authentifizierung",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Mobile Keychain",
+      "predicate": "RELATED_TO",
+      "object": "Secrets Management",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Mobile Permission",
+      "predicate": "RELATED_TO",
+      "object": "Principle of Least Privilege",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Push Notification",
+      "predicate": "RELATED_TO",
+      "object": "Webhook",
+      "confidence": 0.7,
+      "trust_score": 0.7,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "Activity Lifecycle Konfigurations-Falle: onCreate wird bei jeder Konfigurations-Änderung (Rotation, Locale-Wechsel, Dark Mode) neu aufgerufen — naive State-Speicherung in Activity-Feldern geht verloren. ViewModel ist die kanonische Lösung — überlebt Configuration Changes, stirbt erst wenn Activity finally destroyed. Im Code-Review: Lifecycle-Owner-Awareness ist Pflicht, sonst Memory Leaks und State Loss.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Activity Lifecycle",
+        "ViewModel Android",
+        "StateFlow",
+        "LiveData"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Retain Cycle in iOS — der häufigste Memory Leak: Closures capturen self stark per Default. In SwiftUI/Combine/UIKit-Closures: [weak self] oder [unowned self] zwingend bei Reference-Types. Faustregel: weak in Closures die self überleben können (Network Callbacks), unowned wenn definitiv nicht. Memory Graph Debugger zeigt Cycles, Instruments → Leaks ist im Code-Review-Workflow Pflicht.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Retain Cycle",
+        "Memory Management iOS",
+        "SwiftUI",
+        "Combine Framework",
+        "Memory Leak"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.99
+    },
+    {
+      "text": "Offline-First Mobile Architektur: Network ist nicht-deterministisch verfügbar — App MUSS lokal arbeiten und im Hintergrund syncen. Patterns: (1) Local DB als Source of Truth (Room, SQLite, Realm). (2) Optimistic Updates auf UI, Background-Sync queued. (3) CRDT oder Last-Write-Wins für Conflict-Resolution. (4) Network-State-Aware UI (offline Banner). Online-only Apps sind in 2026 unzeitgemäß.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Offline-First Mobile",
+        "Eventual Consistency",
+        "Background Work",
+        "WorkManager"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Battery Optimization Schichten Android: Doze Mode (Idle Device) → kein Network/AlarmManager. App Standby Buckets (Active/Working/Frequent/Rare/Restricted) → reduzierte Background-Quotas. Battery Saver → strict Background-Restrictions. Defense: WorkManager mit constraints (UNMETERED, CHARGING), Foreground Service NUR für User-sichtbare Tasks. Background Service = deprecated.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Battery Optimization",
+        "Background Work",
+        "WorkManager",
+        "Push Notification"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Kotlin Coroutines Structured Concurrency: viewModelScope und lifecycleScope canceln automatisch wenn Lifecycle-Owner stirbt — verhindert Coroutines die nach Activity-Destroy weiterleben (klassischer Memory Leak). GlobalScope ist Anti-Pattern in App-Code (außer für Application-lifetime Tasks). Im Code-Review: 'launch {' ohne explicit Scope ist verdächtig.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Kotlin Coroutines",
+        "ViewModel Android",
+        "Activity Lifecycle",
+        "Memory Leak"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Mobile Permission Best Practices: (1) Just-in-Time Permission Request — fragen wenn Feature genutzt wird, nicht beim App-Start. (2) Permission Rationale UI vor System-Dialog. (3) Graceful Degradation wenn Permission denied (Feature mit eingeschränkter Funktionalität). (4) Runtime Permission Android (>=M), nicht install-time. iOS: Info.plist-Strings (NSCameraUsageDescription) müssen User-Benefit erklären — App Store Review reject sonst.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Mobile Permission",
+        "Principle of Least Privilege",
+        "App Store Review",
+        "Play Store Review"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Mobile Testing Pyramide-Anpassung: UI-Tests (Espresso/XCUITest) sind 10-100x langsamer als Backend E2E — Pyramide noch wichtiger. Schema: 70% Unit (ViewModel-Logik, Use-Cases pure), 20% Integration (Repository + DB), 10% UI-Test für Critical Paths. Snapshot Tests (Paparazzi Android, SwiftSnapshotTesting iOS) für UI-Regression sind schneller als XCUITest.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Mobile Testing Pyramid",
+        "Test Pyramid",
+        "Espresso",
+        "XCUITest"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.9
+    },
+    {
+      "text": "Push Notification Architektur: APNs (Apple) und FCM (Firebase Cloud Messaging) sind End-of-Pipeline. Architektur: Server → FCM/APNs Token Registry → Push Service (FCM HTTP v1 API / APNs HTTP/2). Rate-Limits: APNs ~9000 pps, FCM 1000 batch. Best Practice: Push für Wake-up + Data-Fetch via API, NICHT Daten in Push-Payload (Limit 4KB, plus Privacy/Verschlüsselung).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Push Notification",
+        "Webhook",
+        "HTTP/2",
+        "API Gateway"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    }
+  ],
+  "stats": {
+    "entities": 38,
+    "relations": 35,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}

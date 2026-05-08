@@ -1,0 +1,1013 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "Functional Languages — Haskell, Elixir/BEAM, Clojure, persistent data structures, STM, monads, type classes, supervision trees.",
+  "filters": {
+    "domains": [
+      "code_reviewer",
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "Haskell",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "GHC Haskell",
+        "Pure Functional Language",
+        "Lazy Evaluation Language"
+      ]
+    },
+    {
+      "name": "Elixir",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Elixir/BEAM",
+        "Erlang VM Language",
+        "Phoenix Framework Language"
+      ]
+    },
+    {
+      "name": "Erlang",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Erlang/OTP",
+        "BEAM VM",
+        "Telecom Functional Language"
+      ]
+    },
+    {
+      "name": "Clojure",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Clojure JVM",
+        "Lisp on JVM",
+        "Persistent Data Structures Language"
+      ]
+    },
+    {
+      "name": "F#",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "F Sharp",
+        ".NET Functional Language"
+      ]
+    },
+    {
+      "name": "OCaml",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "OCaml",
+        "ML Family",
+        "Pragmatic FP Language"
+      ]
+    },
+    {
+      "name": "Scala",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Scala 3",
+        "JVM Hybrid OO+FP"
+      ]
+    },
+    {
+      "name": "Lazy Evaluation",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lazy Evaluation",
+        "Call by Need",
+        "Bedarfsweise Auswertung"
+      ]
+    },
+    {
+      "name": "Strict Evaluation",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Eager Evaluation",
+        "Strikte Auswertung",
+        "Call by Value"
+      ]
+    },
+    {
+      "name": "Type Class",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Haskell Type Class",
+        "Typeclass",
+        "Ad-hoc Polymorphism"
+      ]
+    },
+    {
+      "name": "Algebraic Data Type",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "ADT",
+        "Sum Type Product Type",
+        "Tagged Union"
+      ]
+    },
+    {
+      "name": "Pattern Matching FP",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Functional Pattern Matching",
+        "Destructuring Pattern Match"
+      ]
+    },
+    {
+      "name": "Persistent Data Structure",
+      "type": "DataStructure",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Persistent Vector",
+        "HAMT",
+        "Hash Array Mapped Trie",
+        "Immutable Collection"
+      ]
+    },
+    {
+      "name": "HAMT",
+      "type": "DataStructure",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Hash Array Mapped Trie",
+        "Phil Bagwell HAMT"
+      ]
+    },
+    {
+      "name": "Software Transactional Memory",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "STM",
+        "Clojure refs",
+        "Composable Concurrency"
+      ]
+    },
+    {
+      "name": "Immutable Map",
+      "type": "DataStructure",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Persistent Map",
+        "Immutable HashMap",
+        "Clojure Map"
+      ]
+    },
+    {
+      "name": "Immutable Vector",
+      "type": "DataStructure",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Persistent Vector",
+        "Clojure Vector",
+        "Scala Vector"
+      ]
+    },
+    {
+      "name": "BEAM VM",
+      "type": "Architecture",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Erlang VM",
+        "BEAM Bytecode",
+        "Process-based Concurrency"
+      ]
+    },
+    {
+      "name": "Erlang Actor",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Erlang Process",
+        "BEAM Process",
+        "Lightweight Process"
+      ]
+    },
+    {
+      "name": "Let It Crash",
+      "type": "Principle",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Let It Crash Philosophy",
+        "Erlang Supervision Tree",
+        "Fail-Fast Erlang"
+      ]
+    },
+    {
+      "name": "Supervision Tree",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "OTP Supervision Tree",
+        "Erlang Supervisor",
+        "Restart Strategy"
+      ]
+    },
+    {
+      "name": "GenServer",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Elixir GenServer",
+        "OTP GenServer",
+        "Generic Server Behaviour"
+      ]
+    },
+    {
+      "name": "OTP",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Open Telecom Platform",
+        "Erlang OTP",
+        "OTP Behaviours"
+      ]
+    },
+    {
+      "name": "Phoenix Framework",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Elixir Phoenix",
+        "LiveView Phoenix"
+      ]
+    },
+    {
+      "name": "Phoenix LiveView",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LiveView",
+        "Server-rendered Reactive UI"
+      ]
+    },
+    {
+      "name": "Functor FP",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Haskell Functor",
+        "fmap Typeclass"
+      ]
+    },
+    {
+      "name": "Monad FP",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Haskell Monad",
+        ">>= bind",
+        "Maybe Monad",
+        "IO Monad"
+      ]
+    },
+    {
+      "name": "Applicative",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Haskell Applicative",
+        "<*> Apply",
+        "Pure Apply"
+      ]
+    },
+    {
+      "name": "Monoid",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Haskell Monoid",
+        "Semigroup with Identity",
+        "<> mappend"
+      ]
+    },
+    {
+      "name": "Currying",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Curry Function",
+        "Haskell Currying",
+        "Function Argument Sequencing"
+      ]
+    },
+    {
+      "name": "Function Composition FP",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "f ∘ g",
+        "Haskell .",
+        "Pipe Composition |>"
+      ]
+    },
+    {
+      "name": "Tail Call FP",
+      "type": "Algorithm",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "FP Tail Call",
+        "Tail Recursion FP"
+      ]
+    },
+    {
+      "name": "Property-Based Testing FP",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "QuickCheck",
+        "Hedgehog",
+        "PropEr Erlang"
+      ]
+    },
+    {
+      "name": "REPL",
+      "type": "Tool",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Read-Eval-Print Loop",
+        "Interactive Shell",
+        "GHCi",
+        "iex Elixir"
+      ]
+    },
+    {
+      "name": "Lambda Expression",
+      "type": "Tech_Concept",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Anonymous Function",
+        "λ Expression",
+        "fn x -> Lambda"
+      ]
+    },
+    {
+      "name": "Lazy Sequence",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lazy Sequence Clojure",
+        "Infinite Sequence",
+        "Stream FP"
+      ]
+    },
+    {
+      "name": "Macro Lisp",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Lisp Macro",
+        "Clojure defmacro",
+        "Hygenic Macro Lisp"
+      ]
+    },
+    {
+      "name": "Recursion Scheme",
+      "type": "Pattern",
+      "domain": "code_reviewer",
+      "source": "anthropic_training",
+      "aliases": [
+        "Catamorphism",
+        "Anamorphism",
+        "Hylomorphism",
+        "Recursion Schemes Library"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "Lazy Evaluation",
+      "predicate": "IS_A",
+      "object": "Principle",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Strict Evaluation",
+      "predicate": "IS_A",
+      "object": "Principle",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Lazy Evaluation",
+      "predicate": "RELATED_TO",
+      "object": "Strict Evaluation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Haskell",
+      "predicate": "USES",
+      "object": "Lazy Evaluation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Haskell",
+      "predicate": "USES",
+      "object": "Type Class",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Haskell",
+      "predicate": "USES",
+      "object": "Monad FP",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Haskell",
+      "predicate": "USES",
+      "object": "Algebraic Data Type",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Type Class",
+      "predicate": "RELATED_TO",
+      "object": "Trait System",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Algebraic Data Type",
+      "predicate": "RELATED_TO",
+      "object": "Union Type",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Algebraic Data Type",
+      "predicate": "RELATED_TO",
+      "object": "Sealed Class",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Pattern Matching FP",
+      "predicate": "RELATED_TO",
+      "object": "Structural Pattern Matching",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Pattern Matching FP",
+      "predicate": "RELATED_TO",
+      "object": "Algebraic Data Type",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Persistent Data Structure",
+      "predicate": "USES",
+      "object": "HAMT",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Persistent Data Structure",
+      "predicate": "RELATED_TO",
+      "object": "Immutability",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Immutable Map",
+      "predicate": "IS_A",
+      "object": "Persistent Data Structure",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Immutable Vector",
+      "predicate": "IS_A",
+      "object": "Persistent Data Structure",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Software Transactional Memory",
+      "predicate": "RELATED_TO",
+      "object": "Optimistic Locking",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Software Transactional Memory",
+      "predicate": "RELATED_TO",
+      "object": "Compare and Swap",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Clojure",
+      "predicate": "USES",
+      "object": "Persistent Data Structure",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Clojure",
+      "predicate": "USES",
+      "object": "Software Transactional Memory",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Clojure",
+      "predicate": "USES",
+      "object": "Macro Lisp",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Erlang",
+      "predicate": "USES",
+      "object": "BEAM VM",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Elixir",
+      "predicate": "USES",
+      "object": "BEAM VM",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Erlang Actor",
+      "predicate": "IS_A",
+      "object": "Actor Model",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Erlang Actor",
+      "predicate": "USES",
+      "object": "BEAM VM",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Let It Crash",
+      "predicate": "RELATED_TO",
+      "object": "Supervision Tree",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Supervision Tree",
+      "predicate": "RELATED_TO",
+      "object": "OTP",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Supervision Tree",
+      "predicate": "RELATED_TO",
+      "object": "Circuit Breaker",
+      "confidence": 0.7,
+      "trust_score": 0.7,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "GenServer",
+      "predicate": "USES",
+      "object": "Erlang Actor",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OTP",
+      "predicate": "RELATED_TO",
+      "object": "Erlang",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Phoenix Framework",
+      "predicate": "USES",
+      "object": "Elixir",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Phoenix LiveView",
+      "predicate": "RELATED_TO",
+      "object": "Phoenix Framework",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Phoenix LiveView",
+      "predicate": "RELATED_TO",
+      "object": "Reactive Programming",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Functor FP",
+      "predicate": "IS_A",
+      "object": "Functor",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Monad FP",
+      "predicate": "IS_A",
+      "object": "Monad",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Applicative",
+      "predicate": "RELATED_TO",
+      "object": "Functor FP",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Monad FP",
+      "predicate": "RELATED_TO",
+      "object": "Applicative",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Monoid",
+      "predicate": "RELATED_TO",
+      "object": "Functional Composition",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Currying",
+      "predicate": "RELATED_TO",
+      "object": "Partial Application",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Function Composition FP",
+      "predicate": "IS_A",
+      "object": "Functional Composition",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Tail Call FP",
+      "predicate": "IS_A",
+      "object": "Tail Call Optimization",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Property-Based Testing FP",
+      "predicate": "IS_A",
+      "object": "Property-based Testing",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Lambda Expression",
+      "predicate": "RELATED_TO",
+      "object": "Higher-Order Function",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Lazy Sequence",
+      "predicate": "RELATED_TO",
+      "object": "Lazy Evaluation",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Lazy Sequence",
+      "predicate": "RELATED_TO",
+      "object": "Generator",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Macro Lisp",
+      "predicate": "RELATED_TO",
+      "object": "Macro System",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    },
+    {
+      "subject": "Recursion Scheme",
+      "predicate": "RELATED_TO",
+      "object": "Functional Composition",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "code_reviewer",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "Persistent Data Structures via HAMT: Hash Array Mapped Trie (Phil Bagwell, 2001) erlaubt O(log32 n) ≈ O(1) für Lookup/Insert/Delete bei kompletter Immutability — neue Versionen teilen Struktur mit alten (Structural Sharing). Memory-Overhead vs mutable Map: ~30%. Genutzt von Clojure (PersistentHashMap), Scala (Vector, HashMap), Immer.js (JavaScript). Im Code-Review: 'kopiere Map und ändere' ist O(n) — HAMT macht es O(log n).",
+      "insight_type": "synthesis",
+      "entities": [
+        "Persistent Data Structure",
+        "HAMT",
+        "Immutability",
+        "Immutable Map",
+        "Immutable Vector"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Erlang's 'Let It Crash' als Resilience-Philosophie: Statt defensiver Programmierung mit 1000 try-catch-Blöcken: Process crashed bei Error, Supervisor restartet ihn nach Restart-Strategy (one_for_one, one_for_all, rest_for_one). Vorteile: Bug-Patterns klarer, weil Code nur den Happy-Path behandelt. Hot-Code-Reload möglich, weil Processes isoliert sind. WhatsApp und Discord nutzen das für 99.9999% Uptime mit kleinen Teams.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Let It Crash",
+        "Supervision Tree",
+        "Erlang Actor",
+        "OTP",
+        "Defensive Programming"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.99
+    },
+    {
+      "text": "Software Transactional Memory (STM) Composability: Klassische Mutex-basierte Concurrency komponiert nicht — atomic { transfer(a,b) } und atomic { transfer(b,c) } zusammenführen erfordert Lock-Reordering um Deadlocks zu vermeiden. STM (Clojure refs, Haskell STM) komponiert: atomic { transfer(a,b); transfer(b,c) } ist atomar, retry bei Conflict, ohne dass Caller Lock-Order kennen muss. Trade-off: Optimistic Concurrency, kann unter Contention degradieren.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Software Transactional Memory",
+        "Mutex",
+        "Composition over Inheritance",
+        "Optimistic Locking",
+        "Compare and Swap"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Lazy Evaluation Trade-off in Haskell: Erlaubt Programme wie 'take 10 (filter prime [1..])' — unendliche Liste, die nur soweit ausgewertet wird wie nötig. Falle: Space Leaks — Thunk-Akkumulation kann Memory exhausten. Workaround: bang patterns (!x), seq, deepseq, strictness annotations. Production Haskell-Code mischt strikt + lazy bewusst — 'pure lazy' ist selten praktisch.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Lazy Evaluation",
+        "Strict Evaluation",
+        "Haskell",
+        "Lazy Sequence",
+        "Memory Leak"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.9
+    },
+    {
+      "text": "Algebraic Data Types als Domain-Modeling-Werkzeug: Sum Type (data Shape = Circle Radius | Rectangle Width Height) modelliert 'eine von mehreren Möglichkeiten'. Product Type (data Point = Point X Y) modelliert 'mehrere Werte zusammen'. Mit Pattern Matching ist exhaustive case analysis Compile-Time-geprüft (warning bei missing case). Ersetzt OO-Pattern wie Visitor + Strategy mit weniger Code.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Algebraic Data Type",
+        "Pattern Matching FP",
+        "Sealed Class",
+        "Union Type",
+        "Visitor Pattern"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "Monads als Effect-System: IO Monad in Haskell isoliert Side-Effects vom pure Code — main :: IO () ist die einzige Stelle wo I/O passiert. Maybe Monad / Either Monad encoded Failure ohne Exceptions. State Monad encoded Mutable State pure. Effect Systems (Polysemy, fused-effects) bringen das in feinere Granularität. Ergebnis: Function-Signaturen zeigen Effects explizit — function has IO? function can fail? Ein Refactoring-Helper ohnegleichen.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Monad FP",
+        "Functor FP",
+        "Applicative",
+        "Haskell",
+        "Pure Function"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.95
+    },
+    {
+      "text": "BEAM VM für Massive Concurrency: Erlang/Elixir-Processes sind ~2KB Stack-Allokation, BEAM scheduled millions auf wenigen OS-Threads. Process-Isolation = kein Shared Memory, nur Message Passing. Per-Process GC = keine Stop-the-World-Pauses. WhatsApp (2014): 1 Server, 2 Millionen TCP-Connections. JVM-/Go-Goroutine-Gleichzeitigkeit kommt an BEAM nicht heran für I/O-bound Workloads mit vielen kleinen Tasks.",
+      "insight_type": "synthesis",
+      "entities": [
+        "BEAM VM",
+        "Erlang",
+        "Elixir",
+        "Erlang Actor",
+        "Goroutine",
+        "Actor Model"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Recursion Schemes als High-Level Recursion: catamorphism (fold) reduziert Struktur zu Wert. anamorphism (unfold) baut Struktur aus Seed. hylomorphism (cata . ana) komponiert beide. Die Schemes abstrahieren Recursion-Pattern weg — Domain-Code beschreibt nur die Step-Function. Library 'recursion-schemes' (Haskell) oder als Pattern in Scala. Reduziert Bug-Risiko vs. handgeschriebene Rekursion.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Recursion Scheme",
+        "Function Composition FP",
+        "Tail Call FP",
+        "Higher-Order Function"
+      ],
+      "domain": "code_reviewer",
+      "confidence": 0.85
+    }
+  ],
+  "stats": {
+    "entities": 38,
+    "relations": 47,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}

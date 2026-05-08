@@ -1,0 +1,883 @@
+{
+  "@context": "https://moe-sovereign.org/knowledge/v1",
+  "format_version": "1.0",
+  "exported_at": "2026-05-09T12:00:00+00:00",
+  "description": "CRDT & Realtime Collaboration — CRDTs (G-Counter, OR-Set, RGA), Operational Transform, Yjs, Automerge, Awareness, Local-First Software.",
+  "filters": {
+    "domains": [
+      "technical_support"
+    ],
+    "min_trust": 0.0
+  },
+  "entities": [
+    {
+      "name": "CRDT",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Conflict-free Replicated Data Type",
+        "Konfliktfreier replizierter Datentyp"
+      ]
+    },
+    {
+      "name": "State-based CRDT",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "CvRDT",
+        "Convergent Replicated Data Type",
+        "State Sync CRDT"
+      ]
+    },
+    {
+      "name": "Operation-based CRDT",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "CmRDT",
+        "Commutative Replicated Data Type",
+        "Op Sync CRDT"
+      ]
+    },
+    {
+      "name": "G-Counter",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Grow-only Counter",
+        "CRDT Counter Increment-only"
+      ]
+    },
+    {
+      "name": "PN-Counter",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Positive-Negative Counter",
+        "CRDT Counter Up/Down"
+      ]
+    },
+    {
+      "name": "LWW-Element-Set",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Last-Write-Wins Set",
+        "Timestamp-based Set CRDT"
+      ]
+    },
+    {
+      "name": "OR-Set",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Observed-Remove Set",
+        "Add-Wins Set CRDT"
+      ]
+    },
+    {
+      "name": "RGA",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Replicated Growable Array",
+        "Sequence CRDT"
+      ]
+    },
+    {
+      "name": "Treedoc",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Tree-based Sequence CRDT",
+        "Hierarchical Position Identifiers"
+      ]
+    },
+    {
+      "name": "Logoot",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Logoot Sequence CRDT",
+        "Position Identifier Algorithm"
+      ]
+    },
+    {
+      "name": "Operational Transform",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "OT",
+        "Google Wave OT",
+        "OT Algorithm"
+      ]
+    },
+    {
+      "name": "OT Transform Function",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "OT Transform",
+        "Inclusion Transform",
+        "Exclusion Transform"
+      ]
+    },
+    {
+      "name": "Yjs",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Yjs CRDT Library",
+        "Y.Doc",
+        "Y.Map",
+        "Y.Array",
+        "Y.Text"
+      ]
+    },
+    {
+      "name": "Automerge",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Automerge CRDT",
+        "JSON-like CRDT",
+        "Local-first Automerge"
+      ]
+    },
+    {
+      "name": "ShareDB",
+      "type": "Framework",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "ShareDB OT",
+        "Realtime ShareDB",
+        "Operational Transform Library"
+      ]
+    },
+    {
+      "name": "Liveblocks",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Liveblocks CRDT Service",
+        "Realtime Collaboration SaaS"
+      ]
+    },
+    {
+      "name": "Local-First Software",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Local-First",
+        "Ink & Switch Local-First",
+        "Offline-First Web"
+      ]
+    },
+    {
+      "name": "Multiplayer Cursor",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Live Cursors",
+        "Presence Cursors",
+        "Collaborative Cursors"
+      ]
+    },
+    {
+      "name": "Presence",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Online Presence",
+        "Awareness Protocol",
+        "Collaborator Presence"
+      ]
+    },
+    {
+      "name": "Awareness Protocol",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Yjs Awareness",
+        "Liveblocks Presence",
+        "Ephemeral State"
+      ]
+    },
+    {
+      "name": "Conflict Resolution",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Konfliktauflösung",
+        "Merge Strategy",
+        "Conflict Resolution Strategy"
+      ]
+    },
+    {
+      "name": "Last-Write-Wins",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "LWW",
+        "Timestamp-based Merge",
+        "Latest Wins"
+      ]
+    },
+    {
+      "name": "Multi-Value Register",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "MV-Register",
+        "Concurrent Value Set",
+        "Vector-clock Register"
+      ]
+    },
+    {
+      "name": "Causal Order",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Kausale Ordnung",
+        "Happens-Before Relation",
+        "Lamport Causality"
+      ]
+    },
+    {
+      "name": "Hybrid Logical Clock",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "HLC",
+        "Hybrid Clock",
+        "Wall + Logical Clock"
+      ]
+    },
+    {
+      "name": "Operation Log",
+      "type": "Pattern",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Op-Log",
+        "Operation Journal",
+        "CRDT History"
+      ]
+    },
+    {
+      "name": "Garbage Collection CRDT",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "CRDT GC",
+        "Tombstone Cleanup",
+        "Causal Stability"
+      ]
+    },
+    {
+      "name": "Tombstone CRDT",
+      "type": "Tech_Concept",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Logical Delete CRDT",
+        "Removed-Set Marker"
+      ]
+    },
+    {
+      "name": "Delta CRDT",
+      "type": "Algorithm",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Delta-State CRDT",
+        "Δ-CRDT",
+        "Incremental State Sync"
+      ]
+    },
+    {
+      "name": "Realtime Sync Protocol",
+      "type": "Protocol",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "WebSocket Sync",
+        "Sync Protocol",
+        "Replication Protocol"
+      ]
+    },
+    {
+      "name": "Y-WebSocket",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Yjs WebSocket Provider",
+        "y-websocket",
+        "Yjs Sync Server"
+      ]
+    },
+    {
+      "name": "Y-IndexedDB",
+      "type": "Tool",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "Yjs IndexedDB Provider",
+        "y-indexeddb",
+        "Yjs Persistence Browser"
+      ]
+    },
+    {
+      "name": "Eventually Consistent UI",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "EC UI",
+        "Optimistic UI Update",
+        "Convergent UI"
+      ]
+    },
+    {
+      "name": "Strong Eventual Consistency",
+      "type": "Principle",
+      "domain": "technical_support",
+      "source": "anthropic_training",
+      "aliases": [
+        "SEC",
+        "CRDT SEC Property",
+        "Replicas Converge"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "subject": "State-based CRDT",
+      "predicate": "IS_A",
+      "object": "CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Operation-based CRDT",
+      "predicate": "IS_A",
+      "object": "CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "G-Counter",
+      "predicate": "IS_A",
+      "object": "State-based CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "PN-Counter",
+      "predicate": "EXTENDS",
+      "object": "G-Counter",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "LWW-Element-Set",
+      "predicate": "IS_A",
+      "object": "State-based CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OR-Set",
+      "predicate": "IS_A",
+      "object": "State-based CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "RGA",
+      "predicate": "IS_A",
+      "object": "Operation-based CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Treedoc",
+      "predicate": "IS_A",
+      "object": "Operation-based CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Logoot",
+      "predicate": "IS_A",
+      "object": "Operation-based CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Yjs",
+      "predicate": "USES",
+      "object": "RGA",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Yjs",
+      "predicate": "USES",
+      "object": "CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Automerge",
+      "predicate": "USES",
+      "object": "CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "ShareDB",
+      "predicate": "USES",
+      "object": "Operational Transform",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "OT Transform Function",
+      "predicate": "RELATED_TO",
+      "object": "Operational Transform",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Operational Transform",
+      "predicate": "RELATED_TO",
+      "object": "CRDT",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Local-First Software",
+      "predicate": "RELATED_TO",
+      "object": "Offline-First Mobile",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Local-First Software",
+      "predicate": "USES",
+      "object": "CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Multiplayer Cursor",
+      "predicate": "USES",
+      "object": "Presence",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Presence",
+      "predicate": "USES",
+      "object": "Awareness Protocol",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Awareness Protocol",
+      "predicate": "RELATED_TO",
+      "object": "Yjs",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Conflict Resolution",
+      "predicate": "USES",
+      "object": "Last-Write-Wins",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Last-Write-Wins",
+      "predicate": "RELATED_TO",
+      "object": "LWW-Element-Set",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Multi-Value Register",
+      "predicate": "RELATED_TO",
+      "object": "Last-Write-Wins",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Causal Order",
+      "predicate": "RELATED_TO",
+      "object": "Vector Clock",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hybrid Logical Clock",
+      "predicate": "RELATED_TO",
+      "object": "Vector Clock",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Hybrid Logical Clock",
+      "predicate": "RELATED_TO",
+      "object": "Causal Order",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Operation Log",
+      "predicate": "RELATED_TO",
+      "object": "Operation-based CRDT",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Garbage Collection CRDT",
+      "predicate": "RELATED_TO",
+      "object": "Tombstone CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Garbage Collection CRDT",
+      "predicate": "USES",
+      "object": "Causal Order",
+      "confidence": 0.85,
+      "trust_score": 0.85,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Delta CRDT",
+      "predicate": "EXTENDS",
+      "object": "State-based CRDT",
+      "confidence": 0.9,
+      "trust_score": 0.9,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Y-WebSocket",
+      "predicate": "RELATED_TO",
+      "object": "Yjs",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Y-IndexedDB",
+      "predicate": "RELATED_TO",
+      "object": "Yjs",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Y-WebSocket",
+      "predicate": "USES",
+      "object": "WebSocket",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Eventually Consistent UI",
+      "predicate": "RELATED_TO",
+      "object": "Eventual Consistency",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Strong Eventual Consistency",
+      "predicate": "EXTENDS",
+      "object": "Eventual Consistency",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Strong Eventual Consistency",
+      "predicate": "RELATED_TO",
+      "object": "CRDT",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "CRDT",
+      "predicate": "IMPLEMENTS",
+      "object": "Strong Eventual Consistency",
+      "confidence": 1.0,
+      "trust_score": 1.0,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Realtime Sync Protocol",
+      "predicate": "USES",
+      "object": "WebSocket",
+      "confidence": 0.95,
+      "trust_score": 0.95,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    },
+    {
+      "subject": "Realtime Sync Protocol",
+      "predicate": "RELATED_TO",
+      "object": "WebRTC",
+      "confidence": 0.7,
+      "trust_score": 0.7,
+      "source": "anthropic_training",
+      "domain": "technical_support",
+      "verified": true
+    }
+  ],
+  "syntheses": [
+    {
+      "text": "CRDT vs Operational Transform — die Architektur-Wahl: OT (Google Docs original, Wave) braucht zentralen Server zur Operations-Transformation und ist komplex zu implementieren (Concurrency-Bugs in Google Wave waren legendär). CRDT (Figma, Linear, Notion) erlauben Peer-to-Peer Sync ohne zentralen Server, mathematisch beweisbare Konvergenz. CRDT ist 2026 Standard für neue Realtime-Apps; OT nur noch für Backwards-Compatibility.",
+      "insight_type": "synthesis",
+      "entities": [
+        "CRDT",
+        "Operational Transform",
+        "Yjs",
+        "ShareDB",
+        "Strong Eventual Consistency"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Strong Eventual Consistency (SEC): CRDTs garantieren — wenn alle Replicas die gleichen Operations gesehen haben (egal in welcher Reihenfolge), erreichen alle den gleichen Endzustand. Stärker als Eventual Consistency, weil keine User-visible Reconciliation nötig. Mathematisch: Operations sind kommutativ, assoziativ, idempotent (CALM-Theorem von Ameloot). Praktisch: Multi-Device-Sync ohne zentralen Server möglich.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Strong Eventual Consistency",
+        "CRDT",
+        "Eventual Consistency",
+        "Idempotency"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.99
+    },
+    {
+      "text": "OR-Set vs LWW-Set für Collaborative Editing: LWW-Element-Set verliert konkurrente Add-Operations bei gleichem Element + Timestamp-Tie. OR-Set (Observed-Remove) gibt jedem Add eine eindeutige Tag-ID, Remove kann nur vorher beobachtete Tags löschen. OR-Set ist Standard für 'Add-Wins'-Semantik (Tag-Listen, User-Friend-Lists). LWW-Set für 'Last-Write-Wins'-Semantik (Status-Felder).",
+      "insight_type": "synthesis",
+      "entities": [
+        "OR-Set",
+        "LWW-Element-Set",
+        "CRDT",
+        "Conflict Resolution",
+        "Last-Write-Wins"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Awareness Protocol für Multiplayer Cursors: Awareness-State ist EPHEMERAL (Cursor-Position, Selection, Online-Status) — geht nicht in CRDT-Document, sondern wird per Awareness-Channel synchronisiert. Yjs-Awareness nutzt y-websocket-protocol mit kurzem TTL. Ephemeral-Daten brauchen kein Konflikt-Handling, aber Heartbeat (alle 30s) damit verlassene Replicas aus Presence-Liste verschwinden.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Awareness Protocol",
+        "Multiplayer Cursor",
+        "Presence",
+        "Yjs",
+        "Heartbeat Pattern"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Local-First Software (Ink & Switch): 7 Eigenschaften — (1) Schnell auch offline, (2) Daten bleiben Eigentum des Users, (3) Multi-Device-Sync, (4) Multi-User-Collaboration, (5) Long-term Backwards Compat, (6) Privacy by Default, (7) End-to-End Verschlüsselung möglich. CRDTs sind die technische Grundlage. Anti-Pattern: SaaS-only Apps wo User Daten verlieren wenn Service down.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Local-First Software",
+        "CRDT",
+        "Offline-First Mobile",
+        "Yjs",
+        "Automerge"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Hybrid Logical Clock für Cross-Device Causality: Wall-Clock allein versagt bei ungenauen Uhren (Mobile-Devices driften), pure Logical-Clock (Lamport) ist nicht human-readable. HLC kombiniert: physische Zeit als Hauptkomponente + logischer Counter für Tie-Breaking. Eigenschaft: monoton, kausal-konsistent, ungefähr Wall-Clock. Verwendet von CockroachDB, MongoDB. Geeignet für CRDTs mit Hybrid-Synchronization.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Hybrid Logical Clock",
+        "Vector Clock",
+        "Causal Order",
+        "CRDT"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.9
+    },
+    {
+      "text": "CRDT Garbage Collection — die unterschätzte Herausforderung: OR-Sets, Sequence-CRDTs (RGA, Yjs Y.Text) sammeln Tombstones an, weil sie nicht wissen können wann alle Replicas eine Delete-Operation gesehen haben. Lösung: Causal Stability — wenn alle bekannten Replicas Operation X gesehen haben, kann Tombstone gelöscht werden. Yjs nutzt Snapshots + GC, Automerge hat experimental Compaction. Ohne GC: Document wächst unbegrenzt.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Garbage Collection CRDT",
+        "Tombstone CRDT",
+        "Causal Order",
+        "CRDT",
+        "RGA"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    },
+    {
+      "text": "Yjs als pragmatische CRDT-Wahl: Yjs ist 2026 die meistverbreitete CRDT-Library — kleine Bundles (16KB gzipped Y.Doc), Provider-Architektur (WebSocket, IndexedDB, WebRTC, Hocuspocus), Awareness-Protocol eingebaut. Y.Map, Y.Array, Y.Text, Y.XmlElement decken 95% aller Use-Cases. Für komplexe JSON-Schemas: Automerge ist expressiver, aber größer (>50KB). Linear, Modyfi, JupyterLab nutzen Yjs.",
+      "insight_type": "synthesis",
+      "entities": [
+        "Yjs",
+        "Automerge",
+        "Y-WebSocket",
+        "Y-IndexedDB",
+        "CRDT",
+        "Awareness Protocol"
+      ],
+      "domain": "technical_support",
+      "confidence": 0.95
+    }
+  ],
+  "stats": {
+    "entities": 34,
+    "relations": 39,
+    "syntheses": 8,
+    "scrubbed": 0
+  }
+}
