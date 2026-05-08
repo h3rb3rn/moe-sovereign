@@ -11,7 +11,7 @@ psycopg[binary,pool]>=3.2.0
 fastapi>=0.115.0
 uvicorn[standard]
 pydantic>=2.0.0
-python-multipart>=0.0.26
+python-multipart>=0.0.27
 python-dotenv
 
 # --- Datenbanken & Mathe ---
