@@ -45,6 +45,8 @@ os.environ.setdefault("ENV_FILE", "/dev/null")
 os.environ.setdefault("JUDGE_ENDPOINT", "")
 os.environ.setdefault("PLANNER_ENDPOINT", "")
 os.environ.setdefault("GRAPH_INGEST_ENDPOINT", "")
+# Redirect mcp_server's file-generation dir away from /app/generated (Docker-only path)
+os.environ.setdefault("MOE_GENERATED_DIR", "/tmp/moe-test-generated")
 
 # ── 2. Stub all external modules not installed in the test environment ────────
 
@@ -87,11 +89,29 @@ _STUBS = [
     "pint",
     # graph_rag/manager.py deps
     "neo4j",
+    # starlette (FastAPI dependency) — used directly in main.py for middleware
+    "starlette",
+    "starlette.middleware",
+    "starlette.responses",
+    "starlette.requests",
+    "starlette.types",
 ]
 
 for _mod in _STUBS:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+
+# starlette.middleware.base needs BaseHTTPMiddleware as a real Python class so
+# that `class Foo(_BaseHTTPMiddleware)` works without metaclass conflicts.
+class _FakeBaseHTTPMiddleware:
+    def __init__(self, app, *args, **kwargs):
+        self.app = app
+    async def dispatch(self, request, call_next):
+        return await call_next(request)
+
+_starlette_mw_base = MagicMock()
+_starlette_mw_base.BaseHTTPMiddleware = _FakeBaseHTTPMiddleware
+sys.modules["starlette.middleware.base"] = _starlette_mw_base
 
 # Make FastAPI constructor return a sensible mock.
 sys.modules["fastapi"].FastAPI = MagicMock(return_value=MagicMock())

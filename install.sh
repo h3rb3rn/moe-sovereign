@@ -390,6 +390,15 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       "${_upd_rt[@]}" "${_upd_profiles[@]}" build ${_upd_q}
       "${_upd_rt[@]}" "${_upd_profiles[@]}" up -d
     fi
+    # Start enterprise data stack if it was enabled during initial install
+    _upd_eds="$(grep -E '^INSTALL_ENTERPRISE_DATA_STACK=' "${MOE_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    if [[ "${_upd_eds:-false}" == "true" ]]; then
+      if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
+        sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.enterprise.yml up -d"
+      else
+        "${_upd_rt[@]}" -f docker-compose.enterprise.yml up -d
+      fi
+    fi
     echo "  Containers started ✓"
 
     # ── Health check ──────────────────────────────────────────────────────────
@@ -1304,6 +1313,29 @@ fi
 echo ""
 
 # =============================================================================
+#  SECTION 8b: Optional Enterprise Data Stack
+# =============================================================================
+echo "=========================================================================="
+echo "  Optional: Enterprise Data Management Stack"
+echo "=========================================================================="
+echo ""
+echo "  Dieser optionale Enterprise-Data-Stack (Apache NiFi, OpenLineage, lakeFS)"
+echo "  bändigt Daten-Chaos aus Legacy-Systemen, ermöglicht lückenloses"
+echo "  Audit-Tracking und bietet isolierte Branches für sichere"
+echo "  Was-wäre-wenn-Simulationen."
+echo ""
+echo "  Requires approx. 6.5 GB additional RAM (NiFi JVM + Marquez + lakeFS)."
+echo ""
+read -rp "  Install Enterprise Data Stack (NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
+_eds_choice="${_eds_choice:-N}"
+case "${_eds_choice,,}" in
+  y|yes) INSTALL_ENTERPRISE_DATA_STACK=true  ;;
+  *)     INSTALL_ENTERPRISE_DATA_STACK=false ;;
+esac
+export INSTALL_ENTERPRISE_DATA_STACK
+echo ""
+
+# =============================================================================
 #  SECTION 9: Caddyfile — only when Caddy was selected
 # =============================================================================
 # Skipped when INSTALL_CADDY=false (user runs Nginx, Traefik, or no proxy).
@@ -1427,6 +1459,7 @@ fi
   [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
   [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
   printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
+  printf 'INSTALL_ENTERPRISE_DATA_STACK=%s\n' "${INSTALL_ENTERPRISE_DATA_STACK:-false}"
   echo ""
   echo "# --- Container runtime socket + storage paths ---"
   echo "# Docker: DOCKER_SOCKET=/var/run/docker.sock, CONTAINER_STORAGE_ROOT=/var/lib/docker"
@@ -1706,6 +1739,14 @@ _PROFILE_ARGS=()
 _compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
 _compose "${_PROFILE_ARGS[@]}" build ${_Q}
 _compose "${_PROFILE_ARGS[@]}" up -d
+
+if [[ "${INSTALL_ENTERPRISE_DATA_STACK:-false}" == "true" ]]; then
+  echo ""
+  echo "  Starting Enterprise Data Stack (NiFi, Marquez, lakeFS)..."
+  _compose -f docker-compose.enterprise.yml pull ${_Q} 2>/dev/null || true
+  _compose -f docker-compose.enterprise.yml up -d
+  echo "  Enterprise Data Stack started ✓"
+fi
 
 echo "  Containers started ✓"
 
