@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 import state
 import telemetry as _telemetry
+from metrics import PROM_FEEDBACK
 from config import (
     FEEDBACK_POSITIVE_THRESHOLD,
     FEEDBACK_NEGATIVE_THRESHOLD,
@@ -44,11 +45,6 @@ class MemoryIngestRequest(BaseModel):
 # Helpers (lazy-imported from main to avoid circular import)
 # ---------------------------------------------------------------------------
 
-def _prom_feedback():
-    import main as _m
-    return _m.PROM_FEEDBACK
-
-
 async def _record_expert_outcome(model: str, category: str, positive: bool) -> None:
     import main as _m
     await _m._record_expert_outcome(model, category, positive)
@@ -72,7 +68,7 @@ async def submit_feedback(req: FeedbackRequest):
     positive = req.rating >= FEEDBACK_POSITIVE_THRESHOLD
     negative = req.rating <= FEEDBACK_NEGATIVE_THRESHOLD
 
-    _prom_feedback().observe(req.rating)
+    PROM_FEEDBACK.observe(req.rating)
 
     for model_cat in json.loads(meta.get("expert_models_used", "[]")):
         if "::" in model_cat:
