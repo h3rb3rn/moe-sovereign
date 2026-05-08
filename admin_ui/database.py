@@ -1387,7 +1387,7 @@ async def revoke_model_endpoints_by_node(user_id: str, node_name: str) -> int:
             )
             rows = await cur.fetchall()
     # Normalize both names: lowercase, strip hyphens/underscores for fuzzy matching
-    # This handles legacy renames (e.g. "nff-aihub" matches "AIHUB_NFF")
+    # Normalize to handle renamed nodes (e.g. "my-node" matches "MY_NODE")
     target = node_name.lower().replace("-", "").replace("_", "")
     ids_to_delete = []
     for r in rows:

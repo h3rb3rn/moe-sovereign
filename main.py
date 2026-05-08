@@ -94,10 +94,11 @@ from config import (
     EVAL_CACHE_FLAG_THRESHOLD, FEEDBACK_POSITIVE_THRESHOLD, FEEDBACK_NEGATIVE_THRESHOLD,
     # Web search
     _SEARXNG_URL, _WEB_SEARCH_FALLBACK_DDG,
-    # AIHUB fallback
-    _AIHUB_FALLBACK_NODE, _AIHUB_FALLBACK_MODEL, _AIHUB_FALLBACK_MODEL_SECOND,
-    _N04_FALLBACK_NODE, _N04_FALLBACK_MODEL, _N04_FALLBACK_MODEL_SECOND,
+    # Primary endpoint fallback
+    _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED,
+    _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY, _ENDPOINT_DEGRADED_TTL,
+    _EXTERNAL_ENDPOINT_PATTERNS,
     # Thompson / fuzzy / graph compress
     THOMPSON_SAMPLING_ENABLED,
     _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
@@ -238,7 +239,7 @@ DEFAULT_PLANNER_ROLE = (
 # _resolve_user_experts, _resolve_template_prompts moved to services/routing.py
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts,
-    _server_info, _is_aihub_error,
+    _server_info, _is_endpoint_error,
 )
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
@@ -1135,71 +1136,64 @@ async def _ollama_unload(model: str, base_url: str) -> None:
         logger.debug(f"⚠️ VRAM-Unload {model}: {e}")
 
 
-_aihub_degraded: dict[str, float] = {}
-_AIHUB_DEGRADED_TTL = 300  # 5 min blackout window after auth/quota failure
-
-# AIHUB retry config: try N times with short delay BEFORE triggering the fallback.
-# The AIHUB cluster is sometimes transiently unstable (not quota-limited), so a
-# quick retry succeeds without burning the N04-RTX fallback unnecessarily.
-_AIHUB_RETRY_COUNT = 3    # retries before declaring endpoint degraded
-_AIHUB_RETRY_DELAY = 2.0  # seconds between retries (short — transient instability)
+_degraded_endpoints: dict[str, float] = {}  # url → monotonic timestamp of degraded mark
 
 
 def _mark_endpoint_degraded(url: str) -> None:
-    _aihub_degraded[url] = time.monotonic()
+    _degraded_endpoints[url] = time.monotonic()
     logger.warning("⚠️ Endpoint marked degraded (5 min): %s", url)
 
 
 def _endpoint_is_degraded(url: str) -> bool:
-    ts = _aihub_degraded.get(url)
+    ts = _degraded_endpoints.get(url)
     if ts is None:
         return False
-    if time.monotonic() - ts > _AIHUB_DEGRADED_TTL:
-        _aihub_degraded.pop(url, None)
+    if time.monotonic() - ts > _ENDPOINT_DEGRADED_TTL:
+        _degraded_endpoints.pop(url, None)
         return False
     return True
 
 
-async def _get_n04_fallback_llm(timeout: float = 120.0, model: str = "") -> "ChatOpenAI":
+async def _get_fallback_llm(timeout: float = 120.0, model: str = "") -> "ChatOpenAI":
     """Return a ChatOpenAI pointing to the configured local fallback node.
 
-    model: override which fallback model to use. Defaults to AIHUB_FALLBACK_MODEL.
-           Raises RuntimeError when fallback is not configured (AIHUB_FALLBACK_NODE empty).
+    model: override which fallback model to use. Defaults to FALLBACK_MODEL.
+           Raises RuntimeError when fallback is not configured (FALLBACK_NODE empty).
     """
     if not _FALLBACK_ENABLED:
         raise RuntimeError(
-            "No local fallback configured. Set AIHUB_FALLBACK_NODE and "
-            "AIHUB_FALLBACK_MODEL environment variables to enable."
+            "No local fallback configured. Set FALLBACK_NODE and "
+            "FALLBACK_MODEL environment variables to enable."
         )
-    url = URL_MAP.get(_AIHUB_FALLBACK_NODE)
+    url = URL_MAP.get(_FALLBACK_NODE)
     if not url:
         raise RuntimeError(
-            f"Fallback node '{_AIHUB_FALLBACK_NODE}' is not in the configured "
+            f"Fallback node '{_FALLBACK_NODE}' is not in the configured "
             "inference servers (INFERENCE_SERVERS env var)."
         )
-    token = TOKEN_MAP.get(_AIHUB_FALLBACK_NODE, "ollama")
+    token = TOKEN_MAP.get(_FALLBACK_NODE, "ollama")
     return ChatOpenAI(
-        model=model or _AIHUB_FALLBACK_MODEL,
+        model=model or _FALLBACK_MODEL,
         base_url=url,
         api_key=token,
         timeout=timeout,
     )
 
 
-def _is_aihub_url(url: str) -> bool:
-    """Return True when the URL points to an AIHUB endpoint (not a local Ollama node)."""
+def _is_external_endpoint_url(url: str) -> bool:
+    """Return True when the URL points to an external (non-local) inference endpoint."""
     u = url.lower()
-    return "adesso-ai-hub" in u or ("aihub" in u and "ollama" not in u)
+    return any(p and p in u for p in _EXTERNAL_ENDPOINT_PATTERNS)
 
 
-async def _invoke_llm_with_aihub_fallback(
+async def _invoke_llm_with_fallback(
     primary_llm: "ChatOpenAI",
     primary_url: str,
     prompt,
     timeout: float = 120.0,
     label: str = "LLM",
 ) -> tuple:
-    """Invoke primary_llm; on AIHUB auth/quota error OR empty response, retry with N04-RTX.
+    """Invoke primary_llm; on auth/quota error or empty response, retry with fallback node.
 
     Handles two failure modes:
     1. Exception (401, 429, connection error) — caught in except block.
@@ -1207,15 +1201,15 @@ async def _invoke_llm_with_aihub_fallback(
 
     Returns (result, used_fallback: bool).
     """
-    _on_aihub = _is_aihub_url(primary_url)
+    _on_external = _is_external_endpoint_url(primary_url)
 
-    async def _try_n04(reason: str, model: str = "") -> tuple:
-        """Try the given N04-RTX model. Returns (res, True) on success."""
+    async def _try_fallback_node(reason: str, model: str = "") -> tuple:
+        """Try the configured fallback node model. Returns (res, True) on success."""
         _mark_endpoint_degraded(primary_url)
-        _fb_model = model or _N04_FALLBACK_MODEL
+        _fb_model = model or _FALLBACK_MODEL
         logger.warning("🔄 %s: %s — falling back to %s@%s",
-                       label, reason, _fb_model, _N04_FALLBACK_NODE)
-        fb_llm = await _get_n04_fallback_llm(timeout, model=_fb_model)
+                       label, reason, _fb_model, _FALLBACK_NODE)
+        fb_llm = await _get_fallback_llm(timeout, model=_fb_model)
         fb_res = await fb_llm.ainvoke(prompt)
         return fb_res, True
 
@@ -1225,63 +1219,63 @@ async def _invoke_llm_with_aihub_fallback(
         Does nothing (re-raises) when fallback is not configured via env vars.
         """
         if not _FALLBACK_ENABLED:
-            logger.warning("⚠️ %s: %s — no local fallback configured (AIHUB_FALLBACK_NODE/MODEL not set)",
+            logger.warning("⚠️ %s: %s — no local fallback configured (FALLBACK_NODE/FALLBACK_MODEL not set)",
                            label, reason)
             raise RuntimeError(f"{label} failed and no fallback configured: {reason}")
 
         try:
-            res, used = await _try_n04(reason, _AIHUB_FALLBACK_MODEL)
-            logger.info("✅ %s: Fallback (%s@%s) succeeded", label, _AIHUB_FALLBACK_MODEL, _AIHUB_FALLBACK_NODE)
+            res, used = await _try_fallback_node(reason, _FALLBACK_MODEL)
+            logger.info("✅ %s: Fallback (%s@%s) succeeded", label, _FALLBACK_MODEL, _FALLBACK_NODE)
             return res, used
         except Exception as fe1:
-            if _AIHUB_FALLBACK_MODEL_SECOND:
+            if _FALLBACK_MODEL_SECOND:
                 logger.warning("⚠️ %s: Primary fallback (%s) failed: %s — trying %s",
-                               label, _AIHUB_FALLBACK_MODEL, str(fe1)[:60], _AIHUB_FALLBACK_MODEL_SECOND)
+                               label, _FALLBACK_MODEL, str(fe1)[:60], _FALLBACK_MODEL_SECOND)
                 try:
-                    res2, _ = await _try_n04(reason + " (2nd fallback)", _AIHUB_FALLBACK_MODEL_SECOND)
-                    logger.info("✅ %s: Second fallback (%s) succeeded", label, _AIHUB_FALLBACK_MODEL_SECOND)
+                    res2, _ = await _try_fallback_node(reason + " (2nd fallback)", _FALLBACK_MODEL_SECOND)
+                    logger.info("✅ %s: Second fallback (%s) succeeded", label, _FALLBACK_MODEL_SECOND)
                     return res2, True
                 except Exception as fe2:
                     logger.error("❌ %s: Both fallbacks failed. Last: %s", label, fe2)
                     raise fe2
             logger.error("❌ %s: Fallback (%s) failed, no second fallback configured: %s",
-                         label, _AIHUB_FALLBACK_MODEL, fe1)
+                         label, _FALLBACK_MODEL, fe1)
             raise fe1
 
-    # ── Primary call: AIHUB with short retry before declaring it unstable ───
+    # ── Primary call: retry loop for external endpoints before declaring degraded ───
     if _endpoint_is_degraded(primary_url):
         return await _try_fallback_chain(f"endpoint {primary_url} is in degraded state")
 
     _last_exc: Exception | None = None
-    for _attempt in range(_AIHUB_RETRY_COUNT if _on_aihub else 1):
+    for _attempt in range(_ENDPOINT_RETRY_COUNT if _on_external else 1):
         try:
             res = await primary_llm.ainvoke(prompt)
-            # Silent failure: AIHUB sometimes returns HTTP 200 with empty body
-            if _on_aihub and (not res or not getattr(res, "content", None) or not res.content.strip()):
+            # Silent failure: some external endpoints return HTTP 200 with empty body
+            if _on_external and (not res or not getattr(res, "content", None) or not res.content.strip()):
                 _last_exc = RuntimeError("Empty response")
-                if _attempt < _AIHUB_RETRY_COUNT - 1:
+                if _attempt < _ENDPOINT_RETRY_COUNT - 1:
                     logger.debug("⏳ %s: Empty response, retry %d/%d in %.0fs",
-                                 label, _attempt + 1, _AIHUB_RETRY_COUNT, _AIHUB_RETRY_DELAY)
-                    await asyncio.sleep(_AIHUB_RETRY_DELAY)
+                                 label, _attempt + 1, _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY)
+                    await asyncio.sleep(_ENDPOINT_RETRY_DELAY)
                     continue
                 # Exhausted retries → fallback
-                return await _try_fallback_chain("AIHUB returned empty response after retries")
+                return await _try_fallback_chain("Primary endpoint returned empty response after retries")
             return res, False
         except Exception as e:
             _last_exc = e
-            if _is_aihub_error(e) or (_on_aihub and "empty" in str(e).lower()):
-                if _attempt < _AIHUB_RETRY_COUNT - 1:
-                    logger.debug("⏳ %s: AIHUB error, retry %d/%d in %.0fs: %s",
-                                 label, _attempt + 1, _AIHUB_RETRY_COUNT, _AIHUB_RETRY_DELAY, str(e)[:60])
-                    await asyncio.sleep(_AIHUB_RETRY_DELAY)
+            if _is_endpoint_error(e) or (_on_external and "empty" in str(e).lower()):
+                if _attempt < _ENDPOINT_RETRY_COUNT - 1:
+                    logger.debug("⏳ %s: External endpoint error, retry %d/%d in %.0fs: %s",
+                                 label, _attempt + 1, _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY, str(e)[:60])
+                    await asyncio.sleep(_ENDPOINT_RETRY_DELAY)
                     continue
                 # Exhausted retries → fallback
-                return await _try_fallback_chain(f"AIHUB error after {_AIHUB_RETRY_COUNT} retries: {str(e)[:60]}")
-            raise  # non-AIHUB error — propagate immediately
+                return await _try_fallback_chain(f"External endpoint error after {_ENDPOINT_RETRY_COUNT} retries: {str(e)[:60]}")
+            raise  # non-retriable error — propagate immediately
 
     # Should not reach here but handle defensively
-    if _on_aihub and _last_exc:
-        return await _try_fallback_chain(f"AIHUB exhausted: {str(_last_exc)[:60]}")
+    if _on_external and _last_exc:
+        return await _try_fallback_chain(f"Primary endpoint exhausted: {str(_last_exc)[:60]}")
     raise _last_exc
 
 
@@ -1290,8 +1284,8 @@ async def _invoke_judge_with_retry(
 ):
     """Invoke the judge LLM with retry logic for empty/failed responses.
     On failure: waits 5s (model reload time), re-discovers the node, retries.
-    When AIHUB returns 401/429, immediately falls back to qwen3.6:35b@N04-RTX
-    without burning retry budget on unavailable endpoints.
+    When the primary endpoint returns 401/429, immediately falls back to the configured
+    fallback node without burning retry budget on unavailable endpoints.
 
     temperature: when set, overrides the default judge sampling temperature.
     """
@@ -1303,7 +1297,7 @@ async def _invoke_judge_with_retry(
                 llm = llm.bind(temperature=temperature)
             # Determine primary URL for degradation tracking
             _j_url = (state.get("judge_url_override") or JUDGE_URL or "").rstrip("/")
-            res, used_fb = await _invoke_llm_with_aihub_fallback(
+            res, used_fb = await _invoke_llm_with_fallback(
                 llm, _j_url, prompt, timeout=JUDGE_TIMEOUT, label="Judge"
             )
             # Check for empty/useless response
@@ -1334,14 +1328,14 @@ async def _invoke_judge_with_retry(
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template judge LLM, or global judge_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
-    When the configured endpoint is in degraded state, returns N04-RTX fallback directly."""
+    When the configured endpoint is in degraded state, returns the fallback node directly."""
     m = (state.get("judge_model_override") or "").strip()
     u = (state.get("judge_url_override")   or "").strip()
     t = (state.get("judge_token_override") or "ollama").strip()
     if m and u:
         if _endpoint_is_degraded(u.rstrip("/")) and _FALLBACK_ENABLED:
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
-            return await _get_n04_fallback_llm(JUDGE_TIMEOUT)
+            return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT)
     if m and not u:
         # Floating judge: discover the best node for this model
@@ -1357,14 +1351,14 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
 async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template planner LLM, or global planner_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
-    When the configured endpoint is in degraded state, returns N04-RTX fallback directly."""
+    When the configured endpoint is in degraded state, returns the fallback node directly."""
     m = (state.get("planner_model_override") or "").strip()
     u = (state.get("planner_url_override")   or "").strip()
     t = (state.get("planner_token_override") or "ollama").strip()
     if m and u:
         if _endpoint_is_degraded(u.rstrip("/")) and _FALLBACK_ENABLED:
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
-            return await _get_n04_fallback_llm(PLANNER_TIMEOUT)
+            return await _get_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT)
     if m and not u:
         # Floating planner: discover the best node for this model
@@ -3047,12 +3041,12 @@ JSON array:"""
         _planner_llm_inst = await _get_planner_llm(state)
         _planner_url = (state.get("planner_url_override") or PLANNER_URL or "").rstrip("/")
         _planner_llm_inst = _planner_llm_inst.bind(temperature=_query_temp)
-        res, _planner_fb = await _invoke_llm_with_aihub_fallback(
+        res, _planner_fb = await _invoke_llm_with_fallback(
             _planner_llm_inst, _planner_url, prompt,
             timeout=PLANNER_TIMEOUT, label="Planner",
         )
         if _planner_fb:
-            await _report("⚠️ Planner: used N04-RTX fallback (AIHUB degraded)")
+            await _report("⚠️ Planner: used local fallback (primary endpoint degraded)")
         u = _extract_usage(res)
         total_usage["prompt_tokens"]     += u["prompt_tokens"]
         total_usage["completion_tokens"] += u["completion_tokens"]
@@ -3418,13 +3412,13 @@ async def expert_worker(state: AgentState):
             llm = ChatOpenAI(**_llm_kwargs)
             try:
                 _primary_url = url.rstrip("/")
-                res, _used_fallback = await _invoke_llm_with_aihub_fallback(
+                res, _used_fallback = await _invoke_llm_with_fallback(
                     llm, _primary_url, messages,
                     timeout=_expert_node_timeout,
                     label=f"Expert[{cat}]",
                 )
                 if _used_fallback:
-                    await _report(f"⚠️ Expert [{cat}]: used N04-RTX fallback (AIHUB degraded)")
+                    await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)
                 content = res.content[:_expert_max_output]
                 if len(res.content) > _expert_max_output:

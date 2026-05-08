@@ -43,8 +43,8 @@ from config import (
     PLANNER_RETRIES, PLANNER_MAX_TASKS, SSE_CHUNK_SIZE,
     EVAL_CACHE_FLAG_THRESHOLD, FEEDBACK_POSITIVE_THRESHOLD, FEEDBACK_NEGATIVE_THRESHOLD,
     BENCHMARK_SHADOW_TEMPLATE, BENCHMARK_SHADOW_RATE,
-    _AIHUB_FALLBACK_NODE, _AIHUB_FALLBACK_MODEL, _AIHUB_FALLBACK_MODEL_SECOND,
-    _FALLBACK_ENABLED, _AIHUB_RETRY_COUNT, _AIHUB_RETRY_DELAY, _AIHUB_DEGRADED_TTL,
+    _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
+    _FALLBACK_ENABLED, _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY, _ENDPOINT_DEGRADED_TTL,
     LITELLM_URL, _SEARXNG_URL, _WEB_SEARCH_FALLBACK_DDG,
     CORRECTION_MEMORY_ENABLED, GRAPH_INGEST_MODEL, GRAPH_INGEST_URL, GRAPH_INGEST_TOKEN,
     _CUSTOM_EXPERT_PROMPTS, THOMPSON_SAMPLING_ENABLED,
@@ -67,7 +67,7 @@ from services.auth import _validate_api_key, _extract_api_key, _extract_session_
 from services.kafka import _kafka_publish
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts,
-    _server_info, _is_aihub_error,
+    _server_info, _is_endpoint_error,
 )
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
@@ -155,7 +155,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             # Match by template name (display name) or by template ID.
             # Also try _req_model_base (the name without any "@node" suffix) because
             # Open WebUI appends "@connectionname" to model IDs when a user selects a
-            # template — e.g. "nff-test@AIHUB_NFF" → base name is "nff-test".
+            # template — e.g. "nff-test@MY_ENDPOINT" → base name is "nff-test".
             for _ut_id, _ut_cfg in _early_user_tmpls.items():
                 _ut_name = _ut_cfg.get("name", "")
                 if (
@@ -389,7 +389,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     # Model availability check: does the requested model actually exist on the target node?
     # Prevents hanging requests when a model is requested via wildcard permission,
-    # but is not present on the host (e.g. gemma4:31b@AIHUB even though it is not installed).
+    # but is not present on the host (e.g. gemma4:31b@MY_ENDPOINT even though it is not installed).
     # Skipped for user-owned connections — their models_cache already served that check.
     if _native_endpoint and not _native_endpoint.get("_user_conn"):
         _avail_models = await _m._get_available_models(_native_endpoint["node"])
@@ -717,7 +717,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     tool_model/tool_url/tool_token: override default judge if specified (e.g. for Claude Code sessions).
     is_user_conn: when True the tool endpoint is a user-owned connection — tokens are NOT charged to the MoE budget.
     tool_timeout: per-node timeout in seconds (fallback: JUDGE_TIMEOUT).
-    tool_node: node name for Prometheus labels (e.g. "N04-RTX").
+    tool_node: node name for Prometheus labels (e.g. "MY-NODE").
     """
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])

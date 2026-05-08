@@ -136,7 +136,7 @@ def _pick_parent_template(all_templates: list[dict], server: dict) -> Optional[d
     Rough heuristic: if the server name contains the parent's node suffix
     (e.g. N11-M10-01 → parent N11-M10), use it. Otherwise fall back to
     the first aggregated ontology curator found.
-    Supports single-word node names like AIHUB (moe-ontology-curator-aihub).
+    Supports single-word node names (e.g. moe-ontology-curator-mynode).
     """
     by_name = {t["name"]: t for t in all_templates if "ontology-curator" in t.get("name", "")}
     # Accept any number of hyphen-separated alphanumeric segments after the prefix
