@@ -98,37 +98,70 @@ flowchart TD
 
 ### Module Structure
 
-The orchestrator codebase is organised into focused modules. `main.py` is the entry point; domain logic lives in dedicated packages:
+The orchestrator codebase is organised into focused packages. `main.py` is a thin entry point (~1 500 LOC) holding the FastAPI app, lifespan, middleware, and graph wiring. All domain logic lives in dedicated packages:
 
 ```
 moe-infra/
-├── main.py                    # FastAPI app, lifespan, graph wiring (~7 800 LOC, ongoing decomposition)
+├── main.py                    # FastAPI app, lifespan, middleware, graph wiring (~1 500 LOC)
+├── config.py                  # All os.getenv() — typed config constants
+├── state.py                   # Shared mutable globals (redis_client, _userdb_pool, …)
+├── prompts.py                 # Static prompt text + routing detection regexes
+├── metrics.py                 # Single Prometheus registry
+├── parsing.py                 # Stateless parsers: JSON extraction, confidence, history truncation
+├── context_budget.py          # Per-model context-window estimation
+│
+├── routes/                    # FastAPI APIRouters (one per concern)
+│   ├── health.py              # /health, /metrics
+│   ├── watchdog.py            # /api/watchdog/*, Starfleet feature toggles
+│   ├── mission_context.py     # /api/mission-context
+│   ├── graph.py               # /graph/*
+│   ├── feedback.py            # /v1/feedback, /v1/memory/ingest
+│   ├── admin_*.py             # Benchmark, ontology, stats admin endpoints
+│   ├── models.py              # /v1/models
+│   ├── ollama_compat.py       # /api/* (Ollama protocol)
+│   └── anthropic_compat.py    # /v1/messages, /v1/responses, /v1/chat/completions
+│
+├── services/                  # Business logic — no FastAPI imports
+│   ├── auth.py                # OIDC + API key validation + budget enforcement
+│   ├── tracking.py            # Usage logging, request lifecycle, budget counters
+│   ├── routing.py             # Expert template + per-template prompt resolution
+│   ├── templates.py           # Expert template + Claude Code profile loading
+│   ├── llm_instances.py       # ChatOpenAI singletons (judge, planner, ingest, search)
+│   ├── inference.py           # Node selection, fallback chain, Thompson sampling
+│   ├── helpers.py             # Progress reports, semantic memory, self-evaluation
+│   ├── skills.py              # Server-side skill resolution + ADMIN_APPROVED hard-lock
+│   ├── healer.py              # Ontology gap-healer (one-shot + dedicated subprocess)
+│   ├── kafka.py               # Fire-and-forget Kafka publish helper
+│   └── pipeline/              # OpenAI / Anthropic / Ollama / Responses API handlers
+│       ├── chat.py            # OpenAI chat completions
+│       ├── anthropic.py       # Anthropic Messages API + tool/MoE/reasoning handlers
+│       ├── ollama.py          # Ollama-protocol streaming wrappers
+│       └── responses.py       # OpenAI Responses API
+│
+├── graph/                     # LangGraph node implementations
+│   ├── router_nodes.py        # cache_lookup, semantic_router, fuzzy_router, _route_cache
+│   ├── tool_nodes.py          # mcp_node, graph_rag_node, math_node_wrapper
+│   ├── planner.py             # planner_node + plan sanitization + topological levels
+│   ├── expert.py              # expert_worker (parallel expert execution)
+│   ├── research.py            # research_node + research_fallback + domain extraction
+│   └── synthesis.py           # merger_node, thinking_node, resolve_conflicts_node, critic_node
+│
 ├── pipeline/
 │   ├── __init__.py            # LangGraph graph builder — assembles nodes into the pipeline DAG
 │   └── state.py               # AgentState TypedDict (67 fields across 3 categories)
-├── parsing.py                 # Stateless parser helpers: JSON extraction, confidence, usage, dedup
+│
 ├── web_search.py              # SearXNG integration with domain-reliability scoring
 ├── math_node.py               # SymPy-backed math node (solve, integrate, differentiate)
-├── graph_rag/
-│   ├── manager.py             # GraphRAG query, entity linking, trust-score application
-│   ├── ontology.py            # Domain ontology definitions and scope filters
-│   └── corrections.py        # Contradiction detection and graph self-healing
-├── federation/
-│   ├── client.py              # Push / pull to MoE Libris hubs
-│   ├── sync.py                # Background sync scheduler
-│   └── outbound_policy.py     # Privacy-scrubbing policy before bundle export
-├── mcp_server/
-│   └── server.py              # 28 MCP precision tools (AST-whitelisted)
-├── admin_ui/
-│   └── app.py                 # Admin backend: experts, users, budgets, cleanup manager
+├── graph_rag/                 # GraphRAG query, entity linking, ontology, corrections
+├── federation/                # Push / pull federation client to MoE Libris hubs
+├── mcp_server/                # 28 MCP precision tools (AST-whitelisted)
+├── admin_ui/                  # Admin backend: experts, users, budgets, cleanup manager
 ├── prompts/systemprompt/      # 15 expert system prompts (English, "Respond in German.")
-├── tests/
-│   ├── test_parsing.py        # Unit tests for parsing.py
-│   ├── test_web_search.py     # Unit tests for web_search.py
-│   ├── test_routing.py        # LLM routing and node-selection tests
-│   └── test_mcp_validation.py # MCP AST-whitelist validation tests
+├── tests/                     # 195 unit + integration + smoke tests (all green)
 └── benchmarks/                # Overnight benchmark suite, GAIA runner, result injection
 ```
+
+The orchestrator started as an 11 190-line monolith in `main.py`. A 14-phase split (Q2 2026) decomposed it into the structure above without a single behavioural change — every phase ended with the full test suite green. See `docs/ARCHITECTURE.md` for the detailed module map.
 
 ---
 

@@ -8,6 +8,63 @@ All caching is multi-layered: semantic vector cache (ChromaDB), plan cache (Valk
 
 ---
 
+## Code Structure
+
+The orchestrator is organised as a thin `main.py` (lifespan, middleware, FastAPI app) plus topic-focused packages.
+
+```
+moe-infra/
+├── main.py               (~1,500 lines)  Lifespan, middleware, app, init tasks
+├── config.py                              All os.getenv() — typed config constants
+├── state.py                               Shared mutable globals (redis_client, _userdb_pool, …)
+├── prompts.py                             Static prompt text + routing detection regexes
+├── metrics.py                             Single Prometheus registry
+├── parsing.py                             Pure functions: JSON, content extraction, history truncation
+├── context_budget.py                      Per-model context-window estimation
+│
+├── routes/                                FastAPI APIRouters (one per concern)
+│   ├── health.py             /health, /metrics
+│   ├── watchdog.py           /api/watchdog/*, /api/starfleet/features
+│   ├── mission_context.py    /api/mission-context
+│   ├── graph.py              /graph/*
+│   ├── feedback.py           /v1/feedback, /v1/memory/ingest
+│   ├── admin_benchmark.py    /v1/admin/benchmark/lock
+│   ├── admin_ontology.py     /v1/admin/ontology/*
+│   ├── admin_stats.py        /v1/admin/stats/*
+│   ├── models.py             /v1/models
+│   ├── ollama_compat.py      /api/* (Ollama protocol)
+│   └── anthropic_compat.py   /v1/messages, /v1/responses, /v1/chat/completions
+│
+├── services/                              Business logic — no FastAPI imports
+│   ├── auth.py               OIDC + API key validation + budget enforcement
+│   ├── tracking.py           Usage logging, request lifecycle, budget counters
+│   ├── routing.py            Expert template + per-template prompt resolution
+│   ├── templates.py          Expert template + Claude Code profile loading
+│   ├── llm_instances.py      ChatOpenAI singletons (judge, planner, ingest, search)
+│   ├── inference.py          Node selection, fallback chain, Thompson sampling
+│   ├── helpers.py            Progress reports, semantic memory, self-evaluation
+│   ├── skills.py             Server-side skill resolution + ADMIN_APPROVED hard-lock
+│   ├── healer.py             Ontology gap-healer (one-shot + dedicated subprocess)
+│   ├── kafka.py              Fire-and-forget Kafka publish helper
+│   └── pipeline/             OpenAI / Anthropic / Ollama / Responses API handlers
+│       ├── chat.py               OpenAI chat completions
+│       ├── anthropic.py          Anthropic Messages API + tool/MoE/reasoning handlers
+│       ├── ollama.py             Ollama-protocol streaming wrappers
+│       └── responses.py          OpenAI Responses API
+│
+└── graph/                                 LangGraph node implementations
+    ├── router_nodes.py       cache_lookup, semantic_router, fuzzy_router, _route_cache
+    ├── tool_nodes.py         mcp_node, graph_rag_node, math_node_wrapper
+    ├── planner.py            planner_node + plan sanitization + topological levels
+    ├── expert.py             expert_worker (parallel expert execution)
+    ├── research.py           research_node + research_fallback + domain extraction
+    └── synthesis.py          merger_node, thinking_node, resolve_conflicts_node, critic_node
+```
+
+The split was completed in 14 phases — `main.py` shrank from 11,190 → ~1,500 lines (−86 %) without a single behavioural change. Every phase ended with all 195 tests green.
+
+---
+
 ## LangGraph Pipeline
 
 ```mermaid
@@ -457,7 +514,7 @@ excluded middle.
 **Basis:** De Vries (2007), §2 — paraconsistent systems reject *ex
 contradictione quodlibet*: from A ∧ ¬A it does not follow that every formula
 is derivable. Contradictions are tolerated as structured data.  
-**Location:** `pipeline/state.py`, `parsing.py`, `main.py`, `graph_rag/manager.py`
+**Location:** `pipeline/state.py`, `parsing.py`, `graph/synthesis.py`, `graph_rag/manager.py`
 
 #### 2a — LLM Expert Conflicts
 
@@ -503,7 +560,7 @@ contested — rather than silently overwriting the relation property.
 
 **Basis:** De Vries (2007), §4 — fuzzy logics as the most general framework;
 t-norms define logical conjunction over \[0, 1\]-valued truth degrees.  
-**Location:** `parsing.py` (`_compute_routing_confidence`), `main.py` (`fuzzy_router_node`)
+**Location:** `parsing.py` (`_compute_routing_confidence`), `graph/router_nodes.py` (`fuzzy_router_node`)
 
 The `planner_node` previously emitted binary routing flags (`skip_research:
 bool`). The `fuzzy_router_node` replaces this with a two-stage process:
@@ -562,7 +619,7 @@ always yields `complex` regardless of compressibility).
 **Basis:** Bayesian prior adjustment under the maximum-entropy principle:
 given a load constraint on an inference node, the prior over that node's
 performance should reflect the available capacity.  
-**Location:** `main.py` (`_get_expert_score`, `_get_model_node_load`)
+**Location:** `services/inference.py` (`_get_expert_score`, `_get_model_node_load`)
 
 MoE Sovereign uses Thompson Sampling (Beta distribution) for stochastic expert
 selection. Previously, the Beta prior was determined solely by historical

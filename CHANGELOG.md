@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.4.0] - 2026-05-08
+
+### Changed
+- **Monolith decomposition (14 phases)**: `main.py` split from 11 190 → ~1 500 lines (−86 %). Every domain concern now lives in a focused module:
+  - `config.py`, `state.py`, `prompts.py`, `metrics.py` for cross-cutting state and constants
+  - `routes/` (11 modules) for FastAPI endpoints — all decorated handlers extracted from `main.py`
+  - `services/` (12 modules incl. `services/pipeline/`) for business logic — auth, tracking, routing, healer, inference, helpers, skills, kafka, llm_instances, plus a 4-file pipeline subpackage (chat / anthropic / ollama / responses)
+  - `graph/` (6 modules) for LangGraph nodes — router, tools, planner, expert, research, synthesis
+- **Generic infrastructure naming**: removed setup-specific identifiers (`AIHUB_*`, `N04_*`) from variable names. Hardcoded retry constants moved to env vars (`ENDPOINT_RETRY_COUNT`, `ENDPOINT_RETRY_DELAY`, `ENDPOINT_DEGRADED_TTL`); URL-pattern matching now driven by `EXTERNAL_ENDPOINT_PATTERNS`. Legacy env var names (`AIHUB_FALLBACK_*`) kept as backward-compat aliases.
+- All 195 tests remain green throughout the decomposition — no behavioural change.
+
+### Removed
+- ~600 lines of dead route handler duplicates that survived from the original monolith (`benchmark_unlock`, `get_knowledge_stats`, `get_planner_patterns`, `pipeline_log`, all 9 `ollama_*` handlers — already implemented in `routes/`).
+
+### Fixed
+- Variable shadowing bug in regex parsing: `for _m in re.finditer(...)` shadowed the `import main as _m` alias. Renamed loop variable to `_match`.
+- Several lifespan-task references (`_auto_resume_dedicated_healer`, `_watchdog_dedicated_healer`) and pipeline references (`stream_response`, `_is_openwebui_internal`, `_handle_internal_direct`, `_stream_native_llm`) were called as bare names without imports — would have raised `NameError` at runtime. Added explicit imports / lazy imports.
+
+---
+
 ## [2.3.0] - 2026-05-05
 
 ### Added
