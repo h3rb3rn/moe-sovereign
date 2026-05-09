@@ -7533,3 +7533,224 @@ async def toggle_starfleet_feature(name: str, request: Request):
         return {"ok": True, "feature": name, "enabled": enabled, "previous": current, "source": "redis"}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─── Enterprise data stack — Phase 19 ────────────────────────────────────────
+# Probes NiFi/Marquez/lakeFS health and exposes Marquez run-history through the
+# admin UI. Lives in admin_ui (separate container), so it does NOT read
+# state._enterprise_reachable from the orchestrator — it probes the services
+# itself with cfg.read_env() URLs.
+
+_ENTERPRISE_SERVICES = [
+    # (name, env_var_for_base_url, health_path)
+    ("nifi",    "NIFI_URL",        "/nifi/"),
+    ("marquez", "MARQUEZ_URL",     "/api/v1/namespaces"),
+    ("lakefs",  "LAKEFS_ENDPOINT", "/api/v1/config"),
+]
+_LINEAGE_NAMESPACE = "moe-sovereign"
+
+
+_ENTERPRISE_DEGRADED_LATENCY_MS = int(os.getenv("ENTERPRISE_DEGRADED_LATENCY_MS", "800"))
+
+
+def _classify_service_status(reachable: bool, latency_ms: int, configured: bool) -> str:
+    """Map probe outcome to a UI status token used for the dashboard pill colour.
+
+    Returns one of: "disabled" (grey), "down" (red), "degraded" (yellow), "healthy" (green).
+
+    Threshold rationale: enterprise services run in the same Docker network as the
+    admin UI, so healthy round-trip latencies are <100 ms. ENTERPRISE_DEGRADED_LATENCY_MS
+    (default 800 ms) is the cliff above which something is wrong (GC pause, full disk,
+    blocked event loop). Override via env if probing across a slower link.
+    """
+    if not configured:
+        return "disabled"
+    if not reachable or latency_ms < 0:
+        return "down"
+    if latency_ms > _ENTERPRISE_DEGRADED_LATENCY_MS:
+        return "degraded"
+    return "healthy"
+
+
+@app.get("/api/enterprise/health", dependencies=[Depends(require_login)])
+async def api_enterprise_health(request: Request):
+    """Probe NiFi/Marquez/lakeFS and return per-service health for the dashboard."""
+    import time as _time
+    cfg = read_env()
+    enterprise_enabled = cfg.get("INSTALL_ENTERPRISE_DATA_STACK", "false").lower() == "true"
+    services: list = []
+    reachable_count = 0
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        for name, env_var, path in _ENTERPRISE_SERVICES:
+            base = (cfg.get(env_var) or "").rstrip("/")
+            if not base:
+                services.append({
+                    "name":       name,
+                    "configured": False,
+                    "url":        "",
+                    "ok":         False,
+                    "latency_ms": -1,
+                    "status":     _classify_service_status(False, -1, False) or "disabled",
+                })
+                continue
+            url = f"{base}{path}"
+            t0  = _time.monotonic()
+            try:
+                r  = await client.get(url)
+                ok = r.status_code < 500
+                latency_ms = int((_time.monotonic() - t0) * 1000)
+            except Exception:
+                ok = False
+                latency_ms = -1
+            if ok:
+                reachable_count += 1
+            services.append({
+                "name":       name,
+                "configured": True,
+                "url":        base,
+                "ok":         ok,
+                "latency_ms": latency_ms,
+                "status":     _classify_service_status(ok, latency_ms, True) or ("healthy" if ok else "down"),
+            })
+    return {
+        "enabled":         enterprise_enabled,
+        "reachable_count": reachable_count,
+        "total_count":     len(_ENTERPRISE_SERVICES),
+        "services":        services,
+    }
+
+
+@app.get("/api/enterprise/runs", dependencies=[Depends(require_login)])
+async def api_enterprise_runs(request: Request, limit: int = 25):
+    """List recent OpenLineage job runs from Marquez (Phase 16 lineage events)."""
+    cfg  = read_env()
+    base = (cfg.get("MARQUEZ_URL") or "").rstrip("/")
+    if not base:
+        return {"namespace": _LINEAGE_NAMESPACE, "runs": [], "marquez_configured": False}
+    out: list = []
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            jobs_r = await client.get(f"{base}/api/v1/namespaces/{_LINEAGE_NAMESPACE}/jobs?limit=50")
+            if jobs_r.status_code != 200:
+                return {
+                    "namespace":          _LINEAGE_NAMESPACE,
+                    "runs":               [],
+                    "marquez_configured": True,
+                    "error":              f"Marquez /jobs returned {jobs_r.status_code}",
+                }
+            jobs = (jobs_r.json() or {}).get("jobs", [])
+            per_job = max(1, limit // max(1, min(len(jobs), 10)))
+            for job in jobs[:10]:
+                job_name = job.get("name")
+                if not job_name:
+                    continue
+                runs_r = await client.get(
+                    f"{base}/api/v1/namespaces/{_LINEAGE_NAMESPACE}/jobs/{job_name}/runs",
+                    params={"limit": per_job},
+                )
+                if runs_r.status_code != 200:
+                    continue
+                for run in (runs_r.json() or {}).get("runs", []):
+                    out.append({
+                        "job":         job_name,
+                        "runId":       run.get("id"),
+                        "state":       run.get("state"),
+                        "startedAt":   run.get("startedAt"),
+                        "endedAt":     run.get("endedAt"),
+                        "durationMs": run.get("durationMs"),
+                    })
+        out.sort(key=lambda r: r.get("startedAt") or "", reverse=True)
+        return {"namespace": _LINEAGE_NAMESPACE, "runs": out[:limit], "marquez_configured": True}
+    except Exception as exc:
+        return {
+            "namespace":          _LINEAGE_NAMESPACE,
+            "runs":               [],
+            "marquez_configured": True,
+            "error":              str(exc),
+        }
+
+
+@app.get("/api/enterprise/versioning/log", dependencies=[Depends(require_login)])
+async def api_enterprise_versioning_log(request: Request, limit: int = 25):
+    """List the most recent lakeFS commits on the moe-knowledge repository."""
+    cfg  = read_env()
+    base = (cfg.get("LAKEFS_ENDPOINT") or "").rstrip("/")
+    if not base:
+        return {"commits": [], "lakefs_configured": False}
+    repo   = cfg.get("LAKEFS_KNOWLEDGE_REPO", "moe-knowledge")
+    branch = "main"
+    key = cfg.get("LAKEFS_ACCESS_KEY_ID", "")
+    sec = cfg.get("LAKEFS_SECRET_ACCESS_KEY", "")
+    if not key or not sec:
+        return {
+            "commits": [], "lakefs_configured": True,
+            "error": "LAKEFS_ACCESS_KEY_ID/SECRET_ACCESS_KEY not configured",
+        }
+    try:
+        async with httpx.AsyncClient(timeout=5.0, auth=(key, sec)) as client:
+            r = await client.get(
+                f"{base}/api/v1/repositories/{repo}/refs/{branch}/commits",
+                params={"amount": str(min(max(1, limit), 100))},
+            )
+            if r.status_code == 404:
+                return {"commits": [], "lakefs_configured": True, "repo": repo,
+                        "error": "Repository not yet created — first import will initialise it"}
+            if r.status_code != 200:
+                return {"commits": [], "lakefs_configured": True,
+                        "error": f"lakeFS returned {r.status_code}"}
+            commits = (r.json() or {}).get("results", [])
+            return {"commits": commits[:limit], "lakefs_configured": True, "repo": repo}
+    except Exception as exc:
+        return {"commits": [], "lakefs_configured": True, "error": str(exc)}
+
+
+@app.get("/api/enterprise/etl/status", dependencies=[Depends(require_login)])
+async def api_enterprise_etl_status(request: Request):
+    """Surface NiFi system diagnostics (Phase 17) for the enterprise dashboard."""
+    cfg  = read_env()
+    base = (cfg.get("NIFI_URL") or "").rstrip("/")
+    user = cfg.get("NIFI_ADMIN_USER", "")
+    pwd  = cfg.get("NIFI_ADMIN_PASSWORD", "")
+    if not base:
+        return {"available": False, "reason": "NIFI_URL not configured"}
+    if not user or not pwd:
+        return {"available": False, "reason": "NIFI_ADMIN_USER/PASSWORD missing"}
+    ingest_url = cfg.get("NIFI_INGEST_URL", "")
+    try:
+        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+            tok_resp = await client.post(
+                f"{base}/nifi-api/access/token",
+                data={"username": user, "password": pwd},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            if tok_resp.status_code != 201:
+                return {"available": False, "reason": f"Auth returned {tok_resp.status_code}"}
+            token = tok_resp.text.strip()
+            diag_resp = await client.get(
+                f"{base}/nifi-api/system-diagnostics",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if diag_resp.status_code != 200:
+                return {"available": False,
+                        "reason": f"Diagnostics returned {diag_resp.status_code}"}
+            snap = (diag_resp.json().get("systemDiagnostics") or {}).get("aggregateSnapshot") or {}
+        return {
+            "available":          True,
+            "uptime":             snap.get("uptime"),
+            "version":            snap.get("versionInfo", {}).get("niFiVersion"),
+            "available_processors": snap.get("availableProcessors"),
+            "total_threads":      snap.get("totalThreads"),
+            "free_heap":          snap.get("freeHeap"),
+            "max_heap":           snap.get("maxHeap"),
+            "heap_utilization":   snap.get("heapUtilization"),
+            "ingest_url":         ingest_url,
+            "ingest_configured":  bool(ingest_url),
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+@app.get("/enterprise", response_class=HTMLResponse)
+async def enterprise_page(request: Request, _=Depends(require_login)):
+    """Enterprise data stack dashboard — health overview + Marquez run history."""
+    return TEMPLATES.TemplateResponse(request, "enterprise.html", build_template_ctx(request))

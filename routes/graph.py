@@ -78,6 +78,27 @@ async def graph_knowledge_import(raw_request: Request):
         dry_run=dry_run,
         kafka_publish_fn=_kafka_publish,
     )
+    if not dry_run:
+        from services.versioning import archive_bundle_background
+        archive_bundle_background(
+            bundle,
+            source_tag=source_tag,
+            metadata={
+                "trust_floor":  str(trust_floor),
+                "imported_at":  datetime.now(timezone.utc).isoformat(),
+                "entity_count": str(stats.get("entities_added", 0)),
+            },
+        )
+        from services.etl_pipeline import submit_to_pipeline_background
+        submit_to_pipeline_background(
+            {"event": "knowledge_import", "stats": stats, "source_tag": source_tag},
+            source="knowledge_import",
+            metadata={
+                "source_tag":   source_tag,
+                "trust_floor":  str(trust_floor),
+                "entity_count": str(stats.get("entities_added", 0)),
+            },
+        )
     return {"status": "ok", "dry_run": dry_run, **stats}
 
 

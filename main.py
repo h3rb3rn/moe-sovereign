@@ -589,6 +589,16 @@ async def _kafka_consumer_loop() -> None:
                                     _ol_ing_run, job_name="kafka_ingest",
                                     outputs=[dataset_kg(payload.get("domain", "global"))],
                                 )
+                                from services.etl_pipeline import submit_to_pipeline_background as _etl_submit
+                                _etl_submit(
+                                    payload,
+                                    source="kafka_ingest",
+                                    metadata={
+                                        "domain":       payload.get("domain", "global"),
+                                        "source_model": payload.get("source_model", "unknown"),
+                                        "tenant_id":    str(payload.get("tenant_id", "")),
+                                    },
+                                )
                             except Exception as _ing_err:
                                 await _ol_fail_ingest(
                                     _ol_ing_run, job_name="kafka_ingest",

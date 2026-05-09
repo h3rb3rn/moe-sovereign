@@ -301,6 +301,11 @@
               <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
             </a>
           </li>
+          <li class="nav-item">
+            <a href="/enterprise" class="nav-link text-white {% if request.url.path.startswith('/enterprise') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-diagram-3 me-2 text-secondary"></i>{{ t(request, 'nav.enterprise') }}
+            </a>
+          </li>
           <li><hr class="border-secondary my-1"></li>
           <li class="nav-item">
             <span class="nav-link text-secondary px-2 py-1 small">
