@@ -43,6 +43,61 @@ _compose() {
   fi
 }
 
+# Idempotent post-up bootstrap for the enterprise data stack:
+#   1. Ensure the MinIO bucket lakeFS will use exists.
+#   2. Wait for lakeFS to come up, then run its one-shot setup_lakefs API call
+#      so the LAKEFS_INSTALLATION_* credentials become valid login keys.
+# Both steps are no-ops if the stack is not configured or already bootstrapped.
+_bootstrap_enterprise_stack() {
+  local _env="${MOE_ENV_FILE:-${INSTALL_DIR:-.}/.env}"
+  [[ -r "$_env" ]] || return 0
+
+  local _eds; _eds="$(grep -E '^INSTALL_ENTERPRISE_DATA_STACK=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  [[ "${_eds:-false}" == "true" ]] || return 0
+
+  local _bucket="lakefs-data"
+  local _lake_port; _lake_port="$(grep -E '^LAKEFS_HOST_PORT=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  _lake_port="${_lake_port:-8010}"
+  local _akey; _akey="$(grep -E '^LAKEFS_ACCESS_KEY_ID=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  local _skey; _skey="$(grep -E '^LAKEFS_SECRET_ACCESS_KEY=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  local _user; _user="$(grep -E '^ADMIN_USER=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  _user="${_user:-admin}"
+
+  echo "  Bootstrapping enterprise stack..."
+
+  # Step 1: ensure MinIO bucket for lakeFS exists.
+  if _compose ps moe-storage 2>/dev/null | grep -q "Up"; then
+    _compose exec -T moe-storage sh -c \
+      "mc alias set local http://localhost:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 && mc mb -p local/${_bucket} 2>/dev/null || true" \
+      >/dev/null 2>&1 || true
+    echo "    MinIO bucket '${_bucket}' ensured ✓"
+  fi
+
+  # Step 2: wait for lakeFS, then run setup_lakefs (idempotent: returns "already initialized" on second run).
+  if [[ -n "$_akey" && -n "$_skey" ]]; then
+    local _lake_url="http://localhost:${_lake_port}"
+    local _i=0
+    while [[ $_i -lt 30 ]]; do
+      if curl -sf "${_lake_url}/_health" -o /dev/null 2>/dev/null; then break; fi
+      sleep 2; _i=$((_i + 1))
+    done
+    if curl -sf "${_lake_url}/_health" -o /dev/null 2>/dev/null; then
+      local _state; _state="$(curl -s "${_lake_url}/api/v1/setup_lakefs" 2>/dev/null | grep -oE '"state":"[^"]*"' | cut -d'"' -f4)"
+      if [[ "$_state" == "not_initialized" ]]; then
+        curl -s -X POST "${_lake_url}/api/v1/setup_lakefs" \
+          -H "Content-Type: application/json" \
+          -d "{\"username\":\"${_user}\",\"key\":{\"access_key_id\":\"${_akey}\",\"secret_access_key\":\"${_skey}\"}}" \
+          >/dev/null 2>&1 || true
+        echo "    lakeFS bootstrapped with admin '${_user}' ✓"
+      else
+        echo "    lakeFS already initialised ✓"
+      fi
+    else
+      echo "    [!] lakeFS not reachable on ${_lake_url} — bootstrap skipped, run manually later"
+    fi
+  fi
+}
+
 # =============================================================================
 #  SECTION 1: Banner
 # =============================================================================
@@ -408,6 +463,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       else
         "${_upd_rt[@]}" -f docker-compose.enterprise.yml up -d
       fi
+      _bootstrap_enterprise_stack
     fi
     echo "  Containers started ✓"
 
@@ -1755,6 +1811,7 @@ if [[ "${INSTALL_ENTERPRISE_DATA_STACK:-false}" == "true" ]]; then
   echo "  Starting Enterprise Data Stack (NiFi, Marquez, lakeFS)..."
   _compose -f docker-compose.enterprise.yml pull ${_Q} 2>/dev/null || true
   _compose -f docker-compose.enterprise.yml up -d
+  _bootstrap_enterprise_stack
   echo "  Enterprise Data Stack started ✓"
 fi
 
