@@ -105,6 +105,41 @@
   </div>
 </div>
 
+{# ── Data Health drift events (Phase 23) ── #}
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between"
+           style="background:rgba(245,158,11,.08);color:#92400e">
+        <span><i class="bi bi-clipboard-pulse me-2"></i>{{ t(request, 'section.data_health') }}</span>
+        <span class="text-muted small" id="enterprise-health-meta">–</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>{{ t(request, 'lbl.severity') }}</th>
+                <th>{{ t(request, 'lbl.source_tag') }}</th>
+                <th class="text-end">{{ t(request, 'lbl.declared_entities') }}</th>
+                <th class="text-end">{{ t(request, 'lbl.delta_entities') }}</th>
+                <th class="text-end">{{ t(request, 'lbl.delta_relations') }}</th>
+                <th>{{ t(request, 'lbl.flags') }}</th>
+                <th>{{ t(request, 'lbl.committed_at') }}</th>
+              </tr>
+            </thead>
+            <tbody id="enterprise-health-body">
+              <tr><td colspan="7" class="text-muted text-center py-3">
+                <i class="bi bi-hourglass me-1"></i>{{ t(request, 'lbl.loading') }}
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 {# ── lakeFS bundle versioning log (Phase 18) ── #}
 <div class="row g-3 mb-4">
   <div class="col-12">
@@ -283,6 +318,44 @@ async function loadEnterpriseEtl() {
   }
 }
 
+const HEALTH_BADGE = {
+  ok:   "bg-success",
+  info: "bg-info text-dark",
+  warn: "bg-warning text-dark",
+  crit: "bg-danger",
+};
+
+async function loadEnterpriseHealthEvents() {
+  try {
+    const r = await fetch("/api/health/events?limit=25");
+    const data = await r.json();
+    const body = document.getElementById("enterprise-health-body");
+    const meta = document.getElementById("enterprise-health-meta");
+    const events = data.events || [];
+    if (!events.length) {
+      body.innerHTML = `<tr><td colspan="7" class="text-muted text-center py-3">{{ t(request, 'lbl.no_data') }}</td></tr>`;
+      meta.textContent = "0";
+      return;
+    }
+    body.innerHTML = events.map(ev => {
+      const sev = ev.severity || "info";
+      const flags = (ev.flags || []).join(", ") || "—";
+      return `<tr>
+        <td><span class="badge ${HEALTH_BADGE[sev] || "bg-secondary"}">${sev}</span></td>
+        <td class="font-monospace small">${(ev.source_tag || "").replace(/[<>]/g, "")}</td>
+        <td class="text-end small">${ev.declared_entities ?? "–"}</td>
+        <td class="text-end small">${ev.delta_entities ?? "–"}</td>
+        <td class="text-end small">${ev.delta_relations ?? "–"}</td>
+        <td class="small">${flags.replace(/[<>]/g, "")}</td>
+        <td class="small">${ev.ts ? new Date(ev.ts * 1000).toLocaleString() : "–"}</td>
+      </tr>`;
+    }).join("");
+    meta.textContent = String(events.length);
+  } catch (e) {
+    console.error("data-health fetch failed", e);
+  }
+}
+
 async function loadEnterpriseVersioning() {
   try {
     const r = await fetch("/api/enterprise/versioning/log?limit=25");
@@ -328,6 +401,7 @@ async function loadEnterprise() {
     loadEnterpriseHealth(),
     loadEnterpriseRuns(),
     loadEnterpriseEtl(),
+    loadEnterpriseHealthEvents(),
     loadEnterpriseVersioning(),
   ]);
   document.getElementById("enterprise-last-update").textContent = new Date().toLocaleTimeString();

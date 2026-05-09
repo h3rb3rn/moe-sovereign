@@ -144,6 +144,7 @@ def test_env_example_credentials_are_placeholders():
             r'^wJalrX',                 # well-known AWS example secret
             r'EXAMPLE',                 # explicitly named example values
             r'^ollama$',               # Ollama default (no real auth)
+            r'^marquez$',              # Marquez dev-config has literal `password: marquez` hardcoded — see Phase 17-19 hardening notes
         ]
         if not any(re.search(p, stripped, re.IGNORECASE) for p in safe_patterns):
             real_values.append(f"  {name}={stripped[:30]}...")

@@ -7754,3 +7754,243 @@ async def api_enterprise_etl_status(request: Request):
 async def enterprise_page(request: Request, _=Depends(require_login)):
     """Enterprise data stack dashboard — health overview + Marquez run history."""
     return TEMPLATES.TemplateResponse(request, "enterprise.html", build_template_ctx(request))
+
+
+# ─── Data Catalog — Phase 20 ─────────────────────────────────────────────────
+# Unifies datasets from three back-ends into one searchable surface:
+#   * Marquez   — every Dataset registered through OpenLineage events
+#   * Neo4j     — per-domain entity/relation/synthesis counts
+#   * lakeFS    — every repository + recent commit count
+# Each returned record carries `source`, `name`, `type`, `size`, `updated`,
+# `link` so the front-end can render one homogeneous table.
+
+@app.get("/api/catalog/datasets", dependencies=[Depends(require_login)])
+async def api_catalog_datasets(request: Request):
+    """Aggregate datasets from Marquez, Neo4j (via orchestrator), and lakeFS."""
+    cfg = read_env()
+    out: list = []
+    errors: dict = {}
+
+    # ── Marquez datasets ─────────────────────────────────────────────────────
+    marquez_url = (cfg.get("MARQUEZ_URL") or "").rstrip("/")
+    if marquez_url:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                ns_r = await client.get(f"{marquez_url}/api/v1/namespaces")
+                if ns_r.status_code == 200:
+                    namespaces = (ns_r.json() or {}).get("namespaces", [])
+                    for ns in namespaces[:5]:
+                        ns_name = ns.get("name", "")
+                        if not ns_name:
+                            continue
+                        ds_r = await client.get(
+                            f"{marquez_url}/api/v1/namespaces/{ns_name}/datasets",
+                            params={"limit": 100},
+                        )
+                        if ds_r.status_code == 200:
+                            for ds in (ds_r.json() or {}).get("datasets", []):
+                                out.append({
+                                    "source":  "marquez",
+                                    "name":    ds.get("name", "?"),
+                                    "type":    ds.get("type", "DATASET"),
+                                    "size":    None,
+                                    "updated": ds.get("updatedAt") or ds.get("createdAt"),
+                                    "domain":  ns_name,
+                                    "link":    None,
+                                })
+                else:
+                    errors["marquez"] = f"HTTP {ns_r.status_code}"
+        except Exception as exc:
+            errors["marquez"] = str(exc)
+
+    # ── Neo4j domain breakdown via orchestrator ──────────────────────────────
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/graph/domains")
+            if r.status_code == 200:
+                for d in (r.json() or {}).get("domains", []):
+                    out.append({
+                        "source":  "neo4j",
+                        "name":    d.get("domain", "unknown"),
+                        "type":    "ENTITY_DOMAIN",
+                        "size":    d.get("entities"),
+                        "updated": None,
+                        "domain":  d.get("domain"),
+                        "extra": {
+                            "relations":       d.get("relations"),
+                            "synthesis_nodes": d.get("synthesis_nodes"),
+                        },
+                        "link":    None,
+                    })
+            else:
+                errors["neo4j"] = f"orchestrator HTTP {r.status_code}"
+    except Exception as exc:
+        errors["neo4j"] = str(exc)
+
+    # ── lakeFS repositories ──────────────────────────────────────────────────
+    lakefs_url = (cfg.get("LAKEFS_ENDPOINT") or "").rstrip("/")
+    lakefs_key = cfg.get("LAKEFS_ACCESS_KEY_ID", "")
+    lakefs_sec = cfg.get("LAKEFS_SECRET_ACCESS_KEY", "")
+    if lakefs_url and lakefs_key and lakefs_sec:
+        try:
+            async with httpx.AsyncClient(timeout=5.0, auth=(lakefs_key, lakefs_sec)) as client:
+                r = await client.get(f"{lakefs_url}/api/v1/repositories")
+                if r.status_code == 200:
+                    for repo in (r.json() or {}).get("results", []):
+                        repo_id = repo.get("id", "?")
+                        commits_r = await client.get(
+                            f"{lakefs_url}/api/v1/repositories/{repo_id}/refs/main/commits",
+                            params={"amount": "100"},
+                        )
+                        commit_count = (
+                            len((commits_r.json() or {}).get("results", []))
+                            if commits_r.status_code == 200 else None
+                        )
+                        out.append({
+                            "source":  "lakefs",
+                            "name":    repo_id,
+                            "type":    "VERSIONED_REPO",
+                            "size":    commit_count,
+                            "updated": (
+                                None if not repo.get("creation_date")
+                                else repo.get("creation_date")
+                            ),
+                            "domain":  None,
+                            "link":    f"{lakefs_url}/repositories/{repo_id}/objects",
+                        })
+                else:
+                    errors["lakefs"] = f"HTTP {r.status_code}"
+        except Exception as exc:
+            errors["lakefs"] = str(exc)
+
+    return {
+        "datasets": out,
+        "count":    len(out),
+        "errors":   errors,
+    }
+
+
+@app.get("/catalog", response_class=HTMLResponse)
+async def catalog_page(request: Request, _=Depends(require_login)):
+    """Data Catalog — unified browser for Marquez/Neo4j/lakeFS datasets."""
+    return TEMPLATES.TemplateResponse(request, "catalog.html", build_template_ctx(request))
+
+
+# ─── Approval workflow proxy — Phase 21 ──────────────────────────────────────
+
+@app.get("/api/approval/list", dependencies=[Depends(require_login)])
+async def api_approval_list(request: Request):
+    """Proxy to orchestrator's pending-branch list."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/graph/knowledge/approval/list")
+            return r.json() if r.status_code == 200 else {"pending": [], "error": f"HTTP {r.status_code}"}
+    except Exception as exc:
+        return {"pending": [], "error": str(exc)}
+
+
+@app.post("/api/approval/approve", dependencies=[Depends(require_admin)])
+async def api_approval_approve(request: Request):
+    """Approve a pending knowledge-bundle branch (admins only)."""
+    body = await request.json()
+    branch = body.get("branch", "")
+    if not branch:
+        raise HTTPException(status_code=400, detail="branch required")
+    approver = request.session.get("user", "admin")
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/graph/knowledge/approval/{branch}/approve",
+                json={"approver": approver, "trust_floor": body.get("trust_floor", 0.5)},
+            )
+            return r.json() if r.status_code == 200 else {"status": "error", "detail": r.text}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/api/approval/reject", dependencies=[Depends(require_admin)])
+async def api_approval_reject(request: Request):
+    """Reject a pending branch (admins only)."""
+    body = await request.json()
+    branch = body.get("branch", "")
+    if not branch:
+        raise HTTPException(status_code=400, detail="branch required")
+    rejector = request.session.get("user", "admin")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/graph/knowledge/approval/{branch}/reject",
+                json={"rejector": rejector},
+            )
+            return r.json() if r.status_code == 200 else {"status": "error", "detail": r.text}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/approval", response_class=HTMLResponse)
+async def approval_page(request: Request, _=Depends(require_login)):
+    """Bundle Approval — list, preview, approve, reject pending lakeFS branches."""
+    return TEMPLATES.TemplateResponse(request, "approval.html", build_template_ctx(request))
+
+
+@app.get("/api/health/events", dependencies=[Depends(require_login)])
+async def api_health_events(request: Request, limit: int = 50):
+    """Proxy to orchestrator's data-health drift events (Phase 23)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"{ORCHESTRATOR_URL}/graph/health/events",
+                params={"limit": min(max(1, limit), 200)},
+            )
+            return r.json() if r.status_code == 200 else {"events": [], "error": f"HTTP {r.status_code}"}
+    except Exception as exc:
+        return {"events": [], "error": str(exc)}
+
+
+# ─── Object Explorer — Phase 22 ──────────────────────────────────────────────
+
+@app.post("/api/explorer/cypher", dependencies=[Depends(require_admin)])
+async def api_explorer_cypher(request: Request):
+    """Run a read-only Cypher query (admins only). Proxies to orchestrator."""
+    body = await request.json()
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/graph/cypher/read",
+                json={
+                    "query":      body.get("query", ""),
+                    "limit":      body.get("limit", 100),
+                    "parameters": body.get("parameters") or {},
+                },
+            )
+            return r.json() if r.status_code in (200, 400) else {"error": f"HTTP {r.status_code}"}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.get("/explorer", response_class=HTMLResponse)
+async def explorer_page(request: Request, _=Depends(require_login)):
+    """Object Explorer — read-only Cypher editor + Neo4j Browser link."""
+    return TEMPLATES.TemplateResponse(request, "explorer.html", build_template_ctx(request))
+
+
+# ─── Notebook (JupyterLite) — Phase 24 ───────────────────────────────────────
+
+JUPYTERLITE_URL = os.getenv(
+    "JUPYTERLITE_URL",
+    "https://jupyterlite.github.io/demo/lab/index.html",
+)
+
+
+@app.get("/notebook", response_class=HTMLResponse)
+async def notebook_page(request: Request, _=Depends(require_login)):
+    """Embedded JupyterLite (browser-only Jupyter via WebAssembly).
+
+    The iframe URL is configurable via JUPYTERLITE_URL — point at a self-
+    hosted lite/lab/index.html when running offline. Notebooks run entirely
+    client-side; the orchestrator is reached via plain HTTP requests from
+    inside the kernel using the user's session cookie.
+    """
+    ctx = build_template_ctx(request)
+    ctx["jupyterlite_url"] = JUPYTERLITE_URL
+    return TEMPLATES.TemplateResponse(request, "notebook.html", ctx)

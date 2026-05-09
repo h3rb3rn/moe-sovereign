@@ -253,3 +253,191 @@ async def get_bundle_at(repo: str, ref: str, path: str) -> Optional[Dict[str, An
         return resp.json()
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Branch-based approval workflow (Phase 21)
+# ---------------------------------------------------------------------------
+# Knowledge imports may opt into approval gating: instead of going straight
+# into the graph + main branch, the bundle lands on a `pending/<tag>-<ts>`
+# branch and an admin must explicitly approve before the merge happens.
+#
+# pending branches are discovered by prefix; approve = merge into main +
+# delete branch; reject = delete branch with no merge.
+
+PENDING_BRANCH_PREFIX = "pending/"
+
+
+async def archive_to_branch(bundle: Dict[str, Any], *,
+                            source_tag: str,
+                            repo: str = REPO_NAME,
+                            base_branch: str = DEFAULT_BRANCH,
+                            metadata: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """Create a pending branch off `base_branch`, upload + commit the bundle there.
+
+    Returns the branch name on success or None.
+    """
+    if not _enabled():
+        return None
+    if not await ensure_repository(repo):
+        return None
+    ts        = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_tag  = "".join(c if (c.isalnum() or c in "-_") else "_" for c in source_tag)[:48]
+    branch    = f"{PENDING_BRANCH_PREFIX}{safe_tag}-{ts}"
+
+    create = await _request(
+        "POST",
+        f"/api/v1/repositories/{repo}/branches",
+        json_body={"name": branch, "source": base_branch},
+    )
+    if create is None or create.status_code not in (200, 201, 409):
+        return None
+
+    obj_path = f"bundles/{safe_tag}/{ts}.json"
+    payload  = json.dumps(bundle, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    upload = await _request(
+        "POST",
+        f"/api/v1/repositories/{repo}/branches/{branch}/objects",
+        params={"path": obj_path},
+        content=payload,
+        content_type="application/octet-stream",
+        timeout=10.0,
+    )
+    if upload is None or upload.status_code not in (200, 201):
+        return None
+
+    commit_meta: Dict[str, str] = {
+        "source_tag":   source_tag,
+        "object_count": str(len(bundle.get("entities", []))),
+        "object_path":  obj_path,
+        "approval":     "pending",
+    }
+    if metadata:
+        for k, v in metadata.items():
+            commit_meta[str(k)] = str(v)
+
+    commit = await _request(
+        "POST",
+        f"/api/v1/repositories/{repo}/branches/{branch}/commits",
+        json_body={
+            "message":  f"pending approval: {source_tag} ({obj_path})",
+            "metadata": commit_meta,
+        },
+    )
+    if commit is None or commit.status_code not in (200, 201):
+        return None
+    return branch
+
+
+async def list_pending_branches(repo: str = REPO_NAME) -> List[Dict[str, Any]]:
+    """List all branches whose name starts with PENDING_BRANCH_PREFIX.
+
+    Each entry carries the branch id, head commit info, and (best-effort) the
+    metadata of the head commit so admins can preview the source_tag and size
+    without separate fetches.
+    """
+    if not _enabled():
+        return []
+    resp = await _request(
+        "GET",
+        f"/api/v1/repositories/{repo}/branches",
+        params={"prefix": PENDING_BRANCH_PREFIX, "amount": "100"},
+    )
+    if resp is None or resp.status_code != 200:
+        return []
+    out: List[Dict[str, Any]] = []
+    for br in (resp.json() or {}).get("results", []):
+        branch_id = br.get("id")
+        if not branch_id or not branch_id.startswith(PENDING_BRANCH_PREFIX):
+            continue
+        head_meta: Dict[str, Any] = {}
+        log_resp = await _request(
+            "GET",
+            f"/api/v1/repositories/{repo}/refs/{branch_id}/commits",
+            params={"amount": "1"},
+        )
+        if log_resp is not None and log_resp.status_code == 200:
+            head_results = (log_resp.json() or {}).get("results", [])
+            if head_results:
+                head_meta = head_results[0]
+        out.append({
+            "branch":   branch_id,
+            "commit":   head_meta.get("id"),
+            "message":  head_meta.get("message"),
+            "metadata": head_meta.get("metadata") or {},
+            "created_at": head_meta.get("creation_date"),
+        })
+    return out
+
+
+async def get_bundle_from_branch(branch: str, *,
+                                 repo: str = REPO_NAME) -> Optional[Dict[str, Any]]:
+    """Read the bundle JSON committed onto a pending branch."""
+    if not _enabled():
+        return None
+    log_resp = await _request(
+        "GET",
+        f"/api/v1/repositories/{repo}/refs/{branch}/commits",
+        params={"amount": "1"},
+    )
+    if log_resp is None or log_resp.status_code != 200:
+        return None
+    head = ((log_resp.json() or {}).get("results", []) or [{}])[0]
+    obj_path = (head.get("metadata") or {}).get("object_path")
+    if not obj_path:
+        return None
+    obj_resp = await _request(
+        "GET",
+        f"/api/v1/repositories/{repo}/refs/{branch}/objects",
+        params={"path": obj_path},
+        timeout=10.0,
+    )
+    if obj_resp is None or obj_resp.status_code != 200:
+        return None
+    try:
+        return obj_resp.json()
+    except Exception:
+        return None
+
+
+async def approve_branch(branch: str, *,
+                         repo: str = REPO_NAME,
+                         base_branch: str = DEFAULT_BRANCH,
+                         approver: str = "admin") -> Optional[str]:
+    """Merge a pending branch into the base branch and delete it.
+
+    Returns the merge commit id or None on failure.
+    """
+    if not _enabled():
+        return None
+    if not branch.startswith(PENDING_BRANCH_PREFIX):
+        return None
+    merge = await _request(
+        "POST",
+        f"/api/v1/repositories/{repo}/refs/{branch}/merge/{base_branch}",
+        json_body={
+            "message":  f"approve: merge {branch} (by {approver})",
+            "metadata": {"approver": approver, "approval": "approved"},
+        },
+    )
+    if merge is None or merge.status_code not in (200, 201):
+        return None
+    merge_id: Optional[str] = None
+    try:
+        merge_id = (merge.json() or {}).get("reference")
+    except Exception:
+        pass
+    # Best-effort branch cleanup; not a hard error if it stays around.
+    await _request("DELETE", f"/api/v1/repositories/{repo}/branches/{branch}")
+    return merge_id or "merged"
+
+
+async def reject_branch(branch: str, *,
+                        repo: str = REPO_NAME) -> bool:
+    """Delete a pending branch without merging it."""
+    if not _enabled():
+        return False
+    if not branch.startswith(PENDING_BRANCH_PREFIX):
+        return False
+    resp = await _request("DELETE", f"/api/v1/repositories/{repo}/branches/{branch}")
+    return resp is not None and resp.status_code in (200, 204)
