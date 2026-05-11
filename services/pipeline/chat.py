@@ -602,6 +602,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             media_type="text/event-stream",
             headers=_moe_resp_headers or None,
         )
+    if state.app_graph is None:
+        logger.warning("APP-GRAPH-NONE: state id=%d, app_graph=%s", id(state), state.app_graph)
+        return JSONResponse(status_code=503, content={"error": {"message": "Orchestrator graph not ready — retry in a few seconds", "type": "service_unavailable", "code": "graph_not_ready"}})
     result = await state.app_graph.ainvoke(
         {"input": user_input, "response_id": chat_id, "mode": mode,
          "user_id": user_id, "api_key_id": api_key_id,
