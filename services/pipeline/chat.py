@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 import state
+import starfleet_config as _starfleet
+import mission_context as _mission_context
 from config import (
     KAFKA_TOPIC_INGEST, KAFKA_TOPIC_REQUESTS, KAFKA_TOPIC_FEEDBACK,
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL, CLAUDE_CODE_TOOL_ENDPOINT,
