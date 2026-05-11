@@ -1,11 +1,5 @@
 # Data Catalog
 
-> **Migration notice (2026-05-11):** Phase 16-24 (Catalog, Approval, Explorer,
-> Drift, Notebook + Marquez/lakeFS/NiFi) are migrating into the dedicated
-> [`moe-codex`](https://github.com/h3rb3rn/moe-codex) repository as an optional
-> add-on. The endpoints described here remain in moe-sovereign during the
-> transition; new operator deployments should deploy moe-codex separately.
-
 The Data Catalog (`/catalog`) is a single searchable view across all three
 data back-ends in a Sovereign MoE deployment. It removes the need to switch
 between Marquez, Neo4j Browser, and the lakeFS UI when looking up where a

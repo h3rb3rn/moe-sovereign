@@ -65,12 +65,13 @@ _bootstrap_enterprise_stack() {
 
   echo "  Bootstrapping enterprise stack..."
 
-  # Step 1: ensure MinIO bucket for lakeFS exists.
-  if _compose ps moe-storage 2>/dev/null | grep -q "Up"; then
-    _compose exec -T moe-storage sh -c \
-      "mc alias set local http://localhost:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 && mc mb -p local/${_bucket} 2>/dev/null || true" \
-      >/dev/null 2>&1 || true
-    echo "    MinIO bucket '${_bucket}' ensured ✓"
+  # Step 1: ensure Garage bucket for lakeFS exists (create + allow key — idempotent).
+  local _gkey; _gkey="$(grep -E '^GARAGE_ACCESS_KEY_ID=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  if _compose ps moe-storage-garage 2>/dev/null | grep -q "Up" && [[ -n "$_gkey" ]]; then
+    _compose exec -T moe-storage-garage garage bucket create "${_bucket}" 2>/dev/null || true
+    _compose exec -T moe-storage-garage garage bucket allow \
+      --read --write --owner "${_bucket}" --key "${_gkey}" 2>/dev/null || true
+    echo "    Garage bucket '${_bucket}' ensured ✓"
   fi
 
   # Step 2: wait for lakeFS, then run setup_lakefs (idempotent: returns "already initialized" on second run).
@@ -1442,11 +1443,7 @@ if [[ "$INSTALL_CADDY" == "true" ]]; then
         echo "}"
         echo ""
         echo "files.${DOMAIN} {"
-        echo "    reverse_proxy moe-storage:9000"
-        echo "}"
-        echo ""
-        echo "storage.${DOMAIN} {"
-        echo "    reverse_proxy moe-storage:9001"
+        echo "    reverse_proxy moe-storage-garage:3900"
         echo "}"
         if [[ "$INSTALL_AUTHENTIK" == "true" && -n "${AUTHENTIK_URL_INPUT:-}" ]]; then
           _h_sso=$(_caddy_host "${AUTHENTIK_URL_INPUT}")
@@ -1699,12 +1696,13 @@ fi
   echo 'AUTHENTIK_HTTPS_PORT=9443'
   echo 'AUTHENTIK_ERROR_REPORTING__ENABLED=false'
   echo ""
-  echo "# --- Object Storage (MinIO) ---"
-  echo "# MINIO_ENDPOINT: internal container URL (moe-storage:9000)"
-  echo "# MINIO_PUBLIC_URL: public download base URL — set after configuring Nginx"
+  echo "# --- Object Storage (Garage S3 — EOL MinIO replaced 2026-04-25) ---"
+  echo "# MINIO_ENDPOINT: internal Garage S3 API URL — used by MCP server for file uploads"
+  echo "# MINIO_ROOT_USER/PASSWORD: set to your Garage access key ID and secret after running:"
+  echo "#   docker exec moe-storage-garage garage key create moe-mcp"
   printf 'MINIO_ROOT_USER=%s\n'     "${GEN_MINIO_USER}"
   printf 'MINIO_ROOT_PASSWORD=%s\n' "${GEN_MINIO_PASS}"
-  echo 'MINIO_ENDPOINT=moe-storage:9000'
+  echo 'MINIO_ENDPOINT=moe-storage-garage:3900'
   echo 'MINIO_PUBLIC_URL='
   echo 'MINIO_DEFAULT_BUCKET=moe-files'
 } > "${MOE_ENV_FILE}"

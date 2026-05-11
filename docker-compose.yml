@@ -474,7 +474,6 @@ services:
           cpus: "0.3"
           memory: 128M
 
-  # --- MinIO Object Storage ---
   # --- Splash — JavaScript-capable headless browser for MCP web_browser tool ---
   # Renders JS-heavy pages (BBC scripts, British Museum collection, GitHub issues)
   # that SearXNG's static indexer cannot handle. Lightweight (<200MB), REST API.
@@ -489,25 +488,31 @@ services:
           cpus: '0.5'
           memory: 512M
 
-  moe-storage:
-    image: quay.io/minio/minio:latest
-    container_name: moe-storage
+  # --- Garage (S3-compatible object store, AGPLv3) ---
+  # Replaces MinIO after its 2026-04-25 archival.
+  # Developed by Deuxfleurs (French non-profit) — aligns with our EU
+  # sovereignty posture. Drop-in S3 API on port 3900; admin API on 3903.
+  moe-storage-garage:
+    image: dxflrs/garage:v1.0.1
+    container_name: moe-storage-garage
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     env_file:
       - .env
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?missing MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?missing MINIO_ROOT_PASSWORD}
     volumes:
-      - moe_storage_data:/data
+      - ${MOE_DATA_ROOT}/garage/meta:/var/lib/garage/meta
+      - ${MOE_DATA_ROOT}/garage/data:/var/lib/garage/data
+      - ${MOE_DATA_ROOT}/garage/etc/garage.toml:/etc/garage.toml:ro
     ports:
-      - "127.0.0.1:9010:9000"
+      - "127.0.0.1:3900:3900"   # S3 API
+      - "127.0.0.1:3903:3903"   # admin API
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # Garage image is distroless (no shell/wget). Binary lives at /garage (not in PATH).
+      # `garage status` exits 0 when the node is operational.
+      test: ["CMD", "/garage", "status"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -648,7 +653,6 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  moe_storage_data:
 
 
 networks:

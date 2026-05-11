@@ -26,10 +26,11 @@ licence stability is structurally protected.
 
 Already applied in the stack:
 
-| Original | Relicense | We use |
+| Original | Relicense / EOL | We use |
 |---|---|---|
 | Redis 7.4+ | RSALv2/SSPL | **Valkey** (BSD-3-Clause, Linux Foundation) |
 | Confluent Kafka | Confluent Community Licence | **Apache Kafka** (Apache 2.0) |
+| MinIO | **Archived 2026-04-25** (EOL — no further security patches) | **Garage** (AGPL-3.0, Deuxfleurs French non-profit, EU-sovereignty fit) |
 
 Pre-approved replacements for the `moe-codex` stack expansion:
 
@@ -61,7 +62,7 @@ These are the default target for new dependencies.
 
 ---
 
-## 3. Allowlist with aggregation pattern (separate container)
+## 3. Allowlist with Aggregation Pattern (separate container)
 
 The following Copyleft licences are OSI-compatible but introduce
 source-disclosure obligations *if* the licensed code is statically or
@@ -72,7 +73,7 @@ importing its source into MoE codebases.
 
 | Licence | Components in our stack | Aggregation strategy |
 |---|---|---|
-| **AGPL-3.0** | Grafana, MinIO, SearXNG, HedgeDoc (planned) | Own container, talks via HTTP only |
+| **AGPL-3.0** | Grafana, **Garage** (S3 storage), SearXNG, HedgeDoc (planned) | Own container, talks via HTTP/S3 API only |
 | **GPL-3.0** | Neo4j Community | Own container, talks via Bolt protocol |
 | **LGPL** | (no current dependency) | Linking allowed; document if introduced |
 | **MPL-2.0** | OpenTofu, OpenBao (planned) | File-level copyleft; OK to embed |
@@ -97,9 +98,33 @@ explicitly disallowed in any MoE repository:
 - **Llama Community License** (only for MoE Sovereign itself; allowed inside operator deployments under operator responsibility)
 - Any **"Source-Available"** licence without OSI approval
 
+**EOL / Archived projects** — also forbidden regardless of historical licence:
+
+- **MinIO** — archived 2026-04-25; last Docker image frozen; no further security patches.
+  Replacement: **Garage** (AGPL-3.0, EU-origin). See section 1 and section 4a.
+
 A component on this list must either be replaced with an OSI-compatible
 fork, removed, or — if absolutely irreplaceable — explicitly exempted
 in this page with a documented business reason and a sunset deadline.
+
+---
+
+## 4a. Object-storage tier selection
+
+Two tiers are supported; the choice depends on compliance requirements:
+
+| Tier | System | Licence | When to use |
+|---|---|---|---|
+| **Standard** | **Garage** v1.0+ (Deuxfleurs) | AGPL-3.0 | DEV, SME production, internal tooling. Fully S3-compatible; EU-origin; Rust-based. Lacks Object Lock + SSE-KMS. |
+| **Compliance** | **Ceph RadosGW** | LGPL-2.1 | KritIS, government, banking audit, pharma GxP. Full S3 Object Lock (WORM), SSE-KMS (HashiCorp Vault / OpenBao), bucket lifecycle, multi-site replication. Available as managed service at Hetzner, OVH, STACKIT. |
+
+**WORM compliance note:** BSI Grundschutz OPS.1.1.6 and GDPR Art. 5(1)(e)
+(storage limitation) may require immutable object retention in regulated
+deployments. Garage v1.0 does not implement S3 Object Lock; Ceph does.
+
+The application layer (lakeFS, moe-codex API) is storage-backend-agnostic —
+switching tiers requires only changing `LAKEFS_BLOCKSTORE_S3_ENDPOINT` and
+credentials. No code changes.
 
 ---
 
@@ -125,10 +150,9 @@ Run locally:
 
 When positioning MoE Sovereign against proprietary platforms (Palantir
 Foundry / Gotham / AIP / Apollo), the following constraints apply under
-§ 6 of the German UWG (Act against Unfair Competition) and Art. 4 of EU
-Comparative-Advertising Directive 2006/114/EC:
+§ 6 German UWG and Art. 4 EU Comparative Advertising Directive 2006/114/EC:
 
-| ✅ Allowed | ❌ Forbidden |
+| ✅ Allowed | ❌ Prohibited |
 |---|---|
 | "Foundry-equivalent functionality" | "Foundry clone" |
 | "Palantir-coverage table" (factual, verifiable) | Copy of Palantir UI screenshots / icons |
@@ -143,9 +167,9 @@ Comparative claims must be:
 
 ---
 
-## 7. EU AI Act readiness (Verordnung 2024/1689)
+## 7. EU AI Act readiness (Regulation 2024/1689)
 
-MoE Sovereign benefits from the **Open-Source-Privileg gemäß Art. 2(12) AIA** —
+MoE Sovereign benefits from the **Open-Source exemption under Art. 2(12) AIA** —
 Free/Open-Source AI components under Apache/MIT licences are excluded from
 many obligations *unless* they are placed on the market as a high-risk
 system (Art. 6).
