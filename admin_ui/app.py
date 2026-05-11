@@ -7603,7 +7603,7 @@ async def _jl_http_proxy(request: Request, path: str):
     if request.url.query:
         target += f"?{request.url.query}"
     fwd = {k: v for k, v in request.headers.items() if k.lower() not in _PROXY_HOP_BY_HOP}
-    fwd["host"] = _JUPYTERLAB_BASE.split("//", 1)[-1]
+    # httpx sets Host from the target URL automatically — no manual override needed.
     try:
         async with httpx.AsyncClient(timeout=_JUPYTERLAB_TIMEOUT, follow_redirects=True) as cl:
             up = await cl.request(request.method, target, headers=fwd, content=await request.body())
@@ -7740,9 +7740,21 @@ async def explorer_page(request: Request, _=Depends(require_login)):
 
 @app.get("/notebook", response_class=HTMLResponse)
 async def notebook_page(request: Request, _=Depends(require_login)):
-    jupyterlab_configured = bool(os.getenv("JUPYTERLAB_URL", ""))
+    token = os.getenv("JUPYTERLAB_TOKEN", "")
+    host_port = os.getenv("JUPYTERLAB_HOST_PORT", "8899")
+    # Build the direct-host URL so the browser's WebSocket bypasses Nginx.
+    # Falls back to the proxy path when no token/port is configured.
+    public_base = os.getenv("PUBLIC_URL", "").rstrip("/")
+    if token and host_port and public_base:
+        host = public_base.split("//", 1)[-1].split("/")[0].split(":")[0]
+        direct_url = f"http://{host}:{host_port}/notebook/lab?token={token}"
+    else:
+        direct_url = ""
     return TEMPLATES.TemplateResponse(request, "notebook.html", {
-        "jupyterlab_configured": jupyterlab_configured,
+        "jupyterlab_configured": bool(os.getenv("JUPYTERLAB_URL", "")),
+        "jupyterlab_direct_url": direct_url,
+        "jupyterlab_token": token,
+        "jupyterlab_host_port": host_port,
     })
 
 

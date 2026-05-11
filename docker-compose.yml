@@ -501,11 +501,15 @@ services:
       JUPYTER_ENABLE_LAB: "yes"
       CHOWN_HOME: "yes"
       GRANT_SUDO: "yes"
+    # Exposed directly on host so the browser's WebSocket can reach it
+    # without traversing the Nginx Basic-Auth layer (browsers cannot send
+    # Authorization headers in the WebSocket() constructor).
+    ports:
+      - "${JUPYTERLAB_HOST_PORT:-8899}:8888"
     command: >
       start-notebook.sh
       --ServerApp.base_url=/notebook/
-      --ServerApp.token=
-      --ServerApp.password=
+      --ServerApp.token=${JUPYTERLAB_TOKEN}
       --ServerApp.allow_origin=*
       --ServerApp.disable_check_xsrf=true
     volumes:
