@@ -14,18 +14,21 @@ services:
 
   # ── Apache NiFi 1.x — Data Flow Automation ──────────────────────────────────
   # Handles ETL pipelines: ingest from legacy sources, normalize, route to Kafka/Postgres.
+  # NiFi 1.x with SINGLE_USER_CREDENTIALS automatically enables HTTPS on port 8443;
+  # disable HTTP and switch to HTTPS on port 8443 with the auto-generated self-signed cert.
   moe-nifi:
     image: apache/nifi:1.27.0
     container_name: moe-nifi
     restart: unless-stopped
     environment:
-      NIFI_WEB_HTTP_HOST: "0.0.0.0"
-      NIFI_WEB_HTTP_PORT: "8080"
+      NIFI_WEB_HTTPS_HOST: "0.0.0.0"
+      NIFI_WEB_HTTPS_PORT: "8443"
+      NIFI_WEB_PROXY_HOST: "moe-nifi:8443,localhost:${NIFI_HOST_PORT:-8181}"
       SINGLE_USER_CREDENTIALS_USERNAME: "${NIFI_ADMIN_USER:-admin}"
       # Password must be ≥ 12 characters for NiFi single-user auth
       SINGLE_USER_CREDENTIALS_PASSWORD: "${NIFI_ADMIN_PASSWORD:-nifi-changeme-pwd}"
     ports:
-      - "${NIFI_HOST_PORT:-8181}:8080"
+      - "${NIFI_HOST_PORT:-8181}:8443"
     volumes:
       - nifi_data:/opt/nifi/nifi-current/data
       - nifi_conf:/opt/nifi/nifi-current/conf
@@ -33,7 +36,7 @@ services:
     networks:
       - moe_net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/nifi/ -o /dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -sfk https://localhost:8443/nifi/ -o /dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
