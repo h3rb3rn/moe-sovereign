@@ -7745,9 +7745,40 @@ async def notebook_page(request: Request, _=Depends(require_login)):
     })
 
 
+_CODEX_SERVICES = ["nifi", "marquez", "lakefs"]
+_CODEX_DISABLED_SERVICES = [
+    {"name": s, "status": "disabled", "configured": False, "ok": False, "url": "", "latency_ms": None}
+    for s in _CODEX_SERVICES
+]
+
+
 @app.get("/api/enterprise/health", dependencies=[Depends(require_login)])
 async def api_enterprise_health():
-    return await _cx_get("v1/codex/status")
+    if not _CODEX_ADMIN_URL:
+        return {"enabled": False, "services": _CODEX_DISABLED_SERVICES}
+    data = await _cx_get("v1/codex/status")
+    if "error" in data:
+        return {"enabled": False, "services": _CODEX_DISABLED_SERVICES}
+    # moe-codex returns flat boolean flags; transform to the service-array format
+    # the enterprise.html frontend expects.
+    def _svc(name: str, enabled_key: str) -> dict:
+        ok = bool(data.get(enabled_key))
+        return {
+            "name": name,
+            "status": "healthy" if ok else "disabled",
+            "configured": ok,
+            "ok": ok,
+            "url": "",
+            "latency_ms": None,
+        }
+    return {
+        "enabled": True,
+        "services": [
+            _svc("nifi",    "etl_enabled"),
+            _svc("marquez", "lineage_enabled"),
+            _svc("lakefs",  "versioning_enabled"),
+        ],
+    }
 
 
 @app.get("/api/enterprise/runs", dependencies=[Depends(require_login)])
