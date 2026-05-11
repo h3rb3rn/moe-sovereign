@@ -7592,6 +7592,7 @@ _JUPYTERLAB_TIMEOUT = float(os.getenv("JUPYTERLAB_TIMEOUT", "120"))
 _PROXY_HOP_BY_HOP = frozenset({
     "connection", "keep-alive", "transfer-encoding", "te", "trailers",
     "upgrade", "proxy-authorization", "proxy-authenticate", "x-frame-options",
+    "host",  # stripped so we can set the correct upstream host without duplication
 })
 
 
@@ -7714,7 +7715,7 @@ async def _cx_post(path: str, body: dict):
 
 @app.get("/codex", response_class=HTMLResponse)
 async def codex_page(request: Request, _=Depends(require_login)):
-    return TEMPLATES.TemplateResponse(request, "enterprise.html", {})
+    return TEMPLATES.TemplateResponse(request, "codex.html", {})
 
 
 @app.get("/enterprise")
@@ -7760,7 +7761,7 @@ async def api_enterprise_health():
     if "error" in data:
         return {"enabled": False, "services": _CODEX_DISABLED_SERVICES}
     # moe-codex returns flat boolean flags; transform to the service-array format
-    # the enterprise.html frontend expects.
+    # the codex.html frontend expects.
     def _svc(name: str, enabled_key: str) -> dict:
         ok = bool(data.get(enabled_key))
         return {
