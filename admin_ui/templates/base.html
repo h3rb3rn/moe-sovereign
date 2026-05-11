@@ -58,7 +58,7 @@
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
-    {% set _enterprise_active   = _p in ['/enterprise', '/catalog', '/approval', '/explorer', '/notebook'] %}
+    {% set _enterprise_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook'] %}
 
     <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
       {# Config – direct link #}
@@ -153,10 +153,10 @@
       <div class="dropdown">
         <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _enterprise_active %}active{% endif %}"
                 data-bs-toggle="dropdown" aria-expanded="false">
-          <i class="bi bi-building me-1"></i>Enterprise
+          <i class="bi bi-building me-1"></i>{{ t(request, 'nav.enterprise') }}
         </button>
         <ul class="dropdown-menu dropdown-menu-dark">
-          <li><a class="dropdown-item {% if _p == '/enterprise' %}active{% endif %}" href="/enterprise">
+          <li><a class="dropdown-item {% if _p == '/codex' %}active{% endif %}" href="/codex">
             <i class="bi bi-layers me-2" style="color:#b09bff"></i>{{ t(request, 'page.enterprise') }}
           </a></li>
           <li><a class="dropdown-item {% if _p == '/catalog' %}active{% endif %}" href="/catalog">
@@ -333,11 +333,11 @@
           <li><hr class="border-secondary my-1"></li>
           <li class="nav-item">
             <span class="nav-link text-secondary px-2 py-1 small fw-semibold">
-              <i class="bi bi-building me-1"></i>Enterprise
+              <i class="bi bi-building me-1"></i>{{ t(request, 'nav.enterprise') }}
             </span>
           </li>
           <li class="nav-item">
-            <a href="/enterprise" class="nav-link text-white {% if _p == '/enterprise' %}fw-bold{% endif %} rounded px-2 py-2">
+            <a href="/codex" class="nav-link text-white {% if _p == '/codex' %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-layers me-2" style="color:#b09bff"></i>{{ t(request, 'page.enterprise') }}
             </a>
           </li>

@@ -12,5 +12,6 @@ COPY statistics.py .
 COPY templates/ templates/
 COPY static/ static/
 COPY lang/ lang/
+
 EXPOSE 8088
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8088", "--proxy-headers", "--forwarded-allow-ips", "*"]

@@ -489,6 +489,33 @@ services:
           cpus: '0.5'
           memory: 512M
 
+  # --- JupyterLab (server-side Python kernel for the Admin Notebook) ---
+  # BSD-3-Clause. Proxied by moe-admin at /notebook/ so no port needs exposing.
+  # Token auth disabled — moe-admin session layer is the authentication boundary.
+  moe-jupyterlab:
+    image: quay.io/jupyter/scipy-notebook:latest
+    container_name: moe-jupyterlab
+    restart: unless-stopped
+    user: root
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      CHOWN_HOME: "yes"
+      GRANT_SUDO: "yes"
+    command: >
+      start-notebook.sh
+      --ServerApp.base_url=/notebook/
+      --ServerApp.token=
+      --ServerApp.password=
+      --ServerApp.allow_origin=*
+      --ServerApp.disable_check_xsrf=true
+    volumes:
+      - ${MOE_DATA_ROOT}/jupyterlab:/home/jovyan/work
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
   # --- Garage (S3-compatible object store, AGPLv3) ---
   # Replaces MinIO after its 2026-04-25 archival.
   # Developed by Deuxfleurs (French non-profit) — aligns with our EU

@@ -14,8 +14,8 @@ from typing import Optional
 
 import httpx
 import docker
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks, WebSocket
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -152,6 +152,11 @@ def _get_monitored_containers() -> list[str]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         for clist in _OPTIONAL_CONTAINERS.values():
             names.extend(clist)
+    if os.getenv("CODEX_URL"):
+        names.extend([
+            "moe-codex-api", "moe-docling", "moe-trino",
+            "moe-lakefs", "moe-marquez", "moe-mlflow",
+        ])
     extra = os.getenv("EXTRA_CONTAINER_NAMES", "")
     names += [c.strip() for c in extra.split(",") if c.strip()]
     return names
@@ -352,19 +357,40 @@ class CsrfApiMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # /notebook/ is a reverse proxy to JupyterLab: allow same-origin iframe
+    # embedding and WebSocket connections; JupyterLab sets its own framing headers.
+    _NOTEBOOK_PREFIX = "/notebook"
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        path = request.url.path
+        is_notebook = path == "/notebook" or path.startswith("/notebook/")
+
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; "
-            "font-src 'self';"
-        )
+
+        if is_notebook:
+            # JupyterLab needs WebSocket (ws:/wss:) and blob: workers for its kernel.
+            # X-Frame-Options is intentionally omitted so the /notebook page's iframe works.
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; "
+                "font-src 'self' data:; "
+                "worker-src 'self' blob:; "
+                "connect-src 'self' ws: wss: blob:;"
+            )
+        else:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "font-src 'self';"
+            )
         return response
 
 
@@ -7556,6 +7582,105 @@ async def watchdog_test_mail(request: Request):
     return {"ok": sent, "to": to, "smtp_host": SMTP_HOST}
 
 
+# ── moe-jupyterlab Proxy ──────────────────────────────────────────────────────
+# Transparent HTTP + WebSocket reverse proxy for JupyterLab at /notebook/.
+# JupyterLab runs with --ServerApp.base_url=/notebook/ so all its assets and
+# WebSocket kernel channels resolve through the same moe-admin origin.
+
+_JUPYTERLAB_BASE = os.getenv("JUPYTERLAB_URL", "").rstrip("/")
+_JUPYTERLAB_TIMEOUT = float(os.getenv("JUPYTERLAB_TIMEOUT", "120"))
+_PROXY_HOP_BY_HOP = frozenset({
+    "connection", "keep-alive", "transfer-encoding", "te", "trailers",
+    "upgrade", "proxy-authorization", "proxy-authenticate", "x-frame-options",
+})
+
+
+async def _jl_http_proxy(request: Request, path: str):
+    if not _JUPYTERLAB_BASE:
+        raise HTTPException(status_code=503, detail="JupyterLab not configured (JUPYTERLAB_URL missing)")
+    target = f"{_JUPYTERLAB_BASE}/notebook/{path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+    fwd = {k: v for k, v in request.headers.items() if k.lower() not in _PROXY_HOP_BY_HOP}
+    fwd["host"] = _JUPYTERLAB_BASE.split("//", 1)[-1]
+    try:
+        async with httpx.AsyncClient(timeout=_JUPYTERLAB_TIMEOUT, follow_redirects=True) as cl:
+            up = await cl.request(request.method, target, headers=fwd, content=await request.body())
+        rh = {k: v for k, v in up.headers.items() if k.lower() not in _PROXY_HOP_BY_HOP}
+        return StreamingResponse(iter([up.content]), status_code=up.status_code, headers=rh,
+                                 media_type=up.headers.get("content-type"))
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="JupyterLab upstream timeout")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="JupyterLab upstream unavailable")
+
+
+async def _jl_ws_proxy(websocket: WebSocket, path: str) -> None:
+    if not _JUPYTERLAB_BASE:
+        await websocket.close(code=1011)
+        return
+    ws_base = _JUPYTERLAB_BASE.replace("http://", "ws://").replace("https://", "wss://")
+    target = f"{ws_base}/notebook/{path}"
+    if websocket.url.query:
+        target += f"?{websocket.url.query}"
+    await websocket.accept()
+    try:
+        import websockets as _ws
+        extra = [("Host", _JUPYTERLAB_BASE.split("//", 1)[-1])]
+        async with _ws.connect(target, additional_headers=extra) as upstream:
+            async def _to_up():
+                try:
+                    while True:
+                        msg = await websocket.receive()
+                        if msg.get("bytes") is not None:
+                            await upstream.send(msg["bytes"])
+                        elif msg.get("text") is not None:
+                            await upstream.send(msg["text"])
+                        elif msg.get("type") == "websocket.disconnect":
+                            break
+                except Exception:
+                    pass
+            async def _to_cl():
+                try:
+                    async for msg in upstream:
+                        if isinstance(msg, bytes):
+                            await websocket.send_bytes(msg)
+                        else:
+                            await websocket.send_text(msg)
+                except Exception:
+                    pass
+            tasks = [asyncio.create_task(_to_up()), asyncio.create_task(_to_cl())]
+            _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except Exception:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+_JL_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+
+
+@app.websocket("/notebook/{path:path}")
+async def notebook_ws_proxy(websocket: WebSocket, path: str) -> None:
+    await _jl_ws_proxy(websocket, path)
+
+
+@app.api_route("/notebook", methods=_JL_HTTP_METHODS)
+@app.api_route("/notebook/", methods=_JL_HTTP_METHODS)
+async def notebook_http_root(request: Request):
+    return await _jl_http_proxy(request, "")
+
+
+@app.api_route("/notebook/{path:path}", methods=_JL_HTTP_METHODS)
+async def notebook_http_proxy(request: Request, path: str):
+    return await _jl_http_proxy(request, path)
+
+
 # ── moe-codex Enterprise UI ───────────────────────────────────────────────────
 # Pages served by moe-admin; API calls proxied to CODEX_URL (moe-codex-api).
 
@@ -7587,9 +7712,14 @@ async def _cx_post(path: str, body: dict):
         return {"error": str(exc)}
 
 
-@app.get("/enterprise", response_class=HTMLResponse)
-async def enterprise_page(request: Request, _=Depends(require_login)):
+@app.get("/codex", response_class=HTMLResponse)
+async def codex_page(request: Request, _=Depends(require_login)):
     return TEMPLATES.TemplateResponse(request, "enterprise.html", {})
+
+
+@app.get("/enterprise")
+async def enterprise_redirect(_=Depends(require_login)):
+    return RedirectResponse("/codex", status_code=301)
 
 
 @app.get("/catalog", response_class=HTMLResponse)
@@ -7609,8 +7739,9 @@ async def explorer_page(request: Request, _=Depends(require_login)):
 
 @app.get("/notebook", response_class=HTMLResponse)
 async def notebook_page(request: Request, _=Depends(require_login)):
+    jupyterlab_configured = bool(os.getenv("JUPYTERLAB_URL", ""))
     return TEMPLATES.TemplateResponse(request, "notebook.html", {
-        "jupyterlite_url": os.getenv("JUPYTERLITE_URL", ""),
+        "jupyterlab_configured": jupyterlab_configured,
     })
 
 
