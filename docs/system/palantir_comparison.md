@@ -1,5 +1,13 @@
 # Palantir vs. MoE Sovereign — Capability Comparison
 
+> **2026-05-11 — Canonical location moved:** The Palantir-equivalent feature
+> set (Catalog, Approval, Explorer, Drift, Notebook + Marquez/lakeFS/NiFi)
+> now lives in the dedicated [`moe-codex`](https://github.com/h3rb3rn/moe-codex)
+> repository. The authoritative version of this comparison page is at
+> `moe-codex/docs/system/palantir_comparison.md`. The copy here remains for
+> reference until the next moe-sovereign release; new entries should be made
+> in moe-codex.
+
 This page tracks how MoE Sovereign maps onto the Palantir product portfolio
 (Foundry · Gotham · AIP · Apollo). It is the canonical reference for product
 positioning, gap analysis, and roadmap discussions.

@@ -1,5 +1,7 @@
 # Data Health & Drift Detection
 
+> **Migration notice (2026-05-11):** Migrating to [`moe-codex`](https://github.com/h3rb3rn/moe-codex). New deployments use that repo.
+
 Every successful knowledge-bundle import is wrapped in a stats snapshot.
 The differences between *before* and *after* are run through
 `services/data_health.compute_drift()`, which classifies the import on a

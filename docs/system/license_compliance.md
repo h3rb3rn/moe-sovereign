@@ -45,7 +45,7 @@ Pre-approved replacements for the `moe-codex` stack expansion:
 
 ---
 
-## 2. Allowlist — uneingeschränkt einsetzbar
+## 2. Allowlist — unrestricted use
 
 Components published under any of these licences may be embedded,
 imported, or bundled without restriction:
@@ -61,7 +61,7 @@ These are the default target for new dependencies.
 
 ---
 
-## 3. Allowlist mit Aggregation-Pattern (separate container)
+## 3. Allowlist with aggregation pattern (separate container)
 
 The following Copyleft licences are OSI-compatible but introduce
 source-disclosure obligations *if* the licensed code is statically or
@@ -84,7 +84,7 @@ exact container name and the upstream source URL.
 
 ---
 
-## 4. Blocklist — niemals einsetzen
+## 4. Blocklist — never use
 
 These licences are non-OSI-compatible. Components under them are
 explicitly disallowed in any MoE repository:
@@ -125,9 +125,10 @@ Run locally:
 
 When positioning MoE Sovereign against proprietary platforms (Palantir
 Foundry / Gotham / AIP / Apollo), the following constraints apply under
-§ 6 dt. UWG and Art. 4 EU-Werberichtlinie 2006/114/EG:
+§ 6 of the German UWG (Act against Unfair Competition) and Art. 4 of EU
+Comparative-Advertising Directive 2006/114/EC:
 
-| ✅ Erlaubt | ❌ Verboten |
+| ✅ Allowed | ❌ Forbidden |
 |---|---|
 | "Foundry-equivalent functionality" | "Foundry clone" |
 | "Palantir-coverage table" (factual, verifiable) | Copy of Palantir UI screenshots / icons |
