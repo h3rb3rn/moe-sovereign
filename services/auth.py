@@ -185,37 +185,37 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
     if not raw_key.startswith("moe-sk-"):
         return {"error": "invalid_key"}
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-    # Redis may be None during the startup window before lifespan completes.
-    # Fall through to DB immediately instead of rejecting valid keys.
-    if state.redis_client is None:
-        data = await _db_fallback_key_lookup(key_hash)
+    try:
+        # Redis may be None during the startup window before lifespan completes.
+        # Fall through to DB immediately instead of rejecting valid keys.
+        if state.redis_client is None:
+            data = await _db_fallback_key_lookup(key_hash)
+        else:
+            try:
+                data = await state.redis_client.hgetall(f"user:apikey:{key_hash}")
+            except Exception:
+                data = {}
+            if not data or data.get("is_active") != "1":
+                data = await _db_fallback_key_lookup(key_hash)
         if not data:
             return {"error": "invalid_key"}
-    else:
-        try:
-            data = await state.redis_client.hgetall(f"user:apikey:{key_hash}")
-        except Exception:
-            data = {}
-        if not data or data.get("is_active") != "1":
-            data = await _db_fallback_key_lookup(key_hash)
-            if not data:
-                return {"error": "invalid_key"}
         from datetime import date
         today = date.today().strftime("%Y-%m-%d")
         month = date.today().strftime("%Y-%m")
         uid   = data.get("user_id", "")
-        if data.get("budget_daily"):
-            used = int(await state.redis_client.get(f"user:{uid}:tokens:daily:{today}") or 0)
+        r     = state.redis_client
+        if r and data.get("budget_daily"):
+            used = int(await r.get(f"user:{uid}:tokens:daily:{today}") or 0)
             if used >= int(data["budget_daily"]):
                 PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="daily").inc()
                 return {"error": "budget_exceeded", "limit_type": "daily"}
-        if data.get("budget_monthly"):
-            used = int(await state.redis_client.get(f"user:{uid}:tokens:monthly:{month}") or 0)
+        if r and data.get("budget_monthly"):
+            used = int(await r.get(f"user:{uid}:tokens:monthly:{month}") or 0)
             if used >= int(data["budget_monthly"]):
                 PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="monthly").inc()
                 return {"error": "budget_exceeded", "limit_type": "monthly"}
-        if data.get("budget_total"):
-            used = int(await state.redis_client.get(f"user:{uid}:tokens:total") or 0)
+        if r and data.get("budget_total"):
+            used = int(await r.get(f"user:{uid}:tokens:total") or 0)
             if used >= int(data["budget_total"]):
                 PROM_BUDGET_EXCEEDED.labels(user_id=uid, limit_type="total").inc()
                 return {"error": "budget_exceeded", "limit_type": "total"}
