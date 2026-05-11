@@ -61,40 +61,6 @@
   </div>
 </div>
 
-{# ── Enterprise stack quick widget (Phase 19) ── #}
-<div class="card mb-4 d-none" id="dashboard-enterprise-card">
-  <div class="card-header bg-primary bg-opacity-10 text-primary d-flex align-items-center justify-content-between">
-    <span><i class="bi bi-diagram-3 me-2"></i>{{ t(request, 'page.enterprise') }}</span>
-    <a href="/enterprise" class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:.78rem">
-      <i class="bi bi-box-arrow-up-right me-1"></i>{{ t(request, 'btn.open') }}
-    </a>
-  </div>
-  <div class="card-body py-2">
-    <div class="d-flex flex-wrap gap-3" id="dashboard-enterprise-services">
-      <span class="text-muted small">{{ t(request, 'lbl.loading') }}</span>
-    </div>
-  </div>
-</div>
-
-<script>
-(async function(){
-  try {
-    const r = await fetch("/api/enterprise/health");
-    const data = await r.json();
-    const card = document.getElementById("dashboard-enterprise-card");
-    if (!data.enabled) return;
-    card.classList.remove("d-none");
-    const target = document.getElementById("dashboard-enterprise-services");
-    const labels = { healthy:"bg-success", degraded:"bg-warning text-dark", down:"bg-danger", disabled:"bg-secondary" };
-    target.innerHTML = (data.services || []).map(s =>
-      `<div class="d-flex align-items-center gap-2">
-         <span class="text-muted small fw-semibold text-capitalize">${s.name}</span>
-         <span class="badge ${labels[s.status] || "bg-secondary"}">${s.status}</span>
-       </div>`
-    ).join("");
-  } catch(e){ /* silent — widget hidden */ }
-})();
-</script>
 
 {# ── Haupt-Konfigurationsformular ── #}
 <form method="POST" action="/save" id="config-form" novalidate>

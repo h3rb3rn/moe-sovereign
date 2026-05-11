@@ -986,6 +986,7 @@
   ,"save":                             "保存"
   ,"send_test_mail":                   "发送测试邮件"
   ,"btn.open":                         "打开"
+  ,"nav.codex": "MoE Codex ↗"
   ,"nav.enterprise":                   "企业栈"
   ,"page.enterprise":                  "企业数据栈"
   ,"section.lineage_runs":             "最近的血缘运行 (Marquez)"

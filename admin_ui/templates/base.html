@@ -301,31 +301,14 @@
               <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
             </a>
           </li>
+          {% if config.get("CODEX_URL") %}
           <li class="nav-item">
-            <a href="/enterprise" class="nav-link text-white {% if request.url.path.startswith('/enterprise') %}fw-bold{% endif %} rounded px-2 py-2">
-              <i class="bi bi-diagram-3 me-2 text-secondary"></i>{{ t(request, 'nav.enterprise') }}
+            <a href="{{ config.get('CODEX_URL') }}" target="_blank" rel="noopener"
+               class="nav-link text-white rounded px-2 py-2">
+              <i class="bi bi-box-arrow-up-right me-2 text-secondary"></i>{{ t(request, 'nav.codex') }}
             </a>
           </li>
-          <li class="nav-item">
-            <a href="/catalog" class="nav-link text-white {% if request.url.path.startswith('/catalog') %}fw-bold{% endif %} rounded px-2 py-2">
-              <i class="bi bi-collection me-2 text-secondary"></i>{{ t(request, 'nav.catalog') }}
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="/approval" class="nav-link text-white {% if request.url.path.startswith('/approval') %}fw-bold{% endif %} rounded px-2 py-2">
-              <i class="bi bi-check2-square me-2 text-secondary"></i>{{ t(request, 'nav.approval') }}
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="/explorer" class="nav-link text-white {% if request.url.path.startswith('/explorer') %}fw-bold{% endif %} rounded px-2 py-2">
-              <i class="bi bi-bezier2 me-2 text-secondary"></i>{{ t(request, 'nav.explorer') }}
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="/notebook" class="nav-link text-white {% if request.url.path.startswith('/notebook') %}fw-bold{% endif %} rounded px-2 py-2">
-              <i class="bi bi-journal-code me-2 text-secondary"></i>{{ t(request, 'nav.notebook') }}
-            </a>
-          </li>
+          {% endif %}
           <li><hr class="border-secondary my-1"></li>
           <li class="nav-item">
             <span class="nav-link text-secondary px-2 py-1 small">

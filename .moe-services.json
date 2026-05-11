@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-11T10:20:31Z",
+  "services": {
+    "neo4j":                 true,
+    "caddy":                 false,
+    "authentik":             false,
+    "dozzle":                true,
+    "docs":                  true,
+    "prometheus_stack":      true,
+    "enterprise_data_stack": true
+  }
+}

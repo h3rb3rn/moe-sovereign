@@ -556,55 +556,18 @@ async def _kafka_consumer_loop() -> None:
                         # they write entities directly to Neo4j via ingest_synthesis
                         # and do not require a second extraction pass on the global judge.
                         if not _is_curator:
-                            from services.lineage import (
-                                start_run as _ol_start_ingest,
-                                complete_run as _ol_complete_ingest,
-                                fail_run as _ol_fail_ingest,
-                                dataset_kafka_topic, dataset_kg,
+                            await state.graph_manager.extract_and_ingest(
+                                payload.get("input", ""),
+                                payload.get("answer", ""),
+                                _llm_for_ingest,
+                                domain=payload.get("domain"),
+                                source_model=payload.get("source_model", "unknown"),
+                                confidence=float(payload.get("confidence", 0.5)),
+                                knowledge_type=payload.get("knowledge_type", "factual"),
+                                expert_domain=_source_expert,
+                                tenant_id=payload.get("tenant_id"),
+                                redis_client=state.redis_client,
                             )
-                            _ol_ing_run = await _ol_start_ingest(
-                                "kafka_ingest",
-                                inputs=[dataset_kafka_topic("moe.ingest")],
-                                extra_facets={"sourceModel": {
-                                    "_producer": "https://github.com/h3rb3rn/moe-sovereign",
-                                    "_schemaURL": "moe-sovereign://sourceModel",
-                                    "model": payload.get("source_model", "unknown"),
-                                    "domain": payload.get("domain", "global"),
-                                }},
-                            )
-                            try:
-                                await state.graph_manager.extract_and_ingest(
-                                    payload.get("input", ""),
-                                    payload.get("answer", ""),
-                                    _llm_for_ingest,
-                                    domain=payload.get("domain"),
-                                    source_model=payload.get("source_model", "unknown"),
-                                    confidence=float(payload.get("confidence", 0.5)),
-                                    knowledge_type=payload.get("knowledge_type", "factual"),
-                                    expert_domain=_source_expert,
-                                    tenant_id=payload.get("tenant_id"),
-                                    redis_client=state.redis_client,
-                                )
-                                await _ol_complete_ingest(
-                                    _ol_ing_run, job_name="kafka_ingest",
-                                    outputs=[dataset_kg(payload.get("domain", "global"))],
-                                )
-                                from services.etl_pipeline import submit_to_pipeline_background as _etl_submit
-                                _etl_submit(
-                                    payload,
-                                    source="kafka_ingest",
-                                    metadata={
-                                        "domain":       payload.get("domain", "global"),
-                                        "source_model": payload.get("source_model", "unknown"),
-                                        "tenant_id":    str(payload.get("tenant_id", "")),
-                                    },
-                                )
-                            except Exception as _ing_err:
-                                await _ol_fail_ingest(
-                                    _ol_ing_run, job_name="kafka_ingest",
-                                    error=str(_ing_err),
-                                )
-                                raise
                     # Detect ontology gaps: terms not present in Neo4j.
                     # Skip when the request came from an ontology curator template —
                     # those responses are classifications of existing gaps, not

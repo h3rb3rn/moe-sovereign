@@ -985,6 +985,7 @@
   ,"save":                             "Speichern"
   ,"send_test_mail":                   "Test-Mail senden"
   ,"btn.open":                         "Öffnen"
+  ,"nav.codex": "MoE Codex ↗"
   ,"nav.enterprise":                   "Enterprise"
   ,"page.enterprise":                  "Enterprise Data Stack"
   ,"section.lineage_runs":             "Aktuelle Lineage-Runs (Marquez)"

@@ -57,18 +57,14 @@ advantages without requiring any single model to be large enough to cover all do
 
 ## What's New (May 2026)
 
-### Palantir-Coverage: Catalog, Approval Workflow, Explorer, Drift, Notebook
+### EU-Palantir-Alternative: MoE Codex
 
-Five new admin-UI surfaces close the feature gap to Palantir Foundry / Gotham
-without compromising the sovereignty-first architecture.
+Catalog, Approval Workflow, Explorer, Drift Detection, OpenLineage, lakeFS Versioning,
+NiFi ETL, and Notebook (JupyterLite) have moved to the dedicated **[moe-codex](https://github.com/h3rb3rn/moe-codex)**
+repository — the compliance-grade data intelligence platform for regulated industries.
 
-| Page | Purpose | Foundry equivalent |
-|------|---------|--------------------|
-| [Data Catalog](admin/catalog.md) | Cross-source dataset browser (Marquez · Neo4j domains · lakeFS repos) | Foundry Catalog |
-| [Knowledge Approvals](admin/approval.md) | Branch-based gate before writes hit Neo4j (`pending/<tag>-<ts>` branches in lakeFS) | Foundry dataset versioning + review |
-| [Object Explorer](admin/explorer.md) | Read-only Cypher console (regex blacklist + `READ_ACCESS` mode) | Gotham object drill-down |
-| [Data Health & Drift](admin/data-health.md) | Severity-classified events on every import (`ok` / `info` / `warn` / `crit`) | Foundry Health Checks |
-| [Notebook (JupyterLite)](admin/notebook.md) | In-product browser-WASM Jupyter with API snippets | Foundry Code Workbook |
+Deploy moe-sovereign for sovereign LLM infrastructure. Add moe-codex for
+Foundry/Gotham-equivalent data governance. See the [Palantir Comparison](system/palantir_comparison.md) page.
 
 → [Full changelog entry for 2026-05-10](changelog.md)
 

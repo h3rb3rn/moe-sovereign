@@ -8,77 +8,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
-## 2026-05-10 — Palantir-Coverage Phase 20–24: Catalog, Approval Workflow, Object Explorer, Drift Detection, JupyterLite
+## 2026-05-11 — Track C.2: Sauberer Schnitt — Phase 16–24 nach moe-codex migriert
 
-> `impact: minor` · `breaking: no` · `domain: admin_ui, routes/graph, services`
+> `impact: minor` · `breaking: no` · `domain: routes/graph, admin_ui, services`
 
-### Added
+### Removed
 
-- **Data Catalog** (`admin_ui/templates/catalog.html`, `admin_ui.app:get_catalog_datasets`):
-  Searchable, source-filterable browser at `/catalog` aggregating Marquez datasets,
-  Neo4j domain breakdown (`/v1/graph/domains`), and lakeFS repositories into a single
-  table. Foundry-equivalent cross-source discovery; falls back gracefully when an
-  individual back-end is unreachable. Documentation: [Data Catalog](admin/catalog.md).
+- **Phase 16–24 services** removed from moe-sovereign: `services/lineage.py`,
+  `services/versioning.py`, `services/etl_pipeline.py`, `services/data_health.py`.
+  These are now the canonical implementation in **[moe-codex](https://github.com/h3rb3rn/moe-codex)**.
 
-- **Branch-based Approval Workflow**
-  (`services/versioning.py`, `routes/graph.py`, `admin_ui/templates/approval.html`):
-  External knowledge bundles are staged on lakeFS branches `pending/<tag>-<ts>` instead
-  of being written straight into Neo4j. Reviewers approve or reject from `/approval`.
-  New helpers: `archive_to_branch`, `list_pending_branches`, `get_bundle_from_branch`,
-  `approve_branch`, `reject_branch`. Endpoints: `POST /v1/graph/knowledge/import/pending`,
-  `GET /v1/graph/knowledge/approval/list`, `POST /v1/graph/knowledge/approval/{branch}/approve`,
-  `POST /v1/graph/knowledge/approval/{branch}/reject`. Admin-UI proxies enforce
-  `require_admin`. Documentation: [Knowledge Approvals](admin/approval.md).
+- **Enterprise admin-UI pages** removed: templates `catalog.html`, `approval.html`,
+  `explorer.html`, `notebook.html`, `enterprise.html`; routes
+  `/catalog`, `/approval`, `/explorer`, `/notebook`, `/enterprise` and all
+  `/api/enterprise/*`, `/api/approval/*`, `/api/catalog/*` endpoints.
 
-- **Read-only Cypher Object Explorer**
-  (`routes/graph.py`, `admin_ui/templates/explorer.html`):
-  In-page Cypher editor at `/explorer` for ad-hoc graph analysis. Two-layer write
-  protection: regex blacklist `_FORBIDDEN_CYPHER` rejecting
-  `CREATE|DELETE|SET|MERGE|REMOVE|DROP|ALTER|GRANT|REVOKE|FOREACH` plus
-  `neo4j.READ_ACCESS` driver mode. Includes preset queries (top entities, domain
-  breakdown, schema, recent additions) and a deep-link to the standalone Neo4j
-  Browser. Documentation: [Object Explorer](admin/explorer.md).
+- **Nav links** for the five enterprise pages removed from `base.html`; replaced
+  by an optional `MoE Codex ↗` link that appears when `CODEX_URL` is configured.
 
-- **Data Health Drift Detection** (`services/data_health.py`, hook in `routes/graph.py`):
-  Every successful knowledge-bundle import is wrapped in a stats snapshot and run
-  through `compute_drift()`, which classifies the result on a four-step severity
-  ladder (`ok` / `info` / `warn` / `crit`) and tags it with structured flags:
-  `entity_dedup_suppressed`, `zero_entities_added`, `entity_count_shrank`,
-  `entity_overshoot`, `relation_overshoot`, `relation_to_entity_explosion`. Events
-  land in Redis `moe:data_health:events` (capped at 500 via `LPUSH` + `LTRIM`) and
-  surface on the Enterprise dashboard. Threshold tunable via
-  `DATA_HEALTH_DRIFT_THRESHOLD` (default `0.3`). Documentation:
-  [Data Health & Drift](admin/data-health.md).
+- **Dashboard enterprise widget** (Phase 19 health card) removed from `dashboard.html`.
 
-- **Embedded JupyterLite Notebook**
-  (`admin_ui/templates/notebook.html`, `admin_ui.app:notebook_page`):
-  In-product notebook surface at `/notebook` embedding JupyterLite (browser-only
-  WebAssembly Python) plus five copy-paste snippets that wrap the orchestrator API
-  (export, pending-import, search, Cypher, lineage runs). `JUPYTERLITE_URL`
-  configurable for self-hosted deployments. Documentation:
-  [Notebook (JupyterLite)](admin/notebook.md).
-
-- **Test Suite Expansion** (`tests/integration/test_palantir_phases_20_24.py`, 29 tests):
-  Source-scan coverage for all new endpoints, page templates, helper symbols,
-  drift-classifier severity ladder, Cypher write-keyword blacklist, sidebar nav
-  links, and translation parity across `en_EN`, `de_DE`, `fr_FR`, `zh_CN`.
+- **Obsolete tests** removed: `tests/integration/test_palantir_phases_20_24.py`,
+  `test_enterprise_dashboard.py`, `test_etl_pipeline_nifi.py`,
+  `test_versioning_lakefs.py`, `test_lineage_hooks.py`,
+  `tests/pipeline/test_lineage.py`.
 
 ### Changed
 
-- **README.md** — Key Capabilities #33–37 added (Catalog, Approval, Explorer,
-  Drift, Notebook).
-- **`mkdocs.yml`** — new "Enterprise Stack" section under Admin Backend.
-- **`admin_ui/lang/*.lang`** — 50+ new translation keys per language; pre-existing
-  parity gap (`nav.pipeline_log` missing in `fr_FR` and `zh_CN`) fixed in passing.
-- **`tests/smoke/test_env_contract.py`** — `JUPYTERLITE_URL` added to the
-  documented-env contract; `marquez` literal added to the credential placeholder
-  whitelist with an explanatory comment.
-
-### Deployed
-
-- DEV stack rebuilt, all four new pages return HTTP 303 (login redirect) — endpoints
-  registered, templates resolved, `langgraph-orchestrator` healthy.
-- Test suite: 287/287 green (was 258, +29 for Phase 20–24).
+- `docs/system/palantir_comparison.md` → stub pointing to moe-codex.
+- `mkdocs.yml` — "Enterprise Stack" section removed; Palantir Comparison pointer updated.
+- `docs/index.md` — What's New updated to point to moe-codex.
+- Test suite: 195 tests (was 287; 92 enterprise-specific tests removed as they now live in moe-codex).
 
 ---
 
