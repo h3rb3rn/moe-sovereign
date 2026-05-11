@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}{{ t(request, 'page.catalog') }} — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-collection me-2 text-primary"></i>{{ t(request, 'page.catalog') }}
+  </h5>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small" id="catalog-meta">–</span>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadCatalog()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-6 col-lg-4">
+    <input type="search" id="catalog-search" class="form-control form-control-sm"
+           placeholder="{{ t(request, 'lbl.search_filter') }}" oninput="renderCatalog()">
+  </div>
+  <div class="col-12 col-md-6 col-lg-3">
+    <select id="catalog-source-filter" class="form-select form-select-sm" onchange="renderCatalog()">
+      <option value="">{{ t(request, 'lbl.all_sources') }}</option>
+      <option value="marquez">Marquez</option>
+      <option value="neo4j">Neo4j</option>
+      <option value="lakefs">lakeFS</option>
+    </select>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>{{ t(request, 'lbl.source') }}</th>
+            <th>{{ t(request, 'lbl.name') }}</th>
+            <th>{{ t(request, 'lbl.type') }}</th>
+            <th class="text-end">{{ t(request, 'lbl.size') }}</th>
+            <th>{{ t(request, 'lbl.domain') }}</th>
+            <th>{{ t(request, 'lbl.committed_at') }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="catalog-body">
+          <tr><td colspan="7" class="text-muted text-center py-3">
+            <i class="bi bi-hourglass me-1"></i>{{ t(request, 'lbl.loading') }}
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-warning mt-3 d-none" id="catalog-errors" role="alert"></div>
+
+<script>
+let _catalogData = [];
+
+const SOURCE_BADGE = {
+  marquez: "bg-primary",
+  neo4j:   "bg-success",
+  lakefs:  "bg-info text-dark",
+};
+
+function fmtTs(iso) {
+  if (!iso) return "–";
+  try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+}
+
+function fmtSize(n) {
+  if (n == null) return "–";
+  return n.toLocaleString();
+}
+
+function renderCatalog() {
+  const search = (document.getElementById("catalog-search").value || "").toLowerCase();
+  const filter = document.getElementById("catalog-source-filter").value;
+  const rows = _catalogData.filter(d => {
+    if (filter && d.source !== filter) return false;
+    if (!search) return true;
+    return (d.name || "").toLowerCase().includes(search)
+        || (d.type || "").toLowerCase().includes(search)
+        || (d.domain || "").toLowerCase().includes(search);
+  });
+  const body = document.getElementById("catalog-body");
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="7" class="text-muted text-center py-3">{{ t(request, 'lbl.no_data') }}</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map(d => {
+    const badge = SOURCE_BADGE[d.source] || "bg-secondary";
+    const link = d.link ? `<a href="${d.link}" target="_blank" class="text-decoration-none small"><i class="bi bi-box-arrow-up-right"></i></a>` : "";
+    return `<tr>
+      <td><span class="badge ${badge}">${d.source}</span></td>
+      <td class="font-monospace small">${(d.name || "").replace(/[<>]/g, "")}</td>
+      <td class="small text-muted">${d.type || "—"}</td>
+      <td class="text-end small">${fmtSize(d.size)}</td>
+      <td class="small">${d.domain || "—"}</td>
+      <td class="small">${fmtTs(d.updated)}</td>
+      <td>${link}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("catalog-meta").textContent = `${rows.length} / ${_catalogData.length}`;
+}
+
+async function loadCatalog() {
+  document.getElementById("catalog-meta").textContent = "{{ t(request, 'lbl.loading') }}";
+  try {
+    const r = await fetch("/api/catalog/datasets");
+    const data = await r.json();
+    _catalogData = data.datasets || [];
+    const errBox = document.getElementById("catalog-errors");
+    if (data.errors && Object.keys(data.errors).length) {
+      errBox.classList.remove("d-none");
+      errBox.innerHTML = "<i class='bi bi-info-circle me-2'></i>" +
+        Object.entries(data.errors).map(([k, v]) => `<strong>${k}:</strong> ${v}`).join(" · ");
+    } else {
+      errBox.classList.add("d-none");
+    }
+    renderCatalog();
+  } catch (e) {
+    console.error("catalog fetch failed", e);
+    document.getElementById("catalog-meta").textContent = "error";
+  }
+}
+
+loadCatalog();
+</script>
+{% endblock %}

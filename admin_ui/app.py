@@ -7549,6 +7549,125 @@ async def watchdog_test_mail(request: Request):
     return {"ok": sent, "to": to, "smtp_host": SMTP_HOST}
 
 
+# ── moe-codex Enterprise UI ───────────────────────────────────────────────────
+# Pages served by moe-admin; API calls proxied to CODEX_URL (moe-codex-api).
+
+_CODEX_ADMIN_URL = os.getenv("CODEX_URL", "").rstrip("/")
+
+
+async def _cx_get(path: str, query: str = ""):
+    if not _CODEX_ADMIN_URL:
+        return {"error": "moe-codex not configured (CODEX_URL missing)"}
+    url = f"{_CODEX_ADMIN_URL}/{path}"
+    if query:
+        url = f"{url}?{query}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(url)
+            return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+async def _cx_post(path: str, body: dict):
+    if not _CODEX_ADMIN_URL:
+        return {"error": "moe-codex not configured (CODEX_URL missing)"}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(f"{_CODEX_ADMIN_URL}/{path}", json=body)
+            return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.get("/enterprise", response_class=HTMLResponse)
+async def enterprise_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "enterprise.html", {})
+
+
+@app.get("/catalog", response_class=HTMLResponse)
+async def catalog_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "catalog.html", {})
+
+
+@app.get("/approval", response_class=HTMLResponse)
+async def approval_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "approval.html", {})
+
+
+@app.get("/explorer", response_class=HTMLResponse)
+async def explorer_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "explorer.html", {})
+
+
+@app.get("/notebook", response_class=HTMLResponse)
+async def notebook_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "notebook.html", {})
+
+
+@app.get("/api/enterprise/health", dependencies=[Depends(require_login)])
+async def api_enterprise_health():
+    return await _cx_get("v1/codex/status")
+
+
+@app.get("/api/enterprise/runs", dependencies=[Depends(require_login)])
+async def api_enterprise_runs(limit: int = 25):
+    return await _cx_get("v1/codex/lineage/runs", f"limit={limit}")
+
+
+@app.get("/api/enterprise/etl/status", dependencies=[Depends(require_login)])
+async def api_enterprise_etl_status():
+    return await _cx_get("v1/codex/etl/status")
+
+
+@app.get("/api/enterprise/versioning/log", dependencies=[Depends(require_login)])
+async def api_enterprise_versioning_log(limit: int = 25):
+    return await _cx_get("v1/codex/versioning/commits", f"limit={limit}")
+
+
+@app.get("/api/health/events", dependencies=[Depends(require_login)])
+async def api_health_events(limit: int = 25):
+    return await _cx_get("v1/codex/health/events", f"limit={limit}")
+
+
+@app.get("/api/catalog/datasets", dependencies=[Depends(require_login)])
+async def api_catalog_datasets():
+    return await _cx_get("v1/codex/catalog/datasets")
+
+
+@app.get("/api/approval/list", dependencies=[Depends(require_login)])
+async def api_approval_list():
+    return await _cx_get("v1/codex/approval/list")
+
+
+@app.post("/api/approval/approve", dependencies=[Depends(require_login)])
+async def api_approval_approve(request: Request):
+    body = await request.json()
+    branch = (body.get("branch") or "").strip()
+    if not branch:
+        return JSONResponse(status_code=400, content={"error": "branch required"})
+    return await _cx_post(f"v1/codex/approval/{branch}/approve", {})
+
+
+@app.post("/api/approval/reject", dependencies=[Depends(require_login)])
+async def api_approval_reject(request: Request):
+    body = await request.json()
+    branch = (body.get("branch") or "").strip()
+    if not branch:
+        return JSONResponse(status_code=400, content={"error": "branch required"})
+    return await _cx_post(f"v1/codex/approval/{branch}/reject", {"reason": body.get("reason", "")})
+
+
+@app.post("/api/explorer/cypher", dependencies=[Depends(require_login)])
+async def api_explorer_cypher(request: Request):
+    body = await request.json()
+    # Template sends {query, limit}; Trino route expects {sql, max_rows}
+    return await _cx_post("v1/codex/trino/query", {
+        "sql":      body.get("query", ""),
+        "max_rows": body.get("limit", 250),
+    })
+
+
 @app.post("/admin/features/{name}/toggle", dependencies=[Depends(require_admin)])
 async def toggle_starfleet_feature(name: str, request: Request):
     """Toggle a Starfleet feature via Redis (no restart required for runtime-toggleable features)."""
