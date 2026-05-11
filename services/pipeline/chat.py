@@ -18,6 +18,7 @@ from pydantic import BaseModel
 import state
 import starfleet_config as _starfleet
 import mission_context as _mission_context
+from parsing import _oai_content_to_str, _extract_oai_images
 from config import (
     KAFKA_TOPIC_INGEST, KAFKA_TOPIC_REQUESTS, KAFKA_TOPIC_FEEDBACK,
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL, CLAUDE_CODE_TOOL_ENDPOINT,
@@ -82,7 +83,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
-from services.skills import _build_skill_catalog
+from services.skills import _build_skill_catalog, _resolve_skill_secure, _detect_file_skill
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 # Pydantic request models (defined here — used by chat_completions and routes)
@@ -601,7 +602,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             media_type="text/event-stream",
             headers=_moe_resp_headers or None,
         )
-    result = await app_graph.ainvoke(
+    result = await state.app_graph.ainvoke(
         {"input": user_input, "response_id": chat_id, "mode": mode,
          "user_id": user_id, "api_key_id": api_key_id,
          "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
