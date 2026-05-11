@@ -460,10 +460,10 @@ class FeedbackRequest(BaseModel):
 
 # LLM instances and SearxNG search singleton moved to services/llm_instances.py
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
-# Mutable globals — set by lifespan (state.graph_manager, state.redis_client, state.kafka_producer in state.py in next step)
-state.graph_manager:  Optional[GraphRAGManager]  = None
-state.redis_client:   Optional[aioredis.Redis]   = None
-state.kafka_producer: Optional[AIOKafkaProducer] = None
+# state.graph_manager, state.redis_client, state.kafka_producer are already None
+# in state.py — do NOT re-assign here because main.py is lazy-imported as
+# "main" (not "__main__") by services/pipeline/chat.py on the first request,
+# which would reset these values that lifespan already set.
 
 # Inference helpers moved to services/inference.py
 from services.inference import (
