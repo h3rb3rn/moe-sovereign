@@ -986,6 +986,7 @@
   ,"save":                             "Save"
   ,"send_test_mail":                   "Send test mail"
   ,"btn.open":                         "Open"
+  ,"nav.codex": "MoE Codex ↗"
   ,"nav.enterprise":                   "Enterprise"
   ,"page.enterprise":                  "Enterprise Data Stack"
   ,"section.lineage_runs":             "Recent Lineage Runs (Marquez)"

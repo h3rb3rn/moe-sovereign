@@ -279,6 +279,7 @@ services:
       - POSTGRES_CHECKPOINT_URL=postgresql://langgraph:${POSTGRES_CHECKPOINT_PASSWORD:?}@terra_checkpoints:5432/langgraph
     volumes:
       - ./.env:/app/.env:rw
+      - ./.moe-services.json:/app/.moe-services.json:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw

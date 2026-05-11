@@ -97,6 +97,48 @@ _bootstrap_enterprise_stack() {
       echo "    [!] lakeFS not reachable on ${_lake_url} — bootstrap skipped, run manually later"
     fi
   fi
+  # Update services manifest so the admin dashboard reflects the new stack.
+  _write_services_manifest
+}
+
+
+# Write (or overwrite) .moe-services.json next to .env.
+# Reads INSTALL_* variables and COMPOSE_PROFILES from the .env file.
+# Called after install and after _bootstrap_enterprise_stack so the admin
+# dashboard always shows exactly what was deployed.
+_write_services_manifest() {
+  local _env="${MOE_ENV_FILE:-${INSTALL_DIR:-.}/.env}"
+  local _manifest="${INSTALL_DIR}/.moe-services.json"
+  [[ -r "$_env" ]] || return 0
+
+  _renv_local() { grep -E "^${1}=" "$_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'"; }
+
+  local _profiles; _profiles="$(_renv_local COMPOSE_PROFILES)"
+  local _neo4j=false;  echo "$_profiles" | grep -q "neo4j"    && _neo4j=true
+  local _caddy=false;  echo "$_profiles" | grep -q "caddy"    && _caddy=true
+  local _auth=false;   echo "$_profiles" | grep -q "authentik" && _auth=true
+
+  local _enterprise=false
+  [[ "$(_renv_local INSTALL_ENTERPRISE_DATA_STACK)" == "true" ]] && _enterprise=true
+
+  local _ts; _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
+
+  cat > "${_manifest}" <<MANIFEST_EOF
+{
+  "version": 1,
+  "updated_at": "${_ts}",
+  "services": {
+    "neo4j":                 ${_neo4j},
+    "caddy":                 ${_caddy},
+    "authentik":             ${_auth},
+    "dozzle":                true,
+    "docs":                  true,
+    "prometheus_stack":      true,
+    "enterprise_data_stack": ${_enterprise}
+  }
+}
+MANIFEST_EOF
+  echo "  Services manifest written ✓  (${_manifest})"
 }
 
 # =============================================================================
@@ -467,6 +509,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       _bootstrap_enterprise_stack
     fi
     echo "  Containers started ✓"
+    _write_services_manifest
 
     # ── Health check ──────────────────────────────────────────────────────────
     echo ""
@@ -1814,6 +1857,8 @@ if [[ "${INSTALL_ENTERPRISE_DATA_STACK:-false}" == "true" ]]; then
 fi
 
 echo "  Containers started ✓"
+
+_write_services_manifest
 
 # =============================================================================
 #  SECTION 12: Health check

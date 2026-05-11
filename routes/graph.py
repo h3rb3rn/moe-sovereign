@@ -105,9 +105,6 @@ async def graph_knowledge_import(raw_request: Request):
     trust_floor = float(body.get("trust_floor", 0.5))
     if "@context" not in bundle and "entities" not in bundle:
         return JSONResponse(status_code=400, content={"error": "Not a valid knowledge bundle"})
-    _before_stats = (
-        await state.graph_manager.get_stats() if not dry_run else {}
-    )
     stats = await state.graph_manager.import_knowledge_bundle(
         bundle=bundle,
         source_tag=source_tag,
@@ -115,45 +112,6 @@ async def graph_knowledge_import(raw_request: Request):
         dry_run=dry_run,
         kafka_publish_fn=_kafka_publish,
     )
-    if not dry_run:
-        from services.versioning import archive_bundle_background
-        archive_bundle_background(
-            bundle,
-            source_tag=source_tag,
-            metadata={
-                "trust_floor":  str(trust_floor),
-                "imported_at":  datetime.now(timezone.utc).isoformat(),
-                "entity_count": str(stats.get("entities_added", 0)),
-            },
-        )
-        from services.etl_pipeline import submit_to_pipeline_background
-        submit_to_pipeline_background(
-            {"event": "knowledge_import", "stats": stats, "source_tag": source_tag},
-            source="knowledge_import",
-            metadata={
-                "source_tag":   source_tag,
-                "trust_floor":  str(trust_floor),
-                "entity_count": str(stats.get("entities_added", 0)),
-            },
-        )
-        # Phase 23: drift detection — compare claim vs reality.
-        try:
-            from services.data_health import compute_drift, record_event
-            after_stats = await state.graph_manager.get_stats()
-            drift = compute_drift(
-                _before_stats, after_stats,
-                declared_entities=len(bundle.get("entities", [])),
-                declared_relations=len(bundle.get("relations", [])) or None,
-            )
-            await record_event(
-                state.redis_client,
-                source_tag=source_tag,
-                drift=drift,
-                trust_floor=trust_floor,
-            )
-            stats["drift"] = drift
-        except Exception:
-            pass
     return {"status": "ok", "dry_run": dry_run, **stats}
 
 
@@ -172,96 +130,6 @@ async def graph_knowledge_validate(raw_request: Request):
     )
     return {"status": "ok", "dry_run": True, **stats}
 
-
-# ─── Phase 21 — Branch-based approval workflow ──────────────────────────────
-
-@router.post("/graph/knowledge/import/pending")
-async def graph_knowledge_import_pending(raw_request: Request):
-    """Stage a knowledge bundle on a lakeFS pending branch — no Neo4j write yet."""
-    if state.graph_manager is None:
-        return JSONResponse(status_code=503, content={"error": "GraphRAG unavailable"})
-    try:
-        body = await raw_request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
-    bundle = body.get("bundle", body)
-    source_tag = body.get("source_tag", "community_import")
-    if "@context" not in bundle and "entities" not in bundle:
-        return JSONResponse(status_code=400, content={"error": "Not a valid knowledge bundle"})
-    from services.versioning import archive_to_branch, _enabled as versioning_enabled
-    if not versioning_enabled():
-        return JSONResponse(
-            status_code=503,
-            content={"error": "lakeFS not configured — approval workflow requires LAKEFS_ENDPOINT"},
-        )
-    branch = await archive_to_branch(
-        bundle,
-        source_tag=source_tag,
-        metadata={
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "entity_count": str(len(bundle.get("entities", []))),
-        },
-    )
-    if not branch:
-        return JSONResponse(status_code=502, content={"error": "Failed to stage on lakeFS"})
-    return {"status": "pending", "branch": branch, "source_tag": source_tag}
-
-
-@router.get("/graph/knowledge/approval/list")
-async def graph_knowledge_approval_list():
-    """List all pending knowledge-bundle branches awaiting admin approval."""
-    from services.versioning import list_pending_branches, _enabled as versioning_enabled
-    if not versioning_enabled():
-        return {"status": "disabled", "pending": []}
-    pending = await list_pending_branches()
-    return {"status": "ok", "pending": pending}
-
-
-@router.post("/graph/knowledge/approval/{branch:path}/approve")
-async def graph_knowledge_approve(branch: str, raw_request: Request):
-    """Approve a pending branch: import to Neo4j + merge to lakeFS main."""
-    if state.graph_manager is None:
-        return JSONResponse(status_code=503, content={"error": "GraphRAG unavailable"})
-    from services.versioning import (
-        get_bundle_from_branch, approve_branch as approve_lakefs_branch,
-        _enabled as versioning_enabled,
-    )
-    if not versioning_enabled():
-        return JSONResponse(status_code=503, content={"error": "lakeFS not configured"})
-    bundle = await get_bundle_from_branch(branch)
-    if not bundle:
-        return JSONResponse(status_code=404, content={"error": f"No bundle found on {branch}"})
-    try:
-        body = await raw_request.json()
-    except Exception:
-        body = {}
-    approver = body.get("approver", "admin")
-    trust_floor = float(body.get("trust_floor", 0.5))
-    source_tag  = body.get("source_tag") or branch.split("/", 1)[-1].rsplit("-", 1)[0]
-
-    stats = await state.graph_manager.import_knowledge_bundle(
-        bundle=bundle,
-        source_tag=source_tag,
-        trust_floor=trust_floor,
-        dry_run=False,
-        kafka_publish_fn=_kafka_publish,
-    )
-    merge_ref = await approve_lakefs_branch(branch, approver=approver)
-    return {
-        "status":      "approved",
-        "branch":      branch,
-        "merge":       merge_ref,
-        "approver":    approver,
-        "imported":    stats,
-    }
-
-
-@router.get("/graph/health/events")
-async def graph_health_events(limit: int = 50):
-    """Recent data-health drift events (Phase 23)."""
-    from services.data_health import recent_events
-    events = await recent_events(state.redis_client, limit=limit)
-    return {"events": events, "count": len(events)}
 
 
 # ─── Phase 22 — Read-only Cypher explorer ───────────────────────────────────
@@ -339,18 +207,3 @@ async def graph_cypher_read(raw_request: Request):
     }
 
 
-@router.post("/graph/knowledge/approval/{branch:path}/reject")
-async def graph_knowledge_reject(branch: str, raw_request: Request):
-    """Reject a pending branch: delete it without importing."""
-    from services.versioning import reject_branch, _enabled as versioning_enabled
-    if not versioning_enabled():
-        return JSONResponse(status_code=503, content={"error": "lakeFS not configured"})
-    try:
-        body = await raw_request.json()
-    except Exception:
-        body = {}
-    rejector = body.get("rejector", "admin")
-    ok = await reject_branch(branch)
-    if not ok:
-        return JSONResponse(status_code=502, content={"error": "Failed to reject branch"})
-    return {"status": "rejected", "branch": branch, "rejector": rejector}
