@@ -99,6 +99,12 @@ nav:
     - Monitoring & Processes: admin/monitoring.md
     - Starfleet — Ambient Intelligence: system/starfleet.md
     - Maintenance & Disk Management: admin/maintenance.md
+  - Enterprise Stack:
+    - Data Catalog: admin/catalog.md
+    - Knowledge Approvals: admin/approval.md
+    - Object Explorer: admin/explorer.md
+    - Data Health & Drift: admin/data-health.md
+    - Notebook (JupyterLite): admin/notebook.md
   - Federation:
     - federation/index.md
     - Setup Guide: federation/setup.md
@@ -124,6 +130,9 @@ nav:
   - System:
     - system/index.md
     - Architecture: system/architecture.md
+    - EU Sovereignty Charter: system/eu_sovereignty_charter.md
+    - License Compliance: system/license_compliance.md
+    - Palantir Comparison: system/palantir_comparison.md
     - System Documentation: system/overview.md
     - Pipeline Details: system/pipeline.md
     - Data Flow: system/dataflow.md
