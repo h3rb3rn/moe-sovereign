@@ -54,6 +54,7 @@ def _jinja_get_lang(request) -> str:
 
 TEMPLATES.env.globals["t"]        = _jinja_t
 TEMPLATES.env.globals["get_lang"] = _jinja_get_lang
+TEMPLATES.env.globals["codex_url"] = os.getenv("CODEX_URL", "")
 
 ADMIN_USER       = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "")
@@ -964,6 +965,11 @@ def build_template_ctx(request: Request) -> dict:
         flash = make_t(get_lang(request))("wizard.done.flash")
         flash_type = "success"
 
+    try:
+        services_manifest = json.loads(MANIFEST_PATH.read_text()).get("services", {})
+    except Exception:
+        services_manifest = {}
+
     return {
         "config": config,
         "expert_categories": list(EXPERT_CATEGORIES),
@@ -975,6 +981,7 @@ def build_template_ctx(request: Request) -> dict:
         "csrf_token": get_csrf_token(request),
         "flash": flash,
         "flash_type": flash_type,
+        "services_manifest": services_manifest,
     }
 
 
