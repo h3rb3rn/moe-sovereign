@@ -62,7 +62,25 @@ async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
             data = await state.redis_client.hgetall(f"user:apikey:{key_hash}")
             if data and data.get("is_active") == "1":
                 return data
-        return None
+        # Redis unavailable or sync failed — build a minimal auth dict from the
+        # DB row so startup-window requests and cache-miss keys don't 401.
+        return {
+            "user_id":          user_id,
+            "username":         row.get("username") or row.get("user_id", ""),
+            "is_active":        "1",
+            "permissions_json": "{}",
+            "key_id":           row.get("id", ""),
+            "budget_daily":     "",
+            "budget_monthly":   "",
+            "budget_total":     "",
+            "budget_type":      "subscription",
+            "budget_cost_factor": "1.0",
+            "user_templates_json":  "{}",
+            "user_cc_profiles_json": "{}",
+            "user_connections_json": "{}",
+            "default_cc_profile_id": "",
+            "key_cc_profile_id": "",
+        }
     except Exception as e:
         logger.warning("DB fallback auth error: %s", e)
         return None
@@ -167,10 +185,17 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
     if not raw_key.startswith("moe-sk-"):
         return {"error": "invalid_key"}
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    # Redis may be None during the startup window before lifespan completes.
+    # Fall through to DB immediately instead of rejecting valid keys.
     if state.redis_client is None:
-        return {"error": "invalid_key"}
-    try:
-        data = await state.redis_client.hgetall(f"user:apikey:{key_hash}")
+        data = await _db_fallback_key_lookup(key_hash)
+        if not data:
+            return {"error": "invalid_key"}
+    else:
+        try:
+            data = await state.redis_client.hgetall(f"user:apikey:{key_hash}")
+        except Exception:
+            data = {}
         if not data or data.get("is_active") != "1":
             data = await _db_fallback_key_lookup(key_hash)
             if not data:
