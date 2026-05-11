@@ -106,11 +106,11 @@ class ChatCompletionRequest(BaseModel):
 
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     from main import stream_response, _is_openwebui_internal, _handle_internal_direct, _stream_native_llm
-    from services.lineage import (
-        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
-        dataset_user_query, dataset_response,
-    )
-    _ = _ol_fail  # used below in streaming wrapper
+    async def _ol_start(*a, **kw): return None   # lineage owned by moe-codex
+    async def _ol_complete(*a, **kw): pass
+    async def _ol_fail(*a, **kw): pass
+    def dataset_user_query(*a, **kw): return {}
+    def dataset_response(*a, **kw): return {}
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
     session_id = _extract_session_id(raw_request)
     _ol_run_id = await _ol_start(
