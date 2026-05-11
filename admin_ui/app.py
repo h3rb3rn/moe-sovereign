@@ -1361,6 +1361,15 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
             try:
                 if server_diff["removed"]:
                     await _maintenance.cleanup_orphans(server_diff["servers"], dry_run=False)
+                    # Purge stale model_endpoint permissions for removed server names
+                    # across ALL users so the Permissions UI stays consistent.
+                    for removed_name in server_diff["removed"]:
+                        try:
+                            n = await db.revoke_all_model_endpoints_by_node(removed_name)
+                            if n:
+                                logger.info("Revoked %d permission(s) for removed server %s", n, removed_name)
+                        except Exception as e:
+                            logger.warning("Permission cleanup failed for %s: %s", removed_name, e)
             except Exception as e:
                 logger.warning("post-save cleanup failed: %s", e)
             try:

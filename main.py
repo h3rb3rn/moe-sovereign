@@ -1209,14 +1209,25 @@ async def _stream_native_llm(
     p_tok = c_tok = 0
     _did_deregister = False
 
+    # Use the per-server timeout from INFERENCE_SERVERS config (fallback: 300s).
+    # A 10s connect timeout prevents silent hangs when the server URL is wrong.
+    _srv_timeout = float(endpoint.get("timeout", 300))
+    _http_timeout = httpx.Timeout(connect=10.0, read=_srv_timeout, write=30.0, pool=10.0)
+
     try:
         try:
-            async with httpx.AsyncClient(timeout=300) as client:
+            async with httpx.AsyncClient(timeout=_http_timeout, follow_redirects=False) as client:
                 async with client.stream(
                     "POST", url,
                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                     json=payload,
                 ) as resp:
+                    # Fail fast on non-2xx: don't consume a redirect or error page as SSE
+                    if resp.status_code >= 300:
+                        err_body = await resp.aread()
+                        raise RuntimeError(
+                            f"Upstream returned HTTP {resp.status_code}: {err_body[:200].decode(errors='replace')}"
+                        )
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
