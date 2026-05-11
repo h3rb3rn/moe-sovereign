@@ -46,7 +46,7 @@ Pre-approved replacements for the `moe-codex` stack expansion:
 
 ---
 
-## 2. Allowlist — uneingeschränkt einsetzbar
+## 2. Allowlist — unrestricted use
 
 Components published under any of these licences may be embedded,
 imported, or bundled without restriction:
@@ -62,7 +62,7 @@ These are the default target for new dependencies.
 
 ---
 
-## 3. Allowlist mit Aggregation-Pattern (separate container)
+## 3. Allowlist with Aggregation Pattern (separate container)
 
 The following Copyleft licences are OSI-compatible but introduce
 source-disclosure obligations *if* the licensed code is statically or
@@ -85,7 +85,7 @@ exact container name and the upstream source URL.
 
 ---
 
-## 4. Blocklist — niemals einsetzen
+## 4. Blocklist — never use
 
 These licences are non-OSI-compatible. Components under them are
 explicitly disallowed in any MoE repository:
@@ -150,9 +150,9 @@ Run locally:
 
 When positioning MoE Sovereign against proprietary platforms (Palantir
 Foundry / Gotham / AIP / Apollo), the following constraints apply under
-§ 6 dt. UWG and Art. 4 EU-Werberichtlinie 2006/114/EG:
+§ 6 German UWG and Art. 4 EU Comparative Advertising Directive 2006/114/EC:
 
-| ✅ Erlaubt | ❌ Verboten |
+| ✅ Allowed | ❌ Prohibited |
 |---|---|
 | "Foundry-equivalent functionality" | "Foundry clone" |
 | "Palantir-coverage table" (factual, verifiable) | Copy of Palantir UI screenshots / icons |
@@ -167,9 +167,9 @@ Comparative claims must be:
 
 ---
 
-## 7. EU AI Act readiness (Verordnung 2024/1689)
+## 7. EU AI Act readiness (Regulation 2024/1689)
 
-MoE Sovereign benefits from the **Open-Source-Privileg gemäß Art. 2(12) AIA** —
+MoE Sovereign benefits from the **Open-Source exemption under Art. 2(12) AIA** —
 Free/Open-Source AI components under Apache/MIT licences are excluded from
 many obligations *unless* they are placed on the market as a high-risk
 system (Art. 6).
