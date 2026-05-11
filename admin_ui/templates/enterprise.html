@@ -24,7 +24,7 @@
   {% for key, icon, label in services %}
   <div class="col-12 col-md-4">
     <div class="card h-100 border-secondary border-opacity-25" id="ent-card-{{ key }}">
-      <div class="card-header d-flex align-items-center justify-content-between bg-light">
+      <div class="card-header d-flex align-items-center justify-content-between bg-body-secondary">
         <span class="fw-semibold">
           <i class="bi {{ icon }} me-2"></i>{{ label }}
         </span>
@@ -58,15 +58,14 @@
 <div class="row g-3 mb-4">
   <div class="col-12">
     <div class="card">
-      <div class="card-header d-flex align-items-center justify-content-between"
-           style="background:rgba(99,102,241,.08);color:#4338ca">
+      <div class="card-header d-flex align-items-center justify-content-between bg-primary bg-opacity-10 text-primary-emphasis">
         <span><i class="bi bi-clock-history me-2"></i>{{ t(request, 'section.lineage_runs') }}</span>
         <span class="text-muted small" id="enterprise-runs-meta">–</span>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
           <table class="table table-sm table-hover mb-0">
-            <thead class="table-light">
+            <thead class="table-group-divider">
               <tr>
                 <th>{{ t(request, 'lbl.job') }}</th>
                 <th>{{ t(request, 'lbl.run_id') }}</th>
@@ -93,8 +92,7 @@
 <div class="row g-3 mb-4">
   <div class="col-12">
     <div class="card">
-      <div class="card-header d-flex align-items-center justify-content-between"
-           style="background:rgba(220,38,38,.08);color:#991b1b">
+      <div class="card-header d-flex align-items-center justify-content-between bg-danger bg-opacity-10 text-danger-emphasis">
         <span><i class="bi bi-share-fill me-2"></i>{{ t(request, 'section.etl_pipeline') }}</span>
         <span class="text-muted small" id="enterprise-etl-meta">–</span>
       </div>
@@ -109,15 +107,14 @@
 <div class="row g-3 mb-4">
   <div class="col-12">
     <div class="card">
-      <div class="card-header d-flex align-items-center justify-content-between"
-           style="background:rgba(245,158,11,.08);color:#92400e">
+      <div class="card-header d-flex align-items-center justify-content-between bg-warning bg-opacity-10 text-warning-emphasis">
         <span><i class="bi bi-clipboard-pulse me-2"></i>{{ t(request, 'section.data_health') }}</span>
         <span class="text-muted small" id="enterprise-health-meta">–</span>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
           <table class="table table-sm table-hover mb-0">
-            <thead class="table-light">
+            <thead class="table-group-divider">
               <tr>
                 <th>{{ t(request, 'lbl.severity') }}</th>
                 <th>{{ t(request, 'lbl.source_tag') }}</th>
@@ -144,15 +141,14 @@
 <div class="row g-3 mb-4">
   <div class="col-12">
     <div class="card">
-      <div class="card-header d-flex align-items-center justify-content-between"
-           style="background:rgba(16,185,129,.08);color:#065f46">
+      <div class="card-header d-flex align-items-center justify-content-between bg-success bg-opacity-10 text-success-emphasis">
         <span><i class="bi bi-git me-2"></i>{{ t(request, 'section.bundle_versions') }}</span>
         <span class="text-muted small" id="enterprise-versioning-meta">–</span>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
           <table class="table table-sm table-hover mb-0">
-            <thead class="table-light">
+            <thead class="table-group-divider">
               <tr>
                 <th>{{ t(request, 'lbl.commit') }}</th>
                 <th>{{ t(request, 'lbl.message') }}</th>
