@@ -92,7 +92,7 @@ class Message(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     model: str
-    messages: List[Any]
+    messages: List[Message]
     stream: bool = False
     tools: Optional[Any] = None
     tool_choice: Optional[Any] = None
