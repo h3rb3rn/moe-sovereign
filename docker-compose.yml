@@ -504,8 +504,8 @@ services:
       - ${MOE_DATA_ROOT}/garage/data:/var/lib/garage/data
       - ${MOE_DATA_ROOT}/garage/etc/garage.toml:/etc/garage.toml:ro
     ports:
-      - "127.0.0.1:3900:3900"   # S3 API
-      - "127.0.0.1:3903:3903"   # admin API
+      - "3900:3900"   # S3 API
+      - "3903:3903"   # admin API
     healthcheck:
       # Garage image is distroless (no shell/wget). Binary lives at /garage (not in PATH).
       # `garage status` exits 0 when the node is operational.
