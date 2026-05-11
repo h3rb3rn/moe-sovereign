@@ -1,7 +1,5 @@
 # Object Explorer
 
-> **Migration notice (2026-05-11):** The Cypher endpoint `/v1/graph/cypher/read` stays in moe-sovereign (it is a graph operation). The Explorer **UI** migrates to [`moe-codex`](https://github.com/h3rb3rn/moe-codex) where it lives alongside Catalog/Approval/Drift/Notebook.
-
 The Object Explorer (`/explorer`) is a read-only Cypher console for the
 Neo4j knowledge graph. It is intended for ad-hoc analysis without leaving
 the admin UI and without exposing the database to network reachability.

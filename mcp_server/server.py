@@ -1229,7 +1229,7 @@ _GENERATED_DIR.mkdir(exist_ok=True)
 # ─── MinIO helpers ──────────────────────────────────────────────────────────
 
 def _minio_client():
-    """Return a configured Minio client, or None if credentials are missing."""
+    """Return a configured S3 client (Garage backend), or None if credentials are missing."""
     endpoint  = os.getenv("MINIO_ENDPOINT", "")
     access    = os.getenv("MINIO_ROOT_USER", "")
     secret    = os.getenv("MINIO_ROOT_PASSWORD", "")
@@ -1247,7 +1247,7 @@ def _minio_public_url() -> str:
     # MINIO_PUBLIC_URL is writable via Admin Portal → Settings → Storage URL
     url = os.getenv("MINIO_PUBLIC_URL", "").rstrip("/")
     if not url:
-        endpoint = os.getenv("MINIO_ENDPOINT", "moe-storage:9000")
+        endpoint = os.getenv("MINIO_ENDPOINT", "moe-storage-garage:3900")
         url = f"http://{endpoint}"
     return url
 
@@ -1270,7 +1270,7 @@ def _minio_upload_bytes(data: bytes, object_name: str, content_type: str,
     presigned = mc.presigned_get_object(bkt, object_name, expires=timedelta(hours=24))
     # Replace internal hostname with public URL
     public_base = _minio_public_url()
-    internal = os.getenv("MINIO_ENDPOINT", "moe-storage:9000")
+    internal = os.getenv("MINIO_ENDPOINT", "moe-storage-garage:3900")
     presigned = presigned.replace(f"http://{internal}", public_base, 1)
     return presigned
 
@@ -1321,7 +1321,7 @@ def file_download_url(object_name: str, bucket: str = "", expires_hours: int = 2
     try:
         presigned = mc.presigned_get_object(bkt, object_name, expires=timedelta(hours=hours))
         public_base = _minio_public_url()
-        internal = os.getenv("MINIO_ENDPOINT", "moe-storage:9000")
+        internal = os.getenv("MINIO_ENDPOINT", "moe-storage-garage:3900")
         presigned = presigned.replace(f"http://{internal}", public_base, 1)
         return f"Download URL ({hours}h): {presigned}"
     except Exception as e:

@@ -1,7 +1,5 @@
 # Notebook (JupyterLite)
 
-> **Migration notice (2026-05-11):** Migrating to [`moe-codex`](https://github.com/h3rb3rn/moe-codex). New deployments use that repo.
-
 The Notebook page (`/notebook`) embeds a browser-only JupyterLite
 environment alongside copy-paste-ready snippets that talk to the
 orchestrator API. Power users can prototype against the live graph

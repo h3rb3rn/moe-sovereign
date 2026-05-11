@@ -1,7 +1,5 @@
 # Knowledge Approvals
 
-> **Migration notice (2026-05-11):** Migrating to [`moe-codex`](https://github.com/h3rb3rn/moe-codex). New deployments use that repo.
-
 The Approvals page (`/approval`) is a gated import workflow for external
 knowledge bundles. Instead of writing extracted entities and relations
 directly into Neo4j, a bundle is first **staged on a lakeFS branch** named

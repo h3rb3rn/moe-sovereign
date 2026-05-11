@@ -167,6 +167,8 @@ The orchestrator started as an 11 190-line monolith in `main.py`. A 14-phase spl
 
 ## Key Capabilities
 
+### A) Core AI & Orchestration
+
 | | Capability | Description |
 |:---:|---|---|
 | **1** | Deterministic Expert Routing | Versioned, auditable templates --- not a probabilistic black box |
@@ -175,28 +177,43 @@ The orchestrator started as an 11 190-line monolith in `main.py`. A 14-phase spl
 | **4** | Community Knowledge Bundles | Export/import learned knowledge as JSON-LD with regex-based privacy scrubbing (PII, secrets, hostnames) |
 | **5** | 51 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks; includes wikidata_sparql, pubmed_search, crossref_lookup, openalex_search, duckduckgo_search, web_browser (Splash JS rendering), wayback_fetch, github_search_issues with fuzzy label resolution |
 | **6** | VRAM-Aware Scheduling | Per-node VRAM limits, warm-model affinity, sticky sessions |
-| **7** | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
 | **8** | Claude Code Integration | Full Anthropic Messages API with 6 profiles and streaming thinking blocks |
 | **9** | Deployment Flexibility | One OCI image &rarr; LXC (tested), Docker Compose (tested), Podman rootless (tested), Helm/K8s (architecturally prepared, community validation requested) |
 | **10** | 9.3&times; Accumulation Speedup | 707 s &rarr; 76 s latency over 5 benchmark epochs |
-| **11** | Autonomous Disk Management | System Cleanup Manager in Admin UI: configurable TTL per subsystem, daily cron automation, LangGraph checkpoint archiving, Docker build-cache pruning, history tracking with averages |
 | **12** | Agentic Re-Planning Loop | After each synthesis the Judge checks completeness; unresolved gaps trigger a focused re-plan with injected context --- up to 3 autonomous iterations per request; domain-aware search cache prevents result poisoning across iterations |
-| **13** | PowerPoint Generation | MCP `generate_pptx` tool creates fully formatted `.pptx` presentations from structured content and delivers them as signed MinIO download links |
-| **14** | Selective Template & Profile Export | Admin UI: individual templates and CC profiles can be checkbox-selected for targeted export --- no need to export the full set every time |
-| **15** | Endpoint Availability Graph | System Monitoring shows a 24-hour stepped-line chart per inference server (UP/DOWN, 5-min resolution via Prometheus `query_range`) |
-| **16** | API Endpoint Budget Overview | Per-endpoint budget cards with spend, limit, and colour-coded progress bar — read live from LiteLLM `x-litellm-key-spend` / `x-litellm-key-max-budget` headers |
-| **17** | User Budget Response Headers | `/v1/chat/completions` returns `X-MoE-Budget-Daily-Used` and `X-MoE-Budget-Daily-Limit` — clients can gate on quota without a separate API call |
+| **13** | PowerPoint Generation | MCP `generate_pptx` tool creates fully formatted `.pptx` presentations from structured content and delivers them as signed Garage (S3) download links |
 | **18** | Dynamic Sequential/Parallel Experts | Planner tasks support `depends_on` for multi-hop chains (e.g. find author → find their papers). Independent tasks run in parallel; dependent tasks execute sequentially with result injection via `{result_of:id}` placeholders |
 | **19** | Adaptive Context Budget | Context window limits per model auto-scale web-research blocks and GraphRAG budget. Fallback models (gemma4:31b 8K, qwen3.6:35b 32K) receive proportionally smaller context slices |
 | **20** | GraphRAG On-Demand | Neo4j queries skipped for external research questions (papers, APIs, media) — only runs for internal knowledge queries or when the plan includes a knowledge_healing task |
 | **21** | OpenAI Responses API (`/v1/responses`) | Full Responses API streaming with correct SSE events (`sequence_number`, `output_index`, `content_index`) — enables Codex CLI, Continue.dev, and any OpenAI Responses API compatible agent out of the box |
-| **22** | Pipeline Transparency Log | Per-request routing log: expert domains engaged, complexity level, latency, cache hit, agentic rounds — queryable via `/v1/admin/pipeline-log` with CSV export for BI tools |
 | **23** | Chess Analysis via Lichess | MCP tool `chess_analyze_position` queries Lichess cloud Stockfish (342M positions, depth 20–99) for best moves given a FEN string — no local engine required |
-| **24** | Claude Desktop & Cowork Gateway | Full Anthropic Third-Party Inference Gateway spec: `display_name` in `/v1/models`, `/v1/messages/count_tokens` endpoint, `X-Claude-Code-Session-Id` tracking — compatible with Claude Desktop, Claude Cowork, and Claude Code out of the box. Run `scripts/setup-claude-desktop.sh` to auto-configure |
 | **25** | Formal Logic State Layer | Three-tier algebraic logic over the LangGraph state (de Vries 2007): **paraconsistent** conflict registry tolerates contradictory expert outputs without pipeline failure; **intuitionistic** `ConstructiveProof[T]` marks LLM claims as ⊥ until executor-verified; **fuzzy T-norm** routing replaces binary flags with continuous confidence scores — Gödel `min` and Łukasiewicz `max(0,a+b−1)` conjunctions configurable via env |
 | **26** | AIC Complexity Estimation | zlib compressibility as a Kolmogorov complexity proxy (Kolmogorov 1965) acts as a tie-breaker in `estimate_complexity()` — information-dense prompts (ratio < 0.15, ≥ 35 words) are upgraded to `complex`; redundant short prompts downgraded to `trivial`, without any LLM call |
 | **27** | Infrastructure-Adaptive Expert Scoring | Thompson Sampling Beta prior adjusted by real-time node load from `_ps_cache`: busy inference nodes receive an inflated β parameter — steering expert selection toward idle hardware automatically, without manual configuration |
 | **28** | Fuzzy Graph Entity Deduplication | Before every Neo4j MERGE, incoming entity names are resolved via Ratcliff/Obershelp SequenceMatcher (threshold 0.82) against a prefix-batched index — alternate spellings across knowledge sources (`"Einstein, Albert"` ↔ `"Albert Einstein"`) map to one canonical node instead of creating duplicates |
+
+### B) Security, Sovereignty & Admin
+
+| | Capability | Description |
+|:---:|---|---|
+| **7**  | Multi-Tenant RBAC | Per-user token budgets, template permissions, SSO (Authentik/OIDC) |
+| **11** | Autonomous Disk Management | System Cleanup Manager in Admin UI: configurable TTL per subsystem, daily cron automation, LangGraph checkpoint archiving, Docker build-cache pruning, history tracking with averages |
+| **14** | Selective Template & Profile Export | Admin UI: individual templates and CC profiles can be checkbox-selected for targeted export --- no need to export the full set every time |
+| **15** | Endpoint Availability Graph | System Monitoring shows a 24-hour stepped-line chart per inference server (UP/DOWN, 5-min resolution via Prometheus `query_range`) |
+| **16** | API Endpoint Budget Overview | Per-endpoint budget cards with spend, limit, and colour-coded progress bar — read live from LiteLLM `x-litellm-key-spend` / `x-litellm-key-max-budget` headers |
+| **17** | User Budget Response Headers | `/v1/chat/completions` returns `X-MoE-Budget-Daily-Used` and `X-MoE-Budget-Daily-Limit` — clients can gate on quota without a separate API call |
+| **22** | Pipeline Transparency Log | Per-request routing log: expert domains engaged, complexity level, latency, cache hit, agentic rounds — queryable via `/v1/admin/pipeline-log` with CSV export for BI tools |
+| **24** | Claude Desktop & Cowork Gateway | Full Anthropic Third-Party Inference Gateway spec: `display_name` in `/v1/models`, `/v1/messages/count_tokens` endpoint, `X-Claude-Code-Session-Id` tracking — compatible with Claude Desktop, Claude Cowork, and Claude Code out of the box. Run `scripts/setup-claude-desktop.sh` to auto-configure |
+
+### C) Enterprise Data Management (`moe-codex` Extension)
+
+> **This feature group requires the optional [`moe-codex`](https://github.com/h3rb3rn/moe-codex)
+> enterprise stack** (Apache NiFi, Marquez/OpenLineage, lakeFS). It is not part of the
+> `moe-sovereign` core and is deployed as a separate compose stack.
+> See the [moe-codex repository](https://github.com/h3rb3rn/moe-codex) for setup instructions.
+
+| | Capability | Description |
+|:---:|---|---|
 | **29** | OpenLineage Data Lineage (Marquez) | Five pipeline hook points (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`, `merger_node`, `kafka_ingest`) emit OpenLineage 2.0.2 START/COMPLETE/FAIL events to a Marquez backend — fire-and-forget, no-op when `MARQUEZ_URL` is empty. Palantir Foundry-comparable lineage visibility for every MoE pipeline run |
 | **30** | Enterprise Stack Dashboard | Admin UI `/enterprise` page surfaces NiFi, Marquez and lakeFS reachability with live latency probes, plus the most recent OpenLineage runs from Marquez. Auto-refreshes every 30 s; gracefully hides when `INSTALL_ENTERPRISE_DATA_STACK=false` |
 | **31** | lakeFS Bundle Versioning | Every successful `/graph/knowledge/import` archives the JSON-LD bundle as a content-addressed commit on the `moe-knowledge` lakeFS repository — git-style audit log queryable via `/api/enterprise/versioning/log`, point-in-time bundle download via `services.versioning.get_bundle_at()` for rollback. Fire-and-forget; no-op when `LAKEFS_ENDPOINT` is empty |
@@ -369,8 +386,11 @@ flowchart LR
 | Disk | 60 GB | 200 GB+ |
 | GPU | None (API-only mode) | NVIDIA with CUDA, &ge; 8 GB VRAM |
 | Docker | CE 24+ | Docker CE 27+ |
+| **+ Enterprise Stack (`moe-codex`)** | **+ 4 cores, + 8 GB RAM** | **+ 8 cores, + 16 GB RAM** |
 
 > The orchestrator runs on CPU. GPU VRAM is only needed on **inference nodes** (Ollama).
+> The `moe-codex` Enterprise Data Stack (NiFi 4 GB, lakeFS 512 MB, Marquez 1.5 GB + 2&times; Postgres)
+> adds significant overhead — plan a dedicated host or at least 8 GB additional RAM.
 
 ---
 
