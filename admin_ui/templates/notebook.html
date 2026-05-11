@@ -11,9 +11,11 @@
             data-bs-toggle="collapse" data-bs-target="#snippet-panel">
       <i class="bi bi-code-slash me-1"></i>{{ t(request, 'lbl.snippets') }}
     </button>
+    {% if jupyterlite_url %}
     <a href="{{ jupyterlite_url }}" target="_blank" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-box-arrow-up-right me-1"></i>{{ t(request, 'lbl.open_full_window') }}
     </a>
+    {% endif %}
   </div>
 </div>
 
@@ -70,10 +72,19 @@ for run in r.json().get("runs", []):
 
 <div class="card">
   <div class="card-body p-0">
+    {% if jupyterlite_url %}
     <iframe src="{{ jupyterlite_url }}"
             style="width:100%;height:75vh;border:0"
             allow="clipboard-read; clipboard-write"
             referrerpolicy="origin"></iframe>
+    {% else %}
+    <div class="p-4 text-center text-muted">
+      <i class="bi bi-journal-x fs-1 d-block mb-3"></i>
+      <strong>JUPYTERLITE_URL not configured</strong><br>
+      <span class="small">Set <code>JUPYTERLITE_URL</code> in <code>.env</code> to enable the notebook.
+      Default: <code>https://jupyterlite.github.io/demo/lab/index.html</code></span>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

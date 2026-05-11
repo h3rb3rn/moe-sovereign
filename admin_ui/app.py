@@ -7609,7 +7609,9 @@ async def explorer_page(request: Request, _=Depends(require_login)):
 
 @app.get("/notebook", response_class=HTMLResponse)
 async def notebook_page(request: Request, _=Depends(require_login)):
-    return TEMPLATES.TemplateResponse(request, "notebook.html", {})
+    return TEMPLATES.TemplateResponse(request, "notebook.html", {
+        "jupyterlite_url": os.getenv("JUPYTERLITE_URL", ""),
+    })
 
 
 @app.get("/api/enterprise/health", dependencies=[Depends(require_login)])
