@@ -2173,49 +2173,52 @@ async def api_servers_list():
 
 @app.get("/api/servers/health")
 async def api_servers_health(request: Request, _=Depends(require_login)):
-    """Return connectivity + model count for every registered inference server."""
+    """Return connectivity + model count for every registered inference server.
+
+    All servers are checked in parallel to prevent a single unreachable server
+    from blocking the entire response.
+    """
     import time as _time
     servers = _get_inference_servers()
-    results = []
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for srv in servers:
-            api_type = srv.get("api_type", "ollama")
-            token    = srv.get("token", "ollama")
-            t0       = _time.monotonic()
-            try:
+
+    async def _check(srv: dict) -> dict:
+        api_type = srv.get("api_type", "ollama")
+        token    = srv.get("token", "ollama")
+        t0       = _time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 if api_type == "openai":
                     r = await client.get(
                         f"{srv['url'].rstrip('/')}/models",
                         headers={"Authorization": f"Bearer {token}"},
                     )
-                    latency_ms   = int((_time.monotonic() - t0) * 1000)
                     models_count = len(r.json().get("data", []))
                 else:
                     base = srv["url"].rstrip("/").removesuffix("/v1")
                     r = await client.get(f"{base}/api/tags")
-                    latency_ms   = int((_time.monotonic() - t0) * 1000)
                     models_count = len(r.json().get("models", []))
-                results.append({
-                    "name":         srv["name"],
-                    "url":          srv["url"],
-                    "gpu_count":    srv.get("gpu_count", 1),
-                    "api_type":     api_type,
-                    "ok":           r.status_code == 200,
-                    "latency_ms":   latency_ms,
-                    "models_count": models_count,
-                })
-            except Exception as exc:
-                results.append({
-                    "name":         srv["name"],
-                    "url":          srv["url"],
-                    "gpu_count":    srv.get("gpu_count", 1),
-                    "api_type":     api_type,
-                    "ok":           False,
-                    "latency_ms":   -1,
-                    "models_count": 0,
-                    "error":        str(exc),
-                })
-    return results
+            return {
+                "name":         srv["name"],
+                "url":          srv["url"],
+                "gpu_count":    srv.get("gpu_count", 1),
+                "api_type":     api_type,
+                "ok":           r.status_code == 200,
+                "latency_ms":   int((_time.monotonic() - t0) * 1000),
+                "models_count": models_count,
+            }
+        except Exception as exc:
+            return {
+                "name":         srv["name"],
+                "url":          srv["url"],
+                "gpu_count":    srv.get("gpu_count", 1),
+                "api_type":     api_type,
+                "ok":           False,
+                "latency_ms":   int((_time.monotonic() - t0) * 1000),
+                "models_count": 0,
+                "error":        str(exc),
+            }
+
+    return await asyncio.gather(*[_check(s) for s in servers])
 
 
 @app.get("/api/endpoints/availability", dependencies=[Depends(require_login)])
