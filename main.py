@@ -1082,12 +1082,14 @@ async def lifespan(app_: FastAPI):
         from langgraph.checkpoint.memory import MemorySaver
         checkpointer = MemorySaver()
         app_graph = builder.compile(checkpointer=checkpointer)
+        state.app_graph = app_graph  # expose to services/pipeline modules via state
         logger.info("✅ MemorySaver initialized (edge_mobile — in-RAM checkpoints)")
         yield
     else:
         async with AsyncPostgresSaver.from_conn_string(POSTGRES_CHECKPOINT_URL) as checkpointer:
             await checkpointer.setup()
             app_graph = builder.compile(checkpointer=checkpointer)
+            state.app_graph = app_graph  # expose to services/pipeline modules via state
             logger.info("✅ PostgresSaver initialized — checkpoints persisted on terra_checkpoints")
             yield
     # Cleanup
