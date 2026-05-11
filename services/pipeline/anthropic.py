@@ -908,23 +908,13 @@ async def anthropic_messages(request: Request):
         ANTHROPIC_API_KEY=<any>        # not validated
         CLAUDE_MODEL=claude-sonnet-4-6  (or other claude-* ID)
     """
-    from services.lineage import (
-        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
-        dataset_user_query, dataset_response,
-    )
     body       = await request.json()
     chat_id    = f"msg_{uuid.uuid4().hex[:24]}"
     session_id = _extract_session_id(request)
     messages   = body.get("messages", [])
     tools      = body.get("tools", [])
     model     = body.get("model", "")
-    _ol_run_id = await _ol_start(
-        "anthropic_messages",
-        inputs=[dataset_user_query(session_id or "")],
-        extra_facets={"requestModel": {"_producer": "https://github.com/h3rb3rn/moe-sovereign",
-                                       "_schemaURL": "moe-sovereign://requestModel",
-                                       "model": model, "hasTools": bool(tools)}},
-    )
+    _ol_run_id = None  # lineage emitted by moe-codex when deployed
 
     # Auth
     raw_key  = _extract_api_key(request)
@@ -1116,13 +1106,10 @@ async def anthropic_messages(request: Request):
                                                  enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False),
                                                  cross_session_enabled=_user_tmpl_prompts.get("enable_cross_session_memory", False),
                                                  cross_session_scopes=_user_tmpl_prompts.get("cross_session_scopes", ["private"]))
-        await _ol_complete(_ol_run_id, job_name="anthropic_messages",
-                           outputs=[dataset_response(chat_id)])
         return _result
     except Exception as _exc:
-        logger.error("Messages-Endpoint unbehandelte Exception (chat_id=%s): %s", chat_id, _exc, exc_info=True)
+        logger.error("Messages-Endpoint unhandled exception (chat_id=%s): %s", chat_id, _exc, exc_info=True)
         asyncio.create_task(_deregister_active_request(chat_id))
-        await _ol_fail(_ol_run_id, job_name="anthropic_messages", error=str(_exc))
         return JSONResponse(status_code=500, content={"error": {
             "type": "api_error", "message": f"Internal server error: {_exc}"
         }})
