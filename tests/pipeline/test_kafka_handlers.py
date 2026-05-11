@@ -163,7 +163,7 @@ async def test_requests_handler_has_no_side_effects(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# FEEDBACK handler — TODO(human)
+# FEEDBACK handler
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
