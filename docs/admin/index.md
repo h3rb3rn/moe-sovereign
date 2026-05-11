@@ -44,6 +44,20 @@ On smaller screens a hamburger menu opens the full offcanvas sidebar.
 | Quarantine | `/quarantine` | Blocked content review |
 | Maintenance | `/maintenance` | System maintenance tasks |
 
+### Enterprise Stack (dropdown)
+
+These pages integrate the optional Enterprise Stack (Marquez · lakeFS · NiFi).
+They appear when the stack is reachable and surface a Foundry-equivalent
+catalog/approval/explorer/notebook workflow without leaving the admin UI.
+
+| Menu Item | Path | Function |
+|-----------|------|---------|
+| Enterprise Dashboard | `/enterprise` | Lineage runs, lakeFS commits, NiFi ETL submissions, drift events |
+| Data Catalog | `/catalog` | Cross-source dataset browser (Marquez · Neo4j domains · lakeFS repos) |
+| Knowledge Approvals | `/approval` | Review and approve/reject pending knowledge bundles staged on `pending/*` lakeFS branches |
+| Object Explorer | `/explorer` | Read-only Cypher console with regex blacklist + Neo4j Browser deep-link |
+| Notebook | `/notebook` | Embedded JupyterLite + copy-paste snippets for the orchestrator API |
+
 ### Tools (dropdown)
 
 | Menu Item | Path | Function |

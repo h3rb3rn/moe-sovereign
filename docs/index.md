@@ -55,7 +55,22 @@ advantages without requiring any single model to be large enough to cover all do
 
 ---
 
-## What's New in v2.4
+## What's New (May 2026)
+
+### Palantir-Coverage: Catalog, Approval Workflow, Explorer, Drift, Notebook
+
+Five new admin-UI surfaces close the feature gap to Palantir Foundry / Gotham
+without compromising the sovereignty-first architecture.
+
+| Page | Purpose | Foundry equivalent |
+|------|---------|--------------------|
+| [Data Catalog](admin/catalog.md) | Cross-source dataset browser (Marquez · Neo4j domains · lakeFS repos) | Foundry Catalog |
+| [Knowledge Approvals](admin/approval.md) | Branch-based gate before writes hit Neo4j (`pending/<tag>-<ts>` branches in lakeFS) | Foundry dataset versioning + review |
+| [Object Explorer](admin/explorer.md) | Read-only Cypher console (regex blacklist + `READ_ACCESS` mode) | Gotham object drill-down |
+| [Data Health & Drift](admin/data-health.md) | Severity-classified events on every import (`ok` / `info` / `warn` / `crit`) | Foundry Health Checks |
+| [Notebook (JupyterLite)](admin/notebook.md) | In-product browser-WASM Jupyter with API snippets | Foundry Code Workbook |
+
+→ [Full changelog entry for 2026-05-10](changelog.md)
 
 ### Agentic Re-Planning Loop
 
