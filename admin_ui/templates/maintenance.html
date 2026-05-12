@@ -118,7 +118,30 @@
     </div>
   </div>
 
-  <!-- Card 2b: Template verification -->
+  <!-- Card 2b: Permission cleanup -->
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-danger bg-opacity-10">
+        <i class="bi bi-shield-x me-2"></i><strong>{{ t(request, 'lbl.perm_cleanup') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.perm_cleanup_desc') }}</p>
+        <div class="d-flex gap-2 mb-3">
+          <button class="btn btn-outline-secondary btn-sm flex-fill" onclick="scanPermissions()">
+            <i class="bi bi-search me-1"></i>{{ t(request, 'btn.cleanup_scan') }}
+          </button>
+          <button class="btn btn-danger btn-sm flex-fill" id="btn-perm-cleanup-run" disabled onclick="runPermissionCleanup()">
+            <i class="bi bi-shield-x me-1"></i>{{ t(request, 'btn.perm_cleanup_run') }}
+          </button>
+        </div>
+        <div id="perm-cleanup-report" class="small" style="max-height:280px;overflow-y:auto">
+          <div class="text-muted text-center py-4">{{ t(request, 'msg.perm_cleanup_click_scan') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 2c: Template verification -->
   <div class="col-12">
     <div class="card">
       <div class="card-header bg-info bg-opacity-10">
@@ -224,6 +247,10 @@ const _t = {
   jobStarted:            "{{ t(request, 'js.job_started') }}",
   prometheusReloading:   "{{ t(request, 'js.prometheus_reloading') }}",
   prometheusReloaded:    "{{ t(request, 'js.prometheus_reloaded') }}",
+  noStalePermissions:    "{{ t(request, 'js.no_stale_permissions') }}",
+  stalePermissionsFound: "{{ t(request, 'js.stale_permissions_found') }}",
+  confirmPermCleanup:    "{{ t(request, 'js.confirm_perm_cleanup') }}",
+  permCleanupDone:       "{{ t(request, 'js.perm_cleanup_done') }}",
 };
 
 function flash(msg, type='success') {
@@ -485,6 +512,45 @@ async function runCleanup(dryRun) {
     }
     box.innerHTML = html;
     document.getElementById('btn-cleanup-run').disabled = true;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
+  }
+}
+
+async function scanPermissions() {
+  const box = document.getElementById('perm-cleanup-report');
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.scanning}</div>`;
+  try {
+    const d = await fetch('/api/maintenance/permissions/scan').then(r => r.json());
+    if (d.count === 0) {
+      box.innerHTML = `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>${_t.noStalePermissions}</div>`;
+      document.getElementById('btn-perm-cleanup-run').disabled = true;
+      return;
+    }
+    let html = `<div class="alert alert-warning mb-2"><strong>${d.count} ${_t.stalePermissionsFound}</strong></div>`;
+    html += `<ul class="list-unstyled mb-0">`;
+    for (const rid of d.stale_resource_ids) {
+      html += `<li class="font-monospace small text-danger"><i class="bi bi-x-circle me-1"></i>${escapeHtml(rid)}</li>`;
+    }
+    html += `</ul>`;
+    box.innerHTML = html;
+    document.getElementById('btn-perm-cleanup-run').disabled = false;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
+  }
+}
+
+async function runPermissionCleanup() {
+  const box = document.getElementById('perm-cleanup-report');
+  if (!confirm(_t.confirmPermCleanup)) return;
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.cleaning}</div>`;
+  try {
+    const d = await fetch('/api/maintenance/permissions/cleanup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dry_run: false}),
+    }).then(r => r.json());
+    box.innerHTML = `<div class="alert alert-success"><strong>${_t.permCleanupDone}:</strong> ${d.deleted}</div>`;
+    document.getElementById('btn-perm-cleanup-run').disabled = true;
   } catch (e) {
     box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
   }

@@ -326,7 +326,24 @@ async def lifespan(app: FastAPI):
     # Non-blocking: runs as a background task so a slow/unreachable Authentik
     # never delays moe-admin from coming up.
     asyncio.create_task(_sync_authentik_redirect_uris(read_env()))
+    # Clean stale model_endpoint permissions on startup (non-blocking)
+    asyncio.create_task(_startup_permission_cleanup())
     yield
+
+async def _startup_permission_cleanup() -> None:
+    """Remove model_endpoint permissions that reference servers no longer in the config."""
+    try:
+        active_names = [s.get("name", "") for s in _get_inference_servers() if s.get("name")]
+        result = await db.cleanup_stale_model_endpoint_permissions(active_names, dry_run=False)
+        if result["deleted"]:
+            logger.info(
+                "Startup permission cleanup: removed %d stale model_endpoint entries (%s)",
+                result["deleted"],
+                result.get("stale_resource_ids", []),
+            )
+    except Exception as exc:
+        logger.warning("Startup permission cleanup failed: %s", exc)
+
 
 app = FastAPI(docs_url=None, redoc_url=None, title="MoE Admin", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -2717,6 +2734,26 @@ async def api_maintenance_prometheus_reload():
             return {"ok": r.status_code in (200, 204), "status_code": r.status_code}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/maintenance/permissions/scan", dependencies=[Depends(require_login)])
+async def api_maintenance_permissions_scan():
+    """Return stale model_endpoint permissions (server no longer configured)."""
+    active_names = [s.get("name", "") for s in _get_inference_servers() if s.get("name")]
+    return await db.scan_stale_model_endpoint_permissions(active_names)
+
+
+@app.post("/api/maintenance/permissions/cleanup", dependencies=[Depends(require_login)])
+async def api_maintenance_permissions_cleanup(request: Request):
+    """Delete stale model_endpoint permissions. Accepts optional JSON body {dry_run: bool}."""
+    dry_run = False
+    try:
+        body = await request.json()
+        dry_run = bool(body.get("dry_run", False))
+    except Exception:
+        pass
+    active_names = [s.get("name", "") for s in _get_inference_servers() if s.get("name")]
+    return await db.cleanup_stale_model_endpoint_permissions(active_names, dry_run=dry_run)
 
 
 # ─── System Cleanup Manager ───────────────────────────────────────────────────

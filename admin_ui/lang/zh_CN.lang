@@ -1038,5 +1038,13 @@
   "lbl.tt_1d": "最近 24 小时",
   "lbl.tt_7d": "最近 7 天",
   "lbl.tt_30d": "最近 30 天",
-  "lbl.tt_90d": "最近 90 天"
+  "lbl.tt_90d": "最近 90 天",
+  "lbl.perm_cleanup": "权限清理",
+  "msg.perm_cleanup_desc": "扫描并删除引用系统配置中不再存在的推理服务器的 model_endpoint 权限。",
+  "btn.perm_cleanup_run": "清理权限",
+  "msg.perm_cleanup_click_scan": "点击「扫描」以检测过期条目。",
+  "js.no_stale_permissions": "未发现过期权限，系统已清洁。",
+  "js.stale_permissions_found": "个过期权限已检测到",
+  "js.confirm_perm_cleanup": "删除所有过期的 model_endpoint 权限？此操作无法撤销。",
+  "js.perm_cleanup_done": "已删除权限"
 }

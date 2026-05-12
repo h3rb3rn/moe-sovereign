@@ -1037,5 +1037,13 @@
   "lbl.tt_1d": "Letzte 24 Std.",
   "lbl.tt_7d": "Letzte 7 Tage",
   "lbl.tt_30d": "Letzte 30 Tage",
-  "lbl.tt_90d": "Letzte 90 Tage"
+  "lbl.tt_90d": "Letzte 90 Tage",
+  "lbl.perm_cleanup": "Berechtigungs-Cleanup",
+  "msg.perm_cleanup_desc": "Prüft und entfernt model_endpoint-Berechtigungen, die auf nicht mehr konfigurierte Inferenz-Server verweisen.",
+  "btn.perm_cleanup_run": "Berechtigungen bereinigen",
+  "msg.perm_cleanup_click_scan": "Auf „Scannen" klicken, um veraltete Einträge zu finden.",
+  "js.no_stale_permissions": "Keine veralteten Berechtigungen gefunden. System bereinigt.",
+  "js.stale_permissions_found": "veraltete Berechtigung(en) gefunden",
+  "js.confirm_perm_cleanup": "Alle veralteten model_endpoint-Berechtigungen löschen? Dieser Vorgang kann nicht rückgängig gemacht werden.",
+  "js.perm_cleanup_done": "Gelöschte Berechtigungen"
 }

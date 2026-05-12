@@ -1038,5 +1038,13 @@
   "lbl.tt_1d": "Dernières 24 h",
   "lbl.tt_7d": "Derniers 7 jours",
   "lbl.tt_30d": "Derniers 30 jours",
-  "lbl.tt_90d": "Derniers 90 jours"
+  "lbl.tt_90d": "Derniers 90 jours",
+  "lbl.perm_cleanup": "Nettoyage des permissions",
+  "msg.perm_cleanup_desc": "Analyse et supprime les permissions model_endpoint qui référencent des serveurs d'inférence qui n'existent plus dans la configuration.",
+  "btn.perm_cleanup_run": "Nettoyer les permissions",
+  "msg.perm_cleanup_click_scan": "Cliquez sur « Scanner » pour détecter les entrées obsolètes.",
+  "js.no_stale_permissions": "Aucune permission obsolète trouvée. Système propre.",
+  "js.stale_permissions_found": "permission(s) obsolète(s) détectée(s)",
+  "js.confirm_perm_cleanup": "Supprimer toutes les permissions model_endpoint obsolètes ? Cette action est irréversible.",
+  "js.perm_cleanup_done": "Permissions supprimées"
 }
