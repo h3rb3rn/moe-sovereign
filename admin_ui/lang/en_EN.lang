@@ -1038,5 +1038,13 @@
   "lbl.tt_1d": "Last 24 h",
   "lbl.tt_7d": "Last 7 days",
   "lbl.tt_30d": "Last 30 days",
-  "lbl.tt_90d": "Last 90 days"
+  "lbl.tt_90d": "Last 90 days",
+  "lbl.perm_cleanup": "Permission cleanup",
+  "msg.perm_cleanup_desc": "Scans and removes model_endpoint permissions that reference inference servers which no longer exist in the system configuration.",
+  "btn.perm_cleanup_run": "Clean up permissions",
+  "msg.perm_cleanup_click_scan": "Click \"Scan\" to detect stale entries.",
+  "js.no_stale_permissions": "No stale permissions found. System clean.",
+  "js.stale_permissions_found": "stale permission(s) detected",
+  "js.confirm_perm_cleanup": "Delete all stale model_endpoint permissions? This cannot be undone.",
+  "js.perm_cleanup_done": "Deleted permissions"
 }

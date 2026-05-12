@@ -1422,6 +1422,51 @@ async def revoke_all_model_endpoints_by_node(node_name: str) -> int:
     return total
 
 
+async def scan_stale_model_endpoint_permissions(active_server_names: list[str]) -> dict:
+    """Return all model_endpoint permissions that reference a server not in active_server_names.
+
+    Uses fuzzy normalization (lowercase, strip hyphens/underscores) so renamed
+    servers are matched correctly.  Returns {'count': int, 'stale_resource_ids': list[str]}.
+    """
+    active_norm = {n.lower().replace("-", "").replace("_", "") for n in active_server_names}
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT DISTINCT resource_id FROM permissions WHERE resource_type='model_endpoint'"
+            )
+            rows = await cur.fetchall()
+    stale: list[str] = []
+    for row in rows:
+        rid = row["resource_id"]
+        if not rid or "@" not in rid:
+            continue
+        suffix = rid.rsplit("@", 1)[1]
+        if suffix.lower().replace("-", "").replace("_", "") not in active_norm:
+            stale.append(rid)
+    return {"count": len(stale), "stale_resource_ids": sorted(stale)}
+
+
+async def cleanup_stale_model_endpoint_permissions(
+    active_server_names: list[str], dry_run: bool = False
+) -> dict:
+    """Delete every model_endpoint permission that references an inactive server.
+
+    With dry_run=True the function only scans and returns what would be deleted.
+    Returns {'deleted': int, 'dry_run': bool, 'count': int, 'stale_resource_ids': list[str]}.
+    """
+    scan = await scan_stale_model_endpoint_permissions(active_server_names)
+    if dry_run or not scan["stale_resource_ids"]:
+        return {"deleted": 0, "dry_run": dry_run, **scan}
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM permissions WHERE resource_type='model_endpoint' AND resource_id = ANY(%s)",
+                (scan["stale_resource_ids"],),
+            )
+            deleted = cur.rowcount
+    return {"deleted": deleted, "dry_run": False, **scan}
+
+
 async def admin_get_user_connection(conn_id: str) -> Optional[dict]:
     """Fetch any user connection by ID without user scope. Admin use only."""
     async with _get_pool().connection() as conn:
