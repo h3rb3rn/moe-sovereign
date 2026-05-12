@@ -783,7 +783,10 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
 
                 async def _run():
                     try:
-                        result_box["data"] = await app_graph.ainvoke(invoke_state, invoke_cfg)
+                        if state.app_graph is None:
+                            result_box["error"] = "Orchestrator graph not ready — retry in a few seconds"
+                            return
+                        result_box["data"] = await state.app_graph.ainvoke(invoke_state, invoke_cfg)
                     except Exception as e:
                         result_box["error"] = str(e)
                     finally:
@@ -866,7 +869,9 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
         return StreamingResponse(_moe_stream(), media_type="text/event-stream")
 
     # Non-Streaming
-    result  = await app_graph.ainvoke(invoke_state, invoke_cfg)
+    if state.app_graph is None:
+        return JSONResponse(status_code=503, content={"type": "error", "error": {"type": "api_error", "message": "Orchestrator graph not ready — retry in a few seconds"}})
+    result  = await state.app_graph.ainvoke(invoke_state, invoke_cfg)
     content = result.get("final_response", "")
     _p_tok = result.get("prompt_tokens", 0)
     _c_tok = result.get("completion_tokens", 0)
