@@ -1419,8 +1419,12 @@ async def save_config(request: Request, _=Depends(require_login)):
 
     custom_prompts = rebuild_custom_prompts(form, list(EXPERT_CATEGORIES))
     custom_prompts_json = json.dumps(custom_prompts, ensure_ascii=False, separators=(",", ":"))
+    old_servers    = _get_inference_servers()
     servers        = rebuild_inference_servers(form)
     servers_json   = json.dumps(servers, ensure_ascii=False, separators=(",", ":"))
+    old_names      = {s.get("name") for s in old_servers if s.get("name")}
+    new_names      = {s.get("name") for s in servers    if s.get("name")}
+    removed_names  = sorted(old_names - new_names)
 
     updates = {
         "INFERENCE_SERVERS":         servers_json,
@@ -1514,6 +1518,19 @@ async def save_config(request: Request, _=Depends(require_login)):
         return TEMPLATES.TemplateResponse(request, "dashboard.html", ctx, status_code=400)
 
     write_env(updates)
+
+    if removed_names:
+        async def _permission_cleanup():
+            await _maintenance.cleanup_orphans(servers, dry_run=False)
+            for name in removed_names:
+                try:
+                    n = await db.revoke_all_model_endpoints_by_node(name)
+                    if n:
+                        logger.info("Revoked %d permission(s) for removed/renamed server %s", n, name)
+                except Exception as e:
+                    logger.warning("Permission cleanup failed for %s: %s", name, e)
+        asyncio.create_task(_permission_cleanup())
+
     # Push updated public URLs to Authentik's OAuth2 provider (fails open).
     asyncio.create_task(_sync_authentik_redirect_uris(read_env()))
     restart_orchestrator()
