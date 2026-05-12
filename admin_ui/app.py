@@ -6034,7 +6034,11 @@ async def user_api_delete_connection(conn_id: str, user_id: str = Depends(requir
 
 
 async def _probe_connection(conn: dict) -> dict:
-    """Test connectivity and fetch model list from a user API connection."""
+    """Test connectivity and fetch model list with metadata from a user API connection.
+
+    Returns models as a list of dicts: {id, context_window, param_size, families}.
+    Fields are None when the provider does not expose them.
+    """
     api_key  = db.decrypt_api_key(conn.get("api_key_enc", ""))
     api_type = conn.get("api_type", "openai")
     base_url = conn["url"].rstrip("/")
@@ -6044,10 +6048,31 @@ async def _probe_connection(conn: dict) -> dict:
             if api_type == "ollama":
                 probe_url = base_url.removesuffix("/v1") + "/api/tags"
                 r = await client.get(probe_url, headers=headers)
-                models = [m["name"] for m in r.json().get("models", [])]
+                raw_models = r.json().get("models", [])
+                models = []
+                for m in raw_models:
+                    details = m.get("details") or {}
+                    size_bytes = m.get("size")
+                    models.append({
+                        "id":             m.get("name", ""),
+                        "context_window": None,
+                        "param_size":     details.get("parameter_size"),
+                        "families":       details.get("families") or [],
+                        "size_gb":        round(size_bytes / 1_073_741_824, 1) if size_bytes else None,
+                    })
             else:
                 r = await client.get(f"{base_url}/models", headers=headers)
-                models = [m["id"] for m in r.json().get("data", [])]
+                raw_models = r.json().get("data", [])
+                models = []
+                for m in raw_models:
+                    ctx = m.get("context_window") or m.get("max_context_length") or m.get("context_length")
+                    models.append({
+                        "id":             m.get("id", ""),
+                        "context_window": int(ctx) if ctx else None,
+                        "param_size":     None,
+                        "families":       [],
+                        "size_gb":        None,
+                    })
         return {"ok": r.status_code == 200, "status_code": r.status_code, "models": models}
     except Exception as exc:
         return {"ok": False, "error": str(exc)[:200], "models": []}

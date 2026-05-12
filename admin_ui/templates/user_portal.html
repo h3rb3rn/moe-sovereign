@@ -2629,10 +2629,31 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               </div>
               <div id="conn-models-{{ conn.id }}" style="display:none" class="mt-2">
                 {% if conn.models_cache %}
-                <div class="border rounded p-2" style="max-height:220px;overflow-y:auto;font-size:.82rem">
-                  {% for m in conn.models_cache %}
-                  <div class="font-monospace py-1 {% if not loop.last %}border-bottom{% endif %}">{{ m }}</div>
-                  {% endfor %}
+                <div class="border rounded" style="max-height:240px;overflow-y:auto;font-size:.8rem">
+                  <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top" style="font-size:.75rem">
+                      <tr>
+                        <th>{{ t(request, 'portal.conn_col_model') }}</th>
+                        <th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th>
+                        <th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                    {% for m in conn.models_cache %}
+                      {% if m is mapping %}
+                      <tr>
+                        <td class="font-monospace text-truncate" style="max-width:280px">{{ m.id }}</td>
+                        <td class="text-end text-muted">{% if m.context_window %}{{ "{:,}".format(m.context_window) }}{% else %}—{% endif %}</td>
+                        <td class="text-end text-muted">{% if m.param_size %}{{ m.param_size }}{% elif m.size_gb %}{{ m.size_gb }} GB{% else %}—{% endif %}</td>
+                      </tr>
+                      {% else %}
+                      <tr>
+                        <td class="font-monospace text-truncate" colspan="3" style="max-width:360px">{{ m }}</td>
+                      </tr>
+                      {% endif %}
+                    {% endfor %}
+                    </tbody>
+                  </table>
                 </div>
                 {% else %}
                 <div class="text-muted small">{{ t(request, 'portal.conn_no_models') }}</div>
@@ -2786,10 +2807,25 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           div.innerHTML = `<div class="text-muted small">{{ t(request, 'portal.conn_no_models') }}</div>`;
           return;
         }
-        const rows = models.map((m, i) =>
-          `<div class="font-monospace py-1 ${i < models.length - 1 ? 'border-bottom' : ''}">${_connEscHtml(m)}</div>`
-        ).join('');
-        div.innerHTML = `<div class="border rounded p-2" style="max-height:220px;overflow-y:auto;font-size:.82rem">${rows}</div>`;
+        const rows = models.map(m => {
+          if (typeof m === 'string') {
+            return `<tr><td class="font-monospace text-truncate" colspan="3" style="max-width:360px">${_connEscHtml(m)}</td></tr>`;
+          }
+          const ctx = m.context_window ? Number(m.context_window).toLocaleString() : '—';
+          const sz  = m.param_size ? _connEscHtml(m.param_size) : (m.size_gb ? `${m.size_gb} GB` : '—');
+          return `<tr>
+            <td class="font-monospace text-truncate" style="max-width:280px">${_connEscHtml(m.id || '')}</td>
+            <td class="text-end text-muted">${ctx}</td>
+            <td class="text-end text-muted">${sz}</td>
+          </tr>`;
+        }).join('');
+        div.innerHTML = `<div class="border rounded" style="max-height:240px;overflow-y:auto;font-size:.8rem">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light sticky-top" style="font-size:.75rem">
+              <tr><th>{{ t(request, 'portal.conn_col_model') }}</th><th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th><th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table></div>`;
         div.style.display = 'block';
       }
 
