@@ -159,7 +159,7 @@ async def planner_node(state_: AgentState):
 
     # ── Agentic loop: read config from template state ───────────────────────
     _agentic_iteration  = state_.get("agentic_iteration") or 0
-    _agentic_max_rounds = state_.get("agentic_max_rounds") or 0
+    _agentic_max_rounds = state_.get("max_agentic_rounds") or 0
     _is_agentic_replan  = _agentic_iteration > 0 and _agentic_max_rounds > 0
 
     # Planner result cache: same request → same plan (Valkey, TTL=30 min)
@@ -276,12 +276,19 @@ async def planner_node(state_: AgentState):
 
     logger.debug("--- [NODE] PLANNER ---")
     await _report("📋 Planner analyzing request...")
-    # agentic_coder is an optional category — it only appears when the template has it enabled
-    # or the mode requires it. DEFAULT_EXPERT_PROMPTS contains the fallback prompt.
-    expert_categories = list(EXPERTS.keys())
+    # When a template defines its own expert set, restrict routing to those categories so
+    # the planner cannot accidentally route to a global expert not wired in the template.
+    # Fall back to the global EXPERTS list when no template experts are active.
+    _NON_EXPERT = {"precision_tools", "research"}
+    _user_experts_for_cats = state_.get("user_experts") or {}
+    if _user_experts_for_cats:
+        expert_categories = [c for c in _user_experts_for_cats.keys()
+                             if c not in _NON_EXPERT]
+    else:
+        expert_categories = list(EXPERTS.keys())
     if "agentic_coder" not in expert_categories and (
         state_.get("mode") in ("agent_orchestrated", "code")
-        or "agentic_coder" in (state_.get("user_experts") or {})
+        or "agentic_coder" in _user_experts_for_cats
     ):
         expert_categories = expert_categories + ["agentic_coder"]
 

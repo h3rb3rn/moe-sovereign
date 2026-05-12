@@ -37,7 +37,15 @@ def _resolve_user_experts(
         def _find_tmpl(tid: str):
             if tid in user_templates:
                 return user_templates[tid]
-            return next((t for t in templates if t.get("id") == tid), None)
+            return next(
+                (t for t in templates if t.get("id") == tid or t.get("name") == tid), None
+            )
+
+        def _tmpl_in_allowed(tid: str) -> bool:
+            if tid in tmpl_ids:
+                return True
+            t = _find_tmpl(tid)
+            return bool(t and t.get("id") in tmpl_ids)
 
         if admin_override and override_tmpl_id:
             tmpl = _find_tmpl(override_tmpl_id)
@@ -45,7 +53,7 @@ def _resolve_user_experts(
             tmpl = user_templates[override_tmpl_id]
         elif not tmpl_ids:
             return None
-        elif override_tmpl_id and override_tmpl_id in tmpl_ids:
+        elif override_tmpl_id and _tmpl_in_allowed(override_tmpl_id):
             tmpl = _find_tmpl(override_tmpl_id)
             if tmpl is None:
                 logger.warning(
@@ -63,6 +71,7 @@ def _resolve_user_experts(
 
         result: dict = {}
         for cat, cat_cfg in tmpl.get("experts", {}).items():
+            _sys_prompt = (cat_cfg.get("system_prompt") or "").strip() if isinstance(cat_cfg, dict) else ""
             if isinstance(cat_cfg, dict) and "models" in cat_cfg:
                 models_list = []
                 for m in cat_cfg.get("models", []):
@@ -82,12 +91,13 @@ def _resolve_user_experts(
                         if ep in _uc:
                             url = _uc[ep]["url"]
                     models_list.append({
-                        "model":    m.get("model", ""),
-                        "endpoint": ep,
-                        "url":      url,
-                        "token":    TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
-                        "forced":   forced,
-                        "_tier":    model_tier,
+                        "model":          m.get("model", ""),
+                        "endpoint":       ep,
+                        "url":            url,
+                        "token":          TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
+                        "forced":         forced,
+                        "_tier":          model_tier,
+                        "_system_prompt": _sys_prompt,
                     })
                 result[cat] = models_list
             elif isinstance(cat_cfg, dict):
@@ -95,12 +105,13 @@ def _resolve_user_experts(
                 ep  = (cat_cfg.get("endpoint") or "").strip()
                 url = URL_MAP.get(ep) if ep else None
                 result[cat] = [{
-                    "model":    cat_cfg.get("model", ""),
-                    "endpoint": ep,
-                    "url":      url,
-                    "token":    TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
-                    "forced":   True,
-                    "_tier":    None,
+                    "model":          cat_cfg.get("model", ""),
+                    "endpoint":       ep,
+                    "url":            url,
+                    "token":          TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
+                    "forced":         True,
+                    "_tier":          None,
+                    "_system_prompt": _sys_prompt,
                 }]
         return result or None
     except Exception:

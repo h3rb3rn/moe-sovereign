@@ -681,7 +681,7 @@ async def merger_node(state_: AgentState):
         ))
 
     # ── Agentic gap detection: assess if another iteration is needed ─────────
-    _agentic_max  = state_.get("agentic_max_rounds") or 0
+    _agentic_max  = state_.get("max_agentic_rounds") or 0
     _agentic_iter = state_.get("agentic_iteration") or 0
     _agentic_gap  = ""
     _agentic_history = list(state_.get("agentic_history") or [])
@@ -935,7 +935,7 @@ async def thinking_node(state_: AgentState):
 
 def _should_replan(state_: AgentState) -> str:
     """Router: decides whether merger should loop back to planner or proceed to critic."""
-    _max   = state_.get("agentic_max_rounds") or 0
+    _max   = state_.get("max_agentic_rounds") or 0
     _iter  = state_.get("agentic_iteration") or 0
     if _max <= 0:
         return "critic"

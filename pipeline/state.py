@@ -81,6 +81,7 @@ class AgentState(TypedDict):
     enable_cache: bool                  # Allow L1 ChromaDB cache reads/writes
     enable_graphrag: bool               # Allow Neo4j knowledge graph queries
     enable_web_research: bool           # Allow SearXNG web search
+    search_fallback_ddg: bool           # Fall back to DuckDuckGo when SearXNG returns no results
     graphrag_max_chars: int             # Hard char budget for graph_context (0 = derive from judge model context window)
     no_cache: bool                      # If True, bypass both L0 (Redis) and L1 (ChromaDB) entirely
 
@@ -113,11 +114,11 @@ class AgentState(TypedDict):
     expert_inputs: Dict                 # {expert_name: {tokens_out, latency_ms}} per-expert call stats
 
     # ── 11. Agentic re-planning loop ──────────────────────────────────────────
-    # When agentic_max_rounds > 0, the merger can trigger a second planning pass
+    # When max_agentic_rounds > 0, the merger can trigger a second planning pass
     # by setting agentic_gap. The loop exits when the gap is empty or the round
     # limit is reached.
     agentic_iteration: int              # Current loop iteration (0 = first pass)
-    agentic_max_rounds: int             # Max allowed iterations from template config (0 = disabled)
+    max_agentic_rounds: int             # Max allowed iterations from template config (0 = disabled)
     agentic_history: list               # [{iteration, findings, gap}] accumulated across rounds
     agentic_gap: str                    # What information is still missing — output of gap-detection LLM call
     attempted_queries: list             # All search queries already tried [{query, result_quality}] — injected into re-planner to prevent repetition
