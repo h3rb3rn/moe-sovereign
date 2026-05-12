@@ -216,3 +216,113 @@ async def pipeline_log(
         return JSONResponse({"total": total, "limit": limit, "offset": offset, "records": records})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+_WINDOW_INTERVALS = {"1d": "1 day", "7d": "7 days", "30d": "30 days", "90d": "90 days"}
+
+_TOKEN_TIMELINE_SQL = """
+SELECT
+    ul.session_id,
+    ul.request_id,
+    ul.user_id,
+    u.username,
+    ul.model,
+    ul.moe_mode,
+    COALESCE(ul.prompt_tokens, 0)     AS prompt_tokens,
+    COALESCE(ul.completion_tokens, 0) AS completion_tokens,
+    COALESCE(ul.total_tokens, 0)      AS total_tokens,
+    ul.requested_at,
+    rt.template_name,
+    rt.complexity,
+    rt.experts_used
+FROM usage_log ul
+LEFT JOIN users u ON ul.user_id = u.id
+LEFT JOIN routing_telemetry rt ON ul.request_id = rt.response_id
+WHERE ul.requested_at >= NOW() - INTERVAL '{interval}'
+  AND ul.session_id IS NOT NULL
+  AND ul.session_id <> ''
+  {{user_filter}}
+ORDER BY ul.session_id, ul.requested_at
+LIMIT %s
+"""
+
+
+@router.get("/v1/admin/token-timeline")
+async def token_timeline(
+    window: str = "7d",
+    user_id: Optional[str] = None,
+    limit: int = 800,
+):
+    """Session-level token usage grouped for git-graph branch visualization."""
+    if state._userdb_pool is None:
+        return JSONResponse(status_code=503, content={"error": "Database unavailable"})
+
+    # interval is from a validated allowlist — safe to interpolate directly.
+    interval = _WINDOW_INTERVALS.get(window, "7 days")
+    user_filter = "AND ul.user_id = %s" if user_id else ""
+    sql = _TOKEN_TIMELINE_SQL.format(interval=interval, user_filter=user_filter)
+    params = ([user_id] if user_id else []) + [limit]
+
+    try:
+        async with state._userdb_pool.connection() as conn:
+            cur = await conn.execute(sql, params)
+            cols = [d.name for d in cur.description]
+            rows = await cur.fetchall()
+
+        records = [dict(zip(cols, row)) for row in rows]
+
+        # Coerce non-serialisable types
+        for r in records:
+            if r.get("requested_at") is not None:
+                r["requested_at"] = r["requested_at"].isoformat()
+            if isinstance(r.get("experts_used"), list):
+                r["experts_used"] = r["experts_used"]
+            elif r.get("experts_used") is None:
+                r["experts_used"] = []
+
+        # Group by session_id
+        sessions_map: dict = {}
+        for r in records:
+            sid = r["session_id"]
+            if sid not in sessions_map:
+                sessions_map[sid] = {
+                    "session_id": sid,
+                    "user_id": r["user_id"],
+                    "username": r.get("username") or "",
+                    "requests": [],
+                }
+            sessions_map[sid]["requests"].append({
+                "request_id":       r["request_id"],
+                "ts":               r["requested_at"],
+                "prompt_tokens":    r["prompt_tokens"],
+                "completion_tokens": r["completion_tokens"],
+                "total_tokens":     r["total_tokens"],
+                "template":         r.get("template_name") or "",
+                "complexity":       r.get("complexity") or "",
+                "experts":          r.get("experts_used") or [],
+                "model":            r.get("model") or "",
+                "moe_mode":         r.get("moe_mode") or "",
+            })
+
+        # Aggregate per-session totals
+        sessions = []
+        all_templates: set = set()
+        for s in sessions_map.values():
+            reqs = s["requests"]
+            s["total_tokens"] = sum(r["total_tokens"] for r in reqs)
+            s["request_count"] = len(reqs)
+            s["start_ts"] = reqs[0]["ts"] if reqs else None
+            s["end_ts"] = reqs[-1]["ts"] if reqs else None
+            for r in reqs:
+                if r["template"]:
+                    all_templates.add(r["template"])
+            sessions.append(s)
+
+        sessions.sort(key=lambda s: s["start_ts"] or "")
+        return JSONResponse({
+            "window": window,
+            "sessions": sessions,
+            "templates": sorted(all_templates),
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})

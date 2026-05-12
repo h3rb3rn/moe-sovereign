@@ -83,6 +83,12 @@ from services.inference import _select_node as _select_node_svc, _get_available_
 from services.skills import _build_skill_catalog
 
 logger = logging.getLogger("MOE-SOVEREIGN")
+
+# Module-level CC integration state — set per-request inside anthropic_messages().
+# Must live here (not main.py) so _anthropic_tool_handler and _anthropic_moe_handler
+# can read them without a circular import. Defaults are safe no-ops.
+_CC_SYSTEM_PREFIX: str  = ""
+_CC_STREAM_THINK:  bool = False
 # ============================================================
 #  ANTHROPIC MESSAGES API  (/v1/messages)
 #  Enables Claude Code CLI and other Anthropic API clients
@@ -169,7 +175,7 @@ async def _anthropic_content_blocks_to_sse(
     yield _sse_event("message_stop", {"type": "message_stop"})
 
 
-async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional[str] = None, tool_url: Optional[str] = None, tool_token: Optional[str] = None, tool_timeout: Optional[int] = None, tool_node: Optional[str] = None, user_id: str = "anon", api_key_id: str = "", session_id: str = None, is_user_conn: bool = False):
+async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional[str] = None, tool_url: Optional[str] = None, tool_token: Optional[str] = None, tool_timeout: Optional[int] = None, tool_node: Optional[str] = None, user_id: str = "anon", api_key_id: str = "", session_id: str = None, is_user_conn: bool = False, system_prompt_prefix: str = "", tool_max_tokens: int = 0, tool_choice_override: str = ""):
     """Forwards tool-capable requests to an inference server and converts formats.
 
     tool_model/tool_url/tool_token: override default judge if specified (e.g. for Claude Code sessions).
@@ -180,14 +186,15 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
     system     = body.get("system") or ""
-    # Prepend system-prompt prefix from the active Claude Code profile
-    if _CC_SYSTEM_PREFIX and system:
-        system = f"{_CC_SYSTEM_PREFIX}\n\n{system}"
-    elif _CC_SYSTEM_PREFIX:
-        system = _CC_SYSTEM_PREFIX
+    # Prepend system-prompt prefix: parameter takes precedence over module-level fallback
+    _eff_sys_prefix = system_prompt_prefix or _CC_SYSTEM_PREFIX
+    if _eff_sys_prefix and system:
+        system = f"{_eff_sys_prefix}\n\n{system}"
+    elif _eff_sys_prefix:
+        system = _eff_sys_prefix
     tools      = body.get("tools", [])
     do_stream  = body.get("stream", False)
-    max_tokens = body.get("max_tokens", TOOL_MAX_TOKENS)
+    max_tokens = body.get("max_tokens", tool_max_tokens or TOOL_MAX_TOKENS)
 
     # Eval timing + input classification
     _eval_t0 = time.monotonic()
@@ -251,7 +258,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
             for m in messages
         )
         _effective_tool_choice = (
-            "auto" if (_has_tool_results and not tools) else CLAUDE_CODE_TOOL_CHOICE
+            "auto" if (_has_tool_results and not tools) else (tool_choice_override or CLAUDE_CODE_TOOL_CHOICE)
         )
         payload["tool_choice"] = _effective_tool_choice
     else:
@@ -517,7 +524,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     )
 
 
-async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = "anon", api_key_id: str = "", session_id: str = None):
+async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = "anon", api_key_id: str = "", session_id: str = None, reasoning_max_tokens: int = 0):
     """Text requests via reasoning expert (deepseek-r1/qwq) with <think> parsing.
 
     Returns responses in Anthropic Extended Thinking format with optional
@@ -584,7 +591,7 @@ async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = 
         "model":      reasoning_model,
         "messages":   oai_messages,
         "stream":     False,
-        "max_tokens": body.get("max_tokens", REASONING_MAX_TOKENS),
+        "max_tokens": body.get("max_tokens", reasoning_max_tokens or REASONING_MAX_TOKENS),
     }
     try:
         async with httpx.AsyncClient(timeout=_reasoning_timeout) as client:
@@ -954,12 +961,13 @@ async def anthropic_messages(request: Request):
         _user_cc_map = json.loads(_user_cc_profiles_json or "{}")
     except Exception:
         pass
-    _effective_cc_mode       = CLAUDE_CODE_MODE
-    _effective_tool_model    = CLAUDE_CODE_TOOL_MODEL
-    _effective_tool_endpoint = CLAUDE_CODE_TOOL_ENDPOINT
-    _effective_tool_url      = _CLAUDE_CODE_TOOL_URL
-    _effective_tool_token    = _CLAUDE_CODE_TOOL_TOKEN
-    _user_cc_profile         = None
+    _effective_cc_mode           = CLAUDE_CODE_MODE
+    _effective_tool_model        = CLAUDE_CODE_TOOL_MODEL
+    _effective_tool_endpoint     = CLAUDE_CODE_TOOL_ENDPOINT
+    _effective_tool_url          = _CLAUDE_CODE_TOOL_URL
+    _effective_tool_token        = _CLAUDE_CODE_TOOL_TOKEN
+    _effective_tool_is_user_conn = False
+    _user_cc_profile             = None
     if _cc_profile_ids:
         def _resolve_cc_profile(profile_id: str):
             if not profile_id:
@@ -1013,6 +1021,28 @@ async def anthropic_messages(request: Request):
                     admin_override=True,
                     user_connections_json=_user_conns_json2,
                 )
+
+    # Guard: CC profile IDs were assigned to this key but none resolved — return 422 so
+    # Claude Code does NOT retry (it only retries on 5xx / network errors, not 4xx).
+    if _cc_profile_ids and not _user_cc_profile:
+        logger.warning(
+            "CC profile not found for key=%s profiles=%s — returning 422 to suppress retries",
+            _api_key_id, _cc_profile_ids,
+        )
+        return JSONResponse(status_code=422, content={"error": {
+            "message": (
+                "No active Claude Code profile matched this API key. "
+                "Please check your profile configuration in the admin panel."
+            ),
+            "type": "invalid_request_error",
+            "code": "cc_profile_not_found",
+        }})
+
+    # Extract per-profile overrides for downstream handlers (default to no-op if no profile)
+    _cc_sys_prefix      = (_user_cc_profile.get("system_prompt_prefix") or "").strip() if _user_cc_profile else ""
+    _cc_tool_max_tokens = int(_user_cc_profile.get("tool_max_tokens") or 0)             if _user_cc_profile else 0
+    _cc_reasoning_max   = int(_user_cc_profile.get("reasoning_max_tokens") or 0)        if _user_cc_profile else 0
+    _cc_tool_choice     = (_user_cc_profile.get("tool_choice") or "").strip()           if _user_cc_profile else ""
 
     # Detect whether request originates from Claude Code / Anthropic SDK
     is_claude_code = model.startswith("claude-") or model in CLAUDE_CODE_MODELS
@@ -1070,6 +1100,9 @@ async def anthropic_messages(request: Request):
                 api_key_id=_api_key_id,
                 session_id=session_id,
                 is_user_conn=_effective_tool_is_user_conn,
+                system_prompt_prefix=_cc_sys_prefix,
+                tool_max_tokens=_cc_tool_max_tokens,
+                tool_choice_override=_cc_tool_choice,
             )
 
         # All modes: tool calls always go to the tool model (precise function calling needed)
@@ -1086,12 +1119,15 @@ async def anthropic_messages(request: Request):
                     api_key_id=_api_key_id,
                     session_id=session_id,
                     is_user_conn=_effective_tool_is_user_conn,
+                    system_prompt_prefix=_cc_sys_prefix,
+                    tool_max_tokens=_cc_tool_max_tokens,
+                    tool_choice_override=_cc_tool_choice,
                 )
             else:
                 _result = await _anthropic_tool_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
         # Mode 2: MoE Reasoning — reasoning expert with <think> parsing and thinking blocks
         elif _effective_cc_mode == "moe_reasoning":
-            _result = await _anthropic_reasoning_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
+            _result = await _anthropic_reasoning_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id, reasoning_max_tokens=_cc_reasoning_max)
         # Mode 3 + fallback: MoE Orchestrated — full planner, all experts
         else:
             _result = await _anthropic_moe_handler(body, chat_id,
