@@ -7,15 +7,15 @@
     <i class="bi bi-diagram-3 me-2 text-primary"></i>{{ t(request, 'page.enterprise') }}
   </h5>
   <div class="d-flex align-items-center gap-2">
-    <span class="text-muted small" id="enterprise-last-update">{{ t(request, 'lbl.loading') }}</span>
-    <button class="btn btn-sm btn-outline-primary" onclick="loadEnterprise()">
+    <span class="text-muted small" id="codex-last-update">{{ t(request, 'lbl.loading') }}</span>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadCodex()">
       <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
     </button>
   </div>
 </div>
 
 {# ── Per-service health cards ── #}
-<div class="row g-3 mb-4" id="enterprise-services-row">
+<div class="row g-3 mb-4" id="codex-services-row">
   {% set services = [
     ("nifi",    "bi-share-fill",    "NiFi"),
     ("marquez", "bi-link-45deg",    "Marquez"),
@@ -50,7 +50,7 @@
 </div>
 
 {# ── Aggregate status banner (when not configured) ── #}
-<div class="alert alert-warning d-none" id="enterprise-disabled-banner" role="alert">
+<div class="alert alert-warning d-none" id="codex-disabled-banner" role="alert">
   <i class="bi bi-info-circle me-2"></i>{{ t(request, 'lbl.enterprise_not_configured') }}
 </div>
 
@@ -60,7 +60,7 @@
     <div class="card">
       <div class="card-header d-flex align-items-center justify-content-between bg-primary bg-opacity-10 text-primary-emphasis">
         <span><i class="bi bi-clock-history me-2"></i>{{ t(request, 'section.lineage_runs') }}</span>
-        <span class="text-muted small" id="enterprise-runs-meta">–</span>
+        <span class="text-muted small" id="codex-runs-meta">–</span>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
@@ -74,7 +74,7 @@
                 <th class="text-end">{{ t(request, 'lbl.duration') }}</th>
               </tr>
             </thead>
-            <tbody id="enterprise-runs-body">
+            <tbody id="codex-runs-body">
               <tr>
                 <td colspan="5" class="text-muted text-center py-3">
                   <i class="bi bi-hourglass me-1"></i>{{ t(request, 'lbl.loading') }}
@@ -94,9 +94,9 @@
     <div class="card">
       <div class="card-header d-flex align-items-center justify-content-between bg-danger bg-opacity-10 text-danger-emphasis">
         <span><i class="bi bi-share-fill me-2"></i>{{ t(request, 'section.etl_pipeline') }}</span>
-        <span class="text-muted small" id="enterprise-etl-meta">–</span>
+        <span class="text-muted small" id="codex-etl-meta">–</span>
       </div>
-      <div class="card-body py-3" id="enterprise-etl-body">
+      <div class="card-body py-3" id="codex-etl-body">
         <span class="text-muted small">{{ t(request, 'lbl.loading') }}</span>
       </div>
     </div>
@@ -109,7 +109,7 @@
     <div class="card">
       <div class="card-header d-flex align-items-center justify-content-between bg-warning bg-opacity-10 text-warning-emphasis">
         <span><i class="bi bi-clipboard-pulse me-2"></i>{{ t(request, 'section.data_health') }}</span>
-        <span class="text-muted small" id="enterprise-health-meta">–</span>
+        <span class="text-muted small" id="codex-health-meta">–</span>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
@@ -125,7 +125,7 @@
                 <th>{{ t(request, 'lbl.committed_at') }}</th>
               </tr>
             </thead>
-            <tbody id="enterprise-health-body">
+            <tbody id="codex-health-body">
               <tr><td colspan="7" class="text-muted text-center py-3">
                 <i class="bi bi-hourglass me-1"></i>{{ t(request, 'lbl.loading') }}
               </td></tr>
@@ -143,7 +143,7 @@
     <div class="card">
       <div class="card-header d-flex align-items-center justify-content-between bg-success bg-opacity-10 text-success-emphasis">
         <span><i class="bi bi-git me-2"></i>{{ t(request, 'section.bundle_versions') }}</span>
-        <span class="text-muted small" id="enterprise-versioning-meta">–</span>
+        <span class="text-muted small" id="codex-versioning-meta">–</span>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
@@ -156,7 +156,7 @@
                 <th>{{ t(request, 'lbl.committed_at') }}</th>
               </tr>
             </thead>
-            <tbody id="enterprise-versioning-body">
+            <tbody id="codex-versioning-body">
               <tr>
                 <td colspan="4" class="text-muted text-center py-3">
                   <i class="bi bi-hourglass me-1"></i>{{ t(request, 'lbl.loading') }}
@@ -198,11 +198,11 @@ function fmtTs(iso) {
   } catch (e) { return iso; }
 }
 
-async function loadEnterpriseHealth() {
+async function loadCodexHealth() {
   try {
-    const r = await fetch("/api/enterprise/health");
+    const r = await fetch("/api/codex/health");
     const data = await r.json();
-    const banner = document.getElementById("enterprise-disabled-banner");
+    const banner = document.getElementById("codex-disabled-banner");
     if (!data.enabled) {
       banner.classList.remove("d-none");
     } else {
@@ -223,16 +223,16 @@ async function loadEnterpriseHealth() {
       if (okEl) okEl.textContent = svc.configured ? (svc.ok ? "✅" : "❌") : "—";
     }
   } catch (e) {
-    console.error("enterprise health fetch failed", e);
+    console.error("codex health fetch failed", e);
   }
 }
 
-async function loadEnterpriseRuns() {
+async function loadCodexRuns() {
   try {
-    const r = await fetch("/api/enterprise/runs?limit=25");
+    const r = await fetch("/api/codex/runs?limit=25");
     const data = await r.json();
-    const body = document.getElementById("enterprise-runs-body");
-    const meta = document.getElementById("enterprise-runs-meta");
+    const body = document.getElementById("codex-runs-body");
+    const meta = document.getElementById("codex-runs-meta");
     if (!data.marquez_configured) {
       body.innerHTML = `<tr><td colspan="5" class="text-muted text-center py-3">{{ t(request, 'lbl.marquez_not_configured') }}</td></tr>`;
       meta.textContent = "—";
@@ -266,7 +266,7 @@ async function loadEnterpriseRuns() {
     }).join("");
     meta.textContent = data.namespace + " — " + runs.length;
   } catch (e) {
-    console.error("enterprise runs fetch failed", e);
+    console.error("codex runs fetch failed", e);
   }
 }
 
@@ -281,12 +281,12 @@ function fmtBytes(n) {
   return v.toFixed(1) + " " + units[i];
 }
 
-async function loadEnterpriseEtl() {
+async function loadCodexEtl() {
   try {
-    const r = await fetch("/api/enterprise/etl/status");
+    const r = await fetch("/api/codex/etl/status");
     const data = await r.json();
-    const body = document.getElementById("enterprise-etl-body");
-    const meta = document.getElementById("enterprise-etl-meta");
+    const body = document.getElementById("codex-etl-body");
+    const meta = document.getElementById("codex-etl-meta");
     if (!data.available) {
       body.innerHTML = `<span class="text-muted small"><i class="bi bi-info-circle me-1"></i>${data.reason || "—"}</span>`;
       meta.textContent = "—";
@@ -310,7 +310,7 @@ async function loadEnterpriseEtl() {
       </div>`;
     meta.textContent = data.version ? "v" + data.version : "—";
   } catch (e) {
-    console.error("enterprise etl fetch failed", e);
+    console.error("codex etl fetch failed", e);
   }
 }
 
@@ -321,12 +321,12 @@ const HEALTH_BADGE = {
   crit: "bg-danger",
 };
 
-async function loadEnterpriseHealthEvents() {
+async function loadCodexHealthEvents() {
   try {
     const r = await fetch("/api/health/events?limit=25");
     const data = await r.json();
-    const body = document.getElementById("enterprise-health-body");
-    const meta = document.getElementById("enterprise-health-meta");
+    const body = document.getElementById("codex-health-body");
+    const meta = document.getElementById("codex-health-meta");
     const events = data.events || [];
     if (!events.length) {
       body.innerHTML = `<tr><td colspan="7" class="text-muted text-center py-3">{{ t(request, 'lbl.no_data') }}</td></tr>`;
@@ -352,12 +352,12 @@ async function loadEnterpriseHealthEvents() {
   }
 }
 
-async function loadEnterpriseVersioning() {
+async function loadCodexVersioning() {
   try {
-    const r = await fetch("/api/enterprise/versioning/log?limit=25");
+    const r = await fetch("/api/codex/versioning/log?limit=25");
     const data = await r.json();
-    const body = document.getElementById("enterprise-versioning-body");
-    const meta = document.getElementById("enterprise-versioning-meta");
+    const body = document.getElementById("codex-versioning-body");
+    const meta = document.getElementById("codex-versioning-meta");
     if (!data.lakefs_configured) {
       body.innerHTML = `<tr><td colspan="4" class="text-muted text-center py-3">{{ t(request, 'lbl.lakefs_not_configured') }}</td></tr>`;
       meta.textContent = "—";
@@ -387,23 +387,23 @@ async function loadEnterpriseVersioning() {
     }).join("");
     meta.textContent = (data.repo || "moe-knowledge") + " — " + commits.length;
   } catch (e) {
-    console.error("enterprise versioning fetch failed", e);
+    console.error("codex versioning fetch failed", e);
   }
 }
 
-async function loadEnterprise() {
-  document.getElementById("enterprise-last-update").textContent = "{{ t(request, 'lbl.loading') }}";
+async function loadCodex() {
+  document.getElementById("codex-last-update").textContent = "{{ t(request, 'lbl.loading') }}";
   await Promise.all([
-    loadEnterpriseHealth(),
-    loadEnterpriseRuns(),
-    loadEnterpriseEtl(),
-    loadEnterpriseHealthEvents(),
-    loadEnterpriseVersioning(),
+    loadCodexHealth(),
+    loadCodexRuns(),
+    loadCodexEtl(),
+    loadCodexHealthEvents(),
+    loadCodexVersioning(),
   ]);
-  document.getElementById("enterprise-last-update").textContent = new Date().toLocaleTimeString();
+  document.getElementById("codex-last-update").textContent = new Date().toLocaleTimeString();
 }
 
-loadEnterprise();
-setInterval(loadEnterprise, 30000);
+loadCodex();
+setInterval(loadCodex, 30000);
 </script>
 {% endblock %}

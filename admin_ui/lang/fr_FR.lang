@@ -988,7 +988,7 @@
   ,"btn.open":                         "Ouvrir"
   ,"nav.codex": "MoE Codex ↗"
   ,"nav.enterprise":                   "Codex"
-  ,"page.enterprise":                  "Pile de données Enterprise"
+  ,"page.enterprise":                  "Codex"
   ,"section.lineage_runs":             "Exécutions Lineage récentes (Marquez)"
   ,"status.healthy":                   "Sain"
   ,"status.degraded":                  "Dégradé"

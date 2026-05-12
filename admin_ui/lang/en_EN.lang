@@ -988,7 +988,7 @@
   ,"btn.open":                         "Open"
   ,"nav.codex": "MoE Codex ↗"
   ,"nav.enterprise":                   "Codex"
-  ,"page.enterprise":                  "Enterprise Data Stack"
+  ,"page.enterprise":                  "Codex"
   ,"section.lineage_runs":             "Recent Lineage Runs (Marquez)"
   ,"status.healthy":                   "Healthy"
   ,"status.degraded":                  "Degraded"

@@ -57,7 +57,7 @@ for row in data.get("rows", []):
     print(row)</code></pre></div>
         <div class="tab-pane" id="sn-runs"><pre class="bg-light small p-2 mb-0"><code># OpenLineage runs from Marquez (Phase 16)
 import requests
-r = requests.get("https://moe-admin.local/api/enterprise/runs?limit=10")
+r = requests.get("https://moe-admin.local/api/codex/runs?limit=10")
 for run in r.json().get("runs", []):
     print(f"{run['startedAt']}  {run['job']}  {run['state']}")</code></pre></div>
       </div>

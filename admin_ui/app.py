@@ -7694,7 +7694,7 @@ async def notebook_http_proxy(request: Request, path: str):
     return await _jl_http_proxy(request, path)
 
 
-# ── moe-codex Enterprise UI ───────────────────────────────────────────────────
+# ── moe-codex UI ───────────────────────────────────────────────────
 # Pages served by moe-admin; API calls proxied to CODEX_URL (moe-codex-api).
 
 _CODEX_ADMIN_URL = os.getenv("CODEX_URL", "").rstrip("/")
@@ -7728,11 +7728,6 @@ async def _cx_post(path: str, body: dict):
 @app.get("/codex", response_class=HTMLResponse)
 async def codex_page(request: Request, _=Depends(require_login)):
     return TEMPLATES.TemplateResponse(request, "codex.html", {})
-
-
-@app.get("/enterprise")
-async def enterprise_redirect(_=Depends(require_login)):
-    return RedirectResponse("/codex", status_code=301)
 
 
 @app.get("/catalog", response_class=HTMLResponse)
@@ -7777,8 +7772,8 @@ _CODEX_DISABLED_SERVICES = [
 ]
 
 
-@app.get("/api/enterprise/health", dependencies=[Depends(require_login)])
-async def api_enterprise_health():
+@app.get("/api/codex/health", dependencies=[Depends(require_login)])
+async def api_codex_health():
     if not _CODEX_ADMIN_URL:
         return {"enabled": False, "services": _CODEX_DISABLED_SERVICES}
     data = await _cx_get("v1/codex/status")
@@ -7806,18 +7801,18 @@ async def api_enterprise_health():
     }
 
 
-@app.get("/api/enterprise/runs", dependencies=[Depends(require_login)])
-async def api_enterprise_runs(limit: int = 25):
+@app.get("/api/codex/runs", dependencies=[Depends(require_login)])
+async def api_codex_runs(limit: int = 25):
     return await _cx_get("v1/codex/lineage/runs", f"limit={limit}")
 
 
-@app.get("/api/enterprise/etl/status", dependencies=[Depends(require_login)])
-async def api_enterprise_etl_status():
+@app.get("/api/codex/etl/status", dependencies=[Depends(require_login)])
+async def api_codex_etl_status():
     return await _cx_get("v1/codex/etl/status")
 
 
-@app.get("/api/enterprise/versioning/log", dependencies=[Depends(require_login)])
-async def api_enterprise_versioning_log(limit: int = 25):
+@app.get("/api/codex/versioning/log", dependencies=[Depends(require_login)])
+async def api_codex_versioning_log(limit: int = 25):
     return await _cx_get("v1/codex/versioning/commits", f"limit={limit}")
 
 

@@ -58,7 +58,7 @@
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
-    {% set _enterprise_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook'] %}
+    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook'] %}
 
     <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
       {# Config – direct link #}
@@ -148,10 +148,10 @@
         </ul>
       </div>
 
-      {# Enterprise dropdown — only when moe-codex is deployed #}
+      {# Codex dropdown — only when moe-codex is deployed #}
       {% if codex_url %}
       <div class="dropdown">
-        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _enterprise_active %}active{% endif %}"
+        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _codex_active %}active{% endif %}"
                 data-bs-toggle="dropdown" aria-expanded="false">
           <i class="bi bi-building me-1"></i>{{ t(request, 'nav.enterprise') }}
         </button>
