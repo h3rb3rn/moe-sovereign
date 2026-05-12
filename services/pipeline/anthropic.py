@@ -69,7 +69,7 @@ from services.tracking import (
 )
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
-    _log_tool_eval,
+    _log_tool_eval, _tool_eval_logger,
     _update_rate_limit_headers, _check_rate_limit_exhausted,
     _conf_format_for_mode, _get_expert_prompt,
     _truncate_history, _apply_semantic_memory,
