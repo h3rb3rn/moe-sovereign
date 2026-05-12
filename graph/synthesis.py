@@ -90,10 +90,10 @@ async def merger_node(state_: AgentState):
     from parsing import _extract_usage, _parse_expert_confidence, _expert_category, _dedup_by_category, _collect_conflicts, _improvement_ratio
     from metrics import PROM_TOKENS
     from config import KAFKA_TOPIC_REQUESTS
-    from services.lineage import (
-        start_run as _ol_start, complete_run as _ol_complete, fail_run as _ol_fail,
-        dataset_response,
-    )
+    async def _ol_start(*a, **kw): return None   # lineage module removed in c2 clean-cut
+    async def _ol_complete(*a, **kw): pass
+    async def _ol_fail(*a, **kw): pass
+    def dataset_response(*a, **kw): return {}
     _ol_merger_run = await _ol_start(
         "merger_node",
         extra_facets={"templateName": {"_producer": "https://github.com/h3rb3rn/moe-sovereign",
