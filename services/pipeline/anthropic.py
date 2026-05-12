@@ -81,6 +81,13 @@ from services.helpers import (
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
 from services.skills import _build_skill_catalog
+from parsing import (
+    _anthropic_content_to_text,
+    _extract_images,
+    _extract_oai_images,
+    _anthropic_to_openai_messages,
+    _anthropic_tools_to_openai,
+)
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -99,9 +106,6 @@ _CC_STREAM_THINK:  bool = False
 #      with OpenAI→Anthropic format conversion
 #    - Pure text requests                 → MoE Agent-Pipeline (mode="agent")
 # ============================================================
-
-# _anthropic_content_to_text, _extract_images, _extract_oai_images,
-# _anthropic_to_openai_messages, _anthropic_tools_to_openai — see parsing.py
 
 
 def _sse_event(event: str, data: dict) -> str:
@@ -1007,20 +1011,31 @@ async def anthropic_messages(request: Request):
             # CC profile can force an expert template (admin_override bypasses permission check)
             _cc_tmpl_id = _user_cc_profile.get("expert_template_id") or None
             if _cc_tmpl_id:
-                _user_experts = _resolve_user_experts(
-                    user_ctx.get("permissions_json", ""),
-                    override_tmpl_id=_cc_tmpl_id,
-                    user_templates_json=_user_tmpls_json2,
-                    admin_override=True,
-                    user_connections_json=_user_conns_json2,
-                ) or {}
-                _user_tmpl_prompts = _resolve_template_prompts(
+                _resolved_experts = _resolve_user_experts(
                     user_ctx.get("permissions_json", ""),
                     override_tmpl_id=_cc_tmpl_id,
                     user_templates_json=_user_tmpls_json2,
                     admin_override=True,
                     user_connections_json=_user_conns_json2,
                 )
+                if _resolved_experts is None:
+                    # Template referenced by CC profile does not exist in this instance
+                    # (e.g. incomplete import). Fall back to the user's regular permissions
+                    # and log a warning — do NOT crash or return an error here.
+                    logger.warning(
+                        "CC profile '%s' references template '%s' which does not exist — "
+                        "falling back to user permissions (key=%s)",
+                        _user_cc_profile.get("name", "?"), _cc_tmpl_id, _api_key_id,
+                    )
+                else:
+                    _user_experts = _resolved_experts
+                    _user_tmpl_prompts = _resolve_template_prompts(
+                        user_ctx.get("permissions_json", ""),
+                        override_tmpl_id=_cc_tmpl_id,
+                        user_templates_json=_user_tmpls_json2,
+                        admin_override=True,
+                        user_connections_json=_user_conns_json2,
+                    )
 
     # Guard: CC profile IDs were assigned to this key but none resolved — return 422 so
     # Claude Code does NOT retry (it only retries on 5xx / network errors, not 4xx).
