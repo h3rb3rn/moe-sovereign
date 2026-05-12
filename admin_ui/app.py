@@ -5867,12 +5867,16 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
         for m in models_cache:
             if not m:
                 continue
-            # Strip stale @suffixes from deleted nodes (e.g. model@OLD_ENDPOINT)
-            # to prevent cumulative contamination on every permitted-models call.
-            base_model = m.rsplit("@", 1)[0] if "@" in m else m
-            if not base_model:
-                base_model = m
-            results.add(f"{base_model}@{conn['name']}")
+            # models_cache stores rich dicts {id, context_window, ...} from _probe_connection.
+            # Fall back to string handling for legacy caches that stored plain "model@host" strings.
+            if isinstance(m, dict):
+                model_id = m.get("id", "")
+            else:
+                # Strip stale @suffixes from deleted nodes (e.g. model@OLD_ENDPOINT)
+                model_id = m.rsplit("@", 1)[0] if "@" in m else m
+            if not model_id:
+                continue
+            results.add(f"{model_id}@{conn['name']}")
     return sorted(results)
 
 
