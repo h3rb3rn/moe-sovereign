@@ -54,10 +54,11 @@
     {# ── Desktop Nav: visible ≥992px — grouped dropdowns ── #}
     {# Active-state helpers for dropdown highlight #}
     {% set _p = request.url.path %}
-    {% set _monitoring_active = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log'] %}
-    {% set _infra_active      = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
-    {% set _tools_active      = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
-    {% set _users_active      = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
+    {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log'] %}
+    {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
+    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
+    {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
+    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook'] %}
 
     <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
       {# Config – direct link #}
@@ -146,6 +147,33 @@
           </a></li>
         </ul>
       </div>
+
+      {# Codex dropdown — only when moe-codex is deployed #}
+      {% if codex_url %}
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _codex_active %}active{% endif %}"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-building me-1"></i>{{ t(request, 'nav.enterprise') }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          <li><a class="dropdown-item {% if _p == '/codex' %}active{% endif %}" href="/codex">
+            <i class="bi bi-layers me-2" style="color:#b09bff"></i>{{ t(request, 'page.enterprise') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/catalog' %}active{% endif %}" href="/catalog">
+            <i class="bi bi-card-list me-2" style="color:#b09bff"></i>{{ t(request, 'page.catalog') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/approval' %}active{% endif %}" href="/approval">
+            <i class="bi bi-check2-circle me-2" style="color:#b09bff"></i>{{ t(request, 'page.approval') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/explorer' %}active{% endif %}" href="/explorer">
+            <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.explorer') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/notebook' %}active{% endif %}" href="/notebook">
+            <i class="bi bi-journal-code me-2" style="color:#b09bff"></i>{{ t(request, 'page.notebook') }}
+          </a></li>
+        </ul>
+      </div>
+      {% endif %}
 
       {# Verwaltung dropdown #}
       <div class="dropdown">
@@ -301,11 +329,36 @@
               <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
             </a>
           </li>
-          {% if config.get("CODEX_URL") %}
+          {% if codex_url %}
+          <li><hr class="border-secondary my-1"></li>
           <li class="nav-item">
-            <a href="{{ config.get('CODEX_URL') }}" target="_blank" rel="noopener"
-               class="nav-link text-white rounded px-2 py-2">
-              <i class="bi bi-box-arrow-up-right me-2 text-secondary"></i>{{ t(request, 'nav.codex') }}
+            <span class="nav-link text-secondary px-2 py-1 small fw-semibold">
+              <i class="bi bi-building me-1"></i>{{ t(request, 'nav.enterprise') }}
+            </span>
+          </li>
+          <li class="nav-item">
+            <a href="/codex" class="nav-link text-white {% if _p == '/codex' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-layers me-2" style="color:#b09bff"></i>{{ t(request, 'page.enterprise') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/catalog" class="nav-link text-white {% if _p == '/catalog' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-card-list me-2" style="color:#b09bff"></i>{{ t(request, 'page.catalog') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/approval" class="nav-link text-white {% if _p == '/approval' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-check2-circle me-2" style="color:#b09bff"></i>{{ t(request, 'page.approval') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/explorer" class="nav-link text-white {% if _p == '/explorer' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.explorer') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/notebook" class="nav-link text-white {% if _p == '/notebook' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-journal-code me-2" style="color:#b09bff"></i>{{ t(request, 'page.notebook') }}
             </a>
           </li>
           {% endif %}

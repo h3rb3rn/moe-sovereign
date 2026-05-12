@@ -460,10 +460,10 @@ class FeedbackRequest(BaseModel):
 
 # LLM instances and SearxNG search singleton moved to services/llm_instances.py
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
-# Mutable globals — set by lifespan (state.graph_manager, state.redis_client, state.kafka_producer in state.py in next step)
-state.graph_manager:  Optional[GraphRAGManager]  = None
-state.redis_client:   Optional[aioredis.Redis]   = None
-state.kafka_producer: Optional[AIOKafkaProducer] = None
+# state.graph_manager, state.redis_client, state.kafka_producer are already None
+# in state.py — do NOT re-assign here because main.py is lazy-imported as
+# "main" (not "__main__") by services/pipeline/chat.py on the first request,
+# which would reset these values that lifespan already set.
 
 # Inference helpers moved to services/inference.py
 from services.inference import (
@@ -1082,12 +1082,14 @@ async def lifespan(app_: FastAPI):
         from langgraph.checkpoint.memory import MemorySaver
         checkpointer = MemorySaver()
         app_graph = builder.compile(checkpointer=checkpointer)
+        state.app_graph = app_graph  # expose to services/pipeline modules via state
         logger.info("✅ MemorySaver initialized (edge_mobile — in-RAM checkpoints)")
         yield
     else:
         async with AsyncPostgresSaver.from_conn_string(POSTGRES_CHECKPOINT_URL) as checkpointer:
             await checkpointer.setup()
             app_graph = builder.compile(checkpointer=checkpointer)
+            state.app_graph = app_graph  # expose to services/pipeline modules via state
             logger.info("✅ PostgresSaver initialized — checkpoints persisted on terra_checkpoints")
             yield
     # Cleanup
@@ -1120,6 +1122,7 @@ from routes.feedback         import router as _feedback_router
 from routes.ollama_compat    import router as _ollama_router
 from routes.models           import router as _models_router
 from routes.anthropic_compat import router as _anthropic_router
+from routes.codex_proxy    import router as _codex_proxy_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1131,6 +1134,7 @@ app.include_router(_feedback_router)
 app.include_router(_ollama_router)
 app.include_router(_models_router)
 app.include_router(_anthropic_router)
+app.include_router(_codex_proxy_router)
 
 # ── Security Headers Middleware ────────────────────────────────────────────────
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
@@ -1207,14 +1211,25 @@ async def _stream_native_llm(
     p_tok = c_tok = 0
     _did_deregister = False
 
+    # Use the per-server timeout from INFERENCE_SERVERS config (fallback: 300s).
+    # A 10s connect timeout prevents silent hangs when the server URL is wrong.
+    _srv_timeout = float(endpoint.get("timeout", 300))
+    _http_timeout = httpx.Timeout(connect=10.0, read=_srv_timeout, write=30.0, pool=10.0)
+
     try:
         try:
-            async with httpx.AsyncClient(timeout=300) as client:
+            async with httpx.AsyncClient(timeout=_http_timeout, follow_redirects=False) as client:
                 async with client.stream(
                     "POST", url,
                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                     json=payload,
                 ) as resp:
+                    # Fail fast on non-2xx: don't consume a redirect or error page as SSE
+                    if resp.status_code >= 300:
+                        err_body = await resp.aread()
+                        raise RuntimeError(
+                            f"Upstream returned HTTP {resp.status_code}: {err_body[:200].decode(errors='replace')}"
+                        )
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue

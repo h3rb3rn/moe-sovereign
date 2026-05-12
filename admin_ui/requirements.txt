@@ -12,3 +12,4 @@ PyJWT>=2.8.0
 cryptography>=46.0.7
 slowapi>=0.1.9
 PyYAML>=6.0
+websockets>=12.0

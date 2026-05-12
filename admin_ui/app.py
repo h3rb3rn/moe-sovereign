@@ -14,8 +14,8 @@ from typing import Optional
 
 import httpx
 import docker
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks, WebSocket
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -54,6 +54,7 @@ def _jinja_get_lang(request) -> str:
 
 TEMPLATES.env.globals["t"]        = _jinja_t
 TEMPLATES.env.globals["get_lang"] = _jinja_get_lang
+TEMPLATES.env.globals["codex_url"] = os.getenv("CODEX_URL", "")
 
 ADMIN_USER       = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD", "")
@@ -151,6 +152,11 @@ def _get_monitored_containers() -> list[str]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         for clist in _OPTIONAL_CONTAINERS.values():
             names.extend(clist)
+    if os.getenv("CODEX_URL"):
+        names.extend([
+            "moe-codex-api", "moe-docling", "moe-trino",
+            "moe-lakefs", "moe-marquez", "moe-mlflow",
+        ])
     extra = os.getenv("EXTRA_CONTAINER_NAMES", "")
     names += [c.strip() for c in extra.split(",") if c.strip()]
     return names
@@ -351,19 +357,40 @@ class CsrfApiMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # /notebook/ is a reverse proxy to JupyterLab: allow same-origin iframe
+    # embedding and WebSocket connections; JupyterLab sets its own framing headers.
+    _NOTEBOOK_PREFIX = "/notebook"
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        path = request.url.path
+        is_notebook = path == "/notebook" or path.startswith("/notebook/")
+
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; "
-            "font-src 'self';"
-        )
+
+        if is_notebook:
+            # JupyterLab needs WebSocket (ws:/wss:) and blob: workers for its kernel.
+            # X-Frame-Options is intentionally omitted so the /notebook page's iframe works.
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; "
+                "font-src 'self' data:; "
+                "worker-src 'self' blob:; "
+                "connect-src 'self' ws: wss: blob:;"
+            )
+        else:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "font-src 'self';"
+            )
         return response
 
 
@@ -964,6 +991,11 @@ def build_template_ctx(request: Request) -> dict:
         flash = make_t(get_lang(request))("wizard.done.flash")
         flash_type = "success"
 
+    try:
+        services_manifest = json.loads(MANIFEST_PATH.read_text()).get("services", {})
+    except Exception:
+        services_manifest = {}
+
     return {
         "config": config,
         "expert_categories": list(EXPERT_CATEGORIES),
@@ -975,6 +1007,7 @@ def build_template_ctx(request: Request) -> dict:
         "csrf_token": get_csrf_token(request),
         "flash": flash,
         "flash_type": flash_type,
+        "services_manifest": services_manifest,
     }
 
 
@@ -1328,6 +1361,15 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
             try:
                 if server_diff["removed"]:
                     await _maintenance.cleanup_orphans(server_diff["servers"], dry_run=False)
+                    # Purge stale model_endpoint permissions for removed server names
+                    # across ALL users so the Permissions UI stays consistent.
+                    for removed_name in server_diff["removed"]:
+                        try:
+                            n = await db.revoke_all_model_endpoints_by_node(removed_name)
+                            if n:
+                                logger.info("Revoked %d permission(s) for removed server %s", n, removed_name)
+                        except Exception as e:
+                            logger.warning("Permission cleanup failed for %s: %s", removed_name, e)
             except Exception as e:
                 logger.warning("post-save cleanup failed: %s", e)
             try:
@@ -2131,49 +2173,52 @@ async def api_servers_list():
 
 @app.get("/api/servers/health")
 async def api_servers_health(request: Request, _=Depends(require_login)):
-    """Return connectivity + model count for every registered inference server."""
+    """Return connectivity + model count for every registered inference server.
+
+    All servers are checked in parallel to prevent a single unreachable server
+    from blocking the entire response.
+    """
     import time as _time
     servers = _get_inference_servers()
-    results = []
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for srv in servers:
-            api_type = srv.get("api_type", "ollama")
-            token    = srv.get("token", "ollama")
-            t0       = _time.monotonic()
-            try:
+
+    async def _check(srv: dict) -> dict:
+        api_type = srv.get("api_type", "ollama")
+        token    = srv.get("token", "ollama")
+        t0       = _time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 if api_type == "openai":
                     r = await client.get(
                         f"{srv['url'].rstrip('/')}/models",
                         headers={"Authorization": f"Bearer {token}"},
                     )
-                    latency_ms   = int((_time.monotonic() - t0) * 1000)
                     models_count = len(r.json().get("data", []))
                 else:
                     base = srv["url"].rstrip("/").removesuffix("/v1")
                     r = await client.get(f"{base}/api/tags")
-                    latency_ms   = int((_time.monotonic() - t0) * 1000)
                     models_count = len(r.json().get("models", []))
-                results.append({
-                    "name":         srv["name"],
-                    "url":          srv["url"],
-                    "gpu_count":    srv.get("gpu_count", 1),
-                    "api_type":     api_type,
-                    "ok":           r.status_code == 200,
-                    "latency_ms":   latency_ms,
-                    "models_count": models_count,
-                })
-            except Exception as exc:
-                results.append({
-                    "name":         srv["name"],
-                    "url":          srv["url"],
-                    "gpu_count":    srv.get("gpu_count", 1),
-                    "api_type":     api_type,
-                    "ok":           False,
-                    "latency_ms":   -1,
-                    "models_count": 0,
-                    "error":        str(exc),
-                })
-    return results
+            return {
+                "name":         srv["name"],
+                "url":          srv["url"],
+                "gpu_count":    srv.get("gpu_count", 1),
+                "api_type":     api_type,
+                "ok":           r.status_code == 200,
+                "latency_ms":   int((_time.monotonic() - t0) * 1000),
+                "models_count": models_count,
+            }
+        except Exception as exc:
+            return {
+                "name":         srv["name"],
+                "url":          srv["url"],
+                "gpu_count":    srv.get("gpu_count", 1),
+                "api_type":     api_type,
+                "ok":           False,
+                "latency_ms":   int((_time.monotonic() - t0) * 1000),
+                "models_count": 0,
+                "error":        str(exc),
+            }
+
+    return await asyncio.gather(*[_check(s) for s in servers])
 
 
 @app.get("/api/endpoints/availability", dependencies=[Depends(require_login)])
@@ -7547,6 +7592,271 @@ async def watchdog_test_mail(request: Request):
     )
     sent = await asyncio.to_thread(_smtp_send, to, subject, body_html)
     return {"ok": sent, "to": to, "smtp_host": SMTP_HOST}
+
+
+# ── moe-jupyterlab Proxy ──────────────────────────────────────────────────────
+# Transparent HTTP + WebSocket reverse proxy for JupyterLab at /notebook/.
+# JupyterLab runs with --ServerApp.base_url=/notebook/ so all its assets and
+# WebSocket kernel channels resolve through the same moe-admin origin.
+
+_JUPYTERLAB_BASE = os.getenv("JUPYTERLAB_URL", "").rstrip("/")
+_JUPYTERLAB_TIMEOUT = float(os.getenv("JUPYTERLAB_TIMEOUT", "120"))
+_PROXY_HOP_BY_HOP = frozenset({
+    "connection", "keep-alive", "transfer-encoding", "te", "trailers",
+    "upgrade", "proxy-authorization", "proxy-authenticate", "x-frame-options",
+    "host",  # stripped so we can set the correct upstream host without duplication
+})
+
+
+async def _jl_http_proxy(request: Request, path: str):
+    if not _JUPYTERLAB_BASE:
+        raise HTTPException(status_code=503, detail="JupyterLab not configured (JUPYTERLAB_URL missing)")
+    target = f"{_JUPYTERLAB_BASE}/notebook/{path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+    fwd = {k: v for k, v in request.headers.items() if k.lower() not in _PROXY_HOP_BY_HOP}
+    # httpx sets Host from the target URL automatically — no manual override needed.
+    try:
+        async with httpx.AsyncClient(timeout=_JUPYTERLAB_TIMEOUT, follow_redirects=True) as cl:
+            up = await cl.request(request.method, target, headers=fwd, content=await request.body())
+        rh = {k: v for k, v in up.headers.items() if k.lower() not in _PROXY_HOP_BY_HOP}
+        return StreamingResponse(iter([up.content]), status_code=up.status_code, headers=rh,
+                                 media_type=up.headers.get("content-type"))
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="JupyterLab upstream timeout")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="JupyterLab upstream unavailable")
+
+
+async def _jl_ws_proxy(websocket: WebSocket, path: str) -> None:
+    if not _JUPYTERLAB_BASE:
+        await websocket.close(code=1011)
+        return
+    ws_base = _JUPYTERLAB_BASE.replace("http://", "ws://").replace("https://", "wss://")
+    target = f"{ws_base}/notebook/{path}"
+    if websocket.url.query:
+        target += f"?{websocket.url.query}"
+    await websocket.accept()
+    try:
+        import websockets as _ws
+        extra = [("Host", _JUPYTERLAB_BASE.split("//", 1)[-1])]
+        async with _ws.connect(target, additional_headers=extra) as upstream:
+            async def _to_up():
+                try:
+                    while True:
+                        msg = await websocket.receive()
+                        if msg.get("bytes") is not None:
+                            await upstream.send(msg["bytes"])
+                        elif msg.get("text") is not None:
+                            await upstream.send(msg["text"])
+                        elif msg.get("type") == "websocket.disconnect":
+                            break
+                except Exception:
+                    pass
+            async def _to_cl():
+                try:
+                    async for msg in upstream:
+                        if isinstance(msg, bytes):
+                            await websocket.send_bytes(msg)
+                        else:
+                            await websocket.send_text(msg)
+                except Exception:
+                    pass
+            tasks = [asyncio.create_task(_to_up()), asyncio.create_task(_to_cl())]
+            _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+    except Exception:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+_JL_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+
+
+@app.websocket("/notebook/{path:path}")
+async def notebook_ws_proxy(websocket: WebSocket, path: str) -> None:
+    await _jl_ws_proxy(websocket, path)
+
+
+@app.api_route("/notebook", methods=_JL_HTTP_METHODS)
+@app.api_route("/notebook/", methods=_JL_HTTP_METHODS)
+async def notebook_http_root(request: Request):
+    return await _jl_http_proxy(request, "")
+
+
+@app.api_route("/notebook/{path:path}", methods=_JL_HTTP_METHODS)
+async def notebook_http_proxy(request: Request, path: str):
+    return await _jl_http_proxy(request, path)
+
+
+# ── moe-codex UI ───────────────────────────────────────────────────
+# Pages served by moe-admin; API calls proxied to CODEX_URL (moe-codex-api).
+
+_CODEX_ADMIN_URL = os.getenv("CODEX_URL", "").rstrip("/")
+
+
+async def _cx_get(path: str, query: str = ""):
+    if not _CODEX_ADMIN_URL:
+        return {"error": "moe-codex not configured (CODEX_URL missing)"}
+    url = f"{_CODEX_ADMIN_URL}/{path}"
+    if query:
+        url = f"{url}?{query}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(url)
+            return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+async def _cx_post(path: str, body: dict):
+    if not _CODEX_ADMIN_URL:
+        return {"error": "moe-codex not configured (CODEX_URL missing)"}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(f"{_CODEX_ADMIN_URL}/{path}", json=body)
+            return r.json()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.get("/codex", response_class=HTMLResponse)
+async def codex_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "codex.html", {})
+
+
+@app.get("/catalog", response_class=HTMLResponse)
+async def catalog_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "catalog.html", {})
+
+
+@app.get("/approval", response_class=HTMLResponse)
+async def approval_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "approval.html", {})
+
+
+@app.get("/explorer", response_class=HTMLResponse)
+async def explorer_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "explorer.html", {})
+
+
+@app.get("/notebook", response_class=HTMLResponse)
+async def notebook_page(request: Request, _=Depends(require_login)):
+    token = os.getenv("JUPYTERLAB_TOKEN", "")
+    host_port = os.getenv("JUPYTERLAB_HOST_PORT", "8899")
+    # Build the direct-host URL so the browser's WebSocket bypasses Nginx.
+    # Falls back to the proxy path when no token/port is configured.
+    public_base = os.getenv("PUBLIC_URL", "").rstrip("/")
+    if token and host_port and public_base:
+        host = public_base.split("//", 1)[-1].split("/")[0].split(":")[0]
+        direct_url = f"http://{host}:{host_port}/notebook/lab?token={token}"
+    else:
+        direct_url = ""
+    return TEMPLATES.TemplateResponse(request, "notebook.html", {
+        "jupyterlab_configured": bool(os.getenv("JUPYTERLAB_URL", "")),
+        "jupyterlab_direct_url": direct_url,
+        "jupyterlab_token": token,
+        "jupyterlab_host_port": host_port,
+    })
+
+
+_CODEX_SERVICES = ["nifi", "marquez", "lakefs"]
+_CODEX_DISABLED_SERVICES = [
+    {"name": s, "status": "disabled", "configured": False, "ok": False, "url": "", "latency_ms": None}
+    for s in _CODEX_SERVICES
+]
+
+
+@app.get("/api/codex/health", dependencies=[Depends(require_login)])
+async def api_codex_health():
+    if not _CODEX_ADMIN_URL:
+        return {"enabled": False, "services": _CODEX_DISABLED_SERVICES}
+    data = await _cx_get("v1/codex/status")
+    if "error" in data:
+        return {"enabled": False, "services": _CODEX_DISABLED_SERVICES}
+    # moe-codex returns flat boolean flags; transform to the service-array format
+    # the codex.html frontend expects.
+    def _svc(name: str, enabled_key: str) -> dict:
+        ok = bool(data.get(enabled_key))
+        return {
+            "name": name,
+            "status": "healthy" if ok else "disabled",
+            "configured": ok,
+            "ok": ok,
+            "url": "",
+            "latency_ms": None,
+        }
+    return {
+        "enabled": True,
+        "services": [
+            _svc("nifi",    "etl_enabled"),
+            _svc("marquez", "lineage_enabled"),
+            _svc("lakefs",  "versioning_enabled"),
+        ],
+    }
+
+
+@app.get("/api/codex/runs", dependencies=[Depends(require_login)])
+async def api_codex_runs(limit: int = 25):
+    return await _cx_get("v1/codex/lineage/runs", f"limit={limit}")
+
+
+@app.get("/api/codex/etl/status", dependencies=[Depends(require_login)])
+async def api_codex_etl_status():
+    return await _cx_get("v1/codex/etl/status")
+
+
+@app.get("/api/codex/versioning/log", dependencies=[Depends(require_login)])
+async def api_codex_versioning_log(limit: int = 25):
+    return await _cx_get("v1/codex/versioning/commits", f"limit={limit}")
+
+
+@app.get("/api/health/events", dependencies=[Depends(require_login)])
+async def api_health_events(limit: int = 25):
+    return await _cx_get("v1/codex/health/events", f"limit={limit}")
+
+
+@app.get("/api/catalog/datasets", dependencies=[Depends(require_login)])
+async def api_catalog_datasets():
+    return await _cx_get("v1/codex/catalog/datasets")
+
+
+@app.get("/api/approval/list", dependencies=[Depends(require_login)])
+async def api_approval_list():
+    return await _cx_get("v1/codex/approval/list")
+
+
+@app.post("/api/approval/approve", dependencies=[Depends(require_login)])
+async def api_approval_approve(request: Request):
+    body = await request.json()
+    branch = (body.get("branch") or "").strip()
+    if not branch:
+        return JSONResponse(status_code=400, content={"error": "branch required"})
+    return await _cx_post(f"v1/codex/approval/{branch}/approve", {})
+
+
+@app.post("/api/approval/reject", dependencies=[Depends(require_login)])
+async def api_approval_reject(request: Request):
+    body = await request.json()
+    branch = (body.get("branch") or "").strip()
+    if not branch:
+        return JSONResponse(status_code=400, content={"error": "branch required"})
+    return await _cx_post(f"v1/codex/approval/{branch}/reject", {"reason": body.get("reason", "")})
+
+
+@app.post("/api/explorer/cypher", dependencies=[Depends(require_login)])
+async def api_explorer_cypher(request: Request):
+    body = await request.json()
+    # Template sends {query, limit}; Trino route expects {sql, max_rows}
+    return await _cx_post("v1/codex/trino/query", {
+        "sql":      body.get("query", ""),
+        "max_rows": body.get("limit", 250),
+    })
 
 
 @app.post("/admin/features/{name}/toggle", dependencies=[Depends(require_admin)])

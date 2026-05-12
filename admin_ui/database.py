@@ -1409,6 +1409,19 @@ async def revoke_model_endpoints_by_node(user_id: str, node_name: str) -> int:
             return cur.rowcount
 
 
+async def revoke_all_model_endpoints_by_node(node_name: str) -> int:
+    """Revoke model_endpoint permissions for ALL users that reference a specific node name.
+
+    Called after a server is removed or renamed so stale entries don't accumulate
+    in the Permissions UI. Returns the total number of deleted rows.
+    """
+    users = await list_users()
+    total = 0
+    for user in users:
+        total += await revoke_model_endpoints_by_node(user["id"], node_name)
+    return total
+
+
 async def admin_get_user_connection(conn_id: str) -> Optional[dict]:
     """Fetch any user connection by ID without user scope. Admin use only."""
     async with _get_pool().connection() as conn:

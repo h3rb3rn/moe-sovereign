@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ t(request, 'page.notebook') }} — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-journal-code me-2 text-primary"></i>{{ t(request, 'page.notebook') }}
+  </h5>
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-sm btn-outline-secondary" type="button"
+            data-bs-toggle="collapse" data-bs-target="#snippet-panel">
+      <i class="bi bi-code-slash me-1"></i>{{ t(request, 'lbl.snippets') }}
+    </button>
+  </div>
+</div>
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle me-2"></i>{{ t(request, 'lbl.notebook_intro') }}
+</div>
+
+<div class="collapse mb-3" id="snippet-panel">
+  <div class="card">
+    <div class="card-header py-2">
+      <strong class="small">{{ t(request, 'lbl.copy_paste_snippets') }}</strong>
+    </div>
+    <div class="card-body py-2">
+      <ul class="nav nav-pills nav-sm mb-2" role="tablist">
+        <li class="nav-item"><a class="nav-link active small py-1 px-2" data-bs-toggle="tab" href="#sn-export">{{ t(request, 'lbl.snippet_export') }}</a></li>
+        <li class="nav-item"><a class="nav-link small py-1 px-2"        data-bs-toggle="tab" href="#sn-import">{{ t(request, 'lbl.snippet_import') }}</a></li>
+        <li class="nav-item"><a class="nav-link small py-1 px-2"        data-bs-toggle="tab" href="#sn-search">{{ t(request, 'lbl.snippet_search') }}</a></li>
+        <li class="nav-item"><a class="nav-link small py-1 px-2"        data-bs-toggle="tab" href="#sn-cypher">{{ t(request, 'lbl.snippet_cypher') }}</a></li>
+        <li class="nav-item"><a class="nav-link small py-1 px-2"        data-bs-toggle="tab" href="#sn-runs">{{ t(request, 'lbl.snippet_runs') }}</a></li>
+      </ul>
+      <div class="tab-content">
+        <div class="tab-pane active" id="sn-export"><pre class="bg-light small p-2 mb-0"><code>import requests, os
+ORCH = os.environ.get("MOE_BASE_URL", "https://moe-admin.local")
+r = requests.get(f"{ORCH}/v1/graph/knowledge/export",
+                 params={"min_trust": 0.5, "domains": "kg-physics"})
+bundle = r.json()
+print(len(bundle.get("entities", [])), "entities")</code></pre></div>
+        <div class="tab-pane" id="sn-import"><pre class="bg-light small p-2 mb-0"><code>import requests
+ORCH = "https://moe-admin.local"
+bundle = {"@context": "moe", "entities": [{"name": "Test"}]}
+r = requests.post(f"{ORCH}/v1/graph/knowledge/import/pending",
+                  json={"bundle": bundle, "source_tag": "notebook-test"})
+print(r.json())  # {"status": "pending", "branch": "pending/..."}</code></pre></div>
+        <div class="tab-pane" id="sn-search"><pre class="bg-light small p-2 mb-0"><code>import requests
+r = requests.get("https://moe-admin.local/v1/graph/search",
+                 params={"q": "Einstein", "limit": 5})
+for hit in r.json().get("results", []):
+    print(hit["name"], "-", hit.get("source"))</code></pre></div>
+        <div class="tab-pane" id="sn-cypher"><pre class="bg-light small p-2 mb-0"><code>import requests
+r = requests.post("https://moe-admin.local/api/explorer/cypher",
+                  json={"query": "MATCH (e:Entity) RETURN e.name LIMIT 10"})
+data = r.json()
+for row in data.get("rows", []):
+    print(row)</code></pre></div>
+        <div class="tab-pane" id="sn-runs"><pre class="bg-light small p-2 mb-0"><code># OpenLineage runs from Marquez (Phase 16)
+import requests
+r = requests.get("https://moe-admin.local/api/codex/runs?limit=10")
+for run in r.json().get("runs", []):
+    print(f"{run['startedAt']}  {run['job']}  {run['state']}")</code></pre></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if jupyterlab_configured %}
+<div class="card">
+  <div class="card-body p-0">
+    {% if jupyterlab_direct_url %}
+    <iframe src="{{ jupyterlab_direct_url }}"
+            style="width:100%;height:80vh;border:0"
+            allow="clipboard-read; clipboard-write"
+            title="{{ t(request, 'page.notebook') }}"></iframe>
+    {% else %}
+    {# Fallback: no direct URL configured — open in new tab instead #}
+    <div class="p-4 text-center">
+      <i class="bi bi-journal-code display-3 text-primary d-block mb-4"></i>
+      <a href="/notebook/lab" target="_blank" class="btn btn-primary btn-lg px-5">
+        <i class="bi bi-box-arrow-up-right me-2"></i>{{ t(request, 'lbl.open_full_window') }}
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body p-4 text-center text-muted">
+    <i class="bi bi-journal-x fs-1 d-block mb-3"></i>
+    <strong>JUPYTERLAB_URL not configured</strong><br>
+    <span class="small">Set <code>JUPYTERLAB_URL=http://moe-jupyterlab:8888</code> in <code>.env</code>.</span>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
