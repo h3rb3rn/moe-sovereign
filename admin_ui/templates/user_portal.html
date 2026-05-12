@@ -2022,6 +2022,13 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               <textarea class="form-control form-control-sm" id="cat-${cat}-prompt" rows="2"
                         placeholder="Optional system prompt for ${cat}…">${catCfg.system_prompt||''}</textarea>
             </div>
+            <div class="d-flex align-items-center gap-1 mb-2" title="Context window in tokens (0 = auto from model)">
+              <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+              <input type="number" id="cat-${cat}-ctx" value="${catCfg.context_window || ''}"
+                     class="form-control form-control-sm" style="font-size:.75rem;width:100px"
+                     min="0" step="1024" placeholder="auto">
+              <small class="text-muted" style="font-size:.68rem">ctx tokens</small>
+            </div>
             <div id="cat-${cat}-models">${models}</div>
             <button class="btn btn-xs btn-outline-success mt-1" style="font-size:.75rem;padding:.15rem .5rem"
                     onclick="addModelRow('${cat}')">
@@ -2090,7 +2097,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             const endpoint = atIdx > -1 ? llmhost.slice(atIdx + 1) : '';
             if (model) models.push({model, endpoint, role});
           });
-          experts[cat] = {system_prompt: prompt, models};
+          const ctxInput = document.getElementById(`cat-${cat}-ctx`);
+          const context_window = ctxInput ? (parseInt(ctxInput.value) || 0) : 0;
+          experts[cat] = {system_prompt: prompt, models, ...(context_window > 0 ? {context_window} : {})};
         });
         const compressionEnabled = document.getElementById('tmpl-compression-enabled').checked;
         return {
@@ -2602,15 +2611,32 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               </div>
               <div class="text-muted small font-monospace text-truncate mb-2">{{ conn.url }}</div>
               <div class="d-flex gap-2 align-items-center flex-wrap">
-                <span class="badge bg-light text-dark border" id="model-count-{{ conn.id }}">
-                  {% if conn.models_cache %}{{ conn.models_cache | length }} {{ t(request, 'portal.conn_models_count') }}{% else %}{{ t(request, 'portal.conn_no_models') }}{% endif %}
-                </span>
+                <button class="btn btn-outline-secondary btn-sm" id="conn-models-btn-{{ conn.id }}"
+                        onclick="toggleConnModels('{{ conn.id }}')">
+                  <i class="bi bi-list-ul me-1"></i>{{ t(request, 'portal.conn_show_models') }}
+                  {% if conn.models_cache %}
+                  <span class="badge bg-secondary ms-1" id="model-count-{{ conn.id }}">{{ conn.models_cache | length }}</span>
+                  {% else %}
+                  <span class="badge bg-secondary ms-1" id="model-count-{{ conn.id }}">0</span>
+                  {% endif %}
+                </button>
                 <button class="btn btn-outline-primary btn-sm" onclick="testConn('{{ conn.id }}')">
                   <i class="bi bi-wifi me-1"></i>{{ t(request, 'portal.btn_test_conn') }}
                 </button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="refreshConnModels('{{ conn.id }}')">
                   <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'portal.btn_refresh_models') }}
                 </button>
+              </div>
+              <div id="conn-models-{{ conn.id }}" style="display:none" class="mt-2">
+                {% if conn.models_cache %}
+                <div class="border rounded p-2" style="max-height:220px;overflow-y:auto;font-size:.82rem">
+                  {% for m in conn.models_cache %}
+                  <div class="font-monospace py-1 {% if not loop.last %}border-bottom{% endif %}">{{ m }}</div>
+                  {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-muted small">{{ t(request, 'portal.conn_no_models') }}</div>
+                {% endif %}
               </div>
               <div id="conn-result-{{ conn.id }}" class="mt-2 small"></div>
               <div class="mt-2">
@@ -2742,6 +2768,31 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         }
       }
 
+      function _connEscHtml(str) {
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+
+      function toggleConnModels(id) {
+        const div = document.getElementById(`conn-models-${id}`);
+        if (div) div.style.display = div.style.display === 'none' ? 'block' : 'none';
+      }
+
+      function _updateConnModelList(id, models) {
+        const div = document.getElementById(`conn-models-${id}`);
+        if (!div) return;
+        const countBadge = document.getElementById(`model-count-${id}`);
+        if (countBadge) countBadge.textContent = models.length;
+        if (models.length === 0) {
+          div.innerHTML = `<div class="text-muted small">{{ t(request, 'portal.conn_no_models') }}</div>`;
+          return;
+        }
+        const rows = models.map((m, i) =>
+          `<div class="font-monospace py-1 ${i < models.length - 1 ? 'border-bottom' : ''}">${_connEscHtml(m)}</div>`
+        ).join('');
+        div.innerHTML = `<div class="border rounded p-2" style="max-height:220px;overflow-y:auto;font-size:.82rem">${rows}</div>`;
+        div.style.display = 'block';
+      }
+
       async function refreshConnModels(id) {
         const el = document.getElementById(`conn-result-${id}`);
         el.innerHTML = '<span class="text-muted"><i class="bi bi-arrow-clockwise me-1"></i>Refreshing…</span>';
@@ -2749,8 +2800,8 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           const res = await fetch(`/user/api/connections/${id}/refresh-models`, {method: 'POST'});
           const data = await res.json();
           if (data.ok) {
-            document.getElementById(`model-count-${id}`).textContent = `${data.models.length} models cached`;
             el.innerHTML = `<span class="badge bg-success">${data.models.length} models refreshed</span>`;
+            _updateConnModelList(id, data.models);
           } else {
             el.innerHTML = `<span class="badge bg-danger">{{ t(request, 'portal.conn_test_fail') }}: ${data.error || ''}</span>`;
           }

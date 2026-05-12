@@ -2551,6 +2551,18 @@ async def api_statistics_templates(window: str = "7d"):
     return await _statistics.get_template_activity(window=window)
 
 
+@app.get("/token-timeline", response_class=HTMLResponse)
+async def token_timeline_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "token_timeline.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/statistics/token-timeline", dependencies=[Depends(require_login)])
+async def api_token_timeline(window: str = "7d", user_id: Optional[str] = None, limit: int = 800):
+    return await _statistics.get_token_timeline(window=window, user_id=user_id, limit=limit)
+
+
 # ─── Maintenance routes ──────────────────────────────────────────────────────
 
 @app.get("/maintenance", response_class=HTMLResponse)
@@ -5382,11 +5394,6 @@ async def user_api_import_templates(
         config = dict(item.get("config") or {
             k: v for k, v in item.items() if k not in _NON_CONFIG
         })
-        # planner_prompt / judge_prompt are admin-orchestration fields that
-        # have no meaning on user templates — strip them on import.
-        # system_prompt lives inside experts and belongs to the user; preserve it.
-        config.pop("planner_prompt", None)
-        config.pop("judge_prompt", None)
         await db.create_user_template(user_id, name, description, cost_factor, config)
         existing_names.add(name)
         imported += 1

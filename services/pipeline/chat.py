@@ -279,18 +279,27 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     except Exception:
         pass
     if not _tmpl_override and request.model not in _MODEL_ID_TO_MODE:
-        for _ep_entry in user_perms.get("model_endpoint", []):
-            _ep_model, _, _ep_node = _ep_entry.partition("@")
-            if _ep_node not in URL_MAP:
-                continue
-            if (_ep_model == _req_model_base or _ep_model == "*") and \
-               (_req_node_hint is None or _req_node_hint == _ep_node):
-                _native_endpoint = {
-                    "url":   URL_MAP[_ep_node],
-                    "token": TOKEN_MAP.get(_ep_node, "ollama"),
-                    "model": _req_model_base,  # Model name only to backend, no @host suffix
-                    "node":  _ep_node,
-                }
+        # Two-pass: exact matches first, wildcards second — prevents *@AIHUB from shadowing
+        # specific entries like qwen2.5:7b-ctx128k@N04-RTX that appear later in the list.
+        _ep_entries = user_perms.get("model_endpoint", [])
+        for _wildcard_pass in (False, True):
+            for _ep_entry in _ep_entries:
+                _ep_model, _, _ep_node = _ep_entry.partition("@")
+                if _ep_node not in URL_MAP:
+                    continue
+                _is_wildcard = _ep_model == "*"
+                if _is_wildcard != _wildcard_pass:
+                    continue
+                if (_ep_model == _req_model_base or _is_wildcard) and \
+                   (_req_node_hint is None or _req_node_hint == _ep_node):
+                    _native_endpoint = {
+                        "url":   URL_MAP[_ep_node],
+                        "token": TOKEN_MAP.get(_ep_node, "ollama"),
+                        "model": _req_model_base,
+                        "node":  _ep_node,
+                    }
+                    break
+            if _native_endpoint:
                 break
         # Fallback: user-owned private connections (lower priority than global URL_MAP)
         if not _native_endpoint and _user_conns_map:

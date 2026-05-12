@@ -161,6 +161,27 @@ async def get_template_activity(window: str = "7d") -> dict:
     return {"window": w, "templates": rows}
 
 
+async def get_token_timeline(window: str = "7d", user_id: str = None, limit: int = 800) -> dict:
+    """Session-level token usage for git-graph visualization.
+
+    Calls the orchestrator's /v1/admin/token-timeline endpoint which groups
+    usage_log rows by session_id and joins template names from routing_telemetry.
+    """
+    try:
+        params: dict = {"window": window, "limit": limit}
+        if user_id:
+            params["user_id"] = user_id
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(
+                f"{ORCHESTRATOR_URL.rstrip('/')}/v1/admin/token-timeline",
+                params=params,
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        return {"error": str(e)[:200], "sessions": [], "templates": [], "window": window}
+
+
 async def _get_redis():
     url = os.environ.get("REDIS_URL", "").strip()
     if not url:

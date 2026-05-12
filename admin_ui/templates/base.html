@@ -83,6 +83,9 @@
           <li><a class="dropdown-item {% if _p.startswith('/statistics') %}active{% endif %}" href="/statistics">
             <i class="bi bi-bar-chart-line me-2 text-secondary"></i>{{ t(request, 'nav.statistics') }}
           </a></li>
+          <li><a class="dropdown-item {% if _p == '/token-timeline' %}active{% endif %}" href="/token-timeline">
+            <i class="bi bi-diagram-2 me-2 text-info"></i>{{ t(request, 'nav.token_timeline') }}
+          </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/benchmarks') %}active{% endif %}" href="/benchmarks">
             <i class="bi bi-speedometer2 me-2 text-secondary"></i>{{ t(request, 'nav.benchmarks') }}
           </a></li>

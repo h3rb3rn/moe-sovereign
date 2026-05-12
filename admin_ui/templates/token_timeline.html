@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}Token Timeline — MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-diagram-2 me-2 text-info"></i>{{ t(request, 'nav.token_timeline') }}
+  </h5>
+  <div class="d-flex gap-2 align-items-center">
+    <select id="window-select" class="form-select form-select-sm" style="width:auto" onchange="load()">
+      <option value="1d">{{ t(request, 'lbl.tt_1d') }}</option>
+      <option value="7d" selected>{{ t(request, 'lbl.tt_7d') }}</option>
+      <option value="30d">{{ t(request, 'lbl.tt_30d') }}</option>
+      <option value="90d">{{ t(request, 'lbl.tt_90d') }}</option>
+    </select>
+    <button class="btn btn-sm btn-outline-primary" onclick="load()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+  </div>
+</div>
+
+<!-- Stats bar -->
+<div class="row g-2 mb-3" id="stat-cards" style="display:none!important"></div>
+
+<!-- Legend -->
+<div id="legend" class="d-flex flex-wrap gap-2 mb-3 small"></div>
+
+<!-- Graph container -->
+<div class="card">
+  <div class="card-body p-2" style="overflow-x:auto">
+    <div id="graph-wrap" style="min-width:600px;position:relative">
+      <svg id="git-graph" style="width:100%;display:block;font-family:monospace"></svg>
+      <div id="tooltip" style="
+        position:absolute;pointer-events:none;display:none;
+        background:rgba(0,0,0,.82);color:#fff;font-size:12px;
+        padding:6px 10px;border-radius:6px;max-width:260px;line-height:1.5;z-index:10;
+      "></div>
+    </div>
+  </div>
+</div>
+
+<p class="text-muted small mt-2 mb-0">
+  Node size ∝ log(tokens) &nbsp;·&nbsp;
+  Color ∝ expert template &nbsp;·&nbsp;
+  Sessions that don't overlap in time share a lane (git-style compact layout)
+</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const _LABELS = {
+  noData:   {{ t(request, 'lbl.tt_no_data') | tojson }},
+  session:  {{ t(request, 'lbl.tt_session') | tojson }},
+  tokens:   {{ t(request, 'lbl.tt_tokens')  | tojson }},
+  template: {{ t(request, 'lbl.tt_template')| tojson }},
+};
+
+// ── Tableau-10 palette ────────────────────────────────────────────────────────
+const PALETTE = [
+  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
+  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+];
+
+// ── Lane assignment (greedy, like git graph) ──────────────────────────────────
+function assignLanes(sessions) {
+  // sessions must be sorted by start_ts ascending
+  const laneEnd = []; // laneEnd[i] = end_ts of last session in lane i (ms)
+  sessions.forEach(s => {
+    let lane = laneEnd.findIndex(e => e < s._start);
+    if (lane === -1) { lane = laneEnd.length; laneEnd.push(0); }
+    laneEnd[lane] = s._end;
+    s._lane = lane;
+  });
+  return laneEnd.length;
+}
+
+// ── SVG helper ────────────────────────────────────────────────────────────────
+function el(tag, attrs = {}) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+
+function fmtNum(n) {
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render(data) {
+  const svg  = document.getElementById('git-graph');
+  const tip  = document.getElementById('tooltip');
+  const wrap = document.getElementById('graph-wrap');
+  svg.innerHTML = '';
+  tip.style.display = 'none';
+
+  const sessions = (data.sessions || []).filter(s => s.requests && s.requests.length > 0);
+  if (sessions.length === 0) {
+    svg.setAttribute('height', 60);
+    const t = el('text', {x: 20, y: 36, fill: '#888', 'font-size': 14});
+    t.textContent = _LABELS.noData;
+    svg.appendChild(t);
+    return;
+  }
+
+  // Parse timestamps
+  sessions.forEach(s => {
+    s.requests.forEach(r => { r._ts = new Date(r.ts).getTime(); });
+    s._start = Math.min(...s.requests.map(r => r._ts));
+    s._end   = Math.max(...s.requests.map(r => r._ts));
+  });
+  sessions.sort((a, b) => a._start - b._start);
+
+  // Lane assignment
+  const numLanes = assignLanes(sessions);
+
+  // Template → color mapping
+  const templateSet = [...new Set(sessions.flatMap(s => s.requests.map(r => r.template || '')))].filter(Boolean).sort();
+  const colorMap = {};
+  templateSet.forEach((t, i) => { colorMap[t] = PALETTE[i % PALETTE.length]; });
+
+  // Build legend
+  const legendEl = document.getElementById('legend');
+  legendEl.innerHTML = '';
+  templateSet.forEach(t => {
+    const chip = document.createElement('span');
+    chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
+      border-radius:12px;background:${colorMap[t]}22;border:1px solid ${colorMap[t]}88;cursor:pointer`;
+    chip.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${colorMap[t]};display:inline-block"></span>${t}`;
+    chip.onclick = () => toggleTemplate(t);
+    legendEl.appendChild(chip);
+  });
+
+  // Layout constants
+  const LANE_H   = 46;
+  const PAD_TOP  = 24;
+  const PAD_BOT  = 48;
+  const PAD_L    = 92;  // space for session labels
+  const PAD_R    = 20;
+  const SVG_W    = Math.max(svg.clientWidth || 900, 640);
+  const GRAPH_W  = SVG_W - PAD_L - PAD_R;
+  const SVG_H    = numLanes * LANE_H + PAD_TOP + PAD_BOT;
+
+  svg.setAttribute('viewBox', `0 0 ${SVG_W} ${SVG_H}`);
+  svg.setAttribute('height', SVG_H);
+
+  // Time range
+  const allTs  = sessions.flatMap(s => s.requests.map(r => r._ts));
+  const minTs  = Math.min(...allTs);
+  const maxTs  = Math.max(...allTs);
+  const tRange = Math.max(maxTs - minTs, 1);
+
+  const xFor   = ts  => PAD_L + ((ts - minTs) / tRange) * GRAPH_W;
+  const yFor   = lane => PAD_TOP + lane * LANE_H + LANE_H / 2;
+
+  // ── Grid lines (subtle) ──────────────────────────────────────────────────
+  const gridG = el('g', {opacity: '0.08'});
+  for (let i = 0; i <= numLanes; i++) {
+    const y = PAD_TOP + i * LANE_H;
+    gridG.appendChild(el('line', {x1: PAD_L, y1: y, x2: SVG_W - PAD_R, y2: y, stroke:'#666', 'stroke-width':'1'}));
+  }
+  svg.appendChild(gridG);
+
+  // ── Time axis ────────────────────────────────────────────────────────────
+  const axisG = el('g');
+  axisG.appendChild(el('line', {
+    x1: PAD_L, y1: SVG_H - PAD_BOT + 8, x2: SVG_W - PAD_R, y2: SVG_H - PAD_BOT + 8,
+    stroke: '#999', 'stroke-width': '1',
+  }));
+  const tickCount = Math.min(8, Math.floor(GRAPH_W / 90));
+  for (let i = 0; i <= tickCount; i++) {
+    const frac = i / tickCount;
+    const ts   = minTs + frac * tRange;
+    const x    = PAD_L + frac * GRAPH_W;
+    const d    = new Date(ts);
+    const lbl  = tRange < 86400000
+      ? d.toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'})
+      : d.toLocaleDateString('de-DE', {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+    axisG.appendChild(el('line', {x1:x, y1:SVG_H - PAD_BOT + 5, x2:x, y2:SVG_H - PAD_BOT + 12, stroke:'#999', 'stroke-width':'1'}));
+    const txt = el('text', {x, y: SVG_H - PAD_BOT + 24, 'text-anchor':'middle', 'font-size':'9', fill:'#888'});
+    txt.textContent = lbl;
+    axisG.appendChild(txt);
+  }
+  svg.appendChild(axisG);
+
+  // ── Sessions ─────────────────────────────────────────────────────────────
+  const hidden = new Set(); // filtered templates
+  window._toggleTemplate = function(tpl) {
+    if (hidden.has(tpl)) hidden.delete(tpl); else hidden.add(tpl);
+    render(data);
+  };
+  window.toggleTemplate = window._toggleTemplate;
+
+  sessions.forEach(s => {
+    const y   = yFor(s._lane);
+    const x0  = xFor(s._start);
+    const xN  = xFor(s._end);
+    const g   = el('g', {'data-sid': s.session_id});
+
+    // Primary template (most frequent in this session)
+    const tplCount = {};
+    s.requests.forEach(r => { if (r.template) tplCount[r.template] = (tplCount[r.template]||0)+1; });
+    const primTpl = Object.entries(tplCount).sort((a,b)=>b[1]-a[1])[0]?.[0] || '';
+    const lineColor = colorMap[primTpl] || '#9ab';
+
+    // Branch spine
+    g.appendChild(el('line', {
+      x1: x0, y1: y, x2: xN, y2: y,
+      stroke: lineColor, 'stroke-width': '2.5', opacity: '0.4', 'stroke-linecap': 'round',
+    }));
+
+    // Session label (trimmed session id)
+    const lbl = el('text', {
+      x: PAD_L - 8, y: y + 4, 'text-anchor':'end',
+      'font-size':'9', fill:'#777',
+    });
+    lbl.textContent = s.session_id.slice(-10);
+    g.appendChild(lbl);
+
+    // Request nodes
+    s.requests.forEach((r, idx) => {
+      const x        = xFor(r._ts);
+      const tpl      = r.template || '';
+      const col      = colorMap[tpl] || '#9ab';
+      const logTok   = Math.log10(Math.max(r.total_tokens, 1));
+      const nodeR    = Math.max(4, Math.min(13, logTok * 3.5));
+      const isHidden = hidden.has(tpl);
+
+      const circle = el('circle', {
+        cx: x, cy: y, r: nodeR,
+        fill: col, stroke: '#fff', 'stroke-width': '1.5',
+        opacity: isHidden ? '0.12' : '1',
+        style: 'cursor:pointer;transition:r .12s',
+        class: 'commit-node',
+      });
+
+      // Hover tooltip
+      circle.addEventListener('mouseenter', evt => {
+        const experts = Array.isArray(r.experts) ? r.experts.join(', ') : '';
+        tip.innerHTML =
+          `<b>${_LABELS.session}:</b> …${s.session_id.slice(-12)}<br>` +
+          `<b>${_LABELS.template}:</b> ${tpl || '—'}<br>` +
+          `<b>${_LABELS.tokens}:</b> ${fmtNum(r.total_tokens)} (↑${fmtNum(r.prompt_tokens)} / ↓${fmtNum(r.completion_tokens)})<br>` +
+          (experts ? `<b>Experts:</b> ${experts}<br>` : '') +
+          `<b>Time:</b> ${new Date(r._ts).toLocaleString('de-DE')}`;
+        tip.style.display = 'block';
+        positionTip(evt);
+      });
+      circle.addEventListener('mousemove', positionTip);
+      circle.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+
+      g.appendChild(circle);
+    });
+
+    svg.appendChild(g);
+  });
+
+  // ── Stat cards ───────────────────────────────────────────────────────────
+  const totalTok  = sessions.reduce((a,s) => a + s.total_tokens, 0);
+  const totalReq  = sessions.reduce((a,s) => a + s.request_count, 0);
+  const cardData  = [
+    ['Sessions',  sessions.length],
+    ['Requests',  totalReq],
+    [_LABELS.tokens, fmtNum(totalTok)],
+    ['Templates', templateSet.length],
+  ];
+  const cardRow = document.getElementById('stat-cards');
+  cardRow.innerHTML = cardData.map(([l,v]) =>
+    `<div class="col-6 col-md-3 col-lg-2">
+      <div class="card h-100"><div class="card-body text-center py-2">
+        <div class="text-muted" style="font-size:11px">${l}</div>
+        <div class="fs-5 fw-bold">${v}</div>
+      </div></div>
+    </div>`
+  ).join('');
+  cardRow.style.removeProperty('display');
+}
+
+function positionTip(evt) {
+  const wrap = document.getElementById('graph-wrap');
+  const rect = wrap.getBoundingClientRect();
+  const tip  = document.getElementById('tooltip');
+  let tx = evt.clientX - rect.left + 14;
+  let ty = evt.clientY - rect.top  - 10;
+  // Keep within container
+  if (tx + 270 > wrap.offsetWidth) tx = evt.clientX - rect.left - 270;
+  if (ty < 0) ty = 4;
+  tip.style.left = tx + 'px';
+  tip.style.top  = ty + 'px';
+}
+
+// ── Load data ─────────────────────────────────────────────────────────────────
+let _lastData = null;
+
+async function load() {
+  const w = document.getElementById('window-select').value;
+  document.getElementById('git-graph').innerHTML =
+    '<text x="20" y="36" fill="#aaa" font-size="13">Loading…</text>';
+  try {
+    const r = await fetch(`/api/statistics/token-timeline?window=${w}`);
+    if (!r.ok) throw new Error(await r.text());
+    _lastData = await r.json();
+    render(_lastData);
+  } catch(e) {
+    document.getElementById('git-graph').innerHTML =
+      `<text x="20" y="36" fill="#c00" font-size="12">Error: ${e.message}</text>`;
+  }
+}
+
+// Re-render on resize
+let _resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => { if (_lastData) render(_lastData); }, 200);
+});
+
+load();
+</script>
+{% endblock %}
