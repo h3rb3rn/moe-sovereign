@@ -35,3 +35,6 @@ prometheus_client>=0.21.0
 # --- OIDC/JWT ---
 PyJWT>=2.8.0
 cryptography>=46.0.7
+
+# --- Pinned transitive deps (guard against unwanted bumps) ---
+urllib3==2.6.3

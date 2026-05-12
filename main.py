@@ -1331,6 +1331,9 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
 
     async def _run_pipeline() -> None:
         try:
+            if app_graph is None:
+                result_box["error"] = Exception("Orchestrator graph not ready — retry in a few seconds")
+                return
             result_box["data"] = await app_graph.ainvoke(
                 {"input": user_input, "response_id": chat_id, "mode": mode,
                  "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
