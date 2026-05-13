@@ -107,13 +107,21 @@ def _build_skill_catalog() -> str:
 def _resolve_skill_invocation(text: str, allowed_skills: Optional[list] = None) -> str:
     """Resolve /skill-name [args] server-side (client-independent).
 
+    Also accepts the escape form $$/skill-name which passes through API-layer
+    slash-command interceptors (e.g. Claude Code CLI) unchanged.
+
     allowed_skills: None = all allowed; list = only listed skills or '*' for all.
     Returns unchanged text if no matching skill found or not permitted.
 
     Do not call directly from async request handlers — use _resolve_skill_secure()
     which enforces the ADMIN_APPROVED hard-lock.
     """
-    if not text or not text.startswith("/"):
+    if not text:
+        return text
+    # Normalise the API-safe escape prefix $$/skill → /skill
+    if text.startswith("$$/"):
+        text = text[2:]
+    if not text.startswith("/"):
         return text
     m = re.match(r"^/([a-zA-Z0-9][a-zA-Z0-9\-]*)(?:[ \t]+(.*))?$", text, re.DOTALL)
     if not m:

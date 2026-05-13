@@ -3275,25 +3275,6 @@ def _infra_disabled_response(tool_name: str) -> str:
     )
 
 
-# TODO(human): Implement node_status() below.
-# This is the key design decision for how infrastructure state is presented to the AI.
-#
-# You receive raw data from the orchestrator's /api/watchdog/alerts endpoint and the
-# /api/starfleet/features endpoint. Your task: call the orchestrator and aggregate the
-# per-node information into a clear, AI-readable summary.
-#
-# The function signature is already defined — fill in the body.
-# Guiding questions for your design:
-#   - Should you return raw JSON (easy to parse) or a human-readable string (easier for LLM)?
-#   - How do you handle the case where a specific node_name is requested vs. all nodes?
-#   - What's the most useful subset of data to surface? (up/down, VRAM%, loaded models, alerts)
-#   - What should happen when the orchestrator is unreachable?
-#
-# You can call: GET {_ORCHESTRATOR_URL}/api/watchdog/alerts?limit=5
-# Response shape: {"enabled": bool, "alerts": [{"type": ..., "node": ..., "message": ...}]}
-#
-# And: GET {_ORCHESTRATOR_URL}/api/starfleet/features
-# Response shape: {"watchdog": {"enabled": bool, "source": "env|redis|default"}, ...}
 @mcp.tool()
 def node_status(node_name: str = "") -> str:
     """Return health and VRAM status for one or all inference nodes.
@@ -3305,12 +3286,37 @@ def node_status(node_name: str = "") -> str:
     """
     if not _INFRA_MCP_ENABLED:
         return _infra_disabled_response("node_status")
-    # TODO(human): implement the body of this function.
-    # Use httpx.get() (synchronous) to call the orchestrator endpoints listed above,
-    # then format and return a useful summary string or JSON.
-    raise NotImplementedError(
-        "node_status is not yet implemented — see TODO(human) in mcp_server/server.py"
-    )
+    try:
+        alerts_resp = httpx.get(f"{_ORCHESTRATOR_URL}/api/watchdog/alerts?limit=20", timeout=5.0)
+        features_resp = httpx.get(f"{_ORCHESTRATOR_URL}/api/starfleet/features", timeout=5.0)
+
+        alerts_by_node: dict = {}
+        if alerts_resp.status_code == 200:
+            for alert in alerts_resp.json().get("alerts", []):
+                node = alert.get("node", "unknown")
+                alerts_by_node.setdefault(node, []).append(alert.get("message", ""))
+
+        nodes: dict = {}
+        if features_resp.status_code == 200:
+            for server in features_resp.json().get("inference_servers", []):
+                name = server.get("name", "unknown")
+                nodes[name] = {
+                    "enabled": server.get("enabled", False),
+                    "gpu_count": server.get("gpu_count", 0),
+                    "loaded_models": server.get("loaded_models", []),
+                    "vram_used_pct": server.get("vram_used_pct"),
+                    "alerts": alerts_by_node.get(name, []),
+                }
+
+        if node_name:
+            filtered = {k: v for k, v in nodes.items() if node_name.lower() in k.lower()}
+            result = filtered if filtered else {"error": f"No node matching '{node_name}' found"}
+        else:
+            result = nodes if nodes else {"note": "No inference nodes configured or Starfleet unavailable"}
+
+        return json.dumps(result, indent=2)
+    except Exception as exc:
+        return f"[node_status error: {exc}]"
 
 
 @mcp.tool()

@@ -91,14 +91,6 @@
           <input type="text" id="promote-entities" class="form-control"
                  placeholder="FastAPI, PostgreSQL, Redis …">
         </div>
-        <!-- TODO(human): Implement submitPromotion() below.
-             This function should:
-             1. Read values from #promote-from, #promote-to, #promote-entities
-             2. Parse #promote-entities as comma-separated list (or null if empty)
-             3. POST to /api/knowledge/promote with {from_tenant_id, to_tenant_id, entity_names}
-             4. Show the returned {promoted} count in #promote-result
-             5. Handle 403 (not authorized) and 400 (missing fields) with flash messages
-        -->
         <div class="mt-3">
           <button class="btn btn-warning" onclick="submitPromotion()">
             <i class="bi bi-arrow-up-circle me-1"></i>{{ t(request, 'btn.promote') }}
