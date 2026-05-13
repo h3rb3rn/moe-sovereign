@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}Charts & Pivot — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-bar-chart-line me-2 text-primary"></i>Charts &amp; Pivot
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="toggleView()">
+      <i class="bi bi-table me-1"></i><span id="view-label">Pivot view</span>
+    </button>
+    <a id="superset-link" href="#" class="btn btn-sm btn-outline-warning" style="display:none" target="_blank">
+      <i class="bi bi-box-arrow-up-right me-1"></i>Open in Superset
+    </a>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── Query panel ────────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small">SQL Query</div>
+      <div class="card-body d-flex flex-column gap-3">
+
+        {# Presets #}
+        <div>
+          <label class="form-label small fw-semibold mb-1">Presets</label>
+          <div id="preset-list" class="d-flex flex-column gap-1">
+            <div class="text-muted small">Loading…</div>
+          </div>
+        </div>
+
+        {# Custom SQL #}
+        <div class="flex-grow-1">
+          <label class="form-label small fw-semibold mb-1">Custom SQL</label>
+          <textarea id="sql-input" class="form-control form-control-sm font-monospace"
+                    style="min-height:180px;background:#0d1117;color:#c9d1d9;border-color:#30363d"
+                    placeholder="SELECT ..."></textarea>
+        </div>
+
+        {# Chart options #}
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small mb-0">Chart type</label>
+            <select id="chart-type" class="form-select form-select-sm">
+              <option value="bar">Bar</option>
+              <option value="line">Line</option>
+              <option value="pie">Pie</option>
+              <option value="doughnut">Doughnut</option>
+              <option value="scatter">Scatter</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-0">Max rows</label>
+            <input type="number" id="max-rows" class="form-control form-control-sm" value="500" min="1" max="5000">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-0">X axis column</label>
+            <input type="text" id="x-col" class="form-control form-control-sm" placeholder="auto">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-0">Y axis column</label>
+            <input type="text" id="y-col" class="form-control form-control-sm" placeholder="auto">
+          </div>
+          <div class="col-12">
+            <label class="form-label small mb-0">Series column (optional)</label>
+            <input type="text" id="series-col" class="form-control form-control-sm" placeholder="–">
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-sm" onclick="runQuery()">
+          <i class="bi bi-play-fill me-1"></i>Run query
+        </button>
+        <div id="query-msg" class="small text-muted"></div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Chart + pivot output ───────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <div class="card-header py-2 fw-semibold small d-flex align-items-center justify-content-between">
+        <span id="result-title">Run a query to see results</span>
+        <span class="badge bg-secondary" id="row-badge" style="display:none"></span>
+      </div>
+      <div class="card-body">
+        <div id="chart-view">
+          <canvas id="main-chart" style="max-height:400px"></canvas>
+          <div id="chart-placeholder" class="text-center text-muted py-5 small">
+            <i class="bi bi-bar-chart fs-2 d-block mb-2 opacity-25"></i>
+            Run a SQL query to visualize the results.
+          </div>
+        </div>
+        <div id="pivot-view" style="display:none;overflow:auto">
+          <div id="pivot-output"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Chart.js #}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+{# PivotTable.js + jQuery (required by pivottable) #}
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pivottable@2.23.0/dist/pivot.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pivottable@2.23.0/dist/pivot.min.css">
+
+<script>
+let _chart = null;
+let _currentData = null;
+let _viewMode = 'chart'; // 'chart' | 'pivot'
+
+/* ── Presets ───────────────────────────────────────────────────────────── */
+async function loadPresets() {
+  try {
+    const r    = await fetch('/api/codex/charts/presets');
+    const data = await r.json();
+    const list = document.getElementById('preset-list');
+    list.innerHTML = (data.presets || []).map(p => `
+      <button class="btn btn-outline-secondary btn-sm text-start" onclick='loadPreset(${JSON.stringify(p)})'>
+        <div class="fw-semibold">${p.title}</div>
+        <div class="text-muted" style="font-size:.75rem">${p.description}</div>
+      </button>`).join('');
+
+    if (data.superset_url) {
+      const link = document.getElementById('superset-link');
+      link.href = data.superset_url;
+      link.style.display = 'inline-flex';
+    }
+  } catch (_) {}
+}
+
+function loadPreset(p) {
+  document.getElementById('sql-input').value      = p.sql.trim();
+  document.getElementById('chart-type').value     = p.chart_type || 'bar';
+  document.getElementById('x-col').value          = p.x_axis || '';
+  document.getElementById('y-col').value          = p.y_axis || '';
+  document.getElementById('series-col').value     = p.series || '';
+}
+
+/* ── Query ─────────────────────────────────────────────────────────────── */
+async function runQuery() {
+  const sql = document.getElementById('sql-input').value.trim();
+  if (!sql) return;
+
+  const msg = document.getElementById('query-msg');
+  msg.textContent = 'Running…';
+
+  try {
+    const r = await fetch('/api/codex/charts/query', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({
+        sql,
+        max_rows:   parseInt(document.getElementById('max-rows').value) || 500,
+        chart_type: document.getElementById('chart-type').value,
+        x_axis:     document.getElementById('x-col').value,
+        y_axis:     document.getElementById('y-col').value,
+        series:     document.getElementById('series-col').value,
+      }),
+    });
+    const data = await r.json();
+
+    if (data.error) {
+      msg.textContent = `⚠ ${data.error}`;
+      msg.className = 'small text-danger';
+      return;
+    }
+
+    _currentData = data;
+    msg.textContent = `${data.row_count} row(s) returned`;
+    msg.className = 'small text-success';
+
+    document.getElementById('result-title').textContent =
+      `Results — ${data.row_count} rows`;
+    const badge = document.getElementById('row-badge');
+    badge.textContent  = `${data.columns.length} col(s)`;
+    badge.style.display = 'inline';
+
+    if (_viewMode === 'chart') renderChart(data);
+    else renderPivot(data);
+
+  } catch (err) {
+    msg.textContent = `⚠ ${err.message}`;
+    msg.className = 'small text-danger';
+  }
+}
+
+/* ── Chart rendering ───────────────────────────────────────────────────── */
+function renderChart(data) {
+  document.getElementById('chart-placeholder').style.display = 'none';
+
+  const { columns, rows, chart_hint } = data;
+  const xIdx = columns.indexOf(chart_hint.x) !== -1
+    ? columns.indexOf(chart_hint.x) : 0;
+  const yIdx = columns.indexOf(chart_hint.y) !== -1
+    ? columns.indexOf(chart_hint.y) : columns.length - 1;
+
+  const labels   = rows.map(r => String(r[xIdx] ?? ''));
+  const values   = rows.map(r => parseFloat(r[yIdx]) || 0);
+  const isPie    = ['pie', 'doughnut'].includes(chart_hint.type);
+
+  const palette = [
+    '#6ea8fe','#75b798','#ffda6a','#ea868f','#6edff6',
+    '#d783ff','#feb272','#a8d5a2','#f9a8d4','#93c5fd',
+  ];
+
+  const datasets = isPie
+    ? [{ data: values, backgroundColor: palette.slice(0, values.length) }]
+    : [{ label: chart_hint.y || columns[yIdx], data: values,
+         backgroundColor: palette[0], borderColor: palette[0],
+         fill: false }];
+
+  if (_chart) _chart.destroy();
+  _chart = new Chart(document.getElementById('main-chart'), {
+    type: chart_hint.type,
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#c9d1d9' } },
+      },
+      scales: isPie ? {} : {
+        x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+      },
+    },
+  });
+}
+
+/* ── Pivot rendering ───────────────────────────────────────────────────── */
+function renderPivot(data) {
+  const { columns, rows } = data;
+  const objects = rows.map(r =>
+    Object.fromEntries(columns.map((c, i) => [c, r[i]]))
+  );
+  const out = document.getElementById('pivot-output');
+  out.innerHTML = '';
+  $(out).pivotUI(objects, {
+    rows: columns.slice(0, 1),
+    cols: columns.slice(1, 2),
+    rendererName: 'Table',
+    unusedAttrsVertical: false,
+  });
+}
+
+/* ── View toggle ───────────────────────────────────────────────────────── */
+function toggleView() {
+  _viewMode = _viewMode === 'chart' ? 'pivot' : 'chart';
+  document.getElementById('view-label').textContent =
+    _viewMode === 'chart' ? 'Pivot view' : 'Chart view';
+
+  document.getElementById('chart-view').style.display =
+    _viewMode === 'chart' ? 'block' : 'none';
+  document.getElementById('pivot-view').style.display =
+    _viewMode === 'pivot' ? 'block' : 'none';
+
+  if (_currentData) {
+    if (_viewMode === 'chart') renderChart(_currentData);
+    else renderPivot(_currentData);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadPresets);
+</script>
+{% endblock %}

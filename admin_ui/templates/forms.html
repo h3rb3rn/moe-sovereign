@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}Forms — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-ui-checks me-2 text-primary"></i>Dynamic Forms
+    <span class="badge bg-secondary ms-2 fs-6" id="form-status-badge">–</span>
+  </h5>
+  <button class="btn btn-sm btn-outline-primary" onclick="loadFlows()">
+    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+  </button>
+</div>
+
+<div class="row g-3">
+  {# ── Flow selector ──────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small d-flex align-items-center justify-content-between">
+        <span>Flows with inputs</span>
+        <input type="text" id="flow-search" class="form-control form-control-sm w-50"
+               placeholder="Filter…" oninput="filterFlows()">
+      </div>
+      <div class="card-body p-0" style="max-height:560px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="flow-list">
+          <li class="list-group-item text-muted text-center small py-3">
+            <i class="bi bi-hourglass me-1"></i>Loading…
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  {# ── Form renderer ──────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <div class="card-header py-2 fw-semibold small d-flex align-items-center gap-2">
+        <span id="form-title">Select a flow to render its input form</span>
+        <span class="badge bg-secondary" id="form-badge" style="display:none"></span>
+      </div>
+      <div class="card-body">
+        <div id="jsonforms-mount"></div>
+        <div id="form-placeholder" class="text-muted small text-center py-4">
+          <i class="bi bi-ui-checks-grid me-2 fs-4 d-block mb-2"></i>
+          Select a flow on the left to display its dynamic input form.
+        </div>
+        <div id="form-actions" class="mt-3" style="display:none">
+          <button class="btn btn-success btn-sm" id="submit-btn" onclick="submitForm()">
+            <i class="bi bi-play-fill me-1"></i>Trigger execution
+          </button>
+          <button class="btn btn-outline-secondary btn-sm ms-2" onclick="resetForm()">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+          </button>
+          <span id="submit-msg" class="ms-3 small"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header py-2 fw-semibold small">Raw schema (debug)</div>
+      <div class="card-body p-0">
+        <pre id="schema-debug" class="small p-3 mb-0" style="max-height:200px;overflow:auto;background:#0d1117;color:#c9d1d9;border-radius:0 0 .375rem .375rem">Select a flow…</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# JSONForms vanilla — loaded from CDN #}
+<script src="https://cdn.jsdelivr.net/npm/@jsonforms/core@3.4.0/dist/jsonforms-core.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@jsonforms/vanilla-renderers@3.4.0/dist/jsonforms-vanilla-renderers.umd.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@jsonforms/vanilla-renderers@3.4.0/dist/jsonforms-vanilla-renderers.css">
+
+<script>
+let _allFlows   = [];
+let _currentNs  = '';
+let _currentId  = '';
+let _formData   = {};
+let _jsonSchema = null;
+let _uiSchema   = null;
+
+/* ── Flow list ─────────────────────────────────────────────────────────── */
+async function loadFlows() {
+  try {
+    const r    = await fetch('/api/codex/kestra/flows?size=200');
+    const data = await r.json();
+    const all  = data.results || data.flows || [];
+    _allFlows  = all.filter(f => f.inputs && f.inputs.length > 0);
+
+    const badge = document.getElementById('form-status-badge');
+    badge.textContent  = `${_allFlows.length} forms`;
+    badge.className    = `badge ms-2 fs-6 bg-${_allFlows.length ? 'success' : 'secondary'}`;
+    renderList(_allFlows);
+  } catch (err) {
+    document.getElementById('flow-list').innerHTML =
+      `<li class="list-group-item text-danger small">${err.message}</li>`;
+  }
+}
+
+function renderList(flows) {
+  const ul = document.getElementById('flow-list');
+  if (!flows.length) {
+    ul.innerHTML = '<li class="list-group-item text-muted small text-center py-3">No flows with inputs found.</li>';
+    return;
+  }
+  ul.innerHTML = flows.map(f => `
+    <li class="list-group-item list-group-item-action small py-2 px-3"
+        style="cursor:pointer" onclick="selectFlow('${f.namespace}','${f.id}')">
+      <div class="fw-semibold">${f.id}</div>
+      <div class="text-muted">${f.namespace || '–'} · ${(f.inputs||[]).length} input(s)</div>
+    </li>`).join('');
+}
+
+function filterFlows() {
+  const q = document.getElementById('flow-search').value.toLowerCase();
+  renderList(_allFlows.filter(f =>
+    (f.id || '').toLowerCase().includes(q) ||
+    (f.namespace || '').toLowerCase().includes(q)
+  ));
+}
+
+/* ── Schema + form rendering ───────────────────────────────────────────── */
+async function selectFlow(ns, id) {
+  _currentNs = ns;
+  _currentId = id;
+  _formData  = {};
+
+  document.getElementById('form-title').textContent = `${ns} / ${id}`;
+  document.getElementById('form-placeholder').style.display = 'none';
+  document.getElementById('form-actions').style.display     = 'block';
+  document.getElementById('schema-debug').textContent       = 'Loading schema…';
+  document.getElementById('jsonforms-mount').innerHTML      = '';
+
+  try {
+    const r    = await fetch(`/api/codex/forms/schema/${ns}/${id}`);
+    const data = await r.json();
+    _jsonSchema = data.json_schema;
+    _uiSchema   = data.ui_schema;
+    _formData   = buildDefaults(_jsonSchema);
+
+    document.getElementById('schema-debug').textContent =
+      JSON.stringify({json_schema: _jsonSchema, ui_schema: _uiSchema}, null, 2);
+
+    const badge = document.getElementById('form-badge');
+    const props = Object.keys(_jsonSchema.properties || {}).length;
+    badge.textContent    = `${props} field${props !== 1 ? 's' : ''}`;
+    badge.style.display  = 'inline';
+
+    renderJsonForms();
+  } catch (err) {
+    document.getElementById('jsonforms-mount').innerHTML =
+      `<p class="text-danger small">${err.message}</p>`;
+  }
+}
+
+function buildDefaults(schema) {
+  const out = {};
+  for (const [k, v] of Object.entries(schema.properties || {})) {
+    if (v.default !== undefined) out[k] = v.default;
+  }
+  return out;
+}
+
+function renderJsonForms() {
+  const mount = document.getElementById('jsonforms-mount');
+  if (!_jsonSchema || !Object.keys(_jsonSchema.properties || {}).length) {
+    mount.innerHTML = '<p class="text-muted small">This flow has no typed inputs.</p>';
+    return;
+  }
+  try {
+    jsonforms.vanillaRenderers.renderForm(
+      mount,
+      {
+        schema:   _jsonSchema,
+        uischema: _uiSchema,
+        data:     _formData,
+        renderers: jsonforms.vanillaRenderers.vanillaRenderers,
+        onChange:  ({ data }) => { _formData = data; },
+      }
+    );
+  } catch (_) {
+    // Fallback: plain inputs for each property when JSONForms fails
+    renderFallback();
+  }
+}
+
+function renderFallback() {
+  const mount = document.getElementById('jsonforms-mount');
+  const props = _jsonSchema.properties || {};
+  mount.innerHTML = Object.entries(props).map(([k, v]) => `
+    <div class="mb-3">
+      <label class="form-label small fw-semibold">${k}
+        ${(_jsonSchema.required||[]).includes(k) ? '<span class="text-danger">*</span>' : ''}
+      </label>
+      ${v.enum
+        ? `<select class="form-select form-select-sm" id="ff_${k}" onchange="_formData['${k}']=this.value">
+             <option value="">– select –</option>
+             ${v.enum.map(e=>`<option value="${e}" ${_formData[k]===e?'selected':''}>${e}</option>`).join('')}
+           </select>`
+        : v.type === 'boolean'
+          ? `<div class="form-check">
+               <input class="form-check-input" type="checkbox" id="ff_${k}"
+                      ${_formData[k]?'checked':''} onchange="_formData['${k}']=this.checked">
+               <label class="form-check-label small" for="ff_${k}">${v.description||''}</label>
+             </div>`
+          : `<input class="form-control form-control-sm" id="ff_${k}"
+                    type="${v.type==='integer'||v.type==='number'?'number':'text'}"
+                    value="${_formData[k]??''}" placeholder="${v.description||''}"
+                    oninput="_formData['${k}']=this.value">`
+      }
+      ${v.description && !v.enum ? `<div class="form-text">${v.description}</div>` : ''}
+    </div>`).join('');
+}
+
+function resetForm() {
+  _formData = buildDefaults(_jsonSchema);
+  renderJsonForms();
+}
+
+/* ── Trigger ───────────────────────────────────────────────────────────── */
+async function submitForm() {
+  const msg = document.getElementById('submit-msg');
+  msg.textContent = 'Triggering…';
+  try {
+    const r = await fetch('/api/codex/kestra/trigger', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({namespace: _currentNs, flow_id: _currentId, inputs: _formData}),
+    });
+    const d = await r.json();
+    msg.textContent = d.error ? `⚠ ${d.error}` : `✓ Execution ${d.id || 'started'}`;
+    msg.className   = `ms-3 small ${d.error ? 'text-danger' : 'text-success'}`;
+  } catch (err) {
+    msg.textContent = `⚠ ${err.message}`;
+    msg.className   = 'ms-3 small text-danger';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadFlows);
+</script>
+{% endblock %}

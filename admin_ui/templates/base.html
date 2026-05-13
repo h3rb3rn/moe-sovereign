@@ -58,7 +58,7 @@
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
-    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook'] %}
+    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts'] %}
 
     <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
       {# Config – direct link #}
@@ -173,6 +173,25 @@
           </a></li>
           <li><a class="dropdown-item {% if _p == '/notebook' %}active{% endif %}" href="/notebook">
             <i class="bi bi-journal-code me-2" style="color:#b09bff"></i>{{ t(request, 'page.notebook') }}
+          </a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item {% if _p == '/link-analysis' %}active{% endif %}" href="/link-analysis">
+            <i class="bi bi-diagram-3 me-2" style="color:#b09bff"></i>{{ t(request, 'page.link_analysis') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/timeline' %}active{% endif %}" href="/timeline">
+            <i class="bi bi-clock-history me-2" style="color:#b09bff"></i>{{ t(request, 'page.timeline') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/kestra' %}active{% endif %}" href="/kestra">
+            <i class="bi bi-diagram-2 me-2" style="color:#b09bff"></i>{{ t(request, 'page.kestra') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/forms' %}active{% endif %}" href="/forms">
+            <i class="bi bi-ui-checks me-2" style="color:#b09bff"></i>{{ t(request, 'page.forms') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/search' %}active{% endif %}" href="/search">
+            <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.search') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/charts' %}active{% endif %}" href="/charts">
+            <i class="bi bi-bar-chart-line me-2" style="color:#b09bff"></i>{{ t(request, 'page.charts') }}
           </a></li>
         </ul>
       </div>
@@ -362,6 +381,36 @@
           <li class="nav-item">
             <a href="/notebook" class="nav-link text-white {% if _p == '/notebook' %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-journal-code me-2" style="color:#b09bff"></i>{{ t(request, 'page.notebook') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/link-analysis" class="nav-link text-white {% if _p == '/link-analysis' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-diagram-3 me-2" style="color:#b09bff"></i>{{ t(request, 'page.link_analysis') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/timeline" class="nav-link text-white {% if _p == '/timeline' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-clock-history me-2" style="color:#b09bff"></i>{{ t(request, 'page.timeline') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/kestra" class="nav-link text-white {% if _p == '/kestra' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-diagram-2 me-2" style="color:#b09bff"></i>{{ t(request, 'page.kestra') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/forms" class="nav-link text-white {% if _p == '/forms' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-ui-checks me-2" style="color:#b09bff"></i>{{ t(request, 'page.forms') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/search" class="nav-link text-white {% if _p == '/search' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.search') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/charts" class="nav-link text-white {% if _p == '/charts' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-bar-chart-line me-2" style="color:#b09bff"></i>{{ t(request, 'page.charts') }}
             </a>
           </li>
           {% endif %}

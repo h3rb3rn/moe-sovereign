@@ -7836,6 +7836,16 @@ async def explorer_page(request: Request, _=Depends(require_login)):
     return TEMPLATES.TemplateResponse(request, "explorer.html", {})
 
 
+@app.get("/link-analysis", response_class=HTMLResponse)
+async def link_analysis_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "link_analysis.html", {})
+
+
+@app.get("/timeline", response_class=HTMLResponse)
+async def timeline_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "timeline.html", {})
+
+
 @app.get("/notebook", response_class=HTMLResponse)
 async def notebook_page(request: Request, _=Depends(require_login)):
     token = os.getenv("JUPYTERLAB_TOKEN", "")
@@ -7938,6 +7948,101 @@ async def api_approval_reject(request: Request):
     if not branch:
         return JSONResponse(status_code=400, content={"error": "branch required"})
     return await _cx_post(f"v1/codex/approval/{branch}/reject", {"reason": body.get("reason", "")})
+
+
+@app.get("/api/codex/graph/network", dependencies=[Depends(require_login)])
+async def api_graph_network(
+    entity_type: Optional[str] = None,
+    domain:      Optional[str] = None,
+    limit:       int = 150,
+):
+    params = f"limit={limit}"
+    if entity_type: params += f"&entity_type={entity_type}"
+    if domain:      params += f"&domain={domain}"
+    return await _cx_get(f"v1/codex/graph/network?{params}")
+
+
+@app.get("/api/codex/graph/types", dependencies=[Depends(require_login)])
+async def api_graph_types():
+    return await _cx_get("v1/codex/graph/types")
+
+
+@app.get("/api/codex/timeline", dependencies=[Depends(require_login)])
+async def api_timeline(window: str = "7d"):
+    return await _cx_get(f"v1/codex/timeline?window={window}")
+
+
+@app.get("/kestra", response_class=HTMLResponse)
+async def kestra_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "kestra.html", {})
+
+
+@app.get("/forms", response_class=HTMLResponse)
+async def forms_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "forms.html", {})
+
+
+@app.get("/search", response_class=HTMLResponse)
+async def search_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "search.html", {})
+
+
+@app.get("/charts", response_class=HTMLResponse)
+async def charts_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "charts.html", {})
+
+
+@app.get("/api/codex/charts/presets", dependencies=[Depends(require_login)])
+async def api_charts_presets():
+    return await _cx_get("v1/codex/charts/presets")
+
+
+@app.post("/api/codex/charts/query", dependencies=[Depends(require_login)])
+async def api_charts_query(request: Request):
+    body = await request.json()
+    return await _cx_post("v1/codex/charts/query", body)
+
+
+@app.get("/api/codex/search", dependencies=[Depends(require_login)])
+async def api_search(q: str = "", limit: int = 50):
+    return await _cx_get(f"v1/codex/search?q={q}&limit={limit}")
+
+
+@app.get("/api/codex/forms/schema/{namespace}/{flow_id}", dependencies=[Depends(require_login)])
+async def api_forms_schema(namespace: str, flow_id: str):
+    return await _cx_get(f"v1/codex/forms/schema/{namespace}/{flow_id}")
+
+
+@app.get("/api/codex/kestra/status", dependencies=[Depends(require_login)])
+async def api_kestra_status():
+    return await _cx_get("v1/codex/kestra/status")
+
+
+@app.get("/api/codex/kestra/flows", dependencies=[Depends(require_login)])
+async def api_kestra_flows(namespace: str = "", page: int = 1, size: int = 50):
+    params = f"page={page}&size={size}"
+    if namespace: params += f"&namespace={namespace}"
+    return await _cx_get(f"v1/codex/kestra/flows?{params}")
+
+
+@app.get("/api/codex/kestra/flows/{namespace}/{flow_id}", dependencies=[Depends(require_login)])
+async def api_kestra_flow_detail(namespace: str, flow_id: str):
+    return await _cx_get(f"v1/codex/kestra/flows/{namespace}/{flow_id}")
+
+
+@app.post("/api/codex/kestra/trigger", dependencies=[Depends(require_login)])
+async def api_kestra_trigger(request: Request):
+    body = await request.json()
+    return await _cx_post("v1/codex/kestra/trigger", body)
+
+
+@app.get("/api/codex/kestra/executions", dependencies=[Depends(require_login)])
+async def api_kestra_executions(namespace: str = "", flow_id: str = "",
+                                page: int = 1, size: int = 20):
+    params = f"page={page}&size={size}"
+    if namespace: params += f"&namespace={namespace}"
+    if flow_id:   params += f"&flow_id={flow_id}"
+    return await _cx_get(f"v1/codex/kestra/executions?{params}")
 
 
 @app.post("/api/explorer/cypher", dependencies=[Depends(require_login)])

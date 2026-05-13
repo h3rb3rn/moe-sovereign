@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Federated Search — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-search me-2 text-primary"></i>Federated Search
+  </h5>
+</div>
+
+{# ── Search bar ─────────────────────────────────────────────────────────── #}
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <div class="input-group">
+      <span class="input-group-text bg-dark border-secondary">
+        <i class="bi bi-search text-primary"></i>
+      </span>
+      <input type="text" id="search-input" class="form-control form-control-lg bg-dark text-light border-secondary"
+             placeholder="Search across catalog, pipelines, lineage, versioning…"
+             autofocus onkeydown="if(event.key==='Enter') runSearch()">
+      <button class="btn btn-primary px-4" onclick="runSearch()">Search</button>
+    </div>
+    <div class="mt-2 d-flex gap-2 flex-wrap" id="source-filters" style="display:none!important"></div>
+  </div>
+</div>
+
+{# ── Results ────────────────────────────────────────────────────────────── #}
+<div id="results-area">
+  <div class="text-muted small text-center py-5">
+    <i class="bi bi-search fs-2 d-block mb-2 opacity-25"></i>
+    Enter a search term to query all connected data sources.
+  </div>
+</div>
+
+<script>
+let _allResults = [];
+let _activeSource = '';
+
+const SOURCE_ICONS = {
+  catalog:    'bi-table',
+  versioning: 'bi-git',
+  pipelines:  'bi-diagram-2',
+  lineage:    'bi-arrow-left-right',
+};
+const SOURCE_COLORS = {
+  catalog:    'primary',
+  versioning: 'success',
+  pipelines:  'warning',
+  lineage:    'info',
+};
+
+async function runSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+
+  const area = document.getElementById('results-area');
+  area.innerHTML = `
+    <div class="text-center py-5 text-muted">
+      <div class="spinner-border spinner-border-sm me-2"></div>Searching…
+    </div>`;
+
+  try {
+    const r    = await fetch(`/api/codex/search?q=${encodeURIComponent(q)}&limit=100`);
+    const data = await r.json();
+
+    if (data.error) {
+      area.innerHTML = `<div class="alert alert-warning small">${data.error}</div>`;
+      return;
+    }
+
+    _allResults = data.results || [];
+    renderSourceFilters(data.sources || {});
+    renderResults(_allResults);
+  } catch (err) {
+    area.innerHTML = `<div class="alert alert-danger small">${err.message}</div>`;
+  }
+}
+
+function renderSourceFilters(sources) {
+  const bar = document.getElementById('source-filters');
+  if (!Object.keys(sources).length) { bar.style.display = 'none'; return; }
+  bar.style.removeProperty('display');
+  bar.innerHTML = `
+    <button class="btn btn-sm btn-outline-light ${_activeSource===''?'active':''}" onclick="filterSource('')">
+      All (${Object.values(sources).reduce((a,b)=>a+b,0)})
+    </button>` +
+    Object.entries(sources).map(([src, cnt]) => `
+    <button class="btn btn-sm btn-outline-${SOURCE_COLORS[src]||'secondary'} ${_activeSource===src?'active':''}"
+            onclick="filterSource('${src}')">
+      <i class="bi ${SOURCE_ICONS[src]||'bi-box'} me-1"></i>${src} (${cnt})
+    </button>`).join('');
+}
+
+function filterSource(src) {
+  _activeSource = src;
+  const filtered = src ? _allResults.filter(h => h.source === src) : _allResults;
+  // Refresh filter button states
+  document.querySelectorAll('#source-filters button').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('#source-filters button').forEach(btn => {
+    if ((src === '' && btn.textContent.startsWith('All')) ||
+        btn.onclick?.toString().includes(`'${src}'`)) btn.classList.add('active');
+  });
+  renderResults(filtered);
+}
+
+function renderResults(hits) {
+  const area = document.getElementById('results-area');
+  if (!hits.length) {
+    area.innerHTML = `
+      <div class="text-center py-5 text-muted small">
+        <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>No results found.
+      </div>`;
+    return;
+  }
+
+  const grouped = {};
+  for (const h of hits) {
+    if (!grouped[h.source]) grouped[h.source] = [];
+    grouped[h.source].push(h);
+  }
+
+  area.innerHTML = Object.entries(grouped).map(([src, items]) => `
+    <div class="mb-3">
+      <h6 class="text-${SOURCE_COLORS[src]||'secondary'} mb-2">
+        <i class="bi ${SOURCE_ICONS[src]||'bi-box'} me-2"></i>
+        ${src.charAt(0).toUpperCase()+src.slice(1)}
+        <span class="badge bg-secondary ms-1">${items.length}</span>
+      </h6>
+      <div class="row g-2">
+        ${items.map(h => `
+          <div class="col-12 col-md-6">
+            <div class="card border-0 bg-dark-subtle">
+              <div class="card-body py-2 px-3">
+                <div class="d-flex align-items-center justify-content-between">
+                  <span class="fw-semibold small">${escHtml(h.name)}</span>
+                  <span class="badge bg-${SOURCE_COLORS[h.source]||'secondary'} opacity-75">${escHtml(h.kind)}</span>
+                </div>
+                <div class="text-muted small">${escHtml(h.namespace||'–')}</div>
+                ${h.description ? `<div class="text-muted small mt-1">${escHtml(h.description)}</div>` : ''}
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.getElementById('search-input').focus();
+</script>
+{% endblock %}

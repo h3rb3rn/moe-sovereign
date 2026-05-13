@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Timeline — MoE Codex{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/vis-timeline/7.7.3/vis-timeline-graph2d.min.css"
+      crossorigin="anonymous">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-timeline/7.7.3/vis-timeline-graph2d.min.js"
+        crossorigin="anonymous"></script>
+<style>
+  #tl-container { height: 480px; background: #0d1117; border-radius: 0.375rem; }
+  .vis-item.success  { background: #10b981; border-color: #059669; color: #fff; }
+  .vis-item.error    { background: #ef4444; border-color: #dc2626; color: #fff; }
+  .vis-item.warning  { background: #f59e0b; border-color: #d97706; color: #fff; }
+  .vis-item.vis-selected { border-width: 2px; }
+  .vis-time-axis .vis-text { color: #9ca3af; }
+  .vis-panel.vis-left       { background: #161b22; border-color: #30363d; }
+  .vis-labelset .vis-label  { color: #e5e7eb; border-color: #30363d; }
+  .vis-background            { background: #0d1117; }
+  .vis-panel.vis-center      { border-color: #30363d; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-clock-history me-2 text-primary"></i>Timeline
+  </h5>
+  <div class="d-flex align-items-center gap-2">
+    <span class="badge bg-secondary" id="tl-count">–</span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="fitTimeline()">
+      <i class="bi bi-fullscreen me-1"></i>Fit
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadTimeline()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+<div class="d-flex gap-2 mb-3">
+  <select id="tl-window" class="form-select form-select-sm w-auto" onchange="loadTimeline()">
+    <option value="1d">Last 24 h</option>
+    <option value="7d" selected>Last 7 days</option>
+    <option value="30d">Last 30 days</option>
+    <option value="90d">Last 90 days</option>
+  </select>
+  <div class="form-check form-switch my-auto ms-2">
+    <input class="form-check-input" type="checkbox" id="tl-stack" checked onchange="applyStack()">
+    <label class="form-check-label small text-muted" for="tl-stack">Stack items</label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-1">
+    <div id="tl-container"></div>
+  </div>
+</div>
+
+<div class="card mt-3 d-none" id="tl-detail">
+  <div class="card-body">
+    <h6 class="mb-1" id="tl-detail-title">—</h6>
+    <p class="mb-0 small text-muted" id="tl-detail-body"></p>
+  </div>
+</div>
+
+<script>
+let timeline = null;
+let tlItems  = null;
+let tlGroups = null;
+
+function initTimeline(data) {
+  tlGroups = new vis.DataSet(data.groups);
+  tlItems  = new vis.DataSet(data.items.map(it => ({
+    ...it,
+    start: new Date(it.start),
+    end:   it.end ? new Date(it.end) : undefined,
+  })));
+
+  const opts = {
+    stack:          document.getElementById('tl-stack').checked,
+    showMajorLabels: true,
+    showMinorLabels: true,
+    zoomMin:        1000 * 60 * 10,        // 10 minutes
+    zoomMax:        1000 * 60 * 60 * 24 * 90,
+    tooltip:        { followMouse: true, overflowMethod: 'flip' },
+    groupOrder:     'content',
+  };
+
+  if (timeline) {
+    timeline.setGroups(tlGroups);
+    timeline.setItems(tlItems);
+    timeline.setOptions(opts);
+  } else {
+    timeline = new vis.Timeline(
+      document.getElementById('tl-container'), tlItems, tlGroups, opts,
+    );
+    timeline.on('select', params => {
+      const id = params.items[0];
+      if (!id) { document.getElementById('tl-detail').classList.add('d-none'); return; }
+      const item = tlItems.get(id);
+      document.getElementById('tl-detail').classList.remove('d-none');
+      document.getElementById('tl-detail-title').textContent = item.content;
+      document.getElementById('tl-detail-body').textContent  = item.title || '';
+    });
+  }
+  fitTimeline();
+}
+
+function fitTimeline() { if (timeline) timeline.fit(); }
+
+function applyStack() {
+  if (timeline) timeline.setOptions({ stack: document.getElementById('tl-stack').checked });
+}
+
+async function loadTimeline() {
+  const window = document.getElementById('tl-window').value;
+  try {
+    const r    = await fetch(`/api/codex/timeline?window=${window}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    initTimeline(data);
+    const c = data.counts || {};
+    document.getElementById('tl-count').textContent =
+      `${data.items.length} events · lin ${c.lineage||0} · ver ${c.versioning||0} · drift ${c.health||0}`;
+  } catch (err) {
+    document.getElementById('tl-count').textContent = '⚠ ' + err.message;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadTimeline);
+</script>
+{% endblock %}
