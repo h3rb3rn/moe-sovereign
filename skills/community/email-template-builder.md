@@ -92,9 +92,8 @@ export function EmailLayout({ preview, children }: EmailLayoutProps) {
     <Html lang="en">
       <Head>
         <Font
-          fontFamily="Inter"
-          fallbackFontFamily="Arial"
-          webFont={{ url: "https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2", format: "woff2" }}
+          fontFamily="Arial"
+          fallbackFontFamily="Helvetica"
           fontWeight={400}
           fontStyle="normal"
         />

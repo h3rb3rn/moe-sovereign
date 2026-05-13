@@ -1,12 +1,12 @@
 ---
-description: Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists' work to avoid copyright violations.
+description: Creating algorithmic art using the browser Canvas API with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists' work to avoid copyright violations. Use only vanilla JavaScript and the Canvas API — no external libraries or CDN dependencies.
 ---
 
 Algorithmic philosophies are computational aesthetic movements that are then expressed through code. Output .md files (philosophy), .html files (interactive viewer), and .js files (generative algorithms).
 
 This happens in two steps:
 1. Algorithmic Philosophy Creation (.md file)
-2. Express by creating p5.js generative art (.html + .js files)
+2. Express by creating Canvas API generative art (.html + .js files) — no external libraries
 
 First, undertake this task:
 
@@ -21,7 +21,7 @@ To begin, create an ALGORITHMIC PHILOSOPHY (not static images or templates) that
 ### THE CRITICAL UNDERSTANDING
 - What is received: Some subtle input or instructions by the user to take into account, but use as a foundation; it should not constrain creative freedom.
 - What is created: An algorithmic philosophy/generative aesthetic movement.
-- What happens next: The same version receives the philosophy and EXPRESSES IT IN CODE - creating p5.js sketches that are 90% algorithmic generation, 10% essential parameters.
+- What happens next: The same version receives the philosophy and EXPRESSES IT IN CODE - creating Canvas API sketches that are 90% algorithmic generation, 10% essential parameters.
 
 Consider this approach:
 - Write a manifesto for a generative art movement
@@ -183,16 +183,21 @@ If the philosophy is about **controlled chaos**, consider using:
 
 To guide the implementation, let the conceptual essence inform creative and original choices. Build something that expresses the vision for this particular request.
 
-**Canvas Setup**: Standard p5.js structure:
+**Canvas Setup**: Standard Canvas API structure — no external libraries:
 ```javascript
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 1200;
+canvas.height = 1200;
+
 function setup() {
-  createCanvas(1200, 1200);
   // Initialize your system
+  draw();
 }
 
 function draw() {
   // Your generative algorithm
-  // Can be static (noLoop) or animated
+  // Static: call once; Animated: use requestAnimationFrame
 }
 ```
 
@@ -212,7 +217,7 @@ Output:
 1. **Algorithmic Philosophy** - As markdown or text explaining the generative aesthetic
 2. **Single HTML Artifact** - Self-contained interactive generative art built from `templates/viewer.html` (see STEP 0 and next section)
 
-The HTML artifact contains everything: p5.js (from CDN), the algorithm, parameter controls, and UI - all in one file that works immediately in claude.ai artifacts or any browser. Start from the template file, not from scratch.
+The HTML artifact contains everything: the Canvas API algorithm, parameter controls, and UI - all in one file with no external dependencies. Works immediately in any browser, including air-gapped environments. Start from the template file, not from scratch.
 
 ---
 
@@ -239,7 +244,7 @@ The `templates/viewer.html` file is the foundation. It contains the exact struct
   - Reset button
 
 **VARIABLE (customize for each artwork):**
-- The entire p5.js algorithm (setup/draw/classes)
+- The entire Canvas API algorithm (setup/draw/classes)
 - The parameters object (define what the art needs)
 - The Parameters section in sidebar:
   - Number of parameter controls
@@ -274,30 +279,30 @@ The `templates/viewer.html` file is the foundation. It contains the exact struct
 <!DOCTYPE html>
 <html>
 <head>
-  <!-- p5.js from CDN - always available -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
   <style>
     /* All styling inline - clean, minimal */
     /* Canvas on top, controls below */
   </style>
 </head>
 <body>
-  <div id="canvas-container"></div>
+  <canvas id="canvas"></canvas>
   <div id="controls">
     <!-- All parameter controls -->
   </div>
   <script>
-    // ALL p5.js code inline here
+    // ALL vanilla Canvas API code inline here — no external libraries
+    // const canvas = document.getElementById('canvas');
+    // const ctx = canvas.getContext('2d');
     // Parameter objects, classes, functions
-    // setup() and draw()
+    // setup() and draw() / requestAnimationFrame loop
     // UI handlers
-    // Everything self-contained
+    // Everything self-contained, no CDN, airgap-safe
   </script>
 </body>
 </html>
 ```
 
-**CRITICAL**: This is a single artifact. No external files, no imports (except p5.js CDN). Everything inline.
+**CRITICAL**: This is a single artifact. No external files, no CDN imports, no external libraries. Pure vanilla JavaScript and Canvas API only. Must work fully offline.
 
 **4. Implementation Details - BUILD THE SIDEBAR**
 
@@ -388,10 +393,10 @@ This skill includes helpful templates and documentation:
 - **templates/viewer.html**: REQUIRED STARTING POINT for all HTML artifacts.
   - This is the foundation - contains the exact structure and Anthropic branding
   - **Keep unchanged**: Layout structure, sidebar organization, Anthropic colors/fonts, seed controls, action buttons
-  - **Replace**: The p5.js algorithm, parameter definitions, and UI controls in Parameters section
+  - **Replace**: The Canvas API algorithm, parameter definitions, and UI controls in Parameters section
   - The extensive comments in the file mark exactly what to keep vs replace
 
-- **templates/generator_template.js**: Reference for p5.js best practices and code structure principles.
+- **templates/generator_template.js**: Reference for Canvas API best practices and code structure principles.
   - Shows how to organize parameters, use seeded randomness, structure classes
   - NOT a pattern menu - use these principles to build unique algorithms
   - Embed algorithms inline in the HTML artifact (don't create separate .js files)
