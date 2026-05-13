@@ -409,7 +409,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     _pending_reports: List[str] = []
     if user_input != _raw_user_input:
-        _sm = re.match(r"^/([a-zA-Z0-9][a-zA-Z0-9\-]*)", _raw_user_input)
+        # Match both /skill and the API-escape form $$/skill
+        _sm = re.match(r"^\$?\$?/([a-zA-Z0-9][a-zA-Z0-9\-]*)", _raw_user_input)
         _sname = _sm.group(1) if _sm else "?"
         _sargs = _raw_user_input[len(_sname)+1:].strip() if _sm else ""
         _pending_reports.append(

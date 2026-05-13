@@ -187,29 +187,59 @@ def get_model_context_window(model: str) -> int:
     return 0
 
 
+async def _fetch_litellm_model_info(model: str, base_url: str, token: str,
+                                    timeout: float = 5.0) -> dict:
+    """Fetch model capabilities from LiteLLM's /model/info endpoint.
+
+    LiteLLM exposes richer metadata (max_input_tokens, max_output_tokens) at
+    /model/info — a non-standard path outside the /v1 prefix.  Returns the
+    model_info sub-dict for the requested model, or {} on any failure.
+    """
+    try:
+        import httpx
+        # Strip /v1 suffix: LiteLLM's admin routes live at the root
+        root = base_url.rstrip("/").removesuffix("/v1")
+        url  = f"{root}/model/info"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                return {}
+            for entry in resp.json().get("data", []):
+                if entry.get("model_name") == model:
+                    return entry.get("model_info", {})
+    except Exception:
+        pass
+    return {}
+
+
 async def fetch_openai_context_window(model: str, base_url: str, token: str,
                                       timeout: float = 5.0) -> int:
     """Query an OpenAI-compatible /v1/models/{model} endpoint for its context window.
 
-    Different providers expose the limit under different field names; we try
-    all common variants.  Returns 0 when the endpoint is unreachable or the
-    field is absent (caller must fall back to the static table).
+    Falls back to LiteLLM's /model/info when the standard endpoint returns no
+    context-window field (common with LiteLLM-backed providers like AIHUB).
+    Returns 0 when completely unavailable.
     """
     try:
         import httpx
         url = f"{base_url.rstrip('/')}/models/{model}"
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code != 200:
-                return 0
-            data = resp.json()
-            for field in ("context_window", "context_length", "max_context",
-                          "max_input_tokens", "max_tokens"):
-                val = data.get(field)
-                if isinstance(val, int) and val > 0:
-                    return val
+            if resp.status_code == 200:
+                data = resp.json()
+                for field in ("context_window", "context_length", "max_context",
+                              "max_input_tokens", "max_tokens"):
+                    val = data.get(field)
+                    if isinstance(val, int) and val > 0:
+                        return val
     except Exception:
         pass
+    # LiteLLM fallback: /model/info exposes max_input_tokens per model
+    info = await _fetch_litellm_model_info(model, base_url, token, timeout)
+    for field in ("context_window", "max_input_tokens"):
+        val = info.get(field)
+        if isinstance(val, int) and val > 0:
+            return val
     return 0
 
 
@@ -217,23 +247,29 @@ async def fetch_openai_max_output(model: str, base_url: str, token: str,
                                   timeout: float = 5.0) -> int:
     """Query /v1/models/{model} for the model's max output token limit.
 
-    Returns 0 when unavailable; caller falls back to MERGER_HEADROOM_TOKENS.
+    Falls back to LiteLLM's /model/info when the standard endpoint returns no
+    output-limit field.  Returns 0 when unavailable.
     """
     try:
         import httpx
         url = f"{base_url.rstrip('/')}/models/{model}"
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code != 200:
-                return 0
-            data = resp.json()
-            for field in ("max_output_tokens", "max_completion_tokens",
-                          "max_tokens_output", "output_context_window"):
-                val = data.get(field)
-                if isinstance(val, int) and val > 0:
-                    return val
+            if resp.status_code == 200:
+                data = resp.json()
+                for field in ("max_output_tokens", "max_completion_tokens",
+                              "max_tokens_output", "output_context_window"):
+                    val = data.get(field)
+                    if isinstance(val, int) and val > 0:
+                        return val
     except Exception:
         pass
+    # LiteLLM fallback
+    info = await _fetch_litellm_model_info(model, base_url, token, timeout)
+    for field in ("max_output_tokens", "max_completion_tokens", "max_tokens"):
+        val = info.get(field)
+        if isinstance(val, int) and val > 0:
+            return val
     return 0
 
 
