@@ -131,7 +131,12 @@ async def expert_worker(state_: AgentState):
                 logger.info(f"🌐 Floating mode: searching all {len(raw_ep)} nodes for {model_name}")
             selected   = await _select_node(model_name, raw_ep, user_id=state_.get("user_id", ""))
             endpoint   = selected["name"]
-            url        = selected.get("url") or URL_MAP.get(endpoint)
+            url        = selected.get("url") or URL_MAP.get(endpoint) or ""
+            if not url:
+                raise ValueError(
+                    f"Expert '{model_name}' on endpoint '{endpoint}' has no URL configured. "
+                    "Check the inference server settings in the Admin UI."
+                )
             token      = selected.get("token", "ollama")
             api_type   = selected.get("api_type", "ollama")
             semaphore  = _endpoint_semaphores.get(endpoint, asyncio.Semaphore(1))

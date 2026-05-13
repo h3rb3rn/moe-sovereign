@@ -239,7 +239,22 @@ async def merger_node(state_: AgentState):
     mode_cfg = MODES.get(mode, MODES["default"])
 
     # Only include non-empty sections in the prompt
-    sections: List[str] = [f"REQUEST: {state_['input']}"]
+    # Guard: truncate very long inputs to prevent context overflow.
+    # Max input chars = (ctx - max_output - fixed_overhead) * chars_per_token.
+    _merger_judge_model = state_.get("judge_model_override") or JUDGE_MODEL
+    from context_budget import (get_model_context_window as _get_ctx,
+                                get_model_max_output as _get_max_out,
+                                MERGER_FIXED_TOKENS, CHARS_PER_TOKEN)
+    _merger_ctx = _get_ctx(_merger_judge_model)
+    if _merger_ctx > 0:
+        _max_input_chars = (_merger_ctx - MERGER_FIXED_TOKENS - _get_max_out(_merger_judge_model)) * CHARS_PER_TOKEN
+        _query_in = state_["input"]
+        if len(_query_in) > _max_input_chars:
+            _query_in = _query_in[:_max_input_chars] + "\n[…input truncated to fit context window]"
+            await _report(f"⚠️ Input truncated to {_max_input_chars} chars (model ctx limit)")
+    else:
+        _query_in = state_["input"]
+    sections: List[str] = [f"REQUEST: {_query_in}"]
     if reasoning:
         sections.append(f"REASONING ANALYSIS:\n{reasoning}")
     if graph_ctx:
@@ -262,10 +277,11 @@ async def merger_node(state_: AgentState):
         )
         # If async lookup found a larger (or known) context window, recompute
         if _judge_ctx > 0 and _tpl_limit <= 0:
-            from context_budget import (MERGER_FIXED_TOKENS, MERGER_HEADROOM_TOKENS,
-                                        CHARS_PER_TOKEN, MIN_GRAPHRAG_CHARS)
-            _q_tok = (len(state_.get("input", "")) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
-            _avail = _judge_ctx - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - _q_tok
+            from context_budget import (MERGER_FIXED_TOKENS, CHARS_PER_TOKEN,
+                                        MIN_GRAPHRAG_CHARS, get_model_max_output)
+            _q_tok      = (len(state_.get("input", "")) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
+            _max_output = get_model_max_output(_judge_model)
+            _avail      = _judge_ctx - MERGER_FIXED_TOKENS - _max_output - _q_tok
             _effective_limit = max(MIN_GRAPHRAG_CHARS, _avail * CHARS_PER_TOKEN)
         # Final safety net: never exceed the global hard cap if set.
         if MAX_GRAPH_CONTEXT_CHARS > 0:

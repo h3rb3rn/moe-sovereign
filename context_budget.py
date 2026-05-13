@@ -97,9 +97,42 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-oss:20b":          32_768,
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
-    # ── Large sovereign cloud models ─────────────────────────────────────────
-    "gpt-oss-120b-sovereign":   32_768,
-    "qwen-3.5-122b-sovereign":  32_768,
+    # ── AIHUB / LiteLLM-routed sovereign models ──────────────────────────────
+    # Total context window as reported by the model provider.
+    # Effective input limit = context - MODEL_MAX_OUTPUT_TOKENS (see below).
+    "gpt-oss-120b-sovereign":   128_000,
+    "qwen-3.5-122b-sovereign":  128_000,
+    "qwen-3.6-35b-sovereign":   212_000,
+    # ── 1M+ context models (Gemini family) ───────────────────────────────────
+    "gemini-2.5-flash":         1_000_000,
+    "gemini-2.5-pro":           1_048_576,
+    "us-gemini-3.1-pro-preview": 1_000_000,
+    "us-gemini-3-flash-preview": 1_000_000,
+    # ── Claude 4.x family (200K) ─────────────────────────────────────────────
+    "claude-opus-4-7":          200_000,
+    "claude-opus-4-6":          200_000,
+    "claude-opus-4-5":          200_000,
+    "claude-sonnet-4-6":        200_000,
+    "claude-sonnet-4-5":        200_000,
+    "claude-haiku-4-5":         200_000,
+    # ── GPT / OpenAI family (128K) ────────────────────────────────────────────
+    "gpt-4.1":                  128_000,
+    "gpt-4.1-mini":             128_000,
+    "gpt-4.1-nano":             128_000,
+    "gpt-4o":                   128_000,
+    "gpt-5":                    128_000,
+    "gpt-5-mini":               128_000,
+    "gpt-5-nano":               128_000,
+    "gpt-5.1":                  128_000,
+    "o3-mini":                  128_000,
+    "o4-mini":                  128_000,
+    "us-gpt-5.3-codex":         128_000,
+    "us-gpt-5.4":               128_000,
+    # ── Large open models on AIHUB ────────────────────────────────────────────
+    "qwen3-235b":               128_000,
+    "qwen3-coder-480b":         128_000,
+    "devstral-2-123b":          128_000,
+    "llama-3-3-70b":            128_000,
     # ── Local fallback models ─────────────────────────────────────────────────
     "qwen3.6:35b":              32_768,
     "qwen3.6":                  32_768,
@@ -113,6 +146,48 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "qwen3:7b":                 32_768,
     "qwen3:4b":                 32_768,
 }
+
+
+# ── Per-model max output tokens (mirrors LiteLLM / AIHUB config) ─────────────
+# Must match the max_completion_tokens configured in the AIHUB LiteLLM proxy.
+# For local Ollama models MERGER_HEADROOM_TOKENS is used as the fallback.
+MODEL_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "qwen-3.6-35b-sovereign":   64_000,
+    "qwen-3.5-122b-sovereign":  64_000,
+    "gpt-oss-120b-sovereign":   64_000,
+    # Gemini 2.5: 65536 max output (AIHUB default)
+    "gemini-2.5-flash":         65_536,
+    "gemini-2.5-pro":           65_536,
+    "us-gemini-3.1-pro-preview": 65_536,
+    "us-gemini-3-flash-preview": 65_536,
+    # Claude 4.x: 32K output
+    "claude-opus-4-7":          32_000,
+    "claude-opus-4-6":          32_000,
+    "claude-opus-4-5":          32_000,
+    "claude-sonnet-4-6":        16_000,
+    "claude-sonnet-4-5":        16_000,
+    "claude-haiku-4-5":         16_000,
+    # GPT / OpenAI: 32K output
+    "gpt-4.1":                  32_768,
+    "gpt-4.1-mini":             16_384,
+    "gpt-4o":                   16_384,
+    "gpt-5":                    32_768,
+    "gpt-5-mini":               16_384,
+    "o3-mini":                  32_768,
+    "o4-mini":                  32_768,
+    "us-gpt-5.3-codex":         32_768,
+    "us-gpt-5.4":               32_768,
+    # Large open models
+    "qwen3-235b":               32_768,
+    "qwen3-coder-480b":         32_768,
+    "devstral-2-123b":          32_768,
+}
+
+
+def get_model_max_output(model: str) -> int:
+    """Return the configured max output tokens for *model*, or MERGER_HEADROOM_TOKENS."""
+    name = (model or "").strip().lower()
+    return MODEL_MAX_OUTPUT_TOKENS.get(name, MERGER_HEADROOM_TOKENS)
 
 
 def get_model_context_window(model: str) -> int:
@@ -253,7 +328,8 @@ def graphrag_budget_chars(
         return DEFAULT_GRAPHRAG_CHARS
 
     query_tokens = (query_chars + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
-    available = ctx_tokens - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - query_tokens
+    max_output   = get_model_max_output(model)
+    available    = ctx_tokens - MERGER_FIXED_TOKENS - max_output - query_tokens
     return max(MIN_GRAPHRAG_CHARS, available * CHARS_PER_TOKEN)
 
 
