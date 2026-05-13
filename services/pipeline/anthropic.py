@@ -265,8 +265,11 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
 
     # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
     # Fetched from Redis cache (TTL 3600s) — negligible overhead on warm path.
+    # Use the system token for model-info lookup: user tokens often lack /v1/models access
+    # on LiteLLM-backed providers (e.g. AIHUB returns 401 for user keys on that endpoint).
+    _info_token = TOKEN_MAP.get(effective_node, "") or effective_token
     _tool_ctx = await _get_tool_ctx_async(
-        effective_model, effective_url, effective_token, state.redis_client
+        effective_model, effective_url, _info_token, state.redis_client
     )
     if _tool_ctx > 0:
         _CC_SAFETY_BUFFER = 500  # token reserve for overhead not counted in char estimate
