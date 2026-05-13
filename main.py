@@ -1168,6 +1168,23 @@ class _BodySizeLimitMiddleware(_BM2):
 
 app.add_middleware(_BodySizeLimitMiddleware)
 
+# ── Body Cache — enables session fingerprinting for clients without session headers ──
+_BODY_CACHE_MAX = 256 * 1024  # only cache bodies ≤ 256 KB to limit memory overhead
+
+class _BodyCacheMiddleware(_BM2):
+    async def dispatch(self, request, call_next):
+        if request.method in ("POST", "PUT", "PATCH"):
+            cl = request.headers.get("content-length")
+            if not cl or int(cl) <= _BODY_CACHE_MAX:
+                body = await request.body()
+                request.state._body = body
+                async def _replay():
+                    return {"type": "http.request", "body": body, "more_body": False}
+                request._receive = _replay
+        return await call_next(request)
+
+app.add_middleware(_BodyCacheMiddleware)
+
 # CORS for Open WebUI direct connections (browser-side)
 from fastapi.middleware.cors import CORSMiddleware
 _cors_all     = CORS_ALL_ORIGINS   # from config.py

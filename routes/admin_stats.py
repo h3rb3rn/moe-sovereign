@@ -222,15 +222,19 @@ _WINDOW_INTERVALS = {"1d": "1 day", "7d": "7 days", "30d": "30 days", "90d": "90
 
 _TOKEN_TIMELINE_SQL = """
 SELECT
-    ul.session_id,
+    COALESCE(
+        NULLIF(ul.session_id, ''),
+        ul.user_id || '-owu-' || LEFT(ul.requested_at::text, 10)
+    )                                  AS session_id,
+    ul.session_id IS NOT NULL AND ul.session_id <> '' AS has_explicit_session,
     ul.request_id,
     ul.user_id,
     u.username,
     ul.model,
     ul.moe_mode,
-    COALESCE(ul.prompt_tokens, 0)     AS prompt_tokens,
-    COALESCE(ul.completion_tokens, 0) AS completion_tokens,
-    COALESCE(ul.total_tokens, 0)      AS total_tokens,
+    COALESCE(ul.prompt_tokens, 0)      AS prompt_tokens,
+    COALESCE(ul.completion_tokens, 0)  AS completion_tokens,
+    COALESCE(ul.total_tokens, 0)       AS total_tokens,
     ul.requested_at,
     rt.template_name,
     rt.complexity,
@@ -238,11 +242,11 @@ SELECT
 FROM usage_log ul
 LEFT JOIN users u ON ul.user_id = u.id
 LEFT JOIN routing_telemetry rt ON ul.request_id = rt.response_id
-WHERE ul.requested_at >= NOW() - INTERVAL '{interval}'
-  AND ul.session_id IS NOT NULL
-  AND ul.session_id <> ''
-  {{user_filter}}
-ORDER BY ul.session_id, ul.requested_at
+WHERE ul.requested_at::timestamptz >= NOW() - INTERVAL '{interval}'
+  AND ul.user_id IS NOT NULL
+  AND ul.user_id <> 'anon'
+  {user_filter}
+ORDER BY session_id, ul.requested_at
 LIMIT %s
 """
 
@@ -273,20 +277,22 @@ async def token_timeline(
 
         # Coerce non-serialisable types
         for r in records:
-            if r.get("requested_at") is not None:
-                r["requested_at"] = r["requested_at"].isoformat()
+            ts = r.get("requested_at")
+            if ts is not None and not isinstance(ts, str):
+                r["requested_at"] = ts.isoformat()
             if isinstance(r.get("experts_used"), list):
                 r["experts_used"] = r["experts_used"]
             elif r.get("experts_used") is None:
                 r["experts_used"] = []
 
-        # Group by session_id
+        # Group by session_id (explicit or synthetic owu-YYYY-MM-DD bucket)
         sessions_map: dict = {}
         for r in records:
             sid = r["session_id"]
             if sid not in sessions_map:
                 sessions_map[sid] = {
                     "session_id": sid,
+                    "session_type": "explicit" if r.get("has_explicit_session") else "owu-daily",
                     "user_id": r["user_id"],
                     "username": r.get("username") or "",
                     "requests": [],
