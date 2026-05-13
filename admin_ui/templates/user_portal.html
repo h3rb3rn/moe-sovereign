@@ -1080,14 +1080,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         chevron.style.transform = _liveOpen ? '' : 'rotate(-90deg)';
       }
 
-      // TODO(human): Implement tickElapsed()
-      // This function runs every second to smoothly update the elapsed time
-      // displayed for each active request row between API polls.
-      //
-      // Hint: _liveStartedAt[chatId] holds the JS Date the request started.
-      //       Each row in #live-active-list has data-chat-id="..." and
-      //       a <span class="live-elapsed"> that shows the current elapsed time.
-      //       Format: whole seconds under 60s ("42s"), then "1m 12s" etc.
       function tickElapsed() {
         const now = Date.now();
         document.querySelectorAll('#live-active-list [data-chat-id]').forEach(row => {
