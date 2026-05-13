@@ -65,11 +65,6 @@
   </div>
 </div>
 
-{# JSONForms vanilla — loaded from CDN #}
-<script src="https://cdn.jsdelivr.net/npm/@jsonforms/core@3.4.0/dist/jsonforms-core.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@jsonforms/vanilla-renderers@3.4.0/dist/jsonforms-vanilla-renderers.umd.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@jsonforms/vanilla-renderers@3.4.0/dist/jsonforms-vanilla-renderers.css">
-
 <script>
 let _allFlows   = [];
 let _currentNs  = '';
@@ -145,7 +140,7 @@ async function selectFlow(ns, id) {
     badge.textContent    = `${props} field${props !== 1 ? 's' : ''}`;
     badge.style.display  = 'inline';
 
-    renderJsonForms();
+    renderForm();
   } catch (err) {
     document.getElementById('jsonforms-mount').innerHTML =
       `<p class="text-danger small">${err.message}</p>`;
@@ -160,27 +155,13 @@ function buildDefaults(schema) {
   return out;
 }
 
-function renderJsonForms() {
+function renderForm() {
   const mount = document.getElementById('jsonforms-mount');
   if (!_jsonSchema || !Object.keys(_jsonSchema.properties || {}).length) {
     mount.innerHTML = '<p class="text-muted small">This flow has no typed inputs.</p>';
     return;
   }
-  try {
-    jsonforms.vanillaRenderers.renderForm(
-      mount,
-      {
-        schema:   _jsonSchema,
-        uischema: _uiSchema,
-        data:     _formData,
-        renderers: jsonforms.vanillaRenderers.vanillaRenderers,
-        onChange:  ({ data }) => { _formData = data; },
-      }
-    );
-  } catch (_) {
-    // Fallback: plain inputs for each property when JSONForms fails
-    renderFallback();
-  }
+  renderFallback();
 }
 
 function renderFallback() {
@@ -213,7 +194,7 @@ function renderFallback() {
 
 function resetForm() {
   _formData = buildDefaults(_jsonSchema);
-  renderJsonForms();
+  renderForm();
 }
 
 /* ── Trigger ───────────────────────────────────────────────────────────── */
