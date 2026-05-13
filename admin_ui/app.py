@@ -5870,7 +5870,8 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             # models_cache stores rich dicts {id, context_window, ...} from _probe_connection.
             # Fall back to string handling for legacy caches that stored plain "model@host" strings.
             if isinstance(m, dict):
-                model_id = m.get("id", "")
+                _raw_id = m.get("id", "")
+                model_id = _raw_id.rsplit("@", 1)[0] if "@" in _raw_id else _raw_id
             else:
                 # Strip stale @suffixes from deleted nodes (e.g. model@OLD_ENDPOINT)
                 model_id = m.rsplit("@", 1)[0] if "@" in m else m

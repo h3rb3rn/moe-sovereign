@@ -199,7 +199,16 @@ async def list_models(raw_request: Request):
     _seen_conn: set = existing_ids | {m["id"] for m in native_models}
     for _conn_name, _conn_cfg in _user_conns_m.items():
         for _cm in _conn_cfg.get("models_cache", []):
-            _mid = f"{_cm}@{_conn_name}"
+            # models_cache may contain rich dicts {id, ...} or legacy plain strings.
+            # Strip any existing @node suffix so we don't produce model@node@conn double-suffixes.
+            if isinstance(_cm, dict):
+                _raw = _cm.get("id") or ""
+            else:
+                _raw = str(_cm)
+            _base = _raw.rsplit("@", 1)[0] if "@" in _raw else _raw
+            if not _base:
+                continue
+            _mid = f"{_base}@{_conn_name}"
             if _mid not in _seen_conn:
                 _seen_conn.add(_mid)
                 conn_models.append({
@@ -207,8 +216,8 @@ async def list_models(raw_request: Request):
                     "object":       "model",
                     "owned_by":     "moe-sovereign",
                     "created":      _model_created,
-                    "description":  f"Direkt via {_conn_name}",
-                    "display_name": f"{_cm} ({_conn_name})",
+                    "description":  f"Via {_conn_name}",
+                    "display_name": _base,
                 })
 
     return {
