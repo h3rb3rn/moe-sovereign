@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Builder — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-diagram-2 me-2 text-primary"></i>Pipeline Builder
+    <span class="badge bg-secondary ms-2 fs-6" id="kestra-status-badge">–</span>
+  </h5>
+  <button class="btn btn-sm btn-outline-primary" onclick="loadFlows()">
+    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+  </button>
+</div>
+
+<div class="row g-3">
+  {# ── Flow list ────────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-5">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <span class="fw-semibold small">Flows</span>
+        <input type="text" id="flow-search" class="form-control form-control-sm w-50"
+               placeholder="Filter…" oninput="filterFlows()">
+      </div>
+      <div class="card-body p-0" style="max-height:520px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="flow-list">
+          <li class="list-group-item text-muted text-center small py-3">
+            <i class="bi bi-hourglass me-1"></i>Loading…
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  {# ── Flow detail + trigger ────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-7">
+    <div class="card mb-3">
+      <div class="card-header py-2 fw-semibold small">Flow detail</div>
+      <div class="card-body" id="flow-detail">
+        <p class="text-muted small mb-0">Select a flow to see its configuration.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header py-2 fw-semibold small">Recent executions</div>
+      <div class="card-body p-0">
+        <div class="table-responsive" style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>ID</th><th>Flow</th><th>State</th><th>Started</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="exec-body">
+              <tr><td colspan="5" class="text-muted text-center small py-3">–</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _allFlows = [];
+let _selected = null;
+
+const STATE_BADGE = {
+  SUCCESS: 'success', FAILED: 'danger', RUNNING: 'primary',
+  WARNING: 'warning', KILLED: 'secondary', CREATED: 'light',
+};
+
+/* ── Status banner ─────────────────────────────────────────────────────── */
+async function checkStatus() {
+  try {
+    const r = await fetch('/api/codex/kestra/status');
+    const d = await r.json();
+    const badge = document.getElementById('kestra-status-badge');
+    if (!d.enabled) { badge.textContent = 'disabled'; badge.className = 'badge bg-secondary ms-2 fs-6'; return; }
+    badge.textContent  = d.reachable ? 'online' : 'offline';
+    badge.className    = `badge ms-2 fs-6 bg-${d.reachable ? 'success' : 'danger'}`;
+  } catch (_) {}
+}
+
+/* ── Flow list ─────────────────────────────────────────────────────────── */
+async function loadFlows() {
+  try {
+    const r    = await fetch('/api/codex/kestra/flows');
+    const data = await r.json();
+    _allFlows  = data.results || data.flows || [];
+    renderFlows(_allFlows);
+    loadExecutions();
+  } catch (err) {
+    document.getElementById('flow-list').innerHTML =
+      `<li class="list-group-item text-danger small">${err.message}</li>`;
+  }
+}
+
+function renderFlows(flows) {
+  const ul = document.getElementById('flow-list');
+  if (!flows.length) {
+    ul.innerHTML = '<li class="list-group-item text-muted small text-center py-3">No flows found.</li>';
+    return;
+  }
+  ul.innerHTML = flows.map(f => `
+    <li class="list-group-item list-group-item-action small py-2 px-3"
+        style="cursor:pointer" onclick="selectFlow('${f.namespace}','${f.id}')">
+      <div class="fw-semibold">${f.id}</div>
+      <div class="text-muted">${f.namespace || '–'}</div>
+    </li>`).join('');
+}
+
+function filterFlows() {
+  const q = document.getElementById('flow-search').value.toLowerCase();
+  renderFlows(_allFlows.filter(f =>
+    (f.id || '').toLowerCase().includes(q) ||
+    (f.namespace || '').toLowerCase().includes(q)
+  ));
+}
+
+/* ── Flow detail ───────────────────────────────────────────────────────── */
+async function selectFlow(ns, id) {
+  _selected = { ns, id };
+  const panel = document.getElementById('flow-detail');
+  panel.innerHTML = '<p class="text-muted small">Loading…</p>';
+  try {
+    const r = await fetch(`/api/codex/kestra/flows/${ns}/${id}`);
+    const f = await r.json();
+    panel.innerHTML = `
+      <dl class="row small mb-2">
+        <dt class="col-4">Namespace</dt><dd class="col-8">${f.namespace}</dd>
+        <dt class="col-4">Flow ID</dt><dd class="col-8">${f.id}</dd>
+        <dt class="col-4">Revision</dt><dd class="col-8">${f.revision ?? '–'}</dd>
+        <dt class="col-4">Tasks</dt><dd class="col-8">${(f.tasks || []).length}</dd>
+      </dl>
+      <button class="btn btn-sm btn-success" onclick="triggerFlow('${ns}','${id}')">
+        <i class="bi bi-play-fill me-1"></i>Trigger execution
+      </button>
+      <span id="trigger-msg" class="ms-2 small"></span>`;
+  } catch (err) {
+    panel.innerHTML = `<p class="text-danger small">${err.message}</p>`;
+  }
+}
+
+async function triggerFlow(ns, id) {
+  const msg = document.getElementById('trigger-msg');
+  msg.textContent = 'Triggering…';
+  try {
+    const r = await fetch('/api/codex/kestra/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ namespace: ns, flow_id: id, inputs: {} }),
+    });
+    const d = await r.json();
+    msg.textContent = d.error ? `⚠ ${d.error}` : `✓ Execution ${d.id || 'started'}`;
+    loadExecutions(ns, id);
+  } catch (err) {
+    msg.textContent = `⚠ ${err.message}`;
+  }
+}
+
+/* ── Executions ────────────────────────────────────────────────────────── */
+async function loadExecutions(ns = '', id = '') {
+  try {
+    const params = new URLSearchParams({ size: 20 });
+    if (ns) params.append('namespace', ns);
+    if (id) params.append('flow_id', id);
+    const r    = await fetch(`/api/codex/kestra/executions?${params}`);
+    const data = await r.json();
+    const rows = data.results || data.executions || [];
+    const tbody = document.getElementById('exec-body');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center small py-2">No executions yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(e => {
+      const state = e.state?.current || e.status || '?';
+      const cls   = STATE_BADGE[state] || 'secondary';
+      const ts    = e.state?.startDate || e.startDate || '';
+      return `<tr>
+        <td class="font-monospace small">${(e.id || '').slice(0, 8)}</td>
+        <td class="small">${e.flowId || '–'}</td>
+        <td><span class="badge bg-${cls}">${state}</span></td>
+        <td class="small text-muted">${ts ? new Date(ts).toLocaleString() : '–'}</td>
+        <td></td>
+      </tr>`;
+    }).join('');
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => { checkStatus(); loadFlows(); });
+</script>
+{% endblock %}

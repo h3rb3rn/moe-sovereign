@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Link Analysis — MoE Codex{% endblock %}
+
+{% block head_extra %}
+<script src="/static/js/cytoscape.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-diagram-3 me-2 text-primary"></i>Link Analysis
+  </h5>
+  <div class="d-flex align-items-center gap-2">
+    <span class="badge bg-secondary" id="la-count">–</span>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadGraph()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+{# ── Toolbar ──────────────────────────────────────────────────────────────── #}
+<div class="row g-2 mb-3">
+  <div class="col-12 col-md-4">
+    <select id="la-type" class="form-select form-select-sm" onchange="loadGraph()">
+      <option value="">All entity types</option>
+    </select>
+  </div>
+  <div class="col-12 col-md-3">
+    <input type="text" id="la-domain" class="form-control form-control-sm"
+           placeholder="Domain filter…" onchange="loadGraph()">
+  </div>
+  <div class="col-6 col-md-2">
+    <input type="number" id="la-limit" class="form-control form-control-sm"
+           value="150" min="10" max="300" onchange="loadGraph()">
+  </div>
+  <div class="col-6 col-md-3">
+    <select id="la-layout" class="form-select form-select-sm" onchange="applyLayout()">
+      <option value="cose">Force-directed (CoSE)</option>
+      <option value="circle">Circle</option>
+      <option value="grid">Grid</option>
+      <option value="breadthfirst">Tree (breadth-first)</option>
+      <option value="concentric">Concentric</option>
+    </select>
+  </div>
+</div>
+
+{# ── Canvas ───────────────────────────────────────────────────────────────── #}
+<div class="card">
+  <div class="card-body p-0 position-relative">
+    <div id="cy" style="width:100%;height:620px;background:#0d1117;border-radius:inherit;"></div>
+    <div id="la-spinner" class="position-absolute top-50 start-50 translate-middle text-light">
+      <div class="spinner-border" role="status"></div>
+    </div>
+    <div id="la-tooltip" class="position-absolute bg-dark text-light rounded p-2 small"
+         style="display:none;pointer-events:none;max-width:240px;z-index:10;"></div>
+  </div>
+</div>
+
+{# ── Node detail panel ────────────────────────────────────────────────────── #}
+<div class="card mt-3 d-none" id="la-detail">
+  <div class="card-body">
+    <h6 class="card-title mb-2" id="la-detail-title">—</h6>
+    <dl class="row mb-0 small" id="la-detail-body"></dl>
+  </div>
+</div>
+
+<script>
+/* ── Colour palette per entity type ──────────────────────────────────────── */
+const TYPE_COLORS = {};
+const PALETTE = [
+  '#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6',
+  '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
+];
+function typeColor(type) {
+  if (!TYPE_COLORS[type]) {
+    const keys = Object.keys(TYPE_COLORS);
+    TYPE_COLORS[type] = PALETTE[keys.length % PALETTE.length];
+  }
+  return TYPE_COLORS[type];
+}
+
+/* ── Cytoscape instance ──────────────────────────────────────────────────── */
+let cy = null;
+
+function initCy(elements) {
+  if (cy) cy.destroy();
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements,
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': ele => typeColor(ele.data('type') || ''),
+          'label':            'data(label)',
+          'color':            '#e5e7eb',
+          'font-size':        10,
+          'text-valign':      'bottom',
+          'text-margin-y':    4,
+          'width':            28,
+          'height':           28,
+          'border-width':     1,
+          'border-color':     '#374151',
+        }
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          'border-width': 3,
+          'border-color': '#facc15',
+        }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'width':              1.5,
+          'line-color':         '#374151',
+          'target-arrow-color': '#374151',
+          'target-arrow-shape': 'triangle',
+          'curve-style':        'bezier',
+          'label':              'data(label)',
+          'font-size':          8,
+          'color':              '#9ca3af',
+          'text-rotation':      'autorotate',
+        }
+      },
+      {
+        selector: 'edge:selected',
+        style: { 'line-color': '#facc15', 'target-arrow-color': '#facc15' }
+      },
+    ],
+    layout: { name: 'cose', animate: false, randomize: false },
+    userZoomingEnabled: true,
+    userPanningEnabled: true,
+  });
+
+  /* Node click → detail panel */
+  cy.on('tap', 'node', evt => {
+    const d = evt.target.data();
+    document.getElementById('la-detail').classList.remove('d-none');
+    document.getElementById('la-detail-title').textContent = d.label;
+    const body = document.getElementById('la-detail-body');
+    body.innerHTML = ['type','domain','source']
+      .filter(k => d[k])
+      .map(k => `<dt class="col-4">${k}</dt><dd class="col-8">${d[k]}</dd>`)
+      .join('');
+  });
+
+  /* Tooltip on hover */
+  const tip = document.getElementById('la-tooltip');
+  cy.on('mouseover', 'node', evt => {
+    const d = evt.target.data();
+    tip.textContent = `${d.label}${d.type ? ' · ' + d.type : ''}`;
+    tip.style.display = 'block';
+  });
+  cy.on('mouseout', 'node', () => { tip.style.display = 'none'; });
+  cy.on('mousemove', evt => {
+    tip.style.left = (evt.originalEvent.offsetX + 12) + 'px';
+    tip.style.top  = (evt.originalEvent.offsetY + 12) + 'px';
+  });
+}
+
+function applyLayout() {
+  if (!cy) return;
+  const name = document.getElementById('la-layout').value;
+  const opts = { name, padding: 20, animate: true, animationDuration: 400 };
+  if (name === 'cose') { opts.randomize = false; opts.nodeRepulsion = () => 8000; }
+  cy.layout(opts).run();
+}
+
+/* ── Data loading ────────────────────────────────────────────────────────── */
+async function loadGraph() {
+  document.getElementById('la-spinner').style.display = 'block';
+  const type   = document.getElementById('la-type').value;
+  const domain = document.getElementById('la-domain').value.trim();
+  const limit  = document.getElementById('la-limit').value;
+  const params = new URLSearchParams({ limit });
+  if (type)   params.append('entity_type', type);
+  if (domain) params.append('domain', domain);
+
+  try {
+    const r = await fetch(`/api/codex/graph/network?${params}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+
+    const elements = [
+      ...data.nodes.map(n => ({ data: n.data })),
+      ...data.edges.map(e => ({ data: e.data })),
+    ];
+    initCy(elements);
+    document.getElementById('la-count').textContent =
+      `${data.node_count} nodes · ${data.edge_count} edges`;
+  } catch (err) {
+    document.getElementById('la-count').textContent = '⚠ ' + err.message;
+  } finally {
+    document.getElementById('la-spinner').style.display = 'none';
+  }
+}
+
+async function loadTypes() {
+  try {
+    const r    = await fetch('/api/codex/graph/types');
+    const data = await r.json();
+    const sel  = document.getElementById('la-type');
+    (data.types || []).forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = t;
+      sel.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadTypes();
+  loadGraph();
+});
+</script>
+{% endblock %}

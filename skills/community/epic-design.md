@@ -323,8 +323,8 @@ All output follows the structured communication standard:
 ## Output Format
 
 Always deliver:
-1. **Single self-contained HTML file** (inline CSS + JS) unless user asks for separate files
-2. **CDN imports** for GSAP via jsDelivr: `https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js`
+1. **Single self-contained HTML file** (inline CSS + JS) — no external libraries or CDN imports; the artifact must be fully airgap-safe and work offline
+2. **Animations via CSS + Web Animations API** (`element.animate()`, `@keyframes`, `IntersectionObserver`, `ScrollTimeline`) — do NOT use GSAP or any library loaded from a CDN
 3. **Comments** explaining every major section and technique used
 4. **Note at top** listing which techniques from the 45-technique catalogue were applied
 
