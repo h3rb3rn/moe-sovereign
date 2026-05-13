@@ -240,14 +240,19 @@ async def merger_node(state_: AgentState):
 
     # Only include non-empty sections in the prompt
     # Guard: truncate very long inputs to prevent context overflow.
-    # Max input chars = (ctx - max_output - fixed_overhead) * chars_per_token.
+    # Both ctx and max_output are resolved dynamically (Redis → API → static table).
     _merger_judge_model = state_.get("judge_model_override") or JUDGE_MODEL
-    from context_budget import (get_model_context_window as _get_ctx,
-                                get_model_max_output as _get_max_out,
+    _merger_judge_url   = (state_.get("judge_url_override") or "").rstrip("/")
+    _merger_judge_tok   = (state_.get("judge_token_override") or "ollama")
+    from context_budget import (get_model_ctx_async as _get_ctx_async,
+                                get_model_max_output_async as _get_max_out_async,
                                 MERGER_FIXED_TOKENS, CHARS_PER_TOKEN)
-    _merger_ctx = _get_ctx(_merger_judge_model)
+    _merger_ctx    = await _get_ctx_async(_merger_judge_model, _merger_judge_url,
+                                          _merger_judge_tok, state.redis_client)
+    _merger_maxout = await _get_max_out_async(_merger_judge_model, _merger_judge_url,
+                                              _merger_judge_tok, state.redis_client)
     if _merger_ctx > 0:
-        _max_input_chars = (_merger_ctx - MERGER_FIXED_TOKENS - _get_max_out(_merger_judge_model)) * CHARS_PER_TOKEN
+        _max_input_chars = (_merger_ctx - MERGER_FIXED_TOKENS - _merger_maxout) * CHARS_PER_TOKEN
         _query_in = state_["input"]
         if len(_query_in) > _max_input_chars:
             _query_in = _query_in[:_max_input_chars] + "\n[…input truncated to fit context window]"
@@ -278,9 +283,10 @@ async def merger_node(state_: AgentState):
         # If async lookup found a larger (or known) context window, recompute
         if _judge_ctx > 0 and _tpl_limit <= 0:
             from context_budget import (MERGER_FIXED_TOKENS, CHARS_PER_TOKEN,
-                                        MIN_GRAPHRAG_CHARS, get_model_max_output)
+                                        MIN_GRAPHRAG_CHARS, get_model_max_output_async)
             _q_tok      = (len(state_.get("input", "")) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
-            _max_output = get_model_max_output(_judge_model)
+            _max_output = await get_model_max_output_async(
+                _judge_model, _judge_url, _judge_tok, state.redis_client)
             _avail      = _judge_ctx - MERGER_FIXED_TOKENS - _max_output - _q_tok
             _effective_limit = max(MIN_GRAPHRAG_CHARS, _avail * CHARS_PER_TOKEN)
         # Final safety net: never exceed the global hard cap if set.

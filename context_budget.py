@@ -97,42 +97,6 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-oss:20b":          32_768,
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
-    # ── AIHUB / LiteLLM-routed sovereign models ──────────────────────────────
-    # Total context window as reported by the model provider.
-    # Effective input limit = context - MODEL_MAX_OUTPUT_TOKENS (see below).
-    "gpt-oss-120b-sovereign":   128_000,
-    "qwen-3.5-122b-sovereign":  128_000,
-    "qwen-3.6-35b-sovereign":   212_000,
-    # ── 1M+ context models (Gemini family) ───────────────────────────────────
-    "gemini-2.5-flash":         1_000_000,
-    "gemini-2.5-pro":           1_048_576,
-    "us-gemini-3.1-pro-preview": 1_000_000,
-    "us-gemini-3-flash-preview": 1_000_000,
-    # ── Claude 4.x family (200K) ─────────────────────────────────────────────
-    "claude-opus-4-7":          200_000,
-    "claude-opus-4-6":          200_000,
-    "claude-opus-4-5":          200_000,
-    "claude-sonnet-4-6":        200_000,
-    "claude-sonnet-4-5":        200_000,
-    "claude-haiku-4-5":         200_000,
-    # ── GPT / OpenAI family (128K) ────────────────────────────────────────────
-    "gpt-4.1":                  128_000,
-    "gpt-4.1-mini":             128_000,
-    "gpt-4.1-nano":             128_000,
-    "gpt-4o":                   128_000,
-    "gpt-5":                    128_000,
-    "gpt-5-mini":               128_000,
-    "gpt-5-nano":               128_000,
-    "gpt-5.1":                  128_000,
-    "o3-mini":                  128_000,
-    "o4-mini":                  128_000,
-    "us-gpt-5.3-codex":         128_000,
-    "us-gpt-5.4":               128_000,
-    # ── Large open models on AIHUB ────────────────────────────────────────────
-    "qwen3-235b":               128_000,
-    "qwen3-coder-480b":         128_000,
-    "devstral-2-123b":          128_000,
-    "llama-3-3-70b":            128_000,
     # ── Local fallback models ─────────────────────────────────────────────────
     "qwen3.6:35b":              32_768,
     "qwen3.6":                  32_768,
@@ -148,46 +112,62 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 }
 
 
-# ── Per-model max output tokens (mirrors LiteLLM / AIHUB config) ─────────────
-# Must match the max_completion_tokens configured in the AIHUB LiteLLM proxy.
-# For local Ollama models MERGER_HEADROOM_TOKENS is used as the fallback.
-MODEL_MAX_OUTPUT_TOKENS: dict[str, int] = {
-    "qwen-3.6-35b-sovereign":   64_000,
-    "qwen-3.5-122b-sovereign":  64_000,
-    "gpt-oss-120b-sovereign":   64_000,
-    # Gemini 2.5: 65536 max output (AIHUB default)
-    "gemini-2.5-flash":         65_536,
-    "gemini-2.5-pro":           65_536,
-    "us-gemini-3.1-pro-preview": 65_536,
-    "us-gemini-3-flash-preview": 65_536,
-    # Claude 4.x: 32K output
-    "claude-opus-4-7":          32_000,
-    "claude-opus-4-6":          32_000,
-    "claude-opus-4-5":          32_000,
-    "claude-sonnet-4-6":        16_000,
-    "claude-sonnet-4-5":        16_000,
-    "claude-haiku-4-5":         16_000,
-    # GPT / OpenAI: 32K output
-    "gpt-4.1":                  32_768,
-    "gpt-4.1-mini":             16_384,
-    "gpt-4o":                   16_384,
-    "gpt-5":                    32_768,
-    "gpt-5-mini":               16_384,
-    "o3-mini":                  32_768,
-    "o4-mini":                  32_768,
-    "us-gpt-5.3-codex":         32_768,
-    "us-gpt-5.4":               32_768,
-    # Large open models
-    "qwen3-235b":               32_768,
-    "qwen3-coder-480b":         32_768,
-    "devstral-2-123b":          32_768,
-}
+# ── Per-model max output tokens ───────────────────────────────────────────────
+# Populated dynamically via fetch_openai_max_output() and cached in Redis.
+# Admin-configured overrides belong in the inference server / template config,
+# not here. This dict stays empty in the codebase.
+MODEL_MAX_OUTPUT_TOKENS: dict[str, int] = {}
 
 
-def get_model_max_output(model: str) -> int:
-    """Return the configured max output tokens for *model*, or MERGER_HEADROOM_TOKENS."""
+def get_model_max_output(model: str, fetched_max_output: int = 0) -> int:
+    """Return the max output tokens for *model*.
+
+    Priority: fetched_max_output (from Redis / live API) → static table →
+    MERGER_HEADROOM_TOKENS fallback.  The static table (MODEL_MAX_OUTPUT_TOKENS)
+    is intentionally empty; all runtime values come from the dynamic fetch path
+    in get_model_max_output_async().
+    """
+    if fetched_max_output > 0:
+        return fetched_max_output
     name = (model or "").strip().lower()
     return MODEL_MAX_OUTPUT_TOKENS.get(name, MERGER_HEADROOM_TOKENS)
+
+
+async def get_model_max_output_async(
+    model: str,
+    base_url: str = "",
+    token: str = "ollama",
+    redis_client=None,
+) -> int:
+    """Resolve max output tokens: Redis cache → /v1/models API → fallback.
+
+    Cache-Key: moe:maxout:{sha256(base_url)[:12]}:{model}  TTL: 3600s
+    """
+    if redis_client and base_url:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:maxout:{url_hash}:{model}"
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return int(cached)
+        except Exception:
+            pass
+
+    fetched = 0
+    if base_url and token != "ollama":
+        fetched = await fetch_openai_max_output(model, base_url, token)
+
+    result = get_model_max_output(model, fetched)
+
+    if redis_client and base_url and fetched > 0:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:maxout:{url_hash}:{model}"
+        try:
+            await redis_client.setex(cache_key, 3600, str(fetched))
+        except Exception:
+            pass
+
+    return result
 
 
 def get_model_context_window(model: str) -> int:
@@ -204,6 +184,56 @@ def get_model_context_window(model: str) -> int:
     for key, val in MODEL_CONTEXT_WINDOWS.items():
         if key.startswith(base + ":") or key == base:
             return val
+    return 0
+
+
+async def fetch_openai_context_window(model: str, base_url: str, token: str,
+                                      timeout: float = 5.0) -> int:
+    """Query an OpenAI-compatible /v1/models/{model} endpoint for its context window.
+
+    Different providers expose the limit under different field names; we try
+    all common variants.  Returns 0 when the endpoint is unreachable or the
+    field is absent (caller must fall back to the static table).
+    """
+    try:
+        import httpx
+        url = f"{base_url.rstrip('/')}/models/{model}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                return 0
+            data = resp.json()
+            for field in ("context_window", "context_length", "max_context",
+                          "max_input_tokens", "max_tokens"):
+                val = data.get(field)
+                if isinstance(val, int) and val > 0:
+                    return val
+    except Exception:
+        pass
+    return 0
+
+
+async def fetch_openai_max_output(model: str, base_url: str, token: str,
+                                  timeout: float = 5.0) -> int:
+    """Query /v1/models/{model} for the model's max output token limit.
+
+    Returns 0 when unavailable; caller falls back to MERGER_HEADROOM_TOKENS.
+    """
+    try:
+        import httpx
+        url = f"{base_url.rstrip('/')}/models/{model}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                return 0
+            data = resp.json()
+            for field in ("max_output_tokens", "max_completion_tokens",
+                          "max_tokens_output", "output_context_window"):
+                val = data.get(field)
+                if isinstance(val, int) and val > 0:
+                    return val
+    except Exception:
+        pass
     return 0
 
 
@@ -264,12 +294,15 @@ async def get_model_ctx_async(
         except Exception:
             pass
 
-    # Dynamic fetch from Ollama (only for non-OpenAI endpoints)
+    # Dynamic fetch — Ollama via /api/show, OpenAI-compatible via /v1/models/{id}
     fetched = 0
-    if base_url and token == "ollama":  # heuristic: Ollama uses "ollama" token
-        fetched = await fetch_ollama_num_ctx(model, base_url, token)
+    if base_url:
+        if token == "ollama":  # heuristic: local Ollama nodes use "ollama" token
+            fetched = await fetch_ollama_num_ctx(model, base_url, token)
+        else:
+            fetched = await fetch_openai_context_window(model, base_url, token)
 
-    # Static table fallback
+    # Static table fallback (local model families only — no deployment-specific names)
     result = fetched or get_model_context_window(model)
 
     # Cache the result
