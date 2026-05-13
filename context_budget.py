@@ -97,9 +97,6 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "gpt-oss:20b":          32_768,
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
-    # ── Large sovereign cloud models ─────────────────────────────────────────
-    "gpt-oss-120b-sovereign":   32_768,
-    "qwen-3.5-122b-sovereign":  32_768,
     # ── Local fallback models ─────────────────────────────────────────────────
     "qwen3.6:35b":              32_768,
     "qwen3.6":                  32_768,
@@ -113,6 +110,64 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "qwen3:7b":                 32_768,
     "qwen3:4b":                 32_768,
 }
+
+
+# ── Per-model max output tokens ───────────────────────────────────────────────
+# Populated dynamically via fetch_openai_max_output() and cached in Redis.
+# Admin-configured overrides belong in the inference server / template config,
+# not here. This dict stays empty in the codebase.
+MODEL_MAX_OUTPUT_TOKENS: dict[str, int] = {}
+
+
+def get_model_max_output(model: str, fetched_max_output: int = 0) -> int:
+    """Return the max output tokens for *model*.
+
+    Priority: fetched_max_output (from Redis / live API) → static table →
+    MERGER_HEADROOM_TOKENS fallback.  The static table (MODEL_MAX_OUTPUT_TOKENS)
+    is intentionally empty; all runtime values come from the dynamic fetch path
+    in get_model_max_output_async().
+    """
+    if fetched_max_output > 0:
+        return fetched_max_output
+    name = (model or "").strip().lower()
+    return MODEL_MAX_OUTPUT_TOKENS.get(name, MERGER_HEADROOM_TOKENS)
+
+
+async def get_model_max_output_async(
+    model: str,
+    base_url: str = "",
+    token: str = "ollama",
+    redis_client=None,
+) -> int:
+    """Resolve max output tokens: Redis cache → /v1/models API → fallback.
+
+    Cache-Key: moe:maxout:{sha256(base_url)[:12]}:{model}  TTL: 3600s
+    """
+    if redis_client and base_url:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:maxout:{url_hash}:{model}"
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return int(cached)
+        except Exception:
+            pass
+
+    fetched = 0
+    if base_url and token != "ollama":
+        fetched = await fetch_openai_max_output(model, base_url, token)
+
+    result = get_model_max_output(model, fetched)
+
+    if redis_client and base_url and fetched > 0:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:maxout:{url_hash}:{model}"
+        try:
+            await redis_client.setex(cache_key, 3600, str(fetched))
+        except Exception:
+            pass
+
+    return result
 
 
 def get_model_context_window(model: str) -> int:
@@ -129,6 +184,56 @@ def get_model_context_window(model: str) -> int:
     for key, val in MODEL_CONTEXT_WINDOWS.items():
         if key.startswith(base + ":") or key == base:
             return val
+    return 0
+
+
+async def fetch_openai_context_window(model: str, base_url: str, token: str,
+                                      timeout: float = 5.0) -> int:
+    """Query an OpenAI-compatible /v1/models/{model} endpoint for its context window.
+
+    Different providers expose the limit under different field names; we try
+    all common variants.  Returns 0 when the endpoint is unreachable or the
+    field is absent (caller must fall back to the static table).
+    """
+    try:
+        import httpx
+        url = f"{base_url.rstrip('/')}/models/{model}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                return 0
+            data = resp.json()
+            for field in ("context_window", "context_length", "max_context",
+                          "max_input_tokens", "max_tokens"):
+                val = data.get(field)
+                if isinstance(val, int) and val > 0:
+                    return val
+    except Exception:
+        pass
+    return 0
+
+
+async def fetch_openai_max_output(model: str, base_url: str, token: str,
+                                  timeout: float = 5.0) -> int:
+    """Query /v1/models/{model} for the model's max output token limit.
+
+    Returns 0 when unavailable; caller falls back to MERGER_HEADROOM_TOKENS.
+    """
+    try:
+        import httpx
+        url = f"{base_url.rstrip('/')}/models/{model}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code != 200:
+                return 0
+            data = resp.json()
+            for field in ("max_output_tokens", "max_completion_tokens",
+                          "max_tokens_output", "output_context_window"):
+                val = data.get(field)
+                if isinstance(val, int) and val > 0:
+                    return val
+    except Exception:
+        pass
     return 0
 
 
@@ -189,12 +294,15 @@ async def get_model_ctx_async(
         except Exception:
             pass
 
-    # Dynamic fetch from Ollama (only for non-OpenAI endpoints)
+    # Dynamic fetch — Ollama via /api/show, OpenAI-compatible via /v1/models/{id}
     fetched = 0
-    if base_url and token == "ollama":  # heuristic: Ollama uses "ollama" token
-        fetched = await fetch_ollama_num_ctx(model, base_url, token)
+    if base_url:
+        if token == "ollama":  # heuristic: local Ollama nodes use "ollama" token
+            fetched = await fetch_ollama_num_ctx(model, base_url, token)
+        else:
+            fetched = await fetch_openai_context_window(model, base_url, token)
 
-    # Static table fallback
+    # Static table fallback (local model families only — no deployment-specific names)
     result = fetched or get_model_context_window(model)
 
     # Cache the result
@@ -253,7 +361,8 @@ def graphrag_budget_chars(
         return DEFAULT_GRAPHRAG_CHARS
 
     query_tokens = (query_chars + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN
-    available = ctx_tokens - MERGER_FIXED_TOKENS - MERGER_HEADROOM_TOKENS - query_tokens
+    max_output   = get_model_max_output(model)
+    available    = ctx_tokens - MERGER_FIXED_TOKENS - max_output - query_tokens
     return max(MIN_GRAPHRAG_CHARS, available * CHARS_PER_TOKEN)
 
 
