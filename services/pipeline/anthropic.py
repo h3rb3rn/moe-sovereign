@@ -88,8 +88,49 @@ from parsing import (
     _anthropic_to_openai_messages,
     _anthropic_tools_to_openai,
 )
+from context_budget import get_model_ctx_async as _get_tool_ctx_async, CHARS_PER_TOKEN as _CHARS_PER_TOKEN
 
 logger = logging.getLogger("MOE-SOVEREIGN")
+
+
+def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
+    """Remove oldest non-system message groups until history fits the token budget.
+
+    Groups are defined by: one non-tool message + all immediately following tool messages.
+    This preserves tool_call/tool_result integrity — they are dropped as atomic pairs.
+    The last group (current user turn) is never dropped.
+    """
+    budget_chars = int(available_input_tokens * _CHARS_PER_TOKEN)
+    total_chars  = sum(len(json.dumps(m)) for m in oai_msgs)
+    if total_chars <= budget_chars:
+        return oai_msgs, False
+
+    sys_msgs  = [m for m in oai_msgs if m.get("role") == "system"]
+    conv_msgs = [m for m in oai_msgs if m.get("role") != "system"]
+    if len(conv_msgs) <= 1:
+        return oai_msgs, False
+
+    # Build groups: each starts with a non-tool message, collects trailing tool messages
+    groups: list = []
+    for msg in conv_msgs:
+        if msg.get("role") != "tool":
+            groups.append([msg])
+        elif groups:
+            groups[-1].append(msg)
+    if len(groups) <= 1:
+        return oai_msgs, False
+
+    sys_chars   = sum(len(json.dumps(m)) for m in sys_msgs)
+    kept_groups = list(groups)
+    dropped     = False
+    while len(kept_groups) > 1:
+        cand = sys_chars + sum(len(json.dumps(m)) for g in kept_groups for m in g)
+        if cand <= budget_chars:
+            break
+        kept_groups.pop(0)
+        dropped = True
+
+    return sys_msgs + [m for g in kept_groups for m in g], dropped
 
 # Module-level CC integration state — set per-request inside anthropic_messages().
 # Must live here (not main.py) so _anthropic_tool_handler and _anthropic_moe_handler
@@ -221,6 +262,30 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     effective_token = tool_token or JUDGE_TOKEN
     effective_node  = tool_node or "unknown"
     _node_timeout   = float(tool_timeout if tool_timeout is not None else JUDGE_TIMEOUT)
+
+    # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
+    # Fetched from Redis cache (TTL 3600s) — negligible overhead on warm path.
+    _tool_ctx = await _get_tool_ctx_async(
+        effective_model, effective_url, effective_token, state.redis_client
+    )
+    if _tool_ctx > 0:
+        _CC_SAFETY_BUFFER = 500  # token reserve for overhead not counted in char estimate
+        _avail_input = _tool_ctx - max_tokens - _CC_SAFETY_BUFFER
+        oai_messages, _history_trimmed = _trim_oai_to_budget(oai_messages, _avail_input)
+        if _history_trimmed:
+            logger.info(
+                "cc_tool: trimmed message history to fit ctx_window=%d (max_out=%d, model=%s)",
+                _tool_ctx, max_tokens, effective_model,
+            )
+        # Cap max_tokens: prevent output overflow even after trimming
+        _input_est_tok = sum(len(json.dumps(m)) for m in oai_messages) / _CHARS_PER_TOKEN
+        _safe_max_out  = max(256, _tool_ctx - int(_input_est_tok) - _CC_SAFETY_BUFFER)
+        if max_tokens > _safe_max_out:
+            logger.info(
+                "cc_tool: capping max_tokens %d → %d (ctx=%d, est_input=%d tok, model=%s)",
+                max_tokens, _safe_max_out, _tool_ctx, int(_input_est_tok), effective_model,
+            )
+            max_tokens = _safe_max_out
 
     # Guard: empty model name causes inference servers to return HTTP 400.
     # Happens when CLAUDE_CODE_TOOL_MODEL is unset and no CC profile overrides it.
