@@ -501,7 +501,14 @@ def _anthropic_to_openai_messages(messages: list, system: Optional[str]) -> list
     """
     result: list = []
     if system:
-        result.append({"role": "system", "content": system})
+        # Normalize Anthropic list-style system (content blocks with cache_control) to string.
+        if isinstance(system, list):
+            system = "\n".join(
+                b.get("text", "") for b in system
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        if system:
+            result.append({"role": "system", "content": system})
     for msg in messages:
         role    = msg.get("role", "user")
         content = msg.get("content", "")

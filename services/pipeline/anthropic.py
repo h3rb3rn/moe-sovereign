@@ -230,7 +230,16 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     """
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
-    system     = body.get("system") or ""
+    # Claude Code sends system as a list of Anthropic content blocks (with cache_control).
+    # Normalize to plain string before converting to OpenAI format.
+    _system_raw = body.get("system") or ""
+    if isinstance(_system_raw, list):
+        system = "\n".join(
+            b.get("text", "") for b in _system_raw
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    else:
+        system = _system_raw
     # Prepend system-prompt prefix: parameter takes precedence over module-level fallback
     _eff_sys_prefix = system_prompt_prefix or _CC_SYSTEM_PREFIX
     if _eff_sys_prefix and system:
