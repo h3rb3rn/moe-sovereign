@@ -1178,19 +1178,11 @@ class _BodyCacheMiddleware(_BM2):
             if not cl or int(cl) <= _BODY_CACHE_MAX:
                 body = await request.body()
                 request.state._body = body
-                # Replay the body exactly once; then forward to original receive so
-                # Starlette can detect http.disconnect after the response starts streaming.
-                _original_receive = request._receive
-                _replayed = False
-
-                async def _replay():
-                    nonlocal _replayed
-                    if not _replayed:
-                        _replayed = True
-                        return {"type": "http.request", "body": body, "more_body": False}
-                    return await _original_receive()
-
-                request._receive = _replay
+                # Do NOT replace request._receive.  Starlette's _CachedRequest
+                # caches the body in self._body after body() is called.
+                # wrapped_receive() state 3 replays it from _body without touching
+                # _receive; state 2 calls the original _receive which blocks until
+                # the real client disconnect arrives — exactly what we want.
         return await call_next(request)
 
 app.add_middleware(_BodyCacheMiddleware)

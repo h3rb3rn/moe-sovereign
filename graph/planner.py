@@ -595,6 +595,7 @@ JSON array:"""
     # so we unload from the correct node instead of always hitting the global default.
     _actual_planner_model = (state_.get("planner_model_override") or PLANNER_MODEL).strip()
     _actual_planner_url   = (state_.get("planner_url_override")   or PLANNER_URL or "").strip()
+    _actual_planner_token = (state_.get("planner_token_override") or PLANNER_TOKEN or "ollama").strip()
     _actual_planner_base  = _actual_planner_url.rstrip("/").removesuffix("/v1")
     _upcoming_expert_models: set = set()
     for _task_item in plan:
@@ -607,7 +608,7 @@ JSON array:"""
     _upcoming_base_models = {m.split("@")[0] for m in _upcoming_expert_models}
     if _actual_planner_model in _upcoming_base_models:
         logger.debug(f"⏭️ VRAM unload skipped: {_actual_planner_model} will be reused as expert")
-    elif _actual_planner_base:
+    elif _actual_planner_base and _actual_planner_token == "ollama":
         asyncio.create_task(_ollama_unload(_actual_planner_model, _actual_planner_base))
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
