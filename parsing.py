@@ -527,7 +527,9 @@ def _anthropic_to_openai_messages(messages: list, system: Optional[str]) -> list
                 }
                 for tc in tool_calls
             ]
-            result.append({"role": "assistant", "content": text_part, "tool_calls": oai_calls})
+            # OpenAI spec allows content=null with tool_calls, but some LiteLLM-backed
+            # providers reject null and require an empty string instead.
+            result.append({"role": "assistant", "content": text_part or "", "tool_calls": oai_calls})
         elif tool_results:
             for tr in tool_results:
                 tr_content = tr.get("content", "")

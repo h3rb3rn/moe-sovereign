@@ -416,12 +416,21 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     except httpx.HTTPStatusError as _hex:
         _llm_latency = time.monotonic() - _llm_t0
         _status_code = _hex.response.status_code
-        logger.warning(f"⚠️ Tool handler HTTP error {_status_code} from {effective_node}: {_hex}")
+        # Capture response body (first 2000 chars) to surface provider error details in logs
+        try:
+            _err_body_raw = _hex.response.text[:2000]
+        except Exception:
+            _err_body_raw = "<unreadable>"
+        logger.warning(
+            "⚠️ Tool handler HTTP error %s from %s: %s | provider_body: %s",
+            _status_code, effective_node, _hex, _err_body_raw,
+        )
         _tool_eval_logger.warning(json.dumps({
             "ts": datetime.utcnow().isoformat() + "Z",
             "chat_id": chat_id, "model": effective_model, "node": effective_node,
             "phase": "tool_call", "event": "http_error",
             "status_code": _status_code, "elapsed_s": round(_llm_latency, 3),
+            "provider_error": _err_body_raw[:500],
         }))
         _err_text = (
             f"⚠️ The inference server '{effective_node}' returned an error "
