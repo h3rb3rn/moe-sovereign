@@ -10,6 +10,7 @@ from services.pipeline.chat import (
     ChatCompletionRequest,
     chat_completions,
 )
+from services.pipeline.cc_session import CCSession, _resolve_cc_session
 from services.pipeline.anthropic import (
     _anthropic_tool_handler,
     _anthropic_reasoning_handler,
@@ -27,6 +28,8 @@ from services.pipeline.responses import (
 )
 
 __all__ = [
+    "CCSession",
+    "_resolve_cc_session",
     "Message",
     "ChatCompletionRequest",
     "chat_completions",

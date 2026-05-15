@@ -2756,6 +2756,24 @@ async def api_maintenance_permissions_cleanup(request: Request):
     return await db.cleanup_stale_model_endpoint_permissions(active_names, dry_run=dry_run)
 
 
+@app.get("/api/maintenance/template-refs/scan", dependencies=[Depends(require_login)])
+async def api_template_refs_scan():
+    """Scan CC profiles for expert_template_id values that no longer match any template."""
+    return await _maintenance.scan_template_refs()
+
+
+@app.post("/api/maintenance/template-refs/cleanup", dependencies=[Depends(require_login)])
+async def api_template_refs_cleanup(request: Request):
+    """Clear stale expert_template_id references from CC profiles. Accepts {dry_run: bool}."""
+    dry_run = True
+    try:
+        body = await request.json()
+        dry_run = bool(body.get("dry_run", True))
+    except Exception:
+        pass
+    return await _maintenance.cleanup_template_refs(dry_run=dry_run)
+
+
 # ─── System Cleanup Manager ───────────────────────────────────────────────────
 
 _CLEANUP_CONFIG_PATH  = Path("/app/cleanup-config.json")

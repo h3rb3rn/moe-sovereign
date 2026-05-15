@@ -1051,5 +1051,14 @@
   "js.no_stale_permissions": "Keine veralteten Berechtigungen gefunden. System bereinigt.",
   "js.stale_permissions_found": "veraltete Berechtigung(en) gefunden",
   "js.confirm_perm_cleanup": "Alle veralteten model_endpoint-Berechtigungen löschen? Dieser Vorgang kann nicht rückgängig gemacht werden.",
-  "js.perm_cleanup_done": "Gelöschte Berechtigungen"
+  "js.perm_cleanup_done": "Gelöschte Berechtigungen",
+  "lbl.template_ref_cleanup": "Template-Referenz-Bereinigung",
+  "msg.template_ref_cleanup_desc": "Prüft alle CC-Profile auf veraltete expert_template_id-Verweise, die auf nicht mehr vorhandene Admin- oder Benutzer-Templates zeigen, und bereinigt diese.",
+  "btn.template_ref_scan": "Referenzen scannen",
+  "btn.template_ref_cleanup": "Veraltete bereinigen",
+  "msg.template_ref_click": "Auf „Referenzen scannen" klicken, um veraltete Template-Verweise zu finden.",
+  "js.no_stale_template_refs": "Keine veralteten Template-Referenzen gefunden. System bereinigt.",
+  "js.stale_template_refs_found": "veraltete Template-Referenz(en) gefunden",
+  "js.confirm_template_ref_cleanup": "Veraltete expert_template_id-Einträge werden aus CC-Profilen gelöscht und der Benutzercache invalidiert. Fortfahren?",
+  "js.template_ref_cleanup_done": "Template-Referenzen bereinigt"
 }

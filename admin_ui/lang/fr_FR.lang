@@ -1052,5 +1052,14 @@
   "js.no_stale_permissions": "Aucune permission obsolète trouvée. Système propre.",
   "js.stale_permissions_found": "permission(s) obsolète(s) détectée(s)",
   "js.confirm_perm_cleanup": "Supprimer toutes les permissions model_endpoint obsolètes ? Cette action est irréversible.",
-  "js.perm_cleanup_done": "Permissions supprimées"
+  "js.perm_cleanup_done": "Permissions supprimées",
+  "lbl.template_ref_cleanup": "Nettoyage des références de templates",
+  "msg.template_ref_cleanup_desc": "Analyse tous les profils CC à la recherche de références expert_template_id obsolètes pointant vers des templates admin ou utilisateur inexistants, et les supprime.",
+  "btn.template_ref_scan": "Scanner les références",
+  "btn.template_ref_cleanup": "Supprimer les obsolètes",
+  "msg.template_ref_click": "Cliquez sur « Scanner les références » pour trouver les références de templates obsolètes.",
+  "js.no_stale_template_refs": "Aucune référence de template obsolète trouvée. Système propre.",
+  "js.stale_template_refs_found": "référence(s) de template obsolète(s) trouvée(s)",
+  "js.confirm_template_ref_cleanup": "Supprimer les entrées expert_template_id obsolètes des profils CC et invalider les caches utilisateurs. Continuer ?",
+  "js.template_ref_cleanup_done": "Références de templates nettoyées"
 }
