@@ -1558,7 +1558,10 @@ async def sync_user_to_redis(user_id: str) -> None:
         if not p.get("is_active", True):
             continue
         try:
-            user_cc_map[p["id"]] = json.loads(p["config_json"])
+            cfg = json.loads(p["config_json"])
+            cfg["id"]   = p["id"]    # ensure id is always present in the dict
+            cfg["name"] = p["name"]  # merge table-level name so warning logs are readable
+            user_cc_map[p["id"]] = cfg
         except (json.JSONDecodeError, TypeError) as _e:
             logger.warning("sync_user_to_redis: skipping CC profile %s with invalid config_json: %s",
                            p.get("id", "?"), _e)

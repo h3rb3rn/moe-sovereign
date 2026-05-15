@@ -1052,5 +1052,14 @@
   "js.no_stale_permissions": "未发现过期权限，系统已清洁。",
   "js.stale_permissions_found": "个过期权限已检测到",
   "js.confirm_perm_cleanup": "删除所有过期的 model_endpoint 权限？此操作无法撤销。",
-  "js.perm_cleanup_done": "已删除权限"
+  "js.perm_cleanup_done": "已删除权限",
+  "lbl.template_ref_cleanup": "模板引用清理",
+  "msg.template_ref_cleanup_desc": "扫描所有 CC 配置文件中指向不存在的管理员或用户模板的过期 expert_template_id 引用，并将其清除。",
+  "btn.template_ref_scan": "扫描引用",
+  "btn.template_ref_cleanup": "清除过期项",
+  "msg.template_ref_click": "点击「扫描引用」以查找过期的模板引用。",
+  "js.no_stale_template_refs": "未发现过期模板引用，系统已清洁。",
+  "js.stale_template_refs_found": "个过期模板引用已检测到",
+  "js.confirm_template_ref_cleanup": "从 CC 配置文件中清除过期的 expert_template_id 条目并使用户缓存失效。是否继续？",
+  "js.template_ref_cleanup_done": "模板引用已清理"
 }

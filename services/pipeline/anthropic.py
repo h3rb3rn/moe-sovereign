@@ -77,6 +77,7 @@ from services.helpers import (
     _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
     _report,
     _shadow_request, _shadow_lock,
+    _progress_queue,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
@@ -89,6 +90,7 @@ from parsing import (
     _anthropic_tools_to_openai,
 )
 from context_budget import get_model_ctx_async as _get_tool_ctx_async, CHARS_PER_TOKEN as _CHARS_PER_TOKEN
+from services.pipeline.cc_session import CCSession, _resolve_cc_session
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -132,11 +134,6 @@ def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
 
     return sys_msgs + [m for g in kept_groups for m in g], dropped
 
-# Module-level CC integration state — set per-request inside anthropic_messages().
-# Must live here (not main.py) so _anthropic_tool_handler and _anthropic_moe_handler
-# can read them without a circular import. Defaults are safe no-ops.
-_CC_SYSTEM_PREFIX: str  = ""
-_CC_STREAM_THINK:  bool = False
 # ============================================================
 #  ANTHROPIC MESSAGES API  (/v1/messages)
 #  Enables Claude Code CLI and other Anthropic API clients
@@ -220,13 +217,18 @@ async def _anthropic_content_blocks_to_sse(
     yield _sse_event("message_stop", {"type": "message_stop"})
 
 
-async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional[str] = None, tool_url: Optional[str] = None, tool_token: Optional[str] = None, tool_timeout: Optional[int] = None, tool_node: Optional[str] = None, user_id: str = "anon", api_key_id: str = "", session_id: str = None, is_user_conn: bool = False, system_prompt_prefix: str = "", tool_max_tokens: int = 0, tool_choice_override: str = ""):
+async def _anthropic_tool_handler(
+    body: dict,
+    chat_id: str,
+    session: CCSession,
+    user_id: str = "anon",
+    api_key_id: str = "",
+    session_id: str | None = None,
+):
     """Forwards tool-capable requests to an inference server and converts formats.
 
-    tool_model/tool_url/tool_token: override default judge if specified (e.g. for Claude Code sessions).
-    is_user_conn: when True the tool endpoint is a user-owned connection — tokens are NOT charged to the MoE budget.
-    tool_timeout: per-node timeout in seconds (fallback: JUDGE_TIMEOUT).
-    tool_node: node name for Prometheus labels (e.g. "MY-NODE").
+    All routing, credential, and prompt-prefix configuration is read from session.
+    Tokens are not charged to the MoE budget when session.is_user_conn is True.
     """
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
@@ -240,15 +242,14 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
         )
     else:
         system = _system_raw
-    # Prepend system-prompt prefix: parameter takes precedence over module-level fallback
-    _eff_sys_prefix = system_prompt_prefix or _CC_SYSTEM_PREFIX
+    _eff_sys_prefix = session.system_prefix
     if _eff_sys_prefix and system:
         system = f"{_eff_sys_prefix}\n\n{system}"
     elif _eff_sys_prefix:
         system = _eff_sys_prefix
     tools      = body.get("tools", [])
     do_stream  = body.get("stream", False)
-    max_tokens = body.get("max_tokens", tool_max_tokens or TOOL_MAX_TOKENS)
+    max_tokens = body.get("max_tokens", session.tool_max_tokens or TOOL_MAX_TOKENS)
 
     # Eval timing + input classification
     _eval_t0 = time.monotonic()
@@ -266,11 +267,11 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     oai_messages = _anthropic_to_openai_messages(messages, system)
     oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
-    effective_model = tool_model or JUDGE_MODEL
-    effective_url   = tool_url   or JUDGE_URL
-    effective_token = tool_token or JUDGE_TOKEN
-    effective_node  = tool_node or "unknown"
-    _node_timeout   = float(tool_timeout if tool_timeout is not None else JUDGE_TIMEOUT)
+    effective_model = session.tool_model or JUDGE_MODEL
+    effective_url   = session.tool_url   or JUDGE_URL
+    effective_token = session.tool_token or JUDGE_TOKEN
+    effective_node  = session.tool_endpoint or "unknown"
+    _node_timeout   = float(session.tool_timeout)
 
     # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
     # Fetched from Redis cache (TTL 3600s) — negligible overhead on warm path.
@@ -339,7 +340,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
             for m in messages
         )
         _effective_tool_choice = (
-            "auto" if (_has_tool_results and not tools) else (tool_choice_override or CLAUDE_CODE_TOOL_CHOICE)
+            "auto" if (_has_tool_results and not tools) else (session.tool_choice or CLAUDE_CODE_TOOL_CHOICE)
         )
         payload["tool_choice"] = _effective_tool_choice
     else:
@@ -476,7 +477,7 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
             user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
             model=effective_model, moe_mode="cc_tool",
             prompt_tokens=in_tok, completion_tokens=out_tok, session_id=session_id))
-        if not is_user_conn:
+        if not session.is_user_conn:
             asyncio.create_task(_increment_user_budget(user_id, in_tok + out_tok, prompt_tokens=in_tok, completion_tokens=out_tok))
 
     # Format detection: raw Qwen tags in text content indicate missing tool schema
@@ -577,6 +578,27 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     if not content_blocks:
         content_blocks.append({"type": "text", "text": ""})
 
+    # Extract <think>...</think> from text content and surface as thinking blocks
+    if session.stream_think:
+        _think_blocks: list = []
+        _remain_blocks: list = []
+        for _blk in content_blocks:
+            if _blk.get("type") == "text":
+                _txt = _blk.get("text", "")
+                _tm = re.search(r"<think>(.*?)</think>", _txt, re.S)
+                if _tm:
+                    _think_txt = _tm.group(1).strip()
+                    _clean_txt = re.sub(r"<think>.*?</think>", "", _txt, flags=re.S).strip()
+                    if _think_txt:
+                        _think_blocks.append({"type": "thinking", "thinking": _think_txt})
+                    if _clean_txt:
+                        _remain_blocks.append({"type": "text", "text": _clean_txt})
+                else:
+                    _remain_blocks.append(_blk)
+            else:
+                _remain_blocks.append(_blk)
+        content_blocks = _think_blocks + _remain_blocks
+
     # Tool-eval structured log
     _log_tool_eval({
         "ts":              datetime.utcnow().isoformat() + "Z",
@@ -614,11 +636,18 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     )
 
 
-async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = "anon", api_key_id: str = "", session_id: str = None, reasoning_max_tokens: int = 0):
+async def _anthropic_reasoning_handler(
+    body: dict,
+    chat_id: str,
+    session: CCSession,
+    user_id: str = "anon",
+    api_key_id: str = "",
+    session_id: str | None = None,
+):
     """Text requests via reasoning expert (deepseek-r1/qwq) with <think> parsing.
 
-    Returns responses in Anthropic Extended Thinking format with optional
-    thinking block when the model outputs <think>...</think> tags.
+    Returns responses in Anthropic Extended Thinking format. A thinking block is
+    included in the response only when session.stream_think is True.
     """
     model_id  = body.get("model", "claude-sonnet-4-6")
     messages  = body.get("messages", [])
@@ -681,7 +710,7 @@ async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = 
         "model":      reasoning_model,
         "messages":   oai_messages,
         "stream":     False,
-        "max_tokens": body.get("max_tokens", reasoning_max_tokens or REASONING_MAX_TOKENS),
+        "max_tokens": body.get("max_tokens", session.reasoning_max_tokens or REASONING_MAX_TOKENS),
     }
     try:
         async with httpx.AsyncClient(timeout=_reasoning_timeout) as client:
@@ -741,7 +770,7 @@ async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = 
         answer_text   = raw.strip()
 
     content_blocks = []
-    if thinking_text:
+    if thinking_text and session.stream_think:
         content_blocks.append({"type": "thinking", "thinking": thinking_text})
     content_blocks.append({"type": "text", "text": answer_text or ""})
 
@@ -760,23 +789,14 @@ async def _anthropic_reasoning_handler(body: dict, chat_id: str, user_id: str = 
     )
 
 
-async def _anthropic_moe_handler(body: dict, chat_id: str,
-                                  user_permissions: Optional[dict] = None,
-                                  user_experts: Optional[dict] = None,
-                                  planner_prompt: str = "",
-                                  judge_prompt: str = "",
-                                  judge_model_override: str = "",
-                                  judge_url_override: str = "",
-                                  judge_token_override: str = "",
-                                  planner_model_override: str = "",
-                                  planner_url_override: str = "",
-                                  planner_token_override: str = "",
-                                  user_id: str = "anon",
-                                  api_key_id: str = "",
-                                  session_id: str = None,
-                                  enable_semantic_memory: bool = False,
-                                  cross_session_enabled: bool = False,
-                                  cross_session_scopes: Optional[List[str]] = None):
+async def _anthropic_moe_handler(
+    body: dict,
+    chat_id: str,
+    session: CCSession,
+    user_id: str = "anon",
+    api_key_id: str = "",
+    session_id: str | None = None,
+):
     """Route pure text requests through the MoE agent pipeline."""
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
@@ -802,7 +822,7 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
         return empty_resp
 
     last_user_content = last_user.get("content", "")
-    allowed_skills = (user_permissions or {}).get("skill")
+    allowed_skills = session.user_perms.get("skill")
     _raw_cc_input = _anthropic_content_to_text(last_user_content)
     user_input  = await _resolve_skill_secure(_raw_cc_input, allowed_skills, user_id=user_id, session_id=session_id)
     _cc_pending_reports: List[str] = []
@@ -823,47 +843,51 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
     history = _truncate_history(history_raw)
     _sm_team_ids_h: List[str] = []
     _sm_prefs_h:   dict      = {}
-    if enable_semantic_memory and user_id and user_id != "anon":
+    _sm_enable        = session.planner_cfg.get("enable_semantic_memory", False)
+    _sm_cross_session = session.planner_cfg.get("enable_cross_session_memory", False)
+    _sm_scopes        = session.planner_cfg.get("cross_session_scopes", ["private"])
+    if _sm_enable and user_id and user_id != "anon":
         try:
             from admin_ui.database import (
                 get_user_teams        as _gut_h,
                 get_user_memory_prefs as _gmp_h,
             )
-            if cross_session_enabled:
+            if _sm_cross_session:
                 _sm_team_ids_h = await _gut_h(user_id)
             _sm_prefs_h = await _gmp_h(user_id)
         except Exception:
             pass
     history = await _apply_semantic_memory(
         history_raw, history, user_input, session_id,
-        enabled=enable_semantic_memory,
+        enabled=_sm_enable,
         user_id=user_id,
         team_ids=_sm_team_ids_h,
-        cross_session_enabled=cross_session_enabled,
-        cross_session_scopes=cross_session_scopes or ["private"],
+        cross_session_enabled=_sm_cross_session,
+        cross_session_scopes=_sm_scopes,
         n_results=0,   # anthropic handler: use template default (passed via caller)
         ttl_hours=0,
         prefer_fresh=_sm_prefs_h.get("prefer_fresh", False),
         share_with_team=_sm_prefs_h.get("share_with_team", False),
     )
 
+    _pcfg = session.planner_cfg
     invoke_state = {
         "input": user_input, "response_id": chat_id,
-        "mode": "agent_orchestrated" if CLAUDE_CODE_MODE == "moe_orchestrated" else "agent",
+        "mode": "agent_orchestrated" if session.mode == "moe_orchestrated" else "agent",
         "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
         "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
         "chat_history": history, "reasoning_trace": "", "system_prompt": system,
         "images": user_images,
-        "user_permissions": user_permissions or {},
-        "user_experts": user_experts or {},
-        "planner_prompt": planner_prompt or "",
-        "judge_prompt":   judge_prompt or "",
-        "judge_model_override":   judge_model_override or "",
-        "judge_url_override":     judge_url_override or "",
-        "judge_token_override":   judge_token_override or "",
-        "planner_model_override": planner_model_override or "",
-        "planner_url_override":   planner_url_override or "",
-        "planner_token_override": planner_token_override or "",
+        "user_permissions": session.user_perms,
+        "user_experts": session.experts,
+        "planner_prompt": _pcfg.get("planner_prompt", ""),
+        "judge_prompt":   _pcfg.get("judge_prompt", ""),
+        "judge_model_override":   _pcfg.get("judge_model_override", ""),
+        "judge_url_override":     _pcfg.get("judge_url_override", ""),
+        "judge_token_override":   _pcfg.get("judge_token_override", ""),
+        "planner_model_override": _pcfg.get("planner_model_override", ""),
+        "planner_url_override":   _pcfg.get("planner_url_override", ""),
+        "planner_token_override": _pcfg.get("planner_token_override", ""),
         "template_name":          body.get("model", "") or "",
         "pending_reports": _cc_pending_reports,
     }
@@ -902,26 +926,47 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
                         "usage": {"input_tokens": 0, "output_tokens": 1}
                     }
                 })
+                # When stream_think: open a thinking block first, stream progress into it,
+                # then close it and open the text block at the next index.
+                _text_block_index = 0
+                if session.stream_think:
+                    _text_block_index = 1
+                    yield _sse_event("content_block_start", {
+                        "type": "content_block_start", "index": 0,
+                        "content_block": {"type": "thinking", "thinking": ""}
+                    })
+                    yield _sse_event("ping", {"type": "ping"})
+
+                    while True:
+                        try:
+                            msg = await asyncio.wait_for(progress_q.get(), timeout=20.0)
+                            if msg is None:
+                                break
+                            if msg:
+                                yield _sse_event("content_block_delta", {
+                                    "type": "content_block_delta", "index": 0,
+                                    "delta": {"type": "thinking_delta", "thinking": f"{msg}\n"}
+                                })
+                        except asyncio.TimeoutError:
+                            yield ": keep-alive\n\n"
+
+                    yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": 0})
+                else:
+                    # Drain progress queue without emitting (pipeline still uses it internally)
+                    while True:
+                        try:
+                            msg = await asyncio.wait_for(progress_q.get(), timeout=20.0)
+                            if msg is None:
+                                break
+                        except asyncio.TimeoutError:
+                            yield ": keep-alive\n\n"
+
                 yield _sse_event("content_block_start", {
-                    "type": "content_block_start", "index": 0,
+                    "type": "content_block_start", "index": _text_block_index,
                     "content_block": {"type": "text", "text": ""}
                 })
-                yield _sse_event("ping", {"type": "ping"})
-
-                # Wait for pipeline end; stream progress messages as text when _CC_STREAM_THINK is set
-                while True:
-                    try:
-                        msg = await asyncio.wait_for(progress_q.get(), timeout=20.0)
-                        if msg is None:
-                            break
-                        if _CC_STREAM_THINK and msg:
-                            think_chunk = f"\n{msg}\n"
-                            yield _sse_event("content_block_delta", {
-                                "type": "content_block_delta", "index": 0,
-                                "delta": {"type": "text_delta", "text": think_chunk}
-                            })
-                    except asyncio.TimeoutError:
-                        yield ": keep-alive\n\n"
+                if not session.stream_think:
+                    yield _sse_event("ping", {"type": "ping"})
 
                 _progress_queue.reset(ctx_token)
 
@@ -945,12 +990,12 @@ async def _anthropic_moe_handler(body: dict, chat_id: str,
 
                 for i in range(0, max(len(content), 1), SSE_CHUNK_SIZE):
                     yield _sse_event("content_block_delta", {
-                        "type": "content_block_delta", "index": 0,
+                        "type": "content_block_delta", "index": _text_block_index,
                         "delta": {"type": "text_delta", "text": content[i:i+SSE_CHUNK_SIZE]}
                     })
                     await asyncio.sleep(0.005)
 
-                yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": 0})
+                yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": _text_block_index})
                 yield _sse_event("message_delta", {
                     "type": "message_delta",
                     "delta": {"stop_reason": "end_turn", "stop_sequence": None},
@@ -1030,105 +1075,17 @@ async def anthropic_messages(request: Request):
         return JSONResponse(status_code=401, content={"error": {
             "message": "Invalid or missing API key", "type": "invalid_request_error", "code": "invalid_api_key"
         }})
-    _user_id      = user_ctx.get("user_id", "anon")
-    _api_key_id   = user_ctx.get("key_id", "")
-    _user_perms   = json.loads(user_ctx.get("permissions_json", "{}"))
-    _user_tmpls_json2   = user_ctx.get("user_templates_json", "{}")
-    _user_conns_json2   = user_ctx.get("user_connections_json", "{}")
-    _user_experts = _resolve_user_experts(user_ctx.get("permissions_json", ""),
-                                           user_templates_json=_user_tmpls_json2,
-                                           user_connections_json=_user_conns_json2) or {}
-    _user_tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""),
-                                                    user_templates_json=_user_tmpls_json2,
-                                                    user_connections_json=_user_conns_json2)
+    _user_id    = user_ctx.get("user_id", "anon")
+    _api_key_id = user_ctx.get("key_id", "")
 
-    # ─── Resolve per-user CC profile ──────────────────────────────────────────
-    # Priority: 1. key-specific profile  2. user default  3. first available
-    _cc_profile_ids = _user_perms.get("cc_profile", [])
-    _user_cc_profiles_json = user_ctx.get("user_cc_profiles_json", "{}")
-    _user_cc_map: dict = {}
-    try:
-        _user_cc_map = json.loads(_user_cc_profiles_json or "{}")
-    except Exception:
-        pass
-    _effective_cc_mode           = CLAUDE_CODE_MODE
-    _effective_tool_model        = CLAUDE_CODE_TOOL_MODEL
-    _effective_tool_endpoint     = CLAUDE_CODE_TOOL_ENDPOINT
-    _effective_tool_url          = _CLAUDE_CODE_TOOL_URL
-    _effective_tool_token        = _CLAUDE_CODE_TOOL_TOKEN
-    _effective_tool_is_user_conn = False
-    _user_cc_profile             = None
-    if _cc_profile_ids:
-        def _resolve_cc_profile(profile_id: str):
-            if not profile_id:
-                return None
-            return (_user_cc_map.get(profile_id)
-                    or next((p for p in _read_cc_profiles() if p.get("id") == profile_id), None))
+    # ─── Resolve per-request CC session (profile, endpoint, template) ─────────
+    _profile_ids = json.loads(user_ctx.get("permissions_json", "") or "{}").get("cc_profile", [])
+    session = _resolve_cc_session(user_ctx, _profile_ids)
 
-        _key_profile_id     = user_ctx.get("key_cc_profile_id", "") or ""
-        _default_profile_id = user_ctx.get("default_cc_profile_id", "") or ""
-        _user_cc_profile = (
-            _resolve_cc_profile(_key_profile_id)
-            or _resolve_cc_profile(_default_profile_id)
-            or next((v for pid in _cc_profile_ids for v in [_user_cc_map.get(pid)] if v), None)
-            or next((p for p in _read_cc_profiles() if p.get("id") in _cc_profile_ids and p.get("enabled", True)), None)
-        )
-        if _user_cc_profile:
-            _effective_cc_mode       = _user_cc_profile.get("moe_mode", CLAUDE_CODE_MODE)
-            _effective_tool_model    = _user_cc_profile.get("tool_model", CLAUDE_CODE_TOOL_MODEL).strip().rstrip("*")
-            _effective_tool_endpoint = _user_cc_profile.get("tool_endpoint", CLAUDE_CODE_TOOL_ENDPOINT)
-            _effective_tool_url      = URL_MAP.get(_effective_tool_endpoint)
-            _effective_tool_token    = TOKEN_MAP.get(_effective_tool_endpoint, "ollama")
-            _effective_tool_is_user_conn = False  # tracks whether tool_url came from a user connection
-            if not _effective_tool_url:
-                # Fallback: resolve tool_endpoint as a user private connection
-                _cc_conns: dict = {}
-                try:
-                    _cc_conns = json.loads(_user_conns_json2 or "{}")
-                except Exception:
-                    pass
-                _uc = _cc_conns.get(_effective_tool_endpoint)
-                if _uc:
-                    _effective_tool_url          = _uc["url"]
-                    _effective_tool_token        = _uc.get("api_key") or "ollama"
-                    _effective_tool_is_user_conn = True
-                else:
-                    _effective_tool_url = _CLAUDE_CODE_TOOL_URL
-            # CC profile can force an expert template (admin_override bypasses permission check)
-            _cc_tmpl_id = _user_cc_profile.get("expert_template_id") or None
-            if _cc_tmpl_id:
-                _resolved_experts = _resolve_user_experts(
-                    user_ctx.get("permissions_json", ""),
-                    override_tmpl_id=_cc_tmpl_id,
-                    user_templates_json=_user_tmpls_json2,
-                    admin_override=True,
-                    user_connections_json=_user_conns_json2,
-                )
-                if _resolved_experts is None:
-                    # Template referenced by CC profile does not exist in this instance
-                    # (e.g. incomplete import). Fall back to the user's regular permissions
-                    # and log a warning — do NOT crash or return an error here.
-                    logger.warning(
-                        "CC profile '%s' references template '%s' which does not exist — "
-                        "falling back to user permissions (key=%s)",
-                        _user_cc_profile.get("name", "?"), _cc_tmpl_id, _api_key_id,
-                    )
-                else:
-                    _user_experts = _resolved_experts
-                    _user_tmpl_prompts = _resolve_template_prompts(
-                        user_ctx.get("permissions_json", ""),
-                        override_tmpl_id=_cc_tmpl_id,
-                        user_templates_json=_user_tmpls_json2,
-                        admin_override=True,
-                        user_connections_json=_user_conns_json2,
-                    )
-
-    # Guard: CC profile IDs were assigned to this key but none resolved — return 422 so
-    # Claude Code does NOT retry (it only retries on 5xx / network errors, not 4xx).
-    if _cc_profile_ids and not _user_cc_profile:
+    if session.profile_not_found:
         logger.warning(
             "CC profile not found for key=%s profiles=%s — returning 422 to suppress retries",
-            _api_key_id, _cc_profile_ids,
+            _api_key_id, _profile_ids,
         )
         return JSONResponse(status_code=422, content={"error": {
             "message": (
@@ -1139,115 +1096,43 @@ async def anthropic_messages(request: Request):
             "code": "cc_profile_not_found",
         }})
 
-    # Extract per-profile overrides for downstream handlers (default to no-op if no profile)
-    _cc_sys_prefix      = (_user_cc_profile.get("system_prompt_prefix") or "").strip() if _user_cc_profile else ""
-    _cc_tool_max_tokens = int(_user_cc_profile.get("tool_max_tokens") or 0)             if _user_cc_profile else 0
-    _cc_reasoning_max   = int(_user_cc_profile.get("reasoning_max_tokens") or 0)        if _user_cc_profile else 0
-    _cc_tool_choice     = (_user_cc_profile.get("tool_choice") or "").strip()           if _user_cc_profile else ""
-
-    # Detect whether request originates from Claude Code / Anthropic SDK
-    is_claude_code = model.startswith("claude-") or model in CLAUDE_CODE_MODELS
-
     has_tool_results = any(
         isinstance(m.get("content"), list)
         and any(b.get("type") == "tool_result" for b in m.get("content", []))
         for m in messages
     )
 
-    # Per-node timeout for the configured tool model (profile override takes precedence)
-    _cc_tool_node_cfg = _server_info(_effective_tool_endpoint)
-    _cc_tool_timeout  = int(_cc_tool_node_cfg.get("timeout", JUDGE_TIMEOUT))
-    if _user_cc_profile and _user_cc_profile.get("tool_timeout"):
-        _cc_tool_timeout = int(_user_cc_profile["tool_timeout"])
-
-    # Live monitoring: register request
+    # Live monitoring
     _cc_moe_mode = (
-        "cc_tool"      if (tools or has_tool_results or _effective_cc_mode == "native") else
-        "cc_reasoning" if _effective_cc_mode == "moe_reasoning" else
+        "cc_tool"      if (tools or has_tool_results or session.mode == "native") else
+        "cc_reasoning" if session.mode == "moe_reasoning" else
         "cc_moe"
     )
-    _cc_req_type   = "streaming" if body.get("stream", False) else "batch"
-    _cc_client_ip  = request.client.host if request.client else ""
-    # Backend model for live monitoring: shows the actual LLM / template in parentheses
-    _cc_backend_model = _effective_tool_model
-    if _cc_moe_mode == "cc_moe":
-        _cc_tmpl_id_for_display = _user_cc_profile.get("expert_template_id") if _user_cc_profile else None
-        if _cc_tmpl_id_for_display:
-            _cc_backend_model = next(
-                (t.get("name", _cc_tmpl_id_for_display) for t in _read_expert_templates()
-                 if t.get("id") == _cc_tmpl_id_for_display),
-                _cc_tmpl_id_for_display
-            )
-        else:
-            _cc_backend_model = "MoE"
+    _cc_backend_model = session.tool_model if _cc_moe_mode != "cc_moe" else "MoE"
     asyncio.create_task(_register_active_request(
         chat_id=chat_id, user_id=_user_id, model=model,
-        moe_mode=_cc_moe_mode, req_type=_cc_req_type, client_ip=_cc_client_ip,
+        moe_mode=_cc_moe_mode, req_type="streaming" if body.get("stream") else "batch",
+        client_ip=request.client.host if request.client else "",
         backend_model=_cc_backend_model,
         api_key_id=_api_key_id,
     ))
 
     try:
-        # Mode 1: Native — pass everything directly to the configured tool model
-        if _effective_cc_mode == "native":
-            return await _anthropic_tool_handler(
-                body, chat_id,
-                tool_model=_effective_tool_model,
-                tool_url=_effective_tool_url,
-                tool_token=_effective_tool_token,
-                tool_timeout=_cc_tool_timeout,
-                tool_node=_effective_tool_endpoint,
-                user_id=_user_id,
-                api_key_id=_api_key_id,
-                session_id=session_id,
-                is_user_conn=_effective_tool_is_user_conn,
-                system_prompt_prefix=_cc_sys_prefix,
-                tool_max_tokens=_cc_tool_max_tokens,
-                tool_choice_override=_cc_tool_choice,
+        # Mode 1: Native or tool/tool_result turns → tool handler (precise function calling)
+        if session.mode == "native" or tools or has_tool_results:
+            _result = await _anthropic_tool_handler(
+                body, chat_id, session, _user_id, _api_key_id, session_id,
             )
-
-        # All modes: tool calls always go to the tool model (precise function calling needed)
-        if tools or has_tool_results:
-            if is_claude_code:
-                _result = await _anthropic_tool_handler(
-                    body, chat_id,
-                    tool_model=_effective_tool_model,
-                    tool_url=_effective_tool_url,
-                    tool_token=_effective_tool_token,
-                    tool_timeout=_cc_tool_timeout,
-                    tool_node=_effective_tool_endpoint,
-                    user_id=_user_id,
-                    api_key_id=_api_key_id,
-                    session_id=session_id,
-                    is_user_conn=_effective_tool_is_user_conn,
-                    system_prompt_prefix=_cc_sys_prefix,
-                    tool_max_tokens=_cc_tool_max_tokens,
-                    tool_choice_override=_cc_tool_choice,
-                )
-            else:
-                _result = await _anthropic_tool_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id)
         # Mode 2: MoE Reasoning — reasoning expert with <think> parsing and thinking blocks
-        elif _effective_cc_mode == "moe_reasoning":
-            _result = await _anthropic_reasoning_handler(body, chat_id, user_id=_user_id, api_key_id=_api_key_id, session_id=session_id, reasoning_max_tokens=_cc_reasoning_max)
+        elif session.mode == "moe_reasoning":
+            _result = await _anthropic_reasoning_handler(
+                body, chat_id, session, _user_id, _api_key_id, session_id,
+            )
         # Mode 3 + fallback: MoE Orchestrated — full planner, all experts
         else:
-            _result = await _anthropic_moe_handler(body, chat_id,
-                                                 user_permissions=_user_perms,
-                                                 user_experts=_user_experts,
-                                                 planner_prompt=_user_tmpl_prompts["planner_prompt"],
-                                                 judge_prompt=_user_tmpl_prompts["judge_prompt"],
-                                                 judge_model_override=_user_tmpl_prompts["judge_model_override"],
-                                                 judge_url_override=_user_tmpl_prompts["judge_url_override"],
-                                                 judge_token_override=_user_tmpl_prompts["judge_token_override"],
-                                                 planner_model_override=_user_tmpl_prompts["planner_model_override"],
-                                                 planner_url_override=_user_tmpl_prompts["planner_url_override"],
-                                                 planner_token_override=_user_tmpl_prompts["planner_token_override"],
-                                                 user_id=_user_id,
-                                                 api_key_id=_api_key_id,
-                                                 session_id=session_id,
-                                                 enable_semantic_memory=_user_tmpl_prompts.get("enable_semantic_memory", False),
-                                                 cross_session_enabled=_user_tmpl_prompts.get("enable_cross_session_memory", False),
-                                                 cross_session_scopes=_user_tmpl_prompts.get("cross_session_scopes", ["private"]))
+            _result = await _anthropic_moe_handler(
+                body, chat_id, session, _user_id, _api_key_id, session_id,
+            )
         return _result
     except Exception as _exc:
         logger.error("Messages-Endpoint unhandled exception (chat_id=%s): %s", chat_id, _exc, exc_info=True)

@@ -439,6 +439,110 @@ async def cleanup_orphans(servers: list[dict], dry_run: bool = False) -> dict:
     return result
 
 
+# ─── Template reference cleanup ──────────────────────────────────────────────
+
+
+async def scan_template_refs() -> dict:
+    """Find CC profiles whose expert_template_id no longer matches any known template.
+
+    Valid IDs come from admin_expert_templates and user_expert_templates.
+    User templates are stored with a bare UUID in the table but referenced
+    as 'user:<id>' from CC profiles — both forms are accepted.
+    """
+    await database.init_db()
+    valid_ids: set[str] = set()
+    stale: list[dict] = []
+
+    async with database._pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id FROM admin_expert_templates")
+            for row in await cur.fetchall():
+                valid_ids.add(row["id"])
+
+            await cur.execute("SELECT id FROM user_expert_templates")
+            for row in await cur.fetchall():
+                valid_ids.add(row["id"])
+                valid_ids.add(f"user:{row['id']}")
+
+            await cur.execute(
+                "SELECT id, user_id, name, config_json FROM user_cc_profiles"
+            )
+            for row in await cur.fetchall():
+                try:
+                    cfg = json.loads(row["config_json"]) if isinstance(row["config_json"], str) else (row["config_json"] or {})
+                    tmpl_id = cfg.get("expert_template_id", "")
+                    if tmpl_id and tmpl_id not in valid_ids:
+                        stale.append({
+                            "profile_id":       row["id"],
+                            "user_id":          row["user_id"],
+                            "profile_name":     row["name"],
+                            "stale_template_id": tmpl_id,
+                        })
+                except Exception:
+                    pass
+
+    return {
+        "valid_template_count": len(valid_ids),
+        "stale_cc_profiles":    stale,
+        "total_stale":          len(stale),
+    }
+
+
+async def cleanup_template_refs(dry_run: bool = False) -> dict:
+    """Clear stale expert_template_id values from CC profiles.
+
+    Sets expert_template_id to '' for each stale profile and invalidates
+    the Redis user-context cache for all affected users so the fix takes
+    effect immediately without a cache-timeout wait.
+    """
+    scan = await scan_template_refs()
+    cleared = 0
+    errors: list[str] = []
+    affected_user_ids: set[str] = {e["user_id"] for e in scan["stale_cc_profiles"]}
+
+    if not dry_run and scan["stale_cc_profiles"]:
+        now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+        async with database._pool.connection() as conn:
+            async with conn.cursor() as cur:
+                for entry in scan["stale_cc_profiles"]:
+                    try:
+                        await cur.execute(
+                            "SELECT config_json FROM user_cc_profiles WHERE id = %s",
+                            (entry["profile_id"],),
+                        )
+                        row = await cur.fetchone()
+                        if not row:
+                            continue
+                        cfg = json.loads(row["config_json"]) if isinstance(row["config_json"], str) else (row["config_json"] or {})
+                        cfg["expert_template_id"] = ""
+                        await cur.execute(
+                            "UPDATE user_cc_profiles SET config_json = %s, updated_at = %s WHERE id = %s",
+                            (json.dumps(cfg, ensure_ascii=False), now, entry["profile_id"]),
+                        )
+                        cleared += 1
+                    except Exception as exc:
+                        errors.append(f"{entry['profile_id']}: {exc}")
+
+        # Invalidate Redis cache for every affected user
+        redis_cli = await _get_redis()
+        if redis_cli:
+            for uid in affected_user_ids:
+                try:
+                    await redis_cli.delete(f"user_ctx:{uid}")
+                except Exception:
+                    pass
+    elif dry_run:
+        cleared = len(scan["stale_cc_profiles"])
+
+    return {
+        "dry_run":            dry_run,
+        "scan":               scan,
+        "cleared_cc_profiles": cleared,
+        "affected_users":     len(affected_user_ids),
+        "errors":             errors,
+    }
+
+
 # ─── Ontology healer trigger ─────────────────────────────────────────────────
 
 

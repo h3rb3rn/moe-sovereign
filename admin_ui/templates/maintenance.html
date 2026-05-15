@@ -164,6 +164,32 @@
     </div>
   </div>
 
+  <!-- Card 2d: Template reference cleanup -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header bg-warning bg-opacity-10">
+        <i class="bi bi-link-45deg me-2"></i><strong>{{ t(request, 'lbl.template_ref_cleanup') }}</strong>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">{{ t(request, 'msg.template_ref_cleanup_desc') }}</p>
+        <div class="d-flex gap-2 mb-3">
+          <button class="btn btn-outline-warning btn-sm" onclick="scanTemplateRefs()">
+            <i class="bi bi-search me-1"></i>{{ t(request, 'btn.template_ref_scan') }}
+          </button>
+          <button class="btn btn-warning btn-sm" id="btn-tmplref-dryrun" disabled onclick="runTemplateRefCleanup(true)">
+            <i class="bi bi-eye me-1"></i>Dry-Run
+          </button>
+          <button class="btn btn-danger btn-sm" id="btn-tmplref-run" disabled onclick="runTemplateRefCleanup(false)">
+            <i class="bi bi-trash me-1"></i>{{ t(request, 'btn.template_ref_cleanup') }}
+          </button>
+        </div>
+        <div id="tmplref-report" class="small" style="max-height:320px;overflow-y:auto">
+          <div class="text-muted text-center py-3">{{ t(request, 'msg.template_ref_click') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Cleanup Manager ──────────────────────────────────────────────── -->
   <div class="col-12">
     <div class="card">
@@ -247,10 +273,14 @@ const _t = {
   jobStarted:            "{{ t(request, 'js.job_started') }}",
   prometheusReloading:   "{{ t(request, 'js.prometheus_reloading') }}",
   prometheusReloaded:    "{{ t(request, 'js.prometheus_reloaded') }}",
-  noStalePermissions:    "{{ t(request, 'js.no_stale_permissions') }}",
-  stalePermissionsFound: "{{ t(request, 'js.stale_permissions_found') }}",
-  confirmPermCleanup:    "{{ t(request, 'js.confirm_perm_cleanup') }}",
-  permCleanupDone:       "{{ t(request, 'js.perm_cleanup_done') }}",
+  noStalePermissions:       "{{ t(request, 'js.no_stale_permissions') }}",
+  stalePermissionsFound:    "{{ t(request, 'js.stale_permissions_found') }}",
+  confirmPermCleanup:       "{{ t(request, 'js.confirm_perm_cleanup') }}",
+  permCleanupDone:          "{{ t(request, 'js.perm_cleanup_done') }}",
+  noStaleTmplRefs:          "{{ t(request, 'js.no_stale_template_refs') }}",
+  staleTmplRefsFound:       "{{ t(request, 'js.stale_template_refs_found') }}",
+  confirmTmplRefCleanup:    "{{ t(request, 'js.confirm_template_ref_cleanup') }}",
+  tmplRefCleanupDone:       "{{ t(request, 'js.template_ref_cleanup_done') }}",
 };
 
 function flash(msg, type='success') {
@@ -878,6 +908,66 @@ async function saveJobConfig(key) {
     await loadCleanupStatus();
   } else {
     flash('Error: ' + (r.detail || JSON.stringify(r)), 'danger');
+  }
+}
+
+// ─── Template reference cleanup ──────────────────────────────────────────────
+
+async function scanTemplateRefs() {
+  const box = document.getElementById('tmplref-report');
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.scanning}</div>`;
+  try {
+    const d = await fetch('/api/maintenance/template-refs/scan').then(r => r.json());
+    const stale = d.stale_cc_profiles || [];
+    document.getElementById('btn-tmplref-dryrun').disabled = stale.length === 0;
+    document.getElementById('btn-tmplref-run').disabled    = stale.length === 0;
+    if (stale.length === 0) {
+      box.innerHTML = `<div class="text-success text-center py-3"><i class="bi bi-check-circle fs-3"></i><br>${_t.noStaleTmplRefs}</div>`;
+      return;
+    }
+    let html = `<div class="alert alert-warning mb-2"><strong>${stale.length} ${_t.staleTmplRefsFound}</strong>
+      <span class="text-muted ms-2 small">(${d.valid_template_count} valid templates)</span></div>`;
+    html += `<table class="table table-sm mb-0"><thead><tr>
+      <th>Profile</th><th>User ID</th><th>Stale Template ID</th>
+    </tr></thead><tbody>`;
+    for (const e of stale) {
+      html += `<tr>
+        <td class="font-monospace" style="font-size:.78rem">${escapeHtml(e.profile_name || e.profile_id)}</td>
+        <td class="font-monospace text-muted" style="font-size:.75rem">${escapeHtml(e.user_id)}</td>
+        <td class="font-monospace text-danger" style="font-size:.75rem">${escapeHtml(e.stale_template_id)}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
+  }
+}
+
+async function runTemplateRefCleanup(dryRun) {
+  const box = document.getElementById('tmplref-report');
+  if (!dryRun && !confirm(_t.confirmTmplRefCleanup)) return;
+  box.innerHTML = `<div class="text-center py-3"><span class="spinner-border spinner-border-sm"></span> ${_t.cleaning}</div>`;
+  try {
+    const d = await fetch('/api/maintenance/template-refs/cleanup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dry_run: dryRun}),
+    }).then(r => r.json());
+    const label = dryRun ? ' (dry-run)' : '';
+    let html = `<div class="alert alert-success"><strong>${_t.tmplRefCleanupDone}${label}:</strong>
+      ${d.cleared_cc_profiles} profile(s) cleared, ${d.affected_users} user cache(s) invalidated.</div>`;
+    if (d.errors && d.errors.length) {
+      html += `<div class="alert alert-warning small"><strong>Errors:</strong><ul class="mb-0">`;
+      for (const e of d.errors) html += `<li>${escapeHtml(e)}</li>`;
+      html += `</ul></div>`;
+    }
+    box.innerHTML = html;
+    if (!dryRun) {
+      document.getElementById('btn-tmplref-dryrun').disabled = true;
+      document.getElementById('btn-tmplref-run').disabled    = true;
+    }
+  } catch (e) {
+    box.innerHTML = `<div class="text-danger">Error: ${e.message}</div>`;
   }
 }
 

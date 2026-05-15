@@ -1052,5 +1052,14 @@
   "js.no_stale_permissions": "No stale permissions found. System clean.",
   "js.stale_permissions_found": "stale permission(s) detected",
   "js.confirm_perm_cleanup": "Delete all stale model_endpoint permissions? This cannot be undone.",
-  "js.perm_cleanup_done": "Deleted permissions"
+  "js.perm_cleanup_done": "Deleted permissions",
+  "lbl.template_ref_cleanup": "Template Reference Cleanup",
+  "msg.template_ref_cleanup_desc": "Scans all CC profiles for stale expert_template_id references that point to non-existent admin or user templates, and clears them.",
+  "btn.template_ref_scan": "Scan references",
+  "btn.template_ref_cleanup": "Clear stale",
+  "msg.template_ref_click": "Click \"Scan references\" to find stale template references.",
+  "js.no_stale_template_refs": "No stale template references found. System clean.",
+  "js.stale_template_refs_found": "stale template reference(s) found",
+  "js.confirm_template_ref_cleanup": "Clear stale expert_template_id entries from CC profiles and invalidate user caches. Proceed?",
+  "js.template_ref_cleanup_done": "Template references cleaned up"
 }
