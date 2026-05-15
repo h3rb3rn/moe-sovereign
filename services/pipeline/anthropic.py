@@ -80,7 +80,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
-from services.skills import _build_skill_catalog
+from services.skills import _build_skill_catalog, _resolve_skill_secure
 from parsing import (
     _anthropic_content_to_text,
     _extract_images,

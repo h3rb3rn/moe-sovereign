@@ -572,11 +572,29 @@ def _anthropic_to_openai_messages(messages: list, system: Optional[str]) -> list
     return result
 
 
+_UNSUPPORTED_SCHEMA_KEYS = frozenset({"propertyNames", "if", "then", "else", "not", "contains", "unevaluatedProperties", "unevaluatedItems"})
+
+
+def _strip_unsupported_schema_keys(schema: object) -> object:
+    """Recursively remove JSON Schema keys unsupported by llama.cpp grammar parsers."""
+    if isinstance(schema, list):
+        return [_strip_unsupported_schema_keys(i) for i in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        k: _strip_unsupported_schema_keys(v)
+        for k, v in schema.items()
+        if k not in _UNSUPPORTED_SCHEMA_KEYS
+    }
+
+
 def _anthropic_tools_to_openai(tools: list) -> list:
     """Convert Anthropic tool schemas → OpenAI function calling format.
 
     The only difference is the key name: Anthropic uses 'input_schema',
-    OpenAI uses 'parameters'. The schema content is identical.
+    OpenAI uses 'parameters'. The schema content is identical, except
+    that JSON Schema keys unsupported by llama.cpp grammar parsers
+    (e.g. propertyNames) are stripped to avoid HTTP 400 errors.
 
     Args:
         tools: List of Anthropic tool definition dicts.
@@ -590,7 +608,9 @@ def _anthropic_tools_to_openai(tools: list) -> list:
             "function": {
                 "name": t["name"],
                 "description": t.get("description", ""),
-                "parameters": t.get("input_schema", {"type": "object", "properties": {}})
+                "parameters": _strip_unsupported_schema_keys(
+                    t.get("input_schema", {"type": "object", "properties": {}})
+                )
             }
         }
         for t in tools
