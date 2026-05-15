@@ -5747,10 +5747,13 @@ async def user_api_import_cc_profiles(
         if mode == "merge" and name in existing_names:
             skipped += 1
             continue
-        cfg = item.get("config") or {}
+        # Support both user-export format (nested "config" key) and
+        # admin-export / hand-crafted format (flat top-level fields).
+        cfg = item.get("config") or item
         tool_endpoint = (cfg.get("tool_endpoint") or "").strip()
         if tool_endpoint and tool_endpoint not in permitted_names:
-            tool_endpoint = ""  # Nicht erlaubten Server stillschweigend entfernen
+            tool_endpoint = ""  # silently drop disallowed server
+        _tt = cfg.get("tool_timeout")
         config = {
             "tool_model":           (cfg.get("tool_model") or "").strip(),
             "tool_endpoint":        tool_endpoint,
@@ -5760,6 +5763,8 @@ async def user_api_import_cc_profiles(
             "tool_max_tokens":      int(cfg.get("tool_max_tokens") or 8192),
             "reasoning_max_tokens": int(cfg.get("reasoning_max_tokens") or 16384),
             "tool_choice":          cfg.get("tool_choice", "auto"),
+            "expert_template_id":   (cfg.get("expert_template_id") or "").strip(),
+            "tool_timeout":         int(_tt) if _tt else None,
         }
         profile = await db.create_user_cc_profile(user_id, name, config)
         await db.grant_permission(user_id, "cc_profile", profile["id"])

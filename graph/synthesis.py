@@ -407,6 +407,9 @@ async def merger_node(state_: AgentState):
 
     _custom_judge = (state_.get("judge_prompt") or "").strip()
     merger_prefix = _custom_judge if _custom_judge else mode_cfg["merger_prefix"]
+    _behavioral = (state_.get("behavioral_directives") or "").strip()
+    if _behavioral:
+        merger_prefix = f"MANDATORY RESPONSE DIRECTIVES (override all other instructions):\n{_behavioral}\n\n{merger_prefix}"
     _has_graph_ctx = bool(graph_ctx and graph_ctx.strip())
     prompt = (
         merger_prefix

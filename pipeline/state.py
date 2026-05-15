@@ -35,6 +35,7 @@ class AgentState(TypedDict):
     user_id: str                        # Authenticated user identifier, or "anon"
     api_key_id: str                     # API key ID written to usage_log
     system_prompt: str                  # System message from client (e.g. coding-agent file context)
+    behavioral_directives: str          # CC profile system_prefix — injected as mandatory instructions into all nodes
     template_name: str                  # User-facing template name; empty for native/mode requests
     user_permissions: dict              # Deserialized permissions_json from Valkey
     user_experts: dict                  # Per-template expert config resolved from template

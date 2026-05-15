@@ -671,6 +671,12 @@ async def _anthropic_reasoning_handler(
             return StreamingResponse(_empty(), media_type="text/event-stream")
         return empty_resp
 
+    # Apply system_prompt_prefix from CC profile (same logic as _anthropic_tool_handler)
+    if session.system_prefix and system:
+        system = f"{session.system_prefix}\n\n{system}"
+    elif session.system_prefix:
+        system = session.system_prefix
+
     oai_messages = _anthropic_to_openai_messages(messages, system)
 
     # Determine model/node — explicit override takes precedence over dynamic selection
@@ -877,6 +883,7 @@ async def _anthropic_moe_handler(
         "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
         "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
         "chat_history": history, "reasoning_trace": "", "system_prompt": system,
+        "behavioral_directives": session.system_prefix,
         "images": user_images,
         "user_permissions": session.user_perms,
         "user_experts": session.experts,
