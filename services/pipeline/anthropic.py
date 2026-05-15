@@ -80,7 +80,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
-from services.skills import _build_skill_catalog
+from services.skills import _build_skill_catalog, _resolve_skill_secure
 from parsing import (
     _anthropic_content_to_text,
     _extract_images,
@@ -230,7 +230,16 @@ async def _anthropic_tool_handler(body: dict, chat_id: str, tool_model: Optional
     """
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
-    system     = body.get("system") or ""
+    # Claude Code sends system as a list of Anthropic content blocks (with cache_control).
+    # Normalize to plain string before converting to OpenAI format.
+    _system_raw = body.get("system") or ""
+    if isinstance(_system_raw, list):
+        system = "\n".join(
+            b.get("text", "") for b in _system_raw
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    else:
+        system = _system_raw
     # Prepend system-prompt prefix: parameter takes precedence over module-level fallback
     _eff_sys_prefix = system_prompt_prefix or _CC_SYSTEM_PREFIX
     if _eff_sys_prefix and system:
