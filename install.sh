@@ -414,12 +414,9 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       2>/dev/null || true
 
     _upd_chown() {
-      local uid="$1" gid="$2"; shift 2
-      if [[ "${_upd_rt[0]}" == podman* ]]; then
-        podman unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
-      else
-        _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null || true
-      fi
+      # Delegate to _chown_for_container so the sudo fallback uses correctly
+      # remapped host UIDs under rootless Podman (subuid offset applied).
+      _chown_for_container "$@"
     }
     _upd_chown 1000 1000   "${_upd_data}/kafka-data"
     # postgres:17-alpine runs as UID 70 internally. With rootless Podman, container
@@ -490,6 +487,22 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       done
       echo "  Volume permissions reset for rootless Podman ✓"
     fi
+
+    # Remove stale Neo4j Java file locks that survive a crashed JVM.
+    # The JVM holds store_lock / database_lock as OS-level file locks; if the
+    # process is killed (OOM, SIGKILL) without a clean shutdown these files are
+    # left on disk and prevent Neo4j from starting with "Lock file locked by
+    # another process". Safe to remove when the container is confirmed stopped.
+    for _neo4j_lock in \
+        "${_upd_data}/neo4j-data/databases/store_lock" \
+        "${_upd_data}/neo4j-data/databases/neo4j/database_lock" \
+        "${_upd_data}/neo4j-data/databases/system/database_lock" \
+        "${_upd_data}/neo4j-data/databases/neo4j/neostore" ; do
+      if [[ -f "$_neo4j_lock" ]]; then
+        _sudo rm -f "$_neo4j_lock" 2>/dev/null || true
+        echo "  [cleanup] stale neo4j lock removed: $(basename "$_neo4j_lock") ✓"
+      fi
+    done
 
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
       sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
@@ -1526,7 +1539,27 @@ CADDY
       echo "[6/9] Caddyfile: localhost stub written (no domain configured) ✓"
     fi
   else
-    echo "[6/9] Caddyfile already exists — skipping ✓"
+    # Migrate: older installs used the host-bridge IP (10.89.x.x:8002) instead
+    # of the container-DNS name.  That address belongs to the podman1 bridge —
+    # a different Podman network from the compose-internal one — so requests
+    # routed to it silently fail or time out.  Patch in-place using Python to
+    # avoid breaking the bind-mount (sed -i replaces the file inode, which
+    # would unmount the volume inside the running Caddy container).
+    if grep -qE '10\.[0-9]+\.[0-9]+\.[0-9]+:8002' "${CADDYFILE}" 2>/dev/null; then
+      python3 - "${CADDYFILE}" <<'PYEOF'
+import sys, re
+path = sys.argv[1]
+with open(path) as f:
+    c = f.read()
+c = re.sub(r'reverse_proxy\s+10\.\d+\.\d+\.\d+:8002',
+           'reverse_proxy langgraph-orchestrator:8000', c)
+with open(path, 'w') as f:
+    f.write(c)
+PYEOF
+      echo "[6/9] Caddyfile migrated: host-bridge IP → container-DNS ✓"
+    else
+      echo "[6/9] Caddyfile already exists — skipping ✓"
+    fi
   fi
 else
   echo "[6/9] Caddy skipped — configure your existing proxy manually ✓"
