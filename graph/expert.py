@@ -153,6 +153,10 @@ async def expert_worker(state_: AgentState):
                 + mode_cfg["expert_suffix"]
                 + _conf_format_for_mode(mode)
             )
+            # CC profile behavioral directives are prepended as highest-priority instructions
+            _behavioral = (state_.get("behavioral_directives") or "").strip()
+            if _behavioral:
+                sys_prompt = f"MANDATORY RESPONSE DIRECTIVES (override all other instructions):\n{_behavioral}\n\n" + sys_prompt
             # Agent mode: embed file/code context from the client's system message
             agent_ctx = state_.get("system_prompt", "")
             if agent_ctx and mode in ("agent", "agent_orchestrated"):
