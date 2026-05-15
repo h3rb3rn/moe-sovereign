@@ -275,15 +275,35 @@ async def fetch_openai_max_output(model: str, base_url: str, token: str,
 
 async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
                                timeout: float = 5.0) -> int:
-    """Query Ollama /api/show for a model's num_ctx parameter.
+    """Query Ollama for a model's effective context window.
 
-    Returns the context window in tokens, or 0 if unavailable (server
-    unreachable, model not found, num_ctx not in parameters).
+    Strategy (in priority order):
+    1. /api/ps  — context_window field of a running model. This reflects the
+       actual allocation set by OLLAMA_CONTEXT_LENGTH or per-model num_ctx.
+    2. /api/show parameters — explicit num_ctx in the modelfile.
+    Returns 0 if unavailable.
     """
     try:
         import httpx
         api_base = base_url.rstrip("/").removesuffix("/v1")
         async with httpx.AsyncClient(timeout=timeout) as client:
+            # 1. Check /api/ps — gives the real allocated context for running models
+            try:
+                ps_resp = await client.get(
+                    f"{api_base}/api/ps",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                if ps_resp.status_code == 200:
+                    for entry in ps_resp.json().get("models", []):
+                        entry_name = entry.get("name") or entry.get("model") or ""
+                        if entry_name == model or entry_name.split(":")[0] == model.split(":")[0]:
+                            ctx = entry.get("context_window") or entry.get("context_length")
+                            if ctx and int(ctx) > 0:
+                                return int(ctx)
+            except Exception:
+                pass
+
+            # 2. /api/show parameters — explicit num_ctx in the modelfile
             resp = await client.post(
                 f"{api_base}/api/show",
                 json={"model": model},
