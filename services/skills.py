@@ -277,7 +277,12 @@ async def _resolve_skill_secure(
     admin_approved=TRUE in skill_registry. All attempts are written to
     skill_audit_log for compliance auditing.
     """
-    if not text or not text.startswith("/"):
+    if not text:
+        return text
+    # Normalise API-safe escape prefix $$/skill → /skill before the guard check
+    if text.startswith("$$/"):
+        text = text[2:]
+    if not text.startswith("/"):
         return text
     m = re.match(r"^/([a-zA-Z0-9][a-zA-Z0-9\-]*)(?:[ \t]+(.*))?$", text, re.DOTALL)
     if not m:
