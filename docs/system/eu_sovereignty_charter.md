@@ -132,6 +132,8 @@ table.
 
 ## 5. Comparison to closed alternatives
 
+> **Scope of this comparison:** The table below addresses *sovereignty and regulatory compliance properties* only — data jurisdiction, auditability, and vendor dependency. It does not compare feature breadth, product maturity, or enterprise support, where Palantir Technologies — with thousands of engineers and decades of development — remains far ahead of any open-source project. See the [Palantir Comparison](palantir_comparison.md) page for an architectural assessment.
+
 | Concern | MoE Sovereign | Palantir Foundry/AIP | US-Cloud LLM APIs |
 |---|---|---|---|
 | Data leaves EU jurisdiction | ❌ never (operator choice) | 🟡 depends on contract | ✅ always |
@@ -154,7 +156,7 @@ operators actually adopt sovereign AI:
 |---|---|---|
 | **moe-sovereign** | Core: API gateway, multi-model routing, caching, GraphRAG basis, 15 expert specialists | Everyone running sovereign LLM infrastructure |
 | **moe-libris** | Federation hub: knowledge-bundle exchange between sovereign instances | Consortia / federated research networks |
-| **moe-codex** | EU-Palantir-equivalent: data catalog, approval workflow, lineage, versioning, investigation, drift detection | Compliance-driven deployments (authorities, KritIS, pharma audit, banks) |
+| **moe-codex** | Foundry-inspired data platform: catalog, approval workflow, lineage, versioning, investigation, drift detection — architecturally related to Palantir-class platforms, not a current drop-in replacement | Compliance-driven deployments (authorities, KritIS, pharma audit, banks) |
 
 The core (`moe-sovereign`) is the **broad-market product**. `moe-codex`
 is **opt-in** — only deployed where Foundry-/Gotham-equivalent

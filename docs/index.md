@@ -57,14 +57,16 @@ advantages without requiring any single model to be large enough to cover all do
 
 ## What's New (May 2026)
 
-### EU-Palantir-Alternative: MoE Codex
+### MoE Codex — Compliance-Grade Data Intelligence
 
 Catalog, Approval Workflow, Explorer, Drift Detection, OpenLineage, lakeFS Versioning,
 NiFi ETL, and Notebook (JupyterLite) have moved to the dedicated **[moe-codex](https://github.com/h3rb3rn/moe-codex)**
 repository — the compliance-grade data intelligence platform for regulated industries.
 
 Deploy moe-sovereign for sovereign LLM infrastructure. Add moe-codex for
-Foundry/Gotham-equivalent data governance. See the [Palantir Comparison](system/palantir_comparison.md) page.
+Foundry-inspired data governance features (catalog, lineage, approval workflows).
+See the [Palantir Comparison](system/palantir_comparison.md) page for an honest assessment
+of where the architectures converge and where the gap remains.
 
 → [Full changelog entry for 2026-05-10](changelog.md)
 
