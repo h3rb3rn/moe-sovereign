@@ -80,12 +80,13 @@ TIMEOUT_BY_LEVEL: dict[int, int] = {
 }
 QUESTION_TIMEOUT = _global_timeout  # kept for backwards-compat check below
 
-# MinIO — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
+# MinIO / Garage S3 — upload GAIA attachments so the orchestrator can fetch them via parse_attachment
 MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT", "")
 MINIO_USER       = os.environ.get("MINIO_ROOT_USER", "")
 MINIO_PASSWORD   = os.environ.get("MINIO_ROOT_PASSWORD", "")
 MINIO_PUBLIC_URL = os.environ.get("MINIO_PUBLIC_URL", "").rstrip("/")
 MINIO_BUCKET     = os.environ.get("MINIO_DEFAULT_BUCKET", "moe-files")
+MINIO_REGION     = os.environ.get("MINIO_REGION", "")
 MINIO_ENABLED    = bool(MINIO_ENDPOINT and MINIO_USER and MINIO_PASSWORD)
 
 RESULTS_DIR     = pathlib.Path(__file__).parent / "results"
@@ -587,7 +588,10 @@ def _upload_to_minio(path: pathlib.Path, object_name: str) -> str | None:
     try:
         from datetime import timedelta
         from minio import Minio
-        mc = Minio(MINIO_ENDPOINT, access_key=MINIO_USER, secret_key=MINIO_PASSWORD, secure=False)
+        _mc_kwargs = {"access_key": MINIO_USER, "secret_key": MINIO_PASSWORD, "secure": False}
+        if MINIO_REGION:
+            _mc_kwargs["region"] = MINIO_REGION
+        mc = Minio(MINIO_ENDPOINT, **_mc_kwargs)
         if not mc.bucket_exists(MINIO_BUCKET):
             mc.make_bucket(MINIO_BUCKET)
         mc.fput_object(MINIO_BUCKET, object_name, str(path))

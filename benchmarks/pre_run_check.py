@@ -240,7 +240,11 @@ def check_minio() -> bool:
             bucket = os.environ.get("MINIO_DEFAULT_BUCKET", "moe-files")
             try:
                 from minio import Minio
-                mc = Minio(endpoint, access_key=user, secret_key=password, secure=(proto == "https"))
+                _region = os.environ.get("MINIO_REGION", "")
+                _kw = {"access_key": user, "secret_key": password, "secure": (proto == "https")}
+                if _region:
+                    _kw["region"] = _region
+                mc = Minio(endpoint, **_kw)
                 exists = mc.bucket_exists(bucket)
                 return check("MinIO credentials", True, f"bucket '{bucket}' {'exists' if exists else 'not found (ok)'}")
             except Exception as _ce:
@@ -286,7 +290,7 @@ async def check_e2e() -> bool:
         return True
     try:
         t0 = time.time()
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             r = await client.post(
                 f"{API_BASE}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {API_KEY}"},

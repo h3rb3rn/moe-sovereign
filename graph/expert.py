@@ -185,21 +185,40 @@ async def expert_worker(state_: AgentState):
             )
             # Derive per-expert output and input limits from context window
             _expert_max_output = MAX_EXPERT_OUTPUT_CHARS
+            _max_input_chars = 0
             if _expert_ctx_window > 0:
                 # Reserve 25% of window for output, capped at global MAX_EXPERT_OUTPUT_CHARS
                 _expert_max_output = min(MAX_EXPERT_OUTPUT_CHARS, max(1000, _expert_ctx_window // 4))
-                # Truncate task_text if sys_prompt + task would overflow the context
-                _max_input_chars = max(2000, _expert_ctx_window * 3)  # 3 chars/token estimate
+                # 3 chars/token conservative estimate for mixed content
+                _max_input_chars = max(2000, _expert_ctx_window * 3)
                 _available_task_chars = _max_input_chars - len(sys_prompt)
                 if len(task_text) > _available_task_chars > 0:
                     task_text = task_text[:_available_task_chars] + "\n[…truncated for context window]"
+
+            # Context-aware history trimming: keep as much history as fits within the
+            # model's actual context window after system prompt and task are accounted for.
+            # This prevents context flooding without hardcoding a static character limit.
+            _local_history: List[Dict] = list(chat_history)
+            if _max_input_chars > 0 and _local_history:
+                _hist_budget = max(0, _max_input_chars - len(sys_prompt) - len(task_text))
+                _hist_total = sum(len(str(m.get("content", ""))) for m in _local_history)
+                if _hist_total > _hist_budget > 0:
+                    _local_history = _truncate_history(
+                        _local_history,
+                        max_turns=-1,
+                        max_chars=_hist_budget,
+                    )
+                    logger.info(
+                        f"🗜️ Expert [{cat}] history trimmed: {_hist_total} → {_hist_budget} chars "
+                        f"(ctx={_expert_ctx_window//1024}K)"
+                    )
 
             logger.info(f"🚀 Expert {t_idx}.{e_idx} GPU#{gpu} [{model_name} / {cat}]")
 
             # Build messages list: system + history + user turn (with optional image blocks)
             messages: List[Dict] = [{"role": "system", "content": sys_prompt}]
-            if chat_history:
-                messages.extend(chat_history)
+            if _local_history:
+                messages.extend(_local_history)
 
             # Attach images as multimodal content when present (OpenAI image_url format).
             expert_images = state_.get("images") or []
