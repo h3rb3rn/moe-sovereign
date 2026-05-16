@@ -98,8 +98,8 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
     # ── Local fallback models ─────────────────────────────────────────────────
-    "qwen3.6:35b":              32_768,
-    "qwen3.6":                  32_768,
+    "qwen3.6:35b":             262_144,   # native model_info.context_length
+    "qwen3.6":                 262_144,
     "gemma4:31b":                8_192,
     "gemma4:12b":                8_192,
     "gemma4":                    8_192,
@@ -303,7 +303,7 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
             except Exception:
                 pass
 
-            # 2. /api/show parameters — explicit num_ctx in the modelfile
+            # 2. /api/show — explicit num_ctx in parameters OR native context_length in model_info
             resp = await client.post(
                 f"{api_base}/api/show",
                 json={"model": model},
@@ -318,6 +318,13 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
                 m = re.match(r"^\s*num_ctx\s+(\d+)", line, re.IGNORECASE)
                 if m:
                     return int(m.group(1))
+            # 3. model_info — native context_length from the GGUF metadata
+            # Covers models without explicit num_ctx in their Modelfile (e.g. qwen3.6:35b).
+            # Field names vary by architecture; scan all keys ending in "context_length".
+            model_info = data.get("model_info") or {}
+            for key, val in model_info.items():
+                if key.endswith("context_length") and isinstance(val, int) and val > 0:
+                    return val
     except Exception:
         pass
     return 0
