@@ -75,9 +75,34 @@ Navigate to **CC Profile** in the admin navigation. Each profile has:
 | `tool_model` | LLM for tool execution (e.g., `gemma4:31b`) |
 | `tool_endpoint` | Inference server node (e.g., `N04-RTX`) |
 | `expert_template_id` | Expert template for orchestrated mode (optional) |
-| `tool_max_tokens` | Max output tokens for tool calls |
-| `reasoning_max_tokens` | Max tokens for thinking blocks |
+| `tool_max_tokens` | Max output tokens for tool calls — see note below |
+| `reasoning_max_tokens` | Max tokens for thinking blocks — see note below |
 | `tool_choice` | `auto`, `required`, or `any` |
+
+#### `tool_max_tokens` and `reasoning_max_tokens` — Template is the Source of Truth
+
+!!! warning "Profile values must not exceed the template's `context_window`"
+    When a profile references an expert template via `expert_template_id`, the template's
+    `context_window` per expert category is the **authoritative upper bound**.
+
+    Setting `tool_max_tokens: 65536` in the profile while the template defines
+    `context_window: 32768` is a misconfiguration: the orchestrator will silently cap the
+    value and log a warning — but Claude Code never learns that its advertised token budget
+    is wrong. The session appears to work, but responses are shorter than expected with no
+    explanation.
+
+    **Rule:** Set `tool_max_tokens` ≤ template `context_window`. When you change the
+    hardware or switch to a model with a different context window, update the
+    **template first**, then align the profile.
+
+    ```
+    Template context_window: 32768   ← source of truth (set in Admin UI → Expert Templates)
+    Profile tool_max_tokens: 32768   ← must be ≤ template value
+    Profile reasoning_max_tokens: 32768
+    ```
+
+    The orchestrator validates this at session build time (Phase 6 of CC session resolution)
+    and logs a `WARNING` with a fix hint if the values diverge.
 
 ### User Portal
 
@@ -171,6 +196,37 @@ Pre-configured profile JSONs are available for download:
 - [`cc-ref-orchestrated.json`](https://github.com/h3rb3rn/moe-sovereign/blob/main/configs/cc_profiles/downloads/cc-ref-orchestrated.json) — Full Pipeline
 
 Replace `<YOUR_OLLAMA_HOST>` and `<YOUR_TEMPLATE_ID>` with your actual values.
+
+## Conversation History Compression
+
+Long MoE synthesis responses in the conversation history can fill the tool model's
+context window over many turns. The orchestrator compresses older assistant and tool
+messages automatically before sending the history to the tool LLM.
+
+### How It Works
+
+1. After converting the incoming message history to OpenAI format, assistant and tool
+   messages older than **`CC_HISTORY_COMPRESS_KEEP_TURNS`** turns are inspected.
+2. Messages exceeding **`CC_HISTORY_COMPRESS_THRESHOLD`** characters are condensed:
+   the first 800 chars and last 200 chars are kept; the middle is replaced with
+   `[…N chars — condensed for context window]`.
+3. The **full original content** is cached in Redis under
+   `cc:hist:<session_id>:<sha1[:12]>` with a 1-hour TTL — no data is permanently lost.
+4. The existing `_trim_oai_to_budget()` then operates on the already-compressed history,
+   so it needs to drop far fewer complete turns.
+
+### Configuration (`.env`)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CC_HISTORY_COMPRESS_THRESHOLD` | `3000` | Chars above which a message is compressed |
+| `CC_HISTORY_COMPRESS_KEEP_TURNS` | `2` | Most recent N turns are never compressed |
+
+Increase `CC_HISTORY_COMPRESS_THRESHOLD` for models with large context windows where
+you want to retain more verbatim history. Decrease it if the tool model runs out of
+context quickly.
+
+---
 
 ## API Compatibility
 

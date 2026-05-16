@@ -168,6 +168,12 @@ HISTORY_MAX_TURNS   = int(os.getenv("HISTORY_MAX_TURNS",   "4"))
 HISTORY_MAX_CHARS   = int(os.getenv("HISTORY_MAX_CHARS",   "3000"))
 HISTORY_MAX_ENTRIES = int(os.getenv("HISTORY_MAX_ENTRIES", "5000"))
 
+# CC history compression: long assistant/tool messages in the conversation history
+# are condensed and their full content cached in Redis (TTL 3600 s) to prevent
+# context flooding without dropping entire turns.
+CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD",  "3000"))
+CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "2"))
+
 # =============================================================================
 # Timeouts & LLM call limits
 # =============================================================================

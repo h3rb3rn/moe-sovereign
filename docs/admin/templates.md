@@ -42,7 +42,26 @@ Each template is displayed as a card with:
    - **LLM@Node**: Model and inference server (format: `model:tag@server`)
    - **Required**: Model must be available; if missing, the request fails
    - **Optional (Two-Tier)**: Used only if the required model does not respond
-3. Optional: enable and edit a **system prompt** for this category
+3. Optional: set a **Context Window** override for this category (see below)
+4. Optional: enable and edit a **system prompt** for this category
+
+#### `context_window` — Source of Truth for Token Limits
+
+Each expert category can specify a `context_window` value (in tokens). This field is the
+**authoritative upper bound** for token limits in the entire pipeline:
+
+- It overrides the value reported by the Ollama API (useful when the model is loaded with
+  a non-default `OLLAMA_CONTEXT_LENGTH` or when the API reports an incorrect value).
+- It is used to derive the **per-expert output cap**: `min(MAX_EXPERT_OUTPUT_CHARS, ctx // 4)`.
+- At CC session build time, the orchestrator validates that a CC profile's `tool_max_tokens`
+  and `reasoning_max_tokens` do not exceed the minimum `context_window` across all experts
+  in the linked template. If they do, a `WARNING` is logged and the values are capped.
+
+!!! tip "Always set `context_window` to match `OLLAMA_CONTEXT_LENGTH` on the target node"
+    If you change `OLLAMA_CONTEXT_LENGTH` on an inference node (e.g., from 16384 to 32768),
+    update the template's `context_window` first. The CC profile's `tool_max_tokens` should
+    then be updated to match. This keeps the configuration consistent from the template
+    (source of truth) down to the profile (client-visible token budget).
 
 **Orchestration prompts** (optional):
 

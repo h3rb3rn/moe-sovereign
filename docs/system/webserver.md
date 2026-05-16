@@ -58,6 +58,103 @@ graph TD
 | `logs.example.com` | `http://localhost:9999` | `moe-dozzle` |
 
 The exact URLs are configured in the Admin UI under **Configuration → Public URLs**.
+
+---
+
+### Critical Nginx Configuration for LLM API Endpoints
+
+!!! danger "504 Gateway Timeout without these settings"
+    Nginx's default `proxy_read_timeout` is **60 seconds**. LLM inference — especially
+    orchestrated pipelines with Planner → Experts → Judge — regularly takes 2–10 minutes
+    on local hardware. Without extended timeouts, Claude Code and all API clients will
+    receive a 504 error mid-request, even though the orchestrator timeout (`EXPERT_TIMEOUT`,
+    `JUDGE_TIMEOUT`) is set to 3600 s.
+
+    Additionally, `proxy_buffering off` is required for SSE streaming. Without it, Nginx
+    accumulates the entire streamed response internally and only delivers it when the
+    upstream closes the connection — the client sees silence and triggers its own timeout
+    before `proxy_read_timeout` even fires.
+
+The `api.example.com` virtual host **must** include these directives in the `location /` block:
+
+```nginx
+server {
+    server_name api.example.com;
+
+    access_log /var/log/nginx/moe-api-access.log;
+    error_log  /var/log/nginx/moe-api-error.log;
+
+    client_max_body_size 512m;
+
+    location / {
+        proxy_pass         http://localhost:8002;
+        proxy_http_version 1.1;
+
+        # Required for WebSocket / SSE upgrade
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Standard forwarding headers
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # -------------------------------------------------------
+        # LLM timeouts — must be ≥ EXPERT_TIMEOUT / JUDGE_TIMEOUT
+        # in the orchestrator .env (default 3600 s).
+        # -------------------------------------------------------
+        proxy_connect_timeout    75s;
+        proxy_read_timeout       3600s;
+        proxy_send_timeout       3600s;
+
+        # -------------------------------------------------------
+        # SSE / streaming — disable buffering so Claude Code and
+        # other clients receive chunks as they are generated.
+        # Without this, Nginx holds the full response in memory
+        # and the client times out before seeing any output.
+        # -------------------------------------------------------
+        proxy_buffering           off;
+        proxy_cache               off;
+        chunked_transfer_encoding on;
+    }
+
+    listen 443 ssl;
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    include             /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+server {
+    if ($host = api.example.com) {
+        return 301 https://$host$request_uri;
+    }
+    server_name api.example.com;
+    listen 80;
+    return 404;
+}
+```
+
+After editing the vhost, always validate and reload:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+#### Timeout Interaction
+
+The effective timeout chain from client to GPU is:
+
+```
+Claude Code (SDK timeout)
+  └── Nginx proxy_read_timeout (3600 s)
+        └── langgraph-orchestrator EXPERT_TIMEOUT / JUDGE_TIMEOUT (3600 s)
+              └── Ollama inference on GPU node
+```
+
+All layers must be configured consistently. Setting `EXPERT_TIMEOUT=3600` in the
+orchestrator `.env` has no effect if Nginx cuts the connection after 60 s first.
 The `LOG_URL` and `PROMETHEUS_URL_PUBLIC` fields store the external URLs for the
 log viewer and Prometheus — these are informational links used in the Admin UI dashboard.
 
