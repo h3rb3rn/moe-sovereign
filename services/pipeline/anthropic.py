@@ -31,6 +31,7 @@ from config import (
     CACHE_MIN_RESPONSE_LEN, ROUTE_THRESHOLD, ROUTE_GAP,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
+    CC_HISTORY_COMPRESS_THRESHOLD, CC_HISTORY_COMPRESS_KEEP_TURNS,
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
     TOOL_MAX_TOKENS, REASONING_MAX_TOKENS,
     PLANNER_RETRIES, PLANNER_MAX_TASKS, SSE_CHUNK_SIZE,
@@ -133,6 +134,67 @@ def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
         dropped = True
 
     return sys_msgs + [m for g in kept_groups for m in g], dropped
+
+
+import hashlib as _hashlib
+
+
+async def _compress_history_responses(
+    oai_msgs: list,
+    redis_client,
+    session_id: str | None,
+    *,
+    threshold: int,
+    keep_turns: int,
+) -> list:
+    """Condense long assistant/tool messages in history and cache originals in Redis.
+
+    Messages older than the last keep_turns turns are compressed when their content
+    exceeds threshold chars. The full content is stored in Redis (TTL 3600 s) under
+    cc:hist:<session_id>:<sha1[:12]> so it can be retrieved if needed. The last
+    keep_turns * 2 non-system messages are always left untouched to preserve
+    immediate context.
+    """
+    if not oai_msgs or threshold <= 0:
+        return oai_msgs
+
+    non_sys = [i for i, m in enumerate(oai_msgs) if m.get("role") != "system"]
+    protected = set(non_sys[-(keep_turns * 2):]) if non_sys else set()
+
+    result: list = []
+    compressed_count = 0
+    for idx, msg in enumerate(oai_msgs):
+        role = msg.get("role", "")
+        if idx in protected or role in ("system", "user"):
+            result.append(msg)
+            continue
+
+        content = msg.get("content")
+        if not isinstance(content, str) or len(content) <= threshold:
+            result.append(msg)
+            continue
+
+        orig_len = len(content)
+        if redis_client and session_id:
+            key = f"cc:hist:{session_id}:{_hashlib.sha1(content.encode()).hexdigest()[:12]}"
+            try:
+                await redis_client.set(key, content, ex=3600)
+            except Exception:
+                pass
+
+        head = content[:800]
+        tail = content[-200:] if orig_len > 1000 else ""
+        sep  = f"\n[…{orig_len} chars — condensed for context window]\n"
+        result.append({**msg, "content": f"{head}{sep}{tail}" if tail else f"{head}{sep}"})
+        compressed_count += 1
+
+    if compressed_count:
+        logger.info(
+            "cc_hist: compressed %d history message(s) above %d chars (session=%s)",
+            compressed_count, threshold, session_id or "none",
+        )
+    return result
+
 
 # ============================================================
 #  ANTHROPIC MESSAGES API  (/v1/messages)
@@ -265,6 +327,11 @@ async def _anthropic_tool_handler(
     )
 
     oai_messages = _anthropic_to_openai_messages(messages, system)
+    oai_messages = await _compress_history_responses(
+        oai_messages, state.redis_client, session_id,
+        threshold=CC_HISTORY_COMPRESS_THRESHOLD,
+        keep_turns=CC_HISTORY_COMPRESS_KEEP_TURNS,
+    )
     oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
     effective_model = session.tool_model or JUDGE_MODEL
@@ -678,6 +745,11 @@ async def _anthropic_reasoning_handler(
         system = session.system_prefix
 
     oai_messages = _anthropic_to_openai_messages(messages, system)
+    oai_messages = await _compress_history_responses(
+        oai_messages, state.redis_client, session_id,
+        threshold=CC_HISTORY_COMPRESS_THRESHOLD,
+        keep_turns=CC_HISTORY_COMPRESS_KEEP_TURNS,
+    )
 
     # Determine model/node — explicit override takes precedence over dynamic selection
     _reasoning_node_name = "unknown"

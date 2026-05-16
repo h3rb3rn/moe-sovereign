@@ -203,11 +203,36 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
         )
 
     # ── Phase 6: Profile scalar overrides ────────────────────────────────────
-    system_prefix       = (profile.get("system_prompt_prefix") or "").strip() if profile else ""
-    tool_max_tokens     = int(profile.get("tool_max_tokens") or 0)             if profile else 0
-    reasoning_max_tokens = int(profile.get("reasoning_max_tokens") or 0)       if profile else 0
-    tool_choice         = (profile.get("tool_choice") or "").strip()           if profile else ""
-    stream_think        = bool(profile.get("stream_think", False))             if profile else False
+    system_prefix        = (profile.get("system_prompt_prefix") or "").strip() if profile else ""
+    tool_max_tokens      = int(profile.get("tool_max_tokens") or 0)             if profile else 0
+    reasoning_max_tokens = int(profile.get("reasoning_max_tokens") or 0)        if profile else 0
+    tool_choice          = (profile.get("tool_choice") or "").strip()           if profile else ""
+    stream_think         = bool(profile.get("stream_think", False))             if profile else False
+
+    # Enforce template context_window as the source of truth for token limits.
+    # Profile values must not exceed the template constraint — if they do, the session
+    # would silently deliver less output than advertised, with no operator feedback.
+    _tmpl_ctx = min(
+        (v["context_window"] for v in experts.values()
+         if isinstance(v, dict) and v.get("context_window")),
+        default=0,
+    )
+    if _tmpl_ctx > 0:
+        _profile_name = profile.get("name", "?") if profile else "?"
+        if tool_max_tokens and tool_max_tokens > _tmpl_ctx:
+            logger.warning(
+                "CC profile '%s': tool_max_tokens=%d exceeds template context_window=%d"
+                " — capping to template value. Update tool_max_tokens in the profile to silence this.",
+                _profile_name, tool_max_tokens, _tmpl_ctx,
+            )
+            tool_max_tokens = _tmpl_ctx
+        if reasoning_max_tokens and reasoning_max_tokens > _tmpl_ctx:
+            logger.warning(
+                "CC profile '%s': reasoning_max_tokens=%d exceeds template context_window=%d"
+                " — capping to template value. Update reasoning_max_tokens in the profile to silence this.",
+                _profile_name, reasoning_max_tokens, _tmpl_ctx,
+            )
+            reasoning_max_tokens = _tmpl_ctx
 
     return CCSession(
         mode=mode,
