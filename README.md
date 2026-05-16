@@ -374,6 +374,8 @@ flowchart LR
 | Open source | &check; | --- | ~ | --- | &check; | &check; |
 | Cost | Free | &gt;$1M/yr | Pay/DBU | $25+/user | Free | Free |
 
+> **Note on Palantir comparison:** The table above compares technical feature *presence*, not product maturity or enterprise support depth. Palantir AIP is a commercially mature platform with thousands of engineers, extensive certifications, and a global support organisation. MoE Sovereign is an open-source project addressing the same architectural problem space — with full data sovereignty, zero licence cost, and complete code auditability as its differentiating properties. See [Palantir Comparison](docs/system/palantir_comparison.md) for a detailed assessment.
+
 ---
 
 ## Hardware Requirements
@@ -409,6 +411,9 @@ Full documentation: **[docs.moe-sovereign.org](https://docs.moe-sovereign.org)**
 | [Deployment](https://docs.moe-sovereign.org/deployment/) | LXC, Docker, Podman, Kubernetes, OpenShift |
 | [API Reference](https://docs.moe-sovereign.org/guide/api/) | Full endpoint documentation |
 | [Maintenance & Disk Management](https://docs.moe-sovereign.org/admin/maintenance/) | Cleanup Manager, TTL configuration, checkpoint archiving |
+| [Palantir Comparison](https://docs.moe-sovereign.org/system/palantir_comparison/) | Honest architectural assessment — where the approaches converge and where the gap remains |
+| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | Full technical whitepaper (PDF) |
+| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | Vollständiges technisches Whitepaper (PDF) |
 
 Local preview: `pip install mkdocs-material && mkdocs serve`
 
