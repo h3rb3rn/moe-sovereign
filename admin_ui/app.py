@@ -7871,21 +7871,15 @@ async def timeline_page(request: Request, _=Depends(require_login)):
 
 @app.get("/notebook", response_class=HTMLResponse)
 async def notebook_page(request: Request, _=Depends(require_login)):
-    token = os.getenv("JUPYTERLAB_TOKEN", "")
-    host_port = os.getenv("JUPYTERLAB_HOST_PORT", "8899")
-    # Build the direct-host URL so the browser's WebSocket bypasses Nginx.
-    # Falls back to the proxy path when no token/port is configured.
-    public_base = os.getenv("PUBLIC_URL", "").rstrip("/")
-    if token and host_port and public_base:
-        host = public_base.split("//", 1)[-1].split("/")[0].split(":")[0]
-        direct_url = f"http://{host}:{host_port}/notebook/lab?token={token}"
-    else:
-        direct_url = ""
+    # Token auth is disabled on the JupyterLab container (--IdentityProvider.token='').
+    # moe-admin's session is the only authentication boundary. The iframe always
+    # uses the proxy path /notebook/lab so no token URL parameter is needed.
+    configured = bool(os.getenv("JUPYTERLAB_URL", ""))
     return TEMPLATES.TemplateResponse(request, "notebook.html", {
-        "jupyterlab_configured": bool(os.getenv("JUPYTERLAB_URL", "")),
-        "jupyterlab_direct_url": direct_url,
-        "jupyterlab_token": token,
-        "jupyterlab_host_port": host_port,
+        "jupyterlab_configured":  configured,
+        "jupyterlab_direct_url":  "/notebook/lab" if configured else "",
+        "jupyterlab_token":       "",
+        "jupyterlab_host_port":   os.getenv("JUPYTERLAB_HOST_PORT", "8899"),
     })
 
 
@@ -8066,6 +8060,77 @@ async def api_kestra_executions(namespace: str = "", flow_id: str = "",
     if namespace: params += f"&namespace={namespace}"
     if flow_id:   params += f"&flow_id={flow_id}"
     return await _cx_get(f"v1/codex/kestra/executions?{params}")
+
+
+# ── D3: Apache Superset BI ────────────────────────────────────────────────────
+
+@app.get("/superset", response_class=HTMLResponse)
+async def superset_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "superset.html", {})
+
+
+@app.get("/api/codex/superset/status", dependencies=[Depends(require_login)])
+async def api_superset_status():
+    return await _cx_get("v1/codex/superset/status")
+
+
+@app.post("/api/codex/superset/setup", dependencies=[Depends(require_login)])
+async def api_superset_setup():
+    return await _cx_post("v1/codex/superset/setup", {})
+
+
+@app.get("/api/codex/superset/dashboards", dependencies=[Depends(require_login)])
+async def api_superset_dashboards(page: int = 0, page_size: int = 50):
+    return await _cx_get(f"v1/codex/superset/dashboards?page={page}&page_size={page_size}")
+
+
+@app.get("/api/codex/superset/token/{dashboard_id}", dependencies=[Depends(require_login)])
+async def api_superset_token(dashboard_id: int):
+    return await _cx_get(f"v1/codex/superset/token/{dashboard_id}")
+
+
+# ── D3: Compliance Posture (Falco + OpenSCAP) ─────────────────────────────────
+
+@app.get("/compliance", response_class=HTMLResponse)
+async def compliance_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "compliance.html", {})
+
+
+@app.get("/api/codex/compliance/status", dependencies=[Depends(require_login)])
+async def api_compliance_status():
+    return await _cx_get("v1/codex/compliance/status")
+
+
+@app.get("/api/codex/compliance/falco/events", dependencies=[Depends(require_login)])
+async def api_falco_events(limit: int = 200):
+    return await _cx_get(f"v1/codex/compliance/falco/events?limit={limit}")
+
+
+@app.get("/api/codex/compliance/falco/summary", dependencies=[Depends(require_login)])
+async def api_falco_summary(limit: int = 500):
+    return await _cx_get(f"v1/codex/compliance/falco/summary?limit={limit}")
+
+
+@app.get("/api/codex/compliance/scap/summary", dependencies=[Depends(require_login)])
+async def api_scap_summary():
+    return await _cx_get("v1/codex/compliance/scap/summary")
+
+
+@app.post("/api/codex/compliance/scan/trigger", dependencies=[Depends(require_login)])
+async def api_scan_trigger():
+    return await _cx_post("v1/codex/compliance/scan/trigger", {})
+
+
+# ── D3: OpenSearch extended search endpoints ──────────────────────────────────
+
+@app.get("/api/codex/search/stats", dependencies=[Depends(require_login)])
+async def api_search_stats():
+    return await _cx_get("v1/codex/search/stats")
+
+
+@app.post("/api/codex/search/index", dependencies=[Depends(require_login)])
+async def api_search_index():
+    return await _cx_post("v1/codex/search/index", {})
 
 
 @app.post("/api/explorer/cypher", dependencies=[Depends(require_login)])

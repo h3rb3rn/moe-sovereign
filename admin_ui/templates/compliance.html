@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}Compliance Posture — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-shield-check me-2 text-success"></i>Compliance Posture
+    <span class="badge bg-secondary ms-2 fs-6" id="compliance-status">–</span>
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-warning" onclick="triggerScan()"
+            title="Requires openscap-scanner on the host or a Kestra scan workflow">
+      <i class="bi bi-play-circle me-1"></i>Run SCAP Scan
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadAll()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+{# ── Summary cards ────────────────────────────────────────────────────────── #}
+<div class="row g-3 mb-3" id="summary-cards">
+  <div class="col-12 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-danger" id="falco-critical">–</div>
+        <div class="text-muted small">Falco Critical</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-warning" id="falco-total">–</div>
+        <div class="text-muted small">Falco Events (24 h)</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-success" id="scap-score">–</div>
+        <div class="text-muted small">SCAP Score (%)</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="fs-2 fw-bold text-danger" id="scap-fail">–</div>
+        <div class="text-muted small">SCAP Failed Rules</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── Falco events ───────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-7">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex align-items-center justify-content-between">
+        <span class="fw-semibold small"><i class="bi bi-lightning me-1 text-danger"></i>Falco Runtime Alerts</span>
+        <select id="priority-filter" class="form-select form-select-sm w-auto"
+                onchange="filterFalco()">
+          <option value="">All priorities</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="ERROR">Error</option>
+          <option value="WARNING">Warning</option>
+          <option value="NOTICE">Notice</option>
+        </select>
+      </div>
+      <div class="card-body p-0" style="max-height:420px;overflow-y:auto">
+        <table class="table table-sm table-hover mb-0 small" id="falco-table">
+          <thead class="sticky-top bg-dark">
+            <tr>
+              <th style="width:100px">Priority</th>
+              <th>Rule</th>
+              <th>Output</th>
+              <th style="width:90px">Time</th>
+            </tr>
+          </thead>
+          <tbody id="falco-body">
+            <tr><td colspan="4" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── SCAP results ───────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-5">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-clipboard2-check me-1 text-success"></i>OpenSCAP Results
+      </div>
+      <div class="card-body">
+        <div id="scap-body">
+          <p class="text-muted small">Loading…</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Top Falco rules chart ───────────────────────────────────────────────── #}
+<div class="card mt-3">
+  <div class="card-header py-2 fw-semibold small">
+    <i class="bi bi-bar-chart me-1"></i>Top Triggered Rules
+  </div>
+  <div class="card-body" id="top-rules-body">
+    <p class="text-muted small">Loading…</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allFalcoEvents = [];
+
+const PRIORITY_BADGE = {
+  CRITICAL:      'danger',
+  ERROR:         'danger',
+  WARNING:       'warning',
+  NOTICE:        'info',
+  INFORMATIONAL: 'secondary',
+  DEBUG:         'dark',
+};
+
+function prioBadge(p) {
+  const cls = PRIORITY_BADGE[p] || 'secondary';
+  return `<span class="badge bg-${cls}">${p}</span>`;
+}
+
+async function loadAll() {
+  await Promise.all([checkStatus(), loadFalcoSummary(), loadScap()]);
+}
+
+async function checkStatus() {
+  try {
+    const r = await fetch('/v1/codex/compliance/status');
+    const d = await r.json();
+    const el = document.getElementById('compliance-status');
+    const ok = d.falco_reachable || d.scap_available;
+    el.textContent = ok ? 'active' : 'no data';
+    el.className = `badge ${ok ? 'bg-success' : 'bg-secondary'} ms-2 fs-6`;
+  } catch { }
+}
+
+async function loadFalcoSummary() {
+  try {
+    const sr = await fetch('/v1/codex/compliance/falco/summary');
+    const s  = await sr.json();
+    document.getElementById('falco-critical').textContent = s.critical ?? '–';
+    document.getElementById('falco-total').textContent    = s.total    ?? '–';
+    renderTopRules(s.top_rules || []);
+
+    const er = await fetch('/v1/codex/compliance/falco/events?limit=200');
+    const ed = await er.json();
+    allFalcoEvents = ed.events || [];
+    renderFalcoTable(allFalcoEvents);
+  } catch(e) {
+    document.getElementById('falco-body').innerHTML =
+      `<tr><td colspan="4" class="text-muted text-center small py-3">${e}</td></tr>`;
+  }
+}
+
+function renderFalcoTable(events) {
+  const tbody = document.getElementById('falco-body');
+  if (!events.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted small py-3">No events — Falco may not be running yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = events.map(ev => `
+    <tr>
+      <td>${prioBadge(ev.priority)}</td>
+      <td class="text-truncate" style="max-width:140px" title="${escHtml(ev.rule)}">${escHtml(ev.rule)}</td>
+      <td class="text-truncate" style="max-width:220px" title="${escHtml(ev.output)}">${escHtml(ev.output)}</td>
+      <td class="text-muted" style="font-size:.7rem">${(ev.time||'').slice(11,19)}</td>
+    </tr>`).join('');
+}
+
+function filterFalco() {
+  const p = document.getElementById('priority-filter').value;
+  renderFalcoTable(p ? allFalcoEvents.filter(e => e.priority === p) : allFalcoEvents);
+}
+
+function renderTopRules(rules) {
+  const area = document.getElementById('top-rules-body');
+  if (!rules.length) {
+    area.innerHTML = '<p class="text-muted small mb-0">No events recorded.</p>'; return;
+  }
+  const max = rules[0]?.count || 1;
+  area.innerHTML = rules.map(r => `
+    <div class="mb-2">
+      <div class="d-flex justify-content-between small mb-1">
+        <span class="text-truncate" style="max-width:70%">${escHtml(r.rule)}</span>
+        <span class="text-muted">${r.count}</span>
+      </div>
+      <div class="progress" style="height:6px">
+        <div class="progress-bar bg-danger" style="width:${Math.round(r.count/max*100)}%"></div>
+      </div>
+    </div>`).join('');
+}
+
+async function loadScap() {
+  try {
+    const r = await fetch('/v1/codex/compliance/scap/summary');
+    const d = await r.json();
+    document.getElementById('scap-score').textContent = d.available && d.score !== null ? d.score + '%' : '–';
+    document.getElementById('scap-fail').textContent  = d.available ? d.fail : '–';
+
+    const body = document.getElementById('scap-body');
+    if (!d.available) {
+      body.innerHTML = `<p class="text-muted small">No scan results yet. Click <strong>Run SCAP Scan</strong> or trigger a Kestra scan workflow.</p>`;
+      return;
+    }
+    const failedHtml = (d.failed_rules || []).map(r =>
+      `<li class="small text-danger">${escHtml(r.title || r.id)}</li>`).join('');
+    body.innerHTML = `
+      <table class="table table-sm small mb-2">
+        <tr><td class="text-muted">Profile</td><td>${escHtml(d.profile)}</td></tr>
+        <tr><td class="text-muted">Scanned</td><td>${escHtml(d.scanned_at || '–')}</td></tr>
+        <tr><td class="text-muted">Passed</td><td class="text-success">${d.pass}</td></tr>
+        <tr><td class="text-muted">Failed</td><td class="text-danger">${d.fail}</td></tr>
+        <tr><td class="text-muted">Not checked</td><td>${d.notchecked}</td></tr>
+        <tr><td class="text-muted">Score</td><td class="fw-bold">${d.score ?? '–'}%</td></tr>
+      </table>
+      ${failedHtml ? `<p class="small fw-semibold text-danger mb-1">Failed rules (top 20):</p><ul class="mb-0 ps-3">${failedHtml}</ul>` : ''}`;
+  } catch(e) {
+    document.getElementById('scap-body').innerHTML =
+      `<p class="text-muted small">${e}</p>`;
+  }
+}
+
+async function triggerScan() {
+  try {
+    const r = await fetch('/v1/codex/compliance/scan/trigger', {method:'POST'});
+    const d = await r.json();
+    if (d.status === 'started') {
+      alert(`Scan started (PID ${d.pid}).\nOutput: ${d.output}\nRefresh results in a few minutes.`);
+    } else {
+      alert(d.error + '\n\nHint: ' + (d.hint || 'Use a Kestra workflow to schedule scans.'));
+    }
+  } catch(e) { alert('Error: ' + e); }
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', loadAll);
+</script>
+{% endblock %}

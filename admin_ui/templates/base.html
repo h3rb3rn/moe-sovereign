@@ -58,7 +58,7 @@
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
-    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts'] %}
+    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance'] %}
 
     <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
       {# Config – direct link #}
@@ -192,6 +192,13 @@
           </a></li>
           <li><a class="dropdown-item {% if _p == '/charts' %}active{% endif %}" href="/charts">
             <i class="bi bi-bar-chart-line me-2" style="color:#b09bff"></i>{{ t(request, 'page.charts') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/superset' %}active{% endif %}" href="/superset">
+            <i class="bi bi-bar-chart-steps me-2 text-warning"></i>{{ t(request, 'page.superset') }}
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/compliance' %}active{% endif %}" href="/compliance">
+            <i class="bi bi-shield-check me-2 text-success"></i>{{ t(request, 'page.compliance') }}
           </a></li>
         </ul>
       </div>
@@ -411,6 +418,16 @@
           <li class="nav-item">
             <a href="/charts" class="nav-link text-white {% if _p == '/charts' %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-bar-chart-line me-2" style="color:#b09bff"></i>{{ t(request, 'page.charts') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/superset" class="nav-link text-white {% if _p == '/superset' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-bar-chart-steps me-2 text-warning"></i>{{ t(request, 'page.superset') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/compliance" class="nav-link text-white {% if _p == '/compliance' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-shield-check me-2 text-success"></i>{{ t(request, 'page.compliance') }}
             </a>
           </li>
           {% endif %}
