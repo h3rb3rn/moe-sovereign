@@ -1027,6 +1027,8 @@
   "page.forms": "Dynamic Forms",
   "page.search": "Federated Search",
   "page.charts": "Charts & Pivot",
+  "page.superset": "Analytics / BI",
+  "page.compliance": "Compliance Posture",
   "lbl.notebook_intro": "JupyterLite runs entirely in the browser via WebAssembly — no server-side kernel. Use the snippets below to call the orchestrator API from a notebook cell.",
   "lbl.snippets": "Snippets",
   "lbl.copy_paste_snippets": "Copy-paste-ready snippets",

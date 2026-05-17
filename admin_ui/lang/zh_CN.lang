@@ -1027,6 +1027,8 @@
   "page.forms": "动态表单",
   "page.search": "联邦搜索",
   "page.charts": "图表与透视",
+  "page.superset": "分析 / BI",
+  "page.compliance": "合规态势",
   "lbl.notebook_intro": "JupyterLite 通过 WebAssembly 完全在浏览器中运行 — 服务端无 kernel。请使用下方代码片段从单元格直接调用 orchestrator API。",
   "lbl.snippets": "代码片段",
   "lbl.copy_paste_snippets": "复制粘贴即用的代码片段",

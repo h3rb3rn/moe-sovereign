@@ -509,7 +509,7 @@ services:
     command: >
       start-notebook.sh
       --ServerApp.base_url=/notebook/
-      --ServerApp.token=${JUPYTERLAB_TOKEN}
+      --IdentityProvider.token=''
       --ServerApp.allow_origin=*
       --ServerApp.disable_check_xsrf=true
     volumes:

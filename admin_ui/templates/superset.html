@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Analytics / BI — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-bar-chart-line me-2 text-warning"></i>Analytics &amp; BI
+    <span class="badge bg-secondary ms-2 fs-6" id="superset-status">–</span>
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="setupTrino()">
+      <i class="bi bi-plug me-1"></i>Connect Trino
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadDashboards()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── Dashboard picker ────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-grid me-1"></i>Dashboards</span>
+        <input type="text" id="dash-filter" class="form-control form-control-sm w-50"
+               placeholder="Filter…" oninput="filterDashboards()">
+      </div>
+      <div class="card-body p-0" style="max-height:520px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="dash-list">
+          <li class="list-group-item text-muted text-center small py-3">
+            <i class="bi bi-hourglass me-1"></i>Loading…
+          </li>
+        </ul>
+      </div>
+      <div class="card-footer py-2">
+        <a href="{{ superset_url }}" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-warning w-100">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open Superset UI
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {# ── Dashboard embed ────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-8">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small" id="embed-title">
+        <i class="bi bi-display me-1"></i>Dashboard embed
+      </div>
+      <div class="card-body p-2 d-flex align-items-center justify-content-center"
+           id="embed-area" style="min-height:480px">
+        <div class="text-muted text-center small">
+          <i class="bi bi-bar-chart-line fs-2 d-block mb-2 opacity-25"></i>
+          Select a dashboard from the list to embed it here.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Toast ────────────────────────────────────────────────────────────── #}
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="msg-toast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body small" id="toast-body"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto"
+              data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let SUPERSET_URL = "";
+let allDashboards  = [];
+
+function toast(msg, ok=true) {
+  const el = document.getElementById('msg-toast');
+  el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
+  document.getElementById('toast-body').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, {delay:3000}).show();
+}
+
+async function checkStatus() {
+  try {
+    const r  = await fetch('/api/codex/superset/status');
+    const d  = await r.json();
+    SUPERSET_URL = d.url || "";
+    const el = document.getElementById('superset-status');
+    if (d.reachable) {
+      el.textContent = 'online';  el.className = 'badge bg-success ms-2 fs-6';
+    } else {
+      el.textContent = 'offline'; el.className = 'badge bg-danger ms-2 fs-6';
+    }
+  } catch { }
+}
+
+async function setupTrino() {
+  try {
+    const r = await fetch('/api/codex/superset/setup', {method:'POST'});
+    const d = await r.json();
+    toast(d.status === 'exists'
+      ? 'Trino connection already registered.'
+      : `Trino connection created (id ${d.id}).`);
+  } catch(e) { toast('Setup failed: ' + e, false); }
+}
+
+async function loadDashboards() {
+  const r   = await fetch('/api/codex/superset/dashboards');
+  const d   = await r.json();
+  allDashboards = (d.result || []);
+  renderList(allDashboards);
+}
+
+function renderList(items) {
+  const ul = document.getElementById('dash-list');
+  if (!items.length) {
+    ul.innerHTML = '<li class="list-group-item text-muted text-center small py-3">No dashboards found.<br>Create one in the Superset UI.</li>';
+    return;
+  }
+  ul.innerHTML = items.map(db => `
+    <li class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+        style="cursor:pointer" onclick="embedDashboard(${db.id}, '${escHtml(db.dashboard_title)}')">
+      <div>
+        <div class="fw-semibold small">${escHtml(db.dashboard_title)}</div>
+        <div class="text-muted" style="font-size:.75rem">${db.slug || ''}</div>
+      </div>
+      <i class="bi bi-chevron-right text-muted"></i>
+    </li>`).join('');
+}
+
+function filterDashboards() {
+  const q = document.getElementById('dash-filter').value.toLowerCase();
+  renderList(allDashboards.filter(db => db.dashboard_title.toLowerCase().includes(q)));
+}
+
+async function embedDashboard(id, title) {
+  document.getElementById('embed-title').innerHTML =
+    `<i class="bi bi-display me-1"></i>${escHtml(title)}`;
+  const area = document.getElementById('embed-area');
+  area.innerHTML = '<div class="text-muted small"><i class="bi bi-hourglass me-1"></i>Fetching guest token…</div>';
+  try {
+    const tr  = await fetch(`/api/codex/superset/token/${id}`);
+    const td  = await tr.json();
+    if (!td.token) throw new Error(td.error || 'No token');
+
+    // Render via Superset embedded SDK pattern (direct iframe with guest token)
+    const url = `${SUPERSET_URL}/superset/dashboard/${id}/?guest_token=${td.token}&standalone=3`;
+    area.innerHTML = `
+      <iframe src="${url}"
+        style="width:100%;height:480px;border:none;border-radius:4px"
+        allow="fullscreen"
+        title="${escHtml(title)} dashboard">
+      </iframe>`;
+  } catch(e) {
+    area.innerHTML = `<div class="alert alert-warning m-3">
+      Could not embed dashboard: ${escHtml(String(e))}<br>
+      <a href="${SUPERSET_URL}/superset/dashboard/${id}/" target="_blank" class="btn btn-sm btn-outline-warning mt-2">
+        <i class="bi bi-box-arrow-up-right me-1"></i>Open in Superset
+      </a></div>`;
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  checkStatus();
+  loadDashboards();
+});
+</script>
+{% endblock %}

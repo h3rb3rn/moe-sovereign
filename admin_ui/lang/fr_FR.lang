@@ -1027,6 +1027,8 @@
   "page.forms": "Formulaires dynamiques",
   "page.search": "Recherche fédérée",
   "page.charts": "Graphiques & Pivot",
+  "page.superset": "Analytique / BI",
+  "page.compliance": "Conformité",
   "lbl.notebook_intro": "JupyterLite tourne entièrement dans le navigateur via WebAssembly — pas de kernel côté serveur. Utilisez les snippets ci-dessous pour appeler l'API depuis une cellule.",
   "lbl.snippets": "Snippets",
   "lbl.copy_paste_snippets": "Snippets prêts à copier-coller",
