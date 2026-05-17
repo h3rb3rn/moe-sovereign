@@ -6,17 +6,32 @@
 #
 #  "Caddyfile" is listed in .gitignore so your local customisations will
 #  never cause git-pull conflicts.
+#
+#  ARCHITECTURE NOTE — network_mode: host
+#  moe-caddy runs with network_mode: host (see docker-compose.yml).  This
+#  means Caddy binds directly to the host's ports 80 and 443 — no iptables
+#  DNAT rules are needed for external access.  Backends are reached via their
+#  host-mapped ports (localhost:<host-port>), not by container-DNS names.
+#
+#  Default host-port mapping (from docker-compose.yml):
+#    moe-admin            localhost:8088
+#    langgraph-orchestrator  localhost:8002
+#    moe-grafana          localhost:3001
+#    moe-dozzle           127.0.0.1:9999
+#    moe-docs             localhost:8098
+#    moe-storage (S3)     localhost:3900
+#    moe-storage (console) localhost:3903
+#    authentik-server     localhost:9000 / 9443
+#    moe-jupyterlab       localhost:8899
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Documentation site
 docs.<YOUR-DOMAIN> {
-    tls internal
-    reverse_proxy moe-docs:8000
+    reverse_proxy localhost:8098
 }
 
 # Main entry — redirect to docs (adjust or remove as needed)
 <YOUR-DOMAIN> {
-    tls internal
     handle /install.sh {
         root * /srv
         file_server
@@ -26,18 +41,15 @@ docs.<YOUR-DOMAIN> {
 
 # Log viewer (Dozzle)
 logs.<YOUR-DOMAIN> {
-    tls internal
-    reverse_proxy moe-dozzle:8080
+    reverse_proxy 127.0.0.1:9999
 }
 
 # MinIO S3 API (file upload / download, pre-signed URLs)
 files.<YOUR-DOMAIN> {
-    tls internal
-    reverse_proxy moe-storage:9000
+    reverse_proxy localhost:3900
 }
 
 # MinIO Web Console (admin)
 storage.<YOUR-DOMAIN> {
-    tls internal
-    reverse_proxy moe-storage:9001
+    reverse_proxy localhost:3903
 }

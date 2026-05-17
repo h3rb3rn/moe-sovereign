@@ -551,22 +551,23 @@ services:
           cpus: "0.5"
           memory: 512M
 
-  # --- Caddy Reverse Proxy (TLS für docs.moe-sovereign.org) ---
+  # --- Caddy Reverse Proxy ---
+  # Uses host networking so Caddy binds directly to host ports 80/443 without
+  # requiring iptables/nftables DNAT rules.  Backends are reached via their
+  # host-mapped ports (localhost:<port>) — independent of which Podman bridge
+  # or netavark network the backend containers are in.
   # Only started when COMPOSE_PROFILES includes "caddy" (set by install.sh).
   moe-caddy:
     image: caddy:2-alpine
     container_name: moe-caddy
     profiles: [caddy]
     restart: unless-stopped
+    network_mode: "host"
     deploy:
       resources:
         limits:
           cpus: '0.5'
           memory: 256M
-    ports:
-      - "${CADDY_HTTP_PORT:-80}:80"
-      - "${CADDY_HTTPS_PORT:-443}:443"
-      - "${CADDY_HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./install.sh:/srv/install.sh:ro
