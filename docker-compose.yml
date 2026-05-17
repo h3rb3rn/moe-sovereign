@@ -556,6 +556,8 @@ services:
   # requiring iptables/nftables DNAT rules.  Backends are reached via their
   # host-mapped ports (localhost:<port>) — independent of which Podman bridge
   # or netavark network the backend containers are in.
+  # NOTE: network_mode: host requires a Linux host. On macOS (Docker Desktop)
+  # host networking is silently ignored; local dev requires a different Caddyfile.
   # Only started when COMPOSE_PROFILES includes "caddy" (set by install.sh).
   moe-caddy:
     image: caddy:2-alpine
