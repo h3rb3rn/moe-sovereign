@@ -509,6 +509,7 @@ services:
     command: >
       start-notebook.sh
       --ServerApp.base_url=/notebook/
+      --ServerApp.token=''
       --IdentityProvider.token=''
       --ServerApp.allow_origin=*
       --ServerApp.disable_check_xsrf=true
