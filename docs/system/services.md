@@ -369,6 +369,67 @@ graph TD
 
 ---
 
+## MoE Codex Extension Services
+
+MoE Codex is an optional, independently deployed data intelligence platform that extends
+MoE Sovereign with a full enterprise data management stack. Deploy it alongside
+`moe-sovereign` on the same host or on a dedicated node.
+
+**Compose file:** `/opt/moe-sovereign/moe-codex/docker-compose.yml`
+
+### Container Overview
+
+| Container | Host Port | Function |
+|---|---|---|
+| `moe-codex-api` | `8090` | Codex FastAPI backend — 25 route modules, connects all services |
+| `moe-marquez` | `5000` | Marquez OpenLineage server — full data lineage tracking |
+| `moe-lakefs` | `8010` | lakeFS data versioning — Git-style branches and commits for datasets |
+| `moe-nifi` | `8181` | Apache NiFi — visual ETL fan-out, 300+ processors |
+| `moe-mlflow` | `5002` | MLflow — ML experiment tracking and model registry |
+| `moe-opa` | `8282` | Open Policy Agent — ABAC/RBAC policy enforcement |
+| `moe-trino` | `8080` | Trino — federated SQL across Postgres, lakeFS, memory catalogs |
+| `moe-docling` | `7080` | DocLing — document intelligence, OCR, entity extraction |
+| `moe-superset` | `8889` | Apache Superset — BI dashboards, SQL Lab, pivot analytics |
+| `moe-opensearch` | `9200` | OpenSearch — federated full-text and vector search (optional) |
+| `moe-codex-db` | (internal) | PostgreSQL — Codex API state, catalog metadata |
+| `moe-marquez-db` | (internal) | PostgreSQL — Marquez lineage events |
+| `moe-lakefs-db` | (internal) | PostgreSQL — lakeFS repository metadata |
+| `moe-mlflow-db` | (internal) | PostgreSQL — MLflow experiment runs |
+| `moe-superset-db` | (internal) | PostgreSQL — Superset dashboards and chart configs |
+| `moe-kestra-db` | (internal) | PostgreSQL — Kestra pipeline state |
+
+### Best-Practice Usage Examples
+
+**Compliance dashboards via Superset + Trino:**
+Use Apache Superset (`:8889`) connected to the Trino federation layer (`:8080`) to create
+SQL-driven compliance dashboards that aggregate data from Postgres, lakeFS, and Marquez
+into a single reporting surface — without moving data.
+
+**Reproducible ML experiments with lakeFS:**
+Before every training run, create a lakeFS branch (`pending/<experiment>-<ts>`) that
+snapshots the input dataset. MLflow records the branch ref alongside the run metrics.
+When a model needs to be audited or reproduced, check out the exact branch to replay
+with the same data state.
+
+**Federated search across all data sources:**
+OpenSearch (`:9200`) indexes catalog entries, lakeFS commit messages, Marquez lineage
+events, and Kestra pipeline runs. Use the `/search` endpoint in the Codex API to run
+a single BM25 + vector query that surfaces relevant assets regardless of which backend
+system they live in.
+
+**Data lineage for AI pipelines:**
+Every knowledge bundle import through the LangGraph orchestrator emits an OpenLineage
+event that lands in Marquez. Use the Codex `/lineage` UI to trace a Neo4j entity back
+through the NiFi ETL run, the lakeFS dataset version, and the original data source —
+a complete audit trail from raw input to live knowledge graph.
+
+**Policy-as-code with OPA:**
+Define RBAC and ABAC rules as Rego policies in `moe-codex/policies/`. The OPA server
+(`:8282`) evaluates every write request against these policies before the Codex API
+commits any change. Add new compliance rules without redeploying the application.
+
+---
+
 ## Start and Stop Commands
 
 ### All Services

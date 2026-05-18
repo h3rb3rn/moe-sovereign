@@ -123,6 +123,70 @@ graph TD
     style PROM fill:#5f2a00,color:#fff
 ```
 
+## MoE Codex — Optional Data Intelligence Layer
+
+MoE Codex is an independently deployable extension that adds an enterprise data
+management stack on top of MoE Sovereign. It runs in its own Docker Compose project
+at `/opt/moe-sovereign/moe-codex/` and communicates with the core stack
+over the shared host network.
+
+### Architecture Position
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    External Access (Nginx / Caddy)          │
+└───────────────┬─────────────────────────────────────────────┘
+                │
+┌───────────────▼─────────────────────────────────────────────┐
+│              MoE Sovereign Core  (moe-infra/)               │
+│  langgraph-orchestrator :8002 · mcp-precision :8003        │
+│  neo4j :7687 · chromadb :8001 · kafka :9092                │
+│  moe-admin :8088 · grafana :3001 · prometheus :9090         │
+└───────────────┬─────────────────────────────────────────────┘
+                │  OpenLineage events · REST API calls
+┌───────────────▼─────────────────────────────────────────────┐
+│              MoE Codex Extension  (moe-codex/)  [optional]  │
+│  codex-api :8090 · marquez :5000 · lakefs :8010            │
+│  nifi :8181 · mlflow :5002 · opa :8282 · trino :8080       │
+│  superset :8889 · docling :7080 · opensearch :9200         │
+└─────────────────────────────────────────────────────────────┘
+                │
+┌───────────────▼─────────────────────────────────────────────┐
+│              MoE Libris Federation Hub  [optional]          │
+│  Federation API · PostgreSQL · Neo4j (global graph)         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Codex Port Reference
+
+| Service | Host Port | Role |
+|---|---|---|
+| `moe-codex-api` | `8090` | Codex FastAPI backend (25 modules) |
+| `moe-marquez` | `5000` | OpenLineage / Marquez lineage server |
+| `moe-lakefs` | `8010` | lakeFS data versioning UI + API |
+| `moe-nifi` | `8181` | Apache NiFi ETL canvas |
+| `moe-mlflow` | `5002` | MLflow experiment tracking |
+| `moe-opa` | `8282` | Open Policy Agent policy evaluation |
+| `moe-trino` | `8080` | Trino federated SQL |
+| `moe-docling` | `7080` | DocLing document intelligence API |
+| `moe-superset` | `8889` | Apache Superset BI |
+| `moe-opensearch` | `9200` | OpenSearch federated search (optional) |
+
+### Data Flow Between Core and Codex
+
+1. The `langgraph-orchestrator` emits OpenLineage events to `moe-marquez:5000` for
+   every knowledge bundle import.
+2. Dataset snapshots are written to `moe-lakefs` on a `pending/<tag>` branch; the
+   Codex approval UI presents them for human review before merging to `main`.
+3. Apache NiFi fans out raw bundle submissions as OpenLineage run events and routes
+   them to the appropriate sinks (Marquez, lakeFS, Trino catalogs).
+4. OPA evaluates every write request against Rego policies before the Codex API
+   commits any change to the catalog or knowledge graph.
+5. Trino federates SQL queries across Postgres, lakeFS S3, and Marquez without
+   data movement.
+
+---
+
 ## Ollama vs. Ollama37
 
 ### Standard Ollama
