@@ -8,6 +8,7 @@ import ast
 import asyncio
 import base64
 import hashlib
+import inspect
 import io
 import ipaddress
 import json
@@ -3670,16 +3671,60 @@ def download_file(filename: str):
     return FileResponse(path, media_type=mt, filename=safe)
 
 
+_PY_TO_JSON_TYPE: Dict[Any, str] = {
+    str:   "string",
+    int:   "integer",
+    float: "number",
+    bool:  "boolean",
+    list:  "array",
+    dict:  "object",
+}
+
+
+def _input_schema(func) -> Dict[str, Any]:
+    """Derive a JSON-Schema-compatible inputSchema from a Python function signature.
+
+    Used to make each tool's parameter contract visible to Open WebUI Tool Servers
+    and to populate MCP_TOOL_SCHEMAS for pre-call argument validation in the pipeline.
+    Ignores *args / **kwargs; defaults become non-required properties.
+    """
+    props: Dict[str, Any] = {}
+    required: List[str] = []
+    try:
+        sig = inspect.signature(func)
+        for pname, param in sig.parameters.items():
+            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+                continue
+            ann = param.annotation
+            json_type = _PY_TO_JSON_TYPE.get(ann, "string")
+            prop: Dict[str, Any] = {"type": json_type}
+            if param.default is not inspect.Parameter.empty:
+                prop["default"] = param.default
+            else:
+                required.append(pname)
+            props[pname] = prop
+    except (ValueError, TypeError):
+        pass
+    return {"type": "object", "properties": props, "required": required}
+
+
 @rest_app.get("/tools")
 def list_tools():
     with _disabled_tools_lock:
         disabled = set(_disabled_tools)
-    return {
-        "tools": [
-            {"name": name, "description": desc, "enabled": name not in disabled}
-            for name, desc in _TOOL_DESCRIPTIONS.items()
-        ]
-    }
+    tools = []
+    for name, desc in _TOOL_DESCRIPTIONS.items():
+        func = _TOOL_REGISTRY.get(name)
+        schema = _input_schema(func) if func else {"type": "object", "properties": {}}
+        tools.append({
+            "name":        name,
+            "description": desc,
+            "enabled":     name not in disabled,
+            "inputSchema": schema,                    # Open WebUI Tool Server format
+            "args":        schema["properties"],      # pipeline MCP_TOOL_SCHEMAS compat
+            "required_args": schema["required"],      # pipeline pre-call validation
+        })
+    return {"tools": tools}
 
 
 @rest_app.post("/tools/{name}/toggle")
