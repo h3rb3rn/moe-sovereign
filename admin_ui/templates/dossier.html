@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}Dossier / Case File — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-folder2-open me-2 text-warning"></i>Dossier
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-success" onclick="showCreate()">
+      <i class="bi bi-plus-lg me-1"></i>New Case
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadDossiers()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── Case list ─────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-3">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-list-ul me-1"></i>Cases
+      </div>
+      <div class="card-body p-0" style="max-height:600px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="case-list">
+          <li class="list-group-item text-muted text-center small py-3">
+            <i class="bi bi-hourglass me-1"></i>Loading…
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  {# ── Active dossier ────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-9" id="dossier-panel">
+    <div class="card">
+      <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-folder2-open display-4 d-block mb-3 opacity-25"></i>
+        Select a case or create a new one.
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Create modal ──────────────────────────────────────────────────────── #}
+<div class="modal fade" id="createModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-folder-plus me-2"></i>New Case File</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label small">Title</label>
+          <input id="new-title" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 placeholder="Case title…">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small">Description</label>
+          <textarea id="new-desc" class="form-control form-control-sm bg-dark text-light border-secondary"
+                    rows="3" placeholder="What is this investigation about?"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-success" onclick="createCase()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Pin modal ─────────────────────────────────────────────────────────── #}
+<div class="modal fade" id="pinModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-pin-angle me-2"></i>Pin Evidence</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small">Module</label>
+            <select id="pin-module" class="form-select form-select-sm bg-dark text-light border-secondary">
+              <option value="graph">Graph / Entity</option>
+              <option value="timeline">Timeline Event</option>
+              <option value="document">Document</option>
+              <option value="note">Note</option>
+              <option value="geo">Geospatial Feature</option>
+              <option value="compliance">Compliance Alert</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small">Kind</label>
+            <input id="pin-kind" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="entity / alert / …">
+          </div>
+          <div class="col-12">
+            <label class="form-label small">Reference ID</label>
+            <input id="pin-ref" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="ID or name in the source system">
+          </div>
+          <div class="col-12">
+            <label class="form-label small">Label</label>
+            <input id="pin-label" class="form-control form-control-sm bg-dark text-light border-secondary"
+                   placeholder="Short description shown in the case file">
+          </div>
+          <div class="col-12">
+            <label class="form-label small">Note (optional)</label>
+            <textarea id="pin-note" class="form-control form-control-sm bg-dark text-light border-secondary"
+                      rows="2" placeholder="Analysis or context…"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-warning" onclick="pinEvidence()">Pin</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let activeDossier = null;
+
+const MODULE_ICONS = {
+  graph:      'bi-diagram-3 text-info',
+  timeline:   'bi-clock-history text-primary',
+  document:   'bi-file-earmark-text text-secondary',
+  note:       'bi-journal-richtext text-warning',
+  geo:        'bi-map text-success',
+  compliance: 'bi-shield-check text-danger',
+};
+const MODULE_LINKS = {
+  graph:      '/explorer',
+  timeline:   '/timeline',
+  document:   '/documents',
+  note:       '/notes',
+  geo:        '/geo',
+  compliance: '/compliance',
+};
+
+// ── Case list ──────────────────────────────────────────────────────────────
+async function loadDossiers() {
+  const r  = await fetch('/api/codex/dossier/list').catch(() => null);
+  const ul = document.getElementById('case-list');
+  if (!r || !r.ok) {
+    ul.innerHTML = `<li class="list-group-item text-danger small py-2">
+      Cannot load dossiers — Redis not available.</li>`;
+    return;
+  }
+  const d = await r.json();
+  const items = d.dossiers || [];
+  if (!items.length) {
+    ul.innerHTML = `<li class="list-group-item text-muted text-center small py-3">
+      No cases yet.<br>Click <strong>New Case</strong> to start.</li>`;
+    return;
+  }
+  ul.innerHTML = items.map(c => `
+    <li class="list-group-item list-group-item-action py-2" style="cursor:pointer"
+        id="case-${escHtml(c.id)}"
+        onclick="openDossier('${escHtml(c.id)}')">
+      <div class="fw-semibold small">${escHtml(c.title)}</div>
+      <div class="text-muted" style="font-size:.72rem">
+        ${new Date(c.updated_at * 1000).toLocaleDateString()}
+        ${c.description ? ' · ' + escHtml(c.description.slice(0, 40)) : ''}
+      </div>
+    </li>`).join('');
+}
+
+async function openDossier(id) {
+  document.querySelectorAll('#case-list li').forEach(li => li.classList.remove('active'));
+  const li = document.getElementById('case-' + id);
+  if (li) li.classList.add('active');
+
+  const r = await fetch(`/api/codex/dossier/${id}`);
+  if (!r.ok) return;
+  activeDossier = await r.json();
+  renderDossier(activeDossier);
+}
+
+function renderDossier(d) {
+  const items = d.items || [];
+  const byModule = {};
+  items.forEach(it => {
+    if (!byModule[it.module]) byModule[it.module] = [];
+    byModule[it.module].push(it);
+  });
+
+  const moduleHtml = Object.entries(byModule).map(([mod, its]) => `
+    <div class="mb-3">
+      <div class="d-flex align-items-center mb-2">
+        <i class="bi ${MODULE_ICONS[mod] || 'bi-circle'} me-2"></i>
+        <span class="fw-semibold small text-uppercase" style="letter-spacing:.05em">${mod}</span>
+        <a href="${MODULE_LINKS[mod] || '#'}" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-secondary py-0 px-1 ms-auto" style="font-size:.7rem">
+          Open <i class="bi bi-box-arrow-up-right ms-1"></i>
+        </a>
+      </div>
+      ${its.map(it => `
+        <div class="d-flex align-items-start gap-2 mb-2 p-2 rounded"
+             style="background:rgba(255,255,255,.04)">
+          <div class="flex-grow-1">
+            <div class="small fw-semibold">${escHtml(it.label)}</div>
+            <div class="text-muted" style="font-size:.72rem">
+              ${escHtml(it.kind)} · <code>${escHtml(it.ref_id)}</code>
+              ${it.note ? ' — ' + escHtml(it.note) : ''}
+            </div>
+          </div>
+          <button class="btn btn-sm py-0 px-1 text-muted" title="Unpin"
+                  onclick="unpin('${escHtml(d.id)}', '${escHtml(it.item_id)}')">
+            <i class="bi bi-x"></i>
+          </button>
+        </div>`).join('')}
+    </div>`).join('') || `<p class="text-muted small">No evidence pinned yet.</p>`;
+
+  document.getElementById('dossier-panel').innerHTML = `
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <div>
+          <span class="fw-bold">${escHtml(d.title)}</span>
+          <span class="text-muted small ms-2">#${escHtml(d.id)}</span>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-warning" onclick="showPin()">
+            <i class="bi bi-pin-angle me-1"></i>Pin Evidence
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteDossier('${escHtml(d.id)}')">
+            <i class="bi bi-trash3"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        ${d.description ? `<p class="text-muted small mb-3">${escHtml(d.description)}</p>` : ''}
+        <div class="row g-3 mb-3">
+          ${[['graph','Explorer','/explorer'],['timeline','Timeline','/timeline'],
+             ['geo','Map','/geo'],['note','Notes','/notes'],
+             ['compliance','Compliance','/compliance']].map(([mod, lbl, href]) => `
+            <div class="col-6 col-md-4 col-lg-2">
+              <a href="${href}" class="btn btn-sm btn-outline-secondary w-100 py-2">
+                <i class="bi ${MODULE_ICONS[mod]} d-block mb-1 fs-5"></i>
+                <span style="font-size:.75rem">${lbl}</span>
+              </a>
+            </div>`).join('')}
+        </div>
+        <hr class="border-secondary my-3">
+        <div id="evidence-sections">${moduleHtml}</div>
+      </div>
+      <div class="card-footer text-muted small">
+        Created ${new Date(d.created_at * 1000).toLocaleString()}
+        · Last updated ${new Date(d.updated_at * 1000).toLocaleString()}
+        · ${items.length} item${items.length !== 1 ? 's' : ''} pinned
+      </div>
+    </div>`;
+}
+
+// ── CRUD ───────────────────────────────────────────────────────────────────
+function showCreate() { new bootstrap.Modal(document.getElementById('createModal')).show(); }
+function showPin()    { new bootstrap.Modal(document.getElementById('pinModal')).show(); }
+
+async function createCase() {
+  const title = document.getElementById('new-title').value.trim();
+  const desc  = document.getElementById('new-desc').value.trim();
+  if (!title) { alert('Title required'); return; }
+  const r = await fetch('/api/codex/dossier/create', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, description: desc}),
+  });
+  const d = await r.json();
+  bootstrap.Modal.getInstance(document.getElementById('createModal')).hide();
+  if (d.error) { alert('Error: ' + d.error); return; }
+  await loadDossiers();
+  openDossier(d.id);
+}
+
+async function pinEvidence() {
+  if (!activeDossier) return;
+  const body = {
+    module: document.getElementById('pin-module').value,
+    kind:   document.getElementById('pin-kind').value.trim() || 'item',
+    ref_id: document.getElementById('pin-ref').value.trim(),
+    label:  document.getElementById('pin-label').value.trim(),
+    note:   document.getElementById('pin-note').value.trim(),
+  };
+  if (!body.ref_id || !body.label) { alert('Reference ID and label required'); return; }
+  const r = await fetch(`/api/codex/dossier/${activeDossier.id}/pin`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const d = await r.json();
+  bootstrap.Modal.getInstance(document.getElementById('pinModal')).hide();
+  if (d.error) { alert('Error: ' + d.error); return; }
+  // Clear inputs
+  ['pin-kind','pin-ref','pin-label','pin-note'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  openDossier(activeDossier.id);
+}
+
+async function unpin(dossierId, itemId) {
+  await fetch(`/api/codex/dossier/${dossierId}/pin/${itemId}`, {method: 'DELETE'});
+  openDossier(dossierId);
+}
+
+async function deleteDossier(id) {
+  if (!confirm('Delete this case file? This cannot be undone.')) return;
+  await fetch(`/api/codex/dossier/${id}`, {method: 'DELETE'});
+  activeDossier = null;
+  document.getElementById('dossier-panel').innerHTML = `
+    <div class="card"><div class="card-body text-center py-5 text-muted">
+      <i class="bi bi-folder2-open display-4 d-block mb-3 opacity-25"></i>
+      Select a case or create a new one.
+    </div></div>`;
+  loadDossiers();
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', loadDossiers);
+</script>
+{% endblock %}

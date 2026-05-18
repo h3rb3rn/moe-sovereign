@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Notes & Reports — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-journal-richtext me-2 text-warning"></i>Notes &amp; Reports
+    <span class="badge bg-secondary ms-2 fs-6" id="notes-status">–</span>
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-success" onclick="showCreateModal()">
+      <i class="bi bi-plus-lg me-1"></i>New Note
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadNotes()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── Note list ─────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-journals me-1"></i>Recent Notes
+      </div>
+      <div class="card-body p-0" style="max-height:520px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="note-list">
+          <li class="list-group-item text-muted text-center small py-3">Loading…</li>
+        </ul>
+      </div>
+      <div class="card-footer py-2">
+        <a id="hedgedoc-open" href="#" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-warning w-100">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open HedgeDoc
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {# ── Note viewer ────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-8">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small d-flex justify-content-between align-items-center">
+        <span id="note-title"><i class="bi bi-journal me-1"></i>Note Viewer</span>
+        <div id="note-actions" style="display:none">
+          <a id="note-edit-link" href="#" target="_blank" rel="noopener"
+             class="btn btn-sm btn-outline-warning">
+            <i class="bi bi-pencil me-1"></i>Edit
+          </a>
+        </div>
+      </div>
+      <div id="note-area" class="card-body p-2 d-flex align-items-center justify-content-center"
+           style="min-height:480px">
+        <div class="text-muted text-center small">
+          <i class="bi bi-journal-richtext fs-2 d-block mb-2 opacity-25"></i>
+          Select a note to view it here.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Create modal ──────────────────────────────────────────────────────── #}
+<div class="modal fade" id="createModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-plus-circle me-2"></i>New Note</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label small">Title</label>
+          <input id="new-title" class="form-control form-control-sm bg-dark text-light border-secondary"
+                 placeholder="Note title…">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small">Initial content (Markdown)</label>
+          <textarea id="new-content" class="form-control form-control-sm bg-dark text-light border-secondary"
+                    rows="5" placeholder="## Summary&#10;&#10;Write your content here…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-success" onclick="createNote()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let HEDGEDOC_URL = '';
+
+async function checkStatus() {
+  const r = await fetch('/api/codex/notes/status').catch(() => null);
+  if (!r) return;
+  const d = await r.json();
+  HEDGEDOC_URL = d.url || '';
+  document.getElementById('hedgedoc-open').href = HEDGEDOC_URL;
+  const el = document.getElementById('notes-status');
+  el.textContent = d.reachable ? 'online' : 'offline';
+  el.className = `badge ${d.reachable ? 'bg-success' : 'bg-danger'} ms-2 fs-6`;
+}
+
+async function loadNotes() {
+  const r   = await fetch('/api/codex/notes/list?limit=50').catch(() => null);
+  if (!r) return;
+  const d   = await r.json();
+  const ul  = document.getElementById('note-list');
+  const notes = d.notes || [];
+  if (!notes.length) {
+    ul.innerHTML = `<li class="list-group-item text-muted text-center small py-3">
+      No notes yet.<br>Click <strong>New Note</strong> to create one.</li>`;
+    return;
+  }
+  ul.innerHTML = notes.map(n => `
+    <li class="list-group-item list-group-item-action" style="cursor:pointer"
+        onclick="openNote('${escHtml(n.id||n.noteId||'')}', '${escHtml(n.title||n.text||'')}')">
+      <div class="fw-semibold small">${escHtml(n.title||n.text||'Untitled')}</div>
+      <div class="text-muted" style="font-size:.72rem">${(n.updatedAt||n.createdAt||'').slice(0,10)}</div>
+    </li>`).join('');
+}
+
+async function openNote(noteId, title) {
+  if (!noteId) return;
+  document.getElementById('note-title').innerHTML =
+    `<i class="bi bi-journal me-1"></i>${escHtml(title||noteId)}`;
+  document.getElementById('note-actions').style.display = '';
+  document.getElementById('note-edit-link').href = `${HEDGEDOC_URL}/${noteId}`;
+
+  const r2   = await fetch(`/api/codex/notes/${noteId}/embed`);
+  const emb  = await r2.json();
+  const embedUrl = emb.embed_url || `${HEDGEDOC_URL}/${noteId}/view`;
+
+  document.getElementById('note-area').innerHTML =
+    `<iframe src="${embedUrl}" style="width:100%;height:480px;border:none;border-radius:4px"
+      title="${escHtml(title)}"></iframe>`;
+}
+
+function showCreateModal() {
+  new bootstrap.Modal(document.getElementById('createModal')).show();
+}
+
+async function createNote() {
+  const title   = document.getElementById('new-title').value.trim();
+  const content = document.getElementById('new-content').value;
+  if (!title) { alert('Title required.'); return; }
+
+  const r = await fetch('/api/codex/notes/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, content}),
+  });
+  const d = await r.json();
+  bootstrap.Modal.getInstance(document.getElementById('createModal')).hide();
+  if (d.error) { alert('Error: ' + d.error); return; }
+  await loadNotes();
+  openNote(d.id, title);
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', () => { checkStatus(); loadNotes(); });
+</script>
+{% endblock %}

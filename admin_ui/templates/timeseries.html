@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Time Series Catalog — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-activity me-2 text-primary"></i>Time Series Catalog
+    <span class="badge bg-secondary ms-2 fs-6" id="ts-status">–</span>
+  </h5>
+  <button class="btn btn-sm btn-outline-primary" onclick="loadTables()">
+    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+  </button>
+</div>
+
+<div class="row g-3">
+  {# ── Table list ──────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-3">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-table me-1"></i>Hypertables
+      </div>
+      <div class="card-body p-0" style="max-height:520px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="table-list">
+          <li class="list-group-item text-muted text-center small py-3">Loading…</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  {# ── Query + Chart ───────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-9">
+    <div class="card mb-3">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-sliders me-1"></i>Query
+      </div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small">Table</label>
+            <input id="q-table" class="form-control form-control-sm" placeholder="table_name">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Value column</label>
+            <input id="q-col" class="form-control form-control-sm" value="value">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Label filter</label>
+            <input id="q-label" class="form-control form-control-sm" placeholder="optional">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Window</label>
+            <select id="q-window" class="form-select form-select-sm">
+              <option value="1d">1 day</option>
+              <option value="7d" selected>7 days</option>
+              <option value="30d">30 days</option>
+              <option value="90d">90 days</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Limit</label>
+            <input id="q-limit" type="number" class="form-control form-control-sm" value="500" min="1" max="5000">
+          </div>
+          <div class="col-md-1">
+            <button class="btn btn-sm btn-primary w-100" onclick="runQuery()">Run</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header py-2 fw-semibold small d-flex justify-content-between">
+        <span id="chart-title"><i class="bi bi-graph-up me-1"></i>Chart</span>
+        <span class="text-muted small" id="chart-meta">–</span>
+      </div>
+      <div class="card-body">
+        <canvas id="ts-chart" height="200"></canvas>
+        <div id="no-data" class="text-muted small text-center py-4" style="display:none">
+          <i class="bi bi-graph-up fs-2 d-block mb-2 opacity-25"></i>
+          Run a query to see time-series data.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let chart = null;
+
+async function checkStatus() {
+  const r = await fetch('/api/codex/timeseries/status').catch(() => null);
+  if (!r) return;
+  const d = await r.json();
+  const el = document.getElementById('ts-status');
+  el.textContent = d.reachable ? 'online' : 'offline';
+  el.className = `badge ${d.reachable ? 'bg-success' : 'bg-danger'} ms-2 fs-6`;
+}
+
+async function loadTables() {
+  const r  = await fetch('/api/codex/timeseries/tables').catch(() => null);
+  if (!r) return;
+  const d  = await r.json();
+  const ul = document.getElementById('table-list');
+  const tables = d.tables || [];
+  if (!tables.length) {
+    ul.innerHTML = '<li class="list-group-item text-muted text-center small py-3">No hypertables found.</li>';
+    return;
+  }
+  ul.innerHTML = tables.map(t => `
+    <li class="list-group-item list-group-item-action small" style="cursor:pointer"
+        onclick="selectTable('${escHtml(t.hypertable_name||t.table_name||String(t))}')">
+      <i class="bi bi-table me-1 text-primary"></i>${escHtml(t.hypertable_name||t.table_name||String(t))}
+    </li>`).join('');
+}
+
+function selectTable(name) {
+  document.getElementById('q-table').value = name;
+}
+
+async function runQuery() {
+  const table  = document.getElementById('q-table').value.trim();
+  const col    = document.getElementById('q-col').value.trim()   || 'value';
+  const label  = document.getElementById('q-label').value.trim();
+  const window = document.getElementById('q-window').value;
+  const limit  = document.getElementById('q-limit').value        || 500;
+  if (!table) { alert('Enter a table name first.'); return; }
+
+  let url = `/api/codex/timeseries/query?table=${encodeURIComponent(table)}&value_column=${encodeURIComponent(col)}&window=${window}&limit=${limit}`;
+  if (label) url += `&label=${encodeURIComponent(label)}`;
+
+  const r   = await fetch(url).catch(() => null);
+  if (!r || !r.ok) { showNoData(`Query failed (${r?.status})`); return; }
+  const d   = await r.json();
+  if (!d.rows || !d.rows.length) { showNoData('No data in this window.'); return; }
+  renderChart(d, table, col);
+}
+
+function showNoData(msg) {
+  const noData = document.getElementById('no-data');
+  noData.style.display = '';
+  noData.innerHTML = `<i class="bi bi-graph-up fs-2 d-block mb-2 opacity-25"></i>${escHtml(msg)}`;
+  document.getElementById('ts-chart').style.display = 'none';
+  if (chart) { chart.destroy(); chart = null; }
+}
+
+function renderChart(data, table, col) {
+  document.getElementById('no-data').style.display = 'none';
+  document.getElementById('ts-chart').style.display = '';
+  document.getElementById('chart-title').innerHTML =
+    `<i class="bi bi-graph-up me-1"></i>${escHtml(table)} — ${escHtml(col)}`;
+  document.getElementById('chart-meta').textContent =
+    `${data.total} points · ${data.window}`;
+
+  const labels  = data.rows.map(r => r[0]);
+  const values  = data.rows.map(r => r[1]);
+
+  if (chart) chart.destroy();
+  const ctx = document.getElementById('ts-chart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: col,
+        data: values,
+        borderColor: '#6ea8fe',
+        backgroundColor: 'rgba(110,168,254,0.1)',
+        borderWidth: 1.5,
+        pointRadius: data.rows.length < 100 ? 3 : 0,
+        tension: 0.2,
+        fill: true,
+      }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, color: '#adb5bd' }, grid: { color: 'rgba(255,255,255,.05)' } },
+        y: { ticks: { color: '#adb5bd' }, grid: { color: 'rgba(255,255,255,.05)' } },
+      },
+    },
+  });
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', () => { checkStatus(); loadTables(); });
+</script>
+{% endblock %}

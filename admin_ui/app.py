@@ -8133,6 +8133,174 @@ async def api_search_index():
     return await _cx_post("v1/codex/search/index", {})
 
 
+# ── D4: Workshop (Budibase) ────────────────────────────────────────────────────
+
+@app.get("/workshop", response_class=HTMLResponse)
+async def workshop_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "workshop.html", {})
+
+
+@app.get("/api/codex/workshop/status", dependencies=[Depends(require_login)])
+async def api_workshop_status():
+    return await _cx_get("v1/codex/workshop/status")
+
+
+@app.get("/api/codex/workshop/apps", dependencies=[Depends(require_login)])
+async def api_workshop_apps(page: int = 1, per_page: int = 50):
+    return await _cx_get(f"v1/codex/workshop/apps?page={page}&per_page={per_page}")
+
+
+@app.get("/api/codex/workshop/embed/{app_id}", dependencies=[Depends(require_login)])
+async def api_workshop_embed(app_id: str):
+    return await _cx_get(f"v1/codex/workshop/embed/{app_id}")
+
+
+# ── D4: Time Series ────────────────────────────────────────────────────────────
+
+@app.get("/timeseries", response_class=HTMLResponse)
+async def timeseries_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "timeseries.html", {})
+
+
+@app.get("/api/codex/timeseries/status", dependencies=[Depends(require_login)])
+async def api_timeseries_status():
+    return await _cx_get("v1/codex/timeseries/status")
+
+
+@app.get("/api/codex/timeseries/tables", dependencies=[Depends(require_login)])
+async def api_timeseries_tables():
+    return await _cx_get("v1/codex/timeseries/tables")
+
+
+@app.get("/api/codex/timeseries/query", dependencies=[Depends(require_login)])
+async def api_timeseries_query(
+    table: str, time_column: str = "time", value_column: str = "value",
+    label_column: str = "metric", label: str = "", window: str = "7d", limit: int = 1000,
+):
+    params = f"table={table}&time_column={time_column}&value_column={value_column}"
+    params += f"&label_column={label_column}&window={window}&limit={limit}"
+    if label:
+        params += f"&label={label}"
+    return await _cx_get(f"v1/codex/timeseries/query?{params}")
+
+
+# ── D4: Notes (HedgeDoc) ───────────────────────────────────────────────────────
+
+@app.get("/notes", response_class=HTMLResponse)
+async def notes_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "notes.html", {})
+
+
+@app.get("/api/codex/notes/status", dependencies=[Depends(require_login)])
+async def api_notes_status():
+    return await _cx_get("v1/codex/notes/status")
+
+
+@app.get("/api/codex/notes/list", dependencies=[Depends(require_login)])
+async def api_notes_list(limit: int = 50):
+    return await _cx_get(f"v1/codex/notes/list?limit={limit}")
+
+
+@app.post("/api/codex/notes/create", dependencies=[Depends(require_login)])
+async def api_notes_create(request: Request):
+    body = await request.json()
+    return await _cx_post("v1/codex/notes/create", body)
+
+
+@app.get("/api/codex/notes/{note_id}/embed", dependencies=[Depends(require_login)])
+async def api_notes_embed(note_id: str, read_only: bool = True):
+    return await _cx_get(f"v1/codex/notes/{note_id}/embed?read_only={str(read_only).lower()}")
+
+
+# ── D4: Geospatial (Leaflet + PostGIS) ────────────────────────────────────────
+
+@app.get("/geo", response_class=HTMLResponse)
+async def geo_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "geo.html", {})
+
+
+@app.get("/api/codex/geo/status", dependencies=[Depends(require_login)])
+async def api_geo_status():
+    return await _cx_get("v1/codex/geo/status")
+
+
+@app.get("/api/codex/geo/layers", dependencies=[Depends(require_login)])
+async def api_geo_layers():
+    return await _cx_get("v1/codex/geo/layers")
+
+
+@app.get("/api/codex/geo/layers/{table}/geojson", dependencies=[Depends(require_login)])
+async def api_geo_geojson(
+    table: str, geom_column: str = "geom", limit: int = 2000,
+    min_lon: float = None, min_lat: float = None,
+    max_lon: float = None, max_lat: float = None,
+):
+    params = f"geom_column={geom_column}&limit={limit}"
+    if all(v is not None for v in (min_lon, min_lat, max_lon, max_lat)):
+        params += f"&min_lon={min_lon}&min_lat={min_lat}&max_lon={max_lon}&max_lat={max_lat}"
+    return await _cx_get(f"v1/codex/geo/layers/{table}/geojson?{params}")
+
+
+@app.get("/api/codex/geo/pip", dependencies=[Depends(require_login)])
+async def api_geo_pip(
+    table: str, lon: float, lat: float,
+    geom_column: str = "geom", name_column: str = "name",
+):
+    return await _cx_get(
+        f"v1/codex/geo/pip?table={table}&lon={lon}&lat={lat}"
+        f"&geom_column={geom_column}&name_column={name_column}"
+    )
+
+
+# ── D5: Dossier / Case File ────────────────────────────────────────────────────
+
+@app.get("/dossier", response_class=HTMLResponse)
+async def dossier_page(request: Request, _=Depends(require_login)):
+    return TEMPLATES.TemplateResponse(request, "dossier.html", {})
+
+
+@app.get("/api/codex/dossier/list", dependencies=[Depends(require_login)])
+async def api_dossier_list(limit: int = 50):
+    return await _cx_get(f"v1/codex/dossier/list?limit={limit}")
+
+
+@app.post("/api/codex/dossier/create", dependencies=[Depends(require_login)])
+async def api_dossier_create(request: Request):
+    body = await request.json()
+    return await _cx_post("v1/codex/dossier/create", body)
+
+
+@app.get("/api/codex/dossier/{dossier_id}", dependencies=[Depends(require_login)])
+async def api_dossier_get(dossier_id: str):
+    return await _cx_get(f"v1/codex/dossier/{dossier_id}")
+
+
+@app.post("/api/codex/dossier/{dossier_id}/pin", dependencies=[Depends(require_login)])
+async def api_dossier_pin(dossier_id: str, request: Request):
+    body = await request.json()
+    return await _cx_post(f"v1/codex/dossier/{dossier_id}/pin", body)
+
+
+@app.delete("/api/codex/dossier/{dossier_id}/pin/{item_id}", dependencies=[Depends(require_login)])
+async def api_dossier_unpin(dossier_id: str, item_id: str):
+    if not _CODEX_ADMIN_URL:
+        return {"error": "moe-codex not configured"}
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{_CODEX_ADMIN_URL}/v1/codex/dossier/{dossier_id}/pin/{item_id}")
+        return r.json() if r.status_code < 300 else {"error": f"HTTP {r.status_code}"}
+
+
+@app.delete("/api/codex/dossier/{dossier_id}", dependencies=[Depends(require_login)])
+async def api_dossier_delete(dossier_id: str):
+    if not _CODEX_ADMIN_URL:
+        return {"error": "moe-codex not configured"}
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=10) as c:
+        r = await c.delete(f"{_CODEX_ADMIN_URL}/v1/codex/dossier/{dossier_id}")
+        return r.json() if r.status_code < 300 else {"error": f"HTTP {r.status_code}"}
+
+
 @app.post("/api/explorer/cypher", dependencies=[Depends(require_login)])
 async def api_explorer_cypher(request: Request):
     body = await request.json()
