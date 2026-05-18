@@ -156,9 +156,14 @@
       <div class="dropdown">
         <button class="btn btn-sm btn-outline-light dropdown-toggle {% if _codex_active %}active{% endif %}"
                 data-bs-toggle="dropdown" aria-expanded="false">
-          <i class="bi bi-building me-1"></i>{{ t(request, 'nav.enterprise') }}
+          <i class="bi bi-layers me-1"></i>Codex
         </button>
-        <ul class="dropdown-menu dropdown-menu-dark">
+        <ul class="dropdown-menu dropdown-menu-dark" style="min-width:220px">
+
+          {# ── Platform ───────────────────────────────────────────────── #}
+          <li><h6 class="dropdown-header text-uppercase" style="font-size:.68rem;letter-spacing:.07em;color:#888">
+            {{ t(request, 'nav.codex_platform') }}
+          </h6></li>
           <li><a class="dropdown-item {% if _p == '/codex' %}active{% endif %}" href="/codex">
             <i class="bi bi-layers me-2" style="color:#b09bff"></i>{{ t(request, 'page.enterprise') }}
           </a></li>
@@ -168,54 +173,74 @@
           <li><a class="dropdown-item {% if _p == '/approval' %}active{% endif %}" href="/approval">
             <i class="bi bi-check2-circle me-2" style="color:#b09bff"></i>{{ t(request, 'page.approval') }}
           </a></li>
-          <li><a class="dropdown-item {% if _p == '/explorer' %}active{% endif %}" href="/explorer">
-            <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.explorer') }}
-          </a></li>
           <li><a class="dropdown-item {% if _p == '/notebook' %}active{% endif %}" href="/notebook">
             <i class="bi bi-journal-code me-2" style="color:#b09bff"></i>{{ t(request, 'page.notebook') }}
           </a></li>
-          <li><hr class="dropdown-divider"></li>
+
+          {# ── BI & Analytics ─────────────────────────────────────────── #}
+          <li><hr class="dropdown-divider border-secondary my-1"></li>
+          <li><h6 class="dropdown-header text-uppercase" style="font-size:.68rem;letter-spacing:.07em;color:#888">
+            {{ t(request, 'nav.codex_bi') }}
+          </h6></li>
+          <li><a class="dropdown-item {% if _p == '/superset' %}active{% endif %}" href="/superset">
+            <i class="bi bi-bar-chart-steps me-2 text-warning"></i>{{ t(request, 'page.superset') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/charts' %}active{% endif %}" href="/charts">
+            <i class="bi bi-bar-chart-line me-2" style="color:#b09bff"></i>{{ t(request, 'page.charts') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/timeseries' %}active{% endif %}" href="/timeseries">
+            <i class="bi bi-activity me-2 text-primary"></i>{{ t(request, 'page.timeseries') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/search' %}active{% endif %}" href="/search">
+            <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.search') }}
+          </a></li>
+
+          {# ── Investigation ──────────────────────────────────────────── #}
+          <li><hr class="dropdown-divider border-secondary my-1"></li>
+          <li><h6 class="dropdown-header text-uppercase" style="font-size:.68rem;letter-spacing:.07em;color:#888">
+            {{ t(request, 'nav.codex_investigation') }}
+          </h6></li>
+          <li><a class="dropdown-item {% if _p == '/dossier' %}active{% endif %}" href="/dossier">
+            <i class="bi bi-folder2-open me-2 text-warning"></i>{{ t(request, 'page.dossier') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/explorer' %}active{% endif %}" href="/explorer">
+            <i class="bi bi-diagram-3-fill me-2" style="color:#b09bff"></i>{{ t(request, 'page.explorer') }}
+          </a></li>
           <li><a class="dropdown-item {% if _p == '/link-analysis' %}active{% endif %}" href="/link-analysis">
             <i class="bi bi-diagram-3 me-2" style="color:#b09bff"></i>{{ t(request, 'page.link_analysis') }}
           </a></li>
           <li><a class="dropdown-item {% if _p == '/timeline' %}active{% endif %}" href="/timeline">
             <i class="bi bi-clock-history me-2" style="color:#b09bff"></i>{{ t(request, 'page.timeline') }}
           </a></li>
+          <li><a class="dropdown-item {% if _p == '/geo' %}active{% endif %}" href="/geo">
+            <i class="bi bi-map me-2 text-success"></i>{{ t(request, 'page.geo') }}
+          </a></li>
+
+          {# ── Pipelines & Content ─────────────────────────────────────── #}
+          <li><hr class="dropdown-divider border-secondary my-1"></li>
+          <li><h6 class="dropdown-header text-uppercase" style="font-size:.68rem;letter-spacing:.07em;color:#888">
+            {{ t(request, 'nav.codex_pipelines') }}
+          </h6></li>
           <li><a class="dropdown-item {% if _p == '/kestra' %}active{% endif %}" href="/kestra">
             <i class="bi bi-diagram-2 me-2" style="color:#b09bff"></i>{{ t(request, 'page.kestra') }}
           </a></li>
           <li><a class="dropdown-item {% if _p == '/forms' %}active{% endif %}" href="/forms">
             <i class="bi bi-ui-checks me-2" style="color:#b09bff"></i>{{ t(request, 'page.forms') }}
           </a></li>
-          <li><a class="dropdown-item {% if _p == '/search' %}active{% endif %}" href="/search">
-            <i class="bi bi-search me-2" style="color:#b09bff"></i>{{ t(request, 'page.search') }}
-          </a></li>
-          <li><a class="dropdown-item {% if _p == '/charts' %}active{% endif %}" href="/charts">
-            <i class="bi bi-bar-chart-line me-2" style="color:#b09bff"></i>{{ t(request, 'page.charts') }}
-          </a></li>
-          <li><a class="dropdown-item {% if _p == '/superset' %}active{% endif %}" href="/superset">
-            <i class="bi bi-bar-chart-steps me-2 text-warning"></i>{{ t(request, 'page.superset') }}
-          </a></li>
-          <li><hr class="dropdown-divider border-secondary"></li>
-          <li><a class="dropdown-item {% if _p == '/compliance' %}active{% endif %}" href="/compliance">
-            <i class="bi bi-shield-check me-2 text-success"></i>{{ t(request, 'page.compliance') }}
-          </a></li>
-          <li><hr class="dropdown-divider border-secondary"></li>
-          <li><a class="dropdown-item {% if _p == '/geo' %}active{% endif %}" href="/geo">
-            <i class="bi bi-map me-2 text-success"></i>{{ t(request, 'page.geo') }}
-          </a></li>
-          <li><a class="dropdown-item {% if _p == '/timeseries' %}active{% endif %}" href="/timeseries">
-            <i class="bi bi-activity me-2 text-primary"></i>{{ t(request, 'page.timeseries') }}
+          <li><a class="dropdown-item {% if _p == '/workshop' %}active{% endif %}" href="/workshop">
+            <i class="bi bi-grid-1x2 me-2 text-info"></i>{{ t(request, 'page.workshop') }}
           </a></li>
           <li><a class="dropdown-item {% if _p == '/notes' %}active{% endif %}" href="/notes">
             <i class="bi bi-journal-richtext me-2 text-warning"></i>{{ t(request, 'page.notes') }}
           </a></li>
-          <li><a class="dropdown-item {% if _p == '/workshop' %}active{% endif %}" href="/workshop">
-            <i class="bi bi-grid-1x2 me-2 text-info"></i>{{ t(request, 'page.workshop') }}
-          </a></li>
-          <li><hr class="dropdown-divider border-secondary"></li>
-          <li><a class="dropdown-item {% if _p == '/dossier' %}active{% endif %}" href="/dossier">
-            <i class="bi bi-folder2-open me-2 text-warning"></i>{{ t(request, 'page.dossier') }}
+
+          {# ── Security & Compliance ──────────────────────────────────── #}
+          <li><hr class="dropdown-divider border-secondary my-1"></li>
+          <li><h6 class="dropdown-header text-uppercase" style="font-size:.68rem;letter-spacing:.07em;color:#888">
+            {{ t(request, 'nav.codex_security') }}
+          </h6></li>
+          <li><a class="dropdown-item {% if _p == '/compliance' %}active{% endif %}" href="/compliance">
+            <i class="bi bi-shield-check me-2 text-success"></i>{{ t(request, 'page.compliance') }}
           </a></li>
         </ul>
       </div>
