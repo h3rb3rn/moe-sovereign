@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Workshop / Low-Code Apps — MoE Codex{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-grid-1x2 me-2 text-info"></i>Workshop
+    <span class="badge bg-secondary ms-2 fs-6" id="workshop-status">–</span>
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="loadApps()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── App list ─────────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex align-items-center justify-content-between">
+        <span class="fw-semibold small"><i class="bi bi-layout-text-window me-1"></i>Applications</span>
+        <input type="text" id="app-filter" class="form-control form-control-sm w-50"
+               placeholder="Filter…" oninput="filterApps()">
+      </div>
+      <div class="card-body p-0" style="max-height:520px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="app-list">
+          <li class="list-group-item text-muted text-center small py-3">
+            <i class="bi bi-hourglass me-1"></i>Loading…
+          </li>
+        </ul>
+      </div>
+      <div class="card-footer py-2">
+        <a id="budibase-open" href="#" target="_blank" rel="noopener"
+           class="btn btn-sm btn-outline-info w-100">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open Budibase Builder
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {# ── App embed ────────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-8">
+    <div class="card h-100">
+      <div class="card-header py-2 fw-semibold small" id="embed-title">
+        <i class="bi bi-display me-1"></i>App Preview
+      </div>
+      <div class="card-body p-2 d-flex align-items-center justify-content-center"
+           id="embed-area" style="min-height:480px">
+        <div class="text-muted text-center small">
+          <i class="bi bi-grid-1x2 fs-2 d-block mb-2 opacity-25"></i>
+          Select an app to preview it here.
+          <br><span class="opacity-50">Public apps embed directly. Private apps open in Budibase.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allApps = [], BUDIBASE_URL = '';
+
+async function checkStatus() {
+  const r = await fetch('/api/codex/workshop/status').catch(() => null);
+  if (!r) return;
+  const d = await r.json();
+  BUDIBASE_URL = d.url || '';
+  document.getElementById('budibase-open').href = BUDIBASE_URL + '/builder';
+  const el = document.getElementById('workshop-status');
+  el.textContent = d.reachable ? 'online' : 'offline';
+  el.className = `badge ${d.reachable ? 'bg-success' : 'bg-danger'} ms-2 fs-6`;
+}
+
+async function loadApps() {
+  const r   = await fetch('/api/codex/workshop/apps').catch(() => null);
+  if (!r) return;
+  const d   = await r.json();
+  allApps   = d.apps || [];
+  renderList(allApps);
+}
+
+function renderList(apps) {
+  const ul = document.getElementById('app-list');
+  if (!apps.length) {
+    ul.innerHTML = `<li class="list-group-item text-muted text-center small py-3">
+      No apps found.<br>
+      <a href="${BUDIBASE_URL}/builder" target="_blank" class="btn btn-sm btn-outline-info mt-2">
+        Create an app in Budibase
+      </a></li>`;
+    return;
+  }
+  ul.innerHTML = apps.map(a => `
+    <li class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+        style="cursor:pointer"
+        onclick="embedApp('${escHtml(a._id||a.appId||'')}', '${escHtml(a.name||'')}', ${a.public||false})">
+      <div>
+        <div class="fw-semibold small">${escHtml(a.name||'Unnamed')}</div>
+        <div class="text-muted" style="font-size:.75rem">${a.status||''} ${a.public ? '· public' : '· private'}</div>
+      </div>
+      <i class="bi bi-chevron-right text-muted"></i>
+    </li>`).join('');
+}
+
+function filterApps() {
+  const q = document.getElementById('app-filter').value.toLowerCase();
+  renderList(allApps.filter(a => (a.name||'').toLowerCase().includes(q)));
+}
+
+async function embedApp(appId, name, isPublic) {
+  document.getElementById('embed-title').innerHTML =
+    `<i class="bi bi-display me-1"></i>${escHtml(name)}`;
+  const area = document.getElementById('embed-area');
+  if (!appId) { area.innerHTML = '<div class="text-muted small p-3">No app ID available.</div>'; return; }
+  const r   = await fetch(`/api/codex/workshop/embed/${appId}`);
+  const d   = await r.json();
+  const url = d.embed_url || '';
+
+  if (isPublic) {
+    area.innerHTML = `<iframe src="${url}" style="width:100%;height:480px;border:none;border-radius:4px"
+      allow="fullscreen" title="${escHtml(name)}"></iframe>`;
+  } else {
+    area.innerHTML = `<div class="text-muted text-center p-4">
+      <i class="bi bi-lock fs-2 d-block mb-2 opacity-25"></i>
+      Private app — requires Budibase login.<br>
+      <a href="${url}" target="_blank" class="btn btn-sm btn-outline-info mt-2">
+        <i class="bi bi-box-arrow-up-right me-1"></i>Open in Budibase
+      </a></div>`;
+  }
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', () => { checkStatus(); loadApps(); });
+</script>
+{% endblock %}

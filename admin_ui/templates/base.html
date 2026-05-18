@@ -58,7 +58,7 @@
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
-    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance'] %}
+    {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance', '/workshop', '/timeseries', '/notes', '/geo', '/dossier'] %}
 
     <div class="d-none d-lg-flex align-items-center gap-1 flex-grow-1">
       {# Config – direct link #}
@@ -199,6 +199,23 @@
           <li><hr class="dropdown-divider border-secondary"></li>
           <li><a class="dropdown-item {% if _p == '/compliance' %}active{% endif %}" href="/compliance">
             <i class="bi bi-shield-check me-2 text-success"></i>{{ t(request, 'page.compliance') }}
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/geo' %}active{% endif %}" href="/geo">
+            <i class="bi bi-map me-2 text-success"></i>{{ t(request, 'page.geo') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/timeseries' %}active{% endif %}" href="/timeseries">
+            <i class="bi bi-activity me-2 text-primary"></i>{{ t(request, 'page.timeseries') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/notes' %}active{% endif %}" href="/notes">
+            <i class="bi bi-journal-richtext me-2 text-warning"></i>{{ t(request, 'page.notes') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/workshop' %}active{% endif %}" href="/workshop">
+            <i class="bi bi-grid-1x2 me-2 text-info"></i>{{ t(request, 'page.workshop') }}
+          </a></li>
+          <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/dossier' %}active{% endif %}" href="/dossier">
+            <i class="bi bi-folder2-open me-2 text-warning"></i>{{ t(request, 'page.dossier') }}
           </a></li>
         </ul>
       </div>
@@ -428,6 +445,31 @@
           <li class="nav-item">
             <a href="/compliance" class="nav-link text-white {% if _p == '/compliance' %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-shield-check me-2 text-success"></i>{{ t(request, 'page.compliance') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/geo" class="nav-link text-white {% if _p == '/geo' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-map me-2 text-success"></i>{{ t(request, 'page.geo') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/timeseries" class="nav-link text-white {% if _p == '/timeseries' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-activity me-2 text-primary"></i>{{ t(request, 'page.timeseries') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/notes" class="nav-link text-white {% if _p == '/notes' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-journal-richtext me-2 text-warning"></i>{{ t(request, 'page.notes') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/workshop" class="nav-link text-white {% if _p == '/workshop' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-grid-1x2 me-2 text-info"></i>{{ t(request, 'page.workshop') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/dossier" class="nav-link text-white {% if _p == '/dossier' %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-folder2-open me-2 text-warning"></i>{{ t(request, 'page.dossier') }}
             </a>
           </li>
           {% endif %}

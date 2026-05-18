@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Geospatial Investigation — MoE Codex{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/leaflet.min.css">
+<style>
+  #map { height: 500px; border-radius: 0 0 10px 10px; }
+  .leaflet-container { background: #1a1a2e; }
+  .geo-popup { font-size: .82rem; }
+  .geo-popup table { border-collapse: collapse; }
+  .geo-popup td { padding: 2px 6px; border-bottom: 1px solid #eee; }
+  .geo-popup td:first-child { font-weight: 600; color: #555; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0 fw-bold">
+    <i class="bi bi-map me-2 text-success"></i>Geospatial Investigation
+    <span class="badge bg-secondary ms-2 fs-6" id="geo-status">–</span>
+  </h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" onclick="loadLayers()">
+      <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+    </button>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# ── Controls sidebar ──────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-3">
+    {# Layer picker #}
+    <div class="card mb-3">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-layers me-1"></i>Layers
+      </div>
+      <div class="card-body p-0" style="max-height:180px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="layer-list">
+          <li class="list-group-item text-muted text-center small py-3">Loading…</li>
+        </ul>
+      </div>
+    </div>
+
+    {# Active layers #}
+    <div class="card mb-3">
+      <div class="card-header py-2 fw-semibold small d-flex justify-content-between">
+        <span><i class="bi bi-stack me-1"></i>Active layers</span>
+        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="clearAllLayers()" title="Remove all">
+          <i class="bi bi-x-lg" style="font-size:.7rem"></i>
+        </button>
+      </div>
+      <div class="card-body p-0" style="max-height:120px;overflow-y:auto">
+        <ul class="list-group list-group-flush" id="active-layers">
+          <li class="list-group-item text-muted text-center small py-2">None</li>
+        </ul>
+      </div>
+    </div>
+
+    {# Point-in-polygon #}
+    <div class="card">
+      <div class="card-header py-2 fw-semibold small">
+        <i class="bi bi-geo me-1"></i>Point-in-Polygon
+      </div>
+      <div class="card-body">
+        <div class="mb-2">
+          <label class="form-label small mb-1">Layer</label>
+          <input id="pip-table" class="form-control form-control-sm" placeholder="table_name">
+        </div>
+        <div class="row g-1 mb-2">
+          <div class="col-6">
+            <label class="form-label small mb-1">Lon</label>
+            <input id="pip-lon" type="number" step="any" class="form-control form-control-sm" placeholder="13.4">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">Lat</label>
+            <input id="pip-lat" type="number" step="any" class="form-control form-control-sm" placeholder="52.5">
+          </div>
+        </div>
+        <button class="btn btn-sm btn-outline-success w-100" onclick="runPip()">
+          <i class="bi bi-search me-1"></i>Find Region
+        </button>
+        <div id="pip-result" class="mt-2 small"></div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Map ─────────────────────────────────────────────────────────── #}
+  <div class="col-12 col-lg-9">
+    <div class="card h-100">
+      <div class="card-header py-2 d-flex align-items-center justify-content-between">
+        <span class="fw-semibold small" id="map-title">
+          <i class="bi bi-map me-1"></i>Map
+        </span>
+        <div class="d-flex gap-2 align-items-center">
+          <select id="tile-select" class="form-select form-select-sm" style="width:auto"
+                  onchange="changeTiles()">
+            <option value="osm">OpenStreetMap</option>
+            <option value="dark">CartoDB Dark</option>
+            <option value="topo">OpenTopoMap</option>
+          </select>
+          <span class="text-muted small" id="feature-count"></span>
+        </div>
+      </div>
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/leaflet.min.js"></script>
+<script>
+// ── Map init ──────────────────────────────────────────────────────────────────
+const TILE_PROVIDERS = {
+  osm:  {url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+         attr: '© <a href="https://osm.org/copyright">OpenStreetMap</a>'},
+  dark: {url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+         attr: '© <a href="https://carto.com">CARTO</a>'},
+  topo: {url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+         attr: '© <a href="https://opentopomap.org">OpenTopoMap</a>'},
+};
+
+// Override tile server for airgap deployments via env var injected by the template
+const AIRGAP_TILE_URL = "{{ tile_url | default('') }}";
+
+const map = L.map('map', {preferCanvas: true}).setView([51.0, 10.0], 5);
+let tileLayer = null;
+const dataLayers = {};   // table → L.GeoJSON
+const layerColors = ['#4cc9f0','#f72585','#7209b7','#3a0ca3','#4361ee','#4cc9f0'];
+let colorIdx = 0;
+
+function getColor() { return layerColors[colorIdx++ % layerColors.length]; }
+
+function setTiles(provider) {
+  if (tileLayer) map.removeLayer(tileLayer);
+  const p = TILE_PROVIDERS[provider] || TILE_PROVIDERS.osm;
+  const url = AIRGAP_TILE_URL || p.url;
+  tileLayer = L.tileLayer(url, {attribution: p.attr, maxZoom: 19}).addTo(map);
+}
+setTiles('dark');
+
+function changeTiles() { setTiles(document.getElementById('tile-select').value); }
+
+// ── Layer management ──────────────────────────────────────────────────────────
+async function checkStatus() {
+  const r = await fetch('/api/codex/geo/status').catch(() => null);
+  if (!r) return;
+  const d  = await r.json();
+  const el = document.getElementById('geo-status');
+  el.textContent = d.reachable ? 'online' : 'offline';
+  el.className   = `badge ${d.reachable ? 'bg-success' : 'bg-danger'} ms-2 fs-6`;
+}
+
+async function loadLayers() {
+  const r  = await fetch('/api/codex/geo/layers').catch(() => null);
+  if (!r) return;
+  const d  = await r.json();
+  const ul = document.getElementById('layer-list');
+  const layers = d.layers || [];
+  if (!layers.length) {
+    ul.innerHTML = `<li class="list-group-item text-muted text-center small py-3">
+      No geometry tables found.<br>
+      <span class="opacity-50">Upload GeoJSON data to PostGIS.</span></li>`;
+    return;
+  }
+  ul.innerHTML = layers.map(l => {
+    const name = l.table || l.hypertable_name || String(l);
+    const active = dataLayers[name] ? 'fw-bold text-success' : '';
+    return `<li class="list-group-item list-group-item-action small ${active}"
+        style="cursor:pointer" id="layer-item-${escHtml(name)}"
+        onclick="toggleLayer('${escHtml(name)}')">
+      <i class="bi bi-${dataLayers[name] ? 'eye-fill text-success' : 'eye-slash text-muted'} me-1"></i>
+      ${escHtml(name)}
+    </li>`;
+  }).join('');
+}
+
+async function toggleLayer(name) {
+  if (dataLayers[name]) {
+    map.removeLayer(dataLayers[name]);
+    delete dataLayers[name];
+    updateActiveList();
+    loadLayers();
+    return;
+  }
+  await addLayer(name);
+}
+
+async function addLayer(name) {
+  document.getElementById('map-title').innerHTML =
+    `<i class="bi bi-hourglass me-1"></i>Loading ${escHtml(name)}…`;
+  document.getElementById('feature-count').textContent = '';
+
+  const url = `/api/codex/geo/layers/${encodeURIComponent(name)}/geojson?limit=5000`;
+  const r   = await fetch(url).catch(() => null);
+  if (!r || !r.ok) {
+    document.getElementById('map-title').innerHTML =
+      `<i class="bi bi-exclamation-triangle text-warning me-1"></i>Failed to load ${escHtml(name)}`;
+    return;
+  }
+  const fc    = await r.json();
+  const color = getColor();
+
+  const layer = L.geoJSON(fc, {
+    style:         () => ({color, weight: 1.5, opacity: 0.9, fillOpacity: 0.25}),
+    pointToLayer:  (f, ll) => L.circleMarker(ll, {radius: 6, color, fillColor: color, fillOpacity: 0.7}),
+    onEachFeature: (f, l) => {
+      if (!f.properties || !Object.keys(f.properties).length) return;
+      const rows = Object.entries(f.properties)
+        .filter(([, v]) => v !== null && v !== undefined)
+        .slice(0, 12)
+        .map(([k, v]) => `<tr><td>${escHtml(k)}</td><td>${escHtml(String(v))}</td></tr>`)
+        .join('');
+      l.bindPopup(`<div class="geo-popup"><table>${rows}</table></div>`, {maxWidth: 280});
+    },
+  }).addTo(map);
+
+  if (fc.features && fc.features.length) {
+    try { map.fitBounds(layer.getBounds(), {padding: [20, 20]}); } catch {}
+  }
+
+  dataLayers[name] = layer;
+  document.getElementById('map-title').innerHTML =
+    `<i class="bi bi-map me-1"></i>${escHtml(name)}`;
+  document.getElementById('feature-count').textContent =
+    `${fc.count || fc.features?.length || 0} features`;
+
+  document.getElementById('pip-table').value = name;
+  updateActiveList();
+  loadLayers();
+}
+
+function clearAllLayers() {
+  Object.values(dataLayers).forEach(l => map.removeLayer(l));
+  Object.keys(dataLayers).forEach(k => delete dataLayers[k]);
+  colorIdx = 0;
+  updateActiveList();
+  loadLayers();
+  document.getElementById('feature-count').textContent = '';
+  document.getElementById('map-title').innerHTML = '<i class="bi bi-map me-1"></i>Map';
+}
+
+function updateActiveList() {
+  const ul = document.getElementById('active-layers');
+  const names = Object.keys(dataLayers);
+  if (!names.length) {
+    ul.innerHTML = '<li class="list-group-item text-muted text-center small py-2">None</li>';
+    return;
+  }
+  ul.innerHTML = names.map(n => `
+    <li class="list-group-item d-flex justify-content-between align-items-center py-1 small">
+      <span>${escHtml(n)}</span>
+      <button class="btn btn-sm py-0 px-1" onclick="toggleLayer('${escHtml(n)}')" title="Remove">
+        <i class="bi bi-x text-danger"></i>
+      </button>
+    </li>`).join('');
+}
+
+// ── Point-in-Polygon ──────────────────────────────────────────────────────────
+async function runPip() {
+  const table = document.getElementById('pip-table').value.trim();
+  const lon   = parseFloat(document.getElementById('pip-lon').value);
+  const lat   = parseFloat(document.getElementById('pip-lat').value);
+  const out   = document.getElementById('pip-result');
+  if (!table || isNaN(lon) || isNaN(lat)) {
+    out.innerHTML = '<span class="text-warning">Enter table, longitude and latitude.</span>';
+    return;
+  }
+  out.textContent = 'Searching…';
+
+  // Show marker on map
+  L.marker([lat, lon]).addTo(map).bindPopup(`Query: ${lon}, ${lat}`).openPopup();
+  map.setView([lat, lon], 8);
+
+  const r = await fetch(`/api/codex/geo/pip?table=${encodeURIComponent(table)}&lon=${lon}&lat=${lat}`);
+  const d = await r.json();
+  if (!d.matches || !d.matches.length) {
+    out.innerHTML = '<span class="text-muted">No matching region found.</span>';
+    return;
+  }
+  out.innerHTML = d.matches.map(m =>
+    `<span class="badge bg-success me-1">${escHtml(m.name || JSON.stringify(m))}</span>`
+  ).join('');
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s||'').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.addEventListener('DOMContentLoaded', () => { checkStatus(); loadLayers(); });
+</script>
+{% endblock %}
