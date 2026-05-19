@@ -457,6 +457,11 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       "${_upd_graf}/data"              "${_upd_graf}/dashboards"    \
       2>/dev/null || true
 
+    # _chown_for_container reads CONTAINER_RUNTIME, which is only assigned later
+    # in the fresh-install path. Derive it now from _upd_rt so the update path
+    # works correctly without waiting for the full runtime-detection block.
+    [[ "${_upd_rt[0]}" == podman* ]] && CONTAINER_RUNTIME="podman" || CONTAINER_RUNTIME="docker"
+
     _upd_chown() {
       # Delegate to _chown_for_container so the sudo fallback uses correctly
       # remapped host UIDs under rootless Podman (subuid offset applied).
