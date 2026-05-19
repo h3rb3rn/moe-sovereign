@@ -214,6 +214,50 @@ fi
 # during volume detection (line ~128) as well as the full update block.
 _renv() { grep -E "^${1}=" "${MOE_ENV_FILE}" 2>/dev/null | head -1 | cut -d= -f2-; }
 
+# Container UID/GID ownership helpers — defined early so the update path
+# (which runs as top-level code) can call them before the fresh-install block.
+#
+# Three strategies for assigning correct ownership to volume directories:
+# 1. `podman unshare chown` — runs inside the user namespace (native Linux).
+# 2. Direct `sudo chown <host-uid>` — WSL2 fallback; maps container UIDs via
+#    /etc/subuid offsets.
+# 3. chmod a+rwX — last resort when both chown strategies fail.
+_container_uid_to_host_uid() {
+  local cuid="$1"
+  if [[ "$cuid" -eq 0 ]]; then
+    id -u "${DEPLOY_USER}" 2>/dev/null || echo "${UID:-1000}"
+  else
+    local _sub
+    _sub=$(grep -m1 "^${DEPLOY_USER}:" /etc/subuid 2>/dev/null | cut -d: -f2)
+    [[ -n "$_sub" ]] && echo $(( _sub + cuid - 1 )) || echo "$cuid"
+  fi
+}
+
+_chown_for_container() {
+  local uid="$1" gid="$2"; shift 2
+  local _ok=0
+  if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
+    # Strategy 1: podman unshare (native Linux)
+    _podman_as_user unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
+    if [[ $_ok -eq 0 ]]; then
+      # Strategy 2: direct sudo chown with computed host UIDs (WSL2 fallback)
+      local h_uid h_gid
+      h_uid=$(_container_uid_to_host_uid "$uid")
+      h_gid=$(_container_uid_to_host_uid "$gid")
+      _sudo chown -R "${h_uid}:${h_gid}" "$@" 2>/dev/null && _ok=1 || true
+    fi
+  else
+    _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
+  fi
+  if [[ $_ok -eq 1 ]]; then
+    _sudo chmod -R u+rwX "$@" 2>/dev/null || true
+  else
+    # Strategy 3: world-writable fallback
+    echo "  [!] chown ${uid}:${gid} failed for $* — applying fallback chmod a+rwX"
+    _sudo chmod -R a+rwX "$@" 2>/dev/null || true
+  fi
+}
+
 if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
   # Volume detection: check both named volumes AND the data-root directory so
   # the update path is also triggered on installs that pre-date named volumes.
@@ -1001,58 +1045,8 @@ _touch_as_user "${MOE_DATA_ROOT}/cleanup-history.jsonl"
 echo "  Host directories created at ${MOE_DATA_ROOT} ✓"
 
 # Fix ownership for containers that run as non-root UIDs.
-#
-# Three strategies are tried in order:
-#
-# 1. `podman unshare chown` — runs chown inside the user namespace so that
-#    container UIDs translate to the correct host subuid range automatically.
-#    Works on native Linux; may fail on WSL2 kernels that restrict unshare.
-#
-# 2. Direct `sudo chown <host-uid>` — when unshare fails, compute the host
-#    UID that corresponds to the container UID (UID 0 → deploy-user UID;
-#    UID N → subuid_start + N − 1) and chown directly.  Requires sudo but
-#    avoids user-namespace restrictions entirely.
-#
-# 3. chmod a+rwX fallback — last resort when both chown strategies fail
-#    (e.g. read-only filesystem).  Less secure but prevents a total failure.
-#
-# Docker uses the host UID namespace directly, so strategy 1 is skipped and
-# strategy 2 uses the literal container UID as the host UID.
-_container_uid_to_host_uid() {
-  local cuid="$1"
-  if [[ "$cuid" -eq 0 ]]; then
-    id -u "${DEPLOY_USER}" 2>/dev/null || echo "${UID:-1000}"
-  else
-    local _sub
-    _sub=$(grep -m1 "^${DEPLOY_USER}:" /etc/subuid 2>/dev/null | cut -d: -f2)
-    [[ -n "$_sub" ]] && echo $(( _sub + cuid - 1 )) || echo "$cuid"
-  fi
-}
-
-_chown_for_container() {
-  local uid="$1" gid="$2"; shift 2
-  local _ok=0
-  if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
-    # Strategy 1: podman unshare (native Linux)
-    _podman_as_user unshare chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
-    if [[ $_ok -eq 0 ]]; then
-      # Strategy 2: direct sudo chown with computed host UIDs (WSL2 fallback)
-      local h_uid h_gid
-      h_uid=$(_container_uid_to_host_uid "$uid")
-      h_gid=$(_container_uid_to_host_uid "$gid")
-      _sudo chown -R "${h_uid}:${h_gid}" "$@" 2>/dev/null && _ok=1 || true
-    fi
-  else
-    _sudo chown -R "${uid}:${gid}" "$@" 2>/dev/null && _ok=1 || true
-  fi
-  if [[ $_ok -eq 1 ]]; then
-    _sudo chmod -R u+rwX "$@" 2>/dev/null || true
-  else
-    # Strategy 3: world-writable fallback
-    echo "  [!] chown ${uid}:${gid} failed for $* — applying fallback chmod a+rwX"
-    _sudo chmod -R a+rwX "$@" 2>/dev/null || true
-  fi
-}
+# (_container_uid_to_host_uid and _chown_for_container are defined early,
+#  before the update path, so they are available on both install and update.)
 
 # kafka (confluentinc/cp-kafka): appuser uid=1000
 _chown_for_container 1000 1000 "${MOE_DATA_ROOT}/kafka-data"
