@@ -8121,6 +8121,17 @@ async def api_scan_trigger():
     return await _cx_post("v1/codex/compliance/scan/trigger", {})
 
 
+@app.get("/api/codex/compliance/trivy/summary", dependencies=[Depends(require_login)])
+async def api_trivy_summary():
+    return await _cx_get("v1/codex/compliance/trivy/summary")
+
+
+@app.post("/api/codex/compliance/trivy/trigger", dependencies=[Depends(require_login)])
+async def api_trivy_trigger(target: str = ""):
+    return await _cx_post("v1/codex/compliance/trivy/trigger",
+                          {"target": target} if target else {})
+
+
 # ── D3: OpenSearch extended search endpoints ──────────────────────────────────
 
 @app.get("/api/codex/search/stats", dependencies=[Depends(require_login)])
