@@ -31,10 +31,18 @@
         </ul>
       </div>
       <div class="card-footer py-2">
-        <a id="budibase-open" href="#" target="_blank" rel="noopener"
+        {% if budibase_external_url %}
+        <a id="budibase-open" href="{{ budibase_external_url }}/builder" target="_blank" rel="noopener"
            class="btn btn-sm btn-outline-info w-100">
           <i class="bi bi-box-arrow-up-right me-1"></i>Open Budibase Builder
         </a>
+        {% else %}
+        <button class="btn btn-sm btn-outline-secondary w-100 disabled"
+                title="Set BUDIBASE_EXTERNAL_URL in moe-infra .env to enable this link">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open Budibase Builder
+          <i class="bi bi-info-circle ms-1 text-warning" style="font-size:.75rem"></i>
+        </button>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -60,14 +68,16 @@
 
 {% block scripts %}
 <script>
-let allApps = [], BUDIBASE_URL = '';
+// External URL from BUDIBASE_EXTERNAL_URL env var (browser-accessible).
+// Internal Docker URL (d.url = http://moe-budibase:80) is not reachable from a browser.
+let allApps = [], BUDIBASE_URL = "{{ budibase_external_url|default('') }}";
 
 async function checkStatus() {
   const r = await fetch('/api/codex/workshop/status').catch(() => null);
   if (!r) return;
   const d = await r.json();
-  BUDIBASE_URL = d.url || '';
-  document.getElementById('budibase-open').href = BUDIBASE_URL + '/builder';
+  // Only use API url as fallback if no external URL is configured
+  if (!BUDIBASE_URL) BUDIBASE_URL = d.url || '';
   const el = document.getElementById('workshop-status');
   el.textContent = d.reachable ? 'online' : 'offline';
   el.className = `badge ${d.reachable ? 'bg-success' : 'bg-danger'} ms-2 fs-6`;

@@ -234,12 +234,12 @@ async function loadScap() {
 
 async function triggerScan() {
   try {
-    const r = await fetch('/v1/codex/compliance/scan/trigger', {method:'POST'});
+    const r = await fetch('/api/codex/compliance/scan/trigger', {method:'POST'});
     const d = await r.json();
     if (d.status === 'started') {
       alert(`Scan started (PID ${d.pid}).\nOutput: ${d.output}\nRefresh results in a few minutes.`);
     } else {
-      alert(d.error + '\n\nHint: ' + (d.hint || 'Use a Kestra workflow to schedule scans.'));
+      alert((d.error || d.message || 'Scan unavailable') + '\n\nHint: ' + (d.hint || 'Use a Kestra workflow to schedule scans.'));
     }
   } catch(e) { alert('Error: ' + e); }
 }

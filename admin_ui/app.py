@@ -382,6 +382,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         path = request.url.path
         is_notebook = path == "/notebook" or path.startswith("/notebook/")
+        # Geo page needs external HTTPS images for map tiles (CartoCDN, OpenStreetMap etc.)
+        is_geo = path == "/geo" or path.startswith("/geo/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-XSS-Protection"] = "1; mode=block"
@@ -398,6 +400,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "font-src 'self' data:; "
                 "worker-src 'self' blob:; "
                 "connect-src 'self' ws: wss: blob:;"
+            )
+        elif is_geo:
+            # Leaflet map tiles are served from external CDNs (Cartocdn, OSM, Stamen etc.)
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob: https:; "
+                "font-src 'self' data:; "
+                "connect-src 'self' https:;"
             )
         else:
             response.headers["X-Frame-Options"] = "DENY"
@@ -7753,8 +7765,10 @@ async def _jl_ws_proxy(websocket: WebSocket, path: str) -> None:
     await websocket.accept()
     try:
         import websockets as _ws
-        extra = [("Host", _JUPYTERLAB_BASE.split("//", 1)[-1])]
-        async with _ws.connect(target, additional_headers=extra) as upstream:
+        # Do NOT add an extra Host header — websockets sets it automatically from
+        # the target URL. A duplicate Host header causes JupyterLab to reject
+        # the connection with "Multiple host headers not allowed".
+        async with _ws.connect(target) as upstream:
             async def _to_up():
                 try:
                     while True:
@@ -8063,10 +8077,21 @@ async def api_kestra_executions(namespace: str = "", flow_id: str = "",
 
 
 # ── D3: Apache Superset BI ────────────────────────────────────────────────────
+# External URL for the "Open Superset UI" button. The internal Docker URL
+# (http://moe-superset:8088) is not reachable from a browser, so operators
+# must set this to the publicly accessible Superset address, e.g.:
+#   https://bi.yourdomain.com   (dedicated subdomain via Caddy)
+#   http://server-ip:8889       (direct port access)
+# Leave empty to show a "not configured" tooltip on the button.
+_SUPERSET_EXTERNAL_URL = os.environ.get("SUPERSET_EXTERNAL_URL", "").rstrip("/")
+
 
 @app.get("/superset", response_class=HTMLResponse)
 async def superset_page(request: Request, _=Depends(require_login)):
-    return TEMPLATES.TemplateResponse(request, "superset.html", {})
+    return TEMPLATES.TemplateResponse(
+        request, "superset.html",
+        {"superset_external_url": _SUPERSET_EXTERNAL_URL},
+    )
 
 
 @app.get("/api/codex/superset/status", dependencies=[Depends(require_login)])
@@ -8145,10 +8170,20 @@ async def api_search_index():
 
 
 # ── D4: Workshop (Budibase) ────────────────────────────────────────────────────
+# External URL for "Open Budibase Builder" button. Internal Docker URL
+# (http://moe-budibase:80) is not browser-reachable.
+# Set to the public Budibase address, e.g. https://apps.yourdomain.com
+# or http://your-server-ip:10000
+# BUDIBASE_EXTERNAL_URL=
+_BUDIBASE_EXTERNAL_URL = os.environ.get("BUDIBASE_EXTERNAL_URL", "").rstrip("/")
+
 
 @app.get("/workshop", response_class=HTMLResponse)
 async def workshop_page(request: Request, _=Depends(require_login)):
-    return TEMPLATES.TemplateResponse(request, "workshop.html", {})
+    return TEMPLATES.TemplateResponse(
+        request, "workshop.html",
+        {"budibase_external_url": _BUDIBASE_EXTERNAL_URL},
+    )
 
 
 @app.get("/api/codex/workshop/status", dependencies=[Depends(require_login)])
@@ -8196,10 +8231,20 @@ async def api_timeseries_query(
 
 
 # ── D4: Notes (HedgeDoc) ───────────────────────────────────────────────────────
+# External URL for HedgeDoc note links. Internal Docker URL
+# (http://moe-hedgedoc:3000) is not browser-reachable.
+# Set to the public HedgeDoc address, e.g. https://notes.yourdomain.com
+# or http://your-server-ip:3000
+# HEDGEDOC_EXTERNAL_URL=
+_HEDGEDOC_EXTERNAL_URL = os.environ.get("HEDGEDOC_EXTERNAL_URL", "").rstrip("/")
+
 
 @app.get("/notes", response_class=HTMLResponse)
 async def notes_page(request: Request, _=Depends(require_login)):
-    return TEMPLATES.TemplateResponse(request, "notes.html", {})
+    return TEMPLATES.TemplateResponse(
+        request, "notes.html",
+        {"hedgedoc_external_url": _HEDGEDOC_EXTERNAL_URL},
+    )
 
 
 @app.get("/api/codex/notes/status", dependencies=[Depends(require_login)])
