@@ -30,10 +30,18 @@
         </ul>
       </div>
       <div class="card-footer py-2">
-        <a id="hedgedoc-open" href="#" target="_blank" rel="noopener"
+        {% if hedgedoc_external_url %}
+        <a id="hedgedoc-open" href="{{ hedgedoc_external_url }}" target="_blank" rel="noopener"
            class="btn btn-sm btn-outline-warning w-100">
           <i class="bi bi-box-arrow-up-right me-1"></i>Open HedgeDoc
         </a>
+        {% else %}
+        <button class="btn btn-sm btn-outline-secondary w-100 disabled"
+                title="Set HEDGEDOC_EXTERNAL_URL in moe-infra .env to enable this link">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open HedgeDoc
+          <i class="bi bi-info-circle ms-1 text-warning" style="font-size:.75rem"></i>
+        </button>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -92,14 +100,16 @@
 
 {% block scripts %}
 <script>
-let HEDGEDOC_URL = '';
+// External URL from HEDGEDOC_EXTERNAL_URL env var (browser-accessible).
+// Internal Docker URL (d.url = http://moe-hedgedoc:3000) is not browser-reachable.
+let HEDGEDOC_URL = "{{ hedgedoc_external_url|default('') }}";
 
 async function checkStatus() {
   const r = await fetch('/api/codex/notes/status').catch(() => null);
   if (!r) return;
   const d = await r.json();
-  HEDGEDOC_URL = d.url || '';
-  document.getElementById('hedgedoc-open').href = HEDGEDOC_URL;
+  // Only use API url as fallback if no external URL is configured
+  if (!HEDGEDOC_URL) HEDGEDOC_URL = d.url || '';
   const el = document.getElementById('notes-status');
   el.textContent = d.reachable ? 'online' : 'offline';
   el.className = `badge ${d.reachable ? 'bg-success' : 'bg-danger'} ms-2 fs-6`;

@@ -34,10 +34,18 @@
         </ul>
       </div>
       <div class="card-footer py-2">
-        <a href="{{ superset_url }}" target="_blank" rel="noopener"
+        {% if superset_external_url %}
+        <a href="{{ superset_external_url }}" target="_blank" rel="noopener"
            class="btn btn-sm btn-outline-warning w-100">
           <i class="bi bi-box-arrow-up-right me-1"></i>Open Superset UI
         </a>
+        {% else %}
+        <button class="btn btn-sm btn-outline-secondary w-100 disabled"
+                title="Set SUPERSET_EXTERNAL_URL in moe-infra .env to enable this link">
+          <i class="bi bi-box-arrow-up-right me-1"></i>Open Superset UI
+          <i class="bi bi-info-circle ms-1 text-warning" style="font-size:.75rem"></i>
+        </button>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -73,7 +81,10 @@
 
 {% block scripts %}
 <script>
-let SUPERSET_URL = "";
+// External URL for browser-accessible Superset links and embeds.
+// Populated from SUPERSET_EXTERNAL_URL env var; falls back to the
+// internal URL returned by the status API (only useful on the same host).
+let SUPERSET_URL = "{{ superset_external_url|default('') }}";
 let allDashboards  = [];
 
 function toast(msg, ok=true) {
@@ -87,7 +98,9 @@ async function checkStatus() {
   try {
     const r  = await fetch('/api/codex/superset/status');
     const d  = await r.json();
-    SUPERSET_URL = d.url || "";
+    // Only fall back to internal URL if no external URL is configured.
+    // Internal Docker URLs (http://moe-superset:8088) are not browser-reachable.
+    if (!SUPERSET_URL) SUPERSET_URL = d.url || "";
     const el = document.getElementById('superset-status');
     if (d.reachable) {
       el.textContent = 'online';  el.className = 'badge bg-success ms-2 fs-6';
@@ -101,9 +114,10 @@ async function setupTrino() {
   try {
     const r = await fetch('/api/codex/superset/setup', {method:'POST'});
     const d = await r.json();
+    if (d.error) { toast('Setup error: ' + d.error, false); return; }
     toast(d.status === 'exists'
       ? 'Trino connection already registered.'
-      : `Trino connection created (id ${d.id}).`);
+      : `Trino connection created${d.id != null ? ' (id ' + d.id + ')' : ''}.`);
   } catch(e) { toast('Setup failed: ' + e, false); }
 }
 
