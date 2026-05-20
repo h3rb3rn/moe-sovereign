@@ -322,23 +322,45 @@ async def merger_node(state_: AgentState):
         # multi-expert synthesis retains enough of each response to synthesise.
         # With 1 expert: 3500 chars. With 2: 2800 each. With 4+: 2000 each.
         # Floor is 2000 to keep merger token budget bounded.
-        _n_experts    = len(expert_results)
+        _n_experts       = len(expert_results)
         MAX_EXPERT_CHARS = max(2000, min(3500, 3500 - (_n_experts - 1) * 500))
+
+        # Confidence-weighted synthesis (MoE architecture: Top-K → Weighted Combination).
+        # Map confidence levels to weight tiers and sort experts high → low so the judge
+        # reads the most reliable inputs first (primacy bias).
+        _CONF_WEIGHT = {
+            "high":   ("PRIMARY",    "★★★"),
+            "medium": ("SUPPORTING", "★★☆"),
+            "low":    ("BACKGROUND", "★☆☆"),
+        }
+        _CONF_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+        expert_results_weighted = sorted(
+            expert_results,
+            key=lambda r: _CONF_ORDER.get(_parse_expert_confidence(r), 1),
+        )
+
         trimmed = []
-        for er in expert_results:
-            if len(er) > MAX_EXPERT_CHARS:
-                trimmed.append(er[:MAX_EXPERT_CHARS] + "\n[...truncated for merger efficiency]")
-            else:
-                trimmed.append(er)
-        # For multi-expert synthesis: prepend a domain index so the judge
-        # immediately sees which domains are represented and can plan coverage.
-        if _n_experts > 1:
-            domain_index = ", ".join(
-                f"[{_expert_category(er) or 'general'}]" for er in expert_results
+        weight_rows = []
+        for er in expert_results_weighted:
+            conf              = _parse_expert_confidence(er)
+            weight_label, stars = _CONF_WEIGHT.get(conf, ("SUPPORTING", "★★☆"))
+            cat               = _expert_category(er) or "general"
+            weight_rows.append(
+                f"  {stars} [{cat:<22}]  CONFIDENCE: {conf.upper():<6}  →  {weight_label}"
             )
+            trimmed.append(
+                er[:MAX_EXPERT_CHARS] + "\n[...truncated for merger efficiency]"
+                if len(er) > MAX_EXPERT_CHARS else er
+            )
+
+        if _n_experts > 1:
             expert_header = (
-                f"EXPERT RESPONSES ({_n_experts} domains: {domain_index}) — "
-                "integrate ALL domains into the synthesis:\n"
+                f"EXPERT RESPONSES ({_n_experts} domains — confidence-weighted synthesis):\n"
+                + "\n".join(weight_rows) + "\n"
+                "Synthesis rule: PRIMARY findings anchor the answer. "
+                "SUPPORTING findings refine or extend it. "
+                "BACKGROUND findings fill gaps only where PRIMARY/SUPPORTING are silent.\n"
             )
         else:
             expert_header = "EXPERT RESPONSES:\n"

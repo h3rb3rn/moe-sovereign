@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.5.3] - 2026-05-20
+
+### Added
+
+- **Query Reformulation for Agentic RAG** (`graph_rag/manager.py`): implements the iterative retrieval pattern from Agentic RAG (`1757817150496.jpeg`). When term-matching returns nothing, a lightweight LLM (GRAPH_INGEST_MODEL) generates up to 2 alternative query phrasings (shorter terms, English equivalents, known abbreviations). Each alternative is retried through the full term-matching pipeline before falling back to Text-to-Cypher. Adds at most one LLM call (5s timeout) when term-matching fails.
+
+  Refactored `query_context()` into 3 clear stages: term-matching → reformulation retry → T2C fallback.
+  New private method `_match_terms_to_entities()` eliminates the previously duplicated Neo4j Cypher loop.
+
+  New env vars: `GRAPHRAG_REFORMULATE_ENABLED` (default `1`), `GRAPHRAG_REFORMULATE_TIMEOUT` (default `5.0`s).
+
+---
+
+## [2.5.2] - 2026-05-20
+
+### Changed
+
+- **Confidence-Weighted Expert Synthesis** (`graph/synthesis.py`): the merger prompt now receives an explicit weight table before the expert content. Experts are sorted high → low confidence (primacy bias) and labelled `PRIMARY` / `SUPPORTING` / `BACKGROUND`. The judge's synthesis instruction anchors on PRIMARY findings, uses SUPPORTING to refine, and draws on BACKGROUND only for gaps. No extra LLM call — relies on the `CONFIDENCE: high/medium/low` fields already present in expert output.
+
+---
+
+## [2.5.1] - 2026-05-20
+
+### Added
+
+- **Text-to-Cypher GraphRAG Fallback** (`graph_rag/manager.py`): when term-matching returns no entities, a lightweight LLM (configured via `GRAPH_INGEST_ENDPOINT`/`GRAPH_INGEST_MODEL`) generates a targeted Cypher MATCH query from natural language. Validation enforces read-only access (write operations rejected by regex whitelist before execution). Result formatted as `[Knowledge Graph — Text-to-Cypher]` block appended to the same `graph_context` field. Zero latency impact when term-matching succeeds.
+
+  New env vars: `GRAPHRAG_T2C_ENABLED` (default `1`), `GRAPHRAG_T2C_TIMEOUT` (default `8.0`s), `GRAPHRAG_T2C_MAX_NODES` (default `8`).
+
+---
+
 ## [2.5.0] - 2026-05-20
 
 ### Added

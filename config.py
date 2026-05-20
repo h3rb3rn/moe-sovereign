@@ -109,6 +109,19 @@ EXPERTS             = json.loads(os.getenv("EXPERT_MODELS", "{}"))
 MCP_URL             = os.getenv("MCP_URL", "http://mcp-precision:8003")
 GRAPH_VIA_MCP       = os.getenv("GRAPH_VIA_MCP", "false").lower() in ("1", "true", "yes")
 MAX_GRAPH_CONTEXT_CHARS: int = int(os.getenv("MAX_GRAPH_CONTEXT_CHARS", "6000"))
+
+# Text-to-Cypher fallback: when term-matching returns no entities, a small LLM
+# generates a targeted Cypher query from natural language.
+# Requires GRAPH_INGEST_ENDPOINT + GRAPH_INGEST_MODEL to be configured.
+GRAPHRAG_T2C_ENABLED:   bool  = os.getenv("GRAPHRAG_T2C_ENABLED", "1") not in ("0", "false", "no")
+GRAPHRAG_T2C_TIMEOUT:   float = float(os.getenv("GRAPHRAG_T2C_TIMEOUT", "8.0"))
+GRAPHRAG_T2C_MAX_NODES: int   = int(os.getenv("GRAPHRAG_T2C_MAX_NODES", "8"))
+
+# Query reformulation: when term-matching returns nothing, ask a small LLM to
+# rephrase the query (shorter terms, English equivalent, synonyms) and retry
+# term-matching once before falling back to Text-to-Cypher.
+GRAPHRAG_REFORMULATE_ENABLED: bool  = os.getenv("GRAPHRAG_REFORMULATE_ENABLED", "1") not in ("0", "false", "no")
+GRAPHRAG_REFORMULATE_TIMEOUT: float = float(os.getenv("GRAPHRAG_REFORMULATE_TIMEOUT", "5.0"))
 LITELLM_URL         = os.getenv("LITELLM_URL", "").rstrip("/")
 
 # =============================================================================
