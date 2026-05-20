@@ -83,6 +83,7 @@ from pipeline.state import AgentState
 
 # Cross-module: graph context compression helpers live in graph.research
 from graph.research import _rerank_graph_context, _compress_graph_context_llm
+from episodic_memory import log_episode
 
 
 async def merger_node(state_: AgentState):
@@ -645,6 +646,12 @@ async def merger_node(state_: AgentState):
             state._userdb_pool, state_.get("response_id", ""), state_,
             wall_clock_ms=int((time.time() - state_.get("_start_time", time.time())) * 1000),
         ))
+        # Episodic memory: log this task completion for future routing hints.
+        # Park et al. (2023): Generative Agents — store experience, recall on similar tasks.
+        if state.graph_manager is not None:
+            asyncio.create_task(
+                log_episode(state.graph_manager.driver, dict(state_))
+            )
         # Request-Audit-Log → Kafka moe.requests
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
             "response_id":        state_.get("response_id", ""),

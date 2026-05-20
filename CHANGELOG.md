@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.5.0] - 2026-05-20
+
+### Added
+
+- **Corrective RAG Gate** (`graph_rag/manager.py` — `_corrective_relevance_score`): retrieved Neo4j entities are now scored for query relevance before being injected into the judge prompt. Score = weighted term-overlap (entity-name hit counts 2×, relation-target hit counts 1×) + average relation confidence. Entities scoring below `GRAPHRAG_CORRECTIVE_THRESHOLD` (env var, default `0.15`) are discarded. Prevents context pollution from tangentially matched graph nodes that degrade judge output quality. Scientific basis: Yan et al. 2024, *Corrective Retrieval Augmented Generation* (arXiv:2401.15884).
+
+- **CAG Compliance Layer** (`compliance_cag.py`, integrated into `graph/tool_nodes.py`): static regulatory knowledge domains (BAIT, VAIT, DORA, KRITIS, MaRisk) now bypass Neo4j retrieval entirely. Admin drops JSON files (`{"name", "keywords", "context"}`) into `$MOE_DATA_ROOT/cag/`; at query time the orchestrator detects keyword matches and injects the pre-loaded authoritative text directly — more reliable and lower latency than retrieval for stable regulatory content. Hot-reloaded every `CAG_RELOAD_INTERVAL_S` seconds (default 300). Opt-out via `GRAPHRAG_CAG_ENABLED=0`. Scientific basis: Chan et al. 2024, *Don't Do RAG: When Cache-Augmented Generation is All You Need* (arXiv:2412.15605). Ships with `bait.json` and `dora.json` example domain files.
+
+- **Episodic Memory** (`episodic_memory.py`, integrated into `graph/synthesis.py` and `graph/tool_nodes.py`): every completed pipeline run is logged as a `:Episode` node in Neo4j (task type, routing path, tools used, confidence estimate, token cost, user, TTL 90 days, indexed by `hash`). On similar queries, `get_episode_hint()` retrieves relevant past episodes via Sørensen–Dice similarity (APOC, with recency fallback) and appends a `[Episode Hint]` block to `graph_context` — the judge can take proven routing strategies into account. Logging is fire-and-forget (zero latency overhead). Scientific basis: Tulving (1972) episodic/semantic memory distinction; Park et al. 2023, *Generative Agents* (Stanford); Packer et al. 2023, *MemGPT*. Opt-out via `EPISODIC_MEMORY_ENABLED=0`.
+
+### Environment Variables Added
+
+| Variable | Default | Description |
+|---|---|---|
+| `GRAPHRAG_CORRECTIVE_THRESHOLD` | `0.15` | Minimum relevance score for Neo4j entities before injection (0 = disabled) |
+| `GRAPHRAG_CAG_ENABLED` | `1` | Set to `0` to disable the CAG compliance layer |
+| `CAG_COMPLIANCE_DIR` | `$MOE_DATA_ROOT/cag` | Directory containing compliance domain JSON files |
+| `CAG_RELOAD_INTERVAL_S` | `300` | Seconds between live-reloads of CAG domain files |
+| `EPISODIC_MEMORY_ENABLED` | `1` | Set to `0` to disable episodic memory logging and recall |
+| `EPISODIC_MAX_HINTS` | `2` | Maximum past episodes injected as routing hints per request |
+| `EPISODIC_MIN_CONFIDENCE` | `0.6` | Minimum episode confidence required for recall |
+| `EPISODIC_TTL_DAYS` | `90` | Days before Episode nodes expire in Neo4j |
+
+---
+
 ## [2.4.0] - 2026-05-08
 
 ### Changed

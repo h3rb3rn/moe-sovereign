@@ -667,6 +667,123 @@ scores are coincidental.
 
 ---
 
+---
+
+### 7 — Corrective RAG Gate
+
+**Basis:** Yan et al. 2024, *Corrective Retrieval Augmented Generation* (arXiv:2401.15884).  
+**Location:** `graph_rag/manager.py` (`_corrective_relevance_score`, `query_context`)
+
+The Corrective RAG (CRAG) paper introduces a lightweight relevance evaluator that
+gates retrieved documents before injection into the generation prompt. It defines
+three retrieval states — **Correct** (inject), **Ambiguous** (refine), **Incorrect**
+(discard + web fallback) — based on a document-level relevance score.
+
+MoE Sovereign's adaptation operates at the Neo4j entity level rather than document
+level. After `query_context()` builds the `found` dict from the graph, each entity
+is scored by `_corrective_relevance_score()`:
+
+```
+score = overlap * 0.75 + avg_confidence * 0.25
+```
+
+where `overlap` is a weighted term-coverage ratio: entity-name hits count **2×**
+(strong signal — the graph matched the query directly), relation-target hits count
+**1×** (weaker signal — the query term appears only in a neighbour).
+
+Entities scoring below `GRAPHRAG_CORRECTIVE_THRESHOLD` (default `0.15`) are
+discarded. When all entities fall below threshold, `query_context()` returns `""`
+— the pipeline proceeds without graph context rather than injecting noise.
+
+The threshold of 0.15 is deliberately conservative: it only removes entities where
+fewer than 15 % of query terms appear anywhere in the entity's textual surface.
+Administrators can raise it (e.g. `0.30`) for precision-critical deployments or
+set it to `0` to disable the gate entirely (original behaviour).
+
+**Before:** All Neo4j-matched entities were injected unconditionally.  
+**After:** Only entities with meaningful query alignment reach the judge prompt.
+
+---
+
+### 8 — Context-Augmented Generation — Compliance Layer
+
+**Basis:** Chan et al. 2024, *Don't Do RAG: When Cache-Augmented Generation is
+All You Need for Knowledge Tasks* (arXiv:2412.15605).  
+**Location:** `compliance_cag.py`, `graph/tool_nodes.py` (`graph_rag_node`)
+
+Cache-Augmented Generation (CAG) demonstrates empirically that for **stable,
+authoritative knowledge domains** — where the ground truth is static and known
+in advance — pre-loading the full context outperforms retrieval in accuracy,
+latency, and consistency.
+
+MoE Sovereign applies this principle to regulatory compliance domains (BAIT,
+VAIT, DORA, KRITIS, MaRisk) where the BaFin/DORA regulatory texts are:
+
+1. **Static** — they change only on legislative update cycles.
+2. **Authoritative** — the exact wording matters; paraphrased retrieval risks
+   omissions that create audit liability.
+3. **Bounded** — the relevant excerpt fits within a single context block.
+
+When `graph_rag_node` detects a compliance keyword in the query, it calls
+`get_compliance_context()` which returns a pre-loaded text block directly —
+bypassing the Neo4j round-trip entirely. The result is cached in Valkey at the
+same TTL as standard GraphRAG results.
+
+**Admin interface:** Drop `*.json` files into `$MOE_DATA_ROOT/cag/` with schema
+`{"name": str, "keywords": [str, ...], "context": str}`. Files are hot-reloaded
+every `CAG_RELOAD_INTERVAL_S` seconds — no restart required.
+
+**Before:** BAIT/DORA queries triggered Neo4j entity matching, which depended on
+graph coverage and could return empty or partial results.  
+**After:** Compliance queries receive deterministic, complete regulatory context
+with zero retrieval latency.
+
+---
+
+### 9 — Episodic Memory
+
+**Basis:** Tulving (1972) episodic/semantic memory distinction; Park et al. 2023,
+*Generative Agents: Interactive Simulacra of Human Behavior* (Stanford);
+Packer et al. 2023, *MemGPT: Towards LLMs as Operating Systems*.  
+**Location:** `episodic_memory.py`, `graph/synthesis.py` (`merger_node`),
+`graph/tool_nodes.py` (`graph_rag_node`)
+
+Tulving's taxonomy distinguishes three long-term memory systems:
+
+| Type | Content | MoE mapping |
+|---|---|---|
+| **Semantic** | Facts, rules, world knowledge | Neo4j knowledge graph |
+| **Episodic** | Past experiences + outcomes | `:Episode` nodes (this module) |
+| **Procedural** | Skill execution patterns | `graph_rag` procedural relations |
+
+Park et al. (Generative Agents) and Packer et al. (MemGPT) operationalise
+episodic memory for LLM agents as streams of past experience that are retrieved
+by similarity and injected as context. MoE Sovereign adapts this architecture:
+
+**Logging (`log_episode`):** After every successful merger response, a fire-and-forget
+`asyncio.create_task()` writes a `:Episode` node to Neo4j with:
+- `task_type` — primary expert category from the planner
+- `routing_path` — ordered list of categories executed
+- `tools_used` — which pipeline tools were active (graphrag, mcp, math, web, cache)
+- `confidence` — weighted estimate: `expert_conf * 0.7 + response_completeness * 0.3`
+- `total_tokens` — total prompt + completion tokens
+- `expires_at` — TTL-based expiry (default 90 days)
+
+**Recall (`get_episode_hint`):** In `graph_rag_node`, before Neo4j retrieval,
+past episodes for the same `task_type` are ranked by Sørensen–Dice string
+similarity against the current query pattern. The top `EPISODIC_MAX_HINTS`
+episodes above a confidence floor are formatted as an `[Episode Hint]` block
+and appended to `graph_context`.
+
+The hint signals to the judge which routing strategies have historically produced
+high-confidence answers for similar queries — without prescribing the answer.
+
+**Failure isolation:** All episodic memory operations are non-blocking and
+swallow all exceptions — a Neo4j connectivity issue never degrades the
+primary pipeline.
+
+---
+
 ### Implementation Summary
 
 | Component | Logic / Theory | Pub. basis | Status |
@@ -680,6 +797,9 @@ scores are coincidental.
 | `_aic_compressibility` | Algorithmic information | Kolmogorov 1965; Chaitin 1966 | ✅ Active |
 | Load-adaptive Thompson β | Bayesian max-entropy | Statistical learning theory | ✅ Active |
 | `_fuzzy_resolve_entity_name` | Fuzzy profile matching | De Vries 2014; Ratcliff 1988 | ✅ Active |
+| `_corrective_relevance_score` | Retrieval quality gating | Yan et al. 2024 (CRAG) | ✅ Active |
+| `compliance_cag` (CAG layer) | Context-augmented generation | Chan et al. 2024 | ✅ Active |
+| `:Episode` nodes + `log_episode` | Episodic memory | Tulving 1972; Park et al. 2023; Packer et al. 2023 | ✅ Active |
 | `ConstructiveProof` executor node | Intuitionistic | De Vries 2007, §3 | ⏳ Planned |
 
 ---
@@ -693,3 +813,8 @@ scores are coincidental.
 - A. N. Kolmogorov, *Three approaches to the quantitative definition of information*, Problems of Information Transmission 1(1), 1965.
 - G. J. Chaitin, *On the length of programs for computing finite binary sequences*, Journal of the ACM 13(4), 1966.
 - J. W. Ratcliff & D. E. Metzener, *Pattern Matching: The Gestalt Approach*, Dr. Dobb's Journal, 1988.
+- S.-Q. Yan et al., *Corrective Retrieval Augmented Generation*, arXiv:2401.15884, 2024. <https://arxiv.org/abs/2401.15884>
+- B. J. Chan et al., *Don't Do RAG: When Cache-Augmented Generation is All You Need for Knowledge Tasks*, arXiv:2412.15605, 2024. <https://arxiv.org/abs/2412.15605>
+- E. Tulving, *Episodic and semantic memory*, in *Organisation of Memory*, Academic Press, 1972.
+- J. S. Park et al., *Generative Agents: Interactive Simulacra of Human Behavior*, arXiv:2304.03442, 2023. <https://arxiv.org/abs/2304.03442>
+- C. Packer et al., *MemGPT: Towards LLMs as Operating Systems*, arXiv:2310.08560, 2023. <https://arxiv.org/abs/2310.08560>

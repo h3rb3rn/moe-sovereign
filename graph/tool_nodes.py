@@ -80,6 +80,8 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 # AgentState import — defined in pipeline/state.py
 from pipeline.state import AgentState
+from compliance_cag import get_compliance_context
+from episodic_memory import get_episode_hint
 
 
 def _validate_tool_result(result_str: str, tool: str) -> tuple[bool, str]:
@@ -295,6 +297,27 @@ async def graph_rag_node(state_: AgentState):
         except Exception as _ge:
             logger.debug(f"GraphRAG cache read error: {_ge}")
 
+    # CAG check: for known static compliance domains (BAIT, VAIT, DORA, KRITIS,
+    # MaRisk) inject pre-loaded context directly — no Neo4j round-trip needed.
+    # Chan et al. 2024: static knowledge is more reliable than retrieval for
+    # stable, authoritative regulatory content.
+    _cag_ctx = get_compliance_context(state_["input"], categories)
+    if _cag_ctx:
+        await _report(f"📋 CAG: static compliance context ({len(_cag_ctx)} chars, Neo4j skipped)")
+        if state.redis_client is not None:
+            asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, _cag_ctx))
+        return {"graph_context": _cag_ctx}
+
+    # Episode hint: retrieve routing context from similar past tasks.
+    # Appended to graph_context so the judge can use past strategies as signal.
+    _ep_task_type = categories[0] if categories else "general"
+    if state.graph_manager is not None:
+        _ep_hint = await get_episode_hint(
+            state.graph_manager.driver, state_["input"], _ep_task_type
+        )
+    else:
+        _ep_hint = ""
+
     await _report("🔗 GraphRAG — knowledge graph query (Neo4j)...")
     try:
         if GRAPH_VIA_MCP:
@@ -321,11 +344,15 @@ async def graph_rag_node(state_: AgentState):
                     "procedural requirements. Include these requirements explicitly in "
                     "your answer.]\n\n" + ctx
                 )
+            if _ep_hint:
+                ctx = ctx + "\n\n" + _ep_hint if ctx else _ep_hint
             logger.info(f"📊 GraphRAG: {len(ctx)} chars context found (via_mcp={GRAPH_VIA_MCP})")
             await _report(f"🔗 GraphRAG: {len(ctx)} chars structured context")
             if state.redis_client is not None:
                 asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, ctx))
         else:
+            # No Neo4j context, but still inject episode hint if available.
+            ctx = _ep_hint
             await _report("🔗 GraphRAG: no matching context found")
 
         # Domain-filtered ChromaDB retrieval using planner-extracted metadata_filters
