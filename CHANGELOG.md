@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.5.2] - 2026-05-20
+
+### Changed
+
+- **Confidence-Weighted Expert Synthesis** (`graph/synthesis.py`): the merger prompt now receives an explicit weight table before the expert content. Experts are sorted high → low confidence (primacy bias) and labelled `PRIMARY` / `SUPPORTING` / `BACKGROUND`. The judge's synthesis instruction anchors on PRIMARY findings, uses SUPPORTING to refine, and draws on BACKGROUND only for gaps. No extra LLM call — relies on the `CONFIDENCE: high/medium/low` fields already present in expert output.
+
+---
+
 ## [2.5.1] - 2026-05-20
 
 ### Added
