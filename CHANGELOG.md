@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.5.3] - 2026-05-20
+
+### Added
+
+- **Query Reformulation for Agentic RAG** (`graph_rag/manager.py`): implements the iterative retrieval pattern from Agentic RAG (`1757817150496.jpeg`). When term-matching returns nothing, a lightweight LLM (GRAPH_INGEST_MODEL) generates up to 2 alternative query phrasings (shorter terms, English equivalents, known abbreviations). Each alternative is retried through the full term-matching pipeline before falling back to Text-to-Cypher. Adds at most one LLM call (5s timeout) when term-matching fails.
+
+  Refactored `query_context()` into 3 clear stages: term-matching → reformulation retry → T2C fallback.
+  New private method `_match_terms_to_entities()` eliminates the previously duplicated Neo4j Cypher loop.
+
+  New env vars: `GRAPHRAG_REFORMULATE_ENABLED` (default `1`), `GRAPHRAG_REFORMULATE_TIMEOUT` (default `5.0`s).
+
+---
+
 ## [2.5.2] - 2026-05-20
 
 ### Changed

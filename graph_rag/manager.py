@@ -25,6 +25,7 @@ from neo4j import AsyncGraphDatabase, AsyncDriver
 from config import (
     GRAPH_INGEST_MODEL, GRAPH_INGEST_URL, GRAPH_INGEST_TOKEN,
     GRAPHRAG_T2C_ENABLED, GRAPHRAG_T2C_TIMEOUT, GRAPHRAG_T2C_MAX_NODES,
+    GRAPHRAG_REFORMULATE_ENABLED, GRAPHRAG_REFORMULATE_TIMEOUT,
 )
 
 logger = logging.getLogger("MOE-SOVEREIGN.GraphRAG")
@@ -335,39 +336,27 @@ class GraphRAGManager:
             # None-mapped categories (general, reasoning, precision_tools, …) contribute nothing
         return allowed if has_defined else None
 
-    async def query_context(
+    async def _match_terms_to_entities(
         self,
-        query_text: str,
-        categories: Optional[List[str]] = None,
-        max_hops: int = 2,
-        tenant_ids: Optional[List[str]] = None,
-    ) -> str:
-        """
-        Returns structured graph context for a request.
-        Filters entity types based on plan categories to prevent domain cross-contamination.
-        Optionally filters by tenant_ids for multi-tenant RBAC isolation.
-        Searches entities in text → traverses 1-2 hops → formats as text.
-        Shows provenance metadata (source, confidence) for temporal traceability.
-        """
-        terms = self._extract_terms(query_text)
-        if not terms:
-            return ""
+        terms: List[str],
+        allowed_types: Optional[set],
+        tenant_ids: Optional[List[str]],
+    ) -> Dict[str, Any]:
+        """Execute the Neo4j 2-hop term-matching query for a list of search terms.
 
-        allowed_types = self._resolve_allowed_types(categories or [])
-        type_filter = "AND e.type IN $allowed_types" if allowed_types else ""
-        # Tenant RBAC: if tenant_ids provided, only show entities belonging to
-        # those tenants or entities with no tenant (shared/public).
+        Extracted from query_context() so reformulation retries can call the
+        same matching logic without duplicating the Cypher.
+
+        Returns:
+            Dict mapping entity name → {type, direct, indirect} — empty when
+            no terms match any entity in the graph.
+        """
+        type_filter   = "AND e.type IN $allowed_types" if allowed_types else ""
         tenant_filter = (
             "AND (e.tenant_id IN $tenant_ids OR e.tenant_id IS NULL)"
             if tenant_ids else ""
         )
-        if allowed_types:
-            logger.debug(f"GraphRAG domain filter active: {allowed_types}")
-        if tenant_ids:
-            logger.debug(f"GraphRAG tenant filter active: {tenant_ids}")
-
         found: Dict[str, Any] = {}
-
         async with self.driver.session() as session:
             for term in terms[:3]:
                 result = await session.run(
@@ -399,9 +388,9 @@ class GraphRAGManager:
                         }})[..4] AS indirect
                     """,
                     {
-                        "term": term,
+                        "term":          term,
                         "allowed_types": list(allowed_types) if allowed_types else [],
-                        "tenant_ids": tenant_ids or [],
+                        "tenant_ids":    tenant_ids or [],
                     },
                 )
                 async for record in result:
@@ -413,10 +402,117 @@ class GraphRAGManager:
                         "direct":   [r for r in record["direct"]   if r["target"]],
                         "indirect": [r for r in record["indirect"]  if r["target"]],
                     }
+        return found
 
+    async def _reformulate_query_for_graph(
+        self,
+        query_text: str,
+        allowed_types: Optional[set],
+    ) -> List[str]:
+        """Generate alternative phrasings of a query for knowledge graph term-matching.
+
+        When term-matching fails (found = {}), the original query may contain
+        inflected forms, filler words, or language-specific terms that don't
+        appear verbatim in the graph. This method asks a lightweight LLM to
+        produce 2 alternative formulations — shorter, with technical synonyms
+        and/or English equivalents — which are then retried against Neo4j.
+
+        Returns up to 2 alternative query strings, or [] on any failure.
+        """
+        if not GRAPHRAG_REFORMULATE_ENABLED:
+            return []
+        if not GRAPH_INGEST_URL or not GRAPH_INGEST_MODEL:
+            return []
+
+        type_hint = (
+            f"Focus on these entity types: {', '.join(sorted(allowed_types))}. "
+            if allowed_types else ""
+        )
+        prompt = (
+            "Rewrite this knowledge graph search query in exactly 2 shorter alternatives.\n"
+            "Rules: extract only key nouns and technical terms; remove filler words; "
+            "try English equivalents if the query uses another language; "
+            "use known abbreviations (e.g. BAIT, DORA, KWG, BaFin).\n"
+            f"{type_hint}"
+            "Output exactly 2 lines — one alternative per line, no numbering, no explanation.\n\n"
+            f"Query: {query_text.strip()}\n"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=GRAPHRAG_REFORMULATE_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{GRAPH_INGEST_URL.rstrip('/')}/chat/completions",
+                    json={
+                        "model":       GRAPH_INGEST_MODEL,
+                        "messages":    [{"role": "user", "content": prompt}],
+                        "temperature": 0.2,
+                        "max_tokens":  80,
+                    },
+                    headers={"Authorization": f"Bearer {GRAPH_INGEST_TOKEN}"},
+                )
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            logger.debug(f"GraphRAG reformulate: LLM call failed: {exc}")
+            return []
+
+        alternatives = [
+            line.strip().lstrip("0123456789.-) ")
+            for line in content.splitlines()
+            if line.strip() and len(line.strip()) >= 3
+        ][:2]
+
+        logger.debug(f"GraphRAG reformulate: alternatives={alternatives}")
+        return alternatives
+
+    async def query_context(
+        self,
+        query_text: str,
+        categories: Optional[List[str]] = None,
+        max_hops: int = 2,
+        tenant_ids: Optional[List[str]] = None,
+    ) -> str:
+        """Returns structured graph context for a request.
+
+        Retrieval pipeline (Agentic RAG — iterative fallback):
+          1. Term-matching on original query terms (direct Neo4j lookup).
+          2. Query Reformulation retry: if step 1 is empty, rephrase the query
+             and retry term-matching with each alternative (up to 2 attempts).
+          3. Text-to-Cypher fallback: if both steps above return nothing, ask
+             an LLM to generate a targeted Cypher MATCH query.
+
+        Filters entity types based on plan categories to prevent domain
+        cross-contamination. Optionally filters by tenant_ids (RBAC).
+        Shows provenance metadata (source, confidence) for audit traceability.
+        """
+        terms = self._extract_terms(query_text)
+        if not terms:
+            return ""
+
+        allowed_types = self._resolve_allowed_types(categories or [])
+        if allowed_types:
+            logger.debug(f"GraphRAG domain filter active: {allowed_types}")
+        if tenant_ids:
+            logger.debug(f"GraphRAG tenant filter active: {tenant_ids}")
+
+        # ── Step 1: term-matching on original query ───────────────────────────
+        found = await self._match_terms_to_entities(terms, allowed_types, tenant_ids)
+
+        # ── Step 2: Query Reformulation retry ────────────────────────────────
         if not found:
-            # Text-to-Cypher fallback: when term-matching finds nothing, ask
-            # the LLM to generate a targeted Cypher query from natural language.
+            alternatives = await self._reformulate_query_for_graph(query_text, allowed_types)
+            for alt in alternatives:
+                alt_terms = self._extract_terms(alt)
+                if not alt_terms:
+                    continue
+                logger.debug(f"GraphRAG reformulate: retrying with {alt!r}")
+                found = await self._match_terms_to_entities(alt_terms, allowed_types, tenant_ids)
+                if found:
+                    logger.info(f"GraphRAG reformulate: hit on alt query {alt!r}")
+                    break
+
+        # ── Step 3: Text-to-Cypher fallback ──────────────────────────────────
+        if not found:
             return await self._text_to_cypher(query_text, allowed_types)
 
         # ── Corrective RAG Gate (Yan et al., 2024 — arXiv:2401.15884) ─────────
