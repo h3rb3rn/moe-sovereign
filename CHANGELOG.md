@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.5.1] - 2026-05-20
+
+### Added
+
+- **Text-to-Cypher GraphRAG Fallback** (`graph_rag/manager.py`): when term-matching returns no entities, a lightweight LLM (configured via `GRAPH_INGEST_ENDPOINT`/`GRAPH_INGEST_MODEL`) generates a targeted Cypher MATCH query from natural language. Validation enforces read-only access (write operations rejected by regex whitelist before execution). Result formatted as `[Knowledge Graph — Text-to-Cypher]` block appended to the same `graph_context` field. Zero latency impact when term-matching succeeds.
+
+  New env vars: `GRAPHRAG_T2C_ENABLED` (default `1`), `GRAPHRAG_T2C_TIMEOUT` (default `8.0`s), `GRAPHRAG_T2C_MAX_NODES` (default `8`).
+
+---
+
 ## [2.5.0] - 2026-05-20
 
 ### Added

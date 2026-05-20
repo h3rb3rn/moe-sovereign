@@ -19,7 +19,13 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Optional, Set
 
+import httpx
 from neo4j import AsyncGraphDatabase, AsyncDriver
+
+from config import (
+    GRAPH_INGEST_MODEL, GRAPH_INGEST_URL, GRAPH_INGEST_TOKEN,
+    GRAPHRAG_T2C_ENABLED, GRAPHRAG_T2C_TIMEOUT, GRAPHRAG_T2C_MAX_NODES,
+)
 
 logger = logging.getLogger("MOE-SOVEREIGN.GraphRAG")
 
@@ -71,6 +77,91 @@ _CATEGORY_ENTITY_TYPES: Dict[str, Optional[set]] = {
     "research":         None,
     "precision_tools":  None,
 }
+
+# ─── Text-to-Cypher constants ────────────────────────────────────────────────
+
+# Write-operation pattern — any match aborts query execution.
+_T2C_WRITE_PATTERN = re.compile(
+    r"\b(CREATE|MERGE|SET|DELETE|DETACH\s+DELETE|REMOVE|DROP|ALTER|GRANT|REVOKE|FOREACH"
+    r"|CALL\s+\w+\.(write|create|delete|drop|merge|set|remove))\b",
+    re.IGNORECASE,
+)
+
+# Compact schema fed to the LLM. Kept short to fit in the model's context
+# without crowding out the actual query.
+_T2C_SCHEMA = """Graph schema:
+Nodes: (:Entity {name, type, aliases_str})
+Types: Drug|Disease|Symptom|Treatment|Anatomy|Medical_Concept|Drug_Class|
+  Law|Right|Legal_Concept|Organization|Framework|Tool|Protocol|Tech_Concept|
+  DevOps|Architecture|Security|DataStructure|Algorithm|Pattern|Principle|
+  Action|Location|Condition|Math_Concept|Science|Concept|Language|Narrative|Person|AI_Concept
+Relations: IS_A|PART_OF|TREATS|CAUSES|INTERACTS_WITH|CONTRAINDICATES|DEFINES|
+  REGULATES|USES|IMPLEMENTS|DEPENDS_ON|EXTENDS|RELATED_TO|EQUIVALENT_TO|
+  AFFECTS|RUNS|NECESSITATES_PRESENCE|DEPENDS_ON_LOCATION|ENABLES_ACTION"""
+
+_T2C_EXAMPLES = """Examples:
+Q: What laws regulate banks?
+MATCH (l:Entity)-[:REGULATES]->(o:Entity) WHERE o.type='Organization' AND toLower(o.name) CONTAINS 'bank' RETURN l.name AS entity, l.type, o.name AS target LIMIT 8
+
+Q: Which drugs treat diabetes?
+MATCH (d:Entity {type:'Drug'})-[:TREATS]->(c:Entity) WHERE toLower(c.name) CONTAINS 'diabet' RETURN d.name AS drug, c.name AS condition LIMIT 8
+
+Q: What frameworks implement microservices?
+MATCH (f:Entity)-[:IMPLEMENTS]->(p:Entity) WHERE toLower(p.name) CONTAINS 'microservice' RETURN f.name AS framework, f.type LIMIT 8"""
+
+
+def _build_t2c_prompt(query: str, allowed_types: Optional[set]) -> str:
+    """Build the Text-to-Cypher prompt with schema, examples, and query."""
+    type_hint = ""
+    if allowed_types:
+        type_hint = f"\nOnly use these entity types for this query: {', '.join(sorted(allowed_types))}"
+
+    return (
+        f"{_T2C_SCHEMA}{type_hint}\n\n"
+        f"{_T2C_EXAMPLES}\n\n"
+        "Rules:\n"
+        "- Output ONLY the Cypher MATCH query — no explanation, no markdown\n"
+        "- Must start with MATCH\n"
+        "- Must contain RETURN and LIMIT (≤ 8 results)\n"
+        "- No write operations: CREATE MERGE SET DELETE REMOVE DROP\n\n"
+        f"Q: {query}\n"
+    )
+
+
+def _validate_t2c_cypher(cypher: str) -> str:
+    """Validate and normalise a generated Cypher query.
+
+    Raises ValueError when the query contains write operations or is malformed.
+    Injects a LIMIT clause when missing so unbounded queries never run.
+    """
+    stripped = cypher.strip()
+    if not stripped.upper().startswith("MATCH"):
+        raise ValueError(f"T2C: query does not start with MATCH: {stripped[:80]!r}")
+    if _T2C_WRITE_PATTERN.search(stripped):
+        raise ValueError(f"T2C: write operation detected — rejected: {stripped[:80]!r}")
+    if "RETURN" not in stripped.upper():
+        raise ValueError(f"T2C: missing RETURN clause: {stripped[:80]!r}")
+    # Inject LIMIT when absent to bound result size unconditionally.
+    if not re.search(r"\bLIMIT\b", stripped, re.IGNORECASE):
+        stripped = stripped.rstrip(";").rstrip() + f" LIMIT {GRAPHRAG_T2C_MAX_NODES}"
+    return stripped
+
+
+def _format_t2c_result(records: list) -> str:
+    """Format Neo4j records from a Text-to-Cypher query as a context block."""
+    if not records:
+        return ""
+    lines = ["[Knowledge Graph — Text-to-Cypher]"]
+    for rec in records[:GRAPHRAG_T2C_MAX_NODES]:
+        parts = []
+        for key, val in rec.items():
+            if val is not None:
+                parts.append(f"{key}: {val}")
+        if parts:
+            lines.append("• " + " | ".join(parts))
+    lines.append("[End Text-to-Cypher]")
+    return "\n".join(lines)
+
 
 # Semaphore limiting concurrent LLM calls during background ingest.
 # Created lazily inside the async event loop on first use.
@@ -324,7 +415,9 @@ class GraphRAGManager:
                     }
 
         if not found:
-            return ""
+            # Text-to-Cypher fallback: when term-matching finds nothing, ask
+            # the LLM to generate a targeted Cypher query from natural language.
+            return await self._text_to_cypher(query_text, allowed_types)
 
         # ── Corrective RAG Gate (Yan et al., 2024 — arXiv:2401.15884) ─────────
         # Evaluate retrieved entities for relevance before injection.
@@ -497,6 +590,84 @@ class GraphRAGManager:
         # silently dropped when the graph is sparse on a topic — the term match alone
         # is enough evidence if the overlap is high.
         return min(1.0, overlap_score * 0.75 + avg_confidence * 0.25)
+
+    async def _text_to_cypher(
+        self,
+        query: str,
+        allowed_types: Optional[set],
+    ) -> str:
+        """Generate and execute a Cypher query from natural language.
+
+        Called when term-matching returns no entities. Uses the configured
+        GRAPH_INGEST_MODEL to translate the natural-language query into a
+        read-only Cypher MATCH statement, validates it, and executes it.
+
+        Returns a formatted context block, or "" on any failure (including
+        LLM unavailability, Cypher validation failure, or empty results).
+        All errors are logged at DEBUG level — this is a best-effort fallback.
+        """
+        if not GRAPHRAG_T2C_ENABLED:
+            return ""
+        if not GRAPH_INGEST_URL or not GRAPH_INGEST_MODEL:
+            logger.debug("T2C: GRAPH_INGEST_ENDPOINT/MODEL not configured — skipping")
+            return ""
+
+        prompt = _build_t2c_prompt(query, allowed_types)
+
+        # ── LLM call ─────────────────────────────────────────────────────────
+        cypher_raw = ""
+        try:
+            async with httpx.AsyncClient(timeout=GRAPHRAG_T2C_TIMEOUT) as client:
+                resp = await client.post(
+                    f"{GRAPH_INGEST_URL.rstrip('/')}/chat/completions",
+                    json={
+                        "model":       GRAPH_INGEST_MODEL,
+                        "messages":    [{"role": "user", "content": prompt}],
+                        "temperature": 0.0,
+                        "max_tokens":  256,
+                    },
+                    headers={"Authorization": f"Bearer {GRAPH_INGEST_TOKEN}"},
+                )
+                resp.raise_for_status()
+                cypher_raw = resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            logger.debug(f"T2C: LLM call failed: {exc}")
+            return ""
+
+        # ── Extract bare Cypher (strip markdown fences if present) ───────────
+        # Some models wrap their output in ```cypher ... ``` blocks.
+        fence_match = re.search(r"```(?:cypher)?\s*(MATCH.+?)```", cypher_raw, re.S | re.I)
+        cypher_raw = fence_match.group(1).strip() if fence_match else cypher_raw
+        # Take first MATCH statement when model outputs multiple lines.
+        for line in cypher_raw.splitlines():
+            if line.strip().upper().startswith("MATCH"):
+                cypher_raw = line.strip()
+                break
+
+        # ── Validate ─────────────────────────────────────────────────────────
+        try:
+            cypher = _validate_t2c_cypher(cypher_raw)
+        except ValueError as exc:
+            logger.debug(f"T2C: validation failed — {exc}")
+            return ""
+
+        logger.info(f"T2C: executing — {cypher[:120]}")
+
+        # ── Execute ───────────────────────────────────────────────────────────
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(cypher)
+                records = [dict(rec) async for rec in result]
+        except Exception as exc:
+            logger.debug(f"T2C: Neo4j execution failed: {exc}")
+            return ""
+
+        ctx = _format_t2c_result(records)
+        if ctx:
+            logger.info(f"T2C: returned {len(records)} record(s), {len(ctx)} chars")
+        else:
+            logger.debug("T2C: query executed but returned no records")
+        return ctx
 
     # ─── INGEST ──────────────────────────────────────────────────────────────
 
