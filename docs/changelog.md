@@ -8,6 +8,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-05-20 — v2.5.0: Science-Based RAG Extensions
+
+> `impact: minor` · `breaking: no` · `domain: graph_rag, compliance, memory`
+
+### Added
+
+- **Corrective RAG Gate** (`graph_rag/manager.py`): per-entity relevance scoring before Neo4j context injection. Entities below `GRAPHRAG_CORRECTIVE_THRESHOLD` (default `0.15`) are discarded to prevent context pollution. Source: Yan et al. 2024, arXiv:2401.15884.
+
+- **CAG Compliance Layer** (`compliance_cag.py`): keyword-matched compliance queries (BAIT, VAIT, DORA, KRITIS) bypass Neo4j and receive pre-loaded authoritative text from admin JSON files. Hot-reloaded every 5 minutes. Source: Chan et al. 2024, arXiv:2412.15605.
+
+- **Episodic Memory** (`episodic_memory.py`): successful pipeline runs logged as `:Episode` nodes in Neo4j. Routing hints from similar past tasks appended to `graph_context`. Zero latency overhead (fire-and-forget). Source: Tulving 1972; Park et al. 2023, arXiv:2304.03442; Packer et al. 2023, arXiv:2310.08560.
+
+See the project root `CHANGELOG.md` for the full environment variable reference table.
+
+---
+
 ## 2026-05-11 — Track C.2: Sauberer Schnitt — Phase 16–24 nach moe-codex migriert
 
 > `impact: minor` · `breaking: no` · `domain: routes/graph, admin_ui, services`

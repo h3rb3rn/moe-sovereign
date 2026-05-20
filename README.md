@@ -91,7 +91,7 @@ flowchart TD
 | **2. Planner** | Decomposes request into 1--4 subtasks with expert category assignment |
 | **3. Experts** | T1 models (&le;20B) screen with confidence gating; T2 (24--80B) engage only on low confidence |
 | **4. Tools** | 28 MCP precision tools (math, subnet, date, legal, PPTX) via AST-whitelist --- zero hallucination |
-| **5. GraphRAG** | Neo4j context enrichment with domain-scoped entity filters and trust-score decay |
+| **5. GraphRAG** | Neo4j context enrichment with domain-scoped entity filters and trust-score decay. CAG layer intercepts static compliance domains (BAIT, VAIT, DORA, KRITIS) before the Neo4j query and injects pre-loaded authoritative text directly. Corrective RAG gate (Yan et al. 2024) scores each retrieved entity for query relevance and discards low-signal results before injection. Episode hints from past similar tasks are appended as routing context |
 | **6. Judge** | Synthesises expert outputs, evaluates quality, retries on failure (up to 3 attempts) |
 | **7. Agentic Re-Plan** | Lightweight gap detector checks completeness; if unresolved, injects findings into a new planner round (up to 3 agentic iterations) |
 | **8. Ingest** | Validated knowledge flows back into Neo4j via Kafka for graph accumulation acceleration |
@@ -191,6 +191,9 @@ The orchestrator started as an 11 190-line monolith in `main.py`. A 14-phase spl
 | **26** | AIC Complexity Estimation | zlib compressibility as a Kolmogorov complexity proxy (Kolmogorov 1965) acts as a tie-breaker in `estimate_complexity()` — information-dense prompts (ratio < 0.15, ≥ 35 words) are upgraded to `complex`; redundant short prompts downgraded to `trivial`, without any LLM call |
 | **27** | Infrastructure-Adaptive Expert Scoring | Thompson Sampling Beta prior adjusted by real-time node load from `_ps_cache`: busy inference nodes receive an inflated β parameter — steering expert selection toward idle hardware automatically, without manual configuration |
 | **28** | Fuzzy Graph Entity Deduplication | Before every Neo4j MERGE, incoming entity names are resolved via Ratcliff/Obershelp SequenceMatcher (threshold 0.82) against a prefix-batched index — alternate spellings across knowledge sources (`"Einstein, Albert"` ↔ `"Albert Einstein"`) map to one canonical node instead of creating duplicates |
+| **38** | Corrective RAG Gate | Retrieved Neo4j entities are scored for query relevance before injection (Yan et al. 2024, arXiv:2401.15884). Term overlap (2× weight for entity-name hits) combined with average relation confidence produces a [0,1] score; entities below `GRAPHRAG_CORRECTIVE_THRESHOLD` (default 0.15) are discarded — prevents context pollution from tangentially matched graph nodes |
+| **39** | CAG Compliance Layer | Static regulatory domains (BAIT, VAIT, DORA, KRITIS, MaRisk) bypass Neo4j retrieval entirely — authoritative text is injected directly from admin-managed JSON files in `$MOE_DATA_ROOT/cag/` (Chan et al. 2024, arXiv:2412.15605). Hot-reloaded every 5 minutes. Adding a new domain requires only dropping a JSON file — no restart |
+| **40** | Episodic Memory | Every successful pipeline run is logged as a `:Episode` node in Neo4j (task type, routing path, tools used, confidence, token cost, TTL 90 days). On similar queries, routing hints from past episodes are appended to `graph_context` so the judge can leverage proven strategies. Basis: Tulving (1972), Park et al. 2023 Generative Agents, Packer et al. 2023 MemGPT |
 
 ### B) Security, Sovereignty & Admin
 

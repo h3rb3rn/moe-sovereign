@@ -78,7 +78,7 @@ flowchart TD
 | `research` | SearXNG web search | Single or multi-query deep search; always runs if `research` category in plan |
 | `math` | SymPy calculation | Runs only if `math` category in plan AND no `precision_tools` task |
 | `mcp` | MCP Precision Tools | 26 deterministic tools via HTTP; runs if `precision_tools` in plan |
-| `graph_rag` | Neo4j knowledge graph | Generic 2-hop entity/relation traversal + targeted procedural requirement lookup; Valkey cache TTL=1h; if `metadata_filters` is set in state, also performs a filtered ChromaDB query (`where` clause) and appends results as `[Domain-Filtered Memory]` to `graph_context` |
+| `graph_rag` | Neo4j knowledge graph | **CAG gate** (v2.5): compliance-keyword queries (BAIT/VAIT/DORA/KRITIS) bypass Neo4j and inject pre-loaded authoritative text (Chan et al. 2024). **Corrective RAG gate** (v2.5): per-entity relevance score filters low-signal entities before injection (Yan et al. 2024). **Episode hint** (v2.5): Sørensen–Dice retrieval of past similar tasks appended as routing context. Then: generic 2-hop entity/relation traversal + targeted procedural requirement lookup; Valkey cache TTL=1h; if `metadata_filters` is set, also performs filtered ChromaDB query |
 | `research_fallback` | Conditional extra search | Triggers if merger needs more context |
 | `thinking` | Chain-of-thought reasoning | Generates `reasoning_trace`; activated by `force_think` modes |
 | `merger` | Response synthesis (Judge LLM) | Fast-path bypasses Judge for single high-confidence experts; tags Kafka events with `knowledge_type` and `source_expert`; tags ChromaDB inserts with `expert_domain`; emits optional `<SYNTHESIS_INSIGHT>` block → stripped from user response, persisted as `:Synthesis` node in Neo4j |

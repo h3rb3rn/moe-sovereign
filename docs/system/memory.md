@@ -1,24 +1,28 @@
-# Tier-2 Semantic Memory — 1M-Token Context Window
+# Memory Architecture
 
-MoE Sovereign extends effective conversation context to **1 million tokens or more**
-through a three-tier memory architecture. Each tier covers a different time horizon
-without increasing inference token costs.
+MoE Sovereign implements a four-tier memory architecture rooted in Tulving's
+cognitive taxonomy (Tulving 1972) and the LLM-agent memory research of Park et al.
+(Generative Agents, 2023) and Packer et al. (MemGPT, 2023).
+
+Each tier covers a different time horizon without increasing inference token costs.
 
 ---
 
-## Overview: Three-Tier Memory
+## Overview: Four-Tier Memory
 
 ```
-Tier 1 — HOT    (LLM context, verbatim)    Last N conversation turns
-Tier 2 — WARM   (ChromaDB, disk-bound)     ANN retrieval of evicted turns
-Tier 3 — COLD   (Neo4j, disk-bound)        GraphRAG entity/fact extraction
+Tier 1 — HOT        (LLM context, verbatim)    Last N conversation turns
+Tier 2 — WARM       (ChromaDB, disk-bound)     ANN retrieval of evicted turns
+Tier 3 — COLD       (Neo4j, disk-bound)        GraphRAG entity/fact extraction
+Tier 4 — EPISODIC   (Neo4j, :Episode nodes)    Past task outcomes + routing hints
 ```
 
-| Tier | Backend | Capacity | Retrieval | TTL |
-|---|---|---|---|---|
-| **T1 — Hot** | LLM native context | Model-dependent (4k–128k) | Verbatim, instant | Session duration |
-| **T2 — Warm** | ChromaDB + nomic-embed-text | Effectively unlimited | ANN + hybrid keyword ranking | 6 hours |
-| **T3 — Cold** | Neo4j knowledge graph | Unlimited (disk) | GraphRAG cypher queries | Permanent |
+| Tier | Type (Tulving) | Backend | Capacity | Retrieval | TTL |
+|---|---|---|---|---|---|
+| **T1 — Hot** | Working memory | LLM native context | Model-dependent (4k–128k) | Verbatim, instant | Session duration |
+| **T2 — Warm** | Episodic (conversation) | ChromaDB + nomic-embed-text | Effectively unlimited | ANN + hybrid keyword ranking | 6 hours |
+| **T3 — Cold** | Semantic | Neo4j knowledge graph | Unlimited (disk) | GraphRAG cypher queries | Permanent |
+| **T4 — Episodic** | Episodic (task-level) | Neo4j `:Episode` nodes | Unlimited (disk) | Sørensen–Dice similarity | 90 days (configurable) |
 
 ---
 
@@ -284,3 +288,73 @@ Users control their memory behaviour in the **User Portal → Profile → Conver
 | User preferences | `admin_ui/database.py:get_user_memory_prefs()` | `prefer_fresh`, `share_with_team` per user |
 | Benchmark runner | `benchmarks/mrcr_lite_runner.py` | MRCR-lite v2, A/B design, configurable warmup |
 | Dataset | `benchmarks/datasets/mrcr_lite_v1.json` | 5 needles, filler turns, test matrix |
+
+---
+
+## Tier 4 — Episodic Memory (Task-Level)
+
+> **Scientific basis:** Tulving (1972) episodic/semantic memory distinction;
+> Park et al. 2023, *Generative Agents* (arXiv:2304.03442);
+> Packer et al. 2023, *MemGPT* (arXiv:2310.08560).
+
+Tier-4 complements the conversation-level Warm memory (T2) with **task-level experience**.
+Every successful pipeline run is logged as a `:Episode` node in Neo4j.
+On similar future queries, routing hints from past episodes are injected into
+`graph_context` alongside the regular GraphRAG output.
+
+### What is stored
+
+Each `:Episode` node holds:
+
+| Field | Content |
+|---|---|
+| `hash` | SHA-256 fingerprint of normalised query + task type (deduplication key) |
+| `query_pattern` | Normalised query string (first 300 chars, lowercase) |
+| `task_type` | Primary expert category from the planner |
+| `routing_path` | Ordered list of categories executed (e.g. `["technical_support", "math"]`) |
+| `tools_used` | Active pipeline tools: `graphrag`, `mcp`, `math`, `web`, `cache` |
+| `model_signature` | Sorted unique list of `expert_models_used` |
+| `confidence` | Weighted estimate: `0.7 × expert_confidence + 0.3 × response_completeness` |
+| `total_tokens` | Total prompt + completion tokens |
+| `expires_at` | ISO-8601 expiry timestamp (default: 90 days from creation) |
+| `user_id` | Originating user (for auditing, not used in retrieval) |
+
+### How retrieval works
+
+1. `get_episode_hint()` is called in `graph_rag_node` before the Neo4j query.
+2. Past episodes for the same `task_type` are ranked by **Sørensen–Dice string
+   similarity** against the current query pattern (requires Neo4j APOC).
+3. Episodes scoring above `EPISODIC_MIN_CONFIDENCE` (default `0.6`) and within
+   their TTL are returned as a `[Episode Hint]` block appended to `graph_context`.
+4. Without APOC, a recency-based fallback is used automatically.
+
+### What the judge sees
+
+```
+[Episode Hint — past similar tasks]
+• Routing: technical_support → math | Tools: graphrag, mcp | Confidence: 87% | Recalled 4×
+• Routing: technical_support | Tools: graphrag | Confidence: 72% | Recalled 1×
+[End of Episode Hint]
+```
+
+The hint informs which routing strategies and tools have historically produced
+high-confidence answers — without prescribing the current answer.
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `EPISODIC_MEMORY_ENABLED` | `1` | Set to `0` to disable entirely |
+| `EPISODIC_MAX_HINTS` | `2` | Max episodes injected per request |
+| `EPISODIC_MIN_CONFIDENCE` | `0.6` | Minimum stored confidence to recall |
+| `EPISODIC_TTL_DAYS` | `90` | Days before `:Episode` nodes expire |
+
+### Implementation reference
+
+| Component | File | Description |
+|---|---|---|
+| Schema setup | `episodic_memory.ensure_schema()` | Creates `:Episode` uniqueness constraint |
+| Logging | `episodic_memory.log_episode()` | Fire-and-forget write after merger completion |
+| Retrieval | `episodic_memory.get_episode_hint()` | Sørensen–Dice + recency fallback |
+| Integration — log | `graph/synthesis.py:merger_node()` | `asyncio.create_task(log_episode(...))` |
+| Integration — hint | `graph/tool_nodes.py:graph_rag_node()` | Called before Neo4j query; appended to `graph_context` |

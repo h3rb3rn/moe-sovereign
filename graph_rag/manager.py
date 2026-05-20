@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -325,6 +326,28 @@ class GraphRAGManager:
         if not found:
             return ""
 
+        # ── Corrective RAG Gate (Yan et al., 2024 — arXiv:2401.15884) ─────────
+        # Evaluate retrieved entities for relevance before injection.
+        # Entities scoring below the threshold are discarded to prevent context
+        # pollution — injecting weakly-relevant graph nodes degrades judge quality.
+        # Set GRAPHRAG_CORRECTIVE_THRESHOLD=0 to disable (default: 0.15).
+        _corrective_threshold = float(os.getenv("GRAPHRAG_CORRECTIVE_THRESHOLD", "0.15"))
+        if _corrective_threshold > 0:
+            before = len(found)
+            found = {
+                entity: data for entity, data in found.items()
+                if self._corrective_relevance_score(terms, entity, data) >= _corrective_threshold
+            }
+            discarded = before - len(found)
+            if discarded:
+                logger.debug(
+                    f"GraphRAG corrective gate: discarded {discarded}/{before} entities "
+                    f"(threshold={_corrective_threshold:.2f})"
+                )
+            if not found:
+                logger.debug("GraphRAG corrective gate: all results below threshold — returning empty")
+                return ""
+
         lines = ["[Knowledge Graph]"]
         for entity, data in found.items():
             etype = data["type"]
@@ -416,6 +439,64 @@ class GraphRAGManager:
                 seen.add(key)
                 result.append(w)
         return result[:10]
+
+    @staticmethod
+    def _corrective_relevance_score(
+        terms: List[str],
+        entity: str,
+        data: Dict[str, Any],
+    ) -> float:
+        """Score the relevance of a retrieved graph entity to the original query.
+
+        Implements the lightweight retrieval evaluator from CRAG (Yan et al., 2024).
+        Returns a float in [0.0, 1.0]; entities below GRAPHRAG_CORRECTIVE_THRESHOLD
+        are discarded before injection into the judge prompt.
+
+        Args:
+            terms:  Query terms extracted by _extract_terms() — content words only,
+                    stopwords already removed, up to 10 terms.
+            entity: The entity name as stored in Neo4j (e.g. "Python", "BAIT").
+            data:   Dict with keys:
+                      "type"     — entity type string (e.g. "Framework")
+                      "direct"   — list of dicts: {rel, target, ttype, confidence, ...}
+                      "indirect" — list of dicts: {via, rel, target, ttype}
+
+        Returns:
+            Relevance score in [0.0, 1.0].
+
+        Returns:
+            Relevance score in [0.0, 1.0].
+        """
+        terms_lower = [t.lower() for t in terms]
+        if not terms_lower:
+            return 1.0  # no terms to evaluate against — pass through
+
+        # Build the textual surface of this entity for term matching.
+        # Entity name hit counts double: a query for "BAIT" matching entity "BAIT"
+        # is far more signal than a match buried in a relation target.
+        name_lower = entity.lower()
+        relation_surface = " ".join(
+            r["target"].lower() for r in data.get("direct", []) if r.get("target")
+        )
+
+        name_hits = sum(1 for t in terms_lower if t in name_lower)
+        rel_hits  = sum(1 for t in terms_lower if t in relation_surface)
+
+        # Weighted overlap: name match is worth 2x a relation-target match.
+        total_weight = len(terms_lower) * 3  # max possible: all terms hit name (2x) + rels (1x)
+        overlap_score = (name_hits * 2 + rel_hits) / total_weight if total_weight else 0.0
+
+        # Average confidence of direct relations (neutral 0.5 when unset).
+        confidences = [
+            r["confidence"] for r in data.get("direct", [])
+            if r.get("confidence") is not None
+        ]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.5
+
+        # Entities with no relations at all get a small base score so they are not
+        # silently dropped when the graph is sparse on a topic — the term match alone
+        # is enough evidence if the overlap is high.
+        return min(1.0, overlap_score * 0.75 + avg_confidence * 0.25)
 
     # ─── INGEST ──────────────────────────────────────────────────────────────
 
