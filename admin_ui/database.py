@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS users (
     country               TEXT NOT NULL DEFAULT '',
     date_of_birth         TEXT,
     gender                TEXT,
+    -- Conversation audit log: NULL means use the global default from config
+    conversation_log_retention_days  INTEGER,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL
 );
@@ -308,6 +310,9 @@ ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS complexity_level  TEXT;
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS expert_domains    TEXT;
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cache_hit         BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS agentic_rounds    INTEGER NOT NULL DEFAULT 0;
+
+-- Conversation audit log retention: per-user override (NULL = global default)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS conversation_log_retention_days INTEGER;
 """
 
 
@@ -676,6 +681,67 @@ async def update_user_timezone(user_id: str, offset_hours: float) -> None:
 async def delete_user(user_id: str) -> None:
     """Soft-delete: setzt is_active=FALSE."""
     await update_user(user_id, is_active=False)
+
+
+async def get_user_log_retention(user_id: str) -> int:
+    """Return the effective conversation log retention in days for a user.
+
+    Falls back to CONVERSATION_LOG_RETENTION_DAYS_DEFAULT when the user has no
+    personal setting.  The return value is always clamped to
+    [0, CONVERSATION_LOG_RETENTION_MAX].
+    """
+    _default = int(os.getenv("CONVERSATION_LOG_RETENTION_DAYS_DEFAULT", "90"))
+    _max     = int(os.getenv("CONVERSATION_LOG_RETENTION_MAX", "365"))
+    try:
+        async with _get_pool().connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT conversation_log_retention_days FROM users WHERE id=%s",
+                    (user_id,),
+                )
+                row = await cur.fetchone()
+        if row and row[0] is not None:
+            days = int(row[0])
+        else:
+            days = _default
+    except Exception:
+        days = _default
+    return max(0, min(days, _max))
+
+
+async def set_user_log_retention(user_id: str, days: int) -> None:
+    """Persist a per-user conversation log retention value (capped at the global max)."""
+    _max = int(os.getenv("CONVERSATION_LOG_RETENTION_MAX", "365"))
+    capped = max(0, min(int(days), _max))
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE users SET conversation_log_retention_days=%s, updated_at=%s WHERE id=%s",
+                (capped, __import__("datetime").datetime.utcnow().isoformat(), user_id),
+            )
+
+
+async def get_all_user_retentions() -> list[dict]:
+    """Return [(user_id, effective_retention_days)] for the cleanup job."""
+    _default = int(os.getenv("CONVERSATION_LOG_RETENTION_DAYS_DEFAULT", "90"))
+    _max     = int(os.getenv("CONVERSATION_LOG_RETENTION_MAX", "365"))
+    try:
+        async with _get_pool().connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT id, conversation_log_retention_days FROM users WHERE is_active=TRUE")
+                rows = await cur.fetchall()
+        return [
+            {
+                "user_id": r[0],
+                "retention_days": max(0, min(
+                    r[1] if r[1] is not None else _default,
+                    _max,
+                )),
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
 
 
 async def get_user_by_email(email: str) -> Optional[dict]:

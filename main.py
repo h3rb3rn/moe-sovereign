@@ -191,6 +191,7 @@ from services.tracking import (
     _deregister_active_request, _increment_user_budget,
     _check_ip_rate_limit,
 )
+from services.conversation_log import log_conversation
 
 # Helper functions moved to services/helpers.py
 from services.helpers import (
@@ -1502,6 +1503,22 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             _bill_p = max(0, p_tok - _uc_p)
             _bill_c = max(0, c_tok - _uc_c)
             asyncio.create_task(_increment_user_budget(_uid, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
+            _full_messages = list(chat_history or []) + [{"role": "user", "content": user_input}]
+            asyncio.create_task(log_conversation(
+                user_id=_uid,
+                request_id=chat_id,
+                messages=_full_messages,
+                response=content,
+                model=model_name or model_id,
+                moe_mode=mode,
+                session_id=session_id,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                latency_ms=int(total_s * 1000),
+                expert_domains=_expert_domains,
+                cache_hit=bool(cache_hit_flag),
+                agentic_rounds=_agentic_rounds,
+            ))
         if not _deregistered:
             asyncio.create_task(_deregister_active_request(chat_id))
         # Stop chunk WITHOUT usage (OpenAI spec: usage comes in its own chunk after)

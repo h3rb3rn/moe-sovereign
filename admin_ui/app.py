@@ -80,6 +80,11 @@ APP_BASE_URL      = os.getenv("APP_BASE_URL",      "http://localhost:8088")
 PUBLIC_ADMIN_URL  = os.getenv("PUBLIC_ADMIN_URL",  "")
 PUBLIC_API_URL    = os.getenv("PUBLIC_API_URL",     "")
 
+CONVERSATION_LOG_ENABLED              = os.getenv("CONVERSATION_LOG_ENABLED", "true").lower() in ("1", "true", "yes")
+CONVERSATION_LOG_RETENTION_DAYS_DEFAULT = int(os.getenv("CONVERSATION_LOG_RETENTION_DAYS_DEFAULT", "90"))
+CONVERSATION_LOG_RETENTION_MAX        = int(os.getenv("CONVERSATION_LOG_RETENTION_MAX", "365"))
+CONVERSATION_LOG_DIR                  = os.getenv("CONVERSATION_LOG_DIR", "/app/logs/users")
+
 # OIDC / Authentik – module-level defaults (used before config is loaded)
 AUTHENTIK_URL      = os.getenv("AUTHENTIK_URL", "")
 OIDC_CLIENT_ID     = os.getenv("OIDC_CLIENT_ID", "")
@@ -328,7 +333,22 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_sync_authentik_redirect_uris(read_env()))
     # Clean stale model_endpoint permissions on startup (non-blocking)
     asyncio.create_task(_startup_permission_cleanup())
+    # Daily retention cleanup for conversation audit logs
+    asyncio.create_task(_daily_conversation_log_cleanup_loop())
     yield
+
+async def _daily_conversation_log_cleanup_loop() -> None:
+    """Run run_retention_cleanup() once per day, starting 24h after startup."""
+    await asyncio.sleep(86400)
+    while True:
+        try:
+            from conversation_log import run_retention_cleanup
+            deleted = await run_retention_cleanup()
+            logger.info("Conversation log retention cleanup: %d file(s) removed", deleted)
+        except Exception as exc:
+            logger.warning("Conversation log cleanup failed: %s", exc)
+        await asyncio.sleep(86400)
+
 
 async def _startup_permission_cleanup() -> None:
     """Remove model_endpoint permissions that reference servers no longer in the config."""
@@ -5026,6 +5046,66 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
         "count":     len(active),
         "timestamp": now.isoformat(),
     }
+
+
+@app.get("/user/audit-log", response_class=HTMLResponse)
+async def user_audit_log_page(request: Request, user_id: str = Depends(require_user_login)):
+    ctx = await _user_portal_ctx(user_id)
+    retention = await db.get_user_log_retention(user_id)
+    return TEMPLATES.TemplateResponse(request, "user_portal.html", {
+        **ctx,
+        "page": "audit_log",
+        "retention_days": retention,
+        "retention_max": CONVERSATION_LOG_RETENTION_MAX,
+        "log_enabled": CONVERSATION_LOG_ENABLED,
+    })
+
+
+@app.get("/user/api/audit-log")
+async def user_api_audit_log(
+    request: Request,
+    user_id: str = Depends(require_user_login),
+    page: int = 1,
+    per_page: int = 50,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    if not CONVERSATION_LOG_ENABLED:
+        return JSONResponse({"entries": [], "total": 0, "page": page, "per_page": per_page})
+    from conversation_log import read_user_log
+    entries, total = await read_user_log(
+        user_id, page=page, per_page=per_page,
+        date_from=date_from, date_to=date_to, search=search,
+    )
+    return JSONResponse({"entries": entries, "total": total, "page": page, "per_page": per_page})
+
+
+@app.get("/user/api/audit-log/{request_id}")
+async def user_api_audit_log_detail(
+    request_id: str,
+    user_id: str = Depends(require_user_login),
+):
+    """Return the full log entry for a single request_id owned by the user."""
+    if not CONVERSATION_LOG_ENABLED:
+        raise HTTPException(404, "Audit log is disabled")
+    from conversation_log import read_user_log
+    entries, _ = await read_user_log(user_id, page=1, per_page=200)
+    for e in entries:
+        if e.get("request_id") == request_id:
+            return JSONResponse(e)
+    raise HTTPException(404, "Entry not found")
+
+
+@app.patch("/user/api/settings/log-retention")
+async def user_set_log_retention(request: Request, user_id: str = Depends(require_user_login)):
+    body = await request.json()
+    days = body.get("days")
+    if days is None or not str(days).isdigit():
+        raise HTTPException(400, "days must be a non-negative integer")
+    await db.set_user_log_retention(user_id, int(days))
+    effective = await db.get_user_log_retention(user_id)
+    return JSONResponse({"ok": True, "effective_days": effective})
 
 
 @app.get("/user/keys", response_class=HTMLResponse)
