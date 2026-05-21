@@ -306,6 +306,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           <a href="/user/usage" class="sidebar-link {% if page=='usage' %}active{% endif %}">
             <i class="bi bi-list-columns me-2"></i>{{ t(request, 'portal.sidebar.usage') }}
           </a>
+          <a href="/user/audit-log" class="sidebar-link {% if page=='audit_log' %}active{% endif %}">
+            <i class="bi bi-shield-check me-2"></i>{{ t(request, 'portal.sidebar.audit_log') }}
+          </a>
           <a href="/user/keys" class="sidebar-link {% if page=='keys' %}active{% endif %}">
             <i class="bi bi-key me-2"></i>{{ t(request, 'portal.sidebar.api_keys') }}
           </a>
@@ -2837,6 +2840,266 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           el.innerHTML = `<span class="badge bg-danger">Error: ${e.message}</span>`;
         }
       }
+      </script>
+
+      {% elif page == "audit_log" %}
+      <!-- ─── Conversation Audit Log ─── -->
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h5 class="mb-0"><i class="bi bi-shield-check me-2 text-primary"></i>{{ t(request, 'portal.audit_log.title') }}</h5>
+          <p class="text-muted small mb-0 mt-1">{{ t(request, 'portal.audit_log.subtitle') }}</p>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-sm" onclick="exportAuditLog('csv')">
+            <i class="bi bi-filetype-csv me-1"></i>{{ t(request, 'portal.audit_log.btn_export_csv') }}
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" onclick="exportAuditLog('json')">
+            <i class="bi bi-filetype-json me-1"></i>{{ t(request, 'portal.audit_log.btn_export_json') }}
+          </button>
+        </div>
+      </div>
+
+      {% if not log_enabled %}
+      <div class="alert alert-warning">{{ t(request, 'portal.audit_log.disabled') }}</div>
+      {% else %}
+
+      <!-- Filter bar -->
+      <div class="card mb-3 border-0 bg-body-tertiary">
+        <div class="card-body py-2">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <input type="text" id="alSearch" class="form-control form-control-sm"
+                placeholder="{{ t(request, 'portal.audit_log.search_placeholder') }}"
+                oninput="debounceAuditLoad()">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label form-label-sm mb-1">{{ t(request, 'portal.audit_log.date_from') }}</label>
+              <input type="date" id="alDateFrom" class="form-control form-control-sm" onchange="loadAuditLog(1)">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label form-label-sm mb-1">{{ t(request, 'portal.audit_log.date_to') }}</label>
+              <input type="date" id="alDateTo" class="form-control form-control-sm" onchange="loadAuditLog(1)">
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-sm btn-outline-secondary w-100" onclick="resetAuditFilters()">
+                <i class="bi bi-x-circle me-1"></i>{{ t(request, 'portal.audit_log.btn_reset') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle" id="auditTable">
+          <thead class="table-dark">
+            <tr>
+              <th>{{ t(request, 'portal.audit_log.col_time') }}</th>
+              <th>{{ t(request, 'portal.audit_log.col_model') }}</th>
+              <th>{{ t(request, 'portal.audit_log.col_mode') }}</th>
+              <th>{{ t(request, 'portal.audit_log.col_prompt') }}</th>
+              <th class="text-end">{{ t(request, 'portal.audit_log.col_tokens') }}</th>
+              <th class="text-end">{{ t(request, 'portal.audit_log.col_latency') }}</th>
+            </tr>
+          </thead>
+          <tbody id="auditTbody">
+            <tr><td colspan="6" class="text-center text-muted py-4">
+              <span class="spinner-border spinner-border-sm me-2"></span>Loading…
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <nav id="auditPagination" class="d-flex justify-content-between align-items-center mt-2" style="display:none!important">
+        <small class="text-muted" id="auditPagInfo"></small>
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item" id="auditPrev"><a class="page-link" href="#" onclick="loadAuditLog(_alPage-1);return false">‹</a></li>
+          <li class="page-item" id="auditNext"><a class="page-link" href="#" onclick="loadAuditLog(_alPage+1);return false">›</a></li>
+        </ul>
+      </nav>
+
+      <!-- Retention settings card -->
+      <div class="card mt-4 border-0 bg-body-tertiary">
+        <div class="card-body">
+          <h6 class="card-title"><i class="bi bi-clock-history me-2"></i>{{ t(request, 'portal.audit_log.retention_title') }}</h6>
+          <p class="text-muted small">{{ t(request, 'portal.audit_log.retention_hint').replace('{max}', retention_max|string) }}</p>
+          <div class="d-flex align-items-center gap-2">
+            <label class="form-label mb-0 text-nowrap">{{ t(request, 'portal.audit_log.retention_label') }}</label>
+            <input type="number" id="retentionDays" class="form-control form-control-sm" style="width:90px"
+              min="0" max="{{ retention_max }}" value="{{ retention_days }}">
+            <span class="text-muted small">{{ t(request, 'portal.audit_log.retention_days') }}</span>
+            <button class="btn btn-primary btn-sm" onclick="saveRetention()">{{ t(request, 'portal.audit_log.retention_save') }}</button>
+          </div>
+        </div>
+      </div>
+
+      {% endif %}
+
+      <!-- Detail Modal -->
+      <div class="modal fade" id="auditDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title"><i class="bi bi-shield-check me-2"></i>{{ t(request, 'portal.audit_log.col_prompt') }} / {{ t(request, 'portal.audit_log.modal_response') }}</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="auditModalBody">
+              <div class="row">
+                <div class="col-md-6">
+                  <div class="d-flex justify-content-between align-items-center mb-1">
+                    <strong>{{ t(request, 'portal.audit_log.modal_prompt') }}</strong>
+                    <button class="btn btn-xs btn-outline-secondary btn-sm" onclick="copyToClipboard('auditModalPrompt')">
+                      <i class="bi bi-clipboard me-1"></i>{{ t(request, 'portal.audit_log.btn_copy') }}
+                    </button>
+                  </div>
+                  <pre id="auditModalPrompt" class="p-2 rounded bg-body-tertiary" style="white-space:pre-wrap;font-size:.8rem;max-height:400px;overflow-y:auto"></pre>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex justify-content-between align-items-center mb-1">
+                    <strong>{{ t(request, 'portal.audit_log.modal_response') }}</strong>
+                    <button class="btn btn-xs btn-outline-secondary btn-sm" onclick="copyToClipboard('auditModalResponse')">
+                      <i class="bi bi-clipboard me-1"></i>{{ t(request, 'portal.audit_log.btn_copy') }}
+                    </button>
+                  </div>
+                  <pre id="auditModalResponse" class="p-2 rounded bg-body-tertiary" style="white-space:pre-wrap;font-size:.8rem;max-height:400px;overflow-y:auto"></pre>
+                </div>
+              </div>
+              <hr>
+              <div id="auditModalMeta" class="small text-muted font-monospace"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script>
+      let _alPage = 1, _alTotal = 0, _alPerPage = 50, _alDebounce = null;
+      let _alEntries = [];  // current page cache for export
+
+      function debounceAuditLoad() {
+        clearTimeout(_alDebounce);
+        _alDebounce = setTimeout(() => loadAuditLog(1), 350);
+      }
+
+      async function loadAuditLog(page = 1) {
+        _alPage = page;
+        const search = document.getElementById('alSearch').value.trim();
+        const dateFrom = document.getElementById('alDateFrom').value;
+        const dateTo   = document.getElementById('alDateTo').value;
+        const params = new URLSearchParams({ page, per_page: _alPerPage });
+        if (search)   params.set('search', search);
+        if (dateFrom) params.set('date_from', dateFrom);
+        if (dateTo)   params.set('date_to', dateTo);
+
+        const tbody = document.getElementById('auditTbody');
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-3"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
+
+        const r = await fetch(`/user/api/audit-log?${params}`);
+        const data = await r.json();
+        _alTotal   = data.total;
+        _alEntries = data.entries;
+        renderAuditTable(data.entries);
+        renderAuditPagination(data.total, page, _alPerPage);
+      }
+
+      function renderAuditTable(entries) {
+        const tbody = document.getElementById('auditTbody');
+        if (!entries.length) {
+          tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-5">{{ t(request, 'portal.audit_log.empty') }}</td></tr>`;
+          return;
+        }
+        const tzOff = ({{ (user.timezone_offset_hours if user is defined and user.timezone_offset_hours is defined else 0) | float }} || 0) * 3600000;
+        tbody.innerHTML = entries.map((e, i) => {
+          const ts = new Date(new Date(e.ts).getTime() + tzOff).toLocaleString();
+          const promptText = (e.messages || []).filter(m => m.role === 'user').map(m => m.content || '').join(' ');
+          const preview = promptText.slice(0, 120) + (promptText.length > 120 ? '…' : '');
+          const tokens = (e.prompt_tokens || 0) + (e.completion_tokens || 0);
+          const latency = e.latency_ms != null ? `${e.latency_ms}ms` : '—';
+          return `<tr style="cursor:pointer" onclick="showAuditDetail(${i})">
+            <td class="text-nowrap small">${ts}</td>
+            <td class="small">${e.model || '—'}</td>
+            <td><span class="badge bg-secondary">${e.moe_mode || '—'}</span></td>
+            <td class="small text-truncate" style="max-width:280px">${escHtml(preview)}</td>
+            <td class="text-end small">${tokens.toLocaleString()}</td>
+            <td class="text-end small">${latency}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      function renderAuditPagination(total, page, perPage) {
+        const pages = Math.ceil(total / perPage) || 1;
+        const from = (page - 1) * perPage + 1;
+        const to   = Math.min(page * perPage, total);
+        document.getElementById('auditPagInfo').textContent = total ? `${from}–${to} / ${total}` : '';
+        document.getElementById('auditPrev').classList.toggle('disabled', page <= 1);
+        document.getElementById('auditNext').classList.toggle('disabled', page >= pages);
+        document.getElementById('auditPagination').style.display = total > perPage ? '' : 'none';
+      }
+
+      function showAuditDetail(idx) {
+        const e = _alEntries[idx];
+        if (!e) return;
+        const promptText = (e.messages || []).map(m => `[${m.role}] ${m.content || ''}`).join('\n\n');
+        document.getElementById('auditModalPrompt').textContent = promptText;
+        document.getElementById('auditModalResponse').textContent = e.response || '';
+        document.getElementById('auditModalMeta').textContent = JSON.stringify({
+          request_id: e.request_id, ts: e.ts, model: e.model, mode: e.moe_mode,
+          prompt_tokens: e.prompt_tokens, completion_tokens: e.completion_tokens,
+          latency_ms: e.latency_ms, expert_domains: e.expert_domains,
+          cache_hit: e.cache_hit, agentic_rounds: e.agentic_rounds
+        }, null, 2);
+        new bootstrap.Modal(document.getElementById('auditDetailModal')).show();
+      }
+
+      function resetAuditFilters() {
+        document.getElementById('alSearch').value = '';
+        document.getElementById('alDateFrom').value = '';
+        document.getElementById('alDateTo').value = '';
+        loadAuditLog(1);
+      }
+
+      async function saveRetention() {
+        const days = parseInt(document.getElementById('retentionDays').value, 10);
+        if (isNaN(days) || days < 0) return;
+        const r = await fetch('/user/api/settings/log-retention', {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json', 'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || ''},
+          body: JSON.stringify({days})
+        });
+        const data = await r.json();
+        if (data.ok) {
+          document.getElementById('retentionDays').value = data.effective_days;
+          showToast('Retention saved', 'success');
+        }
+      }
+
+      function exportAuditLog(fmt) {
+        if (!_alEntries.length) return;
+        if (fmt === 'json') {
+          downloadBlob(JSON.stringify(_alEntries, null, 2), 'audit-log.json', 'application/json');
+        } else {
+          const cols = ['ts','request_id','model','moe_mode','prompt_tokens','completion_tokens','latency_ms','expert_domains'];
+          const rows = _alEntries.map(e => cols.map(k => JSON.stringify(e[k] ?? '')).join(','));
+          downloadBlob([cols.join(','), ...rows].join('\n'), 'audit-log.csv', 'text/csv');
+        }
+      }
+
+      function downloadBlob(content, filename, mime) {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([content], {type: mime}));
+        a.download = filename;
+        a.click();
+      }
+
+      function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+
+      function copyToClipboard(id) {
+        navigator.clipboard.writeText(document.getElementById(id).textContent).catch(()=>{});
+      }
+
+      loadAuditLog(1);
       </script>
 
       {% endif %}

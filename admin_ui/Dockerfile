@@ -5,6 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 COPY database.py .
+COPY conversation_log.py .
 COPY curator_provisioner.py .
 COPY grafana_generator.py .
 COPY maintenance.py .

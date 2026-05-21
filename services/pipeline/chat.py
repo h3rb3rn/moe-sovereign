@@ -70,6 +70,7 @@ from services.tracking import (
     _deregister_active_request, _increment_user_budget,
     _check_ip_rate_limit,
 )
+from services.conversation_log import log_conversation
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -678,6 +679,24 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         _bill_p = max(0, p_tok - _uc_p)
         _bill_c = max(0, c_tok - _uc_c)
         asyncio.create_task(_increment_user_budget(user_id, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
+        _plan = result.get("plan") or []
+        _expert_domains = ",".join(sorted({
+            t.get("category", "") for t in _plan if isinstance(t, dict) and t.get("category")
+        }))
+        asyncio.create_task(log_conversation(
+            user_id=user_id,
+            request_id=chat_id,
+            messages=[{"role": m.role, "content": m.content or ""} for m in request.messages],
+            response=result.get("final_response", ""),
+            model=MODES.get(mode, MODES["default"])["model_id"],
+            moe_mode=mode,
+            session_id=session_id,
+            prompt_tokens=p_tok,
+            completion_tokens=c_tok,
+            expert_domains=_expert_domains,
+            cache_hit=bool(result.get("cache_hit", False)),
+            agentic_rounds=int(result.get("agentic_round", 0)),
+        ))
     asyncio.create_task(_deregister_active_request(chat_id))
     resp = {
         "id":      chat_id,
