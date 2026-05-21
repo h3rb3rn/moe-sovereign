@@ -283,6 +283,15 @@ CORS_ORIGINS_RAW        = os.getenv("CORS_ORIGINS", "")
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MAX_REQUESTS_PER_MINUTE", "60"))
 
 # =============================================================================
+# Conversation audit logging
+# =============================================================================
+
+CONVERSATION_LOG_ENABLED              = os.getenv("CONVERSATION_LOG_ENABLED", "true").lower() in ("1", "true", "yes")
+CONVERSATION_LOG_RETENTION_DAYS_DEFAULT = int(os.getenv("CONVERSATION_LOG_RETENTION_DAYS_DEFAULT", "90"))
+CONVERSATION_LOG_RETENTION_MAX        = int(os.getenv("CONVERSATION_LOG_RETENTION_MAX", "365"))
+CONVERSATION_LOG_DIR                  = os.getenv("CONVERSATION_LOG_DIR", "/app/logs/users")
+
+# =============================================================================
 # Custom expert prompts (admin override, rarely set)
 # =============================================================================
 

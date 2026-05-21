@@ -41,17 +41,36 @@ AI responses are cached in ChromaDB for fast repeated lookup. Stored data:
 
 ChromaDB does not implement automatic TTL expiry by default. Data persists until manually deleted or the volume is cleared.
 
-### 4. User Database (PostgreSQL — persistent)
+### 4. Conversation Audit Log (JSONL files — configurable retention)
+
+Every completed API request is appended as a JSON line to a per-user JSONL file:
+
+```
+${MOE_DATA_ROOT}/user-audit-logs/{user_id}.jsonl
+```
+
+| Field | Content |
+|---|---|
+| `messages` | Full input message list (all roles and content) |
+| `response` | Full assistant response text |
+| `model`, `moe_mode` | Routing metadata |
+| `prompt_tokens`, `completion_tokens` | Token counts |
+| `expert_domains`, `cache_hit`, `agentic_rounds` | Pipeline transparency fields |
+
+**Retention** is configurable per user (default: 90 days, max: 365 days). Log files are rotated daily by logrotate and deleted when their age exceeds the user's configured retention. Users can adjust their retention period directly in the User Portal under **Audit Log**.
+
+To disable conversation logging globally, set `CONVERSATION_LOG_ENABLED=false` in the environment.
+
+### 5. User Database (PostgreSQL — persistent)
 
 The Admin UI stores the following per user account:
 - Username (hashed for API keys)
 - Bcrypt-hashed password
 - API key hash (not the key itself)
 - API usage counters per model
+- Per-user conversation log retention setting (`conversation_log_retention_days`)
 
-No conversation content is stored in PostgreSQL.
-
-### 5. Session Data (Valkey — volatile)
+### 6. Session Data (Valkey — volatile)
 
 LangGraph checkpoint state and performance scores are stored in Valkey with no guaranteed persistence across container restarts (unless `appendonly yes` is configured). This data contains intermediate reasoning state for ongoing requests.
 
@@ -62,14 +81,14 @@ LangGraph checkpoint state and performance scores are stored in Valkey with no g
 | Role | Access |
 |---|---|
 | **Admins** | Full access to Admin UI, Grafana dashboards, Dozzle logs, Neo4j Browser |
-| **Users** | Own conversation history via the chat interface only |
-| **No one** | Conversation data is never sent to external services (unless SearXNG web search is invoked by the user) |
+| **Users** | Own conversation audit log via `/user/audit-log` (own data only, scoped by `user_id`) |
+| **No one** | Conversation data is never sent to external services (unless SearXNG web search or an external LLM API is configured) |
 
 ---
 
 ## Data Deletion
 
-The system does not currently provide a self-service data deletion interface. Operators can delete data manually:
+Users can adjust their conversation log retention to 0 days (no retention) via the User Portal Audit Log page. Operators can delete data manually:
 
 ```bash
 # Clear ChromaDB cache
@@ -83,6 +102,14 @@ sudo docker compose exec terra_cache valkey-cli -a $REDIS_PASSWORD FLUSHALL
 ```
 
 Kafka data expires automatically after the configured retention period (default 7 days).
+
+```bash
+# Remove conversation audit logs for a specific user
+rm /opt/moe-infra/user-audit-logs/{user_id}.jsonl*
+
+# Remove all conversation audit logs
+rm -rf /opt/moe-infra/user-audit-logs/*.jsonl*
+```
 
 ---
 

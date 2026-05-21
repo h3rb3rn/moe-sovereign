@@ -118,12 +118,17 @@ services:
       - MCP_URL=http://mcp-precision:8003
       - NEO4J_URI=${NEO4J_URI:-bolt://neo4j-knowledge:7687}
       - NEO4J_USER=neo4j
+      - CONVERSATION_LOG_DIR=/app/logs/users
+      - CONVERSATION_LOG_ENABLED=${CONVERSATION_LOG_ENABLED:-true}
+      - CONVERSATION_LOG_RETENTION_DAYS_DEFAULT=${CONVERSATION_LOG_RETENTION_DAYS_DEFAULT:-90}
+      - CONVERSATION_LOG_RETENTION_MAX=${CONVERSATION_LOG_RETENTION_MAX:-365}
       - NEO4J_PASS=${NEO4J_PASS:-}
       - KAFKA_URL=kafka://moe-kafka:9092
       # LITELLM_URL aktiviert das Unified API Gateway (leer = direkter Ollama-Zugriff als Fallback)
       # - LITELLM_URL=http://litellm-proxy:4000
     volumes:
       - ${MOE_DATA_ROOT}/agent-logs:/app/logs
+      - ${MOE_DATA_ROOT}/user-audit-logs:/app/logs/users:rw
       - ${MOE_DATA_ROOT}/chroma-onnx-cache:/app/.cache/chroma
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
@@ -277,12 +282,17 @@ services:
       - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_checkpoints:5432/moe_userdb
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
       - POSTGRES_CHECKPOINT_URL=postgresql://langgraph:${POSTGRES_CHECKPOINT_PASSWORD:?}@terra_checkpoints:5432/langgraph
+      - CONVERSATION_LOG_DIR=/app/logs/users
+      - CONVERSATION_LOG_ENABLED=${CONVERSATION_LOG_ENABLED:-true}
+      - CONVERSATION_LOG_RETENTION_DAYS_DEFAULT=${CONVERSATION_LOG_RETENTION_DAYS_DEFAULT:-90}
+      - CONVERSATION_LOG_RETENTION_MAX=${CONVERSATION_LOG_RETENTION_MAX:-365}
     volumes:
       - ./.env:/app/.env:rw
       - ./.moe-services.json:/app/.moe-services.json:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
+      - ${MOE_DATA_ROOT}/user-audit-logs:/app/logs/users:rw
       - ./grafana/dashboards:/app/grafana/dashboards:rw
       - ./prometheus/prometheus.yml:/app/prometheus/prometheus.yml:rw
       - ${MOE_DATA_ROOT}/gap-healer-stats:/app/gap-healer-stats:ro

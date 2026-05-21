@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.6.0] - 2026-05-22
+
+### Added
+
+- **User Conversation Audit Log** (`services/conversation_log.py`, `admin_ui/conversation_log.py`): every authenticated API request is appended as a JSONL entry to `${MOE_DATA_ROOT}/user-audit-logs/{user_id}.jsonl`. Stores full prompt text, full response, routing metadata (model, mode, expert domains, cache hit, latency, agentic rounds). Fire-and-forget async write with per-user `asyncio.Lock` to prevent line interleaving under concurrent requests.
+
+- **User Portal Audit Log page** (`/user/audit-log`): users can browse their own conversation history with date-range filter, full-text search (prompt + response), click-to-expand modal with copy button, CSV/JSON export, and configurable retention setting.
+
+- **Per-user retention** (`users.conversation_log_retention_days`): users set their own retention in days (0 = no retention, max configurable by admin). Admin sets global default (`CONVERSATION_LOG_RETENTION_DAYS_DEFAULT=90`) and ceiling (`CONVERSATION_LOG_RETENTION_MAX=365`). Daily cleanup loop in `moe-admin` deletes rotated files beyond each user's retention.
+
+- **Logrotate integration** (`/etc/logrotate.d/moe-user-audit`): daily rotation with `dateext`, `copytruncate`, `compress`, `rotate 365`. Host path: `${MOE_DATA_ROOT}/user-audit-logs/`.
+
+- **Shared volume** (`docker-compose.yml`): `${MOE_DATA_ROOT}/user-audit-logs` mounted as `/app/logs/users` in both `langgraph-app` (writer) and `moe-admin` (reader/cleanup).
+
+- New environment variables: `CONVERSATION_LOG_ENABLED` (default `true`), `CONVERSATION_LOG_DIR`, `CONVERSATION_LOG_RETENTION_DAYS_DEFAULT`, `CONVERSATION_LOG_RETENTION_MAX`.
+
+- New DB column: `users.conversation_log_retention_days` (nullable INTEGER, auto-migrated).
+
+- New API routes: `GET /user/audit-log`, `GET /user/api/audit-log`, `GET /user/api/audit-log/{request_id}`, `PATCH /user/api/settings/log-retention`.
+
+---
+
 ## [2.5.3] - 2026-05-20
 
 ### Added

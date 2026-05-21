@@ -47,8 +47,11 @@ sequenceDiagram
     API->>Cache: Write response to ChromaDB (+ expert_domain metadata)
     API->>+Kafka: moe.requests (audit) + moe.ingest (knowledge_type + source_expert tagged)
     Kafka-->>-API: ack
+    API->>AuditLog: Append JSONL entry (full prompt + response + metadata)
     API-->>Client: SSE stream
 ```
+
+> **Conversation Audit Log:** After each completed request the orchestrator appends a JSONL line to `${MOE_DATA_ROOT}/user-audit-logs/{user_id}.jsonl`. This is a fire-and-forget async write (`asyncio.create_task`) and does not block the response stream. Log files are rotated daily by logrotate and cleaned up according to per-user retention settings (default 90 days). Users can view their own log at `/user/audit-log`.
 
 ---
 
