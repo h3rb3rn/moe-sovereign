@@ -8,6 +8,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-05-21 — v2.5.3: Query Reformulation (Agentic RAG)
+
+> `impact: minor` · `breaking: no` · `domain: graph_rag`
+
+When term-matching returns no entities, a lightweight LLM (GRAPH_INGEST_MODEL) generates up to 2 alternative query phrasings (shorter terms, English equivalents, abbreviations) and retries term-matching. Falls back to Text-to-Cypher only if reformulation also fails. `GRAPHRAG_REFORMULATE_ENABLED` (1), `GRAPHRAG_REFORMULATE_TIMEOUT` (5.0s).
+
+---
+
+## 2026-05-21 — v2.5.2: Confidence-Weighted Expert Synthesis
+
+> `impact: minor` · `breaking: no` · `domain: graph/synthesis`
+
+Expert responses are sorted high→low confidence before the merger prompt (primacy bias) and labelled `PRIMARY` / `SUPPORTING` / `BACKGROUND`. Judge instruction explicitly anchors on PRIMARY findings. No extra LLM call.
+
+---
+
+## 2026-05-21 — v2.5.1: Text-to-Cypher GraphRAG Fallback
+
+> `impact: minor` · `breaking: no` · `domain: graph_rag`
+
+When term-matching returns nothing, a lightweight LLM generates a Cypher MATCH query from natural language. Write operations rejected by regex whitelist before execution. Result formatted as `[Knowledge Graph — Text-to-Cypher]`. `GRAPHRAG_T2C_ENABLED` (1), `GRAPHRAG_T2C_TIMEOUT` (8.0s), `GRAPHRAG_T2C_MAX_NODES` (8).
+
+---
+
 ## 2026-05-20 — v2.5.0: Science-Based RAG Extensions
 
 > `impact: minor` · `breaking: no` · `domain: graph_rag, compliance, memory`
