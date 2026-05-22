@@ -1824,6 +1824,14 @@ fi
   echo "# --- Logging ---"
   echo 'LOG_LEVEL=INFO'
   echo ""
+  echo "# --- Conversation audit log ---"
+  echo 'CONVERSATION_LOG_ENABLED=true'
+  echo 'CONVERSATION_LOG_RETENTION_DAYS_DEFAULT=90'
+  echo 'CONVERSATION_LOG_RETENTION_MAX=365'
+  echo ""
+  echo "# --- Prometheus ---"
+  echo 'PROMETHEUS_RETENTION_DAYS=30'
+  echo ""
   echo "# --- Token Pricing ---"
   echo 'TOKEN_PRICE_EUR=0.0000002'
   echo ""
