@@ -230,8 +230,6 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_DAYS:-30}d'
       - '--web.enable-lifecycle'
-    depends_on:
-      - langgraph-app
     deploy:
       resources:
         limits:
@@ -310,6 +308,14 @@ services:
       terra_checkpoints:
         condition: service_healthy
       docker-socket-proxy:
+        condition: service_started
+      # Explicit transitive deps of langgraph-app: podman-compose cannot resolve
+      # multi-level depends_on chains and errors on "not found in input list".
+      mcp-precision:
+        condition: service_started
+      chromadb-vector:
+        condition: service_started
+      moe-kafka:
         condition: service_started
     networks:
       - default
@@ -446,7 +452,6 @@ services:
     command: >
       sh -c "while true; do python /app/sync_agent.py; sleep 900; done"
     depends_on:
-      - moe-prometheus
       - docker-socket-proxy
 
   # --- Dozzle Init (generates bcrypt users.yml from .env credentials) ---
@@ -558,6 +563,7 @@ services:
     depends_on:
       - moe-docs
       - moe-dozzle
+      - moe-dozzle-init   # explicit transitive dep — podman-compose dependency graph fix
 
   # --- Authentik SSO Stack ---
   # All four services are started when COMPOSE_PROFILES includes "authentik".
