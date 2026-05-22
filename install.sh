@@ -35,9 +35,14 @@ _RT_GROUP=""
 
 # Group-aware compose execution: if the runtime group isn't active yet in this
 # session (user was just added), use 'sg' to activate it for the command.
+# Falls back to sudo when sg is absent (minimal cloud images omit the login pkg).
 _compose() {
   if [[ -n "$_RT_GROUP" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_RT_GROUP"; then
-    sg "$_RT_GROUP" -c "${COMPOSE_CMD[*]} $*"
+    if command -v sg &>/dev/null; then
+      sg "$_RT_GROUP" -c "${COMPOSE_CMD[*]} $*"
+    else
+      _sudo "${COMPOSE_CMD[@]}" "$@"
+    fi
   else
     "${COMPOSE_CMD[@]}" "$@"
   fi
@@ -554,8 +559,13 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     done
 
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
-      sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
-      sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} up -d"
+      if command -v sg &>/dev/null; then
+        sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
+        sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} up -d"
+      else
+        _sudo "${_upd_rt[@]}" "${_upd_profiles[@]}" build ${_upd_q}
+        _sudo "${_upd_rt[@]}" "${_upd_profiles[@]}" up -d
+      fi
     else
       "${_upd_rt[@]}" "${_upd_profiles[@]}" build ${_upd_q}
       "${_upd_rt[@]}" "${_upd_profiles[@]}" up -d
@@ -564,7 +574,11 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     _upd_eds="$(grep -E '^INSTALL_ENTERPRISE_DATA_STACK=' "${MOE_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
     if [[ "${_upd_eds:-false}" == "true" ]]; then
       if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
-        sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.enterprise.yml up -d"
+        if command -v sg &>/dev/null; then
+          sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.enterprise.yml up -d"
+        else
+          _sudo "${_upd_rt[@]}" -f docker-compose.enterprise.yml up -d
+        fi
       else
         "${_upd_rt[@]}" -f docker-compose.enterprise.yml up -d
       fi
