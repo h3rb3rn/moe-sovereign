@@ -825,12 +825,14 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
     echo "  Installing Podman + rootless dependencies..."
     _sudo apt-get update -qq
     _sudo apt-get install -y --no-install-recommends \
-      podman podman-compose \
+      podman \
       uidmap \
-      passt \
       slirp4netns \
       fuse-overlayfs \
       dbus-user-session
+    # passt: available from Ubuntu 23.04+ and Debian 12+ only; skip on older releases
+    # (slirp4netns acts as the fallback network backend).
+    _sudo apt-get install -y --no-install-recommends passt 2>/dev/null || true
     if ! command -v podman &>/dev/null; then
       echo "[ERROR] Podman installation failed. Check 'apt policy podman'."
       exit 1
@@ -839,12 +841,21 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
   else
     echo "  Podman already present — installing missing rootless dependencies..."
     _sudo apt-get install -y --no-install-recommends \
-      uidmap passt slirp4netns fuse-overlayfs dbus-user-session &>/dev/null || true
+      uidmap slirp4netns fuse-overlayfs dbus-user-session 2>/dev/null || true
+    _sudo apt-get install -y --no-install-recommends passt 2>/dev/null || true
   fi
 
-  # Ensure podman-compose is available (might be missing even if podman is)
+  # Ensure podman-compose is available.
+  # Not in Ubuntu 22.04 / Debian 11 repos — fall back to pip3 on older systems.
   if ! command -v podman-compose &>/dev/null; then
-    _sudo apt-get install -y --no-install-recommends podman-compose
+    if ! _sudo apt-get install -y --no-install-recommends podman-compose 2>/dev/null; then
+      echo "  podman-compose not in apt — trying pip3 fallback..."
+      # python3 is already installed from Section 5; pip3 may need to be fetched first.
+      _sudo apt-get install -y --no-install-recommends python3-pip 2>/dev/null || true
+      _sudo pip3 install --break-system-packages --quiet podman-compose 2>/dev/null || \
+        _sudo pip3 install --quiet podman-compose 2>/dev/null || \
+        echo "  [!] podman-compose not installable — 'podman compose' built-in will be used"
+    fi
   fi
 
   # Configure user namespace mappings required for rootless containers.
