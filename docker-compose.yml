@@ -7,7 +7,7 @@ services:
     container_name: moe-kafka
     restart: always
     ports:
-      - "127.0.0.1:${KAFKA_HOST_PORT:-9092}:9092"
+      - "127.0.0.1:${KAFKA_HOST_PORT}:9092"
     environment:
       CLUSTER_ID: "moe-kafka-cluster-01"
       KAFKA_NODE_ID: 1
@@ -30,7 +30,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${KAFKA_CPU_LIMIT:-2}'
+          cpus: '${KAFKA_CPU_LIMIT}'
           memory: 2G
   # --- Neo4j Knowledge Graph (GraphRAG + Ontologie) ---
   neo4j-knowledge:
@@ -39,10 +39,10 @@ services:
     profiles: [neo4j]
     restart: always
     ports:
-      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"   # Browser UI
-      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"   # Bolt
+      - "127.0.0.1:${NEO4J_HTTP_PORT}:7474"   # Browser UI
+      - "127.0.0.1:${NEO4J_BOLT_PORT}:7687"   # Bolt
     environment:
-      - NEO4J_AUTH=neo4j/${NEO4J_PASS:-changeme}
+      - NEO4J_AUTH=neo4j/${NEO4J_PASS}
       - NEO4J_server_memory_heap_initial__size=512m
       - NEO4J_server_memory_heap_max__size=1g
       - NEO4J_server_memory_pagecache_size=512m
@@ -53,7 +53,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${NEO4J_CPU_LIMIT:-2}'
+          cpus: '${NEO4J_CPU_LIMIT}'
           memory: 8G
 
   # --- MCP Precision Tools Server ---
@@ -64,7 +64,7 @@ services:
     container_name: mcp-precision
     restart: always
     ports:
-      - "127.0.0.1:${MCP_HOST_PORT:-8003}:8003"
+      - "127.0.0.1:${MCP_HOST_PORT}:8003"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c 'import server'"]
       interval: 60s
@@ -83,9 +83,9 @@ services:
     volumes:
       - ${MOE_DATA_ROOT}/generated:/app/generated:rw,noexec,nosuid
     environment:
-      - NEO4J_URI=${NEO4J_URI:-bolt://neo4j-knowledge:7687}
+      - NEO4J_URI=${NEO4J_URI}
       - NEO4J_USER=neo4j
-      - NEO4J_PASS=${NEO4J_PASS:-}
+      - NEO4J_PASS=${NEO4J_PASS}
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
@@ -95,7 +95,7 @@ services:
     container_name: langgraph-orchestrator
     restart: always
     ports:
-      - "${LANGGRAPH_HOST_PORT:-8002}:8000"
+      - "${LANGGRAPH_HOST_PORT}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -103,7 +103,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${LANGGRAPH_CPU_LIMIT:-2}'
+          cpus: '${LANGGRAPH_CPU_LIMIT}'
           memory: 4G
         reservations:
           memory: 512M
@@ -116,13 +116,13 @@ services:
       - CHROMA_HOST=chromadb-vector
       - CHROMA_PORT=8000
       - MCP_URL=http://mcp-precision:8003
-      - NEO4J_URI=${NEO4J_URI:-bolt://neo4j-knowledge:7687}
+      - NEO4J_URI=${NEO4J_URI}
       - NEO4J_USER=neo4j
       - CONVERSATION_LOG_DIR=/app/logs/users
       - CONVERSATION_LOG_ENABLED=${CONVERSATION_LOG_ENABLED}
       - CONVERSATION_LOG_RETENTION_DAYS_DEFAULT=${CONVERSATION_LOG_RETENTION_DAYS_DEFAULT}
       - CONVERSATION_LOG_RETENTION_MAX=${CONVERSATION_LOG_RETENTION_MAX}
-      - NEO4J_PASS=${NEO4J_PASS:-}
+      - NEO4J_PASS=${NEO4J_PASS}
       - KAFKA_URL=kafka://moe-kafka:9092
       # LITELLM_URL aktiviert das Unified API Gateway (leer = direkter Ollama-Zugriff als Fallback)
       # - LITELLM_URL=http://litellm-proxy:4000
@@ -131,7 +131,7 @@ services:
       - ${MOE_DATA_ROOT}/user-audit-logs:/app/logs/users:rw
       - ${MOE_DATA_ROOT}/chroma-onnx-cache:/app/.cache/chroma
       - ./.env:/app/.env:ro
-      - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
+      - ${CLAUDE_SKILLS_DIR}:/app/skills:ro
     depends_on:
       terra_cache:
         condition: service_started
@@ -157,7 +157,7 @@ services:
       # Consumed by scripts/postgres-init/01-moe_admin.sh on first init only
       - MOE_USERDB_PASSWORD=${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}
       # Consumed by scripts/postgres-init/02-libris.sh on first init only (moe-libris federation DB)
-      - LIBRIS_DB_PASSWORD=${LIBRIS_DB_PASSWORD:-}
+      - LIBRIS_DB_PASSWORD=${LIBRIS_DB_PASSWORD}
     volumes:
       - ${MOE_DATA_ROOT}/langgraph-checkpoints:/var/lib/postgresql/data
       - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -203,7 +203,7 @@ services:
     container_name: chromadb-vector
     restart: always
     ports:
-      - "127.0.0.1:${CHROMA_HOST_PORT:-8001}:8000" # Host Port 8001 -> Container Port 8000
+      - "127.0.0.1:${CHROMA_HOST_PORT}:8000" # Host Port 8001 -> Container Port 8000
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
@@ -212,7 +212,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '${CHROMA_CPU_LIMIT:-2}'
+          cpus: '${CHROMA_CPU_LIMIT}'
           memory: 4G
 
   # --- Prometheus (Metriken-Scraper) ---
@@ -221,7 +221,7 @@ services:
     container_name: moe-prometheus
     restart: always
     ports:
-      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ${MOE_DATA_ROOT}/prometheus-data:/prometheus
@@ -253,7 +253,7 @@ services:
       IMAGES: 1       # POST /images/prune (required by System Cleanup Manager)
       BUILD: 1        # POST /build/prune  (required by System Cleanup Manager)
     volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - ${DOCKER_SOCKET}:/var/run/docker.sock:ro
     networks:
       - default
 
@@ -265,7 +265,7 @@ services:
     container_name: moe-admin
     restart: always
     ports:
-      - "${ADMIN_UI_HOST_PORT:-8088}:8088"
+      - "${ADMIN_UI_HOST_PORT}:8088"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -287,7 +287,7 @@ services:
     volumes:
       - ./.env:/app/.env:rw
       - ./.moe-services.json:/app/.moe-services.json:ro
-      - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
+      - ${CLAUDE_SKILLS_DIR}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
       - ${MOE_DATA_ROOT}/user-audit-logs:/app/logs/users:rw
@@ -332,7 +332,7 @@ services:
     container_name: moe-grafana
     restart: always
     ports:
-      - "${GRAFANA_HOST_PORT:-3001}:3000"
+      - "${GRAFANA_HOST_PORT}:3000"
     user: "472"
     env_file:
       - .env
@@ -344,9 +344,9 @@ services:
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/moe-operations.json
     volumes:
-      - ${GRAFANA_DATA_ROOT:-/opt/grafana}/data:/var/lib/grafana
+      - ${GRAFANA_DATA_ROOT}/data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ${GRAFANA_DATA_ROOT:-/opt/grafana}/dashboards:/var/lib/grafana/dashboards
+      - ${GRAFANA_DATA_ROOT}/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - moe-prometheus
     deploy:
@@ -361,7 +361,7 @@ services:
     container_name: node-exporter
     restart: always
     ports:
-      - "127.0.0.1:${NODE_EXPORTER_HOST_PORT:-9100}:9100"
+      - "127.0.0.1:${NODE_EXPORTER_HOST_PORT}:9100"
     pid: host
     command:
       - '--path.procfs=/host/proc'
@@ -390,7 +390,7 @@ services:
     container_name: cadvisor
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${CADVISOR_HOST_PORT:-9338}:8080"
+      - "127.0.0.1:${CADVISOR_HOST_PORT}:8080"
     cap_add:
       - SYS_ADMIN
     # Podman rootless: same tmpfs /run fix as node-exporter (read-only rootfs).
@@ -404,7 +404,7 @@ services:
     volumes:
       - /:/rootfs:ro
       - /sys:/sys:ro
-      - ${CONTAINER_STORAGE_ROOT:-/var/lib/docker}:/var/lib/docker:ro
+      - ${CONTAINER_STORAGE_ROOT}:/var/lib/docker:ro
       - /dev/disk:/dev/disk:ro
     deploy:
       resources:
@@ -418,7 +418,7 @@ services:
     container_name: moe-docs
     restart: unless-stopped
     ports:
-      - "${DOCS_HOST_PORT:-8098}:8000"   # Direktzugriff intern: http://localhost:8098
+      - "${DOCS_HOST_PORT}:8000"   # Direktzugriff intern: http://localhost:8098
     volumes:
       - .:/docs:ro
     deploy:
@@ -477,9 +477,9 @@ services:
     environment:
       DOZZLE_AUTH_PROVIDER: simple
     ports:
-      - "127.0.0.1:${DOZZLE_HOST_PORT:-9999}:8080"   # local access: http://localhost:9999
+      - "127.0.0.1:${DOZZLE_HOST_PORT}:8080"   # local access: http://localhost:9999
     volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - ${DOCKER_SOCKET}:/var/run/docker.sock:ro
       - ${MOE_DATA_ROOT}/dozzle-users.yml:/data/users.yml:ro
     depends_on:
       moe-dozzle-init:
@@ -576,15 +576,15 @@ services:
     profiles: [authentik]
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
-      POSTGRES_DB: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
-      POSTGRES_PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:-}
+      POSTGRES_USER: ${AUTHENTIK_POSTGRESQL__USER}
+      POSTGRES_DB: ${AUTHENTIK_POSTGRESQL__NAME}
+      POSTGRES_PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD}
     volumes:
       - ${MOE_DATA_ROOT}/authentik/postgres:/var/lib/postgresql/data
     networks:
       - authentik_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AUTHENTIK_POSTGRESQL__USER:-authentik}"]
+      test: ["CMD-SHELL", "pg_isready -U ${AUTHENTIK_POSTGRESQL__USER}"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -607,7 +607,7 @@ services:
       retries: 5
 
   authentik-server:
-    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.2.1}
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG}
     container_name: authentik-server
     profiles: [authentik]
     restart: unless-stopped
@@ -615,21 +615,21 @@ services:
     env_file:
       - .env   # provides AUTHENTIK_BOOTSTRAP_EMAIL/PASSWORD directly
     environment:
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_REDIS__HOST: authentik-redis
       AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
-      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
-      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:-}
-      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED:-false}
-      TZ: ${TZ:-Europe/Berlin}
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+      TZ: ${TZ}
     volumes:
       - ${MOE_DATA_ROOT}/authentik/media:/media
       - ${MOE_DATA_ROOT}/authentik/custom-templates:/templates
       - ${MOE_DATA_ROOT}/authentik/blueprints:/blueprints/custom:ro
     ports:
-      - "${AUTHENTIK_HTTP_PORT:-9000}:9000"
-      - "${AUTHENTIK_HTTPS_PORT:-9443}:9443"
+      - "${AUTHENTIK_HTTP_PORT}:9000"
+      - "${AUTHENTIK_HTTPS_PORT}:9443"
     depends_on:
       authentik-postgresql:
         condition: service_healthy
@@ -640,7 +640,7 @@ services:
       - default
 
   authentik-worker:
-    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.2.1}
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG}
     container_name: authentik-worker
     profiles: [authentik]
     restart: unless-stopped
@@ -649,20 +649,20 @@ services:
     env_file:
       - .env   # provides AUTHENTIK_BOOTSTRAP_EMAIL/PASSWORD directly
     environment:
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
       AUTHENTIK_REDIS__HOST: authentik-redis
       AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
-      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER:-authentik}
-      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME:-authentik}
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD:-}
-      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED:-false}
-      TZ: ${TZ:-Europe/Berlin}
+      AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_POSTGRESQL__USER}
+      AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_POSTGRESQL__NAME}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRESQL__PASSWORD}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING__ENABLED}
+      TZ: ${TZ}
     volumes:
       - ${MOE_DATA_ROOT}/authentik/certs:/certs
       - ${MOE_DATA_ROOT}/authentik/media:/media
       - ${MOE_DATA_ROOT}/authentik/custom-templates:/templates
       - ${MOE_DATA_ROOT}/authentik/blueprints:/blueprints/custom:ro
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${DOCKER_SOCKET}:/var/run/docker.sock
     depends_on:
       authentik-postgresql:
         condition: service_healthy

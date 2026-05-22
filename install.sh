@@ -1296,6 +1296,12 @@ EXISTING_PG_USERDB_PASS=""
 EXISTING_MINIO_USER=""
 EXISTING_MINIO_PASS=""
 EXISTING_GARAGE_SECRET=""
+EXISTING_NIFI_PASS=""
+EXISTING_MARQUEZ_PG_PASS=""
+EXISTING_LAKEFS_DB_PASS=""
+EXISTING_LAKEFS_ENCRYPT=""
+EXISTING_LAKEFS_AK_ID=""
+EXISTING_LAKEFS_SK=""
 EXISTING_AUTHENTIK_SECRET=""
 EXISTING_AUTHENTIK_PG_PASS=""
 EXISTING_ADMIN_USER=""
@@ -1323,6 +1329,12 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   EXISTING_MINIO_USER=$(read_env MINIO_ROOT_USER)
   EXISTING_MINIO_PASS=$(read_env MINIO_ROOT_PASSWORD)
   EXISTING_GARAGE_SECRET=$(read_env GARAGE_RPC_SECRET)
+  EXISTING_NIFI_PASS=$(read_env NIFI_ADMIN_PASSWORD)
+  EXISTING_MARQUEZ_PG_PASS=$(read_env MARQUEZ_POSTGRES_PASSWORD)
+  EXISTING_LAKEFS_DB_PASS=$(read_env LAKEFS_DB_PASSWORD)
+  EXISTING_LAKEFS_ENCRYPT=$(read_env LAKEFS_ENCRYPT_SECRET)
+  EXISTING_LAKEFS_AK_ID=$(read_env LAKEFS_ACCESS_KEY_ID)
+  EXISTING_LAKEFS_SK=$(read_env LAKEFS_SECRET_ACCESS_KEY)
   EXISTING_AUTHENTIK_SECRET=$(read_env AUTHENTIK_SECRET_KEY)
   EXISTING_AUTHENTIK_PG_PASS=$(read_env AUTHENTIK_POSTGRESQL__PASSWORD)
   EXISTING_ADMIN_USER=$(read_env ADMIN_USER)
@@ -1341,6 +1353,12 @@ GEN_LIBRIS_DB_PASS="${EXISTING_LIBRIS_DB_PASS:-$(openssl rand -hex 16)}"
 GEN_MINIO_USER="${EXISTING_MINIO_USER:-moeadmin}"
 GEN_MINIO_PASS="${EXISTING_MINIO_PASS:-$(openssl rand -hex 16)}"
 GEN_GARAGE_SECRET="${EXISTING_GARAGE_SECRET:-$(openssl rand -hex 32)}"
+GEN_NIFI_PASS="${EXISTING_NIFI_PASS:-$(openssl rand -hex 8)}"
+GEN_MARQUEZ_PG_PASS="${EXISTING_MARQUEZ_PG_PASS:-$(openssl rand -hex 16)}"
+GEN_LAKEFS_DB_PASS="${EXISTING_LAKEFS_DB_PASS:-$(openssl rand -hex 16)}"
+GEN_LAKEFS_ENCRYPT="${EXISTING_LAKEFS_ENCRYPT:-$(openssl rand -hex 16)}"
+GEN_LAKEFS_AK_ID="${EXISTING_LAKEFS_AK_ID:-lakefs-$(openssl rand -hex 8)}"
+GEN_LAKEFS_SK="${EXISTING_LAKEFS_SK:-$(openssl rand -hex 20)}"
 GEN_AUTHENTIK_SECRET="${EXISTING_AUTHENTIK_SECRET:-$(openssl rand -hex 32)}"
 GEN_AUTHENTIK_PG_PASS="${EXISTING_AUTHENTIK_PG_PASS:-$(openssl rand -hex 16)}"
 
@@ -1858,6 +1876,42 @@ fi
   echo 'FEEDBACK_POSITIVE_THRESHOLD=4'
   echo 'FEEDBACK_NEGATIVE_THRESHOLD=2'
   echo ""
+  echo "# --- Host-facing ports (change to avoid conflicts on the host) ---"
+  echo 'KAFKA_HOST_PORT=9092'
+  echo 'MCP_HOST_PORT=8003'
+  echo 'LANGGRAPH_HOST_PORT=8002'
+  echo 'CHROMA_HOST_PORT=8001'
+  echo 'PROMETHEUS_HOST_PORT=9090'
+  echo 'ADMIN_UI_HOST_PORT=8088'
+  echo 'GRAFANA_HOST_PORT=3001'
+  echo 'NODE_EXPORTER_HOST_PORT=9100'
+  echo 'CADVISOR_HOST_PORT=9338'
+  echo 'DOCS_HOST_PORT=8098'
+  echo 'DOZZLE_HOST_PORT=9999'
+  echo 'NEO4J_HTTP_PORT=7474'
+  echo 'NEO4J_BOLT_PORT=7687'
+  echo ""
+  echo "# --- Localisation ---"
+  echo 'TZ=Europe/Berlin'
+  echo ""
+  echo "# --- Garage S3 endpoint (internal compose network address) ---"
+  echo 'GARAGE_S3_ENDPOINT=http://moe-storage-garage:3900'
+  echo ""
+  echo "# --- MoE Codex ports (only used when INSTALL_CODEX=true) ---"
+  echo 'JUPYTERLAB_HOST_PORT=8899'
+  echo 'NIFI_HOST_PORT=8181'
+  echo 'MARQUEZ_HOST_PORT=5000'
+  echo 'MARQUEZ_ADMIN_PORT=5001'
+  echo 'MARQUEZ_WEB_PORT=3030'
+  echo 'LAKEFS_HOST_PORT=8010'
+  printf 'NIFI_ADMIN_USER=%s\n'            "${ADMIN_USER}"
+  printf 'NIFI_ADMIN_PASSWORD=%s\n'        "${GEN_NIFI_PASS}"
+  printf 'MARQUEZ_POSTGRES_PASSWORD=%s\n'  "${GEN_MARQUEZ_PG_PASS}"
+  printf 'LAKEFS_DB_PASSWORD=%s\n'         "${GEN_LAKEFS_DB_PASS}"
+  printf 'LAKEFS_ENCRYPT_SECRET=%s\n'      "${GEN_LAKEFS_ENCRYPT}"
+  printf 'LAKEFS_ACCESS_KEY_ID=%s\n'       "${GEN_LAKEFS_AK_ID}"
+  printf 'LAKEFS_SECRET_ACCESS_KEY=%s\n'   "${GEN_LAKEFS_SK}"
+  echo ""
   echo "# --- Container CPU Limits (increase on systems with more than 2 cores) ---"
   echo '# Default 2 is safe for 2-core hosts; raise per-service on larger machines.'
   echo 'NEO4J_CPU_LIMIT=2'
@@ -1935,6 +1989,10 @@ fi
   echo ""
   echo "# --- Garage cluster secret (also embedded in garage.toml — keep in sync) ---"
   printf 'GARAGE_RPC_SECRET=%s\n'   "${GEN_GARAGE_SECRET}"
+  echo ""
+  echo "# --- Garage S3 access key (fill after running: docker exec moe-storage-garage garage key create moe-mcp) ---"
+  echo 'GARAGE_ACCESS_KEY_ID='
+  echo 'GARAGE_SECRET_ACCESS_KEY='
 } > "${MOE_ENV_FILE}"
 
 # 644: containers bind-mount this :ro and run as non-root (uid 1001 for langgraph,

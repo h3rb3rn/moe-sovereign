@@ -29,7 +29,7 @@ services:
     # without traversing any Basic-Auth layer (browsers cannot send
     # Authorization headers in the WebSocket() constructor).
     ports:
-      - "${JUPYTERLAB_HOST_PORT:-8899}:8888"
+      - "${JUPYTERLAB_HOST_PORT}:8888"
     command: >
       start-notebook.sh
       --ServerApp.base_url=/notebook/
@@ -58,12 +58,12 @@ services:
     environment:
       NIFI_WEB_HTTPS_HOST: "0.0.0.0"
       NIFI_WEB_HTTPS_PORT: "8443"
-      NIFI_WEB_PROXY_HOST: "moe-nifi:8443,localhost:${NIFI_HOST_PORT:-8181}"
-      SINGLE_USER_CREDENTIALS_USERNAME: "${NIFI_ADMIN_USER:-admin}"
+      NIFI_WEB_PROXY_HOST: "moe-nifi:8443,localhost:${NIFI_HOST_PORT}"
+      SINGLE_USER_CREDENTIALS_USERNAME: "${NIFI_ADMIN_USER}"
       # Password must be ≥ 12 characters for NiFi single-user auth
-      SINGLE_USER_CREDENTIALS_PASSWORD: "${NIFI_ADMIN_PASSWORD:-nifi-changeme-pwd}"
+      SINGLE_USER_CREDENTIALS_PASSWORD: "${NIFI_ADMIN_PASSWORD}"
     ports:
-      - "${NIFI_HOST_PORT:-8181}:8443"
+      - "${NIFI_HOST_PORT}:8443"
     volumes:
       - nifi_data:/opt/nifi/nifi-current/data
       - nifi_conf:/opt/nifi/nifi-current/conf
@@ -91,7 +91,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: marquez
-      POSTGRES_PASSWORD: "${MARQUEZ_POSTGRES_PASSWORD:-marquez-changeme}"
+      POSTGRES_PASSWORD: "${MARQUEZ_POSTGRES_PASSWORD}"
       POSTGRES_DB: marquez
     volumes:
       - marquez_db_data:/var/lib/postgresql/data
@@ -114,10 +114,10 @@ services:
       POSTGRES_PORT: "5432"
       POSTGRES_DB: marquez
       POSTGRES_USER: marquez
-      POSTGRES_PASSWORD: "${MARQUEZ_POSTGRES_PASSWORD:-marquez-changeme}"
+      POSTGRES_PASSWORD: "${MARQUEZ_POSTGRES_PASSWORD}"
     ports:
-      - "${MARQUEZ_HOST_PORT:-5000}:5000"
-      - "${MARQUEZ_ADMIN_PORT:-5001}:5001"
+      - "${MARQUEZ_HOST_PORT}:5000"
+      - "${MARQUEZ_ADMIN_PORT}:5001"
     depends_on:
       marquez-postgres:
         condition: service_healthy
@@ -145,7 +145,7 @@ services:
       MARQUEZ_PORT: "5000"
       WEB_PORT: "3000"
     ports:
-      - "${MARQUEZ_WEB_PORT:-3030}:3000"
+      - "${MARQUEZ_WEB_PORT}:3000"
     depends_on:
       moe-marquez:
         condition: service_healthy
@@ -164,7 +164,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: lakefs
-      POSTGRES_PASSWORD: "${LAKEFS_DB_PASSWORD:-lakefs-changeme}"
+      POSTGRES_PASSWORD: "${LAKEFS_DB_PASSWORD}"
       POSTGRES_DB: lakefs
     volumes:
       - lakefs_db_data:/var/lib/postgresql/data
@@ -186,19 +186,19 @@ services:
     command: ["run", "--local-settings"]
     environment:
       LAKEFS_BLOCKSTORE_TYPE: s3
-      LAKEFS_BLOCKSTORE_S3_ENDPOINT: "${GARAGE_S3_ENDPOINT:-http://moe-storage-garage:3900}"
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: "${GARAGE_S3_ENDPOINT}"
       LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: "${GARAGE_ACCESS_KEY_ID}"
       LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: "${GARAGE_SECRET_ACCESS_KEY}"
       LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
       LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION: "false"
       LAKEFS_DATABASE_TYPE: postgres
-      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: "postgresql://lakefs:${LAKEFS_DB_PASSWORD:-lakefs-changeme}@lakefs-postgres:5432/lakefs"
-      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_ENCRYPT_SECRET:-changeme-must-be-32bytes-long!!}"
-      LAKEFS_INSTALLATION_USER_NAME: "${ADMIN_USER:-admin}"
-      LAKEFS_INSTALLATION_ACCESS_KEY_ID: "${LAKEFS_ACCESS_KEY_ID:-lakefs-access-key-changeme}"
-      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: "${LAKEFS_SECRET_ACCESS_KEY:-lakefs-secret-key-changeme}"
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: "postgresql://lakefs:${LAKEFS_DB_PASSWORD}@lakefs-postgres:5432/lakefs"
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: "${LAKEFS_ENCRYPT_SECRET}"
+      LAKEFS_INSTALLATION_USER_NAME: "${ADMIN_USER}"
+      LAKEFS_INSTALLATION_ACCESS_KEY_ID: "${LAKEFS_ACCESS_KEY_ID}"
+      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: "${LAKEFS_SECRET_ACCESS_KEY}"
     ports:
-      - "${LAKEFS_HOST_PORT:-8010}:8000"
+      - "${LAKEFS_HOST_PORT}:8000"
     depends_on:
       lakefs-postgres:
         condition: service_healthy
