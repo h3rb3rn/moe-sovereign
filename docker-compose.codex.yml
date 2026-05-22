@@ -1,16 +1,51 @@
 # =============================================================================
-#  MoE Sovereign — Optional Enterprise Data Management Stack
+#  MoE Sovereign — MoE Codex Stack
 #
-#  Services: Apache NiFi (ETL), Marquez/OpenLineage (Lineage), lakeFS (Versioning)
+#  Services: JupyterLab (notebooks), Apache NiFi (ETL),
+#            Marquez/OpenLineage (lineage), lakeFS (data versioning)
 #
 #  Usage (standalone, after main stack is running):
-#    docker compose -f docker-compose.enterprise.yml up -d
+#    docker compose -f docker-compose.codex.yml up -d
 #
-#  Managed automatically by install.sh when INSTALL_ENTERPRISE_DATA_STACK=true.
+#  Managed automatically by install.sh when INSTALL_CODEX=true.
 #  Requires moe-infra to be running so the external network exists.
 # =============================================================================
 
 services:
+
+  # ── JupyterLab — Interactive Notebook Environment ───────────────────────────
+  # BSD-3-Clause. Proxied by moe-admin at /notebook/ so no extra port is needed
+  # for external access. Token auth disabled — moe-admin session layer guards it.
+  moe-jupyterlab:
+    image: quay.io/jupyter/scipy-notebook:latest
+    container_name: moe-jupyterlab
+    restart: unless-stopped
+    user: root
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      CHOWN_HOME: "yes"
+      GRANT_SUDO: "yes"
+    # Exposed directly on the host so the browser WebSocket can reach it
+    # without traversing any Basic-Auth layer (browsers cannot send
+    # Authorization headers in the WebSocket() constructor).
+    ports:
+      - "${JUPYTERLAB_HOST_PORT:-8899}:8888"
+    command: >
+      start-notebook.sh
+      --ServerApp.base_url=/notebook/
+      --ServerApp.token=''
+      --IdentityProvider.token=''
+      --ServerApp.allow_origin=*
+      --ServerApp.disable_check_xsrf=true
+    volumes:
+      - ${MOE_DATA_ROOT}/jupyterlab:/home/jovyan/work
+    networks:
+      - moe_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
 
   # ── Apache NiFi 1.x — Data Flow Automation ──────────────────────────────────
   # Handles ETL pipelines: ingest from legacy sources, normalize, route to Kafka/Postgres.
@@ -142,7 +177,7 @@ services:
       retries: 5
 
   # ── lakeFS — Data Version Control (Git for data) ─────────────────────────────
-  # Uses MinIO (already in main stack) as S3-compatible object store backend.
+  # Uses Garage (already in main stack) as S3-compatible object store backend.
   # Enables branching: create isolated copies of knowledge snapshots for experiments.
   moe-lakefs:
     image: treeverse/lakefs:latest
