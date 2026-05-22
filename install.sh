@@ -491,8 +491,16 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     _upd_chown 0    0      "${_upd_data}/neo4j-logs"
     _upd_chown 0    0      "${_upd_data}/chroma-data"
     _upd_chown 0    0      "${_upd_data}/chroma-onnx-cache"
+    _upd_chown 0    0      "${_upd_data}/garage/meta"
+    _upd_chown 0    0      "${_upd_data}/garage/data"
+    _upd_chown 0    0      "${_upd_data}/jupyterlab"
     _upd_chown 65534 65534 "${_upd_data}/prometheus-data"
     _upd_chown 1001 0      "${_upd_data}/agent-logs"
+    _upd_chown 1001 0      "${_upd_data}/user-audit-logs"
+    _upd_chown 1001 0      "${_upd_data}/admin-logs"
+    _upd_chown 1001 0      "${_upd_data}/generated"
+    _upd_chown 1001 0      "${_upd_data}/gap-healer-stats"
+    _upd_chown 1001 0      "${_upd_data}/checkpoint-archives"
     _upd_chown 472  472    "${_upd_graf}/data" "${_upd_graf}/dashboards"
 
     echo "  [3/4] Volume permissions reset ✓"
@@ -1105,12 +1113,15 @@ _chown_for_container 0 0 "${MOE_DATA_ROOT}/neo4j-data"              # neo4j entr
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/neo4j-logs"              # neo4j entrypoint:    chown → neo4j (7474)
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-data"             # chromadb: runs as root, needs writable /data
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-onnx-cache"       # chromadb: ONNX model cache
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/garage/meta"             # garage: distroless, runs as root
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/garage/data"             # garage: distroless, runs as root
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/jupyterlab"              # jupyter: user:root + CHOWN_HOME
 
 # prometheus: runs as nobody uid=65534
 _chown_for_container 65534 65534 "${MOE_DATA_ROOT}/prometheus-data"
-# langgraph-orchestrator + mcp-precision: moe uid=1001 gid=0
+# langgraph-orchestrator + mcp-precision + moe-admin: moe uid=1001 gid=0
 _chown_for_container 1001 0 "${MOE_DATA_ROOT}/agent-logs"
-# moe-admin: moe uid=1001 gid=0 (runtime state files and directories)
+_chown_for_container 1001 0 "${MOE_DATA_ROOT}/user-audit-logs"
 _chown_for_container 1001 0 \
   "${MOE_DATA_ROOT}/admin-logs" \
   "${MOE_DATA_ROOT}/generated" \
@@ -1360,6 +1371,21 @@ while true; do
   case "${_neo4j_choice,,}" in
     y|yes) INSTALL_NEO4J="true";  break ;;
     n|no)  INSTALL_NEO4J="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+
+# MoE Codex (JupyterLab)
+echo ""
+echo "  MoE Codex adds a JupyterLab notebook environment (~2 GB RAM, ~2 GB image)."
+echo "  Skip on VMs where interactive data science is not needed."
+INSTALL_CODEX="false"
+while true; do
+  read -rp "  Install MoE Codex (JupyterLab)? [y/N]: " _codex_choice < /dev/tty
+  _codex_choice="${_codex_choice:-N}"
+  case "${_codex_choice,,}" in
+    y|yes) INSTALL_CODEX="true";  break ;;
+    n|no)  INSTALL_CODEX="false"; break ;;
     *) echo "  Please enter y or n." ;;
   esac
 done
@@ -1630,6 +1656,7 @@ fi
   [[ "$INSTALL_NEO4J"     == "true" ]] && _env_profiles+=(neo4j)
   [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
   [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
+  [[ "$INSTALL_CODEX"     == "true" ]] && _env_profiles+=(codex)
   printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
   printf 'INSTALL_ENTERPRISE_DATA_STACK=%s\n' "${INSTALL_ENTERPRISE_DATA_STACK:-false}"
   echo ""
@@ -1943,6 +1970,7 @@ _PROFILE_ARGS=()
 [[ "$INSTALL_NEO4J"     == "true" ]] && _PROFILE_ARGS+=(--profile neo4j)
 [[ "$INSTALL_CADDY"     == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
 [[ "$INSTALL_AUTHENTIK" == "true" ]] && _PROFILE_ARGS+=(--profile authentik)
+[[ "$INSTALL_CODEX"     == "true" ]] && _PROFILE_ARGS+=(--profile codex)
 
 _compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
 _compose "${_PROFILE_ARGS[@]}" build ${_Q}

@@ -505,6 +505,7 @@ services:
   moe-jupyterlab:
     image: quay.io/jupyter/scipy-notebook:latest
     container_name: moe-jupyterlab
+    profiles: [codex]
     restart: unless-stopped
     user: root
     environment:
