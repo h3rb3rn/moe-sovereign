@@ -1345,14 +1345,60 @@ GEN_AUTHENTIK_SECRET="${EXISTING_AUTHENTIK_SECRET:-$(openssl rand -hex 32)}"
 GEN_AUTHENTIK_PG_PASS="${EXISTING_AUTHENTIK_PG_PASS:-$(openssl rand -hex 16)}"
 
 echo "  --- Admin Account ---"
-prompt_input ADMIN_USER     "Admin username"   "${EXISTING_ADMIN_USER:-admin}"
-if [[ -n "$EXISTING_ADMIN_PASSWORD" ]]; then
-  prompt_input ADMIN_PASSWORD "Admin password (ENTER keeps existing)" "${EXISTING_ADMIN_PASSWORD}" "true" "false"
-else
-  prompt_input ADMIN_PASSWORD "Admin password (choose a strong password)" "" "true"
-fi
+prompt_input ADMIN_USER "Admin username" "${EXISTING_ADMIN_USER:-admin}"
 
-# Validate password was provided
+# Prompt for admin password with confirmation and basic strength check.
+# On updates: pressing ENTER keeps the existing password (no re-confirmation needed).
+# On fresh installs: requires two matching entries and minimum length of 10.
+prompt_password() {
+  local varname="$1"
+  local existing="${2:-}"
+
+  if [[ -n "$existing" ]]; then
+    # Update path — keep existing unless user types a replacement
+    while true; do
+      read -rsp "  Admin password (ENTER keeps existing): " _pw1 < /dev/tty; echo ""
+      if [[ -z "$_pw1" ]]; then
+        printf -v "${varname}" '%s' "${existing}"
+        break
+      fi
+      if [[ ${#_pw1} -lt 10 ]]; then
+        echo "  [!] Password must be at least 10 characters. Try again."
+        continue
+      fi
+      read -rsp "  Confirm new password: " _pw2 < /dev/tty; echo ""
+      if [[ "$_pw1" != "$_pw2" ]]; then
+        echo "  [!] Passwords do not match. Try again."
+        continue
+      fi
+      printf -v "${varname}" '%s' "${_pw1}"
+      break
+    done
+  else
+    # Fresh install — require confirmation and enforce minimum strength
+    while true; do
+      read -rsp "  Admin password (min 10 chars): " _pw1 < /dev/tty; echo ""
+      if [[ -z "$_pw1" ]]; then
+        echo "  [!] Password is required."
+        continue
+      fi
+      if [[ ${#_pw1} -lt 10 ]]; then
+        echo "  [!] Password must be at least 10 characters (got ${#_pw1}). Try again."
+        continue
+      fi
+      read -rsp "  Confirm password: " _pw2 < /dev/tty; echo ""
+      if [[ "$_pw1" != "$_pw2" ]]; then
+        echo "  [!] Passwords do not match. Try again."
+        continue
+      fi
+      printf -v "${varname}" '%s' "${_pw1}"
+      break
+    done
+  fi
+}
+prompt_password ADMIN_PASSWORD "${EXISTING_ADMIN_PASSWORD:-}"
+
+# Validate password was set (guard against unexpected empty result)
 if [[ -z "$ADMIN_PASSWORD" ]]; then
   echo "[ERROR] Admin password is required."
   exit 1
