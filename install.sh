@@ -48,16 +48,16 @@ _compose() {
   fi
 }
 
-# Idempotent post-up bootstrap for the enterprise data stack:
+# Idempotent post-up bootstrap for the codex stack:
 #   1. Ensure the MinIO bucket lakeFS will use exists.
 #   2. Wait for lakeFS to come up, then run its one-shot setup_lakefs API call
 #      so the LAKEFS_INSTALLATION_* credentials become valid login keys.
 # Both steps are no-ops if the stack is not configured or already bootstrapped.
-_bootstrap_enterprise_stack() {
+_bootstrap_codex_stack() {
   local _env="${MOE_ENV_FILE:-${INSTALL_DIR:-.}/.env}"
   [[ -r "$_env" ]] || return 0
 
-  local _eds; _eds="$(grep -E '^INSTALL_ENTERPRISE_DATA_STACK=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  local _eds; _eds="$(grep -E '^INSTALL_CODEX=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
   [[ "${_eds:-false}" == "true" ]] || return 0
 
   local _bucket="lakefs-data"
@@ -68,7 +68,7 @@ _bootstrap_enterprise_stack() {
   local _user; _user="$(grep -E '^ADMIN_USER=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
   _user="${_user:-admin}"
 
-  echo "  Bootstrapping enterprise stack..."
+  echo "  Bootstrapping codex stack..."
 
   # Step 1: ensure Garage bucket for lakeFS exists (create + allow key — idempotent).
   local _gkey; _gkey="$(grep -E '^GARAGE_ACCESS_KEY_ID=' "$_env" | cut -d= -f2- | tr -d '"' | tr -d "'")"
@@ -109,7 +109,7 @@ _bootstrap_enterprise_stack() {
 
 # Write (or overwrite) .moe-services.json next to .env.
 # Reads INSTALL_* variables and COMPOSE_PROFILES from the .env file.
-# Called after install and after _bootstrap_enterprise_stack so the admin
+# Called after install and after _bootstrap_codex_stack so the admin
 # dashboard always shows exactly what was deployed.
 _write_services_manifest() {
   local _env="${MOE_ENV_FILE:-${INSTALL_DIR:-.}/.env}"
@@ -123,8 +123,8 @@ _write_services_manifest() {
   local _caddy=false;  echo "$_profiles" | grep -q "caddy"    && _caddy=true
   local _auth=false;   echo "$_profiles" | grep -q "authentik" && _auth=true
 
-  local _enterprise=false
-  [[ "$(_renv_local INSTALL_ENTERPRISE_DATA_STACK)" == "true" ]] && _enterprise=true
+  local _codex=false
+  [[ "$(_renv_local INSTALL_CODEX)" == "true" ]] && _codex=true
 
   local _ts; _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
 
@@ -139,7 +139,7 @@ _write_services_manifest() {
     "dozzle":                true,
     "docs":                  true,
     "prometheus_stack":      true,
-    "enterprise_data_stack": ${_enterprise}
+    "codex": ${_codex}
   }
 }
 MANIFEST_EOF
@@ -580,19 +580,19 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       "${_upd_rt[@]}" "${_upd_profiles[@]}" build ${_upd_q}
       "${_upd_rt[@]}" "${_upd_profiles[@]}" up -d
     fi
-    # Start enterprise data stack if it was enabled during initial install
-    _upd_eds="$(grep -E '^INSTALL_ENTERPRISE_DATA_STACK=' "${MOE_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    # Start MoE Codex if it was enabled during initial install
+    _upd_eds="$(grep -E '^INSTALL_CODEX=' "${MOE_ENV_FILE}" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
     if [[ "${_upd_eds:-false}" == "true" ]]; then
       if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
         if command -v sg &>/dev/null; then
-          sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.enterprise.yml up -d"
+          sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.codex.yml up -d"
         else
-          _sudo "${_upd_rt[@]}" -f docker-compose.enterprise.yml up -d
+          _sudo "${_upd_rt[@]}" -f docker-compose.codex.yml up -d
         fi
       else
-        "${_upd_rt[@]}" -f docker-compose.enterprise.yml up -d
+        "${_upd_rt[@]}" -f docker-compose.codex.yml up -d
       fi
-      _bootstrap_enterprise_stack
+      _bootstrap_codex_stack
     fi
     echo "  Containers started ✓"
     _write_services_manifest
@@ -1375,21 +1375,6 @@ while true; do
   esac
 done
 
-# MoE Codex (JupyterLab)
-echo ""
-echo "  MoE Codex adds a JupyterLab notebook environment (~2 GB RAM, ~2 GB image)."
-echo "  Skip on VMs where interactive data science is not needed."
-INSTALL_CODEX="false"
-while true; do
-  read -rp "  Install MoE Codex (JupyterLab)? [y/N]: " _codex_choice < /dev/tty
-  _codex_choice="${_codex_choice:-N}"
-  case "${_codex_choice,,}" in
-    y|yes) INSTALL_CODEX="true";  break ;;
-    n|no)  INSTALL_CODEX="false"; break ;;
-    *) echo "  Please enter y or n." ;;
-  esac
-done
-
 # Caddy reverse proxy
 echo ""
 echo "  Caddy is a built-in TLS reverse proxy for this stack."
@@ -1496,25 +1481,24 @@ fi
 echo ""
 
 # =============================================================================
-#  SECTION 8b: Optional Enterprise Data Stack
+#  SECTION 8b: Optional MoE Codex
 # =============================================================================
 echo "=========================================================================="
-echo "  Optional: Enterprise Data Management Stack"
+echo "  Optional: MoE Codex Stack"
 echo "=========================================================================="
 echo ""
-echo "  This optional Enterprise Data Stack (Apache NiFi, OpenLineage, lakeFS)"
-echo "  tames data chaos from legacy systems, enables complete audit tracking,"
-echo "  and provides isolated branches for safe what-if simulations."
+echo "  MoE Codex adds JupyterLab notebooks, Apache NiFi ETL pipelines,"
+echo "  OpenLineage audit tracking, and lakeFS data versioning (Git for data)."
 echo ""
-echo "  Requires approx. 6.5 GB additional RAM (NiFi JVM + Marquez + lakeFS)."
+echo "  Requires approx. 8.5 GB additional RAM (NiFi JVM + Marquez + lakeFS + JupyterLab)."
 echo ""
-read -rp "  Install Enterprise Data Stack (NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
+read -rp "  Install MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
 _eds_choice="${_eds_choice:-N}"
 case "${_eds_choice,,}" in
-  y|yes) INSTALL_ENTERPRISE_DATA_STACK=true  ;;
-  *)     INSTALL_ENTERPRISE_DATA_STACK=false ;;
+  y|yes) INSTALL_CODEX=true  ;;
+  *)     INSTALL_CODEX=false ;;
 esac
-export INSTALL_ENTERPRISE_DATA_STACK
+export INSTALL_CODEX
 echo ""
 
 # =============================================================================
@@ -1656,9 +1640,8 @@ fi
   [[ "$INSTALL_NEO4J"     == "true" ]] && _env_profiles+=(neo4j)
   [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
   [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
-  [[ "$INSTALL_CODEX"     == "true" ]] && _env_profiles+=(codex)
   printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
-  printf 'INSTALL_ENTERPRISE_DATA_STACK=%s\n' "${INSTALL_ENTERPRISE_DATA_STACK:-false}"
+  printf 'INSTALL_CODEX=%s\n' "${INSTALL_CODEX:-false}"
   echo ""
   echo "# --- Container runtime socket + storage paths ---"
   echo "# Docker: DOCKER_SOCKET=/var/run/docker.sock, CONTAINER_STORAGE_ROOT=/var/lib/docker"
@@ -1970,19 +1953,18 @@ _PROFILE_ARGS=()
 [[ "$INSTALL_NEO4J"     == "true" ]] && _PROFILE_ARGS+=(--profile neo4j)
 [[ "$INSTALL_CADDY"     == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
 [[ "$INSTALL_AUTHENTIK" == "true" ]] && _PROFILE_ARGS+=(--profile authentik)
-[[ "$INSTALL_CODEX"     == "true" ]] && _PROFILE_ARGS+=(--profile codex)
 
 _compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
 _compose "${_PROFILE_ARGS[@]}" build ${_Q}
 _compose "${_PROFILE_ARGS[@]}" up -d
 
-if [[ "${INSTALL_ENTERPRISE_DATA_STACK:-false}" == "true" ]]; then
+if [[ "${INSTALL_CODEX:-false}" == "true" ]]; then
   echo ""
-  echo "  Starting Enterprise Data Stack (NiFi, Marquez, lakeFS)..."
-  _compose -f docker-compose.enterprise.yml pull ${_Q} 2>/dev/null || true
-  _compose -f docker-compose.enterprise.yml up -d
-  _bootstrap_enterprise_stack
-  echo "  Enterprise Data Stack started ✓"
+  echo "  Starting MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)..."
+  _compose -f docker-compose.codex.yml pull ${_Q} 2>/dev/null || true
+  _compose -f docker-compose.codex.yml up -d
+  _bootstrap_codex_stack
+  echo "  MoE Codex started ✓"
 fi
 
 echo "  Containers started ✓"
