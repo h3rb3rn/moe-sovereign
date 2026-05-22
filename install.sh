@@ -167,6 +167,13 @@ EOF
 
 print_banner
 
+echo "  System requirements (realistic usage, not container limits):"
+echo "    Core stack, no Neo4j  :  4 GB RAM minimum,  8 GB recommended"
+echo "    Core stack + Neo4j    :  6 GB RAM minimum, 10 GB recommended"
+echo "    + MoE Codex           : +8.5 GB RAM on top of the above"
+echo "    Disk                  : 20 GB minimum (images + data volumes)"
+echo ""
+
 # =============================================================================
 #  SECTION 1a: Installation paths
 # =============================================================================
@@ -1363,7 +1370,7 @@ echo "  --- Optional Components ---"
 # Neo4j GraphRAG
 echo ""
 echo "  Neo4j powers GraphRAG (knowledge-graph enrichment) and the ontology curator."
-echo "  Requires ~1.5 GB RAM. Skip for small VMs that only need expert templates / CC profiles."
+echo "  Adds ~1.5 GB RAM (raises minimum from 4 GB → 6 GB). Skip on small VMs."
 INSTALL_NEO4J="true"
 while true; do
   read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
@@ -1500,6 +1507,53 @@ case "${_eds_choice,,}" in
 esac
 export INSTALL_CODEX
 echo ""
+
+# =============================================================================
+#  SECTION 8c: RAM check — warn if host memory is below stack requirements
+# =============================================================================
+_ram_total_mb=0
+if [[ -r /proc/meminfo ]]; then
+  _ram_total_mb=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo)
+elif command -v sysctl &>/dev/null; then
+  # macOS fallback
+  _ram_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0)
+  _ram_total_mb=$(( _ram_bytes / 1024 / 1024 ))
+fi
+
+if [[ "${_ram_total_mb}" -gt 0 ]]; then
+  # Calculate minimum requirement based on selected components
+  _ram_min_mb=4096                                               # core baseline
+  [[ "${INSTALL_NEO4J:-true}"  == "true" ]] && _ram_min_mb=$(( _ram_min_mb + 1536 ))  # +1.5 GB
+  [[ "${INSTALL_CODEX:-false}" == "true" ]] && _ram_min_mb=$(( _ram_min_mb + 8704 ))  # +8.5 GB
+
+  _ram_rec_mb=$(( _ram_min_mb * 2 ))  # recommended = 2× minimum
+
+  _ram_total_gb=$(( _ram_total_mb / 1024 ))
+  _ram_min_gb=$(( _ram_min_mb / 1024 ))
+  _ram_rec_gb=$(( _ram_rec_mb / 1024 ))
+
+  echo "  Host RAM detected: ${_ram_total_gb} GB"
+
+  if [[ "${_ram_total_mb}" -lt "${_ram_min_mb}" ]]; then
+    echo ""
+    echo "  [!] WARNING: Host RAM (${_ram_total_gb} GB) is below the minimum"
+    echo "      requirement (${_ram_min_gb} GB) for the selected stack."
+    echo "      Containers may be OOM-killed. Consider:"
+    [[ "${INSTALL_CODEX:-false}" == "true" ]] && \
+      echo "        - Skipping MoE Codex (-8.5 GB)"
+    [[ "${INSTALL_NEO4J:-true}" == "true" ]] && \
+      echo "        - Skipping Neo4j (-1.5 GB)"
+    echo "        - Adding swap space as emergency buffer"
+    echo ""
+    read -rp "  Continue anyway? [y/N]: " _ram_cont < /dev/tty
+    [[ "${_ram_cont,,}" == "y" || "${_ram_cont,,}" == "yes" ]] || { echo "  Aborted."; exit 1; }
+  elif [[ "${_ram_total_mb}" -lt "${_ram_rec_mb}" ]]; then
+    echo "  [!] Note: ${_ram_rec_gb} GB recommended for this stack — performance may vary."
+  else
+    echo "  RAM sufficient for selected stack ✓"
+  fi
+  echo ""
+fi
 
 # =============================================================================
 #  SECTION 9: Caddyfile — only when Caddy was selected
