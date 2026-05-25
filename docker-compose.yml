@@ -25,6 +25,11 @@ services:
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_LOG_RETENTION_BYTES: 536870912
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      # Reduce GC-pause-induced heartbeat timeouts on single-node KRaft.
+      # Heartbeat request timeout = interval * 2 + 500ms; 5000 → 10500ms headroom.
+      KAFKA_BROKER_HEARTBEAT_INTERVAL_MS: "5000"
+      KAFKA_BROKER_SESSION_TIMEOUT_MS: "30000"
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m -XX:MaxGCPauseMillis=100 -XX:+UseG1GC"
     volumes:
       - ${MOE_DATA_ROOT}/kafka-data:/var/lib/kafka/data
     deploy:
