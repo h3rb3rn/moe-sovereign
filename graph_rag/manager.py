@@ -1035,7 +1035,7 @@ class GraphRAGManager:
                 MATCH (e:Entity)   WITH count(e) AS entities
                 MATCH ()-[r]->()   WITH entities, count(r) AS relations
                 OPTIONAL MATCH (s:Synthesis) WITH entities, relations, count(s) AS synthesis_nodes
-                OPTIONAL MATCH ()-[fr]->() WHERE fr.flagged = true
+                OPTIONAL MATCH ()-[fr]->() WHERE coalesce(fr.flagged, false) = true
                 RETURN entities, relations, synthesis_nodes,
                        count(fr) AS flagged_relations
             """)
