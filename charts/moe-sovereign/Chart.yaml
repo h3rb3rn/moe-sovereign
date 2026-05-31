@@ -22,16 +22,16 @@ maintainers:
 # and get a full stack from one `helm install`.
 dependencies:
   - name: postgresql
-    version: "15.x.x"
-    repository: https://charts.bitnami.com/bitnami
+    version: "18.6.10"
+    repository: oci://registry-1.docker.io/bitnamicharts
     condition: postgresql.enabled
   - name: kafka
-    version: "28.x.x"
-    repository: https://charts.bitnami.com/bitnami
+    version: "32.4.3"
+    repository: oci://registry-1.docker.io/bitnamicharts
     condition: kafka.enabled
   - name: valkey
-    version: "1.x.x"
-    repository: https://charts.bitnami.com/bitnami
+    version: "6.0.4"
+    repository: oci://registry-1.docker.io/bitnamicharts
     condition: valkey.enabled
   - name: neo4j
     version: "5.x.x"

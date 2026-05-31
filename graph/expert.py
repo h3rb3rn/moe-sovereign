@@ -279,11 +279,12 @@ async def expert_worker(state_: AgentState):
                     f"{usage.get('prompt_tokens', 0)}→{usage.get('completion_tokens', 0)} tok"
                 )
                 PROM_CONFIDENCE.labels(level=conf or "unknown", category=cat).inc()
-                if conf == "high":
-                    asyncio.create_task(_record_expert_outcome(model_name, cat, positive=True))
-                elif conf == "low":
-                    asyncio.create_task(_record_expert_outcome(model_name, cat, positive=False))
-                # "medium" → no signal (neutral, do not increment counter)
+                # Thompson-sampling reward is no longer recorded here from the
+                # expert's *self-reported* confidence — a confidently-wrong answer
+                # would be rewarded. The outcome is recorded later in merger_node
+                # (graph/synthesis.py), where the judge's verdict is available:
+                # a category the judge had to refine counts as negative. Self-
+                # confidence is used only as a fallback when refinement is disabled.
                 # Unload model — unless the same model is needed as judge LLM
                 if api_type == "ollama":
                     _judge_model_name = (state_.get("judge_model_override") or JUDGE_MODEL).strip()

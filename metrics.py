@@ -19,6 +19,8 @@ PROM_EXPERT_CALLS    = Counter('moe_expert_calls_total',       'Expert model cal
 PROM_CONFIDENCE      = Counter('moe_expert_confidence_total',  'Expert confidence level',     ['level', 'category'])
 PROM_CACHE_HITS      = Counter('moe_cache_hits_total',         'Cache hits')
 PROM_CACHE_MISSES    = Counter('moe_cache_misses_total',       'Cache misses')
+PROM_KNOWLEDGE_BYPASS = Counter('moe_knowledge_bypass_total',  'LLM pipeline skipped via high-confidence fresh prior answer')
+PROM_ROUTING_BANDIT  = Counter('moe_routing_bandit_total',     'Routing-gate decisions', ['gate', 'action', 'source'])
 PROM_RESPONSE_TIME   = Histogram('moe_response_duration_seconds', 'Response duration',        ['mode'],
                                  buckets=[1, 2, 5, 10, 20, 30, 60, 120])
 PROM_SELF_EVAL       = Histogram('moe_self_eval_score',        'Self-evaluation score',       buckets=[1,2,3,4,5,6])

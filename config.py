@@ -169,6 +169,31 @@ SOFT_CACHE_MAX_EXAMPLES   = int(os.getenv("SOFT_CACHE_MAX_EXAMPLES",    "2"))
 ROUTE_THRESHOLD           = float(os.getenv("ROUTE_THRESHOLD",          "0.18"))
 ROUTE_GAP                 = float(os.getenv("ROUTE_GAP",                "0.10"))
 CACHE_MIN_RESPONSE_LEN    = int(os.getenv("CACHE_MIN_RESPONSE_LEN",     "150"))
+
+# Knowledge-bypass: skip the LLM pipeline for a query that is *similar* (but not
+# an exact L1 hit) to a prior answer, IF that prior answer was high-confidence
+# and is still fresh. Conservative by construction — the threshold stays above
+# CACHE_HIT_THRESHOLD and below SOFT_CACHE_THRESHOLD, and both the confidence
+# floor and TTL must hold. This is the lever for "less LLM over time": accumulated
+# high-trust knowledge answers progressively more queries without inference.
+KNOWLEDGE_BYPASS_ENABLED   = os.getenv("KNOWLEDGE_BYPASS_ENABLED", "true").lower() in ("1", "true", "yes")
+KNOWLEDGE_BYPASS_THRESHOLD = float(os.getenv("KNOWLEDGE_BYPASS_THRESHOLD", "0.25"))
+KNOWLEDGE_BYPASS_MIN_CONF  = float(os.getenv("KNOWLEDGE_BYPASS_MIN_CONF",  "0.85"))
+KNOWLEDGE_BYPASS_TTL_DAYS  = int(os.getenv("KNOWLEDGE_BYPASS_TTL_DAYS",    "14"))
+
+# Routing bandit: a contextual Thompson bandit learns the retrieval gates
+# (skip_research / enable_graphrag) from request outcomes, replacing the fixed
+# fuzzy thresholds as the *decision authority*. The fuzzy t-norm scores and the
+# complexity level survive as the context (features) AND as the cold-start
+# fallback: until BOTH arms of a (gate, context) have MIN_DATAPOINTS observations,
+# the heuristic decision is used unchanged — so routing never regresses below the
+# fuzzy baseline while it learns. COST_PRIOR gives the cheaper arm (skip/off) an
+# optimistic head-start so ties resolve toward saving inference. CONTEXT_BANDS is
+# how finely each t-norm score is discretised (2 = low/high → fast learning).
+ROUTING_BANDIT_ENABLED        = os.getenv("ROUTING_BANDIT_ENABLED", "true").lower() in ("1", "true", "yes")
+ROUTING_BANDIT_MIN_DATAPOINTS = int(os.getenv("ROUTING_BANDIT_MIN_DATAPOINTS", "20"))
+ROUTING_BANDIT_COST_PRIOR     = float(os.getenv("ROUTING_BANDIT_COST_PRIOR",   "0.5"))
+ROUTING_BANDIT_CONTEXT_BANDS  = int(os.getenv("ROUTING_BANDIT_CONTEXT_BANDS",  "2"))
 EXPERT_TIER_BOUNDARY_B    = float(os.getenv("EXPERT_TIER_BOUNDARY_B",   "20"))
 EXPERT_MIN_SCORE          = float(os.getenv("EXPERT_MIN_SCORE",         "0.3"))
 EXPERT_MIN_DATAPOINTS     = int(os.getenv("EXPERT_MIN_DATAPOINTS",      "5"))

@@ -48,6 +48,8 @@ services:
       - "127.0.0.1:${NEO4J_BOLT_PORT}:7687"   # Bolt
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASS}
+      # Sovereignty: disable anonymous usage-data reporting to neo4j.com
+      - NEO4J_dbms_usage__report_enabled=false
       - NEO4J_server_memory_heap_initial__size=512m
       - NEO4J_server_memory_heap_max__size=1g
       - NEO4J_server_memory_pagecache_size=512m
@@ -204,7 +206,10 @@ services:
 
   # --- ChromaDB (Vektorspeicher für RAG) ---
   chromadb-vector:
-    image: chromadb/chroma:latest
+    # Pinned (was :latest) — CVE-2026-45829 "ChromaToast" pre-auth RCE affects
+    # 1.0.0–1.5.8; 1.5.9 is the latest stable release. Network exposure is also
+    # restricted to loopback below (the advisory's primary mitigation).
+    image: chromadb/chroma:1.5.9
     container_name: chromadb-vector
     restart: always
     ports:
