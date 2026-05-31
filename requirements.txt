@@ -16,7 +16,7 @@ python-dotenv
 
 # --- Datenbanken & Mathe ---
 redis>=5.0.0
-chromadb>=0.6.0
+chromadb>=1.5.9  # security floor: <1.5.9 affected by CVE-2026-45829 (ChromaToast)
 numpy>=1.26.0,<2.0.0
 sympy==1.12
 neo4j>=5.0.0
