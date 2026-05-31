@@ -232,7 +232,22 @@ _STOPWORDS = {
 class GraphRAGManager:
 
     def __init__(self, uri: str, user: str, password: str):
-        self.driver: AsyncDriver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+        # Filter benign server notifications: this is a schema-flexible graph where
+        # optional properties (e.g. relation `flagged`, set only by verify/linting)
+        # legitimately may not exist yet. Without this filter Neo4j emits an
+        # "UNRECOGNIZED: property key does not exist" WARNING on every stats query
+        # (every 60 s) plus "constraint already exists" INFO on each startup —
+        # pure log noise. We keep all other WARNING-level notifications
+        # (PERFORMANCE/DEPRECATION). Degrades gracefully if the driver predates
+        # the GQL notification-filter kwargs.
+        _notif = {
+            "notifications_min_severity": "WARNING",
+            "notifications_disabled_classifications": ["UNRECOGNIZED"],
+        }
+        try:
+            self.driver: AsyncDriver = AsyncGraphDatabase.driver(uri, auth=(user, password), **_notif)
+        except (TypeError, ValueError):
+            self.driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
 
     # ─── SETUP ───────────────────────────────────────────────────────────────
 

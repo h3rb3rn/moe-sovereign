@@ -18,6 +18,8 @@ from config import (
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
+    KNOWLEDGE_BYPASS_ENABLED, KNOWLEDGE_BYPASS_THRESHOLD,
+    KNOWLEDGE_BYPASS_MIN_CONF, KNOWLEDGE_BYPASS_TTL_DAYS,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
     BENCHMARK_SHADOW_TEMPLATE, BENCHMARK_SHADOW_RATE,
@@ -38,7 +40,8 @@ from metrics import (
     PROM_TOOL_CALL_SUCCESS, PROM_SEMANTIC_MEMORY_STORED, PROM_SEMANTIC_MEMORY_HITS,
     PROM_CORRECTIONS_INJECTED, PROM_CORRECTIONS_STORED,
     PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES, PROM_SYNTHESIS_CREATED,
-    PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
+    PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED, PROM_KNOWLEDGE_BYPASS,
+    PROM_ROUTING_BANDIT,
 )
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
@@ -106,6 +109,17 @@ async def _seed_task_type_prototypes() -> None:
 
 # --- NODES ---
 
+def _entry_is_fresh(ts_iso: str, ttl_days: int) -> bool:
+    """True if an ISO-8601 timestamp is within ttl_days of now. Missing/garbage ts → stale."""
+    if not ts_iso:
+        return False
+    try:
+        from datetime import datetime, timedelta
+        return datetime.now() - datetime.fromisoformat(ts_iso) <= timedelta(days=ttl_days)
+    except Exception:
+        return False
+
+
 async def cache_lookup_node(state_: AgentState):
     logger.debug("--- [NODE] CACHE LOOKUP ---")
     # Template toggle: skip cache if disabled
@@ -155,6 +169,24 @@ async def cache_lookup_node(state_: AgentState):
                 PROM_CACHE_HITS.inc()
                 logger.info(f"✅ Cache hit (distance={dist:.3f}) — skipping pipeline")
                 await _report(f"✅ Cache hit (similarity {1-dist:.2f}) — pipeline skipped")
+            elif (
+                KNOWLEDGE_BYPASS_ENABLED
+                and dist < KNOWLEDGE_BYPASS_THRESHOLD
+                and float(meta.get("confidence", 0.0) or 0.0) >= KNOWLEDGE_BYPASS_MIN_CONF
+                and _entry_is_fresh(meta.get("ts", ""), KNOWLEDGE_BYPASS_TTL_DAYS)
+            ):
+                # Conservative knowledge-bypass: similar (not exact) query, but the
+                # prior answer was high-confidence and is still fresh → skip the LLM.
+                hit = True
+                PROM_KNOWLEDGE_BYPASS.inc()
+                logger.info(
+                    f"🧠 Knowledge bypass (distance={dist:.3f}, conf={meta.get('confidence')}) "
+                    f"— skipping pipeline"
+                )
+                await _report(
+                    f"🧠 Knowledge bypass (similarity {1-dist:.2f}, "
+                    f"confidence {meta.get('confidence')}) — pipeline skipped"
+                )
             break
     if not hit:
         PROM_CACHE_MISSES.inc()
@@ -266,8 +298,25 @@ async def fuzzy_router_node(state_: AgentState):
     tnorm_vector = goedel_tnorm(vector_conf, complexity_score)
     tnorm_graph  = goedel_tnorm(graph_conf,  complexity_score)
 
-    new_skip_research   = tnorm_vector < _FUZZY_VECTOR_THRESHOLD
-    new_enable_graphrag = tnorm_graph  >= _FUZZY_GRAPH_THRESHOLD
+    # Heuristic gate decisions (fuzzy thresholds). These are no longer the final
+    # authority — they serve as the contextual bandit's cold-start fallback and,
+    # via the t-norm bands below, as its context features.
+    _heur_do_research  = tnorm_vector >= _FUZZY_VECTOR_THRESHOLD   # True = fetch web research
+    _heur_enable_graph = tnorm_graph  >= _FUZZY_GRAPH_THRESHOLD    # True = query knowledge graph
+
+    # Context buckets: complexity level + discretised t-norm band, per gate.
+    from services.routing_bandit import decide as _rb_decide, band as _rb_band
+    _research_ctx = f"{complexity_level}|v{_rb_band(tnorm_vector)}"
+    _graph_ctx    = f"{complexity_level}|g{_rb_band(tnorm_graph)}"
+
+    _do_research,  _src_r = await _rb_decide("research", _research_ctx, _heur_do_research)
+    _enable_graph, _src_g = await _rb_decide("graphrag", _graph_ctx,    _heur_enable_graph)
+
+    new_skip_research   = not _do_research
+    new_enable_graphrag = _enable_graph
+
+    PROM_ROUTING_BANDIT.labels(gate="research", action="fetch" if _do_research  else "skip", source=_src_r).inc()
+    PROM_ROUTING_BANDIT.labels(gate="graphrag", action="on"    if _enable_graph else "off",  source=_src_g).inc()
 
     scores = {
         "vector_confidence": vector_conf,
@@ -277,16 +326,18 @@ async def fuzzy_router_node(state_: AgentState):
         "method":            "goedel",
         "vector_threshold":  _FUZZY_VECTOR_THRESHOLD,
         "graph_threshold":   _FUZZY_GRAPH_THRESHOLD,
+        "research_source":   _src_r,
+        "graph_source":      _src_g,
     }
 
     logger.info(
         f"🔀 Fuzzy Router: vector={vector_conf:.2f}→T={tnorm_vector:.2f} "
-        f"({'skip' if new_skip_research else 'fetch'}) | "
+        f"({'fetch' if _do_research else 'skip'}/{_src_r}) | "
         f"graph={graph_conf:.2f}→T={tnorm_graph:.2f} "
-        f"({'skip' if not new_enable_graphrag else 'fetch'})"
+        f"({'on' if new_enable_graphrag else 'off'}/{_src_g})"
     )
     await _report(
-        f"🔀 Fuzzy Router (Godel t-norm): "
+        f"🔀 Router ({_src_r}/{_src_g}): "
         f"web={'✓' if not new_skip_research else '✗'} (score={tnorm_vector:.2f}) | "
         f"graph={'✓' if new_enable_graphrag else '✗'} (score={tnorm_graph:.2f})"
     )
@@ -297,6 +348,7 @@ async def fuzzy_router_node(state_: AgentState):
         "fuzzy_routing_scores": scores,
         "skip_research":        new_skip_research,
         "enable_graphrag":      new_enable_graphrag,
+        "routing_bandit_context": f"{_research_ctx}|||{_graph_ctx}",
     }
 
 

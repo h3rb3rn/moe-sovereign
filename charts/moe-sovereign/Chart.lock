@@ -1,15 +1,15 @@
 dependencies:
 - name: postgresql
-  repository: https://charts.bitnami.com/bitnami
-  version: 15.5.38
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 18.6.10
 - name: kafka
-  repository: https://charts.bitnami.com/bitnami
-  version: 28.3.0
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 32.4.3
 - name: valkey
-  repository: https://charts.bitnami.com/bitnami
-  version: 1.0.3
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 6.0.4
 - name: neo4j
   repository: https://helm.neo4j.com/neo4j
-  version: 5.26.24
-digest: sha256:e1fbf8f30a914e8a8d7d9099776a8b6d0ac3a9c6bab594719f27fb2e66a3fe18
-generated: "2026-04-09T19:43:11.452145226+02:00"
+  version: 5.26.26
+digest: sha256:e88be9b30e1b5bd79ab9969c10f02a9cd581636366067643b1e61ef93a379f33
+generated: "2026-05-31T23:30:02.778244309+02:00"

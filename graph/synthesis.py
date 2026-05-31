@@ -155,11 +155,15 @@ async def merger_node(state_: AgentState):
         await _report(f"⚠️ Low confidence: {', '.join(cats)}")
 
     # ── Judge Refinement Loop: improve low-confidence expert responses ────────
+    # Categories the judge had to step in on — collected for the judge-aware
+    # Thompson reward signal recorded after the loop (see below).
+    _judge_refined_cats: set = set()
     if JUDGE_REFINE_MAX_ROUNDS > 0 and expert_results:
         for _refine_round in range(JUDGE_REFINE_MAX_ROUNDS):
             low_conf_list = [r for r in expert_results if _parse_expert_confidence(r) == "low"]
             if not low_conf_list:
                 break
+            _judge_refined_cats.update(_expert_category(r) for r in low_conf_list)
             await _report(f"🔄 Refinement round {_refine_round + 1}/{JUDGE_REFINE_MAX_ROUNDS}: "
                           f"{len(low_conf_list)} low-confidence experts")
             # Judge generates feedback — enriched with web/graph context
@@ -232,6 +236,61 @@ async def merger_node(state_: AgentState):
                 await _report(f"⏹️ Refinement stopped: no significant improvement "
                               f"(< {JUDGE_REFINE_MIN_IMPROVEMENT:.0%})")
                 break
+
+    # ── Expert performance signal (judge-aware Thompson reward) ───────────────
+    # Reward güte, not self-confidence: an expert whose category the judge had to
+    # refine underperformed (negative); an untouched high-confidence answer is
+    # accepted (positive). Model identity comes from expert_models_used
+    # ("model::category"). Zero extra LLM calls — reuses the refinement verdict.
+    # When refinement is disabled (_judge_refined_cats empty), this degrades
+    # gracefully to the previous self-confidence behaviour.
+    try:
+        _rank = {"low": 0, "medium": 1, "high": 2}
+        _cat_best_conf: dict = {}
+        for _r in expert_results:
+            _c = _expert_category(_r)
+            _conf = _parse_expert_confidence(_r)
+            if _conf and _rank.get(_conf, 0) > _rank.get(_cat_best_conf.get(_c, "low"), -1):
+                _cat_best_conf[_c] = _conf
+        for _mc in (state_.get("expert_models_used") or []):
+            if "::" not in _mc:
+                continue
+            _model, _cat = _mc.split("::", 1)
+            if _cat in _judge_refined_cats:
+                asyncio.create_task(_record_expert_outcome(_model, _cat, positive=False))
+            elif _cat_best_conf.get(_cat) == "high":
+                asyncio.create_task(_record_expert_outcome(_model, _cat, positive=True))
+            elif _cat_best_conf.get(_cat) == "low":
+                asyncio.create_task(_record_expert_outcome(_model, _cat, positive=False))
+            # medium / unknown → neutral, no counter increment
+    except Exception as _re:
+        logger.debug(f"Expert reward signal skipped: {_re}")
+
+    # ── Routing-gate reward (F5): did the retrieval decisions pay off? ────────
+    # Teaches the contextual bandit in fuzzy_router_node. Proxies, noisy but
+    # directionally correct over many requests:
+    #   research → an expert capability-disclaimer ("cannot access the web")
+    #              means research was needed, so skipping it failed.
+    #   graphrag → a category the judge had to refine signals weak grounding.
+    # Recorded only when fuzzy_router actually set a context (i.e. not on cache
+    # hit, where the pipeline short-circuits before routing).
+    try:
+        _rb_ctx = state_.get("routing_bandit_context") or ""
+        if "|||" in _rb_ctx:
+            from services.routing_bandit import record as _rb_record
+            _research_ctx, _graph_ctx = _rb_ctx.split("|||", 1)
+            _joined = " ".join(r for r in expert_results if r)
+            _research_ok = not bool(re.search(
+                r"(?i)cannot access|no web|don't have (?:internet|web|access)|unable to (?:browse|access)",
+                _joined,
+            ))
+            _graph_ok = (len(_judge_refined_cats) == 0)
+            asyncio.create_task(_rb_record(
+                "research", _research_ctx, not state_.get("skip_research", False), _research_ok))
+            asyncio.create_task(_rb_record(
+                "graphrag", _graph_ctx, bool(state_.get("enable_graphrag", True)), _graph_ok))
+    except Exception as _rbe:
+        logger.debug(f"Routing-bandit reward skipped: {_rbe}")
 
     await _report("🔀 Merger synthesizing final response...")
 
@@ -630,11 +689,20 @@ async def merger_node(state_: AgentState):
         # Skipped when no_cache=True: unique benchmark/research queries would only
         # pollute the vector store with entries that are never read again.
         chroma_doc_id = hashlib.sha256(res_content_clean.encode()).hexdigest()[:32]
+        # Mean expert confidence — stored so the knowledge-bypass read path can
+        # gate on answer quality (see cache_lookup_node). Also reused for the
+        # GraphRAG ingest below.
+        _conf_map = {"high": 0.9, "medium": 0.6, "low": 0.3}
+        _expert_confs = [
+            _conf_map.get(_parse_expert_confidence(r), 0.5)
+            for r in state_.get("expert_results", [])
+        ]
+        _ingest_confidence = (sum(_expert_confs) / len(_expert_confs)) if _expert_confs else 0.5
         await asyncio.to_thread(
             state.cache_collection.upsert,
             ids=[chroma_doc_id],
             documents=[res_content_clean],
-            metadatas=[{"ts": datetime.now().isoformat(), "input": state_["input"][:200], "flagged": False, "expert_domain": _expert_domain}],
+            metadatas=[{"ts": datetime.now().isoformat(), "input": state_["input"][:200], "flagged": False, "expert_domain": _expert_domain, "confidence": round(_ingest_confidence, 3)}],
         )
         # L0: Write to query-hash cache (30 min TTL)
         if not state_.get("no_cache") and state.redis_client:
@@ -689,13 +757,7 @@ async def merger_node(state_: AgentState):
         # Dominant model from expert_models_used as provenance source
         _used_models = state_.get("expert_models_used", [])
         _ingest_model = _used_models[0] if _used_models else JUDGE_MODEL
-        # Derive confidence from expert results (high=0.9, medium=0.6, low=0.3)
-        _conf_map = {"high": 0.9, "medium": 0.6, "low": 0.3}
-        _expert_confs = [
-            _conf_map.get(_parse_expert_confidence(r), 0.5)
-            for r in state_.get("expert_results", [])
-        ]
-        _ingest_confidence = (sum(_expert_confs) / len(_expert_confs)) if _expert_confs else 0.5
+        # _ingest_confidence already computed above (reused for the cache metadata).
         # Classify knowledge type: procedural if answer implies action→location requirements.
         _proc_markers = {
             "requires", "must", "necessary", "prerequisite", "needed",

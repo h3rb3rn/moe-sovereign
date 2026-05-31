@@ -133,6 +133,7 @@ class AgentState(TypedDict):
     vector_confidence: float          # Degree to which this query needs vector/semantic search
     graph_confidence: float           # Degree to which this query needs knowledge-graph retrieval
     fuzzy_routing_scores: dict        # {vector, graph, tnorm_vector, tnorm_graph, method}
+    routing_bandit_context: str       # "research_ctx|||graph_ctx" buckets — set by fuzzy_router, consumed by merger to attribute the routing reward
 
     # ── 13. Formal logic state (Paraconsistent + Intuitionistic) ─────────────
     # conflict_registry accumulates ConflictEntry dicts when two experts in the
