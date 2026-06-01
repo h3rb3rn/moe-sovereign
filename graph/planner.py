@@ -27,6 +27,7 @@ from config import (
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
     CORRECTION_MEMORY_ENABLED, THOMPSON_SAMPLING_ENABLED,
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
+    TRIVIAL_FAST_PATH_ENABLED, TRIVIAL_FAST_PATH_CATEGORY,
     _CUSTOM_EXPERT_PROMPTS, PLANNER_MAX_TASKS, PLANNER_RETRIES,
     KAFKA_TOPIC_INGEST, NEO4J_URI, NEO4J_USER, NEO4J_PASS,
     _FALLBACK_ENABLED,
@@ -204,6 +205,27 @@ async def planner_node(state_: AgentState):
         _complexity = "memory_recall"
         logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _prev_complexity)
     _routing    = complexity_routing_hint(_complexity)
+
+    # ── Trivial fast-path (opt-in, OFF by default) ────────────────────────────
+    # A genuinely trivial query the semantic router did not already route skips
+    # the planner LLM call and goes straight to a single default-category expert,
+    # saving one LLM call. Behavioural trade-off (forces a default expert for
+    # unmatched trivial queries), hence gated — see config.TRIVIAL_FAST_PATH_*.
+    if (TRIVIAL_FAST_PATH_ENABLED
+            and _complexity == "trivial"
+            and not state_.get("direct_expert")
+            and not _is_agentic_replan):
+        _ft_cat = TRIVIAL_FAST_PATH_CATEGORY if TRIVIAL_FAST_PATH_CATEGORY in EXPERTS else next(iter(EXPERTS), "general")
+        logger.info("⚡ Trivial fast-path: planner LLM skipped → '%s'", _ft_cat)
+        await _report(f"⚡ Trivial fast-path → expert '{_ft_cat}' (planner skipped)")
+        return {
+            "plan": [{"task": state_["input"], "category": _ft_cat}],
+            "direct_expert": _ft_cat,
+            "complexity_level": _complexity,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
     # Multi-fact memory_recall: when the question asks for multiple facts
     # (contains conjunctions like "und X und Y" or multiple interrogatives),
     # allow 2 tasks so the planner can create separate recall tasks per fact.

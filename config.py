@@ -194,6 +194,14 @@ ROUTING_BANDIT_ENABLED        = os.getenv("ROUTING_BANDIT_ENABLED", "true").lowe
 ROUTING_BANDIT_MIN_DATAPOINTS = int(os.getenv("ROUTING_BANDIT_MIN_DATAPOINTS", "20"))
 ROUTING_BANDIT_COST_PRIOR     = float(os.getenv("ROUTING_BANDIT_COST_PRIOR",   "0.5"))
 ROUTING_BANDIT_CONTEXT_BANDS  = int(os.getenv("ROUTING_BANDIT_CONTEXT_BANDS",  "2"))
+
+# Trivial fast-path (opt-in, OFF by default): a genuinely trivial query that the
+# semantic router did not already route skips the planner LLM call and goes straight
+# to a single default-category expert. Saves one LLM call per trivial request, but
+# forces a default expert for unmatched trivial queries (a behavioural trade-off —
+# e.g. "2+2" would bypass the precision_tools path), so enable only after measuring.
+TRIVIAL_FAST_PATH_ENABLED  = os.getenv("TRIVIAL_FAST_PATH_ENABLED", "false").lower() in ("1", "true", "yes")
+TRIVIAL_FAST_PATH_CATEGORY = os.getenv("TRIVIAL_FAST_PATH_CATEGORY", "general")
 EXPERT_TIER_BOUNDARY_B    = float(os.getenv("EXPERT_TIER_BOUNDARY_B",   "20"))
 EXPERT_MIN_SCORE          = float(os.getenv("EXPERT_MIN_SCORE",         "0.3"))
 EXPERT_MIN_DATAPOINTS     = int(os.getenv("EXPERT_MIN_DATAPOINTS",      "5"))
