@@ -206,9 +206,12 @@ services:
 
   # --- ChromaDB (Vektorspeicher für RAG) ---
   chromadb-vector:
-    # Pinned (was :latest) — CVE-2026-45829 "ChromaToast" pre-auth RCE affects
-    # 1.0.0–1.5.8; 1.5.9 is the latest stable release. Network exposure is also
-    # restricted to loopback below (the advisory's primary mitigation).
+    # CVE-2026-45829 "ChromaToast": pre-auth code-injection RCE via trust_remote_code
+    # on the collections endpoint. Affects ALL versions >= 1.0.0 — NO patched version
+    # exists yet, so this pin is for reproducibility, NOT a fix. Actual mitigation:
+    # the server is bound to loopback only (see ports below) and is not reverse-proxied,
+    # so the unauthenticated endpoint is unreachable from outside the host. Revisit
+    # the pin once upstream ships a patched release.
     image: chromadb/chroma:1.5.9
     container_name: chromadb-vector
     restart: always
