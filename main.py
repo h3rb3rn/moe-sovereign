@@ -830,8 +830,8 @@ async def _gauge_updater_loop():
             # ChromaDB document count
             try:
                 PROM_CHROMA_DOCS.set(cache_collection.count())
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug("gauge: ChromaDB count failed: %s", _e)
             # Neo4j: entities, relations, synthesis nodes, flagged relations.
             # get_stats() does two full relationship scans — refresh only every 5th
             # cycle (~5 min) since graph size changes slowly; avoids hammering Neo4j.
@@ -846,8 +846,8 @@ async def _gauge_updater_loop():
                     PROM_FLAGGED_RELS.set(stats.get("flagged_relations", 0))
                     if _ents > 0:
                         PROM_GRAPH_DENSITY.set(round(_rels / _ents, 4))
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("gauge: Neo4j stats failed: %s", _e)
             # Valkey: planner patterns, ontology gaps, active request count
             if state.redis_client is not None:
                 try:
@@ -855,8 +855,8 @@ async def _gauge_updater_loop():
                     PROM_ONTOLOGY_GAPS.set(await state.redis_client.zcard("moe:ontology_gaps"))
                     active_keys = await state.redis_client.keys("moe:active:*")
                     PROM_ACTIVE_REQUESTS.set(len(active_keys))
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("gauge: Valkey metrics failed: %s", _e)
             # Inference server health + available model count
             try:
                 _hc = state.http_client
@@ -1150,55 +1150,15 @@ app.include_router(_models_router)
 app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
 
-# ── Security Headers Middleware ────────────────────────────────────────────────
-from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
-
-class _SecurityHeadersMiddleware(_BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"]    = "nosniff"
-        response.headers["X-Frame-Options"]           = "DENY"
-        response.headers["X-XSS-Protection"]          = "1; mode=block"
-        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=()"
-        # HSTS only when behind TLS (Nginx sets this on the public endpoint)
-        return response
-
+# ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
+# Added in the original order; Starlette executes add_middleware in reverse.
+from services.middleware import (
+    SecurityHeadersMiddleware as _SecurityHeadersMiddleware,
+    BodySizeLimitMiddleware as _BodySizeLimitMiddleware,
+    BodyCacheMiddleware as _BodyCacheMiddleware,
+)
 app.add_middleware(_SecurityHeadersMiddleware)
-
-# ── Request Body Size Limit — protect against payload-based DoS ───────────────
-from starlette.middleware.base import BaseHTTPMiddleware as _BM2
-_MAX_BODY_BYTES = MAX_REQUEST_BODY_MB * 1024 * 1024  # MAX_REQUEST_BODY_MB from config.py
-
-class _BodySizeLimitMiddleware(_BM2):
-    async def dispatch(self, request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > _MAX_BODY_BYTES:
-            return JSONResponse(
-                status_code=413,
-                content={"error": f"Request body exceeds {_MAX_BODY_BYTES // (1024*1024)} MB limit"},
-            )
-        return await call_next(request)
-
 app.add_middleware(_BodySizeLimitMiddleware)
-
-# ── Body Cache — enables session fingerprinting for clients without session headers ──
-_BODY_CACHE_MAX = 256 * 1024  # only cache bodies ≤ 256 KB to limit memory overhead
-
-class _BodyCacheMiddleware(_BM2):
-    async def dispatch(self, request, call_next):
-        if request.method in ("POST", "PUT", "PATCH"):
-            cl = request.headers.get("content-length")
-            if not cl or int(cl) <= _BODY_CACHE_MAX:
-                body = await request.body()
-                request.state._body = body
-                # Do NOT replace request._receive.  Starlette's _CachedRequest
-                # caches the body in self._body after body() is called.
-                # wrapped_receive() state 3 replays it from _body without touching
-                # _receive; state 2 calls the original _receive which blocks until
-                # the real client disconnect arrives — exactly what we want.
-        return await call_next(request)
-
 app.add_middleware(_BodyCacheMiddleware)
 
 # CORS for Open WebUI direct connections (browser-side)
