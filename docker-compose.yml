@@ -6,6 +6,13 @@ services:
     image: apache/kafka:3.7.1
     container_name: moe-kafka
     restart: always
+    healthcheck:
+      # TCP probe on the broker port (image has bash, no nc) — detects hangs.
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9092"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     ports:
       - "127.0.0.1:${KAFKA_HOST_PORT}:9092"
     environment:
@@ -43,6 +50,13 @@ services:
     container_name: neo4j-knowledge
     profiles: [neo4j]
     restart: always
+    healthcheck:
+      # TCP probe on the Bolt port (image has bash) — detects Bolt hangs.
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/7687"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     ports:
       - "127.0.0.1:${NEO4J_HTTP_PORT}:7474"   # Browser UI
       - "127.0.0.1:${NEO4J_BOLT_PORT}:7687"   # Bolt
@@ -101,6 +115,13 @@ services:
       dockerfile: Dockerfile
     container_name: langgraph-orchestrator
     restart: always
+    healthcheck:
+      # Hits the FastAPI /health endpoint (python3 is present; image has no curl).
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 90s
     ports:
       - "${LANGGRAPH_HOST_PORT}:8000"
     networks:
@@ -190,6 +211,12 @@ services:
     image: valkey/valkey:8-alpine
     container_name: terra_cache
     restart: always
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 30s
+      timeout: 4s
+      retries: 3
+      start_period: 10s
     command: [
       "valkey-server",
       "--requirepass", "${REDIS_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}",
@@ -218,6 +245,13 @@ services:
     image: chromadb/chroma:1.5.9
     container_name: chromadb-vector
     restart: always
+    healthcheck:
+      # TCP probe on the Chroma API port (image has bash, no curl/wget).
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     # No host port published, and attached ONLY to the internal (egress-blocked)
     # chroma_internal network — defence-in-depth for CVE-2026-45829: the server
     # cannot reach the internet to fetch a malicious model repo, and is reachable
