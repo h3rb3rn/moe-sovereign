@@ -822,16 +822,20 @@ _last_loaded_models: Dict[str, set] = {}
 
 async def _gauge_updater_loop():
     """Periodically update gauge metrics from ChromaDB, Neo4j, Valkey, and inference servers (every 60s)."""
+    _cycle = 0
     while True:
         try:
             await asyncio.sleep(60)
+            _cycle += 1
             # ChromaDB document count
             try:
                 PROM_CHROMA_DOCS.set(cache_collection.count())
             except Exception:
                 pass
-            # Neo4j: entities, relations, synthesis nodes, flagged relations
-            if state.graph_manager is not None:
+            # Neo4j: entities, relations, synthesis nodes, flagged relations.
+            # get_stats() does two full relationship scans — refresh only every 5th
+            # cycle (~5 min) since graph size changes slowly; avoids hammering Neo4j.
+            if state.graph_manager is not None and _cycle % 5 == 1:
                 try:
                     stats = await state.graph_manager.get_stats()
                     _ents = stats.get("entities", 0)
@@ -855,7 +859,8 @@ async def _gauge_updater_loop():
                     pass
             # Inference server health + available model count
             try:
-                async with httpx.AsyncClient(timeout=3.0) as _hc:
+                _hc = state.http_client
+                if _hc is not None:
                     for _srv in INFERENCE_SERVERS_LIST:
                         _sname = _srv["name"]
                         _surl  = _srv.get("url", "").rstrip("/")
@@ -1009,12 +1014,17 @@ async def lifespan(app_: FastAPI):
     global app_graph
     state.redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)  # expose to route modules via state.*
     logger.info("✅ Valkey client initialized")
+    # Shared httpx client (connection-pooled, reused by background loops instead
+    # of creating a fresh AsyncClient each cycle). Closed in the finally block.
+    state.http_client = httpx.AsyncClient(timeout=10.0)
     # moe_userdb pool: opened lazily, fails open so SQL-less startup is possible for tests
     try:
         state._userdb_pool = AsyncConnectionPool(
             MOE_USERDB_URL,
-            min_size=1,
-            max_size=5,
+            # min_size=1/max_size=5 was tight: orchestrator, admin UI and background
+            # jobs share this pool, so concurrent writes queued under load.
+            min_size=2,
+            max_size=10,
             open=False,
             kwargs={"autocommit": False},
         )
@@ -1105,6 +1115,9 @@ async def lifespan(app_: FastAPI):
     if state.redis_client is not None:
         await state.redis_client.aclose()
         logger.info("🔌 Valkey client closed")
+    if state.http_client is not None:
+        await state.http_client.aclose()
+        logger.info("🔌 Shared httpx client closed")
     if state._userdb_pool is not None:
         await state._userdb_pool.close()
         logger.info("🔌 moe_userdb pool closed")

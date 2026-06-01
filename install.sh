@@ -592,12 +592,12 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     if [[ "${_upd_eds:-false}" == "true" ]]; then
       if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
         if command -v sg &>/dev/null; then
-          sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.codex.yml up -d"
+          sg "$_upd_group" -c "${_upd_rt[*]} -f docker-compose.codex.yml --profile codex up -d"
         else
-          _sudo "${_upd_rt[@]}" -f docker-compose.codex.yml up -d
+          _sudo "${_upd_rt[@]}" -f docker-compose.codex.yml --profile codex up -d
         fi
       else
-        "${_upd_rt[@]}" -f docker-compose.codex.yml up -d
+        "${_upd_rt[@]}" -f docker-compose.codex.yml --profile codex up -d
       fi
       _bootstrap_codex_stack
     fi
@@ -2127,8 +2127,8 @@ _compose "${_PROFILE_ARGS[@]}" up -d
 if [[ "${INSTALL_CODEX:-false}" == "true" ]]; then
   echo ""
   echo "  Starting MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)..."
-  _compose -f docker-compose.codex.yml pull ${_Q} 2>/dev/null || true
-  _compose -f docker-compose.codex.yml up -d
+  _compose -f docker-compose.codex.yml --profile codex pull ${_Q} 2>/dev/null || true
+  _compose -f docker-compose.codex.yml --profile codex up -d
   _bootstrap_codex_stack
   echo "  MoE Codex started ✓"
 fi

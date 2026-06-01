@@ -25,12 +25,14 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
     from aiokafka import AIOKafkaProducer
     from graph_rag.manager import GraphRAGManager
+    from httpx import AsyncClient
 
 # Set by lifespan() in main.py
 redis_client:   Optional["Redis"]                = None
 graph_manager:  Optional["GraphRAGManager"]      = None
 kafka_producer: Optional["AIOKafkaProducer"]     = None
 _userdb_pool:   Optional["AsyncConnectionPool"]  = None
+http_client:    Optional["AsyncClient"]          = None  # shared, connection-pooled httpx client
 
 # Set to True in lifespan() if INSTALL_ENTERPRISE_DATA_STACK=true AND services respond
 _enterprise_reachable: bool = False

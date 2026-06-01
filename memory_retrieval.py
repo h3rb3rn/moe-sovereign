@@ -145,12 +145,18 @@ class _HttpxOllamaEF:
     already installed in the container.
     """
 
+    # Bounded per-instance embedding cache: identical texts (route prototypes,
+    # repeated queries, re-ingested turns) are embedded once instead of hitting
+    # Ollama every time. FIFO eviction keeps memory bounded (~12 MB at 4096×768f).
+    _CACHE_MAX = 4096
+
     def __init__(self, model_name: str, base_url: str) -> None:
         self._model      = model_name
         self._base_url   = base_url.rstrip("/")
         self._batch_url  = self._base_url + "/api/embed"        # Ollama ≥0.3 batch
         self._legacy_url = self._base_url + "/api/embeddings"   # single-prompt fallback
         self._use_batch  = True  # optimistically try batch first
+        self._cache: dict = {}   # text → np.ndarray (bounded by _CACHE_MAX)
 
     def name(self) -> str:
         """ChromaDB EmbeddingFunction interface — called as method, not property."""
@@ -171,6 +177,18 @@ class _HttpxOllamaEF:
         return self(input)
 
     def __call__(self, input: list[str]) -> list:
+        # Serve from the per-instance cache where possible; only embed the misses.
+        texts = list(input)
+        missing = [t for t in texts if t not in self._cache]
+        if missing:
+            fetched = self._embed_uncached(missing)
+            for t, emb in zip(missing, fetched):
+                if len(self._cache) >= self._CACHE_MAX:
+                    self._cache.pop(next(iter(self._cache)))  # FIFO eviction
+                self._cache[t] = emb
+        return [self._cache[t] for t in texts]
+
+    def _embed_uncached(self, input: list[str]) -> list:
         import httpx
         import numpy as np  # ChromaDB 1.5+ expects numpy.ndarray, not plain lists
         if self._use_batch:

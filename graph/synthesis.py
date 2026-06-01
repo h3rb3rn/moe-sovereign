@@ -158,13 +158,20 @@ async def merger_node(state_: AgentState):
     # Categories the judge had to step in on — collected for the judge-aware
     # Thompson reward signal recorded after the loop (see below).
     _judge_refined_cats: set = set()
-    if JUDGE_REFINE_MAX_ROUNDS > 0 and expert_results:
-        for _refine_round in range(JUDGE_REFINE_MAX_ROUNDS):
+    # Cost-gate the refinement loop: simple queries get at most one round. Each
+    # round costs 1 judge call + N expert re-invocations, so capping trivial/
+    # moderate requests to a single pass saves LLM calls on the cheap paths
+    # without hurting complex multi-task answers (which keep the full budget).
+    _max_refine = JUDGE_REFINE_MAX_ROUNDS
+    if state_.get("complexity_level") in ("trivial", "moderate"):
+        _max_refine = min(1, JUDGE_REFINE_MAX_ROUNDS)
+    if _max_refine > 0 and expert_results:
+        for _refine_round in range(_max_refine):
             low_conf_list = [r for r in expert_results if _parse_expert_confidence(r) == "low"]
             if not low_conf_list:
                 break
             _judge_refined_cats.update(_expert_category(r) for r in low_conf_list)
-            await _report(f"🔄 Refinement round {_refine_round + 1}/{JUDGE_REFINE_MAX_ROUNDS}: "
+            await _report(f"🔄 Refinement round {_refine_round + 1}/{_max_refine}: "
                           f"{len(low_conf_list)} low-confidence experts")
             # Judge generates feedback — enriched with web/graph context
             _ctx_snippet = ""
