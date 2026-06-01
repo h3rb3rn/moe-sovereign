@@ -103,6 +103,9 @@ services:
     restart: always
     ports:
       - "${LANGGRAPH_HOST_PORT}:8000"
+    networks:
+      - default          # internet egress + all other services (kafka, neo4j, redis, ...)
+      - chroma_internal  # reach chromadb-vector on its egress-blocked network
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -206,14 +209,21 @@ services:
 
   # --- ChromaDB (Vektorspeicher für RAG) ---
   chromadb-vector:
-    # Pinned (was :latest) — CVE-2026-45829 "ChromaToast" pre-auth RCE affects
-    # 1.0.0–1.5.8; 1.5.9 is the latest stable release. Network exposure is also
-    # restricted to loopback below (the advisory's primary mitigation).
+    # CVE-2026-45829 "ChromaToast": pre-auth code-injection RCE via trust_remote_code
+    # on the collections endpoint. Affects ALL versions >= 1.0.0 — NO patched version
+    # exists yet, so this pin is for reproducibility, NOT a fix. Actual mitigation:
+    # the server is bound to loopback only (see ports below) and is not reverse-proxied,
+    # so the unauthenticated endpoint is unreachable from outside the host. Revisit
+    # the pin once upstream ships a patched release.
     image: chromadb/chroma:1.5.9
     container_name: chromadb-vector
     restart: always
-    ports:
-      - "127.0.0.1:${CHROMA_HOST_PORT}:8000" # Host Port 8001 -> Container Port 8000
+    # No host port published, and attached ONLY to the internal (egress-blocked)
+    # chroma_internal network — defence-in-depth for CVE-2026-45829: the server
+    # cannot reach the internet to fetch a malicious model repo, and is reachable
+    # only by the orchestrator via the `chromadb-vector` DNS name (not a host port).
+    networks:
+      - chroma_internal
     environment:
       - IS_PERSISTENT=TRUE
       - ANONYMIZED_TELEMETRY=FALSE
@@ -694,4 +704,11 @@ networks:
   authentik_network:
     # Shared network for Authentik server/worker/db/redis and the MoE app.
     # Created automatically when the "authentik" profile is active.
+    driver: bridge
+  chroma_internal:
+    # Egress-blocked network for ChromaDB (CVE-2026-45829 defence-in-depth):
+    # internal=true removes the gateway, so the chromadb server cannot reach the
+    # internet to download a malicious model repo (the RCE's delivery step).
+    # Only services also attached here (the orchestrator) can talk to it.
+    internal: true
     driver: bridge
