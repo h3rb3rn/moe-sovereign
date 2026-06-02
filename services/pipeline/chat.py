@@ -108,6 +108,146 @@ class ChatCompletionRequest(BaseModel):
     max_agentic_rounds: Optional[Any] = None
 
 
+def _build_tool_messages(request: "ChatCompletionRequest") -> list:
+    """Convert ChatCompletionRequest messages to plain dicts for upstream."""
+    messages = []
+    for m in request.messages:
+        msg: dict = {"role": m.role}
+        if m.role == "tool":
+            msg["content"] = _oai_content_to_str(m.content) if m.content else ""
+            if hasattr(m, "tool_call_id") and m.tool_call_id:
+                msg["tool_call_id"] = m.tool_call_id
+            if hasattr(m, "name") and m.name:
+                msg["name"] = m.name
+        elif m.role == "assistant" and hasattr(m, "tool_calls") and m.tool_calls:
+            msg["tool_calls"] = m.tool_calls
+            if m.content:
+                msg["content"] = _oai_content_to_str(m.content)
+        else:
+            msg["content"] = _oai_content_to_str(m.content) if m.content else ""
+        messages.append(msg)
+    return messages
+
+
+def _normalise_tool_calls_response(upstream: dict, chat_id: str, tool_model: str) -> dict:
+    """Normalise an upstream non-streaming response for OpenAI clients.
+
+    - Overrides id with the gateway chat_id.
+    - Ensures content="" (not null) when tool_calls are present — some clients
+      treat null content as an empty/failed response.
+    - Strips the non-standard 'reasoning' field (Qwen3 thinking trace) that
+      some clients do not recognise.
+    """
+    upstream["id"] = chat_id
+    upstream.setdefault("object", "chat.completion")
+    upstream.setdefault("model", tool_model)
+    for choice in upstream.get("choices", []):
+        msg = choice.get("message", {})
+        if msg.get("tool_calls"):
+            if msg.get("content") is None:
+                msg["content"] = ""
+            msg.pop("reasoning", None)
+    return upstream
+
+
+async def _handle_tool_calls(
+    request: "ChatCompletionRequest",
+    chat_id: str,
+    tool_model: str,
+    tool_base_url: str,
+    tool_token: str,
+):
+    """Direct LLM passthrough that preserves tool_calls in the response.
+
+    Bypasses the planner/experts/merger pipeline entirely so the model's
+    tool_calls (or final text answer) reach the client intact. Called when
+    request.tools is present or messages contain role='tool' entries.
+
+    Returns a StreamingResponse (SSE) when request.stream is True, otherwise
+    a plain dict. Callers must check the type and wrap accordingly.
+    """
+    messages = _build_tool_messages(request)
+
+    payload: dict = {
+        "model":    tool_model,
+        "messages": messages,
+        "stream":   False,   # always fetch non-streaming upstream; we re-stream below if needed
+    }
+    # When the conversation already contains tool-result turns (role='tool'), the
+    # model must synthesise those results into a text response — not call more
+    # tools. Omitting `tools` from the follow-up request forces a text response
+    # and prevents models that lack strong instruction-following from looping.
+    _has_tool_results = any(m.get("role") == "tool" for m in messages)
+    if request.tools and not _has_tool_results:
+        payload["tools"] = request.tools
+        if request.tool_choice:
+            payload["tool_choice"] = request.tool_choice
+    if request.temperature is not None:
+        payload["temperature"] = request.temperature
+    if request.max_tokens:
+        payload["max_tokens"] = request.max_tokens
+
+    error_response = {
+        "id": chat_id, "object": "chat.completion",
+        "created": int(time.time()), "model": tool_model,
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant",
+                                 "content": "[Tool-calling error — check logs]"}}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            r = await client.post(
+                tool_base_url.rstrip("/") + "/chat/completions",
+                json=payload,
+                headers={"Authorization": f"Bearer {tool_token}",
+                         "Content-Type": "application/json"},
+            )
+            r.raise_for_status()
+            upstream = r.json()
+    except Exception as e:
+        logger.error(f"Tool-calls passthrough failed: {e}")
+        upstream = error_response
+
+    upstream = _normalise_tool_calls_response(upstream, chat_id, tool_model)
+
+    if not request.stream:
+        return upstream
+
+    # Client requested streaming (SSE) — wrap the single non-streaming
+    # response as a minimal SSE stream so clients using stream=True
+    # (e.g. Hermes) receive the expected text/event-stream format.
+    async def _sse_wrap():
+        choices = upstream.get("choices", [{}])
+        ch = choices[0] if choices else {}
+        msg = ch.get("message", {})
+        finish_reason = ch.get("finish_reason", "stop")
+        created = upstream.get("created", int(time.time()))
+        model_id = upstream.get("model", tool_model)
+
+        # Opening delta (role)
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+
+        # If tool_calls: emit as a single delta chunk
+        tool_calls = msg.get("tool_calls")
+        if tool_calls:
+            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'tool_calls': tool_calls, 'content': msg.get('content', '')}, 'finish_reason': None}]})}\n\n"
+        elif msg.get("content"):
+            # Plain text response — emit content
+            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
+
+        # Finish chunk
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
+
+        # Usage chunk (separate, choices=[])
+        usage = upstream.get("usage", {})
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [], 'usage': usage})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_sse_wrap(), media_type="text/event-stream")
+
+
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     from main import stream_response, _is_openwebui_internal, _handle_internal_direct, _stream_native_llm
     async def _ol_start(*a, **kw): return None   # lineage owned by moe-codex
@@ -571,6 +711,41 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _moe_resp_headers["X-MoE-Budget-Daily-Limit"] = str(_daily_limit)
         except Exception:
             pass
+
+    # --- Tool-Calling Passthrough ---
+    # When the request carries `tools` (function definitions) or messages with
+    # role='tool' (tool-result turns), skip the planner/experts/merger pipeline
+    # and forward directly to the template's judge model. The judge (e.g.
+    # qwen3.6:35b) natively supports OpenAI function-calling and returns
+    # tool_calls that the client (e.g. Hermes) can act on.
+    _has_tools = bool(request.tools) or any(
+        getattr(m, "role", None) == "tool" for m in request.messages
+    )
+    if _has_tools:
+        _raw_judge = (_tmpl_prompts.get("judge_model_override") or "").strip()
+        _tc_model, _, _tc_ep = _raw_judge.partition("@")
+        _tc_url   = _tmpl_prompts.get("judge_url_override") or URL_MAP.get(_tc_ep.strip(), "")
+        _tc_token = _tmpl_prompts.get("judge_token_override") or TOKEN_MAP.get(_tc_ep.strip(), "ollama")
+        if _tc_url and _tc_model:
+            logger.info(
+                f"🔧 Tool-calling passthrough: model={_tc_model} stream={request.stream} "
+                f"tools={len(request.tools or [])} tool_msgs={sum(1 for m in request.messages if getattr(m,'role','')=='tool')}"
+            )
+            _t_tc = time.monotonic()
+            _tc_resp = await _handle_tool_calls(request, chat_id, _tc_model, _tc_url, _tc_token)
+            PROM_REQUESTS.labels(mode="tool", cache_hit="false",
+                                 user_id=(user_id or "anon")).inc()
+            PROM_RESPONSE_TIME.labels(mode="tool").observe(time.monotonic() - _t_tc)
+            # _handle_tool_calls returns StreamingResponse for stream=True, dict otherwise
+            if isinstance(_tc_resp, StreamingResponse):
+                if _moe_resp_headers:
+                    for _hk, _hv in _moe_resp_headers.items():
+                        _tc_resp.headers[_hk] = _hv
+                return _tc_resp
+            if _moe_resp_headers:
+                return JSONResponse(content=_tc_resp, headers=_moe_resp_headers)
+            return _tc_resp
+        logger.warning("⚠️ Tool-calling passthrough: no judge URL configured — falling through to pipeline")
 
     if request.stream:
         _inner = stream_response(user_input, chat_id, mode, chat_history=history,
