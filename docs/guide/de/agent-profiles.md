@@ -116,7 +116,7 @@ Erstelle oder bearbeite `~/.config/opencode/config.toml`:
 name = "MoE Sovereign"
 base_url = "https://your-moe-instance.example.com/v1"
 api_key = "moe-sk-xxxxxxxx..."
-models = ["moe-reference-30b-balanced"]
+models = ["moe-local-sovereign"]
 ```
 
 Dann OpenCode starten:
@@ -146,7 +146,7 @@ OpenAI-kompatiblen Endpunkt.
 ```bash
 export OPENAI_BASE_URL=https://your-moe-instance.example.com/v1
 export OPENAI_API_KEY=moe-sk-xxxxxxxx...
-export OPENAI_MODEL=moe-reference-30b-balanced
+export OPENAI_MODEL=moe-local-sovereign
 
 claw-code
 ```
@@ -174,7 +174,7 @@ OpenAI-kompatible Backends.
 export OPENAI_BASE_URL=https://your-moe-instance.example.com
 export OPENAI_API_KEY=moe-sk-xxxxxxxx...
 
-codex --model moe-reference-30b-balanced
+codex --model moe-local-sovereign
 ```
 
 ### Hinweise
@@ -199,7 +199,7 @@ OpenAI-kompatible Backends ueber Kommandozeilenparameter oder Umgebungsvariablen
 ```bash
 aider --openai-api-base https://your-moe-instance.example.com/v1 \
       --openai-api-key moe-sk-xxxxxxxx... \
-      --model openai/moe-reference-30b-balanced
+      --model openai/moe-local-sovereign
 ```
 
 ### Umgebungsvariablen (Alternative)
@@ -208,7 +208,7 @@ aider --openai-api-base https://your-moe-instance.example.com/v1 \
 export OPENAI_API_BASE=https://your-moe-instance.example.com/v1
 export OPENAI_API_KEY=moe-sk-xxxxxxxx...
 
-aider --model openai/moe-reference-30b-balanced
+aider --model openai/moe-local-sovereign
 ```
 
 ### Hinweise

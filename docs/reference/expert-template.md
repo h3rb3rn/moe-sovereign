@@ -13,7 +13,7 @@ It serves as a reference for all system prompts, planner, and judge configuratio
 | **Template ID** | `tmpl-d2300eb6` |
 | **Name** | `moe-distributed-enterprise` |
 | **Description** | Tuned parallelized MoE infrastructure LLM ensemble |
-| **Planner model** | `gemma4:31b` @ N04-RTX |
+| **Planner model** | `phi4:14b-fp16` @ N04-RTX |
 | **Judge/Merger model** | `llama-3-3-70b` @ AIHUB |
 
 ---
@@ -261,11 +261,38 @@ The template distributes experts by model size and GPU capacity:
 
 | GPU node | Models | Experts |
 |----------|---------|----------|
-| **N04-RTX** | `glm-4.7-flash`, `qwq:32b`, `qwen3:32b`, `translategemma:27b`, `deepseek-r1:32b`, `gemma4:31b` (planner) | general, math, technical_support, translation, reasoning + planner |
+| **N04-RTX** | `glm-4.7-flash`, `qwq:32b`, `qwen3:32b`, `translategemma:27b`, `deepseek-r1:32b`, `phi4:14b-fp16` (planner) | general, math, technical_support, translation, reasoning + planner |
 | **N06-M10** | `mistral-small:24b`, `qwen3-coder:30b`, `qwen2.5vl:32b` | creative_writer, code_reviewer, vision |
-| **N07-GT** | `phi4:14b` | data_analyst |
+| **N07-GT** | — | **offline since 2026-06-02 (defective GPU)** |
 | **N09-M60** | `meditron:7b`, `sauerkrautlm-7b-hero`, `command-r:35b` | medical_consult, legal_advisor, science |
 | **AIHUB** | `llama-3-3-70b` | Judge/Merger |
+
+## Model `role` Field Semantics
+
+Each model entry in the `models` array of an expert category carries a `role` field that
+controls two-tier execution:
+
+| `role` value | Tier | Behaviour |
+|---|---|---|
+| `"always"` | None (forced) | Model always runs, independent of confidence — used for single-expert or ensemble setups |
+| `"primary"` | T1 | Runs first. If confidence is `high`, T2 is skipped (`t1_high_skip`). On trivial queries with `TRIVIAL_LOW_CONF_RESCUE_ENABLED=true`, T2 still runs if confidence is `low` or the response is empty |
+| `"fallback"` | T2 | Only runs when T1 is insufficient (not high-confidence, or low-confidence rescue). Typically a larger, slower model |
+
+The `cost_tier` flag (set by complexity routing when the query is classified as `trivial`)
+further constrains T2: on trivial queries, medium T1 confidence keeps the saving (`t1_cost_kept`);
+only `low` confidence or an empty response triggers the rescue. This balance is configurable via
+`TRIVIAL_LOW_CONF_RESCUE_ENABLED` (default `true`).
+
+**Example — single-tier (always):**
+```json
+{"model": "qwen3.6:35b", "endpoint": "N04-RTX", "role": "always"}
+```
+
+**Example — two-tier (primary + fallback):**
+```json
+{"model": "llama3.1:8b",   "endpoint": "N04-RTX", "role": "primary"},
+{"model": "qwen3.6:35b",   "endpoint": "N04-RTX", "role": "fallback"}
+```
 
 ---
 

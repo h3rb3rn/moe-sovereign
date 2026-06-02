@@ -316,7 +316,7 @@ verarbeitet. Jedes Profil bildet auf einen bestimmten Verarbeitungsmodus ab.
 |------|--------------|---------|
 | `name` | Anzeigename in Clients | `cc-ref-native` |
 | `moe_mode` | Verarbeitungsmodus | `native`, `moe_reasoning`, `moe_orchestrated` |
-| `tool_model` | LLM fuer Tool-Ausfuehrung | `gemma4:31b` |
+| `tool_model` | LLM fuer Tool-Ausfuehrung | `phi4:14b-fp16` |
 | `tool_endpoint` | Inferenz-Server-Knoten | `N04-RTX` |
 | `expert_template_id` | Experten-Vorlage fuer Orchestrated-Modus | `tmpl-d2300eb6` |
 | `tool_max_tokens` | Max. Ausgabe-Tokens fuer Tool Calls | `4096` |
@@ -345,7 +345,7 @@ Kompromisse abgestimmt sind:
 
 | Profil | Tool-Modell | Thinking | Max Tokens | Ziel-Latenz |
 |--------|------------|----------|------------|-------------|
-| `cc-innovator-fast` | `gemma4:31b` | Aus | 4.096 | 30-90s |
+| `cc-innovator-fast` | `phi4:14b-fp16` | Aus | 4.096 | 30-90s |
 | `cc-innovator-balanced` | `Qwen3-Coder-Next` | An | 8.192 / 16K Reasoning | 2-5 Min |
 | `cc-innovator-deep` | `Qwen3-Coder-Next` | An | 8.192 / 32K Reasoning | 5-15 Min |
 

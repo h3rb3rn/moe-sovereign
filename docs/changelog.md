@@ -353,7 +353,7 @@ Expert tasks in the plan now support an optional `depends_on` field. Tasks witho
 
 ### Added — Adaptive Context Budget per Model
 
-`context_budget.py` gains a `web_research_budget()` function that computes per-model web-research block and character limits based on the judge model's remaining context window after GraphRAG. Fallback models (gemma4:31b 8 K, qwen3.6:35b 32 K) receive proportionally tighter limits. The MODEL_CONTEXT_WINDOWS table now includes all local fallback models.
+`context_budget.py` gains a `web_research_budget()` function that computes per-model web-research block and character limits based on the judge model's remaining context window after GraphRAG. Fallback models (phi4:14b-fp16 16 K, qwen3.6:35b 32 K) receive proportionally tighter limits. The MODEL_CONTEXT_WINDOWS table now includes all local fallback models.
 
 ### Added — GraphRAG On-Demand
 

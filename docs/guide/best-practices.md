@@ -55,7 +55,7 @@ Almost any instruction-following model works as an Expert.
 | Code Generation | `qwen3-coder:30b` | 370 languages, strong tool calling |
 | Reasoning | `deepseek-r1:32b` | Best chain-of-thought on consumer GPUs |
 | Security Analysis | `devstral-small-2:24b` | CWEval-aware, OWASP coverage |
-| Research | `gemma4:31b` | Strong general knowledge |
+| Research | `qwen3.6:35b` | Strong general knowledge and reasoning |
 | Math | `phi4:14b` + MCP tools | MCP handles calculation, LLM extracts params |
 | Legal | `gpt-oss:20b` | German law knowledge, Gesetze-im-Internet tools |
 
@@ -140,7 +140,7 @@ The CISO sees at a glance whether data leaves the network.
 
 | Profile Type | Tool Model | Thinking | Max Tokens | Use Case |
 |-------------|-----------|----------|------------|----------|
-| Fast | `gemma4:31b` | off | 4,096 | Quick edits, simple questions |
+| Fast | `phi4:14b-fp16` | off | 4,096 | Quick edits, simple questions |
 | Balanced | `Qwen3-Coder-Next` | on | 8,192 / 16K reasoning | Daily development |
 | Deep | `Qwen3-Coder-Next` | on | 8,192 / 32K reasoning | Architecture, security audits |
 
