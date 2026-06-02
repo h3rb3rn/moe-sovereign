@@ -83,14 +83,23 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 from pipeline.state import AgentState
 
 
-def _sanitize_plan(raw: list, fallback_input: str) -> list:
+def _sanitize_plan(raw: list, fallback_input: str,
+                   user_expert_cats: set | None = None) -> list:
     """
     Ensures all plan entries are valid task dicts.
     Strings, empty dicts or dicts without 'task' key are discarded.
     Returns at least one fallback task.
+
+    user_expert_cats: categories defined in the active user template — these are
+    valid even when not present in the global EXPERTS registry.
     """
     NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
-    valid_cats = set(EXPERTS.keys()) | NON_EXPERT_CATEGORIES | {"agentic_coder", "memory_recall"}
+    valid_cats = (
+        set(EXPERTS.keys())
+        | NON_EXPERT_CATEGORIES
+        | {"agentic_coder", "memory_recall"}
+        | (user_expert_cats or set())
+    )
     result = []
     for item in raw:
         if not isinstance(item, dict):
@@ -589,7 +598,8 @@ JSON array:"""
                         _output_skill = _skill_body
                         logger.info(f"🎯 Planner suggested skill: /{_skill_name}")
                     break
-            plan = _sanitize_plan(raw, state_["input"])
+            _user_expert_cats = set((state_.get("user_experts") or {}).keys())
+            plan = _sanitize_plan(raw, state_["input"], _user_expert_cats)
             categories = [t.get("category", "?") for t in plan]
             logger.info(f"📋 Plan ({len(plan)} Tasks): {json.dumps(plan, ensure_ascii=False)}")
             await _report(f"📋 Plan: {len(plan)} Task(s) → {', '.join(categories)}")

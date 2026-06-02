@@ -1,0 +1,200 @@
+{
+  "name": "quality_constellation_focused",
+  "version": "1.0",
+  "description": "Curated output-quality benchmark for comparing expert constellations on N04-RTX. Covers core experts (math, code_reviewer, reasoning, science) and four newly invented experts (data_analysis, creative_writing, devops_sre, security_analysis). Each case is judge-scored (0-10) plus deterministic keyword/numeric checks. Sovereign-only.",
+  "author": "constellation-experiment",
+  "created_at": "2026-06-02",
+  "test_cases": [
+    {
+      "id": "math-compound-interest",
+      "name": "Compound interest (monthly)",
+      "category": "math",
+      "type": "single_turn",
+      "prompt": "Compute exactly: a principal of 10000 EUR at 4.5% nominal annual interest, compounded monthly, after 3 years. Give the final amount rounded to 2 decimals and show the formula.",
+      "expected_answer": {
+        "final_amount_eur": 11442.43,
+        "formula": "P*(1+r/12)^(12*t)"
+      },
+      "scoring": {
+        "type": "numeric_tolerance",
+        "checks": [
+          {
+            "field": "final_amount",
+            "expected": 11442.43,
+            "tolerance_pct": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "code-sql-injection",
+      "name": "Spot the SQL injection",
+      "category": "code_reviewer",
+      "type": "single_turn",
+      "prompt": "Review this Python function and list every bug or security issue, then give a corrected version:\n\ndef get_user(db, uid):\n    return db.execute('SELECT * FROM users WHERE id = ' + uid).fetchone()",
+      "expected_answer": {
+        "primary_issue": "SQL injection via string concatenation",
+        "fix": "use parameterized query / bound parameters"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "sql injection",
+          "parameter"
+        ],
+        "bonus_keywords": [
+          "prepared",
+          "placeholder",
+          "?",
+          "bound"
+        ]
+      }
+    },
+    {
+      "id": "reasoning-mislabeled-boxes",
+      "name": "Mislabeled boxes logic puzzle",
+      "category": "reasoning",
+      "type": "single_turn",
+      "prompt": "Three boxes are labeled 'Apples', 'Oranges', and 'Mixed'. You are told every label is wrong. You may draw exactly one fruit from exactly one box. From which box do you draw, and explain how that single draw lets you correctly relabel all three boxes.",
+      "expected_answer": {
+        "draw_from": "the box labeled 'Mixed'",
+        "reason": "since all labels are wrong, 'Mixed' is pure; the drawn fruit reveals its true content, the rest follow by elimination"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "mixed"
+        ],
+        "bonus_keywords": [
+          "all labels are wrong",
+          "elimination",
+          "pure",
+          "one fruit"
+        ]
+      }
+    },
+    {
+      "id": "science-rayleigh",
+      "name": "Blue sky and red sunset (Rayleigh)",
+      "category": "science",
+      "type": "single_turn",
+      "prompt": "Explain why the daytime sky is blue but sunsets appear red. Ground your explanation in Rayleigh scattering and the wavelength dependence of scattering.",
+      "expected_answer": {
+        "mechanism": "Rayleigh scattering ~ 1/lambda^4; short (blue) wavelengths scatter more; at sunset light travels a longer path so blue is scattered out, leaving red"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "rayleigh",
+          "wavelength"
+        ],
+        "bonus_keywords": [
+          "scatter",
+          "blue",
+          "longer path",
+          "1/",
+          "lambda"
+        ]
+      }
+    },
+    {
+      "id": "data-groupby-topregion",
+      "name": "Pandas: sales per region",
+      "category": "data_analysis",
+      "type": "single_turn",
+      "prompt": "You have a pandas DataFrame `df` with columns 'region' (string) and 'sales' (float). Write Python code to compute total sales per region, sort descending, and print the top region. Briefly explain each step.",
+      "expected_answer": {
+        "approach": "df.groupby('region')['sales'].sum().sort_values(ascending=False); idxmax/head(1) for top region"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "groupby",
+          "sum",
+          "region"
+        ],
+        "bonus_keywords": [
+          "sort_values",
+          "ascending=false",
+          "idxmax",
+          "head"
+        ]
+      }
+    },
+    {
+      "id": "creative-lighthouse-poem",
+      "name": "Constrained lighthouse poem",
+      "category": "creative_writing",
+      "type": "single_turn",
+      "prompt": "Write a 4-line poem about a lighthouse. It must contain the words 'storm', 'beam', and 'silent', stay under 50 words, and have a consistent rhythm. Output only the poem.",
+      "expected_answer": {
+        "constraints": "4 lines; contains storm, beam, silent; <50 words; coherent imagery"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "storm",
+          "beam",
+          "silent"
+        ],
+        "bonus_keywords": [
+          "light",
+          "sea",
+          "night",
+          "wave"
+        ]
+      }
+    },
+    {
+      "id": "devops-crashloopbackoff",
+      "name": "Diagnose CrashLoopBackOff",
+      "category": "devops_sre",
+      "type": "single_turn",
+      "prompt": "A Kubernetes pod is stuck in CrashLoopBackOff. Give a systematic, ordered diagnostic procedure to find the root cause, naming the concrete kubectl commands you would run at each step.",
+      "expected_answer": {
+        "steps": "kubectl describe pod (events), kubectl logs --previous, check exit code/OOMKilled, liveness/readiness probes, resource limits, config/secret/mounts"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "logs",
+          "describe"
+        ],
+        "bonus_keywords": [
+          "--previous",
+          "events",
+          "oomkilled",
+          "readiness",
+          "liveness",
+          "exit code"
+        ]
+      }
+    },
+    {
+      "id": "security-md5-passwords",
+      "name": "MD5 password storage risks",
+      "category": "security_analysis",
+      "type": "single_turn",
+      "prompt": "A web application stores user passwords hashed with MD5. Explain the concrete security risks and describe the correct modern approach to password storage.",
+      "expected_answer": {
+        "risks": "MD5 fast + broken (collisions), no salt -> rainbow tables, brute-force",
+        "correct": "slow salted KDF: bcrypt/scrypt/argon2 with per-user salt"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "md5",
+          "salt"
+        ],
+        "bonus_keywords": [
+          "bcrypt",
+          "argon2",
+          "scrypt",
+          "rainbow",
+          "brute",
+          "collision"
+        ]
+      }
+    }
+  ]
+}
