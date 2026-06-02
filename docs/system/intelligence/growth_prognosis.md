@@ -256,7 +256,7 @@ months of solo learning in minutes — subject to admin approval and trust floor
 | **Enterprise** | A100, H100 | 40–80 GB HBM2e/3 | NVLink | 70B FP16 | Data-center; parallel tensor ops |
 
 The current production cluster spans Legacy and Consumer/Semi-Pro:
-- **N07-GT**: GT 1060 (6 GB) — Legacy
+- **N07-GT**: GTX 1060 (6 GB) — Legacy, **offline since 2026-06-02 (defective GPU)**
 - **N06-M10** ×4, **N11-M10** ×4: Tesla M10 (8 GB each) — Legacy enterprise (passthrough)
 - **N09-M60**: Tesla M60 (16 GB) — Legacy enterprise
 - **N04-RTX**: RTX series (24 GB) — Consumer/Semi-Pro

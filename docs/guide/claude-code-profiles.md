@@ -13,7 +13,7 @@ Profile: cc-ref-native
 Mode:    native
 ```
 
-The request is forwarded **directly** to a single LLM (e.g., `gemma4:31b`)
+The request is forwarded **directly** to a single LLM (e.g., `phi4:14b-fp16`)
 without any MoE pipeline involvement. The model handles tool calls natively.
 
 - **Latency**: 5-30 seconds
@@ -72,7 +72,7 @@ Navigate to **CC Profile** in the admin navigation. Each profile has:
 |-------|-------------|
 | `name` | Display name shown in clients |
 | `moe_mode` | `native`, `moe_reasoning`, or `moe_orchestrated` |
-| `tool_model` | LLM for tool execution (e.g., `gemma4:31b`) |
+| `tool_model` | LLM for tool execution (e.g., `phi4:14b-fp16`) |
 | `tool_endpoint` | Inference server node (e.g., `N04-RTX`) |
 | `expert_template_id` | Expert template for orchestrated mode (optional) |
 | `tool_max_tokens` | Max output tokens for tool calls — see note below |
@@ -143,7 +143,7 @@ All three profiles use `moe_orchestrated` mode with dedicated expert templates.
 
 | Profile | ID | Tool Model | Target Latency | Thinking | Max Tokens |
 |---------|-----|-----------|----------------|----------|------------|
-| Fast | `cc-innovator-fast` | `gemma4:31b` | 30-90s | off | 4,096 |
+| Fast | `cc-innovator-fast` | `phi4:14b-fp16` | 30-90s | off | 4,096 |
 | Balanced | `cc-innovator-balanced` | `Qwen3-Coder-Next` | 2-5 min | on | 8,192 / 16K reasoning |
 | Deep | `cc-innovator-deep` | `Qwen3-Coder-Next` | 5-15 min | on | 8,192 / 32K reasoning |
 

@@ -584,7 +584,7 @@ for using only 7–9B models distributed across 8 Tesla M10 nodes (8 GB VRAM eac
 
 | Component | Model | Node |
 |---|---|---|
-| Planner | phi4:14b | N07-GT (2× GT 1060, 12 GB total) |
+| Planner | phi4:14b | N07-GT (1× GTX 1060 6 GB — **shut down 2026-06-02, defective GPU**) |
 | Judge | phi4:14b | N07-GT |
 | code_reviewer | qwen2.5-coder:7b | N06-M10-01 |
 | math | mathstral:7b | N06-M10-02 |

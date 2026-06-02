@@ -42,7 +42,7 @@ Each profile defines:
 
 | Field | Meaning | Example value |
 |------|-----------|--------------|
-| `tool_model` | Local model for tool execution | `gemma4:31b` |
+| `tool_model` | Local model for tool execution | `phi4:14b-fp16` |
 | `tool_endpoint` | GPU node | `N04-RTX` |
 | `moe_mode` | Orchestration mode | `native` / `moe_orchestrated` / `moe_reasoning` |
 | `tool_max_tokens` | Max output tokens per tool call | `8192` |

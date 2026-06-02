@@ -5,6 +5,79 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.7.0] - 2026-06-02
+
+### Added
+
+- **OpenAI Tool-Calling Passthrough** (`services/pipeline/chat.py` `_handle_tool_calls()`): when a
+  request carries a `tools` array or messages with `role: "tool"`, the gateway skips the
+  planner/experts/merger pipeline and forwards directly to the template's judge model. Supports
+  streaming (SSE) and non-streaming responses; normalises `content: null` and strips the
+  non-standard `reasoning` field for strict OpenAI-compatible clients (Hermes, Open-WebUI).
+  Follow-up `role: "tool"` turns omit `tools` in the upstream payload to prevent model tool-call
+  loops. Capability **#44**. (PR #226)
+
+- **Two-Tier Escalation Telemetry** (`metrics.py`):
+  - `moe_tier_escalation_total{category, decision}` — per-category counter for four outcomes:
+    `t1_high_skip` (T2 saved), `t1_cost_kept` (deliberate saving on trivial tasks), `t1_only`
+    (no T2 configured), `t2_escalated` (T1 insufficient).
+  - `moe_cache_query_distance` histogram — nearest cosine distance per cache lookup with dense
+    buckets around the decision boundaries (0.08 / 0.25 / 0.50) for threshold calibration.
+  - Structured per-call expert log line: `📊 expert_call model=… node=… tier=… cat=… conf=…`
+    in `graph/expert.py`. Capability **#45**. (PR #222)
+
+- **`t1_cost_kept` Telemetry Label** — splits the former `t1_only` bucket into two distinct
+  outcomes: `t1_cost_kept` (T2 was available but a good-enough medium T1 answer kept the cost
+  saving) vs `t1_only` (no T2 tier configured at all). Pure function `_tier2_escalation_decision()`
+  with deterministic unit-test coverage. (PR #224)
+
+- **Constellation Benchmark Suite** (`benchmarks/datasets/quality_constellation_v1.json`,
+  `run_overnight_constellation.sh`): curated 11-question quality dataset across math, code,
+  reasoning, science, and four new expert categories (data_analysis, creative_writing, devops_sre,
+  security_analysis). Overnight runner covers all three constellation templates with LLM-judge
+  scoring (mistral-small:24b) + GAIA Level 1/2 sanity run.
+
+- **Expert Templates**: `moe-quality-optimal` (best-per-category allrounder: qwen2.5-coder:32b code,
+  solar-pro:22b creative, qwen3-coder:30b devops, deepseek-r1:32b security) and `hermes-sovereign`
+  (hermes3:8b for tool-calling / MCP, qwen3.6:35b for content analysis). Both on N04-RTX.
+
+- **`moe-mail-classify` Template** — lightweight single-expert classifier (qwen2.5:7b, no
+  pipeline overhead) for batch email categorisation. Used by the Hermes mail-sort MCP tool.
+
+### Fixed
+
+- **`moe_requests_total` + `moe_response_duration_seconds` not incremented for `stream=false`
+  clients**: the non-streaming path in `services/pipeline/chat.py` was missing the Prometheus
+  counter increments that the streaming path had. Affected all load tests, Open-WebUI, and
+  any client using `"stream": false`. (PR #222)
+
+- **`_sanitize_plan()` silently dropped user-template expert categories**: categories defined
+  only in a user template (e.g. `mail_classify`, `devops_sre`, `creative_writing`, `tool_agent`)
+  were not in the global `EXPERTS` registry and were silently rewritten to `"general"`, bypassing
+  the intended specialist model. The active template's category set is now passed as an additional
+  valid set. (PR #225)
+
+- **`CACHE_HIT_THRESHOLD=0.0` in `.env` disabled L1 semantic cache**: a misconfigured `.env`
+  entry (`dist < 0.0` is never true) killed all L1 cache hits while the comment claimed it
+  "raised for better hit rate". Corrected default in `.env.example` to `0.08` (near-verbatim
+  matches only; broader semantic reuse remains quality-gated via bypass threshold 0.25).
+
+### Changed
+
+- **`_tier2_escalation_decision()` extracted as pure, unit-tested function** (`graph/expert.py`):
+  the inline decision logic is now a module-level function with 14 deterministic test cases
+  (`tests/pipeline/test_tier_escalation.py`), covering normal vs cost-tier paths, mixed ensembles,
+  and the absence of a T2 tier. (PR #223/#224)
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRIVIAL_LOW_CONF_RESCUE_ENABLED` | `true` | Allow a single T2 rescue on trivial queries that return low-confidence T1 answers |
+| `CACHE_HIT_THRESHOLD` | `0.08` | L1 semantic cache hit threshold (cosine distance); previously defaulted to 0.15 in config.py but was overridden to 0.0 in .env |
+
+---
+
 ## [2.6.0] - 2026-05-22
 
 ### Added

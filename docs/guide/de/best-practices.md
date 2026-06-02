@@ -59,7 +59,7 @@ als Experte.
 | Code-Generierung | `qwen3-coder:30b` | 370 Sprachen, starkes Tool Calling |
 | Reasoning | `deepseek-r1:32b` | Bestes Chain-of-Thought auf Consumer-GPUs |
 | Sicherheitsanalyse | `devstral-small-2:24b` | CWEval-faehig, OWASP-Abdeckung |
-| Recherche | `gemma4:31b` | Starkes Allgemeinwissen |
+| Recherche | `phi4:14b-fp16` | Starkes Allgemeinwissen |
 | Mathematik | `phi4:14b` + MCP-Tools | MCP uebernimmt die Berechnung, LLM extrahiert Parameter |
 | Recht | `gpt-oss:20b` | Deutsches Rechtswissen, Gesetze-im-Internet-Tools |
 
@@ -150,7 +150,7 @@ Der CISO sieht auf einen Blick, ob Daten das Netzwerk verlassen.
 
 | Profiltyp | Tool-Modell | Thinking | Max Tokens | Einsatzzweck |
 |-----------|------------|----------|------------|--------------|
-| Fast | `gemma4:31b` | aus | 4.096 | Schnelle Aenderungen, einfache Fragen |
+| Fast | `phi4:14b-fp16` | aus | 4.096 | Schnelle Aenderungen, einfache Fragen |
 | Balanced | `Qwen3-Coder-Next` | an | 8.192 / 16K Reasoning | Tagesgeschaeft Entwicklung |
 | Deep | `Qwen3-Coder-Next` | an | 8.192 / 32K Reasoning | Architektur, Sicherheitsaudits |
 

@@ -308,7 +308,7 @@ API clients. Each profile maps to a specific processing mode.
 |-------|-------------|---------|
 | `name` | Display name shown in clients | `cc-ref-native` |
 | `moe_mode` | Processing mode | `native`, `moe_reasoning`, `moe_orchestrated` |
-| `tool_model` | LLM for tool execution | `gemma4:31b` |
+| `tool_model` | LLM for tool execution | `phi4:14b-fp16` |
 | `tool_endpoint` | Inference server node | `N04-RTX` |
 | `expert_template_id` | Expert template for orchestrated mode | `tmpl-d2300eb6` |
 | `tool_max_tokens` | Max output tokens for tool calls | `4096` |
@@ -336,7 +336,7 @@ expert templates tuned for different quality/speed trade-offs:
 
 | Profile | Tool Model | Thinking | Max Tokens | Target Latency |
 |---------|-----------|----------|------------|----------------|
-| `cc-innovator-fast` | `gemma4:31b` | Off | 4,096 | 30-90s |
+| `cc-innovator-fast` | `phi4:14b-fp16` | Off | 4,096 | 30-90s |
 | `cc-innovator-balanced` | `Qwen3-Coder-Next` | On | 8,192 / 16K reasoning | 2-5 min |
 | `cc-innovator-deep` | `Qwen3-Coder-Next` | On | 8,192 / 32K reasoning | 5-15 min |
 
