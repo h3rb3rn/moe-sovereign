@@ -172,7 +172,7 @@ The orchestrator started as an 11 190-line monolith in `main.py`. A 14-phase spl
 | | Capability | Description |
 |:---:|---|---|
 | **1** | Deterministic Expert Routing | Versioned, auditable templates --- not a probabilistic black box |
-| **2** | Two-Tier Escalation | T1 screens fast; T2 engages only when needed |
+| **2** | Two-Tier Escalation | T1 screens fast; T2 engages only when needed --- incl. a low-confidence rescue that lets a trivial query escalate to T2 when T1 returns weak/empty output (`TRIVIAL_LOW_CONF_RESCUE_ENABLED`) |
 | **3** | Neo4j GraphRAG | Trust-score self-healing, contradiction detection, domain-scoped filters |
 | **4** | Community Knowledge Bundles | Export/import learned knowledge as JSON-LD with regex-based privacy scrubbing (PII, secrets, hostnames) |
 | **5** | 51 MCP Precision Tools | AST-whitelisted --- 100% accuracy on deterministic tasks; includes wikidata_sparql, pubmed_search, crossref_lookup, openalex_search, duckduckgo_search, web_browser (Splash JS rendering), wayback_fetch, github_search_issues with fuzzy label resolution |

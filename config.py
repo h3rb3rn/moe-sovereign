@@ -202,6 +202,11 @@ ROUTING_BANDIT_CONTEXT_BANDS  = int(os.getenv("ROUTING_BANDIT_CONTEXT_BANDS",  "
 # e.g. "2+2" would bypass the precision_tools path), so enable only after measuring.
 TRIVIAL_FAST_PATH_ENABLED  = os.getenv("TRIVIAL_FAST_PATH_ENABLED", "false").lower() in ("1", "true", "yes")
 TRIVIAL_FAST_PATH_CATEGORY = os.getenv("TRIVIAL_FAST_PATH_CATEGORY", "general")
+# When a trivial query is cost-tier-limited to T1 (force_tier1), still allow a
+# Tier-2 rescue if the T1 answer comes back low-confidence/empty. Medium/high T1
+# answers keep the cost saving; only genuine garbage escalates. Disable to keep
+# the strict "trivial never touches T2" behaviour.
+TRIVIAL_LOW_CONF_RESCUE_ENABLED = os.getenv("TRIVIAL_LOW_CONF_RESCUE_ENABLED", "true").lower() in ("1", "true", "yes")
 EXPERT_TIER_BOUNDARY_B    = float(os.getenv("EXPERT_TIER_BOUNDARY_B",   "20"))
 EXPERT_MIN_SCORE          = float(os.getenv("EXPERT_MIN_SCORE",         "0.3"))
 EXPERT_MIN_DATAPOINTS     = int(os.getenv("EXPERT_MIN_DATAPOINTS",      "5"))

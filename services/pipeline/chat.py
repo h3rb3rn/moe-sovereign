@@ -616,6 +616,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     if state.app_graph is None:
         logger.warning("APP-GRAPH-NONE: state id=%d, app_graph=%s", id(state), state.app_graph)
         return JSONResponse(status_code=503, content={"error": {"message": "Orchestrator graph not ready — retry in a few seconds", "type": "service_unavailable", "code": "graph_not_ready"}})
+    _t_start = time.monotonic()
     result = await state.app_graph.ainvoke(
         {"input": user_input, "response_id": chat_id, "mode": mode,
          "user_id": user_id, "api_key_id": api_key_id,
@@ -667,6 +668,13 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     )
     p_tok = result.get("prompt_tokens",     0)
     c_tok = result.get("completion_tokens", 0)
+    # Prometheus: the streaming path records these in its finalizer; the
+    # non-streaming branch must do it too, otherwise moe_requests_total and
+    # the duration histogram stay flat for stream=false clients (load tests).
+    _cache_hit_flag = bool(result.get("cache_hit", False))
+    PROM_REQUESTS.labels(mode=mode, cache_hit=str(_cache_hit_flag).lower(),
+                         user_id=(user_id or "anon")).inc()
+    PROM_RESPONSE_TIME.labels(mode=mode).observe(time.monotonic() - _t_start)
     if user_id != "anon":
         asyncio.create_task(_log_usage_to_db(
             user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
