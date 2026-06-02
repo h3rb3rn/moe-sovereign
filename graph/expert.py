@@ -20,6 +20,7 @@ from config import (
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
+    TRIVIAL_LOW_CONF_RESCUE_ENABLED,
     BENCHMARK_SHADOW_TEMPLATE, BENCHMARK_SHADOW_RATE,
     MCP_URL, GRAPH_VIA_MCP, MAX_GRAPH_CONTEXT_CHARS,
     LITELLM_URL, _SEARXNG_URL, _WEB_SEARCH_FALLBACK_DDG,
@@ -33,6 +34,7 @@ from config import (
 )
 from metrics import (
     PROM_EXPERT_CALLS, PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
+    PROM_TIER_ESCALATION,
     PROM_SELF_EVAL, PROM_COMPLEXITY, PROM_ACTIVE_REQUESTS,
     PROM_TOOL_CALL_DURATION, PROM_TOOL_TIMEOUTS, PROM_TOOL_FORMAT_ERRORS,
     PROM_TOOL_CALL_SUCCESS, PROM_SEMANTIC_MEMORY_STORED, PROM_SEMANTIC_MEMORY_HITS,
@@ -278,6 +280,15 @@ async def expert_worker(state_: AgentState):
                     f"  → [{model_name}/{cat}] Confidence: {conf or '?'} | "
                     f"{usage.get('prompt_tokens', 0)}→{usage.get('completion_tokens', 0)} tok"
                 )
+                # Structured per-call line (greppable for load-test analysis): which
+                # tier/node handled this category, with token cost and confidence.
+                logger.info(
+                    "📊 expert_call model=%s node=%s tier=%s cat=%s tokens=%s->%s conf=%s%s",
+                    model_name, endpoint, model_cfg.get("_tier", "?"), cat,
+                    usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0),
+                    conf or "unknown",
+                    " fallback" if _used_fallback else "",
+                )
                 PROM_CONFIDENCE.labels(level=conf or "unknown", category=cat).inc()
                 # Thompson-sampling reward is no longer recorded here from the
                 # expert's *self-reported* confidence — a confidently-wrong answer
@@ -343,11 +354,17 @@ async def expert_worker(state_: AgentState):
         if not tier1:
             tier1, tier2 = tier2, []
 
-        # Cost-tier enforcement: trivial tasks use at most one T1 expert — skips T2
-        # entirely and keeps only the best-scored T1 to reduce token consumption.
-        if state_.get("force_tier1") and tier1:
+        # Cost-tier enforcement: trivial tasks use at most one T1 expert to reduce
+        # token consumption. T2 is normally skipped — but when the low-confidence
+        # rescue is enabled it stays available as a fallback that only fires if the
+        # single T1 answer comes back low-confidence/empty (see escalation below).
+        cost_tier_t1 = bool(state_.get("force_tier1")) and bool(tier1)
+        if cost_tier_t1:
             tier1 = tier1[:1]  # only the top-scored T1 expert
-            tier2 = []         # T2 never runs for trivial cost-tier tasks
+            if TRIVIAL_LOW_CONF_RESCUE_ENABLED:
+                tier2 = tier2[:1]  # rescue uses at most the single best T2 expert
+            else:
+                tier2 = []         # strict mode: T2 never runs for trivial cost-tier tasks
 
         task_results: List[dict] = []
 
@@ -373,20 +390,39 @@ async def expert_worker(state_: AgentState):
             task_results.extend(t1_results)
 
             if t1_results:
-                t1_has_high = any(
-                    _parse_expert_confidence(r.get("res", "")) == "high"
-                    for r in t1_results if r.get("res")
-                )
-                if t1_has_high or not tier2:
+                t1_confs = [_parse_expert_confidence(r.get("res", "")) for r in t1_results if r.get("res")]
+                t1_has_high = "high" in t1_confs
+                # A low-confidence (or empty/unparseable) T1 answer is the only thing
+                # that justifies the expensive T2 rescue on a trivial cost-tier task —
+                # a 'medium' answer is good enough to keep the saving. On normal tasks
+                # anything below 'high' escalates.
+                t1_is_weak = (not t1_confs) or any(c == "low" for c in t1_confs)
+                if cost_tier_t1:
+                    should_escalate = t1_is_weak
+                else:
+                    should_escalate = not t1_has_high
+                if t1_has_high or not tier2 or not should_escalate:
                     if t1_has_high:
+                        PROM_TIER_ESCALATION.labels(
+                            category=cat,
+                            decision="t1_high_skip" if tier2 else "t1_only",
+                        ).inc()
                         logger.info(f"✅ T1 [{cat}]: high confidence — T2 skipped")
                         await _report(f"✅ T1 [{cat}]: high confidence — T2 skipped")
+                    else:
+                        # T1 kept (no T2 available, or cost-tier with a good-enough answer).
+                        PROM_TIER_ESCALATION.labels(category=cat, decision="t1_only").inc()
+                        if cost_tier_t1 and tier2:
+                            logger.info(f"💰 T1 [{cat}]: cost-tier kept (medium conf) — T2 rescue not needed")
                     return task_results
             elif not tier2:
                 return task_results
 
         if tier2:
+            PROM_TIER_ESCALATION.labels(category=cat, decision="t2_escalated").inc()
             t2_names = ", ".join(e["model"] for _, e in tier2)
+            _why = "low-confidence T1 rescue" if cost_tier_t1 else "no T1 high confidence"
+            logger.info(f"🔬 T2 [{cat}]: {t2_names} — escalated ({_why})")
             await _report(f"🔬 T2 [{cat}]: {t2_names} (T1 insufficient)")
             t2_results = await asyncio.gather(
                 *[run_single(e, task, i + 1, len(forced_experts) + len(tier1) + j + 1)

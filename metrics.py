@@ -17,12 +17,22 @@ PROM_REQUESTS        = Counter('moe_requests_total',           'Total requests',
 PROM_BUDGET_EXCEEDED = Counter('moe_budget_exceeded_total',    'Budget limit exceeded',       ['user_id', 'limit_type'])
 PROM_EXPERT_CALLS    = Counter('moe_expert_calls_total',       'Expert model calls',          ['model', 'category', 'node'])
 PROM_CONFIDENCE      = Counter('moe_expert_confidence_total',  'Expert confidence level',     ['level', 'category'])
+# Two-tier escalation outcome per category. decision:
+#   t1_high_skip  — a T1 expert returned high confidence; T2 was skipped (cheap path won)
+#   t2_escalated  — no T1 high confidence; T2 (large fallback models) ran
+#   t1_only       — no T2 tier configured, only T1 ran
+PROM_TIER_ESCALATION = Counter('moe_tier_escalation_total',    'Two-tier escalation decisions', ['category', 'decision'])
 PROM_CACHE_HITS      = Counter('moe_cache_hits_total',         'Cache hits')
 PROM_CACHE_MISSES    = Counter('moe_cache_misses_total',       'Cache misses')
 PROM_KNOWLEDGE_BYPASS = Counter('moe_knowledge_bypass_total',  'LLM pipeline skipped via high-confidence fresh prior answer')
 PROM_ROUTING_BANDIT  = Counter('moe_routing_bandit_total',     'Routing-gate decisions', ['gate', 'action', 'source'])
 PROM_RESPONSE_TIME   = Histogram('moe_response_duration_seconds', 'Response duration',        ['mode'],
                                  buckets=[1, 2, 5, 10, 20, 30, 60, 120])
+# Nearest cache-entry cosine distance per lookup — the empirical distance
+# distribution to calibrate the static thresholds (hit 0.15 / bypass 0.25 /
+# soft 0.50). Buckets are dense around those decision boundaries.
+PROM_CACHE_DISTANCE  = Histogram('moe_cache_query_distance', 'Nearest cache entry cosine distance per lookup',
+                                 buckets=[0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.70, 1.0])
 PROM_SELF_EVAL       = Histogram('moe_self_eval_score',        'Self-evaluation score',       buckets=[1,2,3,4,5,6])
 PROM_FEEDBACK        = Histogram('moe_feedback_score',         'User feedback score',         buckets=[1,2,3,4,5,6])
 PROM_COMPLEXITY      = Counter('moe_complexity_routing_total', 'Request complexity routing',  ['level'])

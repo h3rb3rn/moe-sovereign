@@ -41,7 +41,7 @@ from metrics import (
     PROM_CORRECTIONS_INJECTED, PROM_CORRECTIONS_STORED,
     PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES, PROM_SYNTHESIS_CREATED,
     PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED, PROM_KNOWLEDGE_BYPASS,
-    PROM_ROUTING_BANDIT,
+    PROM_ROUTING_BANDIT, PROM_CACHE_DISTANCE,
 )
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
@@ -156,6 +156,14 @@ async def cache_lookup_node(state_: AgentState):
     res = await asyncio.to_thread(state.cache_collection.query, query_texts=[_cache_query], n_results=3)
     cached = ""
     hit = False
+    # Telemetry: record the nearest-neighbour distance for every lookup (hit or
+    # miss) so the static thresholds can be calibrated from the real distribution.
+    _nearest_dist = None
+    if res['documents'] and res['documents'][0]:
+        _all_dists = res.get('distances', [[]])[0]
+        if _all_dists:
+            _nearest_dist = float(_all_dists[0])
+            PROM_CACHE_DISTANCE.observe(_nearest_dist)
     if not state_.get("no_cache") and res['documents'] and res['documents'][0]:
         docs  = res['documents'][0]
         dists = res.get('distances', [[1.0] * len(docs)])[0]
@@ -190,6 +198,11 @@ async def cache_lookup_node(state_: AgentState):
             break
     if not hit:
         PROM_CACHE_MISSES.inc()
+        if _nearest_dist is not None:
+            logger.info(
+                f"📭 Cache miss — nearest distance={_nearest_dist:.3f} "
+                f"(hit<{CACHE_HIT_THRESHOLD}, bypass<{KNOWLEDGE_BYPASS_THRESHOLD})"
+            )
         await _report("📭 No cache hit — starting full pipeline")
     # Soft hits (0.15 < dist < 0.50): collect as few-shot examples
     soft_examples = []
