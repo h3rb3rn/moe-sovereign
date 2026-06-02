@@ -93,7 +93,9 @@ def _tier2_escalation_decision(cost_tier_t1: bool, t1_confs: list, has_tier2: bo
     t1_confs: per-T1-expert confidences ("high"/"medium"/"low"/None for unparseable).
     Returns one of:
       "t1_high_skip" — a T1 expert was high-confidence; T2 skipped (T2 was available)
-      "t1_only"      — kept T1 (no T2 available, or cost-tier task with a good-enough answer)
+      "t1_cost_kept" — cost-tier trivial task kept a good-enough (medium) T1 answer
+                       even though T2 was available — the deliberate cost saving
+      "t1_only"      — kept T1 because no T2 tier was available at all
       "t2_escalated" — escalate to T2
 
     Rules:
@@ -105,8 +107,12 @@ def _tier2_escalation_decision(cost_tier_t1: bool, t1_confs: list, has_tier2: bo
     should_escalate = t1_is_weak if cost_tier_t1 else (not t1_has_high)
     if t1_has_high:
         return "t1_high_skip" if has_tier2 else "t1_only"
-    if not has_tier2 or not should_escalate:
+    if not has_tier2:
         return "t1_only"
+    if not should_escalate:
+        # T2 was available but not needed — only reachable on a cost-tier task
+        # with a good-enough (medium) answer.
+        return "t1_cost_kept"
     return "t2_escalated"
 
 
@@ -420,7 +426,7 @@ async def expert_worker(state_: AgentState):
                     if decision == "t1_high_skip":
                         logger.info(f"✅ T1 [{cat}]: high confidence — T2 skipped")
                         await _report(f"✅ T1 [{cat}]: high confidence — T2 skipped")
-                    elif cost_tier_t1 and tier2:
+                    elif decision == "t1_cost_kept":
                         logger.info(f"💰 T1 [{cat}]: cost-tier kept (medium conf) — T2 rescue not needed")
                     return task_results
             elif not tier2:

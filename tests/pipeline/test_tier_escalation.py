@@ -19,9 +19,9 @@ _CASES = [
     (False, ["medium"], True,  "t2_escalated"),
     (False, ["low"],    True,  "t2_escalated"),
     (False, [],         True,  "t2_escalated"),   # unparseable/empty
-    # trivial cost-tier: only low/empty rescues; medium keeps the saving
+    # trivial cost-tier: only low/empty rescues; medium keeps the saving (t1_cost_kept)
     (True,  ["high"],   True,  "t1_high_skip"),
-    (True,  ["medium"], True,  "t1_only"),         # kept — cost saving
+    (True,  ["medium"], True,  "t1_cost_kept"),     # kept — deliberate cost saving
     (True,  ["low"],    True,  "t2_escalated"),     # rescue
     (True,  [],         True,  "t2_escalated"),     # garbage → rescue
     # no T2 configured: never escalate regardless of confidence
@@ -46,8 +46,9 @@ def _tier2_escalation_decision_label(cost_tier, confs, has_t2):
 
 def test_trivial_medium_keeps_cost_saving():
     """The core TRIVIAL_LOW_CONF_RESCUE contract: medium T1 on a trivial task is
-    good enough — no expensive T2 escalation."""
-    assert decide(True, ["medium"], True) == "t1_only"
+    good enough — no expensive T2 escalation. Reported as a distinct decision so
+    it is not conflated with the no-T2-available case."""
+    assert decide(True, ["medium"], True) == "t1_cost_kept"
 
 
 def test_trivial_low_triggers_rescue():
