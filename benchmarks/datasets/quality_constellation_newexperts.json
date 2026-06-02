@@ -1,0 +1,108 @@
+{
+  "name": "quality_constellation_newexperts",
+  "version": "1.0",
+  "description": "Curated output-quality benchmark for comparing expert constellations on N04-RTX. Covers core experts (math, code_reviewer, reasoning, science) and four newly invented experts (data_analysis, creative_writing, devops_sre, security_analysis). Each case is judge-scored (0-10) plus deterministic keyword/numeric checks. Sovereign-only.",
+  "author": "constellation-experiment",
+  "created_at": "2026-06-02",
+  "test_cases": [
+    {
+      "id": "data-groupby-topregion",
+      "name": "Pandas: sales per region",
+      "category": "data_analysis",
+      "type": "single_turn",
+      "prompt": "You have a pandas DataFrame `df` with columns 'region' (string) and 'sales' (float). Write Python code to compute total sales per region, sort descending, and print the top region. Briefly explain each step.",
+      "expected_answer": {
+        "approach": "df.groupby('region')['sales'].sum().sort_values(ascending=False); idxmax/head(1) for top region"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "groupby",
+          "sum",
+          "region"
+        ],
+        "bonus_keywords": [
+          "sort_values",
+          "ascending=false",
+          "idxmax",
+          "head"
+        ]
+      }
+    },
+    {
+      "id": "creative-lighthouse-poem",
+      "name": "Constrained lighthouse poem",
+      "category": "creative_writing",
+      "type": "single_turn",
+      "prompt": "Write a 4-line poem about a lighthouse. It must contain the words 'storm', 'beam', and 'silent', stay under 50 words, and have a consistent rhythm. Output only the poem.",
+      "expected_answer": {
+        "constraints": "4 lines; contains storm, beam, silent; <50 words; coherent imagery"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "storm",
+          "beam",
+          "silent"
+        ],
+        "bonus_keywords": [
+          "light",
+          "sea",
+          "night",
+          "wave"
+        ]
+      }
+    },
+    {
+      "id": "devops-crashloopbackoff",
+      "name": "Diagnose CrashLoopBackOff",
+      "category": "devops_sre",
+      "type": "single_turn",
+      "prompt": "A Kubernetes pod is stuck in CrashLoopBackOff. Give a systematic, ordered diagnostic procedure to find the root cause, naming the concrete kubectl commands you would run at each step.",
+      "expected_answer": {
+        "steps": "kubectl describe pod (events), kubectl logs --previous, check exit code/OOMKilled, liveness/readiness probes, resource limits, config/secret/mounts"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "logs",
+          "describe"
+        ],
+        "bonus_keywords": [
+          "--previous",
+          "events",
+          "oomkilled",
+          "readiness",
+          "liveness",
+          "exit code"
+        ]
+      }
+    },
+    {
+      "id": "security-md5-passwords",
+      "name": "MD5 password storage risks",
+      "category": "security_analysis",
+      "type": "single_turn",
+      "prompt": "A web application stores user passwords hashed with MD5. Explain the concrete security risks and describe the correct modern approach to password storage.",
+      "expected_answer": {
+        "risks": "MD5 fast + broken (collisions), no salt -> rainbow tables, brute-force",
+        "correct": "slow salted KDF: bcrypt/scrypt/argon2 with per-user salt"
+      },
+      "scoring": {
+        "type": "keyword_match",
+        "required_keywords": [
+          "md5",
+          "salt"
+        ],
+        "bonus_keywords": [
+          "bcrypt",
+          "argon2",
+          "scrypt",
+          "rainbow",
+          "brute",
+          "collision"
+        ]
+      }
+    }
+  ]
+}
