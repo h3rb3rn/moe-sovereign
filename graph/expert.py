@@ -87,6 +87,29 @@ from pipeline.state import AgentState
 from graph.planner import _topological_levels, _inject_prior_results
 
 
+def _tier2_escalation_decision(cost_tier_t1: bool, t1_confs: list, has_tier2: bool) -> str:
+    """Decide the two-tier outcome from the T1 confidences. Pure function (unit-tested).
+
+    t1_confs: per-T1-expert confidences ("high"/"medium"/"low"/None for unparseable).
+    Returns one of:
+      "t1_high_skip" — a T1 expert was high-confidence; T2 skipped (T2 was available)
+      "t1_only"      — kept T1 (no T2 available, or cost-tier task with a good-enough answer)
+      "t2_escalated" — escalate to T2
+
+    Rules:
+      • normal task      → escalate on anything below 'high'
+      • cost-tier trivial → escalate only on a low/empty answer ('medium' keeps the saving)
+    """
+    t1_has_high = "high" in t1_confs
+    t1_is_weak = (not t1_confs) or any(c == "low" for c in t1_confs)
+    should_escalate = t1_is_weak if cost_tier_t1 else (not t1_has_high)
+    if t1_has_high:
+        return "t1_high_skip" if has_tier2 else "t1_only"
+    if not has_tier2 or not should_escalate:
+        return "t1_only"
+    return "t2_escalated"
+
+
 async def expert_worker(state_: AgentState):
     if state_.get("cache_hit"):
         return {"expert_results": []}
@@ -391,29 +414,14 @@ async def expert_worker(state_: AgentState):
 
             if t1_results:
                 t1_confs = [_parse_expert_confidence(r.get("res", "")) for r in t1_results if r.get("res")]
-                t1_has_high = "high" in t1_confs
-                # A low-confidence (or empty/unparseable) T1 answer is the only thing
-                # that justifies the expensive T2 rescue on a trivial cost-tier task —
-                # a 'medium' answer is good enough to keep the saving. On normal tasks
-                # anything below 'high' escalates.
-                t1_is_weak = (not t1_confs) or any(c == "low" for c in t1_confs)
-                if cost_tier_t1:
-                    should_escalate = t1_is_weak
-                else:
-                    should_escalate = not t1_has_high
-                if t1_has_high or not tier2 or not should_escalate:
-                    if t1_has_high:
-                        PROM_TIER_ESCALATION.labels(
-                            category=cat,
-                            decision="t1_high_skip" if tier2 else "t1_only",
-                        ).inc()
+                decision = _tier2_escalation_decision(cost_tier_t1, t1_confs, bool(tier2))
+                if decision != "t2_escalated":
+                    PROM_TIER_ESCALATION.labels(category=cat, decision=decision).inc()
+                    if decision == "t1_high_skip":
                         logger.info(f"✅ T1 [{cat}]: high confidence — T2 skipped")
                         await _report(f"✅ T1 [{cat}]: high confidence — T2 skipped")
-                    else:
-                        # T1 kept (no T2 available, or cost-tier with a good-enough answer).
-                        PROM_TIER_ESCALATION.labels(category=cat, decision="t1_only").inc()
-                        if cost_tier_t1 and tier2:
-                            logger.info(f"💰 T1 [{cat}]: cost-tier kept (medium conf) — T2 rescue not needed")
+                    elif cost_tier_t1 and tier2:
+                        logger.info(f"💰 T1 [{cat}]: cost-tier kept (medium conf) — T2 rescue not needed")
                     return task_results
             elif not tier2:
                 return task_results
