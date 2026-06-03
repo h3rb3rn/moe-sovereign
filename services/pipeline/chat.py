@@ -355,6 +355,31 @@ async def _handle_tool_calls(
             )
             for m in messages
         )
+        # Terminal guard: once kanban_show + kanban_complete have both been called
+        # (tool_results_count >= 2), the task is done. Return an empty stop response
+        # immediately so Hermes closes the session. This is more reliable than
+        # checking tool_calls in assistant messages because the Message Pydantic model
+        # does not declare a tool_calls field and drops it on deserialisation.
+        if _has_tool_results and _kanban_complete_in_tools:
+            _tool_results_count = sum(1 for m in messages if m.get("role") == "tool")
+            if _tool_results_count >= 2:
+                logger.info("🔒 Kanban done (tool_results=%d) — returning terminal stop", _tool_results_count)
+                _stop_resp = {
+                    "id": chat_id, "object": "chat.completion",
+                    "created": int(time.time()), "model": tool_model,
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": ""}}],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                }
+                if not request.stream:
+                    return _stop_resp
+                async def _stop_sse():
+                    _ts = int(time.time())
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(_stop_sse(), media_type="text/event-stream")
+
         if _has_tool_results and _kanban_complete_in_tools and not _kc_already_dispatched:
             # Extract kanban_show result (task description) — use the FIRST tool result
             # that comes before any kanban_complete in the assistant turn.
@@ -364,9 +389,25 @@ async def _handle_tool_calls(
                     _task_content = _m.get("content", "").strip()
                     break
             if _task_content:
+                # Determine workspace path for writing the result as a file.
+                # HERMES_KANBAN_WORKSPACES is set by docker-compose when
+                # HERMES_KANBAN_WORKSPACES_HOST is configured; empty = disabled.
+                import os as _os
+                _ws_base = _os.getenv("HERMES_KANBAN_WORKSPACES", "").rstrip("/")
+                _ws_task_id2 = ""
+                if _ws_base:
+                    for _m in messages:
+                        if _m.get("role") == "user":
+                            _m2 = re.search(
+                                r'work kanban task[:\s]+(\S+)', _m.get("content", ""), re.IGNORECASE
+                            )
+                            if _m2:
+                                _ws_task_id2 = _m2.group(1)
+                                break
+                _ws_path = f"{_ws_base}/{_ws_task_id2}" if (_ws_base and _ws_task_id2) else ""
                 logger.info(
-                    "🎯 Kanban Phase 2: content synthesis via %s (task_len=%d)",
-                    content_model, len(_task_content),
+                    "🎯 Kanban Phase 2: content synthesis via %s (task_len=%d, workspace=%s)",
+                    content_model, len(_task_content), _ws_path or "disabled",
                 )
                 _sys = (content_system_prompt or
                         "You are a knowledgeable expert. Answer the task below completely "
@@ -415,7 +456,7 @@ async def _handle_tool_calls(
                                                          "tool_calls": [{"id": f"call_{chat_id[:8]}_kc2",
                                                                           "type": "function",
                                                                           "function": {"name": "kanban_complete",
-                                                                                       "arguments": json.dumps({"result": _result_text[:4000]})}}]}}],
+                                                                                       "arguments": json.dumps({"result": _result_text})}}]}}],
                                 "usage": {"prompt_tokens": 0, "completion_tokens": 10, "total_tokens": 10},
                             }
                     except Exception as _e:
@@ -463,9 +504,25 @@ async def _handle_tool_calls(
                             yield "data: [DONE]\n\n"
                             return
                         logger.info("✅ Kanban Phase 2 complete (stream): len=%d", len(_result_text))
+                        # Write result to workspace file so it's accessible outside the DB.
+                        # Extension is detected from content: HTML → result.html, else result.md
+                        if _ws_path:
+                            try:
+                                import os as _os
+                                _os.makedirs(_ws_path, mode=0o775, exist_ok=True)
+                                # Ensure group-write on existing dirs created with wrong perms.
+                                _os.chmod(_ws_path, 0o775)
+                                _is_html = _result_text.lstrip().startswith(("<!DOCTYPE", "<html", "<HTML"))
+                                _fname = "result.html" if _is_html else "result.md"
+                                _fpath = f"{_ws_path}/{_fname}"
+                                with open(_fpath, "w", encoding="utf-8") as _f:
+                                    _f.write(_result_text)
+                                logger.info("📄 Workspace file written: %s", _fpath)
+                            except Exception as _we:
+                                logger.warning("Could not write workspace file: %s", _we)
                         _tc2 = [{"id": f"call_{chat_id[:8]}_kc2", "type": "function",
                                   "function": {"name": "kanban_complete",
-                                               "arguments": json.dumps({"result": _result_text[:4000]})}}]
+                                               "arguments": json.dumps({"result": _result_text})}}]
                         _ts = int(time.time())
                         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
                         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'tool_calls': _tc2, 'content': ''}, 'finish_reason': None}]})}\n\n"
@@ -552,7 +609,7 @@ async def _handle_tool_calls(
                                 "type": "function",
                                 "function": {
                                     "name": "kanban_complete",
-                                    "arguments": json.dumps({"result": _last_assistant_text[:3000]}),
+                                    "arguments": json.dumps({"result": _last_assistant_text}),
                                 },
                             }],
                         },
