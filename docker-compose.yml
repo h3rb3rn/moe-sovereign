@@ -155,6 +155,9 @@ services:
       - CONVERSATION_LOG_RETENTION_MAX=${CONVERSATION_LOG_RETENTION_MAX}
       - NEO4J_PASS=${NEO4J_PASS}
       - KAFKA_URL=kafka://moe-kafka:9092
+      # Set to /app/hermes-workspaces when HERMES_KANBAN_WORKSPACES_HOST is configured.
+      # Empty string disables workspace file writing in the kanban two-phase handler.
+      - HERMES_KANBAN_WORKSPACES=${HERMES_KANBAN_WORKSPACES_HOST:+/app/hermes-workspaces}
       # LITELLM_URL aktiviert das Unified API Gateway (leer = direkter Ollama-Zugriff als Fallback)
       # - LITELLM_URL=http://litellm-proxy:4000
     volumes:
@@ -163,6 +166,7 @@ services:
       - ${MOE_DATA_ROOT}/chroma-onnx-cache:/app/.cache/chroma
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR}:/app/skills:ro
+      - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
     depends_on:
       terra_cache:
         condition: service_started
