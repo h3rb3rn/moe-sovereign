@@ -376,72 +376,102 @@ async def _handle_tool_calls(
                     {"role": "user", "content": _task_content},
                 ]
                 _content_endpoint = content_url.rstrip("/") + "/chat/completions"
-                _content_payload = {
-                    "model": content_model,
-                    "messages": _clean_msgs,
-                    "stream": False,
-                }
                 if request.temperature is not None:
-                    _content_payload["temperature"] = request.temperature
-                try:
-                    async with httpx.AsyncClient(timeout=1800) as _c:
-                        _cr_resp = await _c.post(
-                            _content_endpoint,
-                            json=_content_payload,
-                            headers={
-                                "Authorization": f"Bearer {content_token}",
-                                "Content-Type": "application/json",
-                            },
-                        )
-                        _cr_resp.raise_for_status()
-                        _cr_data = _cr_resp.json()
-                    # Extract text from response
-                    _result_text = ""
-                    for _ch in _cr_data.get("choices", []):
-                        _msg = _ch.get("message", {})
-                        _result_text = (_msg.get("content") or "").strip()
-                        # Strip Qwen3 thinking traces
-                        _result_text = re.sub(r'<think>.*?</think>', '', _result_text, flags=re.DOTALL).strip()
+                    _content_extra = {"temperature": request.temperature}
+                else:
+                    _content_extra = {}
+                _content_headers = {
+                    "Authorization": f"Bearer {content_token}",
+                    "Content-Type": "application/json",
+                }
+                # Phase 2 always streams back to the caller so TCP keepalive
+                # events prevent Hermes from timing out during long generations.
+                if not request.stream:
+                    # Non-streaming client: buffer full response synchronously.
+                    try:
+                        async with httpx.AsyncClient(timeout=1800) as _c:
+                            _cr = await _c.post(
+                                _content_endpoint,
+                                json={"model": content_model, "messages": _clean_msgs,
+                                      "stream": False, **_content_extra},
+                                headers=_content_headers,
+                            )
+                            _cr.raise_for_status()
+                            _cr_data = _cr.json()
+                        _result_text = ""
+                        for _ch in _cr_data.get("choices", []):
+                            _t = ((_ch.get("message") or {}).get("content") or "").strip()
+                            _t = re.sub(r'<think>.*?</think>', '', _t, flags=re.DOTALL).strip()
+                            if _t:
+                                _result_text = _t
+                                break
                         if _result_text:
-                            break
-                    if _result_text:
-                        logger.info(
-                            "✅ Kanban Phase 2 complete: result_len=%d", len(_result_text)
-                        )
-                        _kc_synthetic: dict = {
-                            "id": chat_id, "object": "chat.completion",
-                            "created": int(time.time()), "model": tool_model,
-                            "choices": [{
-                                "index": 0, "finish_reason": "tool_calls",
-                                "message": {
-                                    "role": "assistant", "content": None,
-                                    "tool_calls": [{
-                                        "id": f"call_{chat_id[:8]}_kc2",
-                                        "type": "function",
-                                        "function": {
-                                            "name": "kanban_complete",
-                                            "arguments": json.dumps(
-                                                {"result": _result_text[:4000]}
-                                            ),
-                                        },
-                                    }],
-                                },
-                            }],
-                            "usage": {"prompt_tokens": 0, "completion_tokens": 10, "total_tokens": 10},
-                        }
-                        if not request.stream:
-                            return _kc_synthetic
-                        async def _kc2_sse():
-                            _tc2 = _kc_synthetic["choices"][0]["message"]["tool_calls"]
-                            _ts = int(time.time())
-                            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
-                            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'tool_calls': _tc2, 'content': ''}, 'finish_reason': None}]})}\n\n"
-                            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]})}\n\n"
+                            logger.info("✅ Kanban Phase 2 complete (non-stream): len=%d", len(_result_text))
+                            return {
+                                "id": chat_id, "object": "chat.completion",
+                                "created": int(time.time()), "model": tool_model,
+                                "choices": [{"index": 0, "finish_reason": "tool_calls",
+                                             "message": {"role": "assistant", "content": None,
+                                                         "tool_calls": [{"id": f"call_{chat_id[:8]}_kc2",
+                                                                          "type": "function",
+                                                                          "function": {"name": "kanban_complete",
+                                                                                       "arguments": json.dumps({"result": _result_text[:4000]})}}]}}],
+                                "usage": {"prompt_tokens": 0, "completion_tokens": 10, "total_tokens": 10},
+                            }
+                    except Exception as _e:
+                        logger.error("Kanban Phase 2 (non-stream) failed: %s", _e)
+                else:
+                    # Streaming path: pipe qwen3.6:35b chunks as SSE keepalives,
+                    # then emit kanban_complete as the final event.
+                    # This prevents Hermes from timing out during long generations.
+                    async def _kc2_stream():
+                        _parts: list = []
+                        _in_think = False
+                        try:
+                            async with httpx.AsyncClient(timeout=1800) as _c:
+                                async with _c.stream(
+                                    "POST", _content_endpoint,
+                                    json={"model": content_model, "messages": _clean_msgs,
+                                          "stream": True, **_content_extra},
+                                    headers=_content_headers,
+                                ) as _resp:
+                                    _resp.raise_for_status()
+                                    async for _line in _resp.aiter_lines():
+                                        if _line.startswith("data: "):
+                                            _d = _line[6:]
+                                            if _d == "[DONE]":
+                                                break
+                                            try:
+                                                _tok = json.loads(_d)
+                                                _delta = (_tok.get("choices") or [{}])[0].get("delta", {})
+                                                _tok_content = _delta.get("content") or ""
+                                                if _tok_content:
+                                                    _parts.append(_tok_content)
+                                            except Exception:
+                                                pass
+                                            # SSE comment keepalive — ignored by clients,
+                                            # but keeps the TCP connection alive.
+                                            yield ": k\n\n"
+                        except Exception as _e:
+                            logger.error("Kanban Phase 2 streaming failed: %s", _e)
+                        # Strip thinking traces from accumulated text
+                        _result_text = re.sub(
+                            r'<think>.*?</think>', '', "".join(_parts), flags=re.DOTALL
+                        ).strip()
+                        if not _result_text:
+                            logger.warning("⚠️ Kanban Phase 2: empty result after streaming")
                             yield "data: [DONE]\n\n"
-                        return StreamingResponse(_kc2_sse(), media_type="text/event-stream")
-                except Exception as _e:
-                    logger.error("Kanban Phase 2 content synthesis failed: %s", _e)
-                    # Fall through to standard path
+                            return
+                        logger.info("✅ Kanban Phase 2 complete (stream): len=%d", len(_result_text))
+                        _tc2 = [{"id": f"call_{chat_id[:8]}_kc2", "type": "function",
+                                  "function": {"name": "kanban_complete",
+                                               "arguments": json.dumps({"result": _result_text[:4000]})}}]
+                        _ts = int(time.time())
+                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'tool_calls': _tc2, 'content': ''}, 'finish_reason': None}]})}\n\n"
+                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]})}\n\n"
+                        yield "data: [DONE]\n\n"
+                    return StreamingResponse(_kc2_stream(), media_type="text/event-stream")
     # --- End two-phase kanban handling ---
 
     # Hermes3 models require the native Ollama /api/chat endpoint for reliable
