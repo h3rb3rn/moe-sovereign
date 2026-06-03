@@ -133,20 +133,109 @@ def _normalise_tool_calls_response(upstream: dict, chat_id: str, tool_model: str
     """Normalise an upstream non-streaming response for OpenAI clients.
 
     - Overrides id with the gateway chat_id.
-    - Ensures content="" (not null) when tool_calls are present — some clients
-      treat null content as an empty/failed response.
-    - Strips the non-standard 'reasoning' field (Qwen3 thinking trace) that
-      some clients do not recognise.
+    - Ensures content="" (not null) when tool_calls are present.
+    - Strips the non-standard 'reasoning' field (Qwen3 thinking trace).
+    - Extracts tool calls from content when model writes them as text
+      (e.g. qwen2.5 outputs {"name": "...", "arguments": {...}} in content).
     """
     upstream["id"] = chat_id
     upstream.setdefault("object", "chat.completion")
     upstream.setdefault("model", tool_model)
+
     for choice in upstream.get("choices", []):
         msg = choice.get("message", {})
+        msg.pop("reasoning", None)
+
         if msg.get("tool_calls"):
+            _content = (msg.get("content") or "").strip()
+            for tc in msg["tool_calls"]:
+                fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+                if fn.get("name") == "kanban_complete":
+                    try:
+                        _args = json.loads(fn.get("arguments") or "{}")
+                    except (json.JSONDecodeError, TypeError):
+                        _args = {}
+                    if "result" not in _args or not _args.get("result"):
+                        if _args and "result" not in _args:
+                            # Map first non-result arg (summary, answer, etc.) → result
+                            _first_val = next(iter(_args.values()), "")
+                            if _first_val:
+                                _args = {"result": _first_val}
+                                fn["arguments"] = json.dumps(_args)
+                                logger.info("💡 Normalized kanban_complete arg→result (len=%d)", len(_first_val))
+                                continue
+                        if _content:
+                            # Model wrote answer as text content + called kanban_complete()
+                            _args["result"] = _content
+                            fn["arguments"] = json.dumps(_args)
+                            logger.info("💡 Injected content as kanban_complete result (len=%d)", len(_content))
             if msg.get("content") is None:
                 msg["content"] = ""
-            msg.pop("reasoning", None)
+            continue
+
+        # Fallback: extract tool calls embedded as JSON text in content.
+        # ONLY active for Kanban workers (tool_model starts with hermes3 or qwen2.5
+        # AND the model is being used as a tool-calling agent, not as a general LLM).
+        # This prevents false positives in Open-WebUI / OpenCode responses where
+        # code snippets like `read_file(path="...")` could be misinterpreted.
+        _is_kanban_model = tool_model.startswith(("hermes3", "qwen2.5"))
+        if not _is_kanban_model:
+            if msg.get("content") is None:
+                msg["content"] = ""
+            continue
+
+        raw = (msg.get("content") or "").strip()
+        if not raw:
+            continue
+
+        import re as _re
+        extracted = []
+
+        # Pattern 1: JSON style — {"name": "fn", "arguments": {...}}
+        for m in _re.finditer(r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(\{[^}]*\})[^{}]*\}', raw, _re.DOTALL):
+            fn_name = m.group(1)
+            try:
+                args = json.loads(m.group(2))
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+            extracted.append({
+                "id": f"call_{chat_id[:8]}_{len(extracted)}",
+                "type": "function",
+                "function": {"name": fn_name, "arguments": json.dumps(args)},
+            })
+
+        # Pattern 2: Python call style — fn_name(key="val", key2={...})
+        if not extracted:
+            # Match: word_chars( ... ) spanning multiple lines
+            for m in _re.finditer(r'(\b[a-z][a-z0-9_]*)\s*\(\s*((?:[^()]*|\{[^}]*\})*)\)', raw, _re.DOTALL):
+                fn_name = m.group(1)
+                if fn_name in ("if", "for", "while", "def", "class", "print", "return"):
+                    continue
+                args_raw = m.group(2).strip()
+                # Parse keyword args: key="value" or key={...}
+                args = {}
+                for kv in _re.finditer(r'(\w+)\s*=\s*(?:"([^"]*?)"|\'([^\']*?)\'|\{([^}]*)\}|(\S+))', args_raw):
+                    key = kv.group(1)
+                    val = kv.group(2) or kv.group(3) or kv.group(4) or kv.group(5) or ""
+                    args[key] = val
+                if args or not args_raw:
+                    # Normalize kanban_complete: models often use 'summary' or
+                    # other parameter names instead of the required 'result'.
+                    if fn_name == "kanban_complete" and "result" not in args and args:
+                        args = {"result": next(iter(args.values()), "")}
+                    extracted.append({
+                        "id": f"call_{chat_id[:8]}_{len(extracted)}",
+                        "type": "function",
+                        "function": {"name": fn_name, "arguments": json.dumps(args)},
+                    })
+
+        if extracted:
+            msg["tool_calls"] = extracted
+            msg["content"] = ""
+            choice["finish_reason"] = "tool_calls"
+            logger.info("🔧 Extracted %d tool call(s) from content text: %s",
+                        len(extracted), [t["function"]["name"] for t in extracted])
+
     return upstream
 
 
@@ -156,6 +245,10 @@ async def _handle_tool_calls(
     tool_model: str,
     tool_base_url: str,
     tool_token: str,
+    content_model: str = "",
+    content_url: str = "",
+    content_token: str = "ollama",
+    content_system_prompt: str = "",
 ):
     """Direct LLM passthrough that preserves tool_calls in the response.
 
@@ -163,25 +256,292 @@ async def _handle_tool_calls(
     tool_calls (or final text answer) reach the client intact. Called when
     request.tools is present or messages contain role='tool' entries.
 
+    When content_model/content_url are provided, kanban tasks use a two-phase
+    approach: Phase 1 returns a synthetic kanban_show call without LLM (regex
+    parses the task ID); Phase 2 calls content_model with a clean prompt
+    (no KANBAN_GUIDANCE) to generate the actual answer, then wraps it in
+    a synthetic kanban_complete call.
+
     Returns a StreamingResponse (SSE) when request.stream is True, otherwise
     a plain dict. Callers must check the type and wrap accordingly.
     """
     messages = _build_tool_messages(request)
 
-    payload: dict = {
-        "model":    tool_model,
-        "messages": messages,
-        "stream":   False,   # always fetch non-streaming upstream; we re-stream below if needed
-    }
     # When the conversation already contains tool-result turns (role='tool'), the
     # model must synthesise those results into a text response — not call more
     # tools. Omitting `tools` from the follow-up request forces a text response
     # and prevents models that lack strong instruction-following from looping.
     _has_tool_results = any(m.get("role") == "tool" for m in messages)
-    if request.tools and not _has_tool_results:
+
+    # --- Two-phase kanban handling (when a content model is available) ---
+    # Phase 1: Initial kanban dispatch — parse the task ID from the user message
+    # and return a synthetic kanban_show tool call without invoking any LLM.
+    # This avoids KANBAN_GUIDANCE overwhelming the tool model on the first turn.
+    #
+    # Phase 2: Synthesis — when kanban_show result is present, call content_model
+    # with a clean minimal prompt (no KANBAN_GUIDANCE, no system prompt clutter)
+    # and wrap the response in a synthetic kanban_complete call.
+    if content_model and content_url:
+        _kanban_show_in_tools = any(
+            (t.get("function", {}).get("name") == "kanban_show"
+             if isinstance(t, dict)
+             else getattr(getattr(t, "function", None), "name", "") == "kanban_show")
+            for t in (request.tools or [])
+        )
+        _kanban_complete_in_tools = any(
+            (t.get("function", {}).get("name") == "kanban_complete"
+             if isinstance(t, dict)
+             else getattr(getattr(t, "function", None), "name", "") == "kanban_complete")
+            for t in (request.tools or [])
+        )
+
+        # Phase 1: Return synthetic kanban_show without LLM
+        if not _has_tool_results and _kanban_show_in_tools:
+            _task_id = None
+            for _m in messages:
+                if _m.get("role") == "user":
+                    _km = re.search(
+                        r'work kanban task[:\s]+(\S+)',
+                        _m.get("content", ""),
+                        re.IGNORECASE,
+                    )
+                    if _km:
+                        _task_id = _km.group(1)
+                        break
+            if _task_id:
+                logger.info("🎯 Kanban Phase 1: synthetic kanban_show for task %s", _task_id)
+                _ks_resp: dict = {
+                    "id": chat_id, "object": "chat.completion",
+                    "created": int(time.time()), "model": tool_model,
+                    "choices": [{
+                        "index": 0, "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant", "content": "",
+                            "tool_calls": [{
+                                "id": f"call_{chat_id[:8]}_ks",
+                                "type": "function",
+                                "function": {
+                                    "name": "kanban_show",
+                                    "arguments": json.dumps({"id": _task_id}),
+                                },
+                            }],
+                        },
+                    }],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 5, "total_tokens": 5},
+                }
+                if not request.stream:
+                    return _ks_resp
+                async def _ks_sse():
+                    _tc = _ks_resp["choices"][0]["message"]["tool_calls"]
+                    _cr = int(time.time())
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _cr, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _cr, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'tool_calls': _tc, 'content': ''}, 'finish_reason': None}]})}\n\n"
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _cr, 'model': tool_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]})}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(_ks_sse(), media_type="text/event-stream")
+
+        # Phase 2: Synthesise using content model with clean prompt.
+        # Guard: skip re-synthesis if kanban_complete was already dispatched
+        # (i.e. an assistant message already contains a kanban_complete tool call).
+        # This prevents looping when Hermes sends a 3rd request after the tool result.
+        _kc_already_dispatched = any(
+            m.get("role") == "assistant" and any(
+                (
+                    (tc.get("function", {}).get("name") if isinstance(tc, dict) else
+                     getattr(getattr(tc, "function", None), "name", ""))
+                    == "kanban_complete"
+                )
+                for tc in (m.get("tool_calls") or [])
+            )
+            for m in messages
+        )
+        if _has_tool_results and _kanban_complete_in_tools and not _kc_already_dispatched:
+            # Extract kanban_show result (task description) — use the FIRST tool result
+            # that comes before any kanban_complete in the assistant turn.
+            _task_content = ""
+            for _m in messages:
+                if _m.get("role") == "tool":
+                    _task_content = _m.get("content", "").strip()
+                    break
+            if _task_content:
+                logger.info(
+                    "🎯 Kanban Phase 2: content synthesis via %s (task_len=%d)",
+                    content_model, len(_task_content),
+                )
+                _sys = (content_system_prompt or
+                        "You are a knowledgeable expert. Answer the task below completely "
+                        "and thoroughly. Write only the answer — no meta-commentary.")
+                _clean_msgs = [
+                    {"role": "system", "content": _sys},
+                    {"role": "user", "content": _task_content},
+                ]
+                _content_endpoint = content_url.rstrip("/") + "/chat/completions"
+                _content_payload = {
+                    "model": content_model,
+                    "messages": _clean_msgs,
+                    "stream": False,
+                }
+                if request.temperature is not None:
+                    _content_payload["temperature"] = request.temperature
+                try:
+                    async with httpx.AsyncClient(timeout=1800) as _c:
+                        _cr_resp = await _c.post(
+                            _content_endpoint,
+                            json=_content_payload,
+                            headers={
+                                "Authorization": f"Bearer {content_token}",
+                                "Content-Type": "application/json",
+                            },
+                        )
+                        _cr_resp.raise_for_status()
+                        _cr_data = _cr_resp.json()
+                    # Extract text from response
+                    _result_text = ""
+                    for _ch in _cr_data.get("choices", []):
+                        _msg = _ch.get("message", {})
+                        _result_text = (_msg.get("content") or "").strip()
+                        # Strip Qwen3 thinking traces
+                        _result_text = re.sub(r'<think>.*?</think>', '', _result_text, flags=re.DOTALL).strip()
+                        if _result_text:
+                            break
+                    if _result_text:
+                        logger.info(
+                            "✅ Kanban Phase 2 complete: result_len=%d", len(_result_text)
+                        )
+                        _kc_synthetic: dict = {
+                            "id": chat_id, "object": "chat.completion",
+                            "created": int(time.time()), "model": tool_model,
+                            "choices": [{
+                                "index": 0, "finish_reason": "tool_calls",
+                                "message": {
+                                    "role": "assistant", "content": None,
+                                    "tool_calls": [{
+                                        "id": f"call_{chat_id[:8]}_kc2",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "kanban_complete",
+                                            "arguments": json.dumps(
+                                                {"result": _result_text[:4000]}
+                                            ),
+                                        },
+                                    }],
+                                },
+                            }],
+                            "usage": {"prompt_tokens": 0, "completion_tokens": 10, "total_tokens": 10},
+                        }
+                        if not request.stream:
+                            return _kc_synthetic
+                        async def _kc2_sse():
+                            _tc2 = _kc_synthetic["choices"][0]["message"]["tool_calls"]
+                            _ts = int(time.time())
+                            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'tool_calls': _tc2, 'content': ''}, 'finish_reason': None}]})}\n\n"
+                            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _ts, 'model': tool_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]})}\n\n"
+                            yield "data: [DONE]\n\n"
+                        return StreamingResponse(_kc2_sse(), media_type="text/event-stream")
+                except Exception as _e:
+                    logger.error("Kanban Phase 2 content synthesis failed: %s", _e)
+                    # Fall through to standard path
+    # --- End two-phase kanban handling ---
+
+    # Hermes3 models require the native Ollama /api/chat endpoint for reliable
+    # tool calling. The OpenAI-compatible /v1/chat/completions endpoint causes
+    # Hermes3 to write tool calls as text instead of structured tool_calls JSON.
+    _is_hermes3 = tool_model.startswith("hermes3")
+    if _is_hermes3:
+        # Use base URL without /v1 for Ollama's native /api/chat endpoint
+        _ollama_base = tool_base_url.rstrip("/")
+        if _ollama_base.endswith("/v1"):
+            _ollama_base = _ollama_base[:-3]
+        _tool_endpoint = _ollama_base + "/api/chat"
+    else:
+        _tool_endpoint = tool_base_url.rstrip("/") + "/chat/completions"
+
+    payload: dict = {
+        "model":    tool_model,
+        "messages": messages,
+        "stream":   _has_tool_results,
+    }
+    # Always pass tools so the model can call kanban_complete (or any other tool)
+    # after synthesising tool results.
+    if request.tools:
         payload["tools"] = request.tools
         if request.tool_choice:
             payload["tool_choice"] = request.tool_choice
+
+    # After at least 2 tool-result turns (e.g. kanban_show + write_file), force
+    # kanban_complete so the worker always closes the task and never exits with
+    # a protocol violation. Models reliably write the file but forget to call
+    # the completion tool — this guardrail ensures they always do.
+    if _has_tool_results and request.tools:
+        tool_results_count = sum(1 for m in messages if m.get("role") == "tool")
+        _kc_available = any(
+            (t.get("function", {}).get("name") == "kanban_complete"
+             if isinstance(t, dict)
+             else getattr(getattr(t, "function", None), "name", "") == "kanban_complete")
+            for t in (request.tools or [])
+        )
+        # Synthetic kanban_complete: if the model already produced a text answer
+        # (assistant content after tool results), skip the LLM and return a
+        # synthetic kanban_complete tool call using that text as the result.
+        # This prevents infinite "Would this be satisfactory?" loops where the
+        # model never calls the tool despite repeated injections.
+        if _kc_available:
+            # Find last pure-text assistant response (no tool_calls).
+            # Skip messages that have tool_calls — those are planning/dispatch
+            # messages that come BEFORE the tool results, not the actual answer.
+            # The answer appears in a pure-text assistant message AFTER the
+            # tool results in the conversation.
+            _last_assistant_text = ""
+            _tool_result_seen = False
+            for _m in messages:
+                if _m.get("role") == "tool":
+                    _tool_result_seen = True
+                elif (_m.get("role") == "assistant" and
+                      _m.get("content") and
+                      not _m.get("tool_calls") and
+                      _tool_result_seen):
+                    _last_assistant_text = _m["content"].strip()
+            # Skip planning/orientation text that mentions calling kanban tools.
+            # These are navigation messages, not actual task answers.
+            _planning_keywords = ("kanban_show", "let's orient", "i will call",
+                                  "will now call", "will call kanban", "step 1:",
+                                  "orient myself", "orient ourselves")
+            _is_planning = any(kw in _last_assistant_text.lower()
+                               for kw in _planning_keywords)
+            if _last_assistant_text and not _is_planning and tool_results_count >= 2:
+                _synthetic = {
+                    "id": chat_id, "object": "chat.completion",
+                    "created": int(time.time()), "model": tool_model,
+                    "choices": [{
+                        "index": 0, "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant", "content": None,
+                            "tool_calls": [{
+                                "id": f"call_{chat_id[:8]}_kc",
+                                "type": "function",
+                                "function": {
+                                    "name": "kanban_complete",
+                                    "arguments": json.dumps({"result": _last_assistant_text[:3000]}),
+                                },
+                            }],
+                        },
+                    }],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 10, "total_tokens": 10},
+                }
+                logger.info("🎯 Synthetic kanban_complete from assistant text (len=%d)", len(_last_assistant_text))
+                if not request.stream:
+                    return _synthetic
+                # Re-use _sse_wrap logic inline for streaming
+                async def _kc_sse():
+                    _ch = _synthetic["choices"][0]
+                    _tc = _ch["message"]["tool_calls"]
+                    _cr = int(time.time())
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _cr, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _cr, 'model': tool_model, 'choices': [{'index': 0, 'delta': {'tool_calls': _tc, 'content': ''}, 'finish_reason': None}]})}\n\n"
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': _cr, 'model': tool_model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]})}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(_kc_sse(), media_type="text/event-stream")
     if request.temperature is not None:
         payload["temperature"] = request.temperature
     if request.max_tokens:
@@ -196,16 +556,70 @@ async def _handle_tool_calls(
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
+    # Fast path: upstream streaming for tool-result synthesis.
+    # DISABLED for kanban_complete-capable requests: the normalisation of
+    # kanban_complete arguments (summary→result, empty→content) only runs in
+    # the slow path. Using streaming here bypasses it and results in NULL result.
+    _has_kanban_complete = _kc_available if _has_tool_results else False
+    if _has_tool_results and request.stream and not _has_kanban_complete:
+        async def _stream_tool_synthesis():
+            try:
+                async with httpx.AsyncClient(timeout=1800) as client:
+                    async with client.stream(
+                        "POST",
+                        _tool_endpoint,
+                        json=payload,
+                        headers={"Authorization": f"Bearer {tool_token}",
+                                 "Content-Type": "application/json"},
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: "):
+                                yield f"{line}\n\n"
+                            elif line == "data: [DONE]":
+                                yield "data: [DONE]\n\n"
+                                return
+            except Exception as e:
+                logger.error(f"Tool-synthesis stream failed: {e}")
+                err_chunk = {
+                    "id": chat_id, "object": "chat.completion.chunk",
+                    "created": int(time.time()), "model": tool_model,
+                    "choices": [{"index": 0, "delta": {
+                        "content": f"[Stream error: {e}]"}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(err_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(_stream_tool_synthesis(), media_type="text/event-stream")
+
+    # Slow path: buffer full response (used for tool-call turns and non-streaming clients).
+    # Timeout is generous (1800s) to accommodate large models like qwen3.6:35b
+    # which run at ~55 tok/s — quality over speed.
     try:
-        async with httpx.AsyncClient(timeout=600) as client:
+        async with httpx.AsyncClient(timeout=1800) as client:
             r = await client.post(
-                tool_base_url.rstrip("/") + "/chat/completions",
+                _tool_endpoint,
                 json=payload,
                 headers={"Authorization": f"Bearer {tool_token}",
                          "Content-Type": "application/json"},
             )
             r.raise_for_status()
             upstream = r.json()
+            # Ollama /api/chat returns {"message": {...}} not {"choices": [{"message": {...}}]}
+            # Convert to OpenAI format so downstream processing works correctly.
+            if _is_hermes3 and "message" in upstream and "choices" not in upstream:
+                upstream = {
+                    "id": chat_id,
+                    "object": "chat.completion",
+                    "model": tool_model,
+                    "choices": [{
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": upstream["message"],
+                    }],
+                    "usage": upstream.get("usage", {}),
+                }
+                logger.info("🔄 Converted Ollama /api/chat response to OpenAI format")
     except Exception as e:
         logger.error(f"Tool-calls passthrough failed: {e}")
         upstream = error_response
@@ -727,12 +1141,36 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         _tc_url   = _tmpl_prompts.get("judge_url_override") or URL_MAP.get(_tc_ep.strip(), "")
         _tc_token = _tmpl_prompts.get("judge_token_override") or TOKEN_MAP.get(_tc_ep.strip(), "ollama")
         if _tc_url and _tc_model:
+            # Look up content model from template experts (prefer "general" expert).
+            # Used by the two-phase kanban handler to synthesise answers via a
+            # larger, cleaner model instead of the tool-calling model.
+            _content_model, _content_url, _content_token = "", "", "ollama"
+            _content_sys = ""
+            if user_experts:
+                for _exp_cat, _exp_models in user_experts.items():
+                    if _exp_cat in ("tool_agent", "code"):
+                        continue
+                    if isinstance(_exp_models, list) and _exp_models:
+                        _em = _exp_models[0]
+                        if _em.get("model") and _em.get("url"):
+                            _content_model = _em["model"]
+                            _content_url   = _em["url"]
+                            _content_token = _em.get("token", "ollama")
+                            _content_sys   = _em.get("_system_prompt", "")
+                            break
             logger.info(
                 f"🔧 Tool-calling passthrough: model={_tc_model} stream={request.stream} "
-                f"tools={len(request.tools or [])} tool_msgs={sum(1 for m in request.messages if getattr(m,'role','')=='tool')}"
+                f"tools={len(request.tools or [])} tool_msgs={sum(1 for m in request.messages if getattr(m,'role','')=='tool')} "
+                f"content_model={_content_model or 'none'}"
             )
             _t_tc = time.monotonic()
-            _tc_resp = await _handle_tool_calls(request, chat_id, _tc_model, _tc_url, _tc_token)
+            _tc_resp = await _handle_tool_calls(
+                request, chat_id, _tc_model, _tc_url, _tc_token,
+                content_model=_content_model,
+                content_url=_content_url,
+                content_token=_content_token,
+                content_system_prompt=_content_sys,
+            )
             PROM_REQUESTS.labels(mode="tool", cache_hit="false",
                                  user_id=(user_id or "anon")).inc()
             PROM_RESPONSE_TIME.labels(mode="tool").observe(time.monotonic() - _t_tc)

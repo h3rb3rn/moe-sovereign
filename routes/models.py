@@ -23,6 +23,71 @@ from services.templates import _read_expert_templates
 router = APIRouter()
 
 
+@router.get("/v1/models/{model_id}")
+async def get_model(model_id: str, raw_request: Request):
+    """Return info for a single model by ID (OpenAI-compatible).
+
+    Hermes and other OpenAI-compatible clients call this endpoint to probe
+    model availability and capabilities before or during tool-call continuation.
+    A 404 here causes Hermes to abort the in-flight API call with
+    'Interrupted during API call', so we must return a valid model object
+    for any model that appears in the /v1/models list.
+    """
+    raw_key = _extract_api_key(raw_request)
+    user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": {
+            "message": "Invalid or missing API key",
+            "type":    "invalid_request_error",
+            "code":    "invalid_api_key",
+        }})
+
+    _created = int(time.time())
+
+    # Check global expert templates.
+    for t in _read_expert_templates():
+        tid = t.get("name", t["id"])
+        if tid == model_id:
+            return {
+                "id": tid, "object": "model", "owned_by": "moe-sovereign",
+                "created": _created,
+                "description": t.get("description") or tid,
+                "display_name": _model_display_name(tid, t.get("description") or tid),
+            }
+
+    # Check user-specific templates (most model IDs like hermes-tool-agent live here).
+    try:
+        user_tmpls = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
+        for uid, cfg in user_tmpls.items():
+            tid = cfg.get("name", uid)
+            if tid == model_id:
+                desc = cfg.get("description") or tid
+                return {
+                    "id": tid, "object": "model", "owned_by": "moe-sovereign",
+                    "created": _created,
+                    "description": desc,
+                    "display_name": _model_display_name(tid, desc),
+                }
+    except Exception:
+        pass
+
+    # Check MODES (built-in moe-* template IDs).
+    for cfg in MODES.values():
+        if cfg["model_id"] == model_id:
+            return {
+                "id": model_id, "object": "model", "owned_by": "moe-sovereign",
+                "created": _created,
+                "description": cfg["description"],
+                "display_name": _model_display_name(model_id, cfg["description"]),
+            }
+
+    return JSONResponse(status_code=404, content={"error": {
+        "message": f"Model '{model_id}' not found",
+        "type":    "invalid_request_error",
+        "code":    "model_not_found",
+    }})
+
+
 @router.get("/v1/models")
 async def list_models(raw_request: Request):
     raw_key  = _extract_api_key(raw_request)
