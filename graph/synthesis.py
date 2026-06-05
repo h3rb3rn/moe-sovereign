@@ -519,7 +519,20 @@ async def merger_node(state_: AgentState):
     if _skill_body:
         _skill_has_code = any(m in _skill_body for m in _CODE_MARKERS)
         if _primary_has_code and _skill_has_code:
-            logger.info("🛡️ Skill body suppressed: expert output + skill template both contain code (prevents judge interleaving)")
+            # Strip fenced code blocks from the skill body: keep prose instructions
+            # (e.g. "call generate_file(...)") but remove example code that would
+            # cause the judge to duplicate the expert's output.
+            _skill_stripped = re.sub(r"```[^\n]*\n.*?```", "", _skill_body, flags=re.DOTALL).strip()
+            if _skill_stripped:
+                logger.info("🛡️ Skill body: code blocks stripped (expert has code), injecting prose-only instructions")
+                prompt += (
+                    "\n\n--- OUTPUT FORMATTING SKILL ---\n"
+                    "The planner selected a specific output format for this response. "
+                    "Follow these formatting instructions:\n\n"
+                    + _skill_stripped[:2000]
+                )
+            else:
+                logger.info("🛡️ Skill body suppressed: no prose instructions remain after stripping code blocks")
         else:
             prompt += (
                 "\n\n--- OUTPUT FORMATTING SKILL ---\n"
@@ -534,6 +547,16 @@ async def merger_node(state_: AgentState):
         (c for c in ("medical_consult", "legal_advisor", "technical_support") if c in _plan_cats_early),
         _plan_cats_early[0] if _plan_cats_early else "general",
     )
+
+    # ── Fast path: MCP-only result (no experts ran, just precision tool) ──────────
+    # When the plan consisted solely of a precision_tools task (e.g. generate_xlsx,
+    # generate_file) and no expert produced output, the MCP result IS the answer.
+    # Skip judge synthesis to avoid the judge saying "ANSWER: CORRECT" instead of
+    # returning the actual download URL.
+    if (not expert_results and not ensemble_results and mcp_res
+            and not web and not math_res and not graph_ctx):
+        logger.info("⚡ MCP-only fast path: returning MCP result directly")
+        return {"final_response": mcp_res.strip(), "output_skill_body": ""}
 
     # ── Fast path: single high-confidence expert, no additional context ─────────
     _single_expert_modes = ("default", "concise")
@@ -976,6 +999,28 @@ async def merger_node(state_: AgentState):
             "search_strategy_hint": _strategy_hint,
             "agentic_iteration":    _agentic_iter + 1 if _agentic_gap != "COMPLETE" else _agentic_iter,
         }
+
+    # ── Web artifact auto-upload: if response contains HTML and a web skill was active,
+    # upload via generate_file and append the download URL to the response.
+    _web_skill_body = state_.get("output_skill_body", "")
+    _has_web_skill = bool(_web_skill_body) and ("web" in _web_skill_body.lower() or "html" in _web_skill_body.lower())
+    _has_html = bool(re.search(r'<!DOCTYPE|<html', res_content_clean, re.IGNORECASE))
+    if _has_web_skill and _has_html:
+        try:
+            _html_block = re.search(r'```html\s*(.*?)\s*```', res_content_clean, re.DOTALL | re.IGNORECASE)
+            _html_content = _html_block.group(1) if _html_block else res_content_clean
+            async with httpx.AsyncClient(timeout=30) as _hc:
+                _mcp_r = await _hc.post(f"{MCP_URL}/invoke", json={
+                    "tool": "generate_file",
+                    "args": {"content": _html_content, "filename": "webapp", "format": "html"},
+                })
+                _mcp_data = _mcp_r.json()
+                _url_m = re.search(r'https://\S+', _mcp_data.get("result", ""))
+                if _url_m:
+                    res_content_clean += f"\n\n📥 **Download:** [{_url_m.group(0)}]({_url_m.group(0)})"
+                    logger.info("🌐 Web artifact auto-uploaded: %s", _url_m.group(0)[:60])
+        except Exception as _we:
+            logger.debug("Web artifact auto-upload failed: %s", _we)
 
     await _ol_complete(_ol_merger_run, job_name="merger_node",
                        outputs=[dataset_response(state_.get("response_id", "synthesis"))])

@@ -46,7 +46,7 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
+    _infer_tier, assign_gpu, _ollama_unload, _ollama_evict_for_vram, _refine_expert_response,
     _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
@@ -301,6 +301,11 @@ async def expert_worker(state_: AgentState):
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
+            # Pass num_ctx to Ollama when a context_window override is set in the template.
+            # This controls KV cache allocation — smaller num_ctx drastically reduces VRAM
+            # usage (e.g. 8192 vs 32768 saves ~40 GB for large models like qwen2.5-coder:32b).
+            if _expert_ctx_override and api_type == "ollama":
+                _model_kw["num_ctx"] = _expert_ctx_override
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
@@ -393,6 +398,36 @@ async def expert_worker(state_: AgentState):
                 is_vram = any(x in err.lower() for x in
                               ("cudamalloc", "out of memory", "oom", "transfer encoding",
                                "not enough data", "cuda error"))
+                # Ollama reports insufficient VRAM as a 500 — two known message patterns:
+                # 1. "model requires more system memory (X GiB) than is available (Y GiB)"
+                # 2. "model failed to load, this may be due to resource limitations..."
+                is_vram_oom = (
+                    "model requires more system memory" in err.lower()
+                    or "resource limitations" in err.lower()
+                    or "model failed to load" in err.lower()
+                )
+                if is_vram_oom:
+                    logger.warning(f"⏳ Expert {model_name}: VRAM OOM — evicting unused models, then retry")
+                    await _report(f"⏳ Expert {model_name}: VRAM full, evicting unused models…")
+                    _evicted = await _ollama_evict_for_vram(expert_base_url, model_name)
+                    logger.info(f"🗑️ VRAM eviction: {_evicted} model(s) removed for {model_name}")
+                    if not _evicted:
+                        await asyncio.sleep(15)  # fallback: wait if /api/ps returns nothing
+                    try:
+                        _retry_res, _ = await _invoke_llm_with_fallback(
+                            llm, _primary_url, messages,
+                            timeout=_expert_node_timeout, label=f"Expert-retry {model_name}"
+                        )
+                        _retry_content = (_retry_res.content or "").strip()
+                        _retry_usage = _extract_usage(_retry_res)
+                        return {
+                            "res": f"[{model_name.upper()} / {cat}]: {_retry_content}",
+                            "model_cat": f"{model_name}::{cat}",
+                            **_retry_usage,
+                        }
+                    except Exception as e2:
+                        logger.error(f"❌ Expert {model_name}: VRAM OOM retry also failed: {e2}")
+                        return {"res": f"[{model_name} ERROR]: VRAM OOM", "model_cat": None}
                 if is_vram:
                     PROM_EXPERT_FAILURES.labels(model=model_name, reason="vram").inc()
                     logger.error(f"❌ VRAM/HTTP error GPU#{gpu} {model_name}: {e}")
