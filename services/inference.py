@@ -134,6 +134,33 @@ async def _ollama_unload(model: str, base_url: str) -> None:
         logger.debug(f"⚠️ VRAM-Unload {model}: {e}")
 
 
+async def _ollama_evict_for_vram(base_url: str, needed_model: str) -> int:
+    """Evict all loaded Ollama models that are NOT needed_model to free VRAM.
+
+    Called when a new model cannot load due to insufficient VRAM (OOM 500).
+    The keep_alive timer on other models is irrelevant — we force-unload them
+    so the requested model can fit. Returns the number of models evicted.
+    """
+    evicted = 0
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            ps_resp = await client.get(f"{base_url}/api/ps")
+            ps_resp.raise_for_status()
+            loaded = ps_resp.json().get("models", [])
+    except Exception as e:
+        logger.warning(f"⚠️ VRAM eviction: could not list loaded models: {e}")
+        return 0
+    for m in loaded:
+        name = m.get("name", "")
+        if name and name != needed_model:
+            logger.info(f"🗑️ VRAM pressure eviction: unloading {name} to make room for {needed_model}")
+            await _ollama_unload(name, base_url)
+            evicted += 1
+    if evicted:
+        await asyncio.sleep(2)  # allow Ollama to finalize unload before retry
+    return evicted
+
+
 # ---------------------------------------------------------------------------
 # Endpoint degradation tracking
 # ---------------------------------------------------------------------------
