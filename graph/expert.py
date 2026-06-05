@@ -393,22 +393,28 @@ async def expert_worker(state_: AgentState):
                 is_vram = any(x in err.lower() for x in
                               ("cudamalloc", "out of memory", "oom", "transfer encoding",
                                "not enough data", "cuda error"))
-                # Ollama reports insufficient VRAM as a 500 with this message;
-                # wait 30s so the currently-loaded model can be evicted, then retry once.
-                is_vram_oom = "model requires more system memory" in err.lower()
+                # Ollama reports insufficient VRAM as a 500 — two known message patterns:
+                # 1. "model requires more system memory (X GiB) than is available (Y GiB)"
+                # 2. "model failed to load, this may be due to resource limitations..."
+                is_vram_oom = (
+                    "model requires more system memory" in err.lower()
+                    or "resource limitations" in err.lower()
+                    or "model failed to load" in err.lower()
+                )
                 if is_vram_oom:
                     logger.warning(f"⏳ Expert {model_name}: VRAM OOM — evicting unused models, then retry")
                     await _report(f"⏳ Expert {model_name}: VRAM full, evicting unused models…")
                     _evicted = await _ollama_evict_for_vram(expert_base_url, model_name)
                     logger.info(f"🗑️ VRAM eviction: {_evicted} model(s) removed for {model_name}")
                     if not _evicted:
-                        await asyncio.sleep(10)  # fallback: wait if nothing was evicted
+                        await asyncio.sleep(15)  # fallback: wait if /api/ps returns nothing
                     try:
                         _retry_res, _ = await _invoke_llm_with_fallback(
-                            llm, expert_url, msgs, timeout=timeout, label=f"Expert-retry {model_name}"
+                            llm, _primary_url, messages,
+                            timeout=_expert_node_timeout, label=f"Expert-retry {model_name}"
                         )
                         _retry_content = (_retry_res.content or "").strip()
-                        _retry_usage = getattr(_retry_res, "usage_metadata", {}) or {}
+                        _retry_usage = _extract_usage(_retry_res)
                         return {
                             "res": f"[{model_name.upper()} / {cat}]: {_retry_content}",
                             "model_cat": f"{model_name}::{cat}",
