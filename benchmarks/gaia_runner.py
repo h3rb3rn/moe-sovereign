@@ -834,8 +834,36 @@ def extract_clean_answer(question: str, model_output: str) -> str:
     cleaned = re.sub(r"【\d+】", "", model_output)
     cleaned = re.sub(r"^\s*\[\d+\].*$", "", cleaned, flags=re.MULTILINE)
 
-    # 1. Explicit labels
+    # Strip pipeline-internal metadata labels that leak into judge output.
+    # Patterns like "Ensemble Response (MODEL):", "REASONING ANALYSIS:", etc.
+    # are artifacts of the MoE synthesis pipeline and must not be treated as answers.
+    _pipeline_labels = re.compile(
+        r"^\s*(?:\*{1,2})?"
+        r"(?:Ensemble\s+Response\s*(?:\([^)]*\))?"
+        r"|REASONING\s+ANALYSIS"
+        r"|Expert\s+Evaluation"
+        r"|Direct\s+Answer"
+        r"|Taxonomic\s+&[^:]*Clarification"
+        r"|Technical\s+Clarification[^:]*"
+        r"|Step-by-Step\s+Derivation"
+        r"|Based\s+on\s+the\s+(?:provided|above|following)"
+        r")(?:\*{1,2})?[\s:]*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    cleaned = _pipeline_labels.sub("", cleaned).strip()
+    # Also strip the first line if it matches a known pipeline header
+    _first_line_header = re.compile(
+        r"^(?:\*{1,2})?(?:Ensemble\s+Response|REASONING\s+ANALYSIS|Expert\s+Evaluation"
+        r"|Direct\s+Answer|Technical\s+Clarification|Taxonomic[^:]*Clarification"
+        r"|Step-by-Step\s+Derivation)(?:\*{1,2})?[:\s]*\n",
+        re.IGNORECASE,
+    )
+    cleaned = _first_line_header.sub("", cleaned).strip()
+
+    # 1. Explicit labels — ANSWER: line from structured judge output has highest priority
     label_patterns = [
+        # Highest priority: structured ANSWER: line from optimized judge prompt
+        r"(?:^|\n)\s*ANSWER\s*:\s*(.+?)(?:\n|$)",
         r"(?:^|\n)\s*\*{0,2}(?:final\s+)?(?:answer|antwort|result|ergebnis|lösung|solution)\*{0,2}\s*[:：]\s*\*{0,2}(.+?)\*{0,2}(?:\n|$)",
         r"the\s+(?:final\s+)?answer\s+is\s*[:：]?\s*\*{0,2}(.+?)\*{0,2}(?:\.|$)",
         r"(?:answer|antwort)[:\s]+\*{0,2}([^\n*]{1,80})\*{0,2}",
@@ -1188,7 +1216,7 @@ async def call_orchestrator(
                         {"role": "user", "content": user_content},
                     ],
                     "stream": False,
-                    "max_tokens": 1000,
+                    "max_tokens": 400,
                     "temperature": temperature if temperature is not None else TEMPERATURE,
                     "no_cache": True,
                     "mode": "default",  # default merger format for short exact answers; web research is triggered by complexity estimator
@@ -1270,6 +1298,14 @@ async def call_orchestrator(
                 if attempt < 3:
                     print(f"  ↩ Retry {attempt}/3 ({reason})", flush=True)
                     await asyncio.sleep(5 * attempt)
+                    # On retry 2+: add plain-text-only hint to the question so the
+                    # pipeline understands it must not emit JSON or tool-call syntax.
+                    if attempt >= 2 and isinstance(user_content, str):
+                        user_content = (
+                            "[IMPORTANT: Respond with a short plain-text value ONLY. "
+                            "Do NOT output JSON, search queries, or tool calls.]\n\n"
+                            + user_content
+                        )
                     continue
                 # Retries exhausted with tool-call leak — bypass the MoE orchestrator
                 # and call the local Ollama model directly (no pipeline, no tool calls).
@@ -1289,11 +1325,13 @@ async def call_orchestrator(
                                         "Write ONLY a short plain-text answer — never JSON. "
                                         "One word, number, or short phrase. No explanation."
                                     )},
-                                    {"role": "user", "content": _plain_q},
+                                    # /no_think suppresses qwen3 extended thinking for
+                                    # this simple direct-answer fallback call.
+                                    {"role": "user", "content": f"/no_think\n{_plain_q}"},
                                 ],
                                 "stream": False,
-                                "max_tokens": 100,
-                                "temperature": 0.3,
+                                "max_tokens": 150,
+                                "temperature": 0.0,
                             },
                             headers={"Authorization": "Bearer ollama", "Content-Type": "application/json"},
                             timeout=120,

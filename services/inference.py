@@ -18,7 +18,7 @@ from config import (
     JUDGE_TIMEOUT, PLANNER_TIMEOUT,
     _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
-    MAX_EXPERT_OUTPUT_CHARS, THOMPSON_SAMPLING_ENABLED,
+    MAX_EXPERT_OUTPUT_CHARS, MAX_JUDGE_TOKENS, THOMPSON_SAMPLING_ENABLED,
 )
 from metrics import PROM_THOMPSON
 from services.routing import _server_info, _is_endpoint_error
@@ -272,6 +272,21 @@ async def _invoke_llm_with_fallback(
         except Exception as e:
             _last_exc = e
             if _is_endpoint_error(e) or (_on_external and "empty" in str(e).lower()):
+                # 429 rate-limit: honour the upstream retry_after hint instead of
+                # the global ENDPOINT_RETRY_DELAY. Also skip degraded-marking so the
+                # endpoint is not blacklisted for subsequent requests.
+                _e_str = str(e)
+                _is_rate_limit = "429" in _e_str or "rate limit" in _e_str.lower() or "rate-limited" in _e_str.lower()
+                if _is_rate_limit:
+                    import re as _re
+                    _m = _re.search(r'retry_after_seconds[\'\":\s]+(\d+(?:\.\d+)?)', _e_str)
+                    _wait = float(_m.group(1)) + 1.0 if _m else 30.0
+                    logger.info("⏳ %s: 429 rate-limit — waiting %.0fs (retry_after) then retrying", label, _wait)
+                    await asyncio.sleep(_wait)
+                    # Do NOT mark endpoint as degraded — it's temporarily rate-limited, not broken.
+                    if _attempt < _ENDPOINT_RETRY_COUNT - 1:
+                        continue
+                    return await _try_fallback_chain(f"429 rate-limit persisted after {_ENDPOINT_RETRY_COUNT} retries")
                 if _attempt < _ENDPOINT_RETRY_COUNT - 1:
                     logger.debug("⏳ %s: External endpoint error, retry %d/%d in %.0fs: %s",
                                  label, _attempt + 1, _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY, str(e)[:60])
@@ -345,7 +360,8 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         if _endpoint_is_degraded(u.rstrip("/")) and _FALLBACK_ENABLED:
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
-        return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT)
+        return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
+                          model_kwargs={"max_tokens": MAX_JUDGE_TOKENS})
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -353,7 +369,8 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _url = node.get("url") or URL_MAP.get(node["name"], "")
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
-        return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT)
+        return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
+                          model_kwargs={"max_tokens": MAX_JUDGE_TOKENS})
     return judge_llm
 
 

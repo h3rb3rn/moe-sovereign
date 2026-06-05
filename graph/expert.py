@@ -15,7 +15,8 @@ import httpx
 import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
-    PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
+    PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, MAX_EXPERT_TOKENS,
+    MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE, JUDGE_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
@@ -214,12 +215,21 @@ async def expert_worker(state_: AgentState):
                 redis_client=state.redis_client,
                 override=_expert_ctx_override,
             )
-            # Derive per-expert output and input limits from context window
-            _expert_max_output = MAX_EXPERT_OUTPUT_CHARS
+            # Categories that generate large code artifacts need higher token/output limits.
+            # Defined here (before first use) to avoid Python's "referenced before assignment"
+            # error that occurs when the name appears anywhere in the enclosing scope.
+            _CODE_GEN_CATS = {"code_reviewer", "devops_sre", "frontend", "backend", "fullstack"}
+            # Derive per-expert output and input limits from context window.
+            # Code-generation categories use a much higher output cap so that
+            # large HTML/JS/Python files are not truncated mid-function.
+            _max_output_cap = (
+                MAX_EXPERT_OUTPUT_CHARS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_OUTPUT_CHARS
+            )
+            _expert_max_output = _max_output_cap
             _max_input_chars = 0
             if _expert_ctx_window > 0:
-                # Reserve 25% of window for output, capped at global MAX_EXPERT_OUTPUT_CHARS
-                _expert_max_output = min(MAX_EXPERT_OUTPUT_CHARS, max(1000, _expert_ctx_window // 4))
+                # Reserve 25% of window for output, capped at category output cap
+                _expert_max_output = min(_max_output_cap, max(1000, _expert_ctx_window // 4))
                 # 3 chars/token conservative estimate for mixed content
                 _max_input_chars = max(2000, _expert_ctx_window * 3)
                 _available_task_chars = _max_input_chars - len(sys_prompt)
@@ -279,10 +289,38 @@ async def expert_worker(state_: AgentState):
                 else EXPERT_TIMEOUT
             )
             _expert_temp = state_.get("query_temperature")  # None = API default
+            # max_tokens must be passed via model_kwargs so LangChain forwards it
+            # verbatim to Ollama as "max_tokens". Using the top-level max_tokens
+            # parameter causes LangChain to rename it to "max_completion_tokens",
+            # which Ollama ignores — resulting in unlimited generation.
+            # Code-generation categories need much higher token limits than
+            # factual-lookup categories. A full browser game or backend service
+            # can easily exceed 16k tokens; 4096 would truncate mid-function.
+            # _CODE_GEN_CATS is already defined above (before first use).
+            _expert_max_tokens = (
+                MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
+            )
+            _model_kw: dict = {"max_tokens": _expert_max_tokens}
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
-                                 "timeout": _expert_node_timeout}
+                                 "timeout": _expert_node_timeout,
+                                 "model_kwargs": _model_kw}
             if _expert_temp is not None:
                 _llm_kwargs["temperature"] = _expert_temp
+            # thinking_mode=False: inject /no_think directive into the last human message.
+            # Ollama 0.24 does not support think=false via the OpenAI-compatible API;
+            # the /no_think prefix in the user message is the reliable cross-version method.
+            # qwen3 respects this directive and skips the <think>…</think> block entirely,
+            # saving ~30k tokens and 10+ minutes for factual-lookup categories.
+            _thinking_enabled = bool(model_cfg.get("thinking_mode", True))
+            if not _thinking_enabled and messages:
+                from langchain_core.messages import HumanMessage
+                _patched = list(messages)
+                for _i in reversed(range(len(_patched))):
+                    if hasattr(_patched[_i], "type") and _patched[_i].type == "human":
+                        _orig = _patched[_i].content
+                        _patched[_i] = HumanMessage(content=f"/no_think\n{_orig}")
+                        break
+                messages = _patched
             llm = ChatOpenAI(**_llm_kwargs)
             from metrics import PROM_TOKENS
             try:
@@ -295,8 +333,16 @@ async def expert_worker(state_: AgentState):
                 if _used_fallback:
                     await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)
-                content = res.content[:_expert_max_output]
-                if len(res.content) > _expert_max_output:
+                # Strip thinking traces before truncation so the actual answer
+                # is captured instead of the thinking preamble. Thinking-mode
+                # models (qwen3.6:35b) output <think>...</think> first which
+                # would otherwise fill the entire _expert_max_output window.
+                import re as _re
+                _raw_content = _re.sub(
+                    r'<think>.*?</think>', '', res.content, flags=_re.DOTALL
+                ).strip()
+                content = _raw_content[:_expert_max_output]
+                if len(_raw_content) > _expert_max_output:
                     content += "\n[…truncated]"
                 await _report(f"✅ Expert [{model_name} / {cat}]:\n{content}\n---")
                 # Token metrics

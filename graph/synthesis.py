@@ -595,6 +595,14 @@ async def merger_node(state_: AgentState):
         fallback = "\n\n".join(s for s in sections[1:] if s)  # raw sections as emergency response
         await _ol_fail(_ol_merger_run, job_name="merger_node", error=str(e))
         return {"final_response": fallback or "Error: Merger could not generate a response."}
+    # Strip thinking traces before using judge output. Thinking-mode judges
+    # (qwen3.6:35b) emit <think>…</think> blocks that must not appear in the
+    # final response or pollute confidence checks and SYNTH parsing.
+    _judge_raw = re.sub(r'<think>.*?</think>', '', res.content, flags=re.DOTALL).strip()
+    # Wrap in a simple object so downstream code can use .content uniformly.
+    class _StrResult:
+        def __init__(self, s): self.content = s
+    res = _StrResult(_judge_raw)
     await _report(f"🔀 Merger response ({len(res.content)} chars):\n{res.content}")
     merger_usage = _extract_usage(res)
     _uid = state_.get("user_id", "anon")

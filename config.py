@@ -163,6 +163,18 @@ _CLAUDE_CODE_REASONING_URL = (
 # =============================================================================
 
 MAX_EXPERT_OUTPUT_CHARS   = int(os.getenv("MAX_EXPERT_OUTPUT_CHARS",    "2400"))
+# Hard generation limit for expert LLM calls. Prevents thinking-mode models
+# (qwen3.6:35b) from generating massive token traces (32k+ tokens) that block
+# the pipeline for 10+ minutes. Thinking traces are stripped before use —
+# 4096 tokens captures ample reasoning + answer for any expert category.
+MAX_EXPERT_TOKENS         = int(os.getenv("MAX_EXPERT_TOKENS",          "4096"))
+# Per-category token limits override the global MAX_EXPERT_TOKENS.
+# Code generation needs much higher limits than factual lookups.
+MAX_EXPERT_TOKENS_CODE    = int(os.getenv("MAX_EXPERT_TOKENS_CODE",     "16384"))
+MAX_EXPERT_OUTPUT_CHARS_CODE = int(os.getenv("MAX_EXPERT_OUTPUT_CHARS_CODE", "48000"))
+# Judge generation limit — prevents thinking-mode judges from generating
+# massive traces. 8192 is generous for synthesis while still bounding cost.
+MAX_JUDGE_TOKENS          = int(os.getenv("MAX_JUDGE_TOKENS",           "32768"))
 CACHE_HIT_THRESHOLD       = float(os.getenv("CACHE_HIT_THRESHOLD",      "0.15"))
 SOFT_CACHE_THRESHOLD      = float(os.getenv("SOFT_CACHE_THRESHOLD",     "0.50"))
 SOFT_CACHE_MAX_EXAMPLES   = int(os.getenv("SOFT_CACHE_MAX_EXAMPLES",    "2"))
