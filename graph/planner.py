@@ -598,6 +598,51 @@ JSON array:"""
                         _output_skill = _skill_body
                         logger.info(f"🎯 Planner suggested skill: /{_skill_name}")
                     break
+
+            # Deterministic output-skill detection: LLMs often miss output_skill hints.
+            # For xlsx creation: inject a generate_xlsx precision_tools task directly
+            # (avoids the judge code-suppression guard and the file_download_url confusion).
+            # For other file types: set output_skill_body as formatting guidance for judge.
+            if not _output_skill:
+                _inp_lower = state_.get("input", "").lower()
+                _XLSX_KWS = ["excel", ".xlsx", "spreadsheet", "xls-datei", "tabellendokument",
+                             "excel-datei", "excel-tabelle", "kalkulations", "tabelle erstellen",
+                             "tabelle anlegen", "tabelle generieren"]
+                _SKILL_KEYWORDS: list[tuple[list[str], str]] = [
+                    (["word", ".docx", "word-dokument", "word-datei"], "docx"),
+                    (["powerpoint", ".pptx", "präsentation", "slides", "folie",
+                      "slideshow", "slide deck"], "pptx"),
+                    (["webseite erstellen", "website erstellen", "html-seite",
+                      "web-app erstellen", "browser-spiel", "browser-app"], "web-artifacts-builder"),
+                    (["pdf erstellen", "pdf generieren", "als pdf"], "pdf"),
+                ]
+                if any(_kw in _inp_lower for _kw in _XLSX_KWS):
+                    # xlsx: use generate_xlsx MCP tool (not output_skill_body)
+                    _has_xlsx_tool = any(
+                        isinstance(t, dict) and t.get("mcp_tool") == "generate_xlsx"
+                        for t in raw
+                    )
+                    if not _has_xlsx_tool:
+                        # Remove incorrect file_download_url tasks the LLM might have added
+                        raw = [t for t in raw if not (
+                            isinstance(t, dict) and t.get("mcp_tool") in ("file_download_url", "file_upload")
+                        )]
+                        raw.append({
+                            "task": f"Create Excel spreadsheet: {state_.get('input', '')[:120]}",
+                            "category": "precision_tools",
+                            "mcp_tool": "generate_xlsx",
+                            "mcp_args": {},
+                        })
+                        logger.info("📊 Auto-injected generate_xlsx task (xlsx keyword detected)")
+                else:
+                    from services.skills import _load_skill_body as _lsb
+                    for _kws, _sname in _SKILL_KEYWORDS:
+                        if any(_kw in _inp_lower for _kw in _kws):
+                            _sb = _lsb(_sname)
+                            if _sb:
+                                _output_skill = _sb
+                                logger.info(f"🎯 Auto-detected skill from keywords: /{_sname}")
+                            break
             _user_expert_cats = set((state_.get("user_experts") or {}).keys())
             plan = _sanitize_plan(raw, state_["input"], _user_expert_cats)
             categories = [t.get("category", "?") for t in plan]

@@ -139,12 +139,23 @@ async def mcp_node(state_: AgentState):
         _missing = [f for f in _schema.get("required", []) if f not in args]
         if _missing:
             logger.info(f"🔧 MCP pre-validation: {tool} missing {_missing} — asking judge to fix")
+            _user_input_ctx = state_.get("input", "")[:500]
             _pre_fix_prompt = (
                 f"The MCP tool '{tool}' requires these arguments: {_schema.get('required', [])}\n"
                 f"Current args (missing {_missing}): {json.dumps(args)}\n"
                 f"Task context: {desc}\n"
-                f"Return ONLY a corrected JSON object with all required args filled. No explanation."
+                f"User request: {_user_input_ctx}\n"
+                + (
+                    "For generate_xlsx: fill 'csv_data' with a complete CSV table (first row = headers, "
+                    "comma-separated, use \\n for row breaks), 'filename' with a short snake_case name, "
+                    "'title' with a human-readable sheet title.\n"
+                    if tool == "generate_xlsx" else ""
+                )
+                + "Return ONLY a corrected JSON object with all required args filled. No explanation."
             )
+            # Prepend /no_think so qwen3-family models skip Extended Thinking for
+            # this simple JSON-fill task (avoids 2-5 min think chains on trivial prompts)
+            _pre_fix_prompt = "/no_think\n" + _pre_fix_prompt
             try:
                 from parsing import _extract_json
                 _pre_fix_res = await _invoke_judge_with_retry(state_, _pre_fix_prompt, max_retries=1, temperature=0.05)
