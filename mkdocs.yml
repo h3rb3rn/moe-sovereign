@@ -167,6 +167,7 @@ nav:
     - Import & Export (incl. Knowledge Bundles): reference/import-export.md
     - Expert Categories: reference/expert-categories.md
     - Expert Reference Template: reference/expert-template.md
+    - Expert Template Guide (Settings & Examples): reference/expert-template-guide.md
     - Expert Prompts: reference/expert-prompts.md
     - Expert Overview (Live): experts/index.md
     - User Management (Technical): reference/user-management.md

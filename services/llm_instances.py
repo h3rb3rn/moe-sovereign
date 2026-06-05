@@ -21,12 +21,14 @@ from config import (
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN, JUDGE_TIMEOUT,
     PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN, PLANNER_TIMEOUT,
     GRAPH_INGEST_MODEL, GRAPH_INGEST_URL, GRAPH_INGEST_TOKEN,
+    MAX_JUDGE_TOKENS,
     _SEARXNG_URL,
 )
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
-judge_llm   = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT)
+judge_llm   = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT,
+                        model_kwargs={"max_tokens": MAX_JUDGE_TOKENS})
 planner_llm = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN, timeout=PLANNER_TIMEOUT)
 
 # Ingest LLM: dedicated model for background GraphRAG extraction.
