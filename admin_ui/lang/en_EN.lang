@@ -1100,5 +1100,10 @@
   "portal.audit_log.retention_days": "days",
   "portal.audit_log.retention_save": "Save",
   "portal.audit_log.retention_hint": "Maximum retention: {max} days. Older files are deleted daily.",
-  "portal.audit_log.disabled": "Audit logging is disabled."
+  "portal.audit_log.disabled": "Audit logging is disabled.",
+  "skill.detect.xlsx": "excel,spreadsheet,table,worksheet,xlsx,xls,tabular data,create spreadsheet,make spreadsheet,build spreadsheet,excel file,workbook",
+  "skill.detect.docx": "word,document,docx,word document,word file,letter,report,text document,write document",
+  "skill.detect.pptx": "powerpoint,presentation,slides,pptx,slide deck,slideshow,create presentation,make slides",
+  "skill.detect.web": "create website,build website,make website,html page,web app,browser game,browser app,build html,create html,webapp,landing page",
+  "skill.detect.pdf": "create pdf,generate pdf,export as pdf,pdf output,pdf file,save as pdf"
 }

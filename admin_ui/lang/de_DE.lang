@@ -1099,5 +1099,10 @@
   "portal.audit_log.retention_days": "Tage",
   "portal.audit_log.retention_save": "Speichern",
   "portal.audit_log.retention_hint": "Maximale Aufbewahrungsdauer: {max} Tage. Ältere Dateien werden täglich gelöscht.",
-  "portal.audit_log.disabled": "Audit-Logging ist deaktiviert."
+  "portal.audit_log.disabled": "Audit-Logging ist deaktiviert.",
+  "skill.detect.xlsx": "excel,tabelle,spreadsheet,kalkulation,xlsx,xls,tabellendokument,tabelle erstellen,tabelle anlegen,tabelle generieren,excel-tabelle,excel-datei,xls-datei",
+  "skill.detect.docx": "word,dokument,docx,word-dokument,word-datei,brief,bericht,textdokument",
+  "skill.detect.pptx": "powerpoint,präsentation,folie,slides,pptx,slideshow,slide deck,vortrag,präsentation erstellen",
+  "skill.detect.web": "webseite erstellen,website erstellen,html-seite,web-app erstellen,browser-spiel,browser-app,html erstellen,webseite bauen,webapp",
+  "skill.detect.pdf": "pdf erstellen,pdf generieren,als pdf,pdf ausgabe,pdf exportieren"
 }

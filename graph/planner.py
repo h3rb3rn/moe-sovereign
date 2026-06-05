@@ -603,18 +603,34 @@ JSON array:"""
             # For xlsx creation: inject a generate_xlsx precision_tools task directly
             # (avoids the judge code-suppression guard and the file_download_url confusion).
             # For other file types: set output_skill_body as formatting guidance for judge.
+            # Keywords are loaded from all language files (de_DE, en_EN, fr_FR, zh_CN, …)
+            # so detection works regardless of the user's input language.
             if not _output_skill:
                 _inp_lower = state_.get("input", "").lower()
-                _XLSX_KWS = ["excel", ".xlsx", "spreadsheet", "xls-datei", "tabellendokument",
-                             "excel-datei", "excel-tabelle", "kalkulations", "tabelle erstellen",
-                             "tabelle anlegen", "tabelle generieren"]
+
+                # Load multilingual skill keywords from all .lang files
+                def _load_skill_kws(key: str) -> list[str]:
+                    from pathlib import Path as _P
+                    import json as _json
+                    _lang_dir = _P("/app/admin_ui/lang")
+                    _kws: list[str] = []
+                    for _lf in sorted(_lang_dir.glob("*.lang")):
+                        try:
+                            _data = _json.loads(_lf.read_text(encoding="utf-8"))
+                            _raw = _data.get(key, "")
+                            _kws.extend([k.strip().lower() for k in _raw.split(",") if k.strip()])
+                        except Exception:
+                            pass
+                    return list(dict.fromkeys(_kws))  # deduplicate preserving order
+
+                _XLSX_KWS = _load_skill_kws("skill.detect.xlsx") or [
+                    "excel", ".xlsx", "spreadsheet", "tabelle erstellen",
+                ]
                 _SKILL_KEYWORDS: list[tuple[list[str], str]] = [
-                    (["word", ".docx", "word-dokument", "word-datei"], "docx"),
-                    (["powerpoint", ".pptx", "präsentation", "slides", "folie",
-                      "slideshow", "slide deck"], "pptx"),
-                    (["webseite erstellen", "website erstellen", "html-seite",
-                      "web-app erstellen", "browser-spiel", "browser-app"], "web-artifacts-builder"),
-                    (["pdf erstellen", "pdf generieren", "als pdf"], "pdf"),
+                    (_load_skill_kws("skill.detect.docx") or ["word", ".docx"], "docx"),
+                    (_load_skill_kws("skill.detect.pptx") or ["powerpoint", ".pptx", "slides"], "pptx"),
+                    (_load_skill_kws("skill.detect.web") or ["create website", "webseite erstellen"], "web-artifacts-builder"),
+                    (_load_skill_kws("skill.detect.pdf") or ["create pdf", "pdf erstellen"], "pdf"),
                 ]
                 if any(_kw in _inp_lower for _kw in _XLSX_KWS):
                     # xlsx: use generate_xlsx MCP tool (not output_skill_body)

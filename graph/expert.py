@@ -301,6 +301,11 @@ async def expert_worker(state_: AgentState):
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
+            # Pass num_ctx to Ollama when a context_window override is set in the template.
+            # This controls KV cache allocation — smaller num_ctx drastically reduces VRAM
+            # usage (e.g. 8192 vs 32768 saves ~40 GB for large models like qwen2.5-coder:32b).
+            if _expert_ctx_override and api_type == "ollama":
+                _model_kw["num_ctx"] = _expert_ctx_override
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
