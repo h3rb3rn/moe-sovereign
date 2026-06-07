@@ -1101,5 +1101,10 @@
   "portal.audit_log.retention_days": "天",
   "portal.audit_log.retention_save": "保存",
   "portal.audit_log.retention_hint": "最长保留期：{max} 天。较旧的文件将每日删除。",
-  "portal.audit_log.disabled": "审计日志记录已禁用。"
+  "portal.audit_log.disabled": "审计日志记录已禁用。",
+  "skill.detect.xlsx": "excel,表格,电子表格,计算表,xlsx,xls,表格文件,创建表格,生成表格,excel文件,工作簿",
+  "skill.detect.docx": "word,文档,docx,word文档,word文件,信件,报告,文本文档",
+  "skill.detect.pptx": "powerpoint,演示文稿,幻灯片,slides,pptx,幻灯片放映,创建演示文稿,制作幻灯片",
+  "skill.detect.web": "创建网站,建立网站,html页面,网络应用,浏览器游戏,创建html,网页应用,落地页",
+  "skill.detect.pdf": "创建pdf,生成pdf,导出为pdf,pdf输出,pdf文件,另存为pdf"
 }
