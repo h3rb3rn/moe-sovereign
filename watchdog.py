@@ -43,7 +43,7 @@ _SMTP_HOST      = os.getenv("SMTP_HOST", "")
 _SMTP_PORT      = int(os.getenv("SMTP_PORT", "587"))
 _SMTP_USER      = os.getenv("SMTP_USER", "")
 _SMTP_PASS      = os.getenv("SMTP_PASS", "")
-_SMTP_FROM      = os.getenv("SMTP_FROM", "noreply@moe.intern")
+_SMTP_FROM      = os.getenv("SMTP_FROM", "noreply@example.com")
 _SMTP_STARTTLS  = os.getenv("SMTP_STARTTLS", "1") == "1"
 _SMTP_SSL       = os.getenv("SMTP_SSL", "0") == "1"
 

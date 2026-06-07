@@ -96,18 +96,11 @@ def _build_skill_catalog() -> str:
         return ""
     return (
         "\n\nAVAILABLE OUTPUT SKILLS (for non-plaintext deliverables):\n"
-        "If the user's request produces a file or visual artifact, add \"output_skill\" to the relevant task.\n"
-        "MANDATORY AUTO-DETECTION — add output_skill automatically when the request matches:\n"
-        "  spreadsheet/table → xlsx: keywords: Excel, Tabelle, Spreadsheet, .xlsx, CSV-Datei, Kalkulation\n"
-        "  word document     → docx: keywords: Word, Dokument, .docx, Brief, Bericht, Report\n"
-        "  presentation      → pptx: keywords: PowerPoint, Präsentation, Slides, .pptx, Folie\n"
-        "  website/HTML      → web-artifacts-builder or frontend-design: keywords: Webseite, HTML, Browser-App, Web-App\n"
-        "  visual/image      → canvas-design: keywords: Bild, Grafik, Diagramm, Chart, Poster\n"
-        "  code artifact     → (no skill needed, code_reviewer handles it)\n"
-        "RULE: Do NOT ask the user — detect intent from keywords and trigger the skill automatically.\n"
+        "If the user's request would benefit from a specific output format (PDF, DOCX, HTML, slides, etc.),\n"
+        "add an optional field \"output_skill\" to one of your tasks.\n"
+        "Only suggest a skill when the request clearly implies a document or visual output.\n"
         + "\n".join(catalog)
-        + '\nExample (Excel create): {"task": "Create KFZ inspection spreadsheet", "category": "precision_tools", "mcp_tool": "generate_xlsx", "mcp_args": {}}\n'
-        'Example (HTML):  {"task": "Build Star Trek browser game", "category": "code_reviewer", "output_skill": "web-artifacts-builder"}\n'
+        + '\nExample: {"task": "Create visual report", "category": "research", "output_skill": "web-artifacts-builder"}\n'
     )
 
 

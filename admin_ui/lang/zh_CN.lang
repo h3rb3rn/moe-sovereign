@@ -20,6 +20,7 @@
   "lbl.template_activity": "模板使用情况",
   "lbl.healer_history": "Healer 历史",
   "lbl.ontology_runner": "本体缺口解析",
+  "lbl.node_active": "节点激活（用户权限可见）",
   "lbl.floating_routing": "浮动路由激活",
   "lbl.server_blocked": "服务器已封锁（硬封锁）",
   "lbl.dedicated_healer": "专用缺口愈合器（持续循环）",
@@ -1100,10 +1101,5 @@
   "portal.audit_log.retention_days": "天",
   "portal.audit_log.retention_save": "保存",
   "portal.audit_log.retention_hint": "最长保留期：{max} 天。较旧的文件将每日删除。",
-  "portal.audit_log.disabled": "审计日志记录已禁用。",
-  "skill.detect.xlsx": "excel,电子表格,表格,工作表,xlsx,xls,创建表格,制作表格,Excel文件,数据表",
-  "skill.detect.docx": "word,文档,docx,Word文档,报告,信件,文字文档,创建文档",
-  "skill.detect.pptx": "powerpoint,演示文稿,幻灯片,pptx,PPT,制作演示,创建幻灯片",
-  "skill.detect.web": "创建网站,制作网页,html页面,网络应用,浏览器游戏,创建html,网页应用,落地页",
-  "skill.detect.pdf": "创建pdf,生成pdf,导出pdf,pdf文件,保存为pdf"
+  "portal.audit_log.disabled": "审计日志记录已禁用。"
 }

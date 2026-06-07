@@ -1,0 +1,25 @@
+# prometheus/node_targets.yml.example
+#
+# Copy this file to prometheus/node_targets.yml and fill in your inference node details.
+# This file is gitignored — it contains your private infrastructure addresses.
+#
+# Each entry targets a node_exporter instance running on an inference node (port 9100).
+# See: https://github.com/prometheus/node_exporter
+#
+# You must also mount this file into the Prometheus container. Add to docker-compose.yml:
+#
+#   moe-prometheus:
+#     volumes:
+#       - ./prometheus/node_targets.yml:/etc/prometheus/node_targets.yml:ro
+#
+# If you have no external inference nodes, leave this file empty or remove it.
+# The inference-nodes job in prometheus.yml will simply produce no metrics.
+
+- targets:
+    - 'YOUR_NODE_1_IP:9100'
+  labels:
+    node: 'gpu-node-1'
+- targets:
+    - 'YOUR_NODE_2_IP:9100'
+  labels:
+    node: 'gpu-node-2'

@@ -67,16 +67,6 @@ Unless otherwise stated by the user or existing template
 
 A user may ask you to create, edit, or analyze the contents of an .xlsx file. You have different tools and workflows available for different tasks.
 
-## CREATING A NEW EXCEL FILE — use generate_xlsx
-
-When the user wants a NEW spreadsheet created, the pipeline automatically calls the generate_xlsx
-MCP tool, which uploads the file to MinIO and returns a 24-hour download URL.
-
-The generate_xlsx tool accepts csv_data (CSV text, first row = headers), filename, and title.
-It handles openpyxl formatting automatically — no Python code generation needed.
-
-The download URL is returned directly in the tool result. No follow-up file_download_url call needed.
-
 ## Important Requirements
 
 **LibreOffice Required for Formula Recalculation**: You can assume LibreOffice is installed for recalculating formula values using the `scripts/recalc.py` script. The script automatically configures LibreOffice on first run, including in sandboxed environments where Unix sockets are restricted (handled by `scripts/office/soffice.py`)

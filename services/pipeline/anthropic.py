@@ -20,6 +20,7 @@ from config import (
     KAFKA_TOPIC_INGEST, KAFKA_TOPIC_REQUESTS, KAFKA_TOPIC_FEEDBACK,
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL, CLAUDE_CODE_TOOL_ENDPOINT,
     CLAUDE_CODE_MODE, CLAUDE_CODE_REASONING_MODEL, CLAUDE_CODE_REASONING_ENDPOINT,
+    CLAUDE_CODE_TOOL_CHOICE,
     _CLAUDE_CODE_TOOL_URL, _CLAUDE_CODE_TOOL_TOKEN, _CLAUDE_CODE_REASONING_URL,
     JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
@@ -90,7 +91,11 @@ from parsing import (
     _anthropic_to_openai_messages,
     _anthropic_tools_to_openai,
 )
-from context_budget import get_model_ctx_async as _get_tool_ctx_async, CHARS_PER_TOKEN as _CHARS_PER_TOKEN
+from context_budget import (
+    get_model_ctx_async as _get_tool_ctx_async,
+    get_model_context_window as _get_static_ctx_window,
+    CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
+)
 from services.pipeline.cc_session import CCSession, _resolve_cc_session
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -139,6 +144,159 @@ def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
 import hashlib as _hashlib
 
 
+_CC_WORK_TTL = 4 * 3600  # 4 h — long enough to survive context loss + model reload
+
+
+async def _cc_expert_preanalysis(
+    session_id: str,
+    user_query: str,
+    planner_model: str,
+    planner_url: str,
+    planner_token: str,
+    planner_prompt: str,
+    redis_client,
+    delay_s: float = 45.0,
+) -> None:
+    """Background: call the expert template's planner to pre-analyse the user's task.
+
+    Waits delay_s seconds before starting so the main qwen3.6:35b tool-call
+    completes first — avoids competing for the same Ollama server simultaneously.
+    The result is stored in cc:work:{session_id}:task_plan and injected on turn 2+.
+    """
+    if delay_s > 0:
+        await asyncio.sleep(delay_s)
+    try:
+        _sys = (
+            planner_prompt
+            or "You are a senior software engineer. Analyse the task and create a concise step-by-step plan. "
+               "Identify: key files involved, tools needed, risks, and the correct execution order. "
+               "Be specific and brief — max 300 words."
+        )
+        _planner_base = planner_url.rstrip("/").removesuffix("/v1")
+        async with httpx.AsyncClient(timeout=120.0) as _cl:
+            _resp = await _cl.post(
+                f"{_planner_base}/v1/chat/completions",
+                json={
+                    "model":      planner_model,
+                    "messages":   [
+                        {"role": "system", "content": _sys},
+                        {"role": "user",   "content": f"Task:\n{user_query[:2000]}"},
+                    ],
+                    "stream":     False,
+                    "max_tokens": 512,
+                },
+                headers={"Authorization": f"Bearer {planner_token}"},
+            )
+        if _resp.status_code != 200:
+            return
+        _plan_text = _resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        if not _plan_text:
+            return
+
+        # Store in cc:work so _inject_cc_work_context picks it up on turn 2+
+        _key = f"cc:work:{session_id}"
+        _raw = await redis_client.get(_key)
+        _work: dict = json.loads(_raw) if _raw else {"steps": [], "files_read": [], "findings": []}
+        _work["task_plan"] = _plan_text[:800]
+        await redis_client.set(_key, json.dumps(_work, ensure_ascii=False), ex=_CC_WORK_TTL)
+        logger.info("cc_tool: expert pre-analysis stored for session=%s (%d chars, model=%s)",
+                    session_id[:8], len(_plan_text), planner_model)
+    except Exception as _e:
+        logger.debug("cc_tool: expert pre-analysis failed: %s", _e)
+
+
+async def _update_cc_work_summary(
+    redis_client,
+    session_id: str,
+    role: str,
+    content: str,
+    tool_name: str | None = None,
+) -> None:
+    """Accumulate structured work-progress in cc:work:{session_id} (Valkey, TTL 4h).
+
+    Called whenever a message is compressed so that the information is not silently
+    discarded. On the next request _inject_cc_work_context() can read this back and
+    prepend it as a system block so the model knows what was already accomplished.
+    """
+    if not redis_client or not session_id:
+        return
+    key = f"cc:work:{session_id}"
+    try:
+        raw = await redis_client.get(key)
+        work: dict = json.loads(raw) if raw else {"steps": [], "files_read": [], "findings": []}
+
+        if role == "tool" and tool_name:
+            entry = f"[{tool_name}] {content[:300]}"
+            if entry not in work["steps"]:
+                work["steps"].append(entry)
+            # Track file reads specifically for deduplication
+            if tool_name in ("Read", "read_file_chunked") and content and len(content) > 10:
+                path_hint = content.split("\n")[0][:120]
+                if path_hint not in work["files_read"]:
+                    work["files_read"].append(path_hint)
+        elif role == "assistant":
+            # Extract the first meaningful sentence as a finding
+            first = content.strip().split("\n")[0][:200]
+            if first and first not in work["findings"]:
+                work["findings"].append(first)
+
+        # Cap list sizes to prevent unbounded growth
+        work["steps"]     = work["steps"][-30:]
+        work["files_read"] = work["files_read"][-20:]
+        work["findings"]  = work["findings"][-15:]
+
+        await redis_client.set(key, json.dumps(work, ensure_ascii=False), ex=_CC_WORK_TTL)
+    except Exception as _e:
+        logger.debug("cc_work: update failed: %s", _e)
+
+
+async def _inject_cc_work_context(
+    oai_msgs: list,
+    redis_client,
+    session_id: str | None,
+) -> list:
+    """Prepend a [CC_WORK_CONTEXT] system block if prior work is recorded for this session.
+
+    Injected BEFORE the first user message so the model always knows what it already
+    did — even after the history compressor discarded old tool-result turns.
+    """
+    if not redis_client or not session_id:
+        return oai_msgs
+    try:
+        raw = await redis_client.get(f"cc:work:{session_id}")
+        if not raw:
+            return oai_msgs
+        work = json.loads(raw)
+        if not any(work.get(k) for k in ("steps", "files_read", "findings", "task_plan")):
+            return oai_msgs
+
+        lines = ["[CC_WORK_CONTEXT — already completed in this session]"]
+        if work.get("task_plan"):
+            lines.append("[EXPERT ANALYSIS — task plan from specialist model]")
+            lines.append(work["task_plan"])
+            lines.append("[End of expert analysis]")
+        if work.get("files_read"):
+            lines.append("Files already read: " + ", ".join(work["files_read"]))
+        if work.get("steps"):
+            lines.append("Steps completed:")
+            for s in work["steps"][-10:]:
+                lines.append(f"  • {s}")
+        if work.get("findings"):
+            lines.append("Key findings:")
+            for f in work["findings"][-5:]:
+                lines.append(f"  → {f}")
+        lines.append("[Do NOT repeat completed steps. Continue from where you left off.]")
+
+        ctx_block = {"role": "system", "content": "\n".join(lines)}
+        # Insert after the first system message (if any), before user messages
+        sys_idx = next((i for i, m in enumerate(oai_msgs) if m.get("role") == "system"), -1)
+        insert_at = sys_idx + 1 if sys_idx >= 0 else 0
+        return oai_msgs[:insert_at] + [ctx_block] + oai_msgs[insert_at:]
+    except Exception as _e:
+        logger.debug("cc_work: inject failed: %s", _e)
+        return oai_msgs
+
+
 async def _compress_history_responses(
     oai_msgs: list,
     redis_client,
@@ -154,6 +312,10 @@ async def _compress_history_responses(
     cc:hist:<session_id>:<sha1[:12]> so it can be retrieved if needed. The last
     keep_turns * 2 non-system messages are always left untouched to preserve
     immediate context.
+
+    When a message is compressed, its key information is also accumulated in
+    cc:work:<session_id> via _update_cc_work_summary so the model retains awareness
+    of completed steps across context-window resets.
     """
     if not oai_msgs or threshold <= 0:
         return oai_msgs
@@ -179,6 +341,26 @@ async def _compress_history_responses(
             key = f"cc:hist:{session_id}:{_hashlib.sha1(content.encode()).hexdigest()[:12]}"
             try:
                 await redis_client.set(key, content, ex=3600)
+            except Exception:
+                pass
+            # Persist work-progress so the model can resume after context loss
+            tool_name = msg.get("name") or (
+                msg.get("tool_calls", [{}])[0].get("function", {}).get("name")
+                if msg.get("tool_calls") else None
+            )
+            asyncio.create_task(_update_cc_work_summary(
+                redis_client, session_id, role, content, tool_name
+            ))
+            # Store evicted turn in Tier-2 Semantic Memory (ChromaDB) for later retrieval
+            try:
+                from memory_retrieval import get_memory_store as _get_mem_store_e
+                _mem_e = _get_mem_store_e()
+                if _mem_e is not None:
+                    asyncio.create_task(_mem_e.store_turns(
+                        session_id=session_id,
+                        turns=[{"role": role, "content": content[:2000]}],
+                        base_turn_index=idx,
+                    ))
             except Exception:
                 pass
 
@@ -311,7 +493,8 @@ async def _anthropic_tool_handler(
         system = _eff_sys_prefix
     tools      = body.get("tools", [])
     do_stream  = body.get("stream", False)
-    max_tokens = body.get("max_tokens", session.tool_max_tokens or TOOL_MAX_TOKENS)
+    _req_max_tokens = body.get("max_tokens", TOOL_MAX_TOKENS)
+    max_tokens = min(_req_max_tokens, session.tool_max_tokens) if session.tool_max_tokens else _req_max_tokens
 
     # Eval timing + input classification
     _eval_t0 = time.monotonic()
@@ -327,10 +510,84 @@ async def _anthropic_tool_handler(
     )
 
     oai_messages = _anthropic_to_openai_messages(messages, system)
+
+    # ── Tier-2 Semantic Memory: store evicted turns + retrieve warm context ─────
+    # Evicted turns from _compress_history_responses are embedded in ChromaDB so
+    # they can be retrieved semantically — giving Claude Code an effective context
+    # that scales beyond the 32k LLM window (the "1M+ infrastructure" layer).
+    if session_id:
+        try:
+            from memory_retrieval import get_memory_store as _get_mem_store
+            _mem_store = _get_mem_store()
+            if _mem_store is not None:
+                # Retrieve semantically relevant past turns for the current query
+                _user_query = next(
+                    (m.get("content", "") for m in reversed(oai_messages)
+                     if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                    ""
+                )
+                if _user_query:
+                    _warm_turns = await _mem_store.retrieve_relevant(
+                        session_id=session_id,
+                        query=_user_query[:500],
+                        n_results=5,
+                    )
+                    if _warm_turns:
+                        _warm_block = "\n".join(
+                            f"[PAST TURN {t.get('metadata', {}).get('role', '?')}]: {t.get('document', '')[:300]}"
+                            for t in _warm_turns
+                        )
+                        _warm_msg = {
+                            "role": "system",
+                            "content": f"[SEMANTIC MEMORY — relevant past context]\n{_warm_block}\n[End of past context. Continue current task.]"
+                        }
+                        sys_end = next((i for i, m in enumerate(oai_messages) if m.get("role") != "system"), 0)
+                        oai_messages = oai_messages[:sys_end] + [_warm_msg] + oai_messages[sys_end:]
+                        logger.info("cc_tool: injected %d Tier-2 memory turns (session=%s)", len(_warm_turns), session_id[:8])
+        except Exception as _me:
+            logger.debug("cc_tool: Tier-2 memory retrieval skipped: %s", _me)
+
+    # ── Expert-Template pre-analysis (first turn only) ────────────────────────
+    # On the first user turn (no tool_results yet), fire a background planner call
+    # using the expert template's planner_model. The result is stored in
+    # cc:work:{session_id} and injected by _inject_cc_work_context on turn 2+.
+    # This makes the expert template meaningful for Claude Code without blocking
+    # the immediate tool-call response.
+    if session_id and _last_msg_type == "tool_use_request" and state.redis_client:
+        try:
+            _work_key = f"cc:work:{session_id}"
+            _existing_work = await state.redis_client.get(_work_key)
+            if not _existing_work:
+                # First turn: no prior work recorded → trigger expert pre-analysis
+                _planner_model   = (session.planner_cfg.get("planner_model_override")   or PLANNER_MODEL   or "")
+                _planner_url     = (session.planner_cfg.get("planner_url_override")     or PLANNER_URL     or "")
+                _planner_token   = (session.planner_cfg.get("planner_token_override")   or PLANNER_TOKEN   or "ollama")
+                _planner_prompt  = session.planner_cfg.get("planner_prompt", "")
+                _user_q = next(
+                    (m.get("content", "") for m in reversed(oai_messages)
+                     if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                    "",
+                )
+                if _planner_model and _planner_url and _user_q:
+                    asyncio.create_task(_cc_expert_preanalysis(
+                        session_id=session_id,
+                        user_query=_user_q,
+                        planner_model=_planner_model,
+                        planner_url=_planner_url,
+                        planner_token=_planner_token,
+                        planner_prompt=_planner_prompt,
+                        redis_client=state.redis_client,
+                    ))
+        except Exception as _pae:
+            logger.debug("cc_tool: expert pre-analysis skipped: %s", _pae)
+
     oai_messages = await _compress_history_responses(
         oai_messages, state.redis_client, session_id,
         threshold=CC_HISTORY_COMPRESS_THRESHOLD,
         keep_turns=CC_HISTORY_COMPRESS_KEEP_TURNS,
+    )
+    oai_messages = await _inject_cc_work_context(
+        oai_messages, state.redis_client, session_id,
     )
     oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
@@ -348,6 +605,26 @@ async def _anthropic_tool_handler(
     _tool_ctx = await _get_tool_ctx_async(
         effective_model, effective_url, _info_token, state.redis_client
     )
+    # For Ollama endpoints: the loaded num_ctx may be smaller than the model's native
+    # context window (e.g. 8192 default vs 32768 for qwen3-coder:30b).  Claude Code's
+    # 26-tool schemas alone consume ~7 800 tokens, leaving only 1 output token at 8192.
+    # Store the desired num_ctx now so (a) the budget guard uses the correct window and
+    # (b) we can inject it into the Ollama payload later.
+    _ollama_num_ctx: int = 0
+    if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
+        # Use the CC profile's tool_max_tokens as num_ctx for Ollama.
+        # This is the value the admin configured in the Admin UI — do not override
+        # it with hardcoded ceilings or static table lookups.
+        # tool_max_tokens is the total context budget (input + output); it controls
+        # how much KV cache Ollama allocates and should match the hardware's capacity.
+        _profile_ctx = session.tool_max_tokens or max_tokens
+        _ollama_num_ctx = _profile_ctx
+        if _ollama_num_ctx != (_tool_ctx or 0):
+            logger.info(
+                "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",
+                _ollama_num_ctx, effective_model,
+            )
+            _tool_ctx = _ollama_num_ctx
     if _tool_ctx > 0:
         _CC_SAFETY_BUFFER = 500  # token reserve for overhead not counted in char estimate
         _avail_input = _tool_ctx - max_tokens - _CC_SAFETY_BUFFER
@@ -413,6 +690,80 @@ async def _anthropic_tool_handler(
     else:
         _effective_tool_choice = "auto"
 
+    # For Ollama nodes use the native /api/chat endpoint instead of /v1/chat/completions.
+    # The OpenAI-compatible endpoint silently discards the "options" dict (including
+    # num_ctx), so per-request context expansion only works on the native API.
+    _use_ollama_native = _ollama_num_ctx > 0
+    if _use_ollama_native:
+        _ollama_base = effective_url.rstrip("/").removesuffix("/v1")
+        _call_url = f"{_ollama_base}/api/chat"
+
+        def _normalize_for_ollama(msg: dict) -> dict:
+            """Normalize one OpenAI-format message for Ollama's native /api/chat.
+
+            Key differences between OpenAI and Ollama native format:
+            - content must be a string (not an array of content blocks)
+            - tool messages must not carry 'tool_call_id' (unsupported field)
+            - assistant tool_calls: arguments must be a dict, not a JSON string
+            - assistant tool_calls: 'id' and 'type' fields should be removed
+            """
+            role    = msg.get("role", "")
+            content = msg.get("content")
+            # Flatten content arrays to plain string
+            if isinstance(content, list):
+                content = "\n".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ) or ""
+            out = {**msg, "content": content or ""}
+            # tool messages: strip tool_call_id (unsupported in Ollama native)
+            if role == "tool":
+                out.pop("tool_call_id", None)
+            # assistant messages: convert tool_calls to Ollama native format
+            # OpenAI: [{"id": "...", "type": "function", "function": {"name": "...", "arguments": "{...}"}}]
+            # Ollama: [{"function": {"name": "...", "arguments": {...}}}]  (arguments = dict, not string)
+            if role == "assistant" and out.get("tool_calls"):
+                _native_tcs = []
+                for _tc in out["tool_calls"]:
+                    _fn = _tc.get("function", {})
+                    _args = _fn.get("arguments", {})
+                    if isinstance(_args, str):
+                        try:
+                            _args = json.loads(_args)
+                        except (json.JSONDecodeError, ValueError):
+                            _args = {}
+                    _native_tcs.append({"function": {"name": _fn.get("name", ""), "arguments": _args}})
+                out["tool_calls"] = _native_tcs
+            return out
+
+        _ollama_messages = [_normalize_for_ollama(m) for m in oai_messages]
+        _call_payload: dict = {
+            "model":    effective_model,
+            "messages": _ollama_messages,
+            "stream":   False,
+            "options":  {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
+        }
+        if oai_tools:
+            _call_payload["tools"] = oai_tools
+        # Inject /no_think when stream_think=False (thinking output not desired).
+        # This prevents thinking models (qwen3.6:35b, deepseek-r1) from generating
+        # thousands of <think> tokens on every tool call, wasting context and latency.
+        if not session.stream_think:
+            _msgs = _call_payload["messages"]
+            for _mi in range(len(_msgs) - 1, -1, -1):
+                if _msgs[_mi].get("role") == "user":
+                    _orig = _msgs[_mi].get("content", "")
+                    if isinstance(_orig, str) and not _orig.startswith("/no_think"):
+                        _msgs[_mi] = {**_msgs[_mi], "content": f"/no_think\n{_orig}"}
+                    break
+        logger.info(
+            "cc_tool: Ollama native /api/chat — num_ctx=%d num_predict=%d model=%s think=%s",
+            _ollama_num_ctx, max_tokens, effective_model, session.stream_think,
+        )
+    else:
+        _call_url = f"{effective_url}/chat/completions"
+        _call_payload = payload
+
     # Pre-check: if this endpoint is known to be rate-limited, fail fast instead of timing out.
     # This prevents Claude Code CLI from making 10 retry attempts and risking a DDoS ban.
     _tool_ep = CLAUDE_CODE_TOOL_ENDPOINT if (effective_url == _CLAUDE_CODE_TOOL_URL) else None
@@ -436,8 +787,8 @@ async def _anthropic_tool_handler(
     try:
         async with httpx.AsyncClient(timeout=_node_timeout) as client:
             resp = await client.post(
-                f"{effective_url}/chat/completions",
-                json=payload,
+                _call_url,
+                json=_call_payload,
                 headers={"Authorization": f"Bearer {effective_token}"}
             )
             # Parse and cache rate limit headers from the provider response
@@ -454,6 +805,21 @@ async def _anthropic_tool_handler(
                 asyncio.create_task(_deregister_active_request(chat_id))
                 from fastapi.responses import JSONResponse as _JSONResponse
                 return _JSONResponse(content=_err_body, status_code=529)
+            # Ollama native /api/chat returns 400 on certain message structures
+            # (e.g. complex tool schemas, unsupported fields). Fall back to the
+            # OpenAI-compatible endpoint so Claude Code still receives a response.
+            if resp.status_code == 400 and _use_ollama_native:
+                logger.warning(
+                    "cc_tool: Ollama native /api/chat 400 — falling back to /v1/chat/completions "
+                    "(error: %s)", resp.text[:200],
+                )
+                _fallback_url = f"{effective_url}/chat/completions"
+                resp = await client.post(
+                    _fallback_url,
+                    json=payload,                   # original OpenAI-format payload
+                    headers={"Authorization": f"Bearer {effective_token}"},
+                )
+                _use_ollama_native = False          # parse response as OpenAI format
             resp.raise_for_status()
             oai_resp = resp.json()
     except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as _tex:
@@ -533,11 +899,38 @@ async def _anthropic_tool_handler(
     _llm_latency = time.monotonic() - _llm_t0
     PROM_TOOL_CALL_DURATION.labels(node=effective_node, model=effective_model, phase="llm_call").observe(_llm_latency)
 
-    choice = oai_resp["choices"][0]
-    msg    = choice["message"]
-    usage  = oai_resp.get("usage", {})
-    in_tok  = usage.get("prompt_tokens", 0)
-    out_tok = usage.get("completion_tokens", 0)
+    # Normalize response: Ollama native /api/chat and OpenAI /v1/chat/completions differ.
+    if _use_ollama_native:
+        # Ollama native: {"message": {"role": ..., "content": ..., "tool_calls": [...]},
+        #                 "prompt_eval_count": N, "eval_count": M}
+        _native_msg = oai_resp.get("message", {})
+        in_tok  = oai_resp.get("prompt_eval_count", 0)
+        out_tok = oai_resp.get("eval_count", 0)
+        # Convert Ollama tool_calls to OpenAI format (add synthetic id, stringify args)
+        _native_tcs = _native_msg.get("tool_calls") or []
+        _oai_tcs = []
+        for _ntc in _native_tcs:
+            _nfn = _ntc.get("function", {})
+            _args = _nfn.get("arguments", {})
+            _oai_tcs.append({
+                "id":   f"call_{uuid.uuid4().hex[:12]}",
+                "type": "function",
+                "function": {
+                    "name":      _nfn.get("name", "unknown"),
+                    "arguments": json.dumps(_args) if isinstance(_args, dict) else str(_args),
+                },
+            })
+        msg = {
+            "role":       _native_msg.get("role", "assistant"),
+            "content":    _native_msg.get("content") or "",
+            "tool_calls": _oai_tcs or None,
+        }
+    else:
+        choice  = oai_resp["choices"][0]
+        msg     = choice["message"]
+        usage   = oai_resp.get("usage", {})
+        in_tok  = usage.get("prompt_tokens", 0)
+        out_tok = usage.get("completion_tokens", 0)
 
     if user_id != "anon":
         asyncio.create_task(_log_usage_to_db(
