@@ -20,6 +20,7 @@ from config import (
     KAFKA_TOPIC_INGEST, KAFKA_TOPIC_REQUESTS, KAFKA_TOPIC_FEEDBACK,
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL, CLAUDE_CODE_TOOL_ENDPOINT,
     CLAUDE_CODE_MODE, CLAUDE_CODE_REASONING_MODEL, CLAUDE_CODE_REASONING_ENDPOINT,
+    CLAUDE_CODE_TOOL_CHOICE,
     _CLAUDE_CODE_TOOL_URL, _CLAUDE_CODE_TOOL_TOKEN, _CLAUDE_CODE_REASONING_URL,
     JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
@@ -90,7 +91,11 @@ from parsing import (
     _anthropic_to_openai_messages,
     _anthropic_tools_to_openai,
 )
-from context_budget import get_model_ctx_async as _get_tool_ctx_async, CHARS_PER_TOKEN as _CHARS_PER_TOKEN
+from context_budget import (
+    get_model_ctx_async as _get_tool_ctx_async,
+    get_model_context_window as _get_static_ctx_window,
+    CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
+)
 from services.pipeline.cc_session import CCSession, _resolve_cc_session
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -348,6 +353,21 @@ async def _anthropic_tool_handler(
     _tool_ctx = await _get_tool_ctx_async(
         effective_model, effective_url, _info_token, state.redis_client
     )
+    # For Ollama endpoints: the loaded num_ctx may be smaller than the model's native
+    # context window (e.g. 8192 default vs 32768 for qwen3-coder:30b).  Claude Code's
+    # 26-tool schemas alone consume ~7 800 tokens, leaving only 1 output token at 8192.
+    # Store the desired num_ctx now so (a) the budget guard uses the correct window and
+    # (b) we can inject it into the Ollama payload later.
+    _ollama_num_ctx: int = 0
+    if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
+        _static_ctx = _get_static_ctx_window(effective_model)
+        _ollama_num_ctx = max(_tool_ctx or 0, _static_ctx or 0, 16_384)
+        if _ollama_num_ctx > (_tool_ctx or 0):
+            logger.info(
+                "cc_tool: Ollama num_ctx override %d → %d (static=%d, model=%s)",
+                _tool_ctx or 0, _ollama_num_ctx, _static_ctx or 0, effective_model,
+            )
+            _tool_ctx = _ollama_num_ctx
     if _tool_ctx > 0:
         _CC_SAFETY_BUFFER = 500  # token reserve for overhead not counted in char estimate
         _avail_input = _tool_ctx - max_tokens - _CC_SAFETY_BUFFER
@@ -398,6 +418,8 @@ async def _anthropic_tool_handler(
         "stream":     False,        # collect tool calls completely, then convert
         "max_tokens": max_tokens,
     }
+    if _ollama_num_ctx > 0:
+        payload["num_ctx"] = _ollama_num_ctx
     if oai_tools:
         payload["tools"] = oai_tools
         # Guard: if the last message is a tool_result (synthesis turn), don't force tool_use

@@ -134,56 +134,6 @@ async def _ollama_unload(model: str, base_url: str) -> None:
         logger.debug(f"⚠️ VRAM-Unload {model}: {e}")
 
 
-async def _ollama_evict_for_vram(base_url: str, needed_model: str) -> int:
-    """Evict all loaded Ollama models that are NOT needed_model to free VRAM.
-
-    Called when a new model cannot load due to insufficient VRAM (OOM 500).
-    The keep_alive timer on other models is irrelevant — we force-unload them
-    so the requested model can fit. Returns the number of models evicted.
-
-    Note: /api/ps may return an empty list while models are still occupying VRAM
-    (Ollama race condition during concurrent loads). In that case, fall back to
-    broadcasting keep_alive=0 to all known large models via the /api/generate
-    endpoint — Ollama will no-op silently for models that are not loaded.
-    """
-    evicted = 0
-    loaded_names: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            ps_resp = await client.get(f"{base_url}/api/ps")
-            ps_resp.raise_for_status()
-            loaded_names = [m.get("name", "") for m in ps_resp.json().get("models", []) if m.get("name")]
-    except Exception as e:
-        logger.warning(f"⚠️ VRAM eviction: could not list loaded models: {e}")
-
-    # Always reset the needed model's own state first: a failed partial load leaves
-    # it in an error state that blocks retry even after other models are evicted.
-    logger.info(f"🗑️ VRAM eviction: resetting partial-load state for {needed_model}")
-    await _ollama_unload(needed_model, base_url)
-    await asyncio.sleep(1)
-
-    if loaded_names:
-        for name in loaded_names:
-            if name != needed_model:
-                logger.info(f"🗑️ VRAM pressure eviction: unloading {name} to make room for {needed_model}")
-                await _ollama_unload(name, base_url)
-                evicted += 1
-    else:
-        # Fallback: /api/ps returned nothing but VRAM is full — broadcast eviction
-        # to common large models. Ollama silently ignores models that aren't loaded.
-        _COMMON_LARGE = [
-            "qwen3.6:35b", "mistral-small:24b", "phi4:14b-fp16",
-            "qwen2.5-coder:32b", "devstral:22b", "solar-pro:22b",
-        ]
-        for name in _COMMON_LARGE:
-            logger.info(f"🗑️ VRAM broadcast eviction: {name} (ps was empty)")
-            await _ollama_unload(name, base_url)
-            evicted += 1
-
-    await asyncio.sleep(15)  # allow Ollama to finalize VRAM release (async internally)
-    return evicted
-
-
 # ---------------------------------------------------------------------------
 # Endpoint degradation tracking
 # ---------------------------------------------------------------------------

@@ -598,67 +598,6 @@ JSON array:"""
                         _output_skill = _skill_body
                         logger.info(f"🎯 Planner suggested skill: /{_skill_name}")
                     break
-
-            # Deterministic output-skill detection: LLMs often miss output_skill hints.
-            # For xlsx creation: inject a generate_xlsx precision_tools task directly
-            # (avoids the judge code-suppression guard and the file_download_url confusion).
-            # For other file types: set output_skill_body as formatting guidance for judge.
-            # Keywords are loaded from all language files (de_DE, en_EN, fr_FR, zh_CN, …)
-            # so detection works regardless of the user's input language.
-            if not _output_skill:
-                _inp_lower = state_.get("input", "").lower()
-
-                # Load multilingual skill keywords from all .lang files
-                def _load_skill_kws(key: str) -> list[str]:
-                    from pathlib import Path as _P
-                    import json as _json
-                    _lang_dir = _P("/app/admin_ui/lang")
-                    _kws: list[str] = []
-                    for _lf in sorted(_lang_dir.glob("*.lang")):
-                        try:
-                            _data = _json.loads(_lf.read_text(encoding="utf-8"))
-                            _raw = _data.get(key, "")
-                            _kws.extend([k.strip().lower() for k in _raw.split(",") if k.strip()])
-                        except Exception:
-                            pass
-                    return list(dict.fromkeys(_kws))  # deduplicate preserving order
-
-                _XLSX_KWS = _load_skill_kws("skill.detect.xlsx") or [
-                    "excel", ".xlsx", "spreadsheet", "tabelle erstellen",
-                ]
-                _SKILL_KEYWORDS: list[tuple[list[str], str]] = [
-                    (_load_skill_kws("skill.detect.docx") or ["word", ".docx"], "docx"),
-                    (_load_skill_kws("skill.detect.pptx") or ["powerpoint", ".pptx", "slides"], "pptx"),
-                    (_load_skill_kws("skill.detect.web") or ["create website", "webseite erstellen"], "web-artifacts-builder"),
-                    (_load_skill_kws("skill.detect.pdf") or ["create pdf", "pdf erstellen"], "pdf"),
-                ]
-                if any(_kw in _inp_lower for _kw in _XLSX_KWS):
-                    # xlsx: use generate_xlsx MCP tool (not output_skill_body)
-                    _has_xlsx_tool = any(
-                        isinstance(t, dict) and t.get("mcp_tool") == "generate_xlsx"
-                        for t in raw
-                    )
-                    if not _has_xlsx_tool:
-                        # Remove incorrect file_download_url tasks the LLM might have added
-                        raw = [t for t in raw if not (
-                            isinstance(t, dict) and t.get("mcp_tool") in ("file_download_url", "file_upload")
-                        )]
-                        raw.append({
-                            "task": f"Create Excel spreadsheet: {state_.get('input', '')[:120]}",
-                            "category": "precision_tools",
-                            "mcp_tool": "generate_xlsx",
-                            "mcp_args": {},
-                        })
-                        logger.info("📊 Auto-injected generate_xlsx task (xlsx keyword detected)")
-                else:
-                    from services.skills import _load_skill_body as _lsb
-                    for _kws, _sname in _SKILL_KEYWORDS:
-                        if any(_kw in _inp_lower for _kw in _kws):
-                            _sb = _lsb(_sname)
-                            if _sb:
-                                _output_skill = _sb
-                                logger.info(f"🎯 Auto-detected skill from keywords: /{_sname}")
-                            break
             _user_expert_cats = set((state_.get("user_experts") or {}).keys())
             plan = _sanitize_plan(raw, state_["input"], _user_expert_cats)
             categories = [t.get("category", "?") for t in plan]

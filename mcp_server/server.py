@@ -1236,10 +1236,9 @@ def _minio_client():
     secret    = os.getenv("MINIO_ROOT_PASSWORD", "")
     if not (endpoint and access and secret):
         return None
-    region = os.getenv("GARAGE_REGION", "garage")
     try:
         from minio import Minio
-        return Minio(endpoint, access_key=access, secret_key=secret, secure=False, region=region)
+        return Minio(endpoint, access_key=access, secret_key=secret, secure=False)
     except Exception:
         return None
 
@@ -1443,82 +1442,6 @@ def generate_file(content: str, filename: str = "output", format: str = "html") 
             f"File generated: {out_path.name} ({size_kb:.1f} KB)\n"
             f"Download: /downloads/{out_path.name}"
         )
-
-
-
-def generate_xlsx(csv_data: str, filename: str = "output", title: str = "") -> str:
-    """Create a formatted Excel (.xlsx) file from CSV data and upload to MinIO.
-
-    The first row of csv_data is used as column headers (bold, dark blue background).
-    All data is written to a single sheet; columns are auto-sized.
-    The file is uploaded to MinIO and a 24-hour pre-signed URL is returned.
-
-    Args:
-        csv_data: CSV-formatted table (first row = headers). Use comma as delimiter.
-        filename: Base name for the output file (without extension).
-        title:    Optional worksheet title (defaults to filename).
-    Returns:
-        Download URL (24h) on success, or an error message.
-    """
-    import uuid as _uuid
-    import io as _io
-    import csv as _csv
-
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.utils import get_column_letter
-    except ImportError:
-        return "Error: openpyxl not available in this environment."
-
-    _id = _uuid.uuid4().hex[:12]
-    # Strip any .xlsx extension the caller may have included — we always append it below
-    _fname_stripped = re.sub(r"\.xlsx$", "", filename, flags=re.IGNORECASE)
-    _safe = re.sub(r"[^\w\-.]", "_", _fname_stripped)[:80]
-
-    try:
-        rows = list(_csv.reader(_io.StringIO(csv_data.strip())))
-    except Exception as e:
-        return f"Error parsing CSV data: {e}"
-    if not rows:
-        return "Error: csv_data is empty."
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = (title or _safe)[:31]
-
-    _header_font  = Font(bold=True, color="FFFFFF", name="Arial", size=11)
-    _header_fill  = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-    _alt_fill     = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
-    _center       = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    for r_idx, row_vals in enumerate(rows, start=1):
-        for c_idx, val in enumerate(row_vals, start=1):
-            cell = ws.cell(row=r_idx, column=c_idx, value=val.strip())
-            if r_idx == 1:
-                cell.font  = _header_font
-                cell.fill  = _header_fill
-                cell.alignment = _center
-            elif r_idx % 2 == 0:
-                cell.fill = _alt_fill
-
-    for col_cells in ws.columns:
-        max_len = max((len(str(c.value or "")) for c in col_cells), default=10)
-        ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 4, 45)
-
-    buf = _io.BytesIO()
-    wb.save(buf)
-    data = buf.getvalue()
-
-    obj_name = f"{_id}_{_safe}.xlsx"
-    ct = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    try:
-        url = _minio_upload_bytes(data, obj_name, ct)
-        return f"Excel file created: {_safe}.xlsx ({len(data)/1024:.1f} KB)\nDownload URL (24h): {url}"
-    except Exception as exc:
-        out_path = _GENERATED_DIR / obj_name
-        out_path.write_bytes(data)
-        return f"Excel file created: {obj_name} ({len(data)/1024:.1f} KB)\nDownload: /downloads/{obj_name}\n(MinIO upload failed: {exc})"
 
 
 # ─── Attachment Parser Tool ──────────────────────────────────────────────────
@@ -3593,7 +3516,6 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "read_file_chunked": read_file_chunked,
     "lsp_query":         lsp_query,
     "generate_file":     generate_file,
-    "generate_xlsx":     generate_xlsx,
     "parse_attachment":  parse_attachment,
     "graph_analyze":     graph_analyze,
     "file_upload":       file_upload,
@@ -3658,7 +3580,6 @@ _TOOL_DESCRIPTIONS = {
     "read_file_chunked": "Paginated file reading (start_line/end_line) — prevents context overflow",
     "lsp_query":         "Python LSP features: signature, find_references, completions (.py only)",
     "generate_file":     "Generate downloadable files (HTML, DOCX, PPTX, Markdown, TXT) from content — returns MinIO pre-signed URL",
-    "generate_xlsx":     "Create a formatted Excel (.xlsx) spreadsheet from CSV data and upload to MinIO — returns a 24h download URL. Use this for ANY request that needs an Excel/spreadsheet file output.",
     "parse_attachment":  "Download and parse file attachments (XLSX→CSV, DOCX→text, PDF→text, CSV→text) — max 20 MB",
     "graph_analyze":     "Analyze a graph (Eulerian path/circuit, connected components, degree map, density) from text description",
     "file_upload":       "Upload a file (base64-encoded) to MinIO object storage and get a 24h pre-signed download URL",

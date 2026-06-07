@@ -1100,10 +1100,5 @@
   "portal.audit_log.retention_days": "jours",
   "portal.audit_log.retention_save": "Enregistrer",
   "portal.audit_log.retention_hint": "Conservation maximale : {max} jours. Les fichiers plus anciens sont supprimés quotidiennement.",
-  "portal.audit_log.disabled": "La journalisation d'audit est désactivée.",
-  "skill.detect.xlsx": "excel,tableau,feuille de calcul,classeur,xlsx,xls,tableur,créer tableau,faire un tableau,fichier excel",
-  "skill.detect.docx": "word,document,docx,fichier word,lettre,rapport,document texte,rédiger document",
-  "skill.detect.pptx": "powerpoint,présentation,diapositives,diapo,pptx,diaporama,créer présentation,faire des slides",
-  "skill.detect.web": "créer site web,faire un site,page html,application web,jeu navigateur,app navigateur,créer html,webapp,page web",
-  "skill.detect.pdf": "créer pdf,générer pdf,exporter en pdf,fichier pdf,enregistrer en pdf"
+  "portal.audit_log.disabled": "La journalisation d'audit est désactivée."
 }
