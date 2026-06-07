@@ -98,8 +98,12 @@ MODEL_CONTEXT_WINDOWS: dict[str, int] = {
     "solar-pro:22b":        32_768,
     "qwen3.5:27b":          32_768,
     # ── Local fallback models ─────────────────────────────────────────────────
-    "qwen3.6:35b":             262_144,   # native model_info.context_length
-    "qwen3.6":                 262_144,
+    # Native GGUF capacity is 262144, but KV cache at full context needs ~43 GB
+    # (16 KV-heads × 40 attn-layers × 128 head-dim × fp16 = 1.7 KB/token).
+    # On a 60 GB node with ~24.5 GB model weights only ~35 GB remain for KV cache,
+    # giving a safe ceiling of 65536 (10.7 GB KV cache, 35.2 GB total).
+    "qwen3.6:35b":              65_536,
+    "qwen3.6":                  65_536,
     "gemma4:31b":                8_192,
     "gemma4:12b":                8_192,
     "gemma4":                    8_192,

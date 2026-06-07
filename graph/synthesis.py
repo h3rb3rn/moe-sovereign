@@ -30,6 +30,9 @@ from config import (
     _CUSTOM_EXPERT_PROMPTS, PLANNER_MAX_TASKS, PLANNER_RETRIES,
     KAFKA_TOPIC_INGEST, NEO4J_URI, NEO4J_USER, NEO4J_PASS,
     _FALLBACK_ENABLED,
+    AGENTIC_GAP_THRESHOLD_TOKENS, WM_EXTRACT_THRESHOLD_TOKENS,
+    COT_MIN_CATEGORIES, COT_MIN_TASKS,
+    JUDGE_NUM_CTX, JUDGE_MODEL as _JUDGE_MODEL_NAME,
 )
 from metrics import (
     PROM_EXPERT_CALLS, PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
@@ -80,6 +83,36 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 # AgentState import — defined in pipeline/state.py
 from pipeline.state import AgentState
+
+
+def _judge_ctx_budget() -> dict:
+    """Derive char budgets for judge-facing content from the judge model's context window.
+
+    All quality-affecting truncations in merger, gap detection, working-memory
+    extraction and reasoning nodes scale with the configured judge context window
+    instead of being static constants. Metadata and telemetry fields stay small
+    regardless (they go into Kafka / ChromaDB, not the LLM prompt).
+
+    Reserves 35% of the window for the static judge prompt + expert responses
+    already assembled before these blocks are appended.
+    """
+    from context_budget import get_model_context_window as _static_ctx
+    ctx_tokens  = JUDGE_NUM_CTX or _static_ctx(_JUDGE_MODEL_NAME) or 8192
+    avail_chars = int(ctx_tokens * 4 * 0.65)   # 4 chars/token, 65% for dynamic content
+    return {
+        # merger_node: context injected before expert responses
+        "web_context":         min(avail_chars // 5,  40_000),   # was 1500
+        "graph_context":       min(avail_chars // 8,  20_000),   # was 800
+        "cached_prior":        min(avail_chars // 8,  20_000),   # was 1000
+        # gap detection: question + current answer shown to judge
+        "gap_question":        min(avail_chars // 6,  30_000),   # was 600
+        "gap_answer":          min(avail_chars // 4,  50_000),   # was 800
+        # working memory extraction: full answer text fed to judge
+        "wm_extract_text":     min(avail_chars // 4,  50_000),   # was 500
+        # reasoning node (thinking mode): web + graph context blocks
+        "reasoning_web":       min(avail_chars // 5,  40_000),   # was 1000
+        "reasoning_graph":     min(avail_chars // 8,  20_000),   # was 500
+    }
 
 # Cross-module: graph context compression helpers live in graph.research
 from graph.research import _rerank_graph_context, _compress_graph_context_llm
@@ -175,10 +208,11 @@ async def merger_node(state_: AgentState):
                           f"{len(low_conf_list)} low-confidence experts")
             # Judge generates feedback — enriched with web/graph context
             _ctx_snippet = ""
+            _jbudget = _judge_ctx_budget()
             if web:
-                _ctx_snippet += f"\nWEB CONTEXT (excerpt):\n{web[:1500]}"
+                _ctx_snippet += f"\nWEB CONTEXT (excerpt):\n{web[:_jbudget['web_context']]}"
             if graph_ctx:
-                _ctx_snippet += f"\nGRAPH KNOWLEDGE (excerpt):\n{graph_ctx[:800]}"
+                _ctx_snippet += f"\nGRAPH KNOWLEDGE (excerpt):\n{graph_ctx[:_jbudget['graph_context']]}"
             gap_prompt = (
                 "Analyze these expert responses with CONFIDENCE: low and formulate "
                 "concrete, specific improvement hints for each category (max. 3 sentences). "
@@ -504,7 +538,7 @@ async def merger_node(state_: AgentState):
             logger.info("🛡️ PRIOR KNOWLEDGE suppressed: primary source + cache both contain code (prevents judge interleaving)")
             await _report("🛡️ Prior knowledge suppressed (code duplication guard)")
         else:
-            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:1000]}")
+            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:_judge_ctx_budget()['cached_prior']]}")
     soft_examples = state_.get("soft_cache_examples") or ""
     if soft_examples:
         _soft_has_code = any(m in soft_examples for m in _CODE_MARKERS)
@@ -938,12 +972,13 @@ async def merger_node(state_: AgentState):
             # Skip gap detection when already resolved by confidence gate or expert-leak handler.
             # Running a judge LLM-call after the gate already decided COMPLETE wastes tokens
             # and risks overwriting the correct COMPLETE verdict with NEEDS_MORE_INFO.
-            if not _confidence_gate_passed and _agentic_gap != "COMPLETE" and _used_tokens < 80_000:
+            _jb = _judge_ctx_budget()
+            if not _confidence_gate_passed and _agentic_gap != "COMPLETE" and _used_tokens < AGENTIC_GAP_THRESHOLD_TOKENS:
                 _gap_prompt = (
                     "You are a completion assessor. Based on the original question and the current answer, "
                     "determine if the answer is complete and what specific data is still missing.\n\n"
-                    f"ORIGINAL QUESTION:\n{state_['input'][:600]}\n\n"
-                    f"CURRENT ANSWER:\n{res_content_clean[:800]}\n\n"
+                    f"ORIGINAL QUESTION:\n{state_['input'][:_jb['gap_question']]}\n\n"
+                    f"CURRENT ANSWER:\n{res_content_clean[:_jb['gap_answer']]}\n\n"
                     "IMPORTANT: If the answer contains phrases like 'I cannot access', 'no web browsing', "
                     "'I don't have internet access' — this is INCOMPLETE regardless of other content.\n\n"
                     "Reply ONLY in this exact format (no extra text):\n"
@@ -991,16 +1026,17 @@ async def merger_node(state_: AgentState):
         # (b) there are more rounds available — extraction is useless on the last iteration
         _max_rounds = state_.get("max_agentic_rounds", 2)
         _wm_merged: dict = dict(state_.get("working_memory") or {})
+        _jb_wm = _judge_ctx_budget()
         if (_agentic_gap != "COMPLETE"
                 and _agentic_iter < _max_rounds - 1
-                and state_.get("prompt_tokens", 0) < 90_000):
+                and state_.get("prompt_tokens", 0) < WM_EXTRACT_THRESHOLD_TOKENS):
             from parsing import _extract_json
             _extract_prompt = (
                 "Extract the key facts from the text below as a flat JSON object "
                 "{\"key\": \"value\"}. Keys must be short snake_case. "
                 "Values must be concrete facts only (no opinions, no explanations). "
                 "Return ONLY valid JSON, no markdown, no extra text.\n\n"
-                f"TEXT:\n{res_content_clean[:500]}"
+                f"TEXT:\n{res_content_clean[:_jb_wm['wm_extract_text']]}"
             )
             try:
                 _fact_res = await _invoke_judge_with_retry(state_, _extract_prompt, max_retries=1)
@@ -1068,10 +1104,10 @@ async def thinking_node(state_: AgentState):
     # Genuine complexity: sequential task chains (depends_on) or multi-domain expert divergence.
     # len(plan) > 1 is too broad — most research requests have >1 task but don't need CoT.
     has_sequential_chain = any(t.get("depends_on") for t in plan if isinstance(t, dict))
-    has_multi_category   = len({t.get("category") for t in plan if isinstance(t, dict)}) > 2
+    has_multi_category   = len({t.get("category") for t in plan if isinstance(t, dict)}) > COT_MIN_CATEGORIES
     # Also activate for complex/research queries with multiple tasks — L3 GAIA questions
     # have only 1 category but multi-step reasoning benefits from CoT.
-    has_multi_task = len([t for t in plan if isinstance(t, dict)]) > 2
+    has_multi_task = len([t for t in plan if isinstance(t, dict)]) > COT_MIN_TASKS
     is_complex = has_sequential_chain or has_multi_category or has_multi_task
 
     if not (force or is_complex or has_low_conf):
@@ -1087,10 +1123,11 @@ async def thinking_node(state_: AgentState):
             for r in expert_results
         )
         sections.append(f"EXPERT CONFIDENCE: {conf_summary}")
+    _jb_r = _judge_ctx_budget()
     if state_.get("web_research"):
-        sections.append(f"WEB CONTEXT (excerpt):\n{state_['web_research'][:1000]}")
+        sections.append(f"WEB CONTEXT (excerpt):\n{state_['web_research'][:_jb_r['reasoning_web']]}")
     if state_.get("graph_context"):
-        sections.append(f"GRAPH CONTEXT (excerpt):\n{state_['graph_context'][:500]}")
+        sections.append(f"GRAPH CONTEXT (excerpt):\n{state_['graph_context'][:_jb_r['reasoning_graph']]}")
 
     reasoning_prompt = (
         "You are an analytical reasoning assistant. Analyze the task in 4 steps:\n\n"

@@ -19,7 +19,9 @@ from config import (
     _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
     MAX_EXPERT_OUTPUT_CHARS, MAX_JUDGE_TOKENS, THOMPSON_SAMPLING_ENABLED,
+    JUDGE_NUM_CTX, PLANNER_NUM_CTX,
 )
+from context_budget import get_model_context_window as _static_ctx
 from metrics import PROM_THOMPSON
 from services.routing import _server_info, _is_endpoint_error
 from typing import Dict, List, Optional, TYPE_CHECKING
@@ -349,6 +351,24 @@ async def _invoke_judge_with_retry(
     return SimpleNamespace(content=f"[Judge unavailable after {max_retries} retries: {last_error}]")
 
 
+def _judge_model_kw(model: str) -> dict:
+    """Build model_kwargs for a judge LLM, including num_ctx when known."""
+    kw = {"max_tokens": MAX_JUDGE_TOKENS}
+    ctx = JUDGE_NUM_CTX or _static_ctx(model)
+    if ctx > 0:
+        kw["num_ctx"] = ctx
+    return kw
+
+
+def _planner_model_kw(model: str) -> dict:
+    """Build model_kwargs for a planner LLM, including num_ctx when known."""
+    kw: dict = {}
+    ctx = PLANNER_NUM_CTX or _static_ctx(model)
+    if ctx > 0:
+        kw["num_ctx"] = ctx
+    return kw
+
+
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template judge LLM, or global judge_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
@@ -361,7 +381,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
-                          model_kwargs={"max_tokens": MAX_JUDGE_TOKENS})
+                          model_kwargs=_judge_model_kw(m))
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -370,7 +390,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
-                          model_kwargs={"max_tokens": MAX_JUDGE_TOKENS})
+                          model_kwargs=_judge_model_kw(m))
     return judge_llm
 
 
@@ -385,7 +405,8 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         if _endpoint_is_degraded(u.rstrip("/")) and _FALLBACK_ENABLED:
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(PLANNER_TIMEOUT)
-        return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT)
+        return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT,
+                          model_kwargs=_planner_model_kw(m))
     if m and not u:
         # Floating planner: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -393,7 +414,8 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _url = node.get("url") or URL_MAP.get(node["name"], "")
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
-        return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT)
+        return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT,
+                          model_kwargs=_planner_model_kw(m))
     return planner_llm
 
 

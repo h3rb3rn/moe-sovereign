@@ -16,7 +16,7 @@ import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
-    HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
+    HISTORY_MAX_TURNS, HISTORY_MAX_CHARS, PLANNER_NUM_CTX, PLANNER_MODEL,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
@@ -81,6 +81,38 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 # AgentState import — defined in pipeline/state.py
 from pipeline.state import AgentState
+
+
+def _planner_ctx_budget() -> dict:
+    """Derive agentic context-block char budgets from the planner model's context window.
+
+    Uses PLANNER_NUM_CTX when set explicitly, otherwise falls back to the static
+    model table. All caps scale proportionally so a larger planner model
+    automatically gets more room for working memory and gap context.
+
+    Assumes ~4 chars per token (conservative mixed-language estimate) and
+    reserves 40% of the window for the static instruction prompt + user query.
+    """
+    from context_budget import get_model_context_window as _static_ctx
+    ctx_tokens = PLANNER_NUM_CTX or _static_ctx(PLANNER_MODEL) or 4096
+    # Characters available after reserving 40% for instruction prompt + user query
+    available_chars = int(ctx_tokens * 4 * 0.60)
+    return {
+        # working_memory JSON — largest share, structured facts are most valuable
+        "working_memory":    min(available_chars // 2, 24_000),
+        # prose fallback when working_memory is empty
+        "prev_findings":     min(available_chars // 3, 16_000),
+        # gap description — concise by nature, small cap is fine
+        "gap":               min(available_chars // 8,  4_000),
+        # per-query line in the search history block
+        "query_line":        200,
+        # how many past queries to show
+        "max_queries":       20,
+        # how many past failures to show
+        "max_failures":      10,
+        # how many discovered domains to show
+        "max_domains":       12,
+    }
 
 
 def _sanitize_plan(raw: list, fallback_input: str,
@@ -396,17 +428,19 @@ async def planner_node(state_: AgentState):
         _tried_queries  = state_.get("attempted_queries") or []
         _strategy_hint  = (state_.get("search_strategy_hint") or "").strip()
 
+        _budget = _planner_ctx_budget()
+
         # Prefer structured working memory over truncated prose when available
         if _wm:
-            _context_facts = "ESTABLISHED FACTS (structured):\n" + json.dumps(_wm)[:2000]
+            _context_facts = "ESTABLISHED FACTS (structured):\n" + json.dumps(_wm)[:_budget["working_memory"]]
         else:
-            _context_facts = f"Previously established facts:\n{_prev_found[:1500]}"
+            _context_facts = f"Previously established facts:\n{_prev_found[:_budget['prev_findings']]}"
 
         # Build search-history block to prevent query repetition
         if _tried_queries:
             _query_lines = "\n".join(
-                f"  • [{q.get('quality','?')}] {q.get('query','?')[:120]}"
-                for q in _tried_queries[-10:]  # last 10 queries max
+                f"  • [{q.get('quality','?')}] {q.get('query','?')[:_budget['query_line']]}"
+                for q in _tried_queries[-_budget["max_queries"]:]
             )
             _search_history_block = (
                 f"\nSEARCH QUERIES ALREADY TRIED (do NOT repeat these or near-identical variants):\n"
@@ -416,7 +450,7 @@ async def planner_node(state_: AgentState):
             _search_history_block = ""
 
         _fail_block = (
-            f"\nFAILED TOOL CALLS (do NOT retry with identical args):\n{json.dumps(_failures[-5:])}"
+            f"\nFAILED TOOL CALLS (do NOT retry with identical args):\n{json.dumps(_failures[-_budget['max_failures']:])}"
             if _failures else ""
         )
 
@@ -456,7 +490,7 @@ async def planner_node(state_: AgentState):
         if _disc_domains:
             _domain_lines = "\n".join(
                 f"  • {d['domain']}" + (f" — {d['context']}" if d.get("context") else "")
-                for d in _disc_domains[:8]
+                for d in _disc_domains[:_budget["max_domains"]]
             )
             _discovered_block = (
                 "\nSOURCES FOUND IN PREVIOUS SEARCHES (consider using web_search_domain with these):\n"
@@ -468,7 +502,7 @@ async def planner_node(state_: AgentState):
         _agentic_context_block = (
             f"\n=== AGENTIC ITERATION {_agentic_iteration}/{_agentic_max_rounds} ===\n"
             f"{_context_facts}\n\n"
-            f"Still unresolved:\n{_gap[:800]}\n"
+            f"Still unresolved:\n{_gap[:_budget['gap']]}\n"
             f"{_search_history_block}"
             f"{_discovered_block}"
             f"{_fail_block}\n"

@@ -18,6 +18,7 @@ from config import (
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, MAX_EXPERT_TOKENS,
     MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE, JUDGE_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
+    EXPERT_OUTPUT_DIVISOR, EXPERT_INPUT_MIN_CHARS, EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
@@ -228,10 +229,10 @@ async def expert_worker(state_: AgentState):
             _expert_max_output = _max_output_cap
             _max_input_chars = 0
             if _expert_ctx_window > 0:
-                # Reserve 25% of window for output, capped at category output cap
-                _expert_max_output = min(_max_output_cap, max(1000, _expert_ctx_window // 4))
-                # 3 chars/token conservative estimate for mixed content
-                _max_input_chars = max(2000, _expert_ctx_window * 3)
+                # Reserve 1/EXPERT_OUTPUT_DIVISOR of window for output, capped at category cap
+                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window // EXPERT_OUTPUT_DIVISOR))
+                # EXPERT_CHARS_PER_TOKEN chars/token conservative estimate for mixed content
+                _max_input_chars = max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window * EXPERT_CHARS_PER_TOKEN)
                 _available_task_chars = _max_input_chars - len(sys_prompt)
                 if len(task_text) > _available_task_chars > 0:
                     task_text = task_text[:_available_task_chars] + "\n[…truncated for context window]"
@@ -301,6 +302,11 @@ async def expert_worker(state_: AgentState):
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
+            if _expert_ctx_window > 0:
+                # Pass num_ctx to Ollama so the model is loaded with the correct
+                # context window. Without this Ollama defaults to 8192 regardless
+                # of what is defined in the template or the model's native capacity.
+                _model_kw["num_ctx"] = _expert_ctx_window
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}

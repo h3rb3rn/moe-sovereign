@@ -45,6 +45,7 @@ from config import (
     _CUSTOM_EXPERT_PROMPTS, THOMPSON_SAMPLING_ENABLED,
     _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
+    CC_SAFETY_BUFFER_TOKENS,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -626,7 +627,7 @@ async def _anthropic_tool_handler(
             )
             _tool_ctx = _ollama_num_ctx
     if _tool_ctx > 0:
-        _CC_SAFETY_BUFFER = 500  # token reserve for overhead not counted in char estimate
+        _CC_SAFETY_BUFFER = CC_SAFETY_BUFFER_TOKENS
         _avail_input = _tool_ctx - max_tokens - _CC_SAFETY_BUFFER
         oai_messages, _history_trimmed = _trim_oai_to_budget(oai_messages, _avail_input)
         if _history_trimmed:

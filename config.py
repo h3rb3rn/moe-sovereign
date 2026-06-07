@@ -175,6 +175,34 @@ MAX_EXPERT_OUTPUT_CHARS_CODE = int(os.getenv("MAX_EXPERT_OUTPUT_CHARS_CODE", "48
 # Judge generation limit — prevents thinking-mode judges from generating
 # massive traces. 8192 is generous for synthesis while still bounding cost.
 MAX_JUDGE_TOKENS          = int(os.getenv("MAX_JUDGE_TOKENS",           "32768"))
+# Ollama num_ctx for judge and planner — 0 means auto-detect from static model table.
+# Set explicitly when the auto-detected value differs from Ollama's actual allocation.
+JUDGE_NUM_CTX   = int(os.getenv("JUDGE_NUM_CTX",   "0"))
+PLANNER_NUM_CTX = int(os.getenv("PLANNER_NUM_CTX", "0"))
+# ── Agentic loop token budgets ────────────────────────────────────────────────
+# Gap detection and working-memory extraction are skipped when accumulated token
+# usage exceeds these thresholds. Default matches practical qwen3.6:35b limits;
+# raise when using a model+node with larger context windows.
+AGENTIC_GAP_THRESHOLD_TOKENS    = int(os.getenv("AGENTIC_GAP_THRESHOLD_TOKENS",    "80000"))
+WM_EXTRACT_THRESHOLD_TOKENS     = int(os.getenv("WM_EXTRACT_THRESHOLD_TOKENS",     "90000"))
+
+# ── Chain-of-Thought trigger thresholds ───────────────────────────────────────
+# CoT reasoning is activated when the plan has at least this many distinct
+# categories or sequential tasks. Lower = more CoT, higher = less CoT.
+COT_MIN_CATEGORIES  = int(os.getenv("COT_MIN_CATEGORIES", "2"))
+COT_MIN_TASKS       = int(os.getenv("COT_MIN_TASKS",      "2"))
+
+# ── Expert context-window allocation ratios ───────────────────────────────────
+# Output cap = min(MAX_EXPERT_OUTPUT, max(EXPERT_INPUT_MIN_CHARS, ctx // EXPERT_OUTPUT_DIVISOR))
+# Input max  = max(EXPERT_INPUT_MIN_CHARS, ctx * EXPERT_CHARS_PER_TOKEN)
+EXPERT_OUTPUT_DIVISOR   = int(os.getenv("EXPERT_OUTPUT_DIVISOR",   "4"))    # reserve 25% for output
+EXPERT_INPUT_MIN_CHARS  = int(os.getenv("EXPERT_INPUT_MIN_CHARS",  "2000")) # floor for very small ctx
+EXPERT_CHARS_PER_TOKEN  = int(os.getenv("EXPERT_CHARS_PER_TOKEN",  "3"))    # conservative mixed estimate
+
+# ── CC pipeline safety buffer ─────────────────────────────────────────────────
+# Token headroom reserved for message framing overhead in Claude Code tool calls.
+CC_SAFETY_BUFFER_TOKENS = int(os.getenv("CC_SAFETY_BUFFER_TOKENS", "500"))
+
 CACHE_HIT_THRESHOLD       = float(os.getenv("CACHE_HIT_THRESHOLD",      "0.15"))
 SOFT_CACHE_THRESHOLD      = float(os.getenv("SOFT_CACHE_THRESHOLD",     "0.50"))
 SOFT_CACHE_MAX_EXAMPLES   = int(os.getenv("SOFT_CACHE_MAX_EXAMPLES",    "2"))
