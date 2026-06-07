@@ -26,7 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger("MOE-SOVEREIGN.SelfCorrection")
 
-_FEW_SHOT_DIR = Path(os.getenv("FEW_SHOT_DIR", "/opt/moe-infra/few_shot_examples"))
+_FEW_SHOT_DIR = Path(os.getenv("FEW_SHOT_DIR", "/app/few_shot_examples"))
 _MAX_ENTRIES  = 20  # Max few-shot entries per category in Redis
 
 

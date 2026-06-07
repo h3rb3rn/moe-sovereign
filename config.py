@@ -90,14 +90,14 @@ API_TYPE_MAP = {s["name"]: s.get("api_type", "ollama") for s in INFERENCE_SERVER
 JUDGE_ENDPOINT_NAME = os.getenv("JUDGE_ENDPOINT", "")
 JUDGE_URL           = URL_MAP.get(JUDGE_ENDPOINT_NAME) if JUDGE_ENDPOINT_NAME else None
 JUDGE_TOKEN         = TOKEN_MAP.get(JUDGE_ENDPOINT_NAME, "ollama") if JUDGE_ENDPOINT_NAME else "ollama"
-JUDGE_MODEL         = os.getenv("JUDGE_MODEL", "magistral:24b")
+JUDGE_MODEL         = os.getenv("JUDGE_MODEL", "")
 
 GRAPH_INGEST_MODEL    = os.getenv("GRAPH_INGEST_MODEL", "")
 _GRAPH_INGEST_EP_NAME = os.getenv("GRAPH_INGEST_ENDPOINT", "")
 GRAPH_INGEST_URL      = URL_MAP.get(_GRAPH_INGEST_EP_NAME) if _GRAPH_INGEST_EP_NAME else None
 GRAPH_INGEST_TOKEN    = TOKEN_MAP.get(_GRAPH_INGEST_EP_NAME, "ollama") if _GRAPH_INGEST_EP_NAME else "ollama"
 
-PLANNER_MODEL    = os.getenv("PLANNER_MODEL", "phi4:14b")
+PLANNER_MODEL    = os.getenv("PLANNER_MODEL", "")
 PLANNER_ENDPOINT = os.getenv("PLANNER_ENDPOINT", os.getenv("JUDGE_ENDPOINT", ""))
 PLANNER_URL      = URL_MAP.get(PLANNER_ENDPOINT) if PLANNER_ENDPOINT else None
 PLANNER_TOKEN    = TOKEN_MAP.get(PLANNER_ENDPOINT, "ollama") if PLANNER_ENDPOINT else "ollama"

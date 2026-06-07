@@ -11,7 +11,7 @@ import os
 from typing import Optional
 
 # Path to expert system prompt files
-_EXPERTS_PATH = os.getenv("EXPERTS_PATH", "/opt/moe-sovereign/prompts/systemprompt")
+_EXPERTS_PATH = os.getenv("EXPERTS_PATH", "/app/prompts/systemprompt")
 
 # Tool definitions per expert category
 # Format: compact prose block appended to the system prompt

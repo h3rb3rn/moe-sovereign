@@ -55,6 +55,16 @@
         </div>
         <div class="form-check form-switch mb-1">
           <input class="form-check-input" type="checkbox" role="switch"
+                 id="srv-active-{{ loop.index0 }}"
+                 data-server="{{ srv.name }}"
+                 {% if srv.get('enabled', True) %}checked{% endif %}
+                 onchange="toggleActive(this)">
+          <label class="form-check-label small fw-semibold" for="srv-active-{{ loop.index0 }}">
+            {{ t(request, 'lbl.node_active') }}
+          </label>
+        </div>
+        <div class="form-check form-switch mb-1">
+          <input class="form-check-input" type="checkbox" role="switch"
                  id="srv-onto-{{ loop.index0 }}"
                  data-server="{{ srv.name }}"
                  data-idx="{{ loop.index0 }}"
@@ -258,6 +268,24 @@ async function pollOntologyStatus(name, idx, input) {
   }
 }
 
+async function toggleActive(input) {
+  const name = input.dataset.server;
+  const active = input.checked;
+  const card = input.closest('.card');
+  if (card) card.style.borderColor = active ? '' : '#fd7e14';
+  try {
+    const r = await fetch(`/api/servers/${encodeURIComponent(name)}/active-toggle`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({active}),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    alert('Error: ' + e.message);
+    input.checked = !input.checked;
+    if (card) card.style.borderColor = '';
+  }
+}
+
 async function toggleFloating(input) {
   const name = input.dataset.server;
   const enabled = input.checked;
@@ -339,6 +367,13 @@ async function generateDashboard() {
 document.addEventListener('DOMContentLoaded', () => {
   loadAll();
   loadRoutingState();
+  // Mark inactive nodes with orange border on initial load
+  document.querySelectorAll('input[id^="srv-active-"]').forEach(inp => {
+    if (!inp.checked) {
+      const card = inp.closest('.card');
+      if (card) card.style.borderColor = '#fd7e14';
+    }
+  });
   // On page load, start polling for any server that has ontology enabled
   document.querySelectorAll('input[id^="srv-onto-"]:checked').forEach(inp => {
     const name = inp.dataset.server, idx = inp.dataset.idx;

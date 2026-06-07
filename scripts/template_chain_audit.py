@@ -80,9 +80,9 @@ def _import_httpx():
 def run_audit(tmpl_id: str, bench_env: dict, proj_env: dict, api_base: str, api_key: str):
     redis_password  = proj_env.get("REDIS_PASSWORD", "")
     db_password     = proj_env.get("MOE_USERDB_PASSWORD", "")
-    redis_url       = proj_env.get("REDIS_URL", f"redis://:{redis_password}@172.20.0.8:6379")
+    redis_url       = proj_env.get("REDIS_URL", f"redis://:{redis_password}@terra_cache:6379")
     db_url          = proj_env.get("MOE_USERDB_URL",
-                        f"postgresql://moe_admin:{db_password}@172.20.0.9:5432/moe_userdb")
+                        f"postgresql://moe_admin:{db_password}@terra_checkpoints:5432/moe_userdb")
 
     psycopg, dict_row = _import_psycopg()
     redis_lib = _import_redis()

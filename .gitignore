@@ -7,8 +7,9 @@ __pycache__/
 .mypy_cache/
 tmp_install/
 site/
-# Local Prometheus GPU scrape targets (contain private IPs — use gpu_targets.yml.example as template)
+# Local Prometheus scrape targets (contain private IPs — use *.example as template)
 prometheus/gpu_targets.yml
+prometheus/node_targets.yml
 
 # Backup env files with secrets
 .env.env.bak.*

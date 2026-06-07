@@ -147,6 +147,64 @@ import hashlib as _hashlib
 _CC_WORK_TTL = 4 * 3600  # 4 h — long enough to survive context loss + model reload
 
 
+async def _cc_expert_preanalysis(
+    session_id: str,
+    user_query: str,
+    planner_model: str,
+    planner_url: str,
+    planner_token: str,
+    planner_prompt: str,
+    redis_client,
+    delay_s: float = 45.0,
+) -> None:
+    """Background: call the expert template's planner to pre-analyse the user's task.
+
+    Waits delay_s seconds before starting so the main qwen3.6:35b tool-call
+    completes first — avoids competing for the same Ollama server simultaneously.
+    The result is stored in cc:work:{session_id}:task_plan and injected on turn 2+.
+    """
+    if delay_s > 0:
+        await asyncio.sleep(delay_s)
+    try:
+        _sys = (
+            planner_prompt
+            or "You are a senior software engineer. Analyse the task and create a concise step-by-step plan. "
+               "Identify: key files involved, tools needed, risks, and the correct execution order. "
+               "Be specific and brief — max 300 words."
+        )
+        _planner_base = planner_url.rstrip("/").removesuffix("/v1")
+        async with httpx.AsyncClient(timeout=120.0) as _cl:
+            _resp = await _cl.post(
+                f"{_planner_base}/v1/chat/completions",
+                json={
+                    "model":      planner_model,
+                    "messages":   [
+                        {"role": "system", "content": _sys},
+                        {"role": "user",   "content": f"Task:\n{user_query[:2000]}"},
+                    ],
+                    "stream":     False,
+                    "max_tokens": 512,
+                },
+                headers={"Authorization": f"Bearer {planner_token}"},
+            )
+        if _resp.status_code != 200:
+            return
+        _plan_text = _resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        if not _plan_text:
+            return
+
+        # Store in cc:work so _inject_cc_work_context picks it up on turn 2+
+        _key = f"cc:work:{session_id}"
+        _raw = await redis_client.get(_key)
+        _work: dict = json.loads(_raw) if _raw else {"steps": [], "files_read": [], "findings": []}
+        _work["task_plan"] = _plan_text[:800]
+        await redis_client.set(_key, json.dumps(_work, ensure_ascii=False), ex=_CC_WORK_TTL)
+        logger.info("cc_tool: expert pre-analysis stored for session=%s (%d chars, model=%s)",
+                    session_id[:8], len(_plan_text), planner_model)
+    except Exception as _e:
+        logger.debug("cc_tool: expert pre-analysis failed: %s", _e)
+
+
 async def _update_cc_work_summary(
     redis_client,
     session_id: str,
@@ -209,10 +267,14 @@ async def _inject_cc_work_context(
         if not raw:
             return oai_msgs
         work = json.loads(raw)
-        if not any(work.get(k) for k in ("steps", "files_read", "findings")):
+        if not any(work.get(k) for k in ("steps", "files_read", "findings", "task_plan")):
             return oai_msgs
 
         lines = ["[CC_WORK_CONTEXT — already completed in this session]"]
+        if work.get("task_plan"):
+            lines.append("[EXPERT ANALYSIS — task plan from specialist model]")
+            lines.append(work["task_plan"])
+            lines.append("[End of expert analysis]")
         if work.get("files_read"):
             lines.append("Files already read: " + ", ".join(work["files_read"]))
         if work.get("steps"):
@@ -484,6 +546,40 @@ async def _anthropic_tool_handler(
                         logger.info("cc_tool: injected %d Tier-2 memory turns (session=%s)", len(_warm_turns), session_id[:8])
         except Exception as _me:
             logger.debug("cc_tool: Tier-2 memory retrieval skipped: %s", _me)
+
+    # ── Expert-Template pre-analysis (first turn only) ────────────────────────
+    # On the first user turn (no tool_results yet), fire a background planner call
+    # using the expert template's planner_model. The result is stored in
+    # cc:work:{session_id} and injected by _inject_cc_work_context on turn 2+.
+    # This makes the expert template meaningful for Claude Code without blocking
+    # the immediate tool-call response.
+    if session_id and _last_msg_type == "tool_use_request" and state.redis_client:
+        try:
+            _work_key = f"cc:work:{session_id}"
+            _existing_work = await state.redis_client.get(_work_key)
+            if not _existing_work:
+                # First turn: no prior work recorded → trigger expert pre-analysis
+                _planner_model   = (session.planner_cfg.get("planner_model_override")   or PLANNER_MODEL   or "")
+                _planner_url     = (session.planner_cfg.get("planner_url_override")     or PLANNER_URL     or "")
+                _planner_token   = (session.planner_cfg.get("planner_token_override")   or PLANNER_TOKEN   or "ollama")
+                _planner_prompt  = session.planner_cfg.get("planner_prompt", "")
+                _user_q = next(
+                    (m.get("content", "") for m in reversed(oai_messages)
+                     if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                    "",
+                )
+                if _planner_model and _planner_url and _user_q:
+                    asyncio.create_task(_cc_expert_preanalysis(
+                        session_id=session_id,
+                        user_query=_user_q,
+                        planner_model=_planner_model,
+                        planner_url=_planner_url,
+                        planner_token=_planner_token,
+                        planner_prompt=_planner_prompt,
+                        redis_client=state.redis_client,
+                    ))
+        except Exception as _pae:
+            logger.debug("cc_tool: expert pre-analysis skipped: %s", _pae)
 
     oai_messages = await _compress_history_responses(
         oai_messages, state.redis_client, session_id,

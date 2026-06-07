@@ -20,6 +20,7 @@
   "lbl.template_activity": "Template-Nutzung",
   "lbl.healer_history": "Healer-Historie",
   "lbl.ontology_runner": "Ontologie-Gap-Auflösung",
+  "lbl.node_active": "Node aktiv (User-Freigaben sichtbar)",
   "lbl.floating_routing": "Floating-Routing aktiv",
   "lbl.server_blocked": "Server gesperrt (Hard-Block)",
   "lbl.dedicated_healer": "Dedicated Gap Healer (Dauerlauf)",

@@ -282,6 +282,7 @@ services:
       - "127.0.0.1:${PROMETHEUS_HOST_PORT}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/node_targets.yml:/etc/prometheus/node_targets.yml:ro
       - ${MOE_DATA_ROOT}/prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'

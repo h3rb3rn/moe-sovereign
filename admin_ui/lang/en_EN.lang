@@ -20,6 +20,7 @@
   "lbl.template_activity": "Template usage",
   "lbl.healer_history": "Healer history",
   "lbl.ontology_runner": "Ontology gap resolution",
+  "lbl.node_active": "Node active (user permissions visible)",
   "lbl.floating_routing": "Floating routing active",
   "lbl.server_blocked": "Server blocked (hard block)",
   "lbl.dedicated_healer": "Dedicated Gap Healer (continuous loop)",

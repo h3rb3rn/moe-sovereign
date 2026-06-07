@@ -29,19 +29,12 @@ scrape_configs:
     - __name__
     regex: container_(tasks_state|memory_failures_total)
     action: drop
+# Inference node scrape targets (private IPs — gitignored).
+# Copy prometheus/node_targets.yml.example → prometheus/node_targets.yml and fill in your nodes.
 - job_name: inference-nodes
-  static_configs:
-  - targets:
-    - node-0X.internal:9100
-    labels:
-      node: N04-RTX
-  - targets:
-    - node-0X.internal:9100
-    labels:
-      node: N07-GT
-  - targets:
-    - node-0X.internal:9100
-    labels:
-      node: N09-M60
+  file_sd_configs:
+  - files:
+    - /etc/prometheus/node_targets.yml
+    refresh_interval: 60s
   scrape_interval: 15s
   scrape_timeout: 10s

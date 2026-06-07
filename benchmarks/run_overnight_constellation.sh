@@ -16,7 +16,7 @@ cd "$(dirname "$0")"                      # benchmarks/
 set -a; . ./.env; set +a                  # brings in HF_TOKEN (+ node config)
 export MOE_API_KEY="$(cat ../../loadtest/.moe_key)"
 export MOE_API_BASE="http://127.0.0.1:8002"
-export MOE_JUDGE_OLLAMA_URL="http://192.168.155.224:11434"
+export MOE_JUDGE_OLLAMA_URL="${MOE_JUDGE_OLLAMA_URL:-http://localhost:11434}"
 export MOE_JUDGE_MODEL="mistral-small:24b"   # reliable JSON judge, neutral (not an expert in any candidate)
 export MOE_PARALLEL_TESTS=1                   # one big model at a time -> no VRAM thrash
 export MOE_TIMEOUT=1100 MOE_MAX_RETRIES=2

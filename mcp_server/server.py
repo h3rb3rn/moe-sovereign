@@ -3262,10 +3262,10 @@ def duckduckgo_search(query: str, max_results: int = 5, region: str = "wt-wt") -
 
 # ─── Starfleet Infra Tools (read-only observability) ────────────────────────
 # All tools in this section are guarded by the INFRA_MCP_ENABLED flag.
-# They call the orchestrator's Starfleet API endpoints (langgraph-app:8002)
+# They call the orchestrator's Starfleet API endpoints via the internal Docker network.
 # and therefore work without direct Redis/Prometheus access from this container.
 
-_ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_INTERNAL_URL", "http://langgraph-app:8002")
+_ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_INTERNAL_URL", "http://langgraph-app:8000")
 _INFRA_MCP_ENABLED = os.getenv("INFRA_MCP_ENABLED", "false").lower() in ("1", "true", "yes")
 
 

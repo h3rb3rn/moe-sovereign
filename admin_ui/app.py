@@ -71,7 +71,7 @@ SMTP_HOST     = os.getenv("SMTP_HOST", "")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("SMTP_USER", "")
 SMTP_PASS     = os.getenv("SMTP_PASS", "")
-SMTP_FROM     = os.getenv("SMTP_FROM", "noreply@moe.intern")
+SMTP_FROM     = os.getenv("SMTP_FROM", "noreply@example.com")
 SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "1") == "1"
 # SMTP_SSL=1 → Implicit TLS (SMTPS, typically port 465).
 # Takes precedence over STARTTLS. Port 465 almost always requires this.
@@ -1384,6 +1384,16 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
         updates["INFERENCE_SERVERS"] = json.dumps(servers, ensure_ascii=False, separators=(",", ":"))
         old_names = {s.get("name") for s in old_servers if s.get("name")}
         new_names = {s.get("name") for s in servers if s.get("name")}
+        # Detect enabled-flag transitions for servers that still exist
+        old_enabled = {s.get("name"): s.get("enabled", True) for s in old_servers}
+        new_enabled = {s.get("name"): s.get("enabled", True) for s in servers}
+        shared_names = old_names & new_names
+        deactivated = sorted(n for n in shared_names if old_enabled.get(n, True) and not new_enabled.get(n, True))
+        reactivated = sorted(n for n in shared_names if not old_enabled.get(n, True) and new_enabled.get(n, True))
+        for name in deactivated:
+            logger.info("Node %s deactivated via wizard — user permissions hidden (not deleted)", name)
+        for name in reactivated:
+            logger.info("Node %s reactivated via wizard — user permissions restored automatically", name)
         server_diff = {
             "removed": sorted(old_names - new_names),
             "added": [s for s in servers if s.get("name") not in old_names],
@@ -1525,7 +1535,7 @@ async def save_config(request: Request, _=Depends(require_login)):
         "SMTP_USER":      form.get("SMTP_USER",      ""),
         # Empty SMTP_PASS = preserve existing value (field is masked in UI)
         "SMTP_PASS":      form.get("SMTP_PASS", "").strip() or read_env().get("SMTP_PASS", ""),
-        "SMTP_FROM":      form.get("SMTP_FROM",      "noreply@moe.intern"),
+        "SMTP_FROM":      form.get("SMTP_FROM",      "noreply@example.com"),
         "SMTP_STARTTLS":  "1" if form.get("SMTP_STARTTLS") else "0",
         "SMTP_SSL":       "1" if form.get("SMTP_SSL") else "0",
         "APP_BASE_URL":          form.get("APP_BASE_URL",          "http://localhost:8088"),
@@ -2588,6 +2598,26 @@ async def api_server_block_toggle(server_name: str, request: Request):
     return {"ok": True, "server": server_name, "blocked": blocked}
 
 
+@app.post("/api/servers/{server_name}/active-toggle", dependencies=[Depends(require_login)])
+async def api_server_active_toggle(server_name: str, request: Request):
+    """Enable or disable a server for user permission visibility.
+
+    Sets the 'enabled' flag in INFERENCE_SERVERS. When disabled, the server is
+    excluded from _get_permitted_servers_for_user() so users no longer see its
+    native LLMs. Permissions are NOT deleted — re-enabling instantly restores access.
+    """
+    body = await request.json()
+    active = bool(body.get("active", True))
+    target = _update_server_flags(server_name, {"enabled": active})
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"server {server_name} not found")
+    if active:
+        logger.info("Node %s reactivated — user permissions for its models are now visible again", server_name)
+    else:
+        logger.info("Node %s deactivated — user permissions hidden (not deleted); re-activation restores them", server_name)
+    return {"ok": True, "server": server_name, "active": active}
+
+
 @app.get("/api/servers/routing-state", dependencies=[Depends(require_login)])
 async def api_servers_routing_state():
     """Return current floating-disabled and hard-blocked server sets from Redis."""
@@ -3517,7 +3547,7 @@ async def _run_llm_audit(skill_content: str, model: str, node: str) -> dict:
 async def api_skill_audit(skill_name: str, request: Request):
     """Run a security audit on a community skill using a designated LLM."""
     body = await request.json()
-    audit_model = body.get("model", "phi4:14b")
+    audit_model = body.get("model") or read_env().get("PLANNER_MODEL", "")
     audit_node = body.get("node", "")
 
     community_dir = Path("/app/skills/community")
@@ -3821,7 +3851,7 @@ def _list_upstream_skills() -> list:
 async def api_upstream_skill_audit(skill_name: str, request: Request):
     """Run a security audit on an upstream (Anthropic) skill using a designated LLM."""
     body = await request.json()
-    audit_model = body.get("model", "phi4:14b")
+    audit_model = body.get("model") or read_env().get("PLANNER_MODEL", "")
     audit_node = body.get("node", "")
 
     # Locate skill in upstream directory
@@ -5268,7 +5298,7 @@ async def admin_test_smtp(request: Request, _=Depends(require_login)):
     starttls  = cfg.get("SMTP_STARTTLS", "1") == "1"
     user_smtp = cfg.get("SMTP_USER", "")
     pass_smtp = cfg.get("SMTP_PASS", "")
-    from_addr = cfg.get("SMTP_FROM", "noreply@moe.intern")
+    from_addr = cfg.get("SMTP_FROM", "noreply@example.com")
     body    = await request.json() if await request.body() else {}
     to_addr = body.get("to", "").strip()
     if not to_addr:
@@ -5411,24 +5441,7 @@ async def user_templates_page(request: Request, user_id: str = Depends(require_u
     if not can_create_templates:
         return RedirectResponse("/user/dashboard", status_code=303)
     my_templates = await db.list_user_templates(user_id)
-    # Determine allowed inference servers for this user
-    config = read_env()
-    try:
-        all_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
-    except json.JSONDecodeError:
-        all_servers = []
-    permitted_server_names = set()
-    for ep_entry in model_endpoint_perms:
-        _, _, ep_node = ep_entry.partition("@")
-        if ep_node:
-            permitted_server_names.add(ep_node)
-        else:
-            # Wildcard: "*" or bare server name
-            if ep_entry == "*":
-                permitted_server_names = {s["name"] for s in all_servers}
-                break
-            permitted_server_names.add(ep_entry)
-    permitted_servers = [s for s in all_servers if s["name"] in permitted_server_names]
+    permitted_servers = _get_permitted_servers_for_user(perms)
     # Admin-Templates die dem User freigegeben wurden
     tmpl_ids      = set(perms.get("expert_template", []))
     all_admin_tmpls = load_expert_templates()
@@ -5450,23 +5463,7 @@ async def user_templates_page(request: Request, user_id: str = Depends(require_u
 async def user_api_permitted_servers(user_id: str = Depends(require_user_login)):
     ctx = await _require_template_access(user_id, None)
     perms = ctx["perms"]
-    model_endpoint_perms = perms.get("model_endpoint", [])
-    config = read_env()
-    try:
-        all_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
-    except json.JSONDecodeError:
-        all_servers = []
-    permitted_server_names = set()
-    for ep_entry in model_endpoint_perms:
-        _, _, ep_node = ep_entry.partition("@")
-        if ep_node:
-            permitted_server_names.add(ep_node)
-        elif ep_entry == "*":
-            permitted_server_names = {s["name"] for s in all_servers}
-            break
-        else:
-            permitted_server_names.add(ep_entry)
-    permitted_servers = [s for s in all_servers if s["name"] in permitted_server_names]
+    permitted_servers = _get_permitted_servers_for_user(perms)
     return {"servers": permitted_servers}
 
 
@@ -5649,24 +5646,31 @@ async def _require_cc_profile_access(user_id: str, request) -> dict:
 
 
 def _get_permitted_servers_for_user(perms: dict) -> list:
-    """Returns the inference servers enabled for the user."""
+    """Returns the inference servers the user may use.
+
+    Only servers with enabled=True (or missing enabled key) are considered.
+    This ensures that deactivated nodes vanish from the user's view without
+    deleting their permissions — re-activating the node instantly restores access.
+    """
     model_endpoint_perms = perms.get("model_endpoint", [])
     config = read_env()
     try:
         all_servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
     except json.JSONDecodeError:
         all_servers = []
+    # Only active (enabled) servers are visible to users
+    active_servers = [s for s in all_servers if s.get("enabled", True)]
     permitted_server_names: set = set()
     for ep_entry in model_endpoint_perms:
         _, _, ep_node = ep_entry.partition("@")
         if ep_node:
             permitted_server_names.add(ep_node)
         elif ep_entry == "*":
-            permitted_server_names = {s["name"] for s in all_servers}
+            permitted_server_names = {s["name"] for s in active_servers}
             break
         else:
             permitted_server_names.add(ep_entry)
-    return [s for s in all_servers if s["name"] in permitted_server_names]
+    return [s for s in active_servers if s["name"] in permitted_server_names]
 
 
 @app.get("/user/cc-profiles", response_class=HTMLResponse)

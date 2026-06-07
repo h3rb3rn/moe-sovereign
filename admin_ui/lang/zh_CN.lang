@@ -20,6 +20,7 @@
   "lbl.template_activity": "模板使用情况",
   "lbl.healer_history": "Healer 历史",
   "lbl.ontology_runner": "本体缺口解析",
+  "lbl.node_active": "节点激活（用户权限可见）",
   "lbl.floating_routing": "浮动路由激活",
   "lbl.server_blocked": "服务器已封锁（硬封锁）",
   "lbl.dedicated_healer": "专用缺口愈合器（持续循环）",

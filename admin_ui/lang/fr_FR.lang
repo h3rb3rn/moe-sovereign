@@ -20,6 +20,7 @@
   "lbl.template_activity": "Utilisation des templates",
   "lbl.healer_history": "Historique du healer",
   "lbl.ontology_runner": "Résolution des lacunes d'ontologie",
+  "lbl.node_active": "Nœud actif (permissions utilisateurs visibles)",
   "lbl.floating_routing": "Routage flottant actif",
   "lbl.server_blocked": "Serveur bloqué (bloc dur)",
   "lbl.dedicated_healer": "Healer dédié (boucle permanente)",

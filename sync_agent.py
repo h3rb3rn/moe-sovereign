@@ -39,7 +39,7 @@ logger = logging.getLogger("mkdocs-sync")
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
 DOCS_DIR        = Path(os.getenv("DOCS_DIR",        "/app/docs"))
-EXPERTS_PATH    = Path(os.getenv("EXPERTS_PATH",    "/opt/moe-sovereign/prompts/systemprompt"))
+EXPERTS_PATH    = Path(os.getenv("EXPERTS_PATH",    "/app/prompts/systemprompt"))
 FEW_SHOT_DIR    = Path(os.getenv("FEW_SHOT_DIR",    "/moe-few-shot"))
 PROMETHEUS_URL  = os.getenv("PROMETHEUS_URL",       "http://moe-prometheus:9090")
 
