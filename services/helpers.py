@@ -328,6 +328,12 @@ async def _self_evaluate(
         asyncio.create_task(_telemetry.record_self_score(
             state._userdb_pool, response_id, score, template_name=template_name, complexity=complexity
         ))
+        # Patch self_eval_score into the policy training record (arrives async).
+        try:
+            from services.policy_log import update_policy_event as _upd_policy
+            asyncio.create_task(_upd_policy(response_id, score))
+        except Exception:
+            pass
         # Cost-tier learning loop: track low-quality responses routed as local_7b.
         # If the downgrade rate > 20% for a category, it signals the tier is too low.
         if state.redis_client and score <= 2:

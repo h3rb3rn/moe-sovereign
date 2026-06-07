@@ -299,6 +299,36 @@ async def merger_node(state_: AgentState):
     except Exception as _rbe:
         logger.debug(f"Routing-bandit reward skipped: {_rbe}")
 
+    # ── Policy training log ────────────────────────────────────────────────────
+    # Persist a (State, Action, Reward) tuple for offline training of the
+    # MoE Meta-Policy. Non-blocking — never delays the response.
+    try:
+        from services.policy_log import log_policy_event as _log_policy
+        _conf_map = {
+            _expert_category(r): _parse_expert_confidence(r)
+            for r in expert_results if r
+        }
+        _t_start = state_.get("_merger_t0") or time.monotonic()
+        asyncio.create_task(_log_policy(
+            chat_id=state_.get("response_id", ""),
+            query=state_.get("input", ""),
+            complexity=state_.get("complexity_level", "unknown"),
+            plan_categories=[t.get("category", "") for t in (state_.get("plan") or [])],
+            experts_called=state_.get("expert_models_used") or [],
+            confidence_map=_conf_map,
+            judge_refined_cats=_judge_refined_cats,
+            refinement_rounds=_refine_round + 1 if _judge_refined_cats else 0,
+            fast_path=False,
+            cache_hit=bool(state_.get("cache_hit")),
+            web_research_used=bool(state_.get("web_research")),
+            graphrag_used=bool(state_.get("graph_context")),
+            template_id=state_.get("template_name", ""),
+            latency_s=time.monotonic() - _t_start,
+            tier_escalations=state_.get("tier_escalations", 0),
+        ))
+    except Exception as _ple:
+        logger.debug("policy_log skipped: %s", _ple)
+
     await _report("🔀 Merger synthesizing final response...")
 
     # ── 3B: Confidence-aware merger instruction ────────────────────────────
@@ -582,6 +612,27 @@ async def merger_node(state_: AgentState):
             "fast_path":   True,
             "ts":          datetime.now().isoformat(),
         }))
+        try:
+            from services.policy_log import log_policy_event as _log_policy_fp
+            asyncio.create_task(_log_policy_fp(
+                chat_id=state_.get("response_id", ""),
+                query=state_.get("input", ""),
+                complexity=state_.get("complexity_level", "unknown"),
+                plan_categories=[t.get("category", "") for t in (state_.get("plan") or [])],
+                experts_called=state_.get("expert_models_used") or [],
+                confidence_map={_expert_category(expert_results[0]): "high"},
+                judge_refined_cats=set(),
+                refinement_rounds=0,
+                fast_path=True,
+                cache_hit=False,
+                web_research_used=False,
+                graphrag_used=False,
+                template_id=state_.get("template_name", ""),
+                latency_s=0.0,
+                tier_escalations=0,
+            ))
+        except Exception as _ple:
+            logger.debug("policy_log fast-path skipped: %s", _ple)
         await _ol_complete(_ol_merger_run, job_name="merger_node",
                            outputs=[dataset_response(state_.get("response_id", "fast"))])
         return {"final_response": fast_resp, "prompt_tokens": 0, "completion_tokens": 0}
