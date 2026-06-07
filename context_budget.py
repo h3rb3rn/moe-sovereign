@@ -1,30 +1,19 @@
 """
 context_budget.py — Per-template context window budget management.
 
-Provides a static lookup table of known model context windows and helper
-functions to compute the GraphRAG character budget that fits within a target
-model's context window.
+Context window resolution uses a four-tier priority chain:
 
-The orchestrator pipeline injects several content blocks into the merger
-(judge) prompt:
-  - System instruction + mode prefix   (~500–800 tokens)
-  - REQUEST (user query)               (variable)
-  - EXPERT RESPONSES (4 × 2000 chars)  (~2 000 tokens)
-  - STRUCTURED KNOWLEDGE (GraphRAG)    (variable — this is what we cap)
-  - Other sections (web, math, MCP)    (~200–600 tokens)
+  1. Explicit override (JUDGE_NUM_CTX / PLANNER_NUM_CTX env vars, or template
+     context_window field) — always wins.
+  2. Redis cache (TTL 1 h) — warm after first use, avoids repeated API calls.
+  3. Ollama /api/show (async) — reads GGUF metadata, always accurate and
+     model-agnostic. This is the primary dynamic source.
+  4. Parameter-count heuristic (sync fallback) — extracts "Xb" from the model
+     name and maps it to a conservative context estimate. Works for any future
+     model without requiring a table update.
 
-Target: leave at least MERGER_HEADROOM_TOKENS tokens for the merger model's
-own generation.  Total budget = model_ctx - headroom - fixed_sections.
-
-Usage:
-  from context_budget import graphrag_budget_chars
-
-  # Returns the char limit to pass to graph_rag truncation.
-  limit = graphrag_budget_chars(
-      model="phi4:14b",
-      query_chars=len(user_input),
-      override_chars=template_graphrag_max_chars,  # 0 = auto
-  )
+The old name-based lookup table has been removed. It was maintenance-heavy and
+would silently return wrong values for renamed or future models.
 """
 
 from __future__ import annotations
@@ -53,67 +42,35 @@ MIN_GRAPHRAG_CHARS: int = 800
 # Corresponds to the existing MAX_GRAPH_CONTEXT_CHARS default of 6 000.
 DEFAULT_GRAPHRAG_CHARS: int = 6_000
 
-# ── Known model context windows (tokens) ─────────────────────────────────────
-# Key: lowercase model name without tag (or with specific tag for exceptions).
-# Value: context window in tokens.
+# ── Parameter-count → context-window heuristic ───────────────────────────────
+# Maps billion-parameter ranges to conservative context window estimates.
+# Used only as a last-resort sync fallback when Redis is cold and Ollama is
+# unreachable. The Ollama /api/show path (tier 3) always wins when available.
 #
-# Sources: model cards, Ollama GGUF metadata, vendor documentation.
-# When a model has a configurable context window, list the default/safe value
-# for the hardware tier the model is commonly used on in this deployment.
-MODEL_CONTEXT_WINDOWS: dict[str, int] = {
-    # ── phi family ────────────────────────────────────────────────────────────
-    "phi4:14b":              16_384,   # microsoft/phi-4 — default 16k window
-    "phi4":                  16_384,
-    "phi3:14b":              16_384,
-    "phi3:medium":           16_384,
-    "phi3":                   4_096,   # phi3 mini — 4k default
-    # ── qwen2.5 / qwen3 family ───────────────────────────────────────────────
-    "qwen2.5-coder:7b":     32_768,
-    "qwen2.5-coder:14b":    32_768,
-    "qwen2.5-coder:32b":    32_768,
-    "qwen2.5:7b":           32_768,
-    "qwen2.5:14b":          32_768,
-    "qwen2.5:32b":          32_768,
-    "qwen3:8b":             32_768,
-    "qwen3:32b":            32_768,
-    "qwen3-coder:30b":      32_768,
-    # ── mistral / hermes / llama family ──────────────────────────────────────
-    "mistral:7b":            8_192,
-    "mistral-nemo:latest":  32_768,
-    "hermes3:8b":            8_192,
-    "llama3.1:8b":          16_384,
-    "llama3.2:3b":          16_384,
-    "llama3.1:70b":         16_384,
-    # ── math / science specialists ────────────────────────────────────────────
-    "mathstral:7b":          4_096,
-    "meditron:7b":           4_096,
-    # ── glm4 / gemma ─────────────────────────────────────────────────────────
-    "glm4:9b":               8_192,
-    "gemma2:9b":             8_192,
-    # ── translation / German ─────────────────────────────────────────────────
-    "translategemma:27b":    8_192,
-    "sroecker/sauerkrautlm-7b-hero:latest":  4_096,
-    # ── large / cloud-tier models ─────────────────────────────────────────────
-    "gpt-oss:20b":          32_768,
-    "solar-pro:22b":        32_768,
-    "qwen3.5:27b":          32_768,
-    # ── Local fallback models ─────────────────────────────────────────────────
-    # Native GGUF capacity is 262144, but KV cache at full context needs ~43 GB
-    # (16 KV-heads × 40 attn-layers × 128 head-dim × fp16 = 1.7 KB/token).
-    # On a 60 GB node with ~24.5 GB model weights only ~35 GB remain for KV cache,
-    # giving a safe ceiling of 65536 (10.7 GB KV cache, 35.2 GB total).
-    "qwen3.6:35b":              65_536,
-    "qwen3.6":                  65_536,
-    "gemma4:31b":                8_192,
-    "gemma4:12b":                8_192,
-    "gemma4":                    8_192,
-    "gemma3:27b":                8_192,
-    "gemma3":                    8_192,
-    # ── Additional qwen3 variants ─────────────────────────────────────────────
-    "qwen3:14b":                32_768,
-    "qwen3:7b":                 32_768,
-    "qwen3:4b":                 32_768,
-}
+# Rationale: parameter count is embedded in every Ollama model tag ("7b", "14b",
+# "35b" …) and is stable across model families and generations. This heuristic
+# will remain correct for future models without any table maintenance.
+#
+# Values are intentionally conservative — they represent what fits in typical
+# VRAM rather than the model's theoretical maximum.
+_PARAM_CTX_HEURISTIC: list[tuple[float, int]] = [
+    (3.0,   4_096),   # ≤3 B  — tiny models, usually 4 k default
+    (9.0,   8_192),   # 4–9 B — standard small models
+    (15.0, 16_384),   # 10–15 B
+    (25.0, 32_768),   # 16–25 B
+    (40.0, 32_768),   # 26–40 B (may be VRAM-constrained)
+    (70.0, 32_768),   # 41–70 B
+]
+_DEFAULT_CTX_HEURISTIC: int = 32_768   # > 70 B or unknown size
+
+
+def _params_from_name(model: str) -> float:
+    """Extract parameter count (billions) from a model tag like 'qwen3:35b' or 'phi4:14b-fp16'.
+
+    Returns 0.0 when no parameter count is found.
+    """
+    m = re.search(r"[:\-_](\d+(?:\.\d+)?)b\b", model.lower())
+    return float(m.group(1)) if m else 0.0
 
 
 # ── Per-model max output tokens ───────────────────────────────────────────────
@@ -175,20 +132,22 @@ async def get_model_max_output_async(
 
 
 def get_model_context_window(model: str) -> int:
-    """Return the known context window (tokens) for *model*.
+    """Estimate context window (tokens) for *model* using a parameter-count heuristic.
 
-    Falls back to a generic lookup by base model name (strips the tag).
-    Returns 0 if unknown.
+    Extracts the billion-parameter count from the model tag (e.g. "qwen3:35b" → 35,
+    "phi4:14b-fp16" → 14) and maps it to a conservative VRAM-safe context estimate.
+    Returns 0 when no parameter count can be parsed (caller should treat as unknown).
+
+    This replaces the old name-based lookup table, which required manual maintenance
+    and silently returned wrong values for renamed or future models.
     """
-    name = (model or "").strip().lower()
-    if name in MODEL_CONTEXT_WINDOWS:
-        return MODEL_CONTEXT_WINDOWS[name]
-    # Try base name without tag (e.g. "phi4:14b-q4" → "phi4:14b" → "phi4")
-    base = name.split(":")[0]
-    for key, val in MODEL_CONTEXT_WINDOWS.items():
-        if key.startswith(base + ":") or key == base:
-            return val
-    return 0
+    params = _params_from_name(model)
+    if params <= 0:
+        return 0
+    for threshold, ctx in _PARAM_CTX_HEURISTIC:
+        if params <= threshold:
+            return ctx
+    return _DEFAULT_CTX_HEURISTIC
 
 
 async def _fetch_litellm_model_info(model: str, base_url: str, token: str,
