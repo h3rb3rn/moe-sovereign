@@ -17,6 +17,7 @@ from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS, PLANNER_NUM_CTX, PLANNER_MODEL,
+    EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
@@ -90,13 +91,14 @@ def _planner_ctx_budget() -> dict:
     model table. All caps scale proportionally so a larger planner model
     automatically gets more room for working memory and gap context.
 
-    Assumes ~4 chars per token (conservative mixed-language estimate) and
-    reserves 40% of the window for the static instruction prompt + user query.
+    Uses EXPERT_CHARS_PER_TOKEN (env: EXPERT_CHARS_PER_TOKEN, default 3) for the
+    chars/token estimate and reserves 40% of the window for the static instruction
+    prompt + user query.
     """
     from context_budget import get_model_context_window as _static_ctx
     ctx_tokens = PLANNER_NUM_CTX or _static_ctx(PLANNER_MODEL) or 4096
     # Characters available after reserving 40% for instruction prompt + user query
-    available_chars = int(ctx_tokens * 4 * 0.60)
+    available_chars = int(ctx_tokens * EXPERT_CHARS_PER_TOKEN * 0.60)
     return {
         # working_memory JSON — largest share, structured facts are most valuable
         "working_memory":    min(available_chars // 2, 24_000),
