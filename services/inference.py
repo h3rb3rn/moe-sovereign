@@ -453,7 +453,12 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
             f"--- FEEDBACK DES JUDGES (Bitte gezielt verbessern) ---\n{gap_feedback}"
         )},
     ]
-    llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token, timeout=_timeout)
+    _refine_extra: dict = {}
+    if token == "ollama":
+        _refine_num_ctx = int(JUDGE_NUM_CTX or 32768)
+        _refine_extra = {"model_kwargs": {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}}
+    llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
+                     timeout=_timeout, **_refine_extra)
     try:
         res = await llm.ainvoke(messages)
         return res.content[:MAX_EXPERT_OUTPUT_CHARS] if res.content else None

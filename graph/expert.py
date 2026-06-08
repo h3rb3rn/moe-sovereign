@@ -32,7 +32,7 @@ from config import (
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
     _CUSTOM_EXPERT_PROMPTS, PLANNER_MAX_TASKS, PLANNER_RETRIES,
     KAFKA_TOPIC_INGEST, NEO4J_URI, NEO4J_USER, NEO4J_PASS,
-    _FALLBACK_ENABLED,
+    _FALLBACK_ENABLED, JUDGE_NUM_CTX,
 )
 from metrics import (
     PROM_EXPERT_CALLS, PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
@@ -231,7 +231,7 @@ async def expert_worker(state_: AgentState):
                 except Exception:
                     pass
             # Resolve per-expert context window: template override → Ollama API (cached) → static table
-            from context_budget import get_model_ctx_async as _ctx_async
+            from context_budget import get_model_ctx_async as _ctx_async, _params_from_name as _pfn
             _expert_ctx_override = int(model_cfg.get("context_window", 0) or 0)
             _expert_ctx_window = await _ctx_async(
                 model=model_name,
@@ -240,6 +240,22 @@ async def expert_worker(state_: AgentState):
                 redis_client=state.redis_client,
                 override=_expert_ctx_override,
             )
+            # Pin context to JUDGE_NUM_CTX for all large local Ollama models (≥25 B params).
+            # This keeps all expert calls aligned with the CC-tool keepalive-loop warmup
+            # context, preventing Ollama from reloading the model on every request.
+            # Without this, /api/show can return the GGUF native context (e.g. 40960),
+            # which differs from the keepalive-loaded 32768 and triggers a reload.
+            if (
+                token == "ollama"
+                and JUDGE_NUM_CTX > 0
+                and _pfn(model_name) >= 25.0
+                and _expert_ctx_window != JUDGE_NUM_CTX
+            ):
+                logger.info(
+                    "expert: ctx pinned to JUDGE_NUM_CTX=%d model=%s (was %d)",
+                    JUDGE_NUM_CTX, model_name, _expert_ctx_window,
+                )
+                _expert_ctx_window = JUDGE_NUM_CTX
             # Categories that generate large code artifacts need higher token/output limits.
             # Defined here (before first use) to avoid Python's "referenced before assignment"
             # error that occurs when the name appears anywhere in the enclosing scope.
