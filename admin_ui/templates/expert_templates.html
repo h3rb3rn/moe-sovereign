@@ -639,6 +639,9 @@ function addExpertCategory(prefix) {
 document.addEventListener('DOMContentLoaded', async () => {
   const llms = await fetchAvailableLlms();
   document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, llms);
+  // Pre-populate planner/judge selects so they are ready before the modal opens
+  buildLlmDropdown('ct_planner_llm_select', llms, '');
+  buildLlmDropdown('ct_judge_llm_select',   llms, '');
 
   document.getElementById('createTemplateModal').addEventListener('show.bs.modal', async () => {
     if (document.getElementById('ct_name').dataset.prefilled) return;
