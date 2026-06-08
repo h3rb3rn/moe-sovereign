@@ -414,29 +414,33 @@ async def _invoke_judge_with_retry(
     return SimpleNamespace(content=f"[Judge unavailable after {max_retries} retries: {last_error}]")
 
 
-def _judge_model_kw(model: str) -> dict:
+def _judge_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a judge call.
 
     Contains model_kwargs (max_tokens) and, when ctx is known, extra_body as a
     top-level key.  extra_body must NOT be placed inside model_kwargs — LangChain
     silently drops it from there, causing Ollama to use its Modelfile default
     num_ctx (8192) and reload the already-warm model.
+
+    Priority: state_num_ctx (per-template) > JUDGE_NUM_CTX (global env) > static table.
     """
     out: dict = {"max_tokens": MAX_JUDGE_TOKENS}
-    ctx = JUDGE_NUM_CTX or _static_ctx(model)
+    ctx = state_num_ctx or JUDGE_NUM_CTX or _static_ctx(model)
     if ctx > 0:
         out["extra_body"] = {"options": {"num_ctx": ctx}}
     return out
 
 
-def _planner_model_kw(model: str) -> dict:
+def _planner_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a planner call.
 
     Same contract as _judge_model_kw: extra_body is a top-level key, not nested
     inside model_kwargs.
+
+    Priority: state_num_ctx (per-template) > PLANNER_NUM_CTX (global env) > static table.
     """
     out: dict = {}
-    ctx = PLANNER_NUM_CTX or _static_ctx(model)
+    ctx = state_num_ctx or PLANNER_NUM_CTX or _static_ctx(model)
     if ctx > 0:
         out["extra_body"] = {"options": {"num_ctx": ctx}}
     return out
@@ -445,7 +449,9 @@ def _planner_model_kw(model: str) -> dict:
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template judge LLM, or global judge_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
-    When the configured endpoint is in degraded state, returns the fallback node directly."""
+    When the configured endpoint is in degraded state, returns the fallback node directly.
+    Respects state['judge_num_ctx'] for per-template context window override."""
+    _state_num_ctx = int(state.get("judge_num_ctx") or 0)
     m = (state.get("judge_model_override") or "").strip()
     u = (state.get("judge_url_override")   or "").strip()
     t = (state.get("judge_token_override") or "ollama").strip()
@@ -454,7 +460,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
-                          **_judge_model_kw(m))
+                          **_judge_model_kw(m, _state_num_ctx))
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -463,14 +469,23 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
-                          **_judge_model_kw(m))
+                          **_judge_model_kw(m, _state_num_ctx))
+    # No model override — if num_ctx differs from global, create a fresh instance
+    if _state_num_ctx > 0:
+        from services.llm_instances import _judge_num_ctx as _global_judge_ctx
+        if _state_num_ctx != _global_judge_ctx:
+            return ChatOpenAI(model=JUDGE_MODEL, base_url=JUDGE_URL, api_key=JUDGE_TOKEN,
+                              timeout=JUDGE_TIMEOUT,
+                              **_judge_model_kw(JUDGE_MODEL, _state_num_ctx))
     return judge_llm
 
 
 async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template planner LLM, or global planner_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
-    When the configured endpoint is in degraded state, returns the fallback node directly."""
+    When the configured endpoint is in degraded state, returns the fallback node directly.
+    Respects state['planner_num_ctx'] for per-template context window override."""
+    _state_num_ctx = int(state.get("planner_num_ctx") or 0)
     m = (state.get("planner_model_override") or "").strip()
     u = (state.get("planner_url_override")   or "").strip()
     t = (state.get("planner_token_override") or "ollama").strip()
@@ -479,7 +494,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT,
-                          **_planner_model_kw(m))
+                          **_planner_model_kw(m, _state_num_ctx))
     if m and not u:
         # Floating planner: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -488,7 +503,14 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT,
-                          **_planner_model_kw(m))
+                          **_planner_model_kw(m, _state_num_ctx))
+    # No model override — if num_ctx differs from global, create a fresh instance
+    if _state_num_ctx > 0:
+        from services.llm_instances import _planner_num_ctx as _global_planner_ctx
+        if _state_num_ctx != _global_planner_ctx:
+            return ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN,
+                              timeout=PLANNER_TIMEOUT,
+                              **_planner_model_kw(PLANNER_MODEL, _state_num_ctx))
     return planner_llm
 
 
