@@ -352,20 +352,27 @@ async def _invoke_judge_with_retry(
 
 
 def _judge_model_kw(model: str) -> dict:
-    """Build model_kwargs for a judge LLM, including num_ctx when known."""
+    """Build model_kwargs for a judge LLM, including num_ctx when known.
+
+    num_ctx is passed via extra_body → options so it reaches Ollama's
+    /v1/chat/completions endpoint without triggering an OpenAI SDK TypeError.
+    """
     kw = {"max_tokens": MAX_JUDGE_TOKENS}
     ctx = JUDGE_NUM_CTX or _static_ctx(model)
     if ctx > 0:
-        kw["num_ctx"] = ctx
+        kw["extra_body"] = {"options": {"num_ctx": ctx}}
     return kw
 
 
 def _planner_model_kw(model: str) -> dict:
-    """Build model_kwargs for a planner LLM, including num_ctx when known."""
+    """Build model_kwargs for a planner LLM, including num_ctx when known.
+
+    num_ctx is passed via extra_body → options (same reason as _judge_model_kw).
+    """
     kw: dict = {}
     ctx = PLANNER_NUM_CTX or _static_ctx(model)
     if ctx > 0:
-        kw["num_ctx"] = ctx
+        kw["extra_body"] = {"options": {"num_ctx": ctx}}
     return kw
 
 

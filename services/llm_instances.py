@@ -37,13 +37,16 @@ def _resolve_num_ctx(model: str, override: int) -> int:
 _judge_num_ctx   = _resolve_num_ctx(JUDGE_MODEL,   JUDGE_NUM_CTX)
 _planner_num_ctx = _resolve_num_ctx(PLANNER_MODEL, PLANNER_NUM_CTX)
 
+# num_ctx must be passed via extra_body → options, NOT as a direct model_kwarg.
+# The OpenAI SDK raises TypeError for unknown kwargs; Ollama's /v1 endpoint reads
+# options.num_ctx from the request body via extra_body.
 _judge_kw   = {"max_tokens": MAX_JUDGE_TOKENS}
 _planner_kw = {}
 if _judge_num_ctx > 0:
-    _judge_kw["num_ctx"] = _judge_num_ctx
+    _judge_kw["extra_body"] = {"options": {"num_ctx": _judge_num_ctx}}
     logger.info("Judge LLM: num_ctx=%d (model=%s)", _judge_num_ctx, JUDGE_MODEL)
 if _planner_num_ctx > 0:
-    _planner_kw["num_ctx"] = _planner_num_ctx
+    _planner_kw["extra_body"] = {"options": {"num_ctx": _planner_num_ctx}}
     logger.info("Planner LLM: num_ctx=%d (model=%s)", _planner_num_ctx, PLANNER_MODEL)
 
 judge_llm   = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT,

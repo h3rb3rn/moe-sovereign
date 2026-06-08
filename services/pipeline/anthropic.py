@@ -683,13 +683,15 @@ async def _anthropic_tool_handler(
     # (b) we can inject it into the Ollama payload later.
     _ollama_num_ctx: int = 0
     if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
-        # Use the CC profile's tool_max_tokens as num_ctx for Ollama.
-        # This is the value the admin configured in the Admin UI — do not override
-        # it with hardcoded ceilings or static table lookups.
-        # tool_max_tokens is the total context budget (input + output); it controls
-        # how much KV cache Ollama allocates and should match the hardware's capacity.
+        # Derive num_ctx from the CC profile's tool_max_tokens.
+        # When JUDGE_NUM_CTX is set, cap at that value so the CC tool model and
+        # the judge singleton are loaded at the same num_ctx — this prevents Ollama
+        # from reloading the model between every judge call and every tool call
+        # (a reload cycle that can take 2-3 min for 35B models and causes 502s).
         _profile_ctx = session.tool_max_tokens or max_tokens
         _ollama_num_ctx = _profile_ctx
+        if JUDGE_NUM_CTX > 0 and _ollama_num_ctx > JUDGE_NUM_CTX:
+            _ollama_num_ctx = JUDGE_NUM_CTX
         if _ollama_num_ctx != (_tool_ctx or 0):
             logger.info(
                 "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",

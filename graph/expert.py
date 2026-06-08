@@ -327,10 +327,10 @@ async def expert_worker(state_: AgentState):
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
             if _expert_ctx_window > 0:
-                # Pass num_ctx to Ollama so the model is loaded with the correct
-                # context window. Without this Ollama defaults to 8192 regardless
-                # of what is defined in the template or the model's native capacity.
-                _model_kw["num_ctx"] = _expert_ctx_window
+                # Pass num_ctx via extra_body → options so Ollama's /v1/chat/completions
+                # endpoint receives it. Direct model_kwargs keys raise TypeError in the
+                # OpenAI SDK since num_ctx is not an OpenAI parameter.
+                _model_kw["extra_body"] = {"options": {"num_ctx": _expert_ctx_window}}
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
