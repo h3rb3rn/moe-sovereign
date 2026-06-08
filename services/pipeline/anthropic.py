@@ -574,6 +574,50 @@ async def _anthropic_tool_handler(
         except Exception as _me:
             logger.debug("cc_tool: Tier-2 memory retrieval skipped: %s", _me)
 
+    # ── Tier-3 Context Retrieval: inject relevant chunks into tool-call messages ─
+    # When the session has an indexed context (large system_prompt chunked into
+    # ChromaDB), retrieve the semantically relevant slice for the current query
+    # and inject it as a system message. This gives the CC tool model access to
+    # the full codebase/document context beyond its 32k KV-cache limit.
+    if session_id and state.redis_client:
+        try:
+            from services.context_index import (
+                is_context_indexed as _ctx_indexed_t3,
+                retrieve_context_for_task as _ctx_retrieve_t3,
+            )
+            if await _ctx_indexed_t3(session_id, state.redis_client):
+                _t3_query = next(
+                    (m.get("content", "") for m in reversed(oai_messages)
+                     if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                    ""
+                )
+                if _t3_query:
+                    _t3_chunks = await _ctx_retrieve_t3(
+                        session_id=session_id,
+                        task_text=_t3_query[:500],
+                        redis_client=state.redis_client,
+                    )
+                    if _t3_chunks:
+                        _t3_msg = {
+                            "role": "system",
+                            "content": (
+                                "[RELEVANT CODEBASE CONTEXT — retrieved for current task]\n"
+                                f"{_t3_chunks}\n"
+                                "[End of retrieved context. Use this to inform your next action.]"
+                            ),
+                        }
+                        # Insert after all other system messages, just before conversation
+                        _sys_end = next(
+                            (i for i, m in enumerate(oai_messages) if m.get("role") != "system"), 0
+                        )
+                        oai_messages = oai_messages[:_sys_end] + [_t3_msg] + oai_messages[_sys_end:]
+                        logger.debug(
+                            "cc_tool: injected Tier-3 context chunks (%d chars, session=%s)",
+                            len(_t3_chunks), session_id[:8],
+                        )
+        except Exception as _t3e:
+            logger.debug("cc_tool: Tier-3 context retrieval skipped: %s", _t3e)
+
     # ── Expert-Template pre-analysis (first turn only) ────────────────────────
     # On the first user turn (no tool_results yet), fire a background planner call
     # using the expert template's planner_model. The result is stored in
