@@ -107,6 +107,7 @@ services:
       - NEO4J_URI=${NEO4J_URI}
       - NEO4J_USER=neo4j
       - NEO4J_PASS=${NEO4J_PASS}
+      - ORCHESTRATOR_URL=http://langgraph-orchestrator:8000
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
@@ -155,6 +156,10 @@ services:
       - CONVERSATION_LOG_RETENTION_MAX=${CONVERSATION_LOG_RETENTION_MAX}
       - NEO4J_PASS=${NEO4J_PASS}
       - KAFKA_URL=kafka://moe-kafka:9092
+      # Tier-2 semantic memory: dedicated CPU embed sidecar — no inference-GPU load.
+      # context_index.py (Tier-3) uses in-process ONNX and ignores these vars.
+      - SEMANTIC_MEMORY_EMBED_URL=http://moe-embed:11434
+      - SEMANTIC_MEMORY_EMBED_MODEL=${SEMANTIC_MEMORY_EMBED_MODEL:-ollama:nomic-embed-text}
       # Set to /app/hermes-workspaces when HERMES_KANBAN_WORKSPACES_HOST is configured.
       # Empty string disables workspace file writing in the kanban two-phase handler.
       - HERMES_KANBAN_WORKSPACES=${HERMES_KANBAN_WORKSPACES_HOST:+/app/hermes-workspaces}
@@ -178,6 +183,8 @@ services:
         condition: service_started
       moe-kafka:
         condition: service_started
+      moe-embed:
+        condition: service_healthy
 
   # --- Postgres (LangGraph checkpoints via AsyncPostgresSaver) ---
   # Dedicated instance — keeps checkpoint data isolated from authentik-postgresql.
@@ -272,6 +279,35 @@ services:
         limits:
           cpus: '${CHROMA_CPU_LIMIT}'
           memory: 4G
+
+  # --- Embedding Sidecar (CPU-only, no inference-GPU load) ---
+  # Serves nomic-embed-text for Tier-2 semantic memory (memory_retrieval.py).
+  # Tier-3 context indexing (context_index.py) uses in-process ONNX instead.
+  # OLLAMA_NUM_GPU=0 forces CPU mode regardless of host GPU visibility.
+  moe-embed:
+    build:
+      context: ./services/moe-embed
+      dockerfile: Dockerfile
+    image: moe-embed:local
+    container_name: moe-embed
+    restart: unless-stopped
+    environment:
+      - OLLAMA_NUM_GPU=0
+      - OLLAMA_KEEP_ALIVE=24h
+      - MOE_EMBED_MODEL=${MOE_EMBED_MODEL:-nomic-embed-text}
+    volumes:
+      - ${MOE_DATA_ROOT}/embed-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '${EMBED_CPU_LIMIT:-2.0}'
+          memory: 2G
 
   # --- Prometheus (Metriken-Scraper) ---
   moe-prometheus:

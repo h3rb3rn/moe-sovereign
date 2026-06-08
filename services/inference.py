@@ -16,6 +16,7 @@ from config import (
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
     EXPERT_MIN_DATAPOINTS, EXPERT_TIER_BOUNDARY_B,
     JUDGE_TIMEOUT, PLANNER_TIMEOUT,
+    JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
     _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
     MAX_EXPERT_OUTPUT_CHARS, MAX_JUDGE_TOKENS, THOMPSON_SAMPLING_ENABLED,
@@ -304,6 +305,20 @@ async def _invoke_llm_with_fallback(
     raise _last_exc
 
 
+def _url_api_type(url: str) -> str:
+    """Return api_type for a base URL by reverse-matching INFERENCE_SERVERS_LIST.
+    Strips the trailing /v1 segment for comparison so both URL forms match.
+    Defaults to 'ollama' — all internal nodes are Ollama unless explicitly configured."""
+    if not url:
+        return "ollama"
+    base = url.rstrip("/").removesuffix("/v1")
+    for s in INFERENCE_SERVERS_LIST:
+        s_base = (s.get("url") or "").rstrip("/").removesuffix("/v1")
+        if s_base and s_base == base:
+            return s.get("api_type", "ollama")
+    return "ollama"
+
+
 async def _invoke_judge_with_retry(
     state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None
 ):
@@ -312,21 +327,69 @@ async def _invoke_judge_with_retry(
     When the primary endpoint returns 401/429, immediately falls back to the configured
     fallback node without burning retry budget on unavailable endpoints.
 
+    For Ollama endpoints uses native /api/chat so options.num_ctx is respected.
+    The OpenAI-compat /v1/chat/completions endpoint silently drops the options dict
+    (Ollama ≤0.30.6), causing the model to reload at ctx=8192 on every judge call.
+
     temperature: when set, overrides the default judge sampling temperature.
     """
-    from config import JUDGE_URL
+    from types import SimpleNamespace as _NS
     last_error = None
     for attempt in range(max_retries):
         try:
-            llm = await _get_judge_llm(state)
-            if temperature is not None:
-                llm = llm.bind(temperature=temperature)
-            # Determine primary URL for degradation tracking
-            _j_url = (state.get("judge_url_override") or JUDGE_URL or "").rstrip("/")
-            res, used_fb = await _invoke_llm_with_fallback(
-                llm, _j_url, prompt, timeout=JUDGE_TIMEOUT, label="Judge"
-            )
-            # Check for empty/useless response
+            # Resolve judge endpoint for this attempt (cache cleared between retries)
+            _jm = (state.get("judge_model_override") or "").strip() or (JUDGE_MODEL or "")
+            _ju = (state.get("judge_url_override")   or "").strip() or (JUDGE_URL or "")
+            _jt = (state.get("judge_token_override") or "").strip() or (JUDGE_TOKEN or "ollama")
+            # Floating mode: model set but URL empty → discover best node
+            if (state.get("judge_model_override") or "").strip() and not (state.get("judge_url_override") or "").strip():
+                _all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
+                _node = await _select_node(_jm, _all_eps, user_id=state.get("user_id", ""))
+                _ju  = _node.get("url") or URL_MAP.get(_node["name"], "")
+                _jt  = _node.get("token", "ollama")
+                logger.info("🌐 Floating judge: %s → %s", _jm, _node["name"])
+            _j_url_base = (_ju or "").rstrip("/")
+            _j_api_type = _url_api_type(_j_url_base)
+
+            if _j_api_type == "ollama" and _jm and _j_url_base:
+                # Native Ollama /api/chat — respects options.num_ctx unlike /v1/chat/completions.
+                _ollama_base = _j_url_base.removesuffix("/v1")
+                _ctx = JUDGE_NUM_CTX or _static_ctx(_jm)
+                _opts: dict = {}
+                if _ctx > 0:
+                    _opts["num_ctx"] = _ctx
+                if MAX_JUDGE_TOKENS > 0:
+                    _opts["num_predict"] = MAX_JUDGE_TOKENS
+                if temperature is not None:
+                    _opts["temperature"] = temperature
+                _payload: dict = {
+                    "model":      _jm,
+                    "messages":   [{"role": "user", "content": prompt}],
+                    "stream":     False,
+                    # Short lease: frees VRAM within 5m after pipeline completes so expert/planner
+                    # models can load without eviction. _cc_keepalive_loop overrides to "4h" for
+                    # the CC tool model independently, so this does not affect CC tool availability.
+                    "keep_alive": "5m",
+                }
+                if _opts:
+                    _payload["options"] = _opts
+                async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
+                    _r = await _hc.post(
+                        f"{_ollama_base}/api/chat",
+                        json=_payload,
+                        headers={"Authorization": f"Bearer {_jt}"},
+                    )
+                _r.raise_for_status()
+                res = _NS(content=_r.json().get("message", {}).get("content", ""))
+            else:
+                # Non-Ollama path (AIHUB, cloud providers): use LangChain ChatOpenAI
+                llm = await _get_judge_llm(state)
+                if temperature is not None:
+                    llm = llm.bind(temperature=temperature)
+                res, _ = await _invoke_llm_with_fallback(
+                    llm, _j_url_base, prompt, timeout=JUDGE_TIMEOUT, label="Judge"
+                )
+
             if res and hasattr(res, 'content') and res.content and len(res.content.strip()) > 0:
                 if attempt > 0:
                     logger.info(f"✅ Judge retry {attempt+1}/{max_retries} succeeded")
@@ -352,28 +415,31 @@ async def _invoke_judge_with_retry(
 
 
 def _judge_model_kw(model: str) -> dict:
-    """Build model_kwargs for a judge LLM, including num_ctx when known.
+    """Return kwargs to spread (**) directly into ChatOpenAI for a judge call.
 
-    num_ctx is passed via extra_body → options so it reaches Ollama's
-    /v1/chat/completions endpoint without triggering an OpenAI SDK TypeError.
+    Contains model_kwargs (max_tokens) and, when ctx is known, extra_body as a
+    top-level key.  extra_body must NOT be placed inside model_kwargs — LangChain
+    silently drops it from there, causing Ollama to use its Modelfile default
+    num_ctx (8192) and reload the already-warm model.
     """
-    kw = {"max_tokens": MAX_JUDGE_TOKENS}
+    out: dict = {"max_tokens": MAX_JUDGE_TOKENS}
     ctx = JUDGE_NUM_CTX or _static_ctx(model)
     if ctx > 0:
-        kw["extra_body"] = {"options": {"num_ctx": ctx}}
-    return kw
+        out["extra_body"] = {"options": {"num_ctx": ctx}}
+    return out
 
 
 def _planner_model_kw(model: str) -> dict:
-    """Build model_kwargs for a planner LLM, including num_ctx when known.
+    """Return kwargs to spread (**) directly into ChatOpenAI for a planner call.
 
-    num_ctx is passed via extra_body → options (same reason as _judge_model_kw).
+    Same contract as _judge_model_kw: extra_body is a top-level key, not nested
+    inside model_kwargs.
     """
-    kw: dict = {}
+    out: dict = {}
     ctx = PLANNER_NUM_CTX or _static_ctx(model)
     if ctx > 0:
-        kw["extra_body"] = {"options": {"num_ctx": ctx}}
-    return kw
+        out["extra_body"] = {"options": {"num_ctx": ctx}}
+    return out
 
 
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
@@ -388,7 +454,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
-                          model_kwargs=_judge_model_kw(m))
+                          **_judge_model_kw(m))
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -397,7 +463,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
-                          model_kwargs=_judge_model_kw(m))
+                          **_judge_model_kw(m))
     return judge_llm
 
 
@@ -413,7 +479,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT,
-                          model_kwargs=_planner_model_kw(m))
+                          **_planner_model_kw(m))
     if m and not u:
         # Floating planner: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -422,7 +488,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT,
-                          model_kwargs=_planner_model_kw(m))
+                          **_planner_model_kw(m))
     return planner_llm
 
 
@@ -453,7 +519,12 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
             f"--- FEEDBACK DES JUDGES (Bitte gezielt verbessern) ---\n{gap_feedback}"
         )},
     ]
-    llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token, timeout=_timeout)
+    _refine_extra: dict = {}
+    if token == "ollama":
+        _refine_num_ctx = int(JUDGE_NUM_CTX or 32768)
+        _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
+    llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
+                     timeout=_timeout, **_refine_extra)
     try:
         res = await llm.ainvoke(messages)
         return res.content[:MAX_EXPERT_OUTPUT_CHARS] if res.content else None

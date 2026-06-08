@@ -23,7 +23,7 @@ from config import (
     CLAUDE_CODE_TOOL_CHOICE,
     _CLAUDE_CODE_TOOL_URL, _CLAUDE_CODE_TOOL_TOKEN, _CLAUDE_CODE_REASONING_URL,
     JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
-    JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
+    JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN, JUDGE_NUM_CTX,
     PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN, PLANNER_NUM_CTX,
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
     MODES, _MODEL_ID_TO_MODE, _CLAUDE_PRETTY_NAMES, _model_display_name,
@@ -46,6 +46,8 @@ from config import (
     _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
     CC_SAFETY_BUFFER_TOKENS,
+    CC_PREANALYSIS_DELAY_SECS,
+    CC_CONTEXT_INDEX_ENABLED,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -150,6 +152,10 @@ import hashlib as _hashlib
 
 
 _CC_WORK_TTL = 4 * 3600  # 4 h — long enough to survive context loss + model reload
+
+# Track active Ollama streaming tasks per CC session so zombie requests from
+# previous CC retries can be cancelled when a new request arrives for the same session.
+_cc_active_ollama_tasks: dict[str, asyncio.Task] = {}
 
 
 async def _cc_expert_preanalysis(
@@ -556,21 +562,10 @@ async def _anthropic_tool_handler(
     # When the client ships a large system_prompt (codebase, documents, long files),
     # index it once per session so that every expert can later retrieve only the
     # semantically relevant slice — the infrastructure-level 1M+ context window.
-    if session_id and system and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session_id and system and state.redis_client:
         try:
-            from services.context_index import (
-                CONTEXT_INDEX_THRESHOLD as _CTX_THRESHOLD,
-                chunk_and_index_context as _chunk_ctx,
-                is_context_indexed as _ctx_indexed,
-            )
-            if len(system) > _CTX_THRESHOLD:
-                _already_indexed = await _ctx_indexed(session_id, state.redis_client)
-                if not _already_indexed:
-                    asyncio.create_task(_chunk_ctx(session_id, system, state.redis_client))
-                    logger.info(
-                        "cc_tool: triggered context indexing for session %s (%d chars)",
-                        session_id[:8], len(system),
-                    )
+            from services.context_index import ensure_indexed as _ensure_ctx
+            await _ensure_ctx(session_id, system, state.redis_client)
         except Exception as _cie:
             logger.debug("cc_tool: context indexing skipped: %s", _cie)
 
@@ -578,7 +573,7 @@ async def _anthropic_tool_handler(
     # Evicted turns from _compress_history_responses are embedded in ChromaDB so
     # they can be retrieved semantically — giving Claude Code an effective context
     # that scales beyond the 32k LLM window (the "1M+ infrastructure" layer).
-    if session_id:
+    if CC_CONTEXT_INDEX_ENABLED and session_id:
         try:
             from memory_retrieval import get_memory_store as _get_mem_store
             _mem_store = _get_mem_store()
@@ -596,10 +591,7 @@ async def _anthropic_tool_handler(
                         n_results=5,
                     )
                     if _warm_turns:
-                        _warm_block = "\n".join(
-                            f"[PAST TURN {t.get('metadata', {}).get('role', '?')}]: {t.get('document', '')[:300]}"
-                            for t in _warm_turns
-                        )
+                        _warm_block = _mem_store.build_warm_context_block(_warm_turns)
                         _warm_msg = {
                             "role": "system",
                             "content": f"[SEMANTIC MEMORY — relevant past context]\n{_warm_block}\n[End of past context. Continue current task.]"
@@ -615,7 +607,7 @@ async def _anthropic_tool_handler(
     # ChromaDB), retrieve the semantically relevant slice for the current query
     # and inject it as a system message. This gives the CC tool model access to
     # the full codebase/document context beyond its 32k KV-cache limit.
-    if session_id and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session_id and state.redis_client:
         try:
             from services.context_index import (
                 is_context_indexed as _ctx_indexed_t3,
@@ -675,7 +667,28 @@ async def _anthropic_tool_handler(
                      if m.get("role") == "user" and isinstance(m.get("content"), str)),
                     "",
                 )
-                if _planner_model and _planner_url and _user_q:
+                # Skip preanalysis if the planner runs on the same node as the CC tool
+                # model — loading the planner model would evict the active CC tool model
+                # from VRAM (Ollama evicts LRU on model switch, regardless of free VRAM).
+                _cc_tool_base = (session.tool_url or JUDGE_URL or "").rstrip("/").removesuffix("/v1")
+                _planner_base_cmp = _planner_url.rstrip("/").removesuffix("/v1")
+                _same_node = bool(_planner_url and _planner_base_cmp == _cc_tool_base)
+                if _same_node:
+                    logger.info(
+                        "cc_tool: preanalysis skipped — planner on same node as CC tool model (%s)",
+                        _cc_tool_base,
+                    )
+                if _planner_model and _planner_url and _user_q and not _same_node:
+                    # Resolve per-server model_load_delay; fall back to global default
+                    _preanalysis_delay: float = float(CC_PREANALYSIS_DELAY_SECS)
+                    _planner_base = _planner_url.rstrip("/").removesuffix("/v1")
+                    _planner_srv = next(
+                        (s for s in INFERENCE_SERVERS_LIST
+                         if s.get("url", "").rstrip("/") == _planner_base),
+                        None,
+                    )
+                    if _planner_srv and _planner_srv.get("model_load_delay") is not None:
+                        _preanalysis_delay = float(_planner_srv["model_load_delay"])
                     asyncio.create_task(_cc_expert_preanalysis(
                         session_id=session_id,
                         user_query=_user_q,
@@ -684,6 +697,7 @@ async def _anthropic_tool_handler(
                         planner_token=_planner_token,
                         planner_prompt=_planner_prompt,
                         redis_client=state.redis_client,
+                        delay_s=_preanalysis_delay,
                     ))
         except Exception as _pae:
             logger.debug("cc_tool: expert pre-analysis skipped: %s", _pae)
@@ -724,10 +738,38 @@ async def _anthropic_tool_handler(
         # the judge singleton are loaded at the same num_ctx — this prevents Ollama
         # from reloading the model between every judge call and every tool call
         # (a reload cycle that can take 2-3 min for 35B models and causes 502s).
-        _profile_ctx = session.tool_max_tokens or max_tokens
+        # Prefer the CC profile's explicit num_ctx; fall back to JUDGE_NUM_CTX so the
+        # model loads with the same context window as the warmup call.  Never fall back
+        # to max_tokens — that is the max OUTPUT tokens, not the context window size.
+        # Using max_tokens as num_ctx would force a model reload every CC request
+        # (e.g. from warmup 32768 → request 8192) which takes 60-90 s at 35 B params.
+        _profile_ctx = session.tool_max_tokens or JUDGE_NUM_CTX or 32768
         _ollama_num_ctx = _profile_ctx
         if JUDGE_NUM_CTX > 0 and _ollama_num_ctx > JUDGE_NUM_CTX:
             _ollama_num_ctx = JUDGE_NUM_CTX
+        # Never downgrade a warm model: if Ollama already has the model loaded with a
+        # larger context window, reuse that window instead of forcing a costly reload.
+        # A model loaded at 32768 can serve any request that needs ≤32768 tokens.
+        _ollama_base = effective_url.rstrip("/").removesuffix("/v1")
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {effective_token}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = effective_model.split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _ollama_num_ctx:
+                        logger.info(
+                            "cc_tool: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _ollama_num_ctx, effective_model,
+                        )
+                        _ollama_num_ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         if _ollama_num_ctx != (_tool_ctx or 0):
             logger.info(
                 "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",
@@ -849,11 +891,18 @@ async def _anthropic_tool_handler(
             return out
 
         _ollama_messages = [_normalize_for_ollama(m) for m in oai_messages]
+        # Use streaming when CC requests it so tokens flow back immediately,
+        # preventing CC connection timeouts while the model generates.
+        # Treat "stream": null (CC retry) identically to "stream": true — Ollama must
+        # stream tokens so the first byte arrives after model-load (~90 s), not after
+        # full generation (load + gen > 120 s httpx timeout → false timeout on retries).
+        _do_ollama_stream = body.get("stream") is not False
         _call_payload: dict = {
-            "model":    effective_model,
-            "messages": _ollama_messages,
-            "stream":   False,
-            "options":  {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
+            "model":      effective_model,
+            "messages":   _ollama_messages,
+            "stream":     _do_ollama_stream,
+            "keep_alive": "4h",
+            "options":    {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
         }
         if oai_tools:
             _call_payload["tools"] = oai_tools
@@ -890,6 +939,240 @@ async def _anthropic_tool_handler(
         from fastapi.responses import JSONResponse as _JSONResponse
         return _JSONResponse(content=_err_body, status_code=529)
 
+    # ── Live-streaming path (Ollama native, CC streaming request) ─────────────
+    # When Claude Code requests a streaming response AND the endpoint is Ollama
+    # native, pipe tokens directly back to CC as they arrive. This prevents CC
+    # from timing out while waiting for a complete non-streaming Ollama response
+    # (which can take 60–120 s for complex tool-call reasoning at 35B).
+    logger.info(
+        "cc_tool: routing — ollama_native=%s stream=%s session=%s",
+        _use_ollama_native, body.get("stream"), session_id[:8] if session_id else "?",
+    )
+    # CC retries send "stream": null instead of true — treat None as True for Ollama native.
+    # Non-streaming Ollama calls always timeout CC anyway (full generation before first byte).
+    if _use_ollama_native and body.get("stream") is not False:
+        logger.info("cc_tool: entering live streaming path (model=%s stream=%s)", effective_model, body.get("stream"))
+        _model_id_out = body.get("model", effective_model)
+
+        async def _live_ollama_sse():
+            _text_acc: str = ""
+            _tool_calls_acc: list = []
+            _sent_text_block: bool = False
+            _block_idx: int = 0
+            _in_tok: int = 0
+            _out_tok: int = 0
+            _stream_error: str = ""
+
+            # Emit message_start immediately — CC sees the stream open and won't retry
+            yield _sse_event("message_start", {
+                "type": "message_start",
+                "message": {
+                    "id": chat_id, "type": "message", "role": "assistant",
+                    "content": [], "model": _model_id_out,
+                    "stop_reason": None,
+                    "usage": {"input_tokens": 0, "output_tokens": 1},
+                },
+            })
+            yield _sse_event("ping", {"type": "ping"})
+
+            # Bridge Ollama streaming and SSE via a queue so we can send keep-alive
+            # SSE comment lines while waiting for the model to load (up to 90s for
+            # 35B models). Without this, CC would see silence and disconnect.
+            _q: asyncio.Queue = asyncio.Queue()
+
+            async def _ollama_fetch() -> None:
+                try:
+                    async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
+                        async with _scl.stream(
+                            "POST", _call_url, json=_call_payload,
+                            headers={"Authorization": f"Bearer {effective_token}"},
+                        ) as _sr:
+                            if _sr.status_code == 400:
+                                await _q.put(("error", f"Ollama 400: {(await _sr.aread()).decode()[:200]}"))
+                            else:
+                                async for _ln in _sr.aiter_lines():
+                                    await _q.put(("line", _ln))
+                except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as _te:
+                    await _q.put(("error", f"timeout after {_node_timeout}s"))
+                except Exception as _se:
+                    await _q.put(("error", str(_se)))
+                finally:
+                    await _q.put(("done", None))
+
+            # Cancel zombie task from a previous CC retry for the same session before
+            # starting a new fetch. Without this, stale Ollama requests keep running and
+            # queue up, blocking the next CC request from ever getting a first token.
+            if session_id:
+                _old_task = _cc_active_ollama_tasks.get(session_id)
+                if _old_task and not _old_task.done():
+                    _old_task.cancel()
+                    logger.info("cc_tool: cancelled zombie Ollama task (session=%s)", session_id[:8])
+            _fetch_task = asyncio.create_task(_ollama_fetch())
+            if session_id:
+                _cc_active_ollama_tasks[session_id] = _fetch_task
+                # Compact: drop finished entries so the dict doesn't grow unboundedly
+                # across days of uptime with many sessions.
+                if len(_cc_active_ollama_tasks) > 50:
+                    _done_keys = [k for k, t in _cc_active_ollama_tasks.items() if t.done()]
+                    for _dk in _done_keys:
+                        _cc_active_ollama_tasks.pop(_dk, None)
+
+            try:
+                while True:
+                    try:
+                        _kind, _val = await asyncio.wait_for(_q.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        # Ollama still loading — send SSE comment to keep the CC connection alive
+                        yield ": keep-alive\n\n"
+                        continue
+                    if _kind == "done":
+                        break
+                    if _kind == "error":
+                        _stream_error = _val
+                        break
+                    _line = _val
+                    if not _line.strip():
+                        continue
+                    try:
+                        _chunk = json.loads(_line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    _cmsg = _chunk.get("message", {})
+                    _delta = _cmsg.get("content", "") or ""
+                    _chunk_tcs = _cmsg.get("tool_calls")
+                    _done = _chunk.get("done", False)
+
+                    if _delta:
+                        _text_acc += _delta
+                        if not _sent_text_block:
+                            yield _sse_event("content_block_start", {
+                                "type": "content_block_start", "index": 0,
+                                "content_block": {"type": "text", "text": ""},
+                            })
+                            _sent_text_block = True
+                        yield _sse_event("content_block_delta", {
+                            "type": "content_block_delta", "index": 0,
+                            "delta": {"type": "text_delta", "text": _delta},
+                        })
+
+                    if _chunk_tcs:
+                        _tool_calls_acc = _chunk_tcs
+
+                    if _done:
+                        _in_tok = _chunk.get("prompt_eval_count", 0)
+                        _out_tok = _chunk.get("eval_count", 0)
+            except Exception as _loop_err:
+                _stream_error = str(_loop_err)
+                logger.warning("cc_tool stream loop error: %s", _loop_err)
+            finally:
+                # Only remove our own entry — a new CC retry may have already replaced it.
+                if session_id and _cc_active_ollama_tasks.get(session_id) is _fetch_task:
+                    _cc_active_ollama_tasks.pop(session_id, None)
+                if not _fetch_task.done():
+                    _fetch_task.cancel()
+            if _stream_error and "timeout" in _stream_error.lower():
+                PROM_TOOL_TIMEOUTS.labels(node=effective_node, model=effective_model).inc()
+
+            if _stream_error:
+                _err_txt = f"⚠️ Inference server '{effective_node}' error: {_stream_error}"
+                if not _sent_text_block:
+                    yield _sse_event("content_block_start", {
+                        "type": "content_block_start", "index": 0,
+                        "content_block": {"type": "text", "text": ""},
+                    })
+                    _sent_text_block = True
+                yield _sse_event("content_block_delta", {
+                    "type": "content_block_delta", "index": 0,
+                    "delta": {"type": "text_delta", "text": _err_txt},
+                })
+
+            # Close text block if one was opened
+            if _sent_text_block:
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": _block_idx,
+                })
+                _block_idx += 1
+
+            # JSON-in-text fallback: detect tool call JSON in accumulated text
+            if not _tool_calls_acc and _text_acc and tools and not _stream_error:
+                _known = {t.get("name", "") for t in tools}
+                _probe = re.sub(r"^```(?:json)?\s*|\s*```$", "", _text_acc.strip(), flags=re.DOTALL).strip()
+                try:
+                    _parsed = json.loads(_probe)
+                    _cands = [_parsed] if isinstance(_parsed, dict) else (_parsed if isinstance(_parsed, list) else [])
+                    for _c in _cands:
+                        if isinstance(_c, dict):
+                            _tn = _c.get("name") or _c.get("tool") or _c.get("function")
+                            _ta = _c.get("arguments") or _c.get("parameters") or _c.get("input") or {}
+                            if _tn and _tn in _known:
+                                _tool_calls_acc.append({"function": {"name": _tn, "arguments": _ta}})
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            # Tool call blocks
+            _stop_reason = "end_turn"
+            for _ntc in _tool_calls_acc:
+                _fn = _ntc.get("function", {})
+                _args = _fn.get("arguments", {})
+                _tc_id = f"call_{uuid.uuid4().hex[:12]}"
+                _args_json = json.dumps(_args) if isinstance(_args, dict) else str(_args)
+                yield _sse_event("content_block_start", {
+                    "type": "content_block_start", "index": _block_idx,
+                    "content_block": {
+                        "type": "tool_use", "id": _tc_id,
+                        "name": _fn.get("name", ""), "input": {},
+                    },
+                })
+                yield _sse_event("content_block_delta", {
+                    "type": "content_block_delta", "index": _block_idx,
+                    "delta": {"type": "input_json_delta", "partial_json": _args_json},
+                })
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": _block_idx,
+                })
+                _block_idx += 1
+                _stop_reason = "tool_use"
+
+            # Empty response guard
+            if not _sent_text_block and not _tool_calls_acc:
+                yield _sse_event("content_block_start", {
+                    "type": "content_block_start", "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                })
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": 0,
+                })
+
+            yield _sse_event("message_delta", {
+                "type": "message_delta",
+                "delta": {"stop_reason": _stop_reason, "stop_sequence": None},
+                "usage": {"output_tokens": _out_tok},
+            })
+            yield _sse_event("message_stop", {"type": "message_stop"})
+
+            PROM_TOOL_CALL_DURATION.labels(
+                node=effective_node, model=effective_model, phase="llm_call"
+            ).observe(time.monotonic() - _llm_t0)
+            if _tool_calls_acc:
+                PROM_TOOL_CALL_SUCCESS.labels(node=effective_node, model=effective_model).inc()
+            if user_id != "anon":
+                asyncio.create_task(_log_usage_to_db(
+                    user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+                    model=effective_model, moe_mode="cc_tool",
+                    prompt_tokens=_in_tok, completion_tokens=_out_tok,
+                    session_id=session_id,
+                ))
+                if not session.is_user_conn:
+                    asyncio.create_task(_increment_user_budget(
+                        user_id, _in_tok + _out_tok,
+                        prompt_tokens=_in_tok, completion_tokens=_out_tok,
+                    ))
+            asyncio.create_task(_deregister_active_request(chat_id))
+
+        _llm_t0 = time.monotonic()
+        return StreamingResponse(_live_ollama_sse(), media_type="text/event-stream")
+
+    # ── Non-streaming fallback (non-Ollama or non-streaming request) ───────────
     _llm_t0 = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=_node_timeout) as client:
@@ -1462,19 +1745,10 @@ async def _anthropic_moe_handler(
     )
 
     # ── Tier-3 Context Index: chunk large system_prompt before dispatching to MoE ─
-    if session_id and system and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session_id and system and state.redis_client:
         try:
-            from services.context_index import (
-                CONTEXT_INDEX_THRESHOLD as _CTX_THRESHOLD,
-                chunk_and_index_context as _chunk_ctx,
-                is_context_indexed as _ctx_indexed,
-            )
-            if len(system) > _CTX_THRESHOLD and not await _ctx_indexed(session_id, state.redis_client):
-                asyncio.create_task(_chunk_ctx(session_id, system, state.redis_client))
-                logger.info(
-                    "moe_handler: triggered context indexing for session %s (%d chars)",
-                    session_id[:8], len(system),
-                )
+            from services.context_index import ensure_indexed as _ensure_ctx_moe
+            await _ensure_ctx_moe(session_id, system, state.redis_client)
         except Exception as _cie:
             logger.debug("moe_handler: context indexing skipped: %s", _cie)
 

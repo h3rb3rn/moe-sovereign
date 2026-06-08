@@ -120,6 +120,7 @@
                   <th style="width:65px" title="Total usable VRAM in GB. Used for floating node selection — models larger than this are not routed here.">VRAM GB <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
                   <th style="width:60px" title="{{ t(request, 'tip.factor') }}">{{ t(request, 'table.factor') }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
                   <th style="width:75px" title="{{ t(request, 'tip.timeout') }}">{{ t(request, 'lbl.timeout') }} <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
+                  <th style="width:70px" title="Pre-analysis delay in seconds before the planner fires (per server). Accounts for slow model load times (e.g. large fp16 models).">Delay s <i class="bi bi-info-circle text-muted" style="font-size:.75rem"></i></th>
                   <th style="width:80px">API-Typ</th>
                   <th style="width:130px">{{ t(request, 'lbl.token') }}</th>
                   <th style="width:45px" title="{{ t(request, 'tip.active_toggle') }}">{{ t(request, 'status.active') }}</th>
@@ -145,6 +146,11 @@
                     <input type="number" name="srv_timeout_{{ loop.index0 }}"
                            value="{{ srv.get('timeout', '') }}"
                            class="form-control form-control-sm" min="1" placeholder="global">
+                  </td>
+                  <td>
+                    <input type="number" name="srv_load_delay_{{ loop.index0 }}"
+                           value="{{ srv.get('model_load_delay', '') }}"
+                           class="form-control form-control-sm" min="0" max="300" step="1" placeholder="auto">
                   </td>
                   <td>
                     <select name="srv_api_type_{{ loop.index0 }}" class="form-select form-select-sm">
@@ -814,7 +820,7 @@ function escHtml(str) {
 
 // ─── Inference-Server Editor ─────────────────────────────────────────────────
 
-function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeout, costFactor, enabled) {
+function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeout, costFactor, enabled, loadDelay) {
   const apiOpts = ['ollama','openai'].map(t =>
     `<option value="${t}" ${t===(apiType||'ollama')?'selected':''}>${t==='openai'?'OpenAI':'Ollama'}</option>`
   ).join('');
@@ -833,6 +839,8 @@ function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeou
                class="form-control form-control-sm" min="0.1" max="100" step="0.1"></td>
      <td><input type="number" name="srv_timeout_${idx}" value="${timeout||''}"
                class="form-control form-control-sm" min="1" placeholder="global"></td>
+     <td><input type="number" name="srv_load_delay_${idx}" value="${loadDelay||''}"
+               class="form-control form-control-sm" min="0" max="300" step="1" placeholder="auto"></td>
      <td><select name="srv_api_type_${idx}" class="form-select form-select-sm">${apiOpts}</select></td>
      <td><input type="password" name="srv_token_${idx}"
                class="form-control form-control-sm font-monospace"
@@ -872,9 +880,10 @@ function reindexServerRows() {
     if (inputs[3]) inputs[3].name = `srv_vram_gb_${i}`;
     if (inputs[4]) inputs[4].name = `srv_cost_factor_${i}`;
     if (inputs[5]) inputs[5].name = `srv_timeout_${i}`;
-    if (inputs[6]) inputs[6].name = `srv_token_${i}`;
-    if (inputs[7]) inputs[7].name = `srv_enabled_${i}`;
-    if (inputs[8]) inputs[8].name = `srv_ontology_enabled_${i}`;
+    if (inputs[6]) inputs[6].name = `srv_load_delay_${i}`;
+    if (inputs[7]) inputs[7].name = `srv_token_${i}`;
+    if (inputs[8]) inputs[8].name = `srv_enabled_${i}`;
+    if (inputs[9]) inputs[9].name = `srv_ontology_enabled_${i}`;
     if (selects[0]) selects[0].name = `srv_api_type_${i}`;
   });
 }

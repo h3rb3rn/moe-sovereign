@@ -331,12 +331,16 @@ async def get_model_ctx_async(
     # Static table fallback (local model families only — no deployment-specific names)
     result = fetched or get_model_context_window(model)
 
-    # Cache the result
+    # Cache the result.
+    # Ollama nodes use a short TTL (120 s) because context_window reflects the
+    # currently-loaded allocation, which can change between requests.
+    # Remote/cloud nodes use 3600 s — their context window is static.
+    _ctx_ttl = 120 if token == "ollama" else 3600
     if redis_client and base_url and result > 0:
         url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
         cache_key = f"moe:ctx:{url_hash}:{model}"
         try:
-            await redis_client.setex(cache_key, 3600, str(result))
+            await redis_client.setex(cache_key, _ctx_ttl, str(result))
         except Exception:
             pass
 

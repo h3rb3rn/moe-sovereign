@@ -46,6 +46,7 @@ from config import (
     _CUSTOM_EXPERT_PROMPTS, THOMPSON_SAMPLING_ENABLED,
     _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
+    CC_CONTEXT_INDEX_ENABLED,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -1030,6 +1031,16 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 system_prompt = f"{_mc_block}\n\n{system_prompt}" if system_prompt else _mc_block
         except Exception:
             pass
+
+    # Tier-3 Context Index: trigger background indexing for large system prompts.
+    # Hermes and OpenCode reach the MoE graph via this path, so this is the
+    # single place that ensures all agentic tools share the same context gateway.
+    if CC_CONTEXT_INDEX_ENABLED and session_id and system_prompt and state.redis_client:
+        try:
+            from services.context_index import ensure_indexed as _ensure_ctx_indexed
+            await _ensure_ctx_indexed(session_id, system_prompt, state.redis_client)
+        except Exception as _ci_exc:
+            logger.debug("chat: context indexing skipped: %s", _ci_exc)
 
     # Last user message as the actual query
     user_msgs  = [m for m in request.messages if m.role in ("user", "assistant")]

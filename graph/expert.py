@@ -32,7 +32,7 @@ from config import (
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
     _CUSTOM_EXPERT_PROMPTS, PLANNER_MAX_TASKS, PLANNER_RETRIES,
     KAFKA_TOPIC_INGEST, NEO4J_URI, NEO4J_USER, NEO4J_PASS,
-    _FALLBACK_ENABLED,
+    _FALLBACK_ENABLED, JUDGE_NUM_CTX,
 )
 from metrics import (
     PROM_EXPERT_CALLS, PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
@@ -231,7 +231,7 @@ async def expert_worker(state_: AgentState):
                 except Exception:
                     pass
             # Resolve per-expert context window: template override → Ollama API (cached) → static table
-            from context_budget import get_model_ctx_async as _ctx_async
+            from context_budget import get_model_ctx_async as _ctx_async, _params_from_name as _pfn
             _expert_ctx_override = int(model_cfg.get("context_window", 0) or 0)
             _expert_ctx_window = await _ctx_async(
                 model=model_name,
@@ -240,6 +240,22 @@ async def expert_worker(state_: AgentState):
                 redis_client=state.redis_client,
                 override=_expert_ctx_override,
             )
+            # Pin context to JUDGE_NUM_CTX for all large local Ollama models (≥25 B params).
+            # This keeps all expert calls aligned with the CC-tool keepalive-loop warmup
+            # context, preventing Ollama from reloading the model on every request.
+            # Without this, /api/show can return the GGUF native context (e.g. 40960),
+            # which differs from the keepalive-loaded 32768 and triggers a reload.
+            if (
+                token == "ollama"
+                and JUDGE_NUM_CTX > 0
+                and _pfn(model_name) >= 25.0
+                and _expert_ctx_window != JUDGE_NUM_CTX
+            ):
+                logger.info(
+                    "expert: ctx pinned to JUDGE_NUM_CTX=%d model=%s (was %d)",
+                    JUDGE_NUM_CTX, model_name, _expert_ctx_window,
+                )
+                _expert_ctx_window = JUDGE_NUM_CTX
             # Categories that generate large code artifacts need higher token/output limits.
             # Defined here (before first use) to avoid Python's "referenced before assignment"
             # error that occurs when the name appears anywhere in the enclosing scope.
@@ -326,14 +342,16 @@ async def expert_worker(state_: AgentState):
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
-            if _expert_ctx_window > 0:
-                # Pass num_ctx via extra_body → options so Ollama's /v1/chat/completions
-                # endpoint receives it. Direct model_kwargs keys raise TypeError in the
-                # OpenAI SDK since num_ctx is not an OpenAI parameter.
-                _model_kw["extra_body"] = {"options": {"num_ctx": _expert_ctx_window}}
+            # extra_body must be a direct ChatOpenAI constructor parameter, NOT inside
+            # model_kwargs — LangChain warns and silently drops extra_body from model_kwargs,
+            # which causes Ollama to use the Modelfile default (8192) instead of JUDGE_NUM_CTX
+            # (32768), triggering a reload of the already-warm model on every expert call.
+            _extra_body = {"options": {"num_ctx": _expert_ctx_window}} if _expert_ctx_window > 0 else None
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
+            if _extra_body is not None:
+                _llm_kwargs["extra_body"] = _extra_body
             if _expert_temp is not None:
                 _llm_kwargs["temperature"] = _expert_temp
             # thinking_mode=False: inject /no_think directive into the last human message.
@@ -351,15 +369,56 @@ async def expert_worker(state_: AgentState):
                         _patched[_i] = HumanMessage(content=f"/no_think\n{_orig}")
                         break
                 messages = _patched
-            llm = ChatOpenAI(**_llm_kwargs)
             from metrics import PROM_TOKENS
             try:
                 _primary_url = url.rstrip("/")
-                res, _used_fallback = await _invoke_llm_with_fallback(
-                    llm, _primary_url, messages,
-                    timeout=_expert_node_timeout,
-                    label=f"Expert[{cat}]",
-                )
+                # Ollama native /api/chat: the only path that reliably passes options.num_ctx.
+                # The OpenAI-compatible /v1/chat/completions endpoint discards the options dict
+                # in Ollama ≤0.30.6, causing every cold expert call to load qwen3.6:35b at the
+                # Modelfile default (8192) instead of 32768 — evicting the CC tool model and
+                # forcing a 90-second reload on the next CC request.
+                if api_type == "ollama" and _expert_ctx_window > 0:
+                    _native_msgs = []
+                    for _m in messages:
+                        _role = ("assistant" if (hasattr(_m, "type") and _m.type == "ai") else
+                                 "system"    if (hasattr(_m, "type") and _m.type == "system") else
+                                 "user")
+                        _native_msgs.append({"role": _role,
+                                             "content": _m.content if hasattr(_m, "content") else str(_m)})
+                    _ollama_base = url.rstrip("/").removesuffix("/v1")
+                    _native_payload: dict = {
+                        "model":      model_name,
+                        "messages":   _native_msgs,
+                        "stream":     False,
+                        "options":    {"num_ctx": _expert_ctx_window, "num_predict": _expert_max_tokens},
+                        "keep_alive": "4h",
+                    }
+                    if not _thinking_enabled:
+                        _native_payload["think"] = False
+                    async with httpx.AsyncClient(timeout=_expert_node_timeout) as _acl:
+                        _r = await _acl.post(
+                            f"{_ollama_base}/api/chat",
+                            json=_native_payload,
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                    _r.raise_for_status()
+                    _rdata = _r.json()
+                    from types import SimpleNamespace as _NS
+                    res = _NS(
+                        content=_rdata.get("message", {}).get("content", ""),
+                        usage_metadata={
+                            "input_tokens":  _rdata.get("prompt_eval_count", 0),
+                            "output_tokens": _rdata.get("eval_count", 0),
+                        },
+                    )
+                    _used_fallback = False
+                else:
+                    llm = ChatOpenAI(**_llm_kwargs)
+                    res, _used_fallback = await _invoke_llm_with_fallback(
+                        llm, _primary_url, messages,
+                        timeout=_expert_node_timeout,
+                        label=f"Expert[{cat}]",
+                    )
                 if _used_fallback:
                     await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)
