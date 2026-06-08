@@ -34,6 +34,7 @@ class AgentState(TypedDict):
     mode: str                           # "default"|"code"|"concise"|"agent"|"agent_orchestrated"|"research"|"report"|"plan"
     user_id: str                        # Authenticated user identifier, or "anon"
     api_key_id: str                     # API key ID written to usage_log
+    session_id: str                     # Client session identifier (used for Tier-3 context index and Tier-2 memory)
     system_prompt: str                  # System message from client (e.g. coding-agent file context)
     behavioral_directives: str          # CC profile system_prefix — injected as mandatory instructions into all nodes
     template_name: str                  # User-facing template name; empty for native/mode requests

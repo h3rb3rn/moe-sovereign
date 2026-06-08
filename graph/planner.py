@@ -16,7 +16,8 @@ import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
-    HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
+    HISTORY_MAX_TURNS, HISTORY_MAX_CHARS, PLANNER_NUM_CTX, PLANNER_MODEL,
+    EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
@@ -81,6 +82,39 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 # AgentState import — defined in pipeline/state.py
 from pipeline.state import AgentState
+
+
+def _planner_ctx_budget() -> dict:
+    """Derive agentic context-block char budgets from the planner model's context window.
+
+    Uses PLANNER_NUM_CTX when set explicitly, otherwise falls back to the static
+    model table. All caps scale proportionally so a larger planner model
+    automatically gets more room for working memory and gap context.
+
+    Uses EXPERT_CHARS_PER_TOKEN (env: EXPERT_CHARS_PER_TOKEN, default 3) for the
+    chars/token estimate and reserves 40% of the window for the static instruction
+    prompt + user query.
+    """
+    from context_budget import get_model_context_window as _static_ctx
+    ctx_tokens = PLANNER_NUM_CTX or _static_ctx(PLANNER_MODEL) or 4096
+    # Characters available after reserving 40% for instruction prompt + user query
+    available_chars = int(ctx_tokens * EXPERT_CHARS_PER_TOKEN * 0.60)
+    return {
+        # working_memory JSON — largest share, structured facts are most valuable
+        "working_memory":    min(available_chars // 2, 24_000),
+        # prose fallback when working_memory is empty
+        "prev_findings":     min(available_chars // 3, 16_000),
+        # gap description — concise by nature, small cap is fine
+        "gap":               min(available_chars // 8,  4_000),
+        # per-query line in the search history block
+        "query_line":        200,
+        # how many past queries to show
+        "max_queries":       20,
+        # how many past failures to show
+        "max_failures":      10,
+        # how many discovered domains to show
+        "max_domains":       12,
+    }
 
 
 def _sanitize_plan(raw: list, fallback_input: str,
@@ -384,6 +418,24 @@ async def planner_node(state_: AgentState):
 
     _planner_role = (state_.get("planner_prompt") or "").strip() or DEFAULT_PLANNER_ROLE
 
+    # ── Tier-3 Context TOC: inject table-of-contents for indexed large contexts ──
+    # When the session carries a 1M+ context indexed into ChromaDB, prepend a compact
+    # TOC so the planner knows what domains/files are available to the experts.
+    _context_toc_block = ""
+    _session_id_plan = state_.get("session_id", "")
+    if _session_id_plan and state.redis_client:
+        try:
+            from services.context_index import get_context_toc as _get_toc, is_context_indexed as _ctx_indexed
+            if await _ctx_indexed(_session_id_plan, state.redis_client):
+                _toc_raw = await _get_toc(_session_id_plan, state.redis_client)
+                if _toc_raw:
+                    _context_toc_block = (
+                        f"\n\n[INDEXED CONTEXT OVERVIEW — available to all experts]\n{_toc_raw}\n"
+                        "[End of overview. Experts will receive the relevant sections automatically.]\n"
+                    )
+        except Exception as _tie:
+            logger.debug("planner: context TOC injection skipped: %s", _tie)
+
     # ── Agentic re-plan: inject gap context and clear stale single-string results ──
     _agentic_context_block = ""
     _agentic_state_reset: dict = {}
@@ -396,17 +448,19 @@ async def planner_node(state_: AgentState):
         _tried_queries  = state_.get("attempted_queries") or []
         _strategy_hint  = (state_.get("search_strategy_hint") or "").strip()
 
+        _budget = _planner_ctx_budget()
+
         # Prefer structured working memory over truncated prose when available
         if _wm:
-            _context_facts = "ESTABLISHED FACTS (structured):\n" + json.dumps(_wm)[:2000]
+            _context_facts = "ESTABLISHED FACTS (structured):\n" + json.dumps(_wm)[:_budget["working_memory"]]
         else:
-            _context_facts = f"Previously established facts:\n{_prev_found[:1500]}"
+            _context_facts = f"Previously established facts:\n{_prev_found[:_budget['prev_findings']]}"
 
         # Build search-history block to prevent query repetition
         if _tried_queries:
             _query_lines = "\n".join(
-                f"  • [{q.get('quality','?')}] {q.get('query','?')[:120]}"
-                for q in _tried_queries[-10:]  # last 10 queries max
+                f"  • [{q.get('quality','?')}] {q.get('query','?')[:_budget['query_line']]}"
+                for q in _tried_queries[-_budget["max_queries"]:]
             )
             _search_history_block = (
                 f"\nSEARCH QUERIES ALREADY TRIED (do NOT repeat these or near-identical variants):\n"
@@ -416,7 +470,7 @@ async def planner_node(state_: AgentState):
             _search_history_block = ""
 
         _fail_block = (
-            f"\nFAILED TOOL CALLS (do NOT retry with identical args):\n{json.dumps(_failures[-5:])}"
+            f"\nFAILED TOOL CALLS (do NOT retry with identical args):\n{json.dumps(_failures[-_budget['max_failures']:])}"
             if _failures else ""
         )
 
@@ -456,7 +510,7 @@ async def planner_node(state_: AgentState):
         if _disc_domains:
             _domain_lines = "\n".join(
                 f"  • {d['domain']}" + (f" — {d['context']}" if d.get("context") else "")
-                for d in _disc_domains[:8]
+                for d in _disc_domains[:_budget["max_domains"]]
             )
             _discovered_block = (
                 "\nSOURCES FOUND IN PREVIOUS SEARCHES (consider using web_search_domain with these):\n"
@@ -468,7 +522,7 @@ async def planner_node(state_: AgentState):
         _agentic_context_block = (
             f"\n=== AGENTIC ITERATION {_agentic_iteration}/{_agentic_max_rounds} ===\n"
             f"{_context_facts}\n\n"
-            f"Still unresolved:\n{_gap[:800]}\n"
+            f"Still unresolved:\n{_gap[:_budget['gap']]}\n"
             f"{_search_history_block}"
             f"{_discovered_block}"
             f"{_fail_block}\n"
@@ -487,7 +541,7 @@ async def planner_node(state_: AgentState):
         _agentic_state_reset = {"web_research": "", "mcp_result": "", "math_result": ""}
         logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds} depth={_depth}: gap={_gap[:80]}")
 
-    prompt = f"""{_planner_role}{_agentic_context_block}
+    prompt = f"""{_planner_role}{_context_toc_block}{_agentic_context_block}
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).

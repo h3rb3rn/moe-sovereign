@@ -18,6 +18,7 @@ from config import (
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, MAX_EXPERT_TOKENS,
     MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE, JUDGE_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
+    EXPERT_OUTPUT_DIVISOR, EXPERT_INPUT_MIN_CHARS, EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     ROUTE_THRESHOLD, ROUTE_GAP, CACHE_MIN_RESPONSE_LEN,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
@@ -189,10 +190,34 @@ async def expert_worker(state_: AgentState):
             _behavioral = (state_.get("behavioral_directives") or "").strip()
             if _behavioral:
                 sys_prompt = f"MANDATORY RESPONSE DIRECTIVES (override all other instructions):\n{_behavioral}\n\n" + sys_prompt
-            # Agent mode: embed file/code context from the client's system message
+            # Agent mode: embed file/code context from the client's system message.
+            # When the session has a Tier-3 context index (large system_prompt chunked into
+            # ChromaDB), retrieve only the semantically relevant slice for this task instead
+            # of truncating to an arbitrary char limit.
             agent_ctx = state_.get("system_prompt", "")
             if agent_ctx and mode in ("agent", "agent_orchestrated"):
-                sys_prompt += f"\n\n--- USER CODE CONTEXT ---\n{agent_ctx[:4000]}"
+                _session_id = state_.get("session_id", "")
+                _ctx_snippet = ""
+                if _session_id and state.redis_client:
+                    try:
+                        from services.context_index import (
+                            is_context_indexed as _ctx_indexed,
+                            retrieve_context_for_task as _ctx_retrieve,
+                            FALLBACK_CONTEXT_CHARS as _FALLBACK_CHARS,
+                        )
+                        if await _ctx_indexed(_session_id, state.redis_client):
+                            _ctx_snippet = await _ctx_retrieve(
+                                session_id=_session_id,
+                                task_text=task_text,
+                                redis_client=state.redis_client,
+                            )
+                    except Exception as _cie:
+                        logger.debug("expert: context retrieval failed: %s", _cie)
+                if not _ctx_snippet:
+                    from services.context_index import FALLBACK_CONTEXT_CHARS as _FALLBACK_CHARS
+                    _ctx_snippet = agent_ctx[:_FALLBACK_CHARS]
+                if _ctx_snippet:
+                    sys_prompt += f"\n\n--- USER CODE CONTEXT ---\n{_ctx_snippet}"
             # Inject correction memory for this category (avoids repeat mistakes)
             if CORRECTION_MEMORY_ENABLED and state.graph_manager is not None:
                 try:
@@ -228,10 +253,10 @@ async def expert_worker(state_: AgentState):
             _expert_max_output = _max_output_cap
             _max_input_chars = 0
             if _expert_ctx_window > 0:
-                # Reserve 25% of window for output, capped at category output cap
-                _expert_max_output = min(_max_output_cap, max(1000, _expert_ctx_window // 4))
-                # 3 chars/token conservative estimate for mixed content
-                _max_input_chars = max(2000, _expert_ctx_window * 3)
+                # Reserve 1/EXPERT_OUTPUT_DIVISOR of window for output, capped at category cap
+                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window // EXPERT_OUTPUT_DIVISOR))
+                # EXPERT_CHARS_PER_TOKEN chars/token conservative estimate for mixed content
+                _max_input_chars = max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window * EXPERT_CHARS_PER_TOKEN)
                 _available_task_chars = _max_input_chars - len(sys_prompt)
                 if len(task_text) > _available_task_chars > 0:
                     task_text = task_text[:_available_task_chars] + "\n[…truncated for context window]"
@@ -301,6 +326,11 @@ async def expert_worker(state_: AgentState):
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
+            if _expert_ctx_window > 0:
+                # Pass num_ctx to Ollama so the model is loaded with the correct
+                # context window. Without this Ollama defaults to 8192 regardless
+                # of what is defined in the template or the model's native capacity.
+                _model_kw["num_ctx"] = _expert_ctx_window
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
