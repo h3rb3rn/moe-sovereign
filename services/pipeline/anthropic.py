@@ -24,7 +24,7 @@ from config import (
     _CLAUDE_CODE_TOOL_URL, _CLAUDE_CODE_TOOL_TOKEN, _CLAUDE_CODE_REASONING_URL,
     JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
-    PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN,
+    PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN, PLANNER_NUM_CTX,
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
     MODES, _MODEL_ID_TO_MODE, _CLAUDE_PRETTY_NAMES, _model_display_name,
     MAX_GRAPH_CONTEXT_CHARS, MCP_URL, GRAPH_VIA_MCP,
@@ -160,23 +160,56 @@ async def _cc_expert_preanalysis(
     planner_token: str,
     planner_prompt: str,
     redis_client,
-    delay_s: float = 45.0,
+    delay_s: float = 20.0,
 ) -> None:
-    """Background: call the expert template's planner to pre-analyse the user's task.
+    """Background: call the planner with Tier-3 codebase context to pre-analyse the task.
 
-    Waits delay_s seconds before starting so the main qwen3.6:35b tool-call
-    completes first — avoids competing for the same Ollama server simultaneously.
+    Waits delay_s seconds so the first tool-call (qwen3.6:35b) completes before
+    phi4:14b-fp16 loads — avoids simultaneous VRAM pressure on the same node.
+
+    The planner receives:
+      1. The Tier-3 TOC (table-of-contents of the indexed codebase/document)
+      2. Semantically relevant Tier-3 chunks for the user's query
+    Together these give it full awareness of the codebase without exceeding its
+    16k context window, enabling a meaningful plan that references real files.
+
     The result is stored in cc:work:{session_id}:task_plan and injected on turn 2+.
     """
     if delay_s > 0:
         await asyncio.sleep(delay_s)
     try:
+        # ── Build Tier-3 context block for the planner ────────────────────────
+        _ctx_block = ""
+        try:
+            from services.context_index import (
+                is_context_indexed as _ctx_indexed,
+                get_context_toc as _get_toc,
+                retrieve_context_for_task as _ctx_retrieve,
+            )
+            if await _ctx_indexed(session_id, redis_client):
+                _toc = await _get_toc(session_id, redis_client)
+                _chunks = await _ctx_retrieve(
+                    session_id=session_id,
+                    task_text=user_query[:500],
+                    redis_client=redis_client,
+                    n_results=4,
+                )
+                if _toc:
+                    _ctx_block += f"\n\nCODEBASE OVERVIEW (table of contents):\n{_toc}"
+                if _chunks:
+                    _ctx_block += f"\n\nRELEVANT CODEBASE SECTIONS:\n{_chunks}"
+        except Exception:
+            pass
+
         _sys = (
             planner_prompt
-            or "You are a senior software engineer. Analyse the task and create a concise step-by-step plan. "
-               "Identify: key files involved, tools needed, risks, and the correct execution order. "
-               "Be specific and brief — max 300 words."
+            or "You are a senior software engineer with full access to the codebase index below. "
+               "Analyse the task and create a concise step-by-step plan. "
+               "Identify: exact file paths involved, tools needed, risks, and the correct execution order. "
+               "Reference specific files and functions from the codebase overview. "
+               "Be specific and brief — max 500 words."
         )
+        _user_content = f"Task:\n{user_query[:2000]}{_ctx_block}"
         _planner_base = planner_url.rstrip("/").removesuffix("/v1")
         async with httpx.AsyncClient(timeout=120.0) as _cl:
             _resp = await _cl.post(
@@ -185,10 +218,11 @@ async def _cc_expert_preanalysis(
                     "model":      planner_model,
                     "messages":   [
                         {"role": "system", "content": _sys},
-                        {"role": "user",   "content": f"Task:\n{user_query[:2000]}"},
+                        {"role": "user",   "content": _user_content},
                     ],
                     "stream":     False,
-                    "max_tokens": 512,
+                    "max_tokens": 800,
+                    "extra_body": {"options": {"num_ctx": PLANNER_NUM_CTX or 16384}},
                 },
                 headers={"Authorization": f"Bearer {planner_token}"},
             )
@@ -202,10 +236,12 @@ async def _cc_expert_preanalysis(
         _key = f"cc:work:{session_id}"
         _raw = await redis_client.get(_key)
         _work: dict = json.loads(_raw) if _raw else {"steps": [], "files_read": [], "findings": []}
-        _work["task_plan"] = _plan_text[:800]
+        _work["task_plan"] = _plan_text[:4000]
         await redis_client.set(_key, json.dumps(_work, ensure_ascii=False), ex=_CC_WORK_TTL)
-        logger.info("cc_tool: expert pre-analysis stored for session=%s (%d chars, model=%s)",
-                    session_id[:8], len(_plan_text), planner_model)
+        logger.info(
+            "cc_tool: expert pre-analysis stored for session=%s (%d chars, ctx_indexed=%s, model=%s)",
+            session_id[:8], len(_plan_text), bool(_ctx_block), planner_model,
+        )
     except Exception as _e:
         logger.debug("cc_tool: expert pre-analysis failed: %s", _e)
 
