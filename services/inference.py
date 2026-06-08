@@ -352,28 +352,31 @@ async def _invoke_judge_with_retry(
 
 
 def _judge_model_kw(model: str) -> dict:
-    """Build model_kwargs for a judge LLM, including num_ctx when known.
+    """Return kwargs to spread (**) directly into ChatOpenAI for a judge call.
 
-    num_ctx is passed via extra_body → options so it reaches Ollama's
-    /v1/chat/completions endpoint without triggering an OpenAI SDK TypeError.
+    Contains model_kwargs (max_tokens) and, when ctx is known, extra_body as a
+    top-level key.  extra_body must NOT be placed inside model_kwargs — LangChain
+    silently drops it from there, causing Ollama to use its Modelfile default
+    num_ctx (8192) and reload the already-warm model.
     """
-    kw = {"max_tokens": MAX_JUDGE_TOKENS}
+    out: dict = {"max_tokens": MAX_JUDGE_TOKENS}
     ctx = JUDGE_NUM_CTX or _static_ctx(model)
     if ctx > 0:
-        kw["extra_body"] = {"options": {"num_ctx": ctx}}
-    return kw
+        out["extra_body"] = {"options": {"num_ctx": ctx}}
+    return out
 
 
 def _planner_model_kw(model: str) -> dict:
-    """Build model_kwargs for a planner LLM, including num_ctx when known.
+    """Return kwargs to spread (**) directly into ChatOpenAI for a planner call.
 
-    num_ctx is passed via extra_body → options (same reason as _judge_model_kw).
+    Same contract as _judge_model_kw: extra_body is a top-level key, not nested
+    inside model_kwargs.
     """
-    kw: dict = {}
+    out: dict = {}
     ctx = PLANNER_NUM_CTX or _static_ctx(model)
     if ctx > 0:
-        kw["extra_body"] = {"options": {"num_ctx": ctx}}
-    return kw
+        out["extra_body"] = {"options": {"num_ctx": ctx}}
+    return out
 
 
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
@@ -388,7 +391,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
-                          model_kwargs=_judge_model_kw(m))
+                          **_judge_model_kw(m))
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -397,7 +400,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
-                          model_kwargs=_judge_model_kw(m))
+                          **_judge_model_kw(m))
     return judge_llm
 
 
@@ -413,7 +416,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT,
-                          model_kwargs=_planner_model_kw(m))
+                          **_planner_model_kw(m))
     if m and not u:
         # Floating planner: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -422,7 +425,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT,
-                          model_kwargs=_planner_model_kw(m))
+                          **_planner_model_kw(m))
     return planner_llm
 
 
@@ -456,7 +459,7 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     _refine_extra: dict = {}
     if token == "ollama":
         _refine_num_ctx = int(JUDGE_NUM_CTX or 32768)
-        _refine_extra = {"model_kwargs": {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}}
+        _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)
     try:

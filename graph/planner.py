@@ -617,43 +617,6 @@ JSON array:"""
     from parsing import _extract_usage, _extract_json
     from config import PLANNER_URL, PLANNER_MODEL, PLANNER_TOKEN
 
-    # VRAM guard: if the planner Ollama node is the same as the CC tool node,
-    # loading the planner model (phi4) would evict the CC tool model (qwen3.6)
-    # from VRAM — Ollama default is OLLAMA_MAX_LOADED_MODELS=1.  Check /api/ps
-    # first; if the CC tool model is currently warm, skip the LLM call entirely
-    # and fall straight through to the single-task fallback plan.  This lets the
-    # CC tool call continue without a 90-second cold-start reload.
-    from config import (
-        _CLAUDE_CODE_TOOL_URL   as _pg_cc_url,
-        CLAUDE_CODE_TOOL_MODEL  as _pg_cc_model,
-    )
-    _pg_planner_base = (state_.get("planner_url_override") or PLANNER_URL or "").rstrip("/").removesuffix("/v1")
-    _pg_cc_base      = (_pg_cc_url or "").rstrip("/").removesuffix("/v1")
-    if _pg_planner_base and _pg_planner_base == _pg_cc_base and _pg_cc_model:
-        _pg_cc_loaded = False
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as _pg_cl:
-                _pg_r = await _pg_cl.get(
-                    f"{_pg_cc_base}/api/ps",
-                    headers={"Authorization": f"Bearer {PLANNER_TOKEN}"},
-                )
-                for _pg_m in _pg_r.json().get("models", []):
-                    if _pg_m.get("name", "").split(":")[0] == _pg_cc_model.split(":")[0]:
-                        _pg_cc_loaded = True
-                        break
-        except Exception:
-            pass
-        if _pg_cc_loaded:
-            logger.info(
-                "planner: VRAM guard — %s warm on %s, skipping phi4 load (direct fallback)",
-                _pg_cc_model, _pg_cc_base,
-            )
-            return {
-                "plan": [{"task": state_["input"], "category": "general"}],
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-            }
-
     for attempt in range(PLANNER_RETRIES):
         _planner_llm_inst = await _get_planner_llm(state_)
         _planner_url = (state_.get("planner_url_override") or PLANNER_URL or "").rstrip("/")

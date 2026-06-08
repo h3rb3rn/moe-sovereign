@@ -1029,7 +1029,7 @@ async def _warmup_cc_tool_model() -> None:
         JUDGE_NUM_CTX as _jnctx,
     )
 
-    await asyncio.sleep(8)  # let FastAPI finish startup before the warmup fires
+    await asyncio.sleep(2)  # brief yield so lifespan completes before warmup fires
 
     if not (_cc_ep and _cc_url and _cc_model):
         return

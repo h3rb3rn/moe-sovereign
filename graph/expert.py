@@ -342,14 +342,16 @@ async def expert_worker(state_: AgentState):
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
-            if _expert_ctx_window > 0:
-                # Pass num_ctx via extra_body → options so Ollama's /v1/chat/completions
-                # endpoint receives it. Direct model_kwargs keys raise TypeError in the
-                # OpenAI SDK since num_ctx is not an OpenAI parameter.
-                _model_kw["extra_body"] = {"options": {"num_ctx": _expert_ctx_window}}
+            # extra_body must be a direct ChatOpenAI constructor parameter, NOT inside
+            # model_kwargs — LangChain warns and silently drops extra_body from model_kwargs,
+            # which causes Ollama to use the Modelfile default (8192) instead of JUDGE_NUM_CTX
+            # (32768), triggering a reload of the already-warm model on every expert call.
+            _extra_body = {"options": {"num_ctx": _expert_ctx_window}} if _expert_ctx_window > 0 else None
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
+            if _extra_body is not None:
+                _llm_kwargs["extra_body"] = _extra_body
             if _expert_temp is not None:
                 _llm_kwargs["temperature"] = _expert_temp
             # thinking_mode=False: inject /no_think directive into the last human message.

@@ -37,22 +37,23 @@ def _resolve_num_ctx(model: str, override: int) -> int:
 _judge_num_ctx   = _resolve_num_ctx(JUDGE_MODEL,   JUDGE_NUM_CTX)
 _planner_num_ctx = _resolve_num_ctx(PLANNER_MODEL, PLANNER_NUM_CTX)
 
-# num_ctx must be passed via extra_body → options, NOT as a direct model_kwarg.
-# The OpenAI SDK raises TypeError for unknown kwargs; Ollama's /v1 endpoint reads
-# options.num_ctx from the request body via extra_body.
-_judge_kw   = {"max_tokens": MAX_JUDGE_TOKENS}
-_planner_kw = {}
+# extra_body MUST be a direct ChatOpenAI constructor parameter, NOT inside model_kwargs.
+# LangChain silently drops extra_body from model_kwargs (emits UserWarning), so Ollama
+# would fall back to its Modelfile default num_ctx (8192), causing a model reload.
+_judge_extra_body:   dict | None = None
+_planner_extra_body: dict | None = None
 if _judge_num_ctx > 0:
-    _judge_kw["extra_body"] = {"options": {"num_ctx": _judge_num_ctx}}
+    _judge_extra_body = {"options": {"num_ctx": _judge_num_ctx}}
     logger.info("Judge LLM: num_ctx=%d (model=%s)", _judge_num_ctx, JUDGE_MODEL)
 if _planner_num_ctx > 0:
-    _planner_kw["extra_body"] = {"options": {"num_ctx": _planner_num_ctx}}
+    _planner_extra_body = {"options": {"num_ctx": _planner_num_ctx}}
     logger.info("Planner LLM: num_ctx=%d (model=%s)", _planner_num_ctx, PLANNER_MODEL)
 
 judge_llm   = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT,
-                         model_kwargs=_judge_kw)
+                         max_tokens=MAX_JUDGE_TOKENS,
+                         **({"extra_body": _judge_extra_body} if _judge_extra_body else {}))
 planner_llm = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN, timeout=PLANNER_TIMEOUT,
-                         model_kwargs=_planner_kw if _planner_kw else {})
+                         **({"extra_body": _planner_extra_body} if _planner_extra_body else {}))
 
 # Ingest LLM: dedicated model for background GraphRAG extraction.
 # Falls back to judge_llm when GRAPH_INGEST_MODEL is not configured.
