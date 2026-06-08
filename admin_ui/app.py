@@ -617,6 +617,13 @@ def rebuild_inference_servers(form) -> list:
                 entry["ontology_enabled"] = True
             if curator_model_val:
                 entry["curator_model"] = curator_model_val
+            load_delay_raw = form.get(f"srv_load_delay_{i}", "").strip()
+            try:
+                load_delay_val = int(load_delay_raw) if load_delay_raw else None
+            except (ValueError, TypeError):
+                load_delay_val = None
+            if load_delay_val is not None:
+                entry["model_load_delay"] = load_delay_val
             servers.append(entry)
         i += 1
     return servers

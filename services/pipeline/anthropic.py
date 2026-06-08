@@ -46,6 +46,7 @@ from config import (
     _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
     CC_SAFETY_BUFFER_TOKENS,
+    CC_PREANALYSIS_DELAY_SECS,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -676,6 +677,16 @@ async def _anthropic_tool_handler(
                     "",
                 )
                 if _planner_model and _planner_url and _user_q:
+                    # Resolve per-server model_load_delay; fall back to global default
+                    _preanalysis_delay: float = float(CC_PREANALYSIS_DELAY_SECS)
+                    _planner_base = _planner_url.rstrip("/").removesuffix("/v1")
+                    _planner_srv = next(
+                        (s for s in INFERENCE_SERVERS_LIST
+                         if s.get("url", "").rstrip("/") == _planner_base),
+                        None,
+                    )
+                    if _planner_srv and _planner_srv.get("model_load_delay") is not None:
+                        _preanalysis_delay = float(_planner_srv["model_load_delay"])
                     asyncio.create_task(_cc_expert_preanalysis(
                         session_id=session_id,
                         user_query=_user_q,
@@ -684,6 +695,7 @@ async def _anthropic_tool_handler(
                         planner_token=_planner_token,
                         planner_prompt=_planner_prompt,
                         redis_client=state.redis_client,
+                        delay_s=_preanalysis_delay,
                     ))
         except Exception as _pae:
             logger.debug("cc_tool: expert pre-analysis skipped: %s", _pae)

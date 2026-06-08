@@ -264,6 +264,9 @@ HISTORY_MAX_ENTRIES = int(os.getenv("HISTORY_MAX_ENTRIES", "5000"))
 # context flooding without dropping entire turns.
 CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD",  "3000"))
 CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "2"))
+# Fallback delay (seconds) before the CC pre-analysis planner fires.
+# Overridden per-server via model_load_delay in Admin UI → Servers.
+CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 
 # =============================================================================
 # Timeouts & LLM call limits
