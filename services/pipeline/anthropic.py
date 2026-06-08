@@ -910,7 +910,12 @@ async def _anthropic_tool_handler(
     # native, pipe tokens directly back to CC as they arrive. This prevents CC
     # from timing out while waiting for a complete non-streaming Ollama response
     # (which can take 60–120 s for complex tool-call reasoning at 35B).
+    logger.info(
+        "cc_tool: routing — ollama_native=%s stream=%s session=%s",
+        _use_ollama_native, body.get("stream"), session_id[:8] if session_id else "?",
+    )
     if _use_ollama_native and body.get("stream", False):
+        logger.info("cc_tool: entering live streaming path (model=%s)", effective_model)
         _model_id_out = body.get("model", effective_model)
 
         async def _live_ollama_sse():
