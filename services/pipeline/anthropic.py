@@ -676,7 +676,18 @@ async def _anthropic_tool_handler(
                      if m.get("role") == "user" and isinstance(m.get("content"), str)),
                     "",
                 )
-                if _planner_model and _planner_url and _user_q:
+                # Skip preanalysis if the planner runs on the same node as the CC tool
+                # model — loading the planner model would evict the active CC tool model
+                # from VRAM (Ollama evicts LRU on model switch, regardless of free VRAM).
+                _cc_tool_base = (session.tool_url or JUDGE_URL or "").rstrip("/").removesuffix("/v1")
+                _planner_base_cmp = _planner_url.rstrip("/").removesuffix("/v1")
+                _same_node = bool(_planner_url and _planner_base_cmp == _cc_tool_base)
+                if _same_node:
+                    logger.info(
+                        "cc_tool: preanalysis skipped — planner on same node as CC tool model (%s)",
+                        _cc_tool_base,
+                    )
+                if _planner_model and _planner_url and _user_q and not _same_node:
                     # Resolve per-server model_load_delay; fall back to global default
                     _preanalysis_delay: float = float(CC_PREANALYSIS_DELAY_SECS)
                     _planner_base = _planner_url.rstrip("/").removesuffix("/v1")
@@ -736,10 +747,38 @@ async def _anthropic_tool_handler(
         # the judge singleton are loaded at the same num_ctx — this prevents Ollama
         # from reloading the model between every judge call and every tool call
         # (a reload cycle that can take 2-3 min for 35B models and causes 502s).
-        _profile_ctx = session.tool_max_tokens or max_tokens
+        # Prefer the CC profile's explicit num_ctx; fall back to JUDGE_NUM_CTX so the
+        # model loads with the same context window as the warmup call.  Never fall back
+        # to max_tokens — that is the max OUTPUT tokens, not the context window size.
+        # Using max_tokens as num_ctx would force a model reload every CC request
+        # (e.g. from warmup 32768 → request 8192) which takes 60-90 s at 35 B params.
+        _profile_ctx = session.tool_max_tokens or JUDGE_NUM_CTX or 32768
         _ollama_num_ctx = _profile_ctx
         if JUDGE_NUM_CTX > 0 and _ollama_num_ctx > JUDGE_NUM_CTX:
             _ollama_num_ctx = JUDGE_NUM_CTX
+        # Never downgrade a warm model: if Ollama already has the model loaded with a
+        # larger context window, reuse that window instead of forcing a costly reload.
+        # A model loaded at 32768 can serve any request that needs ≤32768 tokens.
+        _ollama_base = effective_url.rstrip("/").removesuffix("/v1")
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {effective_token}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = effective_model.split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _ollama_num_ctx:
+                        logger.info(
+                            "cc_tool: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _ollama_num_ctx, effective_model,
+                        )
+                        _ollama_num_ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         if _ollama_num_ctx != (_tool_ctx or 0):
             logger.info(
                 "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",
@@ -865,10 +904,11 @@ async def _anthropic_tool_handler(
         # preventing CC connection timeouts while the model generates.
         _do_ollama_stream = bool(body.get("stream", False))
         _call_payload: dict = {
-            "model":    effective_model,
-            "messages": _ollama_messages,
-            "stream":   _do_ollama_stream,
-            "options":  {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
+            "model":      effective_model,
+            "messages":   _ollama_messages,
+            "stream":     _do_ollama_stream,
+            "keep_alive": "4h",
+            "options":    {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
         }
         if oai_tools:
             _call_payload["tools"] = oai_tools
@@ -914,8 +954,10 @@ async def _anthropic_tool_handler(
         "cc_tool: routing — ollama_native=%s stream=%s session=%s",
         _use_ollama_native, body.get("stream"), session_id[:8] if session_id else "?",
     )
-    if _use_ollama_native and body.get("stream", False):
-        logger.info("cc_tool: entering live streaming path (model=%s)", effective_model)
+    # CC retries send "stream": null instead of true — treat None as True for Ollama native.
+    # Non-streaming Ollama calls always timeout CC anyway (full generation before first byte).
+    if _use_ollama_native and body.get("stream") is not False:
+        logger.info("cc_tool: entering live streaming path (model=%s stream=%s)", effective_model, body.get("stream"))
         _model_id_out = body.get("model", effective_model)
 
         async def _live_ollama_sse():
@@ -939,55 +981,81 @@ async def _anthropic_tool_handler(
             })
             yield _sse_event("ping", {"type": "ping"})
 
+            # Bridge Ollama streaming and SSE via a queue so we can send keep-alive
+            # SSE comment lines while waiting for the model to load (up to 90s for
+            # 35B models). Without this, CC would see silence and disconnect.
+            _q: asyncio.Queue = asyncio.Queue()
+
+            async def _ollama_fetch() -> None:
+                try:
+                    async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
+                        async with _scl.stream(
+                            "POST", _call_url, json=_call_payload,
+                            headers={"Authorization": f"Bearer {effective_token}"},
+                        ) as _sr:
+                            if _sr.status_code == 400:
+                                await _q.put(("error", f"Ollama 400: {(await _sr.aread()).decode()[:200]}"))
+                            else:
+                                async for _ln in _sr.aiter_lines():
+                                    await _q.put(("line", _ln))
+                except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as _te:
+                    await _q.put(("error", f"timeout after {_node_timeout}s"))
+                except Exception as _se:
+                    await _q.put(("error", str(_se)))
+                finally:
+                    await _q.put(("done", None))
+
+            asyncio.create_task(_ollama_fetch())
+
             try:
-                async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
-                    async with _scl.stream(
-                        "POST", _call_url, json=_call_payload,
-                        headers={"Authorization": f"Bearer {effective_token}"},
-                    ) as _sr:
-                        if _sr.status_code == 400:
-                            # Ollama 400 — fall through to error handling below
-                            _stream_error = f"Ollama 400: {(await _sr.aread()).decode()[:200]}"
-                        else:
-                            async for _line in _sr.aiter_lines():
-                                if not _line.strip():
-                                    continue
-                                try:
-                                    _chunk = json.loads(_line)
-                                except (json.JSONDecodeError, ValueError):
-                                    continue
-                                _cmsg = _chunk.get("message", {})
-                                _delta = _cmsg.get("content", "") or ""
-                                _chunk_tcs = _cmsg.get("tool_calls")
-                                _done = _chunk.get("done", False)
+                while True:
+                    try:
+                        _kind, _val = await asyncio.wait_for(_q.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        # Ollama still loading — send SSE comment to keep the CC connection alive
+                        yield ": keep-alive\n\n"
+                        continue
+                    if _kind == "done":
+                        break
+                    if _kind == "error":
+                        _stream_error = _val
+                        break
+                    _line = _val
+                    if not _line.strip():
+                        continue
+                    try:
+                        _chunk = json.loads(_line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    _cmsg = _chunk.get("message", {})
+                    _delta = _cmsg.get("content", "") or ""
+                    _chunk_tcs = _cmsg.get("tool_calls")
+                    _done = _chunk.get("done", False)
 
-                                if _delta:
-                                    _text_acc += _delta
-                                    if not _sent_text_block:
-                                        yield _sse_event("content_block_start", {
-                                            "type": "content_block_start", "index": 0,
-                                            "content_block": {"type": "text", "text": ""},
-                                        })
-                                        _sent_text_block = True
-                                    yield _sse_event("content_block_delta", {
-                                        "type": "content_block_delta", "index": 0,
-                                        "delta": {"type": "text_delta", "text": _delta},
-                                    })
+                    if _delta:
+                        _text_acc += _delta
+                        if not _sent_text_block:
+                            yield _sse_event("content_block_start", {
+                                "type": "content_block_start", "index": 0,
+                                "content_block": {"type": "text", "text": ""},
+                            })
+                            _sent_text_block = True
+                        yield _sse_event("content_block_delta", {
+                            "type": "content_block_delta", "index": 0,
+                            "delta": {"type": "text_delta", "text": _delta},
+                        })
 
-                                if _chunk_tcs:
-                                    _tool_calls_acc = _chunk_tcs  # arrives as a single chunk
+                    if _chunk_tcs:
+                        _tool_calls_acc = _chunk_tcs
 
-                                if _done:
-                                    _in_tok = _chunk.get("prompt_eval_count", 0)
-                                    _out_tok = _chunk.get("eval_count", 0)
-                                    break
-            except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as _te:
-                _stream_error = f"timeout after {_node_timeout}s"
+                    if _done:
+                        _in_tok = _chunk.get("prompt_eval_count", 0)
+                        _out_tok = _chunk.get("eval_count", 0)
+            except Exception as _loop_err:
+                _stream_error = str(_loop_err)
+                logger.warning("cc_tool stream loop error: %s", _loop_err)
+            if _stream_error and "timeout" in _stream_error.lower():
                 PROM_TOOL_TIMEOUTS.labels(node=effective_node, model=effective_model).inc()
-                logger.warning("cc_tool stream timeout: %s", _te)
-            except Exception as _se:
-                _stream_error = str(_se)
-                logger.warning("cc_tool stream error: %s", _se)
 
             if _stream_error:
                 _err_txt = f"⚠️ Inference server '{effective_node}' error: {_stream_error}"

@@ -1060,6 +1060,55 @@ async def _warmup_cc_tool_model() -> None:
         logger.warning("⚠️ CC tool model warmup failed: %s", _e)
 
 
+async def _cc_keepalive_loop() -> None:
+    """Periodically re-ping the CC tool model to keep it in VRAM.
+
+    Many Ollama deployments cap keep_alive at ~3 minutes server-side, overriding
+    per-request keep_alive values. This loop re-pings every 150s (2.5 min) so the
+    model never reaches the eviction deadline between active CC requests.
+    """
+    import asyncio
+    import httpx as _httpx
+    from config import (
+        CLAUDE_CODE_TOOL_ENDPOINT as _cc_ep,
+        _CLAUDE_CODE_TOOL_URL as _cc_url,
+        _CLAUDE_CODE_TOOL_TOKEN as _cc_tok,
+        CLAUDE_CODE_TOOL_MODEL as _cc_model,
+        API_TYPE_MAP as _api_type_map,
+        JUDGE_NUM_CTX as _jnctx,
+    )
+
+    if not (_cc_ep and _cc_url and _cc_model):
+        return
+    if _api_type_map.get(_cc_ep, "ollama") != "ollama":
+        return
+
+    _base_url = _cc_url.rstrip("/").removesuffix("/v1")
+    _num_ctx  = _jnctx if _jnctx > 0 else 32768
+
+    while True:
+        await asyncio.sleep(150)  # 2.5 minutes — safely below any 3-min server cap
+        try:
+            async with _httpx.AsyncClient(timeout=300.0) as _cl:
+                _r = await _cl.post(
+                    f"{_base_url}/api/generate",
+                    json={
+                        "model": _cc_model,
+                        "prompt": ".",
+                        "stream": False,
+                        "options": {"num_ctx": _num_ctx, "num_predict": 1},
+                        "keep_alive": "4h",
+                    },
+                    headers={"Authorization": f"Bearer {_cc_tok}"},
+                )
+            if _r.status_code == 200:
+                logger.debug("cc_keepalive: pinged %s (num_ctx=%d)", _cc_model, _num_ctx)
+            else:
+                logger.warning("⚠️ cc_keepalive: HTTP %d for %s", _r.status_code, _cc_model)
+        except Exception as _e:
+            logger.warning("⚠️ cc_keepalive: %s", _e)
+
+
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     import state as _state
@@ -1119,6 +1168,7 @@ async def lifespan(app_: FastAPI):
     # Pre-load the CC tool model into Ollama VRAM so the first CC session
     # does not stall waiting for model load (~90s for 35B models).
     asyncio.create_task(_warmup_cc_tool_model())
+    asyncio.create_task(_cc_keepalive_loop())
     # Kafka Consumer as persistent background task
     consumer_task  = asyncio.create_task(_kafka_consumer_loop())
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
