@@ -861,10 +861,13 @@ async def _anthropic_tool_handler(
             return out
 
         _ollama_messages = [_normalize_for_ollama(m) for m in oai_messages]
+        # Use streaming when CC requests it so tokens flow back immediately,
+        # preventing CC connection timeouts while the model generates.
+        _do_ollama_stream = bool(body.get("stream", False))
         _call_payload: dict = {
             "model":    effective_model,
             "messages": _ollama_messages,
-            "stream":   False,
+            "stream":   _do_ollama_stream,
             "options":  {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
         }
         if oai_tools:
@@ -902,6 +905,185 @@ async def _anthropic_tool_handler(
         from fastapi.responses import JSONResponse as _JSONResponse
         return _JSONResponse(content=_err_body, status_code=529)
 
+    # ── Live-streaming path (Ollama native, CC streaming request) ─────────────
+    # When Claude Code requests a streaming response AND the endpoint is Ollama
+    # native, pipe tokens directly back to CC as they arrive. This prevents CC
+    # from timing out while waiting for a complete non-streaming Ollama response
+    # (which can take 60–120 s for complex tool-call reasoning at 35B).
+    if _use_ollama_native and body.get("stream", False):
+        _model_id_out = body.get("model", effective_model)
+
+        async def _live_ollama_sse():
+            _text_acc: str = ""
+            _tool_calls_acc: list = []
+            _sent_text_block: bool = False
+            _block_idx: int = 0
+            _in_tok: int = 0
+            _out_tok: int = 0
+            _stream_error: str = ""
+
+            # Emit message_start immediately — CC sees the stream open and won't retry
+            yield _sse_event("message_start", {
+                "type": "message_start",
+                "message": {
+                    "id": chat_id, "type": "message", "role": "assistant",
+                    "content": [], "model": _model_id_out,
+                    "stop_reason": None,
+                    "usage": {"input_tokens": 0, "output_tokens": 1},
+                },
+            })
+            yield _sse_event("ping", {"type": "ping"})
+
+            try:
+                async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
+                    async with _scl.stream(
+                        "POST", _call_url, json=_call_payload,
+                        headers={"Authorization": f"Bearer {effective_token}"},
+                    ) as _sr:
+                        if _sr.status_code == 400:
+                            # Ollama 400 — fall through to error handling below
+                            _stream_error = f"Ollama 400: {(await _sr.aread()).decode()[:200]}"
+                        else:
+                            async for _line in _sr.aiter_lines():
+                                if not _line.strip():
+                                    continue
+                                try:
+                                    _chunk = json.loads(_line)
+                                except (json.JSONDecodeError, ValueError):
+                                    continue
+                                _cmsg = _chunk.get("message", {})
+                                _delta = _cmsg.get("content", "") or ""
+                                _chunk_tcs = _cmsg.get("tool_calls")
+                                _done = _chunk.get("done", False)
+
+                                if _delta:
+                                    _text_acc += _delta
+                                    if not _sent_text_block:
+                                        yield _sse_event("content_block_start", {
+                                            "type": "content_block_start", "index": 0,
+                                            "content_block": {"type": "text", "text": ""},
+                                        })
+                                        _sent_text_block = True
+                                    yield _sse_event("content_block_delta", {
+                                        "type": "content_block_delta", "index": 0,
+                                        "delta": {"type": "text_delta", "text": _delta},
+                                    })
+
+                                if _chunk_tcs:
+                                    _tool_calls_acc = _chunk_tcs  # arrives as a single chunk
+
+                                if _done:
+                                    _in_tok = _chunk.get("prompt_eval_count", 0)
+                                    _out_tok = _chunk.get("eval_count", 0)
+                                    break
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as _te:
+                _stream_error = f"timeout after {_node_timeout}s"
+                PROM_TOOL_TIMEOUTS.labels(node=effective_node, model=effective_model).inc()
+                logger.warning("cc_tool stream timeout: %s", _te)
+            except Exception as _se:
+                _stream_error = str(_se)
+                logger.warning("cc_tool stream error: %s", _se)
+
+            if _stream_error:
+                _err_txt = f"⚠️ Inference server '{effective_node}' error: {_stream_error}"
+                if not _sent_text_block:
+                    yield _sse_event("content_block_start", {
+                        "type": "content_block_start", "index": 0,
+                        "content_block": {"type": "text", "text": ""},
+                    })
+                    _sent_text_block = True
+                yield _sse_event("content_block_delta", {
+                    "type": "content_block_delta", "index": 0,
+                    "delta": {"type": "text_delta", "text": _err_txt},
+                })
+
+            # Close text block if one was opened
+            if _sent_text_block:
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": _block_idx,
+                })
+                _block_idx += 1
+
+            # JSON-in-text fallback: detect tool call JSON in accumulated text
+            if not _tool_calls_acc and _text_acc and tools and not _stream_error:
+                _known = {t.get("name", "") for t in tools}
+                _probe = re.sub(r"^```(?:json)?\s*|\s*```$", "", _text_acc.strip(), flags=re.DOTALL).strip()
+                try:
+                    _parsed = json.loads(_probe)
+                    _cands = [_parsed] if isinstance(_parsed, dict) else (_parsed if isinstance(_parsed, list) else [])
+                    for _c in _cands:
+                        if isinstance(_c, dict):
+                            _tn = _c.get("name") or _c.get("tool") or _c.get("function")
+                            _ta = _c.get("arguments") or _c.get("parameters") or _c.get("input") or {}
+                            if _tn and _tn in _known:
+                                _tool_calls_acc.append({"function": {"name": _tn, "arguments": _ta}})
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            # Tool call blocks
+            _stop_reason = "end_turn"
+            for _ntc in _tool_calls_acc:
+                _fn = _ntc.get("function", {})
+                _args = _fn.get("arguments", {})
+                _tc_id = f"call_{uuid.uuid4().hex[:12]}"
+                _args_json = json.dumps(_args) if isinstance(_args, dict) else str(_args)
+                yield _sse_event("content_block_start", {
+                    "type": "content_block_start", "index": _block_idx,
+                    "content_block": {
+                        "type": "tool_use", "id": _tc_id,
+                        "name": _fn.get("name", ""), "input": {},
+                    },
+                })
+                yield _sse_event("content_block_delta", {
+                    "type": "content_block_delta", "index": _block_idx,
+                    "delta": {"type": "input_json_delta", "partial_json": _args_json},
+                })
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": _block_idx,
+                })
+                _block_idx += 1
+                _stop_reason = "tool_use"
+
+            # Empty response guard
+            if not _sent_text_block and not _tool_calls_acc:
+                yield _sse_event("content_block_start", {
+                    "type": "content_block_start", "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                })
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": 0,
+                })
+
+            yield _sse_event("message_delta", {
+                "type": "message_delta",
+                "delta": {"stop_reason": _stop_reason, "stop_sequence": None},
+                "usage": {"output_tokens": _out_tok},
+            })
+            yield _sse_event("message_stop", {"type": "message_stop"})
+
+            PROM_TOOL_CALL_DURATION.labels(
+                node=effective_node, model=effective_model, phase="llm_call"
+            ).observe(time.monotonic() - _llm_t0)
+            if _tool_calls_acc:
+                PROM_TOOL_CALL_SUCCESS.labels(node=effective_node, model=effective_model).inc()
+            if user_id != "anon":
+                asyncio.create_task(_log_usage_to_db(
+                    user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+                    model=effective_model, moe_mode="cc_tool",
+                    prompt_tokens=_in_tok, completion_tokens=_out_tok,
+                    session_id=session_id,
+                ))
+                if not session.is_user_conn:
+                    asyncio.create_task(_increment_user_budget(
+                        user_id, _in_tok + _out_tok,
+                        prompt_tokens=_in_tok, completion_tokens=_out_tok,
+                    ))
+            asyncio.create_task(_deregister_active_request(chat_id))
+
+        _llm_t0 = time.monotonic()
+        return StreamingResponse(_live_ollama_sse(), media_type="text/event-stream")
+
+    # ── Non-streaming fallback (non-Ollama or non-streaming request) ───────────
     _llm_t0 = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=_node_timeout) as client:
