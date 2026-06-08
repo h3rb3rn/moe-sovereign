@@ -369,15 +369,56 @@ async def expert_worker(state_: AgentState):
                         _patched[_i] = HumanMessage(content=f"/no_think\n{_orig}")
                         break
                 messages = _patched
-            llm = ChatOpenAI(**_llm_kwargs)
             from metrics import PROM_TOKENS
             try:
                 _primary_url = url.rstrip("/")
-                res, _used_fallback = await _invoke_llm_with_fallback(
-                    llm, _primary_url, messages,
-                    timeout=_expert_node_timeout,
-                    label=f"Expert[{cat}]",
-                )
+                # Ollama native /api/chat: the only path that reliably passes options.num_ctx.
+                # The OpenAI-compatible /v1/chat/completions endpoint discards the options dict
+                # in Ollama ≤0.30.6, causing every cold expert call to load qwen3.6:35b at the
+                # Modelfile default (8192) instead of 32768 — evicting the CC tool model and
+                # forcing a 90-second reload on the next CC request.
+                if api_type == "ollama" and _expert_ctx_window > 0:
+                    _native_msgs = []
+                    for _m in messages:
+                        _role = ("assistant" if (hasattr(_m, "type") and _m.type == "ai") else
+                                 "system"    if (hasattr(_m, "type") and _m.type == "system") else
+                                 "user")
+                        _native_msgs.append({"role": _role,
+                                             "content": _m.content if hasattr(_m, "content") else str(_m)})
+                    _ollama_base = url.rstrip("/").removesuffix("/v1")
+                    _native_payload: dict = {
+                        "model":      model_name,
+                        "messages":   _native_msgs,
+                        "stream":     False,
+                        "options":    {"num_ctx": _expert_ctx_window, "num_predict": _expert_max_tokens},
+                        "keep_alive": "4h",
+                    }
+                    if not _thinking_enabled:
+                        _native_payload["think"] = False
+                    async with httpx.AsyncClient(timeout=_expert_node_timeout) as _acl:
+                        _r = await _acl.post(
+                            f"{_ollama_base}/api/chat",
+                            json=_native_payload,
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                    _r.raise_for_status()
+                    _rdata = _r.json()
+                    from types import SimpleNamespace as _NS
+                    res = _NS(
+                        content=_rdata.get("message", {}).get("content", ""),
+                        usage_metadata={
+                            "input_tokens":  _rdata.get("prompt_eval_count", 0),
+                            "output_tokens": _rdata.get("eval_count", 0),
+                        },
+                    )
+                    _used_fallback = False
+                else:
+                    llm = ChatOpenAI(**_llm_kwargs)
+                    res, _used_fallback = await _invoke_llm_with_fallback(
+                        llm, _primary_url, messages,
+                        timeout=_expert_node_timeout,
+                        label=f"Expert[{cat}]",
+                    )
                 if _used_fallback:
                     await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)

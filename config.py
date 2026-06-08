@@ -268,6 +268,13 @@ CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS",
 # Overridden per-server via model_load_delay in Admin UI → Servers.
 CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 
+# Master kill-switch for the infrastructure-side "1M+ context" path on CC tool
+# requests: ChromaDB context indexing (Tier-3), Tier-2 semantic-memory injection
+# and Tier-3 retrieval. Default OFF — this path caused per-request OOM kills of the
+# orchestrator (4 GiB cgroup limit). When disabled, CC tool requests use the plain
+# pass-through path (system prompt forwarded verbatim, budget-trimmed).
+CC_CONTEXT_INDEX_ENABLED = os.getenv("CC_CONTEXT_INDEX_ENABLED", "false").lower() in ("1", "true", "yes")
+
 # =============================================================================
 # Timeouts & LLM call limits
 # =============================================================================

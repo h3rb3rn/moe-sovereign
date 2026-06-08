@@ -3485,6 +3485,42 @@ def chess_legal_moves(fen: str) -> str:
         return f"[chess_legal_moves: error parsing FEN — {e}]"
 
 
+# ─── Session Context Search ──────────────────────────────────────────────────
+
+_ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://langgraph-orchestrator:8000").rstrip("/")
+
+
+@mcp.tool()
+async def search_context(query: str, session_id: str, n_results: int = 8) -> str:
+    """Retrieve semantically relevant chunks from the session's indexed context.
+
+    Use this tool when you need to find specific information from a large
+    codebase, document, or system prompt that was provided at session start.
+    The context was automatically indexed at the beginning of the session.
+
+    query:      What you are looking for (natural language or code snippet)
+    session_id: The current session ID (available in the system prompt header)
+    n_results:  Number of chunks to return (default 8, max 20)
+    """
+    if not session_id or not query:
+        return "[search_context: session_id and query are required]"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{_ORCHESTRATOR_URL}/v1/context/search",
+                json={"session_id": session_id, "query": query[:500], "n_results": min(n_results, 20)},
+            )
+            data = resp.json()
+            if not data.get("indexed"):
+                return "[search_context: no context index available for this session — either the context is below the indexing threshold or indexing is still in progress]"
+            chunks = data.get("chunks", "")
+            if not chunks:
+                return "[search_context: no relevant chunks found for this query]"
+            return chunks
+    except Exception as exc:
+        return f"[search_context: retrieval error — {exc}]"
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -3549,6 +3585,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "active_requests":      active_requests,
     "mission_context_get":  mission_context_get,
     "watchdog_alerts":      watchdog_alerts,
+    "search_context":       search_context,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -3607,6 +3644,7 @@ _TOOL_DESCRIPTIONS = {
     "wayback_fetch":           "Retrieve a historical snapshot of any web page from the Wayback Machine (web.archive.org). Use for: ORCID profiles at a past date, pages that have changed, historical API data. timestamp=YYYYMMDD optional — omit for closest available. Ideal for 'as of year X' questions.",
     "crossref_lookup":         "Search CrossRef for 150M+ scholarly publications — title, author, DOI, keyword. Returns DOI, authors, year, journal, citation count. Use to count articles by venue/year or verify publication metadata. No API key, deterministic.",
     "openalex_search":         "Search OpenAlex academic database (250M+ works, all disciplines). Broader than PubMed/SemanticScholar. Use for cross-disciplinary paper counts, author publication histories, funding data. Supports year_min filter and open_access_only. No API key.",
+    "search_context":          "Retrieve semantically relevant chunks from the session's indexed context (codebase, documents, large system prompt). Use when you need to find specific information in a large context that was provided at session start. Returns the top-k most relevant sections.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────

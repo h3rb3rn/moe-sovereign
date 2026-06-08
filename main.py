@@ -1262,7 +1262,8 @@ from routes.feedback         import router as _feedback_router
 from routes.ollama_compat    import router as _ollama_router
 from routes.models           import router as _models_router
 from routes.anthropic_compat import router as _anthropic_router
-from routes.codex_proxy    import router as _codex_proxy_router
+from routes.codex_proxy      import router as _codex_proxy_router
+from routes.context_search   import router as _context_search_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1275,6 +1276,7 @@ app.include_router(_ollama_router)
 app.include_router(_models_router)
 app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
+app.include_router(_context_search_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
 # Added in the original order; Starlette executes add_middleware in reverse.

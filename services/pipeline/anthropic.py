@@ -47,6 +47,7 @@ from config import (
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
     CC_SAFETY_BUFFER_TOKENS,
     CC_PREANALYSIS_DELAY_SECS,
+    CC_CONTEXT_INDEX_ENABLED,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -151,6 +152,10 @@ import hashlib as _hashlib
 
 
 _CC_WORK_TTL = 4 * 3600  # 4 h — long enough to survive context loss + model reload
+
+# Track active Ollama streaming tasks per CC session so zombie requests from
+# previous CC retries can be cancelled when a new request arrives for the same session.
+_cc_active_ollama_tasks: dict[str, asyncio.Task] = {}
 
 
 async def _cc_expert_preanalysis(
@@ -557,21 +562,10 @@ async def _anthropic_tool_handler(
     # When the client ships a large system_prompt (codebase, documents, long files),
     # index it once per session so that every expert can later retrieve only the
     # semantically relevant slice — the infrastructure-level 1M+ context window.
-    if session_id and system and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session_id and system and state.redis_client:
         try:
-            from services.context_index import (
-                CONTEXT_INDEX_THRESHOLD as _CTX_THRESHOLD,
-                chunk_and_index_context as _chunk_ctx,
-                is_context_indexed as _ctx_indexed,
-            )
-            if len(system) > _CTX_THRESHOLD:
-                _already_indexed = await _ctx_indexed(session_id, state.redis_client)
-                if not _already_indexed:
-                    asyncio.create_task(_chunk_ctx(session_id, system, state.redis_client))
-                    logger.info(
-                        "cc_tool: triggered context indexing for session %s (%d chars)",
-                        session_id[:8], len(system),
-                    )
+            from services.context_index import ensure_indexed as _ensure_ctx
+            await _ensure_ctx(session_id, system, state.redis_client)
         except Exception as _cie:
             logger.debug("cc_tool: context indexing skipped: %s", _cie)
 
@@ -579,7 +573,7 @@ async def _anthropic_tool_handler(
     # Evicted turns from _compress_history_responses are embedded in ChromaDB so
     # they can be retrieved semantically — giving Claude Code an effective context
     # that scales beyond the 32k LLM window (the "1M+ infrastructure" layer).
-    if session_id:
+    if CC_CONTEXT_INDEX_ENABLED and session_id:
         try:
             from memory_retrieval import get_memory_store as _get_mem_store
             _mem_store = _get_mem_store()
@@ -597,10 +591,7 @@ async def _anthropic_tool_handler(
                         n_results=5,
                     )
                     if _warm_turns:
-                        _warm_block = "\n".join(
-                            f"[PAST TURN {t.get('metadata', {}).get('role', '?')}]: {t.get('document', '')[:300]}"
-                            for t in _warm_turns
-                        )
+                        _warm_block = _mem_store.build_warm_context_block(_warm_turns)
                         _warm_msg = {
                             "role": "system",
                             "content": f"[SEMANTIC MEMORY — relevant past context]\n{_warm_block}\n[End of past context. Continue current task.]"
@@ -616,7 +607,7 @@ async def _anthropic_tool_handler(
     # ChromaDB), retrieve the semantically relevant slice for the current query
     # and inject it as a system message. This gives the CC tool model access to
     # the full codebase/document context beyond its 32k KV-cache limit.
-    if session_id and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session_id and state.redis_client:
         try:
             from services.context_index import (
                 is_context_indexed as _ctx_indexed_t3,
@@ -1008,7 +999,23 @@ async def _anthropic_tool_handler(
                 finally:
                     await _q.put(("done", None))
 
-            asyncio.create_task(_ollama_fetch())
+            # Cancel zombie task from a previous CC retry for the same session before
+            # starting a new fetch. Without this, stale Ollama requests keep running and
+            # queue up, blocking the next CC request from ever getting a first token.
+            if session_id:
+                _old_task = _cc_active_ollama_tasks.get(session_id)
+                if _old_task and not _old_task.done():
+                    _old_task.cancel()
+                    logger.info("cc_tool: cancelled zombie Ollama task (session=%s)", session_id[:8])
+            _fetch_task = asyncio.create_task(_ollama_fetch())
+            if session_id:
+                _cc_active_ollama_tasks[session_id] = _fetch_task
+                # Compact: drop finished entries so the dict doesn't grow unboundedly
+                # across days of uptime with many sessions.
+                if len(_cc_active_ollama_tasks) > 50:
+                    _done_keys = [k for k, t in _cc_active_ollama_tasks.items() if t.done()]
+                    for _dk in _done_keys:
+                        _cc_active_ollama_tasks.pop(_dk, None)
 
             try:
                 while True:
@@ -1057,6 +1064,12 @@ async def _anthropic_tool_handler(
             except Exception as _loop_err:
                 _stream_error = str(_loop_err)
                 logger.warning("cc_tool stream loop error: %s", _loop_err)
+            finally:
+                # Only remove our own entry — a new CC retry may have already replaced it.
+                if session_id and _cc_active_ollama_tasks.get(session_id) is _fetch_task:
+                    _cc_active_ollama_tasks.pop(session_id, None)
+                if not _fetch_task.done():
+                    _fetch_task.cancel()
             if _stream_error and "timeout" in _stream_error.lower():
                 PROM_TOOL_TIMEOUTS.labels(node=effective_node, model=effective_model).inc()
 
@@ -1732,19 +1745,10 @@ async def _anthropic_moe_handler(
     )
 
     # ── Tier-3 Context Index: chunk large system_prompt before dispatching to MoE ─
-    if session_id and system and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session_id and system and state.redis_client:
         try:
-            from services.context_index import (
-                CONTEXT_INDEX_THRESHOLD as _CTX_THRESHOLD,
-                chunk_and_index_context as _chunk_ctx,
-                is_context_indexed as _ctx_indexed,
-            )
-            if len(system) > _CTX_THRESHOLD and not await _ctx_indexed(session_id, state.redis_client):
-                asyncio.create_task(_chunk_ctx(session_id, system, state.redis_client))
-                logger.info(
-                    "moe_handler: triggered context indexing for session %s (%d chars)",
-                    session_id[:8], len(system),
-                )
+            from services.context_index import ensure_indexed as _ensure_ctx_moe
+            await _ensure_ctx_moe(session_id, system, state.redis_client)
         except Exception as _cie:
             logger.debug("moe_handler: context indexing skipped: %s", _cie)
 

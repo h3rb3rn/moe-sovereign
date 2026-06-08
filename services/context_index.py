@@ -65,36 +65,56 @@ def _collection_name(session_id: str) -> str:
 
 
 def _get_embedding_function():
-    """Reuse the embedding function from memory_retrieval if available."""
+    """Return an in-process ONNX embedding function (all-MiniLM-L6-v2).
+
+    Uses ChromaDB's bundled DefaultEmbeddingFunction, which runs fully in-process
+    via ONNX Runtime — no external service, no inference-GPU load.  The model
+    artifact (~90 MB) is cached in the chroma-onnx-cache volume on first use.
+
+    Falls back to None (keyword-based retrieval) if the ONNX runtime is not
+    available, and logs a warning so the failure is visible in container logs.
+    """
     try:
-        from memory_retrieval import _get_ef
-        return _get_ef()
-    except Exception:
-        try:
-            import chromadb.utils.embedding_functions as ef
-            return ef.DefaultEmbeddingFunction()
-        except Exception:
-            return None
+        import chromadb.utils.embedding_functions as cef
+        return cef.DefaultEmbeddingFunction()
+    except Exception as exc:
+        logger.warning(
+            "context_index: no embedding function available — retrieval will use "
+            "chromadb keyword fallback (degraded quality). Error: %s", exc
+        )
+        return None
 
 
 # ── Chunker ───────────────────────────────────────────────────────────────────
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Split text into overlapping chunks. Prefers splitting on newlines."""
+    """Split text into overlapping chunks. Prefers splitting on newlines.
+
+    Termination is guaranteed: the window always stops once it reaches the end of
+    the text, and ``start`` always advances by at least ``chunk_size - overlap``
+    per iteration. (A previous version omitted the end-of-text break and looped
+    forever, growing ``chunks`` until the process was OOM-killed.)
+    """
+    # Degenerate config guard: overlap must be strictly smaller than chunk_size,
+    # otherwise start = end - overlap would never advance.
+    if overlap >= chunk_size:
+        overlap = max(0, chunk_size // 4)
+
     chunks: list[str] = []
     start = 0
     length = len(text)
     while start < length:
         end = min(start + chunk_size, length)
-        # Try to extend to a natural boundary (newline) within 200 chars
+        # Try to snap to a natural boundary (newline), but only one that lies past
+        # start + overlap so the window keeps moving forward.
         if end < length:
-            boundary = text.rfind("\n", end - 200, end)
+            boundary = text.rfind("\n", start + overlap, end)
             if boundary > start:
                 end = boundary + 1
         chunks.append(text[start:end])
-        start = end - overlap
-        if start < 0:
-            start = 0
+        if end >= length:           # reached the end → done (the missing termination)
+            break
+        start = end - overlap       # end < length here, so start strictly advances
     return [c for c in chunks if c.strip()]
 
 
@@ -137,29 +157,114 @@ def _build_toc(text: str, max_chars: int = 2000) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+async def ensure_indexed(
+    session_id: str,
+    content: str,
+    redis_client,
+    *,
+    loop: Optional[asyncio.AbstractEventLoop] = None,
+) -> bool:
+    """Idempotent entry-point: index *content* for *session_id* if not done yet.
+
+    Safe to call from any entry-point (CC tool handler, MoE handler, chat.py) —
+    the atomic Redis lock ``cc:ctx:{session_id}:indexing`` prevents duplicate jobs.
+
+    Returns True if indexing was triggered or already complete, False on error.
+    """
+    if not content or not session_id or len(content) <= CONTEXT_INDEX_THRESHOLD:
+        return False
+    if not redis_client:
+        return False
+
+    try:
+        # Fast path: already indexed — nothing to do.
+        if await redis_client.get(f"cc:ctx:{session_id}:indexed"):
+            return True
+
+        # Claim exclusive in-progress lock (TTL 300s — well above any indexing time).
+        # nx=True means only one caller wins; all others skip silently.
+        _claimed = await redis_client.set(
+            f"cc:ctx:{session_id}:indexing", "1", ex=300, nx=True
+        )
+        if not _claimed:
+            return True  # another task is already indexing
+
+        _ev_loop = loop or asyncio.get_event_loop()
+        _ev_loop.create_task(chunk_and_index_context(session_id, content, redis_client))
+        logger.info(
+            "context_index.ensure_indexed: triggered for session %s (%d chars)",
+            session_id[:8], len(content),
+        )
+        return True
+    except Exception as exc:
+        logger.debug("context_index.ensure_indexed: skipped for session %s: %s", session_id[:8], exc)
+        return False
+
+
+async def retrieve(
+    session_id: str,
+    query: str,
+    redis_client,
+    n_results: int = RETRIEVAL_TOP_K,
+) -> str:
+    """Retrieve relevant context chunks.  Thin wrapper over retrieve_context_for_task."""
+    return await retrieve_context_for_task(
+        session_id=session_id,
+        task_text=query,
+        redis_client=redis_client,
+        n_results=n_results,
+    )
+
+
 async def chunk_and_index_context(
     session_id: str,
     content: str,
     redis_client,
 ) -> bool:
-    """Chunk content into ChromaDB. Stores TOC + size in Redis. Returns True on success."""
+    """Chunk content into ChromaDB. Stores TOC + size in Redis. Returns True on success.
+
+    The heavy ChromaDB embedding/upsert runs in a worker thread; the Redis flag
+    writes happen here on the main event loop, because ``redis_client`` is an async
+    client bound to this loop and cannot be driven from the worker thread.
+    """
     if not content or not session_id:
         return False
     try:
-        return await asyncio.to_thread(
-            _index_sync, session_id, content, redis_client
-        )
+        result = await asyncio.to_thread(_index_sync, session_id, content)
     except Exception as exc:
         logger.warning("context_index: indexing failed for session %s: %s", session_id[:8], exc)
+        result = None
+
+    if not result:
+        # Indexing failed: drop the in-progress lock so a later request can retry.
+        if redis_client is not None:
+            try:
+                await redis_client.delete(f"cc:ctx:{session_id}:indexing")
+            except Exception:
+                pass
         return False
 
+    # Persist completion flags on the main loop (where the async redis client lives).
+    if redis_client is not None:
+        try:
+            await redis_client.set(f"cc:ctx:{session_id}:indexed", "1", ex=INDEX_TTL_SECS)
+            await redis_client.set(f"cc:ctx:{session_id}:toc", result["toc"][:3000], ex=INDEX_TTL_SECS)
+            await redis_client.set(f"cc:ctx:{session_id}:size", str(result["size"]), ex=INDEX_TTL_SECS)
+            await redis_client.set(f"cc:ctx:{session_id}:chunks", str(result["chunks"]), ex=INDEX_TTL_SECS)
+        except Exception as exc:
+            logger.warning("context_index: flag persist failed for session %s: %s", session_id[:8], exc)
+    return True
 
-def _index_sync(session_id: str, content: str, redis_client) -> bool:
-    """Synchronous indexing — runs in thread pool."""
-    import asyncio as _asyncio
+
+def _index_sync(session_id: str, content: str) -> Optional[dict]:
+    """Synchronous indexing — runs in a thread pool.
+
+    Returns a metadata dict ``{"toc", "size", "chunks"}`` on success (the async
+    caller persists these to Redis), or ``None`` on failure.
+    """
     chunks = _chunk_text(content)
     if not chunks:
-        return False
+        return None
 
     client = _get_chromadb_client()
     ef = _get_embedding_function()
@@ -176,7 +281,7 @@ def _index_sync(session_id: str, content: str, redis_client) -> bool:
         coll = client.get_or_create_collection(**kw)
     except Exception as exc:
         logger.warning("context_index: collection create failed: %s", exc)
-        return False
+        return None
 
     expire_at = int(time.time()) + INDEX_TTL_SECS
     docs, ids, metas = [], [], []
@@ -195,35 +300,15 @@ def _index_sync(session_id: str, content: str, redis_client) -> bool:
         coll.upsert(documents=docs, ids=ids, metadatas=metas)
     except Exception as exc:
         logger.warning("context_index: upsert failed: %s", exc)
-        return False
+        return None
 
     toc = _build_toc(content)
-
-    # Store flags in Redis synchronously via asyncio.run_coroutine_threadsafe if needed
-    # We use a simple fire-and-forget pattern here
-    if redis_client is not None:
-        async def _set_flags():
-            try:
-                await redis_client.set(f"cc:ctx:{session_id}:indexed", "1", ex=INDEX_TTL_SECS)
-                await redis_client.set(f"cc:ctx:{session_id}:toc", toc[:3000], ex=INDEX_TTL_SECS)
-                await redis_client.set(f"cc:ctx:{session_id}:size", str(len(content)), ex=INDEX_TTL_SECS)
-                await redis_client.set(f"cc:ctx:{session_id}:chunks", str(len(chunks)), ex=INDEX_TTL_SECS)
-            except Exception:
-                pass
-        try:
-            loop = _asyncio.get_event_loop()
-            if loop.is_running():
-                _asyncio.ensure_future(_set_flags())
-            else:
-                loop.run_until_complete(_set_flags())
-        except Exception:
-            pass
 
     logger.info(
         "context_index: indexed %d chunks (%d chars) for session %s",
         len(chunks), len(content), session_id[:12],
     )
-    return True
+    return {"toc": toc, "size": len(content), "chunks": len(chunks)}
 
 
 async def is_context_indexed(session_id: str, redis_client) -> bool:
