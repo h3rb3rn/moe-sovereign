@@ -568,19 +568,79 @@ def _get_model_node_load(model: str) -> float:
 def _estimate_model_vram_gb(model_name: str) -> float:
     """Estimate VRAM requirement in GB from model name.
 
-    Parses parameter count from name (e.g. 'llama3.3:70b' → 70) and estimates
-    VRAM based on common quantization: Q4 ≈ 0.55 * params + 1.5 GB overhead.
-    Returns 0 if parameter count cannot be parsed (disables VRAM filtering).
+    Parses the parameter count AND quantization from the name and applies the
+    correct bytes-per-parameter multiplier.  The default Q4 estimate is only
+    correct for GGUF Q4_K_M models; fp16/fp32/q8 variants need different math.
+
+    Examples
+    --------
+    phi4:14b-fp16     → 14 × 2.0 + 2 ≈ 30 GB   (fp16, 2 B/param)
+    qwen3.6:35b       → 35 × 0.55 + 1.5 ≈ 21 GB (Q4 default)
+    llama3.3:70b-q8_0 → 70 × 1.1  + 2  ≈ 79 GB  (Q8)
+    gemma4:31b-fp32   → 31 × 4.0  + 2  ≈ 126 GB (fp32)
+
+    Returns 0 when the parameter count cannot be parsed (disables filtering).
     """
     import re as _re
-    # Extract parameter count: "phi4:14b", "llama3.3:70b", "gemma4:31b"
-    m = _re.search(r"[:\-](\d+(?:\.\d+)?)b", model_name.lower())
+    name = model_name.lower()
+
+    # Extract parameter count: "phi4:14b-fp16", "llama3.3:70b", "gemma4:31b"
+    m = _re.search(r"[:\-](\d+(?:\.\d+)?)b", name)
     if not m:
-        # Try GGUF names: "Q4_0" → no param info, return 0
         return 0.0
     params_b = float(m.group(1))
-    # Q4_K_M estimate: ~0.55 bytes/param + 1.5 GB context/overhead
-    return params_b * 0.55 + 1.5
+
+    # Quantization-aware bytes-per-parameter
+    if _re.search(r"[-_]?fp32", name):
+        bpp = 4.0
+    elif _re.search(r"[-_]?fp16", name):
+        bpp = 2.0
+    elif _re.search(r"[-_]?fp8", name):
+        bpp = 1.0
+    elif _re.search(r"[-_]?q8", name):
+        bpp = 1.1
+    elif _re.search(r"[-_]?q6", name):
+        bpp = 0.75
+    elif _re.search(r"[-_]?q2", name):
+        bpp = 0.30
+    else:
+        bpp = 0.55  # Q4_K_M default
+
+    # Overhead: KV-cache, runtime tensors, activations (~1.5–2 GB for small models,
+    # larger for fp16/fp32 due to bigger activation buffers)
+    overhead = 2.0 if bpp >= 2.0 else 1.5
+    return params_b * bpp + overhead
+
+
+def _node_vram_by_url(base_url: str) -> float:
+    """Return the configured vram_gb for the node that serves base_url, or 0."""
+    url = base_url.rstrip("/")
+    for srv in INFERENCE_SERVERS_LIST:
+        if srv.get("url", "").rstrip("/") == url:
+            return float(srv.get("vram_gb", 0))
+    return 0.0
+
+
+def _can_coexist_on_node(model_a: str, model_b: str, node_vram_gb: float) -> bool:
+    """Return True if both models fit simultaneously in node_vram_gb.
+
+    Used before proactively unloading a model: if both models fit, let Ollama
+    manage VRAM naturally instead of evicting a warm model unnecessarily.
+    Returns False (conservative — unload) when any estimate is unavailable.
+    """
+    if node_vram_gb <= 0:
+        return False
+    est_a = _estimate_model_vram_gb(model_a)
+    est_b = _estimate_model_vram_gb(model_b)
+    if est_a <= 0 or est_b <= 0:
+        return False  # unknown size → don't risk it
+    fits = (est_a + est_b) <= node_vram_gb
+    if fits:
+        logger.debug(
+            "🔵 VRAM coexist: %s (%.1fGB) + %s (%.1fGB) = %.1fGB ≤ %.0fGB — skip unload",
+            model_a, est_a, model_b, est_b, est_a + est_b, node_vram_gb,
+        )
+    return fits
 
 
 async def _select_node(model_name: str, allowed_endpoints: List[str],

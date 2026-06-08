@@ -46,7 +46,8 @@ from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
     _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
-    _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
+    _estimate_model_vram_gb, _can_coexist_on_node, _node_vram_by_url,
+    _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
@@ -84,19 +85,19 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 from pipeline.state import AgentState
 
 
-def _planner_ctx_budget() -> dict:
+def _planner_ctx_budget(state_num_ctx: int = 0) -> dict:
     """Derive agentic context-block char budgets from the planner model's context window.
 
-    Uses PLANNER_NUM_CTX when set explicitly, otherwise falls back to the static
-    model table. All caps scale proportionally so a larger planner model
-    automatically gets more room for working memory and gap context.
+    Priority: state_num_ctx (per-template) > PLANNER_NUM_CTX (global env) > static model
+    table. All caps scale proportionally so a larger planner model automatically gets
+    more room for working memory and gap context.
 
     Uses EXPERT_CHARS_PER_TOKEN (env: EXPERT_CHARS_PER_TOKEN, default 3) for the
     chars/token estimate and reserves 40% of the window for the static instruction
     prompt + user query.
     """
     from context_budget import get_model_context_window as _static_ctx
-    ctx_tokens = PLANNER_NUM_CTX or _static_ctx(PLANNER_MODEL) or 4096
+    ctx_tokens = state_num_ctx or PLANNER_NUM_CTX or _static_ctx(PLANNER_MODEL) or 4096
     # Characters available after reserving 40% for instruction prompt + user query
     available_chars = int(ctx_tokens * EXPERT_CHARS_PER_TOKEN * 0.60)
     return {
@@ -448,7 +449,7 @@ async def planner_node(state_: AgentState):
         _tried_queries  = state_.get("attempted_queries") or []
         _strategy_hint  = (state_.get("search_strategy_hint") or "").strip()
 
-        _budget = _planner_ctx_budget()
+        _budget = _planner_ctx_budget(state_.get("planner_num_ctx", 0))
 
         # Prefer structured working memory over truncated prose when available
         if _wm:
@@ -696,7 +697,16 @@ JSON array:"""
     if _actual_planner_model in _upcoming_base_models:
         logger.debug(f"⏭️ VRAM unload skipped: {_actual_planner_model} will be reused as expert")
     elif _actual_planner_base and _actual_planner_token == "ollama":
-        asyncio.create_task(_ollama_unload(_actual_planner_model, _actual_planner_base))
+        # Skip unload if planner + first expert fit together in the node's VRAM.
+        _first_expert = next(iter(_upcoming_base_models), "")
+        _node_vram = _node_vram_by_url(_actual_planner_base)
+        if _first_expert and _can_coexist_on_node(_actual_planner_model, _first_expert, _node_vram):
+            logger.debug(
+                "⏭️ VRAM unload skipped: %s and %s coexist on %.0f GB node",
+                _actual_planner_model, _first_expert, _node_vram,
+            )
+        else:
+            asyncio.create_task(_ollama_unload(_actual_planner_model, _actual_planner_base))
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
         asyncio.create_task(state.redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))

@@ -100,6 +100,8 @@ class AgentState(TypedDict):
     planner_model_override: str         # Override global PLANNER_MODEL
     planner_url_override: str           # Override global PLANNER_URL
     planner_token_override: str         # Override global PLANNER_TOKEN
+    planner_num_ctx: int                # Template-specific planner context window (0 = global default / auto-detect)
+    judge_num_ctx: int                  # Template-specific judge context window (0 = global default / auto-detect)
 
     # ── 9. Routing & complexity flags ─────────────────────────────────────────
     skip_research: bool                 # Skip research_node (set by complexity estimator for trivial queries)

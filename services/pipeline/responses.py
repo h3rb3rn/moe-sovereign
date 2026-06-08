@@ -267,6 +267,8 @@ async def _invoke_pipeline_for_responses(
             planner_model_override=_tp.get("planner_model_override", ""),
             planner_url_override=_tp.get("planner_url_override", ""),
             planner_token_override=_tp.get("planner_token_override", ""),
+            planner_num_ctx=_tp.get("planner_num_ctx", 0),
+            judge_num_ctx=_tp.get("judge_num_ctx", 0),
             model_name=request.model,
             session_id=_extract_session_id(raw_request),
             max_agentic_rounds=_max_rounds,

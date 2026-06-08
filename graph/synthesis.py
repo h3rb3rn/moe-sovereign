@@ -85,10 +85,11 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 from pipeline.state import AgentState
 
 
-def _judge_ctx_budget() -> dict:
+def _judge_ctx_budget(state_num_ctx: int = 0) -> dict:
     """Derive char budgets for judge-facing content from the judge model's context window.
 
-    All quality-affecting truncations in merger, gap detection, working-memory
+    Priority: state_num_ctx (per-template) > JUDGE_NUM_CTX (global env) > static model
+    table. All quality-affecting truncations in merger, gap detection, working-memory
     extraction and reasoning nodes scale with the configured judge context window
     instead of being static constants. Metadata and telemetry fields stay small
     regardless (they go into Kafka / ChromaDB, not the LLM prompt).
@@ -97,7 +98,7 @@ def _judge_ctx_budget() -> dict:
     already assembled before these blocks are appended.
     """
     from context_budget import get_model_context_window as _static_ctx
-    ctx_tokens  = JUDGE_NUM_CTX or _static_ctx(_JUDGE_MODEL_NAME) or 8192
+    ctx_tokens  = state_num_ctx or JUDGE_NUM_CTX or _static_ctx(_JUDGE_MODEL_NAME) or 8192
     avail_chars = int(ctx_tokens * 4 * 0.65)   # 4 chars/token, 65% for dynamic content
     return {
         # merger_node: context injected before expert responses
@@ -208,7 +209,7 @@ async def merger_node(state_: AgentState):
                           f"{len(low_conf_list)} low-confidence experts")
             # Judge generates feedback — enriched with web/graph context
             _ctx_snippet = ""
-            _jbudget = _judge_ctx_budget()
+            _jbudget = _judge_ctx_budget(state_.get("judge_num_ctx", 0))
             if web:
                 _ctx_snippet += f"\nWEB CONTEXT (excerpt):\n{web[:_jbudget['web_context']]}"
             if graph_ctx:
@@ -538,7 +539,7 @@ async def merger_node(state_: AgentState):
             logger.info("🛡️ PRIOR KNOWLEDGE suppressed: primary source + cache both contain code (prevents judge interleaving)")
             await _report("🛡️ Prior knowledge suppressed (code duplication guard)")
         else:
-            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:_judge_ctx_budget()['cached_prior']]}")
+            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:_judge_ctx_budget(state_.get('judge_num_ctx', 0))['cached_prior']]}")
     soft_examples = state_.get("soft_cache_examples") or ""
     if soft_examples:
         _soft_has_code = any(m in soft_examples for m in _CODE_MARKERS)
@@ -972,7 +973,7 @@ async def merger_node(state_: AgentState):
             # Skip gap detection when already resolved by confidence gate or expert-leak handler.
             # Running a judge LLM-call after the gate already decided COMPLETE wastes tokens
             # and risks overwriting the correct COMPLETE verdict with NEEDS_MORE_INFO.
-            _jb = _judge_ctx_budget()
+            _jb = _judge_ctx_budget(state_.get("judge_num_ctx", 0))
             if not _confidence_gate_passed and _agentic_gap != "COMPLETE" and _used_tokens < AGENTIC_GAP_THRESHOLD_TOKENS:
                 _gap_prompt = (
                     "You are a completion assessor. Based on the original question and the current answer, "
@@ -1026,7 +1027,7 @@ async def merger_node(state_: AgentState):
         # (b) there are more rounds available — extraction is useless on the last iteration
         _max_rounds = state_.get("max_agentic_rounds", 2)
         _wm_merged: dict = dict(state_.get("working_memory") or {})
-        _jb_wm = _judge_ctx_budget()
+        _jb_wm = _judge_ctx_budget(state_.get("judge_num_ctx", 0))
         if (_agentic_gap != "COMPLETE"
                 and _agentic_iter < _max_rounds - 1
                 and state_.get("prompt_tokens", 0) < WM_EXTRACT_THRESHOLD_TOKENS):
@@ -1123,7 +1124,7 @@ async def thinking_node(state_: AgentState):
             for r in expert_results
         )
         sections.append(f"EXPERT CONFIDENCE: {conf_summary}")
-    _jb_r = _judge_ctx_budget()
+    _jb_r = _judge_ctx_budget(state_.get("judge_num_ctx", 0))
     if state_.get("web_research"):
         sections.append(f"WEB CONTEXT (excerpt):\n{state_['web_research'][:_jb_r['reasoning_web']]}")
     if state_.get("graph_context"):

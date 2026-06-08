@@ -247,6 +247,8 @@ async def _ollama_internal_stream(
         planner_model_override=tmpl_prompts["planner_model_override"],
         planner_url_override=tmpl_prompts["planner_url_override"],
         planner_token_override=tmpl_prompts["planner_token_override"],
+        planner_num_ctx=tmpl_prompts.get("planner_num_ctx", 0),
+        judge_num_ctx=tmpl_prompts.get("judge_num_ctx", 0),
         model_name=model_name,
         pending_reports=[],
         images=_user_images,
