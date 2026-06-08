@@ -1106,7 +1106,28 @@ async def _cc_keepalive_loop() -> None:
             else:
                 logger.warning("⚠️ cc_keepalive: HTTP %d for %s", _r.status_code, _cc_model)
         except Exception as _e:
-            logger.warning("⚠️ cc_keepalive: %s", _e)
+            # repr() shows the exception class when str() is empty (e.g. asyncio.TimeoutError)
+            logger.warning("⚠️ cc_keepalive: %r — retrying in 30 s", _e)
+            await asyncio.sleep(30)
+            try:
+                async with _httpx.AsyncClient(timeout=300.0) as _cl2:
+                    _r2 = await _cl2.post(
+                        f"{_base_url}/api/generate",
+                        json={
+                            "model": _cc_model,
+                            "prompt": ".",
+                            "stream": False,
+                            "options": {"num_ctx": _num_ctx, "num_predict": 1},
+                            "keep_alive": "4h",
+                        },
+                        headers={"Authorization": f"Bearer {_cc_tok}"},
+                    )
+                if _r2.status_code == 200:
+                    logger.info("cc_keepalive: recovered after retry (num_ctx=%d)", _num_ctx)
+                else:
+                    logger.warning("⚠️ cc_keepalive retry: HTTP %d for %s", _r2.status_code, _cc_model)
+            except Exception as _e2:
+                logger.warning("⚠️ cc_keepalive retry also failed: %r", _e2)
 
 
 @asynccontextmanager

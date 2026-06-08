@@ -902,7 +902,10 @@ async def _anthropic_tool_handler(
         _ollama_messages = [_normalize_for_ollama(m) for m in oai_messages]
         # Use streaming when CC requests it so tokens flow back immediately,
         # preventing CC connection timeouts while the model generates.
-        _do_ollama_stream = bool(body.get("stream", False))
+        # Treat "stream": null (CC retry) identically to "stream": true — Ollama must
+        # stream tokens so the first byte arrives after model-load (~90 s), not after
+        # full generation (load + gen > 120 s httpx timeout → false timeout on retries).
+        _do_ollama_stream = body.get("stream") is not False
         _call_payload: dict = {
             "model":      effective_model,
             "messages":   _ollama_messages,
