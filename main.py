@@ -1008,6 +1008,58 @@ builder.add_edge("critic", END)
 app_graph = None
 
 
+async def _warmup_cc_tool_model() -> None:
+    """Pre-load the CC tool model into Ollama VRAM on startup.
+
+    Prevents cold-start timeouts: Claude Code sessions that arrive before the
+    model is loaded would otherwise retry 10x while Ollama loads the model (~90s
+    for 35B models), exhausting retries before the first token is generated.
+
+    Sends a minimal /api/generate request (1 predicted token) so the model is
+    already resident in VRAM by the time the first real CC session starts.
+    """
+    import asyncio
+    import httpx as _httpx
+    from config import (
+        CLAUDE_CODE_TOOL_ENDPOINT as _cc_ep,
+        _CLAUDE_CODE_TOOL_URL as _cc_url,
+        _CLAUDE_CODE_TOOL_TOKEN as _cc_tok,
+        CLAUDE_CODE_TOOL_MODEL as _cc_model,
+        API_TYPE_MAP as _api_type_map,
+        JUDGE_NUM_CTX as _jnctx,
+    )
+
+    await asyncio.sleep(8)  # let FastAPI finish startup before the warmup fires
+
+    if not (_cc_ep and _cc_url and _cc_model):
+        return
+    if _api_type_map.get(_cc_ep, "ollama") != "ollama":
+        return  # only needed for Ollama; OpenAI-compatible providers are always ready
+
+    _base_url = _cc_url.rstrip("/").removesuffix("/v1")
+    _num_ctx  = _jnctx if _jnctx > 0 else 32768
+
+    try:
+        async with _httpx.AsyncClient(timeout=300.0) as _cl:
+            _r = await _cl.post(
+                f"{_base_url}/api/generate",
+                json={
+                    "model": _cc_model,
+                    "prompt": ".",
+                    "stream": False,
+                    "options": {"num_ctx": _num_ctx, "num_predict": 1},
+                    "keep_alive": "4h",
+                },
+                headers={"Authorization": f"Bearer {_cc_tok}"},
+            )
+        if _r.status_code == 200:
+            logger.info("✅ CC tool model warmup done: %s (num_ctx=%d)", _cc_model, _num_ctx)
+        else:
+            logger.warning("⚠️ CC tool model warmup HTTP %d: %s", _r.status_code, _r.text[:120])
+    except Exception as _e:
+        logger.warning("⚠️ CC tool model warmup failed: %s", _e)
+
+
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     import state as _state
@@ -1064,6 +1116,9 @@ async def lifespan(app_: FastAPI):
         _seed_task_type_prototypes(),
         _init_enterprise_stack(),
     )
+    # Pre-load the CC tool model into Ollama VRAM so the first CC session
+    # does not stall waiting for model load (~90s for 35B models).
+    asyncio.create_task(_warmup_cc_tool_model())
     # Kafka Consumer as persistent background task
     consumer_task  = asyncio.create_task(_kafka_consumer_loop())
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
