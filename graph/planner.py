@@ -416,6 +416,24 @@ async def planner_node(state_: AgentState):
 
     _planner_role = (state_.get("planner_prompt") or "").strip() or DEFAULT_PLANNER_ROLE
 
+    # ── Tier-3 Context TOC: inject table-of-contents for indexed large contexts ──
+    # When the session carries a 1M+ context indexed into ChromaDB, prepend a compact
+    # TOC so the planner knows what domains/files are available to the experts.
+    _context_toc_block = ""
+    _session_id_plan = state_.get("session_id", "")
+    if _session_id_plan and state.redis_client:
+        try:
+            from services.context_index import get_context_toc as _get_toc, is_context_indexed as _ctx_indexed
+            if await _ctx_indexed(_session_id_plan, state.redis_client):
+                _toc_raw = await _get_toc(_session_id_plan, state.redis_client)
+                if _toc_raw:
+                    _context_toc_block = (
+                        f"\n\n[INDEXED CONTEXT OVERVIEW — available to all experts]\n{_toc_raw}\n"
+                        "[End of overview. Experts will receive the relevant sections automatically.]\n"
+                    )
+        except Exception as _tie:
+            logger.debug("planner: context TOC injection skipped: %s", _tie)
+
     # ── Agentic re-plan: inject gap context and clear stale single-string results ──
     _agentic_context_block = ""
     _agentic_state_reset: dict = {}
@@ -521,7 +539,7 @@ async def planner_node(state_: AgentState):
         _agentic_state_reset = {"web_research": "", "mcp_result": "", "math_result": ""}
         logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds} depth={_depth}: gap={_gap[:80]}")
 
-    prompt = f"""{_planner_role}{_agentic_context_block}
+    prompt = f"""{_planner_role}{_context_toc_block}{_agentic_context_block}
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).

@@ -190,10 +190,34 @@ async def expert_worker(state_: AgentState):
             _behavioral = (state_.get("behavioral_directives") or "").strip()
             if _behavioral:
                 sys_prompt = f"MANDATORY RESPONSE DIRECTIVES (override all other instructions):\n{_behavioral}\n\n" + sys_prompt
-            # Agent mode: embed file/code context from the client's system message
+            # Agent mode: embed file/code context from the client's system message.
+            # When the session has a Tier-3 context index (large system_prompt chunked into
+            # ChromaDB), retrieve only the semantically relevant slice for this task instead
+            # of truncating to an arbitrary char limit.
             agent_ctx = state_.get("system_prompt", "")
             if agent_ctx and mode in ("agent", "agent_orchestrated"):
-                sys_prompt += f"\n\n--- USER CODE CONTEXT ---\n{agent_ctx[:4000]}"
+                _session_id = state_.get("session_id", "")
+                _ctx_snippet = ""
+                if _session_id and state.redis_client:
+                    try:
+                        from services.context_index import (
+                            is_context_indexed as _ctx_indexed,
+                            retrieve_context_for_task as _ctx_retrieve,
+                            FALLBACK_CONTEXT_CHARS as _FALLBACK_CHARS,
+                        )
+                        if await _ctx_indexed(_session_id, state.redis_client):
+                            _ctx_snippet = await _ctx_retrieve(
+                                session_id=_session_id,
+                                task_text=task_text,
+                                redis_client=state.redis_client,
+                            )
+                    except Exception as _cie:
+                        logger.debug("expert: context retrieval failed: %s", _cie)
+                if not _ctx_snippet:
+                    from services.context_index import FALLBACK_CONTEXT_CHARS as _FALLBACK_CHARS
+                    _ctx_snippet = agent_ctx[:_FALLBACK_CHARS]
+                if _ctx_snippet:
+                    sys_prompt += f"\n\n--- USER CODE CONTEXT ---\n{_ctx_snippet}"
             # Inject correction memory for this category (avoids repeat mistakes)
             if CORRECTION_MEMORY_ENABLED and state.graph_manager is not None:
                 try:

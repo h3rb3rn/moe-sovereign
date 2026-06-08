@@ -97,6 +97,10 @@ from context_budget import (
     get_model_context_window as _get_static_ctx_window,
     CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
 )
+# CC tool conversations contain code, JSON, shell output and tool results —
+# all denser than prose. Use 3 chars/token for input estimation to avoid
+# running the total context into num_ctx and getting done_reason=length.
+_CC_TOOL_CHARS_PER_TOKEN = 3
 from services.pipeline.cc_session import CCSession, _resolve_cc_session
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -512,6 +516,28 @@ async def _anthropic_tool_handler(
 
     oai_messages = _anthropic_to_openai_messages(messages, system)
 
+    # ── Tier-3 Context Index: chunk large system_prompt into ChromaDB ────────────
+    # When the client ships a large system_prompt (codebase, documents, long files),
+    # index it once per session so that every expert can later retrieve only the
+    # semantically relevant slice — the infrastructure-level 1M+ context window.
+    if session_id and system and state.redis_client:
+        try:
+            from services.context_index import (
+                CONTEXT_INDEX_THRESHOLD as _CTX_THRESHOLD,
+                chunk_and_index_context as _chunk_ctx,
+                is_context_indexed as _ctx_indexed,
+            )
+            if len(system) > _CTX_THRESHOLD:
+                _already_indexed = await _ctx_indexed(session_id, state.redis_client)
+                if not _already_indexed:
+                    asyncio.create_task(_chunk_ctx(session_id, system, state.redis_client))
+                    logger.info(
+                        "cc_tool: triggered context indexing for session %s (%d chars)",
+                        session_id[:8], len(system),
+                    )
+        except Exception as _cie:
+            logger.debug("cc_tool: context indexing skipped: %s", _cie)
+
     # ── Tier-2 Semantic Memory: store evicted turns + retrieve warm context ─────
     # Evicted turns from _compress_history_responses are embedded in ChromaDB so
     # they can be retrieved semantically — giving Claude Code an effective context
@@ -635,8 +661,11 @@ async def _anthropic_tool_handler(
                 "cc_tool: trimmed message history to fit ctx_window=%d (max_out=%d, model=%s)",
                 _tool_ctx, max_tokens, effective_model,
             )
-        # Cap max_tokens: prevent output overflow even after trimming
-        _input_est_tok = sum(len(json.dumps(m)) for m in oai_messages) / _CHARS_PER_TOKEN
+        # Cap max_tokens: prevent output overflow even after trimming.
+        # Use _CC_TOOL_CHARS_PER_TOKEN=3 (not the prose default of 4) because CC
+        # conversations are code-heavy — tool results, JSON, shell output tokenize
+        # at ~3 chars/token. Underestimating input causes num_ctx to be hit mid-response.
+        _input_est_tok = sum(len(json.dumps(m)) for m in oai_messages) / _CC_TOOL_CHARS_PER_TOKEN
         _safe_max_out  = max(256, _tool_ctx - int(_input_est_tok) - _CC_SAFETY_BUFFER)
         if max_tokens > _safe_max_out:
             logger.info(
@@ -746,17 +775,12 @@ async def _anthropic_tool_handler(
         }
         if oai_tools:
             _call_payload["tools"] = oai_tools
-        # Inject /no_think when stream_think=False (thinking output not desired).
-        # This prevents thinking models (qwen3.6:35b, deepseek-r1) from generating
-        # thousands of <think> tokens on every tool call, wasting context and latency.
+        # Use Ollama's native think:false flag (Ollama ≥0.30) to disable thinking mode.
+        # The previous /no_think prefix approach was unreliable — qwen3.6:35b ignored it
+        # and consumed the entire num_predict budget on thinking, returning empty content.
+        # think:false is a top-level parameter (not inside options) per Ollama 0.30 API.
         if not session.stream_think:
-            _msgs = _call_payload["messages"]
-            for _mi in range(len(_msgs) - 1, -1, -1):
-                if _msgs[_mi].get("role") == "user":
-                    _orig = _msgs[_mi].get("content", "")
-                    if isinstance(_orig, str) and not _orig.startswith("/no_think"):
-                        _msgs[_mi] = {**_msgs[_mi], "content": f"/no_think\n{_orig}"}
-                    break
+            _call_payload["think"] = False
         logger.info(
             "cc_tool: Ollama native /api/chat — num_ctx=%d num_predict=%d model=%s think=%s",
             _ollama_num_ctx, max_tokens, effective_model, session.stream_think,
@@ -1018,6 +1042,13 @@ async def _anthropic_tool_handler(
     PROM_TOOL_CALL_DURATION.labels(node=effective_node, model=effective_model, phase="total").observe(time.monotonic() - _eval_t0)
 
     # OpenAI-Response → Anthropic Content-Blocks
+    logger.info(
+        "cc_tool: Ollama response — content_len=%d tool_calls=%d done=%s eval=%s",
+        len(msg.get("content") or ""),
+        len(msg.get("tool_calls") or []),
+        oai_resp.get("done_reason", "?"),
+        oai_resp.get("eval_count", "?"),
+    )
     content_blocks: list = []
     if msg.get("content"):
         content_blocks.append({"type": "text", "text": msg["content"]})
@@ -1026,10 +1057,16 @@ async def _anthropic_tool_handler(
         stop_reason = "tool_use"
         for tc in msg["tool_calls"]:
             fn = tc.get("function", {})
-            try:
-                args = json.loads(fn.get("arguments", "{}"))
-            except Exception:
-                args = {}
+            raw_args = fn.get("arguments", {})
+            # Ollama native /api/chat returns arguments as a dict already.
+            # OpenAI-compat endpoints return arguments as a JSON string.
+            if isinstance(raw_args, dict):
+                args = raw_args
+            else:
+                try:
+                    args = json.loads(raw_args) if raw_args else {}
+                except Exception:
+                    args = {}
             content_blocks.append({
                 "type":  "tool_use",
                 "id":    tc["id"],
@@ -1342,6 +1379,23 @@ async def _anthropic_moe_handler(
         share_with_team=_sm_prefs_h.get("share_with_team", False),
     )
 
+    # ── Tier-3 Context Index: chunk large system_prompt before dispatching to MoE ─
+    if session_id and system and state.redis_client:
+        try:
+            from services.context_index import (
+                CONTEXT_INDEX_THRESHOLD as _CTX_THRESHOLD,
+                chunk_and_index_context as _chunk_ctx,
+                is_context_indexed as _ctx_indexed,
+            )
+            if len(system) > _CTX_THRESHOLD and not await _ctx_indexed(session_id, state.redis_client):
+                asyncio.create_task(_chunk_ctx(session_id, system, state.redis_client))
+                logger.info(
+                    "moe_handler: triggered context indexing for session %s (%d chars)",
+                    session_id[:8], len(system),
+                )
+        except Exception as _cie:
+            logger.debug("moe_handler: context indexing skipped: %s", _cie)
+
     _pcfg = session.planner_cfg
     invoke_state = {
         "input": user_input, "response_id": chat_id,
@@ -1349,6 +1403,7 @@ async def _anthropic_moe_handler(
         "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
         "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
         "chat_history": history, "reasoning_trace": "", "system_prompt": system,
+        "session_id": session_id or "",
         "behavioral_directives": session.system_prefix,
         "images": user_images,
         "user_permissions": session.user_perms,
