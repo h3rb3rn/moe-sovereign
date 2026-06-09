@@ -21,6 +21,7 @@ from config import (
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
     MAX_EXPERT_OUTPUT_CHARS, MAX_JUDGE_TOKENS, THOMPSON_SAMPLING_ENABLED,
     JUDGE_NUM_CTX, PLANNER_NUM_CTX,
+    MAX_PLANNER_TOKENS,
 )
 from context_budget import get_model_context_window as _static_ctx
 from metrics import PROM_THOMPSON
@@ -354,7 +355,7 @@ async def _invoke_judge_with_retry(
             if _j_api_type == "ollama" and _jm and _j_url_base:
                 # Native Ollama /api/chat — respects options.num_ctx unlike /v1/chat/completions.
                 _ollama_base = _j_url_base.removesuffix("/v1")
-                _ctx = JUDGE_NUM_CTX or _static_ctx(_jm)
+                _ctx = int(state.get("judge_num_ctx") or 0) or JUDGE_NUM_CTX or _static_ctx(_jm)
                 _opts: dict = {}
                 if _ctx > 0:
                     _opts["num_ctx"] = _ctx
@@ -435,14 +436,17 @@ def _planner_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a planner call.
 
     Same contract as _judge_model_kw: extra_body is a top-level key, not nested
-    inside model_kwargs.
+    inside model_kwargs. Both num_ctx and num_predict are set so Ollama does not
+    fall back to Modelfile defaults that may truncate the plan JSON.
 
     Priority: state_num_ctx (per-template) > PLANNER_NUM_CTX (global env) > static table.
     """
-    out: dict = {}
+    out: dict = {"max_tokens": MAX_PLANNER_TOKENS}
     ctx = state_num_ctx or PLANNER_NUM_CTX or _static_ctx(model)
+    opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
-        out["extra_body"] = {"options": {"num_ctx": ctx}}
+        opts["num_ctx"] = ctx
+    out["extra_body"] = {"options": opts}
     return out
 
 

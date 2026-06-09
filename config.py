@@ -175,6 +175,7 @@ MAX_EXPERT_OUTPUT_CHARS_CODE = int(os.getenv("MAX_EXPERT_OUTPUT_CHARS_CODE", "48
 # Judge generation limit — prevents thinking-mode judges from generating
 # massive traces. 8192 is generous for synthesis while still bounding cost.
 MAX_JUDGE_TOKENS          = int(os.getenv("MAX_JUDGE_TOKENS",           "32768"))
+MAX_PLANNER_TOKENS        = int(os.getenv("MAX_PLANNER_TOKENS",         "16384"))
 # Ollama num_ctx for judge and planner — 0 means auto-detect from static model table.
 # Set explicitly when the auto-detected value differs from Ollama's actual allocation.
 JUDGE_NUM_CTX   = int(os.getenv("JUDGE_NUM_CTX",   "0"))
