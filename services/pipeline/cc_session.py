@@ -45,6 +45,7 @@ class CCSession:
     tool_token: str = ""
     tool_timeout: int = 120
     tool_max_tokens: int = 0
+    context_window: int = 0
     tool_choice: str = "auto"
     is_user_conn: bool = False
 
@@ -208,13 +209,14 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
     reasoning_max_tokens = int(profile.get("reasoning_max_tokens") or 0)        if profile else 0
     tool_choice          = (profile.get("tool_choice") or "").strip()           if profile else ""
     stream_think         = bool(profile.get("stream_think", False))             if profile else False
+    context_window       = int(profile.get("context_window") or 0)              if profile else 0
 
     # Enforce template context_window as the source of truth for token limits.
     # Profile values must not exceed the template constraint — if they do, the session
     # would silently deliver less output than advertised, with no operator feedback.
     _tmpl_ctx = min(
-        (v["context_window"] for v in experts.values()
-         if isinstance(v, dict) and v.get("context_window")),
+        (m["context_window"] for v in experts.values() if isinstance(v, list)
+         for m in v if isinstance(m, dict) and m.get("context_window")),
         default=0,
     )
     if _tmpl_ctx > 0:
@@ -226,6 +228,13 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
                 _profile_name, tool_max_tokens, _tmpl_ctx,
             )
             tool_max_tokens = _tmpl_ctx
+        if context_window and context_window > _tmpl_ctx:
+            logger.warning(
+                "CC profile '%s': context_window=%d exceeds template context_window=%d"
+                " — capping to template value. Update context_window in the profile to silence this.",
+                _profile_name, context_window, _tmpl_ctx,
+            )
+            context_window = _tmpl_ctx
         if reasoning_max_tokens and reasoning_max_tokens > _tmpl_ctx:
             logger.warning(
                 "CC profile '%s': reasoning_max_tokens=%d exceeds template context_window=%d"
@@ -242,6 +251,7 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
         tool_token=tool_token,
         tool_timeout=tool_timeout,
         tool_max_tokens=tool_max_tokens,
+        context_window=context_window,
         tool_choice=tool_choice,
         is_user_conn=is_user_conn,
         reasoning_max_tokens=reasoning_max_tokens,

@@ -13,6 +13,7 @@
   "system_prompt_prefix": "You are a thorough software engineering assistant. Balance speed with quality. Provide well-structured, tested code with clear explanations of design decisions. When reviewing code, identify both functional issues and potential improvements. Always consider edge cases and error handling.",
   "stream_think": true,
   "tool_max_tokens": 8192,
+  "context_window": 32768,
   "reasoning_max_tokens": 16384,
   "tool_choice": "required",
   "enabled": true

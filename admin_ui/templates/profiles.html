@@ -112,8 +112,8 @@
             </td>
           </tr>
           <tr>
-            <th class="text-muted fw-normal ps-0">max_tokens</th>
-            <td class="font-monospace">Tool: {{ p.tool_max_tokens or 8192 }} / Reasoning: {{ p.reasoning_max_tokens or 16384 }}</td>
+            <th class="text-muted fw-normal ps-0">Limits & Ctx</th>
+            <td class="font-monospace">Tool Out: {{ p.tool_max_tokens or 8192 }} / Reasoning Out: {{ p.reasoning_max_tokens or 16384 }} / Ctx: {{ p.context_window or 'auto' }}</td>
           </tr>
           {% if p.tool_timeout %}
           <tr>
@@ -215,15 +215,19 @@
               <option value="required">required — force tool</option>
             </select>
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">Tool max_tokens</label>
             <input type="number" class="form-control" id="pm-tool-tokens" value="8192" min="512">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
+            <label class="form-label">Context Window <span class="text-muted small">(0 = auto)</span></label>
+            <input type="number" class="form-control" id="pm-context-window" value="0" min="0">
+          </div>
+          <div class="col-md-3">
             <label class="form-label">Reasoning max_tokens</label>
             <input type="number" class="form-control" id="pm-reasoning-tokens" value="16384" min="512">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label">{{ t(request, 'lbl.timeout') }} <span class="text-muted small">(Sekunden, leer = {{ t(request, 'lbl.server_default') }})</span></label>
             <input type="number" class="form-control" id="pm-tool-timeout" min="30" placeholder="{{ t(request, 'lbl.server_default') }}">
           </div>
@@ -321,6 +325,7 @@ async function fillModal(profile) {
   document.getElementById('pm-prefix').value         = profile?.system_prompt_prefix || '';
   document.getElementById('pm-stream-think').checked = profile?.stream_think || false;
   document.getElementById('pm-tool-tokens').value    = profile?.tool_max_tokens || 8192;
+  document.getElementById('pm-context-window').value = profile?.context_window || 0;
   document.getElementById('pm-reasoning-tokens').value = profile?.reasoning_max_tokens || 16384;
   document.getElementById('pm-tool-timeout').value   = profile?.tool_timeout || '';
   document.getElementById('pm-expert-template').value = profile?.expert_template_id || '';
@@ -399,6 +404,7 @@ async function saveProfile() {
     system_prompt_prefix: document.getElementById('pm-prefix').value.trim(),
     stream_think:         document.getElementById('pm-stream-think').checked,
     tool_max_tokens:      parseInt(document.getElementById('pm-tool-tokens').value) || 8192,
+    context_window:       parseInt(document.getElementById('pm-context-window').value) || 0,
     reasoning_max_tokens: parseInt(document.getElementById('pm-reasoning-tokens').value) || 16384,
     tool_timeout:         parseInt(document.getElementById('pm-tool-timeout').value) || null,
     expert_template_id:   document.getElementById('pm-expert-template').value,

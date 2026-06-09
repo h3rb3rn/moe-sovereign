@@ -72,6 +72,7 @@ def _resolve_user_experts(
         result: dict = {}
         for cat, cat_cfg in tmpl.get("experts", {}).items():
             _sys_prompt = (cat_cfg.get("system_prompt") or "").strip() if isinstance(cat_cfg, dict) else ""
+            _cat_ctx = int(cat_cfg.get("context_window") or 0) if isinstance(cat_cfg, dict) else 0
             if isinstance(cat_cfg, dict) and "models" in cat_cfg:
                 models_list = []
                 for m in cat_cfg.get("models", []):
@@ -98,6 +99,7 @@ def _resolve_user_experts(
                         "forced":         forced,
                         "_tier":          model_tier,
                         "_system_prompt": _sys_prompt,
+                        "context_window": _cat_ctx,
                     })
                 result[cat] = models_list
             elif isinstance(cat_cfg, dict):
@@ -112,6 +114,7 @@ def _resolve_user_experts(
                     "forced":         True,
                     "_tier":          None,
                     "_system_prompt": _sys_prompt,
+                    "context_window": _cat_ctx,
                 }]
         return result or None
     except Exception:

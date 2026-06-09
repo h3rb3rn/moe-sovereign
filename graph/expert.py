@@ -271,7 +271,7 @@ async def expert_worker(state_: AgentState):
             _max_input_chars = 0
             if _expert_ctx_window > 0:
                 # Reserve 1/EXPERT_OUTPUT_DIVISOR of window for output, capped at category cap
-                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window // EXPERT_OUTPUT_DIVISOR))
+                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, (_expert_ctx_window // EXPERT_OUTPUT_DIVISOR) * EXPERT_CHARS_PER_TOKEN))
                 # EXPERT_CHARS_PER_TOKEN chars/token conservative estimate for mixed content
                 _max_input_chars = max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window * EXPERT_CHARS_PER_TOKEN)
                 _available_task_chars = _max_input_chars - len(sys_prompt)

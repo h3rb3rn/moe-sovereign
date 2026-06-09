@@ -13,6 +13,7 @@
   "system_prompt_prefix": "You are a fast, efficient coding assistant optimized for developer productivity. Prioritize speed and correctness over exhaustive explanation. Deliver working code with minimal commentary. When multiple approaches exist, choose the simplest that meets requirements.",
   "stream_think": false,
   "tool_max_tokens": 4096,
+  "context_window": 32768,
   "reasoning_max_tokens": 4096,
   "tool_choice": "required",
   "enabled": true

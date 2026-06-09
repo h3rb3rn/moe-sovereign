@@ -2342,11 +2342,15 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </div>
           </div>
           <div class="row g-3 mb-3">
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label class="form-label small fw-semibold">Max Tool-Tokens</label>
               <input type="number" class="form-control form-control-sm" id="cc-tool-max-tokens" value="8192" min="512">
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Context Window <span class="text-muted">(0 = auto)</span></label>
+              <input type="number" class="form-control form-control-sm" id="cc-context-window" value="0" min="0">
+            </div>
+            <div class="col-md-4">
               <label class="form-label small fw-semibold">Max Reasoning-Tokens</label>
               <input type="number" class="form-control form-control-sm" id="cc-reasoning-max-tokens" value="16384" min="512">
             </div>
@@ -2422,6 +2426,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         }
         document.getElementById('cc-tool-choice').value = cfg.tool_choice || 'auto';
         document.getElementById('cc-tool-max-tokens').value = cfg.tool_max_tokens || 8192;
+        document.getElementById('cc-context-window').value = cfg.context_window || 0;
         document.getElementById('cc-reasoning-max-tokens').value = cfg.reasoning_max_tokens || 16384;
         document.getElementById('cc-system-prefix').value = cfg.system_prompt_prefix || '';
         document.getElementById('cc-stream-think').checked = !!cfg.stream_think;
@@ -2536,6 +2541,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           tool_endpoint,
           tool_choice:          document.getElementById('cc-tool-choice').value,
           tool_max_tokens:      parseInt(document.getElementById('cc-tool-max-tokens').value) || 8192,
+          context_window:       parseInt(document.getElementById('cc-context-window').value) || 0,
           reasoning_max_tokens: parseInt(document.getElementById('cc-reasoning-max-tokens').value) || 16384,
           system_prompt_prefix: document.getElementById('cc-system-prefix').value.trim(),
           stream_think:         document.getElementById('cc-stream-think').checked,
