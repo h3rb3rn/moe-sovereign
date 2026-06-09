@@ -21,7 +21,7 @@ from config import (
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN, JUDGE_TIMEOUT,
     PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN, PLANNER_TIMEOUT,
     GRAPH_INGEST_MODEL, GRAPH_INGEST_URL, GRAPH_INGEST_TOKEN,
-    MAX_JUDGE_TOKENS, JUDGE_NUM_CTX, PLANNER_NUM_CTX,
+    MAX_JUDGE_TOKENS, MAX_PLANNER_TOKENS, JUDGE_NUM_CTX, PLANNER_NUM_CTX,
     _SEARXNG_URL,
 )
 from context_budget import get_model_context_window
@@ -45,15 +45,16 @@ _planner_extra_body: dict | None = None
 if _judge_num_ctx > 0:
     _judge_extra_body = {"options": {"num_ctx": _judge_num_ctx}}
     logger.info("Judge LLM: num_ctx=%d (model=%s)", _judge_num_ctx, JUDGE_MODEL)
+_planner_extra_body = {"options": {"num_predict": MAX_PLANNER_TOKENS}}
 if _planner_num_ctx > 0:
-    _planner_extra_body = {"options": {"num_ctx": _planner_num_ctx}}
+    _planner_extra_body["options"]["num_ctx"] = _planner_num_ctx
     logger.info("Planner LLM: num_ctx=%d (model=%s)", _planner_num_ctx, PLANNER_MODEL)
 
 judge_llm   = ChatOpenAI(model=JUDGE_MODEL,   base_url=JUDGE_URL,   api_key=JUDGE_TOKEN,   timeout=JUDGE_TIMEOUT,
                          max_tokens=MAX_JUDGE_TOKENS,
                          **({"extra_body": _judge_extra_body} if _judge_extra_body else {}))
 planner_llm = ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN, timeout=PLANNER_TIMEOUT,
-                         **({"extra_body": _planner_extra_body} if _planner_extra_body else {}))
+                         max_tokens=MAX_PLANNER_TOKENS, extra_body=_planner_extra_body)
 
 # Ingest LLM: dedicated model for background GraphRAG extraction.
 # Falls back to judge_llm when GRAPH_INGEST_MODEL is not configured.

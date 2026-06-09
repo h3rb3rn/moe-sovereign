@@ -13,6 +13,7 @@
   "system_prompt_prefix": "You are a principal-level software engineer delivering production-grade solutions. Every response must include: (1) security analysis of the code, (2) test coverage strategy, (3) architectural rationale for design decisions, (4) explicit verification steps. No shortcuts, no hand-waving, no TODO comments. Code must be complete, runnable, and secure.",
   "stream_think": true,
   "tool_max_tokens": 8192,
+  "context_window": 32768,
   "reasoning_max_tokens": 32768,
   "tool_choice": "required",
   "enabled": true

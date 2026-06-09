@@ -540,8 +540,88 @@ async def _anthropic_tool_handler(
         system = _eff_sys_prefix
     tools      = body.get("tools", [])
     do_stream  = body.get("stream", False)
+
+    effective_model = session.tool_model or JUDGE_MODEL
+    effective_url   = session.tool_url   or JUDGE_URL
+    effective_token = session.tool_token or JUDGE_TOKEN
+    effective_node  = session.tool_endpoint or "unknown"
+    _node_timeout   = float(session.tool_timeout)
+
+    # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
+    # Fetched from Redis cache (TTL 3600s) — negligible overhead on warm path.
+    # Use the system token for model-info lookup: user tokens often lack /v1/models access
+    # on LiteLLM-backed providers (e.g. AIHUB returns 401 for user keys on that endpoint).
+    _info_token = TOKEN_MAP.get(effective_node, "") or effective_token
+    _tool_ctx = await _get_tool_ctx_async(
+        effective_model, effective_url, _info_token, state.redis_client
+    )
+    # For Ollama endpoints: the loaded num_ctx may be smaller than the model's native
+    # context window (e.g. 8192 default vs 32768 for qwen3-coder:30b).  Claude Code's
+    # 26-tool schemas alone consume ~7 800 tokens, leaving only 1 output token at 8192.
+    # Store the desired num_ctx now so (a) the budget guard uses the correct window and
+    # (b) we can inject it into the Ollama payload later.
+    _ollama_num_ctx: int = 0
+    if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
+        # Derive num_ctx from the CC profile's tool_max_tokens.
+        # When JUDGE_NUM_CTX is set, cap at that value so the CC tool model and
+        # the judge singleton are loaded at the same num_ctx — this prevents Ollama
+        # from reloading the model between every judge call and every tool call
+        # (a reload cycle that can take 2-3 min for 35B models and causes 502s).
+        # Prefer the CC profile's explicit num_ctx; fall back to JUDGE_NUM_CTX so the
+        # model loads with the same context window as the warmup call.  Never fall back
+        # to max_tokens — that is the max OUTPUT tokens, not the context window size.
+        # Using max_tokens as num_ctx would force a model reload every CC request
+        # (e.g. from warmup 32768 → request 8192) which takes 60-90 s at 35 B params.
+        _profile_ctx = session.context_window or session.tool_max_tokens or JUDGE_NUM_CTX or 32768
+        _ollama_num_ctx = _profile_ctx
+        if JUDGE_NUM_CTX > 0 and _ollama_num_ctx > JUDGE_NUM_CTX:
+            _ollama_num_ctx = JUDGE_NUM_CTX
+        # Never downgrade a warm model: if Ollama already has the model loaded with a
+        # larger context window, reuse that window instead of forcing a costly reload.
+        # A model loaded at 32768 can serve any request that needs ≤32768 tokens.
+        _ollama_base = effective_url.rstrip("/").removesuffix("/v1")
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {effective_token}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = effective_model.split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _ollama_num_ctx:
+                        logger.info(
+                            "cc_tool: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _ollama_num_ctx, effective_model,
+                        )
+                        _ollama_num_ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
+        if _ollama_num_ctx != (_tool_ctx or 0):
+            logger.info(
+                "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",
+                _ollama_num_ctx, effective_model,
+            )
+            _tool_ctx = _ollama_num_ctx
+
     _req_max_tokens = body.get("max_tokens", TOOL_MAX_TOKENS)
     max_tokens = min(_req_max_tokens, session.tool_max_tokens) if session.tool_max_tokens else _req_max_tokens
+    # Cap max_tokens to reserve at least a healthy input context budget.
+    # Claude Code requests max_tokens=32000 which in a 32768-window leaves only
+    # 268 tokens for input (32768 - 32000 - 500), causing _trim_oai_to_budget
+    # to strip all conversation history — model receives "3" with no context.
+    # When context window is small (e.g. 8192), split the context budget 50/50
+    # to ensure history is not trimmed to nothing.
+    _MIN_INPUT_BUDGET = min(TOOL_MAX_TOKENS, _tool_ctx // 2) if _tool_ctx > 0 else TOOL_MAX_TOKENS
+    _max_allowed_out = _tool_ctx - _MIN_INPUT_BUDGET - CC_SAFETY_BUFFER_TOKENS if _tool_ctx > 0 else 0
+    if _max_allowed_out > 0 and max_tokens > _max_allowed_out:
+        logger.info(
+            "cc_tool: capping max_tokens %d → %d (ctx=%d, reserving %d tok input budget)",
+            max_tokens, _max_allowed_out, _tool_ctx, _MIN_INPUT_BUDGET,
+        )
+        max_tokens = _max_allowed_out
 
     # Eval timing + input classification
     _eval_t0 = time.monotonic()
@@ -712,70 +792,6 @@ async def _anthropic_tool_handler(
     )
     oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
-    effective_model = session.tool_model or JUDGE_MODEL
-    effective_url   = session.tool_url   or JUDGE_URL
-    effective_token = session.tool_token or JUDGE_TOKEN
-    effective_node  = session.tool_endpoint or "unknown"
-    _node_timeout   = float(session.tool_timeout)
-
-    # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
-    # Fetched from Redis cache (TTL 3600s) — negligible overhead on warm path.
-    # Use the system token for model-info lookup: user tokens often lack /v1/models access
-    # on LiteLLM-backed providers (e.g. AIHUB returns 401 for user keys on that endpoint).
-    _info_token = TOKEN_MAP.get(effective_node, "") or effective_token
-    _tool_ctx = await _get_tool_ctx_async(
-        effective_model, effective_url, _info_token, state.redis_client
-    )
-    # For Ollama endpoints: the loaded num_ctx may be smaller than the model's native
-    # context window (e.g. 8192 default vs 32768 for qwen3-coder:30b).  Claude Code's
-    # 26-tool schemas alone consume ~7 800 tokens, leaving only 1 output token at 8192.
-    # Store the desired num_ctx now so (a) the budget guard uses the correct window and
-    # (b) we can inject it into the Ollama payload later.
-    _ollama_num_ctx: int = 0
-    if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
-        # Derive num_ctx from the CC profile's tool_max_tokens.
-        # When JUDGE_NUM_CTX is set, cap at that value so the CC tool model and
-        # the judge singleton are loaded at the same num_ctx — this prevents Ollama
-        # from reloading the model between every judge call and every tool call
-        # (a reload cycle that can take 2-3 min for 35B models and causes 502s).
-        # Prefer the CC profile's explicit num_ctx; fall back to JUDGE_NUM_CTX so the
-        # model loads with the same context window as the warmup call.  Never fall back
-        # to max_tokens — that is the max OUTPUT tokens, not the context window size.
-        # Using max_tokens as num_ctx would force a model reload every CC request
-        # (e.g. from warmup 32768 → request 8192) which takes 60-90 s at 35 B params.
-        _profile_ctx = session.tool_max_tokens or JUDGE_NUM_CTX or 32768
-        _ollama_num_ctx = _profile_ctx
-        if JUDGE_NUM_CTX > 0 and _ollama_num_ctx > JUDGE_NUM_CTX:
-            _ollama_num_ctx = JUDGE_NUM_CTX
-        # Never downgrade a warm model: if Ollama already has the model loaded with a
-        # larger context window, reuse that window instead of forcing a costly reload.
-        # A model loaded at 32768 can serve any request that needs ≤32768 tokens.
-        _ollama_base = effective_url.rstrip("/").removesuffix("/v1")
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
-                _ps_r = await _ps_cl.get(
-                    f"{_ollama_base}/api/ps",
-                    headers={"Authorization": f"Bearer {effective_token}"},
-                )
-                for _loaded in _ps_r.json().get("models", []):
-                    _lname = _loaded.get("name", "").split(":")[0]
-                    _ename = effective_model.split(":")[0]
-                    _loaded_ctx = _loaded.get("context_length", 0)
-                    if _lname == _ename and _loaded_ctx >= _ollama_num_ctx:
-                        logger.info(
-                            "cc_tool: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
-                            _loaded_ctx, _ollama_num_ctx, effective_model,
-                        )
-                        _ollama_num_ctx = _loaded_ctx
-                        break
-        except Exception:
-            pass  # non-fatal — fall through to the configured num_ctx
-        if _ollama_num_ctx != (_tool_ctx or 0):
-            logger.info(
-                "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",
-                _ollama_num_ctx, effective_model,
-            )
-            _tool_ctx = _ollama_num_ctx
     if _tool_ctx > 0:
         _CC_SAFETY_BUFFER = CC_SAFETY_BUFFER_TOKENS
         _avail_input = _tool_ctx - max_tokens - _CC_SAFETY_BUFFER
@@ -1772,6 +1788,8 @@ async def _anthropic_moe_handler(
         "planner_model_override": _pcfg.get("planner_model_override", ""),
         "planner_url_override":   _pcfg.get("planner_url_override", ""),
         "planner_token_override": _pcfg.get("planner_token_override", ""),
+        "planner_num_ctx":        _pcfg.get("planner_num_ctx", 0),
+        "judge_num_ctx":          _pcfg.get("judge_num_ctx", 0),
         "template_name":          body.get("model", "") or "",
         "pending_reports": _cc_pending_reports,
     }

@@ -212,10 +212,22 @@
           <div class="col-md-6">
             <label class="form-label small mb-1"><i class="bi bi-diagram-3 me-1 text-info"></i>Planner LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
             <div id="ct_planner_llm_select"></div>
+            <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the planner model. 0 = auto-detect from model.">
+              <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+              <input type="number" id="ct_planner_num_ctx" value="" class="form-control form-control-sm"
+                     style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
+              <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+            </div>
           </div>
           <div class="col-md-6">
             <label class="form-label small mb-1"><i class="bi bi-shield-check me-1"></i>Judge/Merger LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
             <div id="ct_judge_llm_select"></div>
+            <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the judge model. 0 = auto-detect from model.">
+              <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+              <input type="number" id="ct_judge_num_ctx" value="" class="form-control form-control-sm"
+                     style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
+              <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+            </div>
           </div>
           <div class="col-12">
             <div class="d-flex align-items-center gap-2 mb-1">
@@ -627,6 +639,9 @@ function addExpertCategory(prefix) {
 document.addEventListener('DOMContentLoaded', async () => {
   const llms = await fetchAvailableLlms();
   document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, llms);
+  // Pre-populate planner/judge selects so they are ready before the modal opens
+  buildLlmDropdown('ct_planner_llm_select', llms, '');
+  buildLlmDropdown('ct_judge_llm_select',   llms, '');
 
   document.getElementById('createTemplateModal').addEventListener('show.bs.modal', async () => {
     if (document.getElementById('ct_name').dataset.prefilled) return;
@@ -665,6 +680,10 @@ async function copyTemplate(tmplId) {
   if (ctJudge)   { ctJudge.value   = src.judge_prompt   || ''; if (src.judge_prompt)   document.getElementById('ct_judge_area').style.display   = ''; }
   buildLlmDropdown('ct_planner_llm_select', llms, src.planner_model || '');
   buildLlmDropdown('ct_judge_llm_select',   llms, src.judge_model   || '');
+  const ctPlannerCtx = document.getElementById('ct_planner_num_ctx');
+  const ctJudgeCtx   = document.getElementById('ct_judge_num_ctx');
+  if (ctPlannerCtx) ctPlannerCtx.value = src.planner_num_ctx || '';
+  if (ctJudgeCtx)   ctJudgeCtx.value   = src.judge_num_ctx   || '';
   _updateMedicalLegalWarning('ct');
   document.getElementById('ct_error').classList.add('d-none');
   new bootstrap.Modal(document.getElementById('createTemplateModal')).show();
@@ -687,9 +706,11 @@ async function createTemplate() {
         description:    document.getElementById('ct_desc').value.trim(),
         planner_prompt: document.getElementById('ct_planner_prompt').value.trim(),
         judge_prompt:   document.getElementById('ct_judge_prompt').value.trim(),
-        planner_model:  getLlmValue('ct_planner_llm_select'),
-        judge_model:    getLlmValue('ct_judge_llm_select'),
-        experts:        collectExperts('ct'),
+        planner_model:    getLlmValue('ct_planner_llm_select'),
+        planner_num_ctx:  parseInt(document.getElementById('ct_planner_num_ctx').value) || 0,
+        judge_model:      getLlmValue('ct_judge_llm_select'),
+        judge_num_ctx:    parseInt(document.getElementById('ct_judge_num_ctx').value) || 0,
+        experts:          collectExperts('ct'),
         enable_cache:            document.getElementById('ct_enable_cache').checked,
         enable_graphrag:         document.getElementById('ct_enable_graphrag').checked,
         enable_web_research:     document.getElementById('ct_enable_web_research').checked,
@@ -758,10 +779,24 @@ async function openEditModal(tmplId) {
       <div class="col-md-6">
         <label class="form-label small mb-1"><i class="bi bi-diagram-3 me-1 text-info"></i>Planner LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
         <div id="et_planner_llm_select"></div>
+        <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the planner model. 0 = auto-detect from model.">
+          <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+          <input type="number" id="et_planner_num_ctx" value="${tmpl.planner_num_ctx || ''}"
+                 class="form-control form-control-sm" style="font-size:.75rem;width:100px"
+                 min="0" step="1024" placeholder="auto">
+          <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+        </div>
       </div>
       <div class="col-md-6">
         <label class="form-label small mb-1"><i class="bi bi-shield-check me-1"></i>Judge/Merger LLM <span class="text-muted fw-normal">(empty = global default)</span></label>
         <div id="et_judge_llm_select"></div>
+        <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the judge model. 0 = auto-detect from model.">
+          <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+          <input type="number" id="et_judge_num_ctx" value="${tmpl.judge_num_ctx || ''}"
+                 class="form-control form-control-sm" style="font-size:.75rem;width:100px"
+                 min="0" step="1024" placeholder="auto">
+          <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+        </div>
       </div>
       <div class="col-12">
         <div class="d-flex align-items-center gap-2 mb-1">
@@ -891,9 +926,11 @@ async function saveEditTemplate() {
         description:    document.getElementById('et_desc').value.trim(),
         planner_prompt: document.getElementById('et_planner_prompt').value.trim(),
         judge_prompt:   document.getElementById('et_judge_prompt').value.trim(),
-        planner_model:  getLlmValue('et_planner_llm_select'),
-        judge_model:    getLlmValue('et_judge_llm_select'),
-        experts:        collectExperts('et'),
+        planner_model:    getLlmValue('et_planner_llm_select'),
+        planner_num_ctx:  parseInt(document.getElementById('et_planner_num_ctx').value) || 0,
+        judge_model:      getLlmValue('et_judge_llm_select'),
+        judge_num_ctx:    parseInt(document.getElementById('et_judge_num_ctx').value) || 0,
+        experts:          collectExperts('et'),
         enable_cache:            document.getElementById('et_enable_cache').checked,
         enable_graphrag:         document.getElementById('et_enable_graphrag').checked,
         enable_web_research:     document.getElementById('et_enable_web_research').checked,

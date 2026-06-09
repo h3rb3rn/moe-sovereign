@@ -1748,12 +1748,24 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-judge-model">
                     <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
                   </select>
+                  <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the judge model. 0 = auto-detect from model.">
+                    <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+                    <input type="number" id="tmpl-judge-num-ctx" class="form-control form-control-sm"
+                           style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
+                    <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+                  </div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label small">{{ t(request, 'portal.tmpl_planner_model') }} <span class="text-muted">(llm@host, {{ t(request, 'portal.tmpl_empty_default') }})</span></label>
                   <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-planner-model">
                     <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
                   </select>
+                  <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the planner model. 0 = auto-detect from model.">
+                    <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+                    <input type="number" id="tmpl-planner-num-ctx" class="form-control form-control-sm"
+                           style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
+                    <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+                  </div>
                 </div>
               </div>
               <div class="mt-2">
@@ -1910,6 +1922,8 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-desc').value = '';
         document.getElementById('tmpl-judge-model').value = '';
         document.getElementById('tmpl-planner-model').value = '';
+        document.getElementById('tmpl-judge-num-ctx').value = '';
+        document.getElementById('tmpl-planner-num-ctx').value = '';
         document.getElementById('tmpl-judge-prompt').value = '';
         document.getElementById('tmpl-planner-prompt').value = '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
@@ -1931,6 +1945,8 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-desc').value = tmpl.description || '';
         _setSelectOrKeep('tmpl-judge-model', cfg.judge_model || '');
         _setSelectOrKeep('tmpl-planner-model', cfg.planner_model || '');
+        document.getElementById('tmpl-judge-num-ctx').value = cfg.judge_num_ctx || '';
+        document.getElementById('tmpl-planner-num-ctx').value = cfg.planner_num_ctx || '';
         document.getElementById('tmpl-judge-prompt').value = cfg.judge_prompt || '';
         document.getElementById('tmpl-planner-prompt').value = cfg.planner_prompt || '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
@@ -2100,7 +2116,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         return {
           experts,
           judge_model:         document.getElementById('tmpl-judge-model').value.trim(),
+          judge_num_ctx:       parseInt(document.getElementById('tmpl-judge-num-ctx').value) || 0,
           planner_model:       document.getElementById('tmpl-planner-model').value.trim(),
+          planner_num_ctx:     parseInt(document.getElementById('tmpl-planner-num-ctx').value) || 0,
           judge_prompt:        document.getElementById('tmpl-judge-prompt').value.trim(),
           planner_prompt:      document.getElementById('tmpl-planner-prompt').value.trim(),
           enable_cache:        document.getElementById('tmpl-enable-cache').checked,
@@ -2324,11 +2342,15 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </div>
           </div>
           <div class="row g-3 mb-3">
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label class="form-label small fw-semibold">Max Tool-Tokens</label>
               <input type="number" class="form-control form-control-sm" id="cc-tool-max-tokens" value="8192" min="512">
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
+              <label class="form-label small fw-semibold">Context Window <span class="text-muted">(0 = auto)</span></label>
+              <input type="number" class="form-control form-control-sm" id="cc-context-window" value="0" min="0">
+            </div>
+            <div class="col-md-4">
               <label class="form-label small fw-semibold">Max Reasoning-Tokens</label>
               <input type="number" class="form-control form-control-sm" id="cc-reasoning-max-tokens" value="16384" min="512">
             </div>
@@ -2404,6 +2426,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         }
         document.getElementById('cc-tool-choice').value = cfg.tool_choice || 'auto';
         document.getElementById('cc-tool-max-tokens').value = cfg.tool_max_tokens || 8192;
+        document.getElementById('cc-context-window').value = cfg.context_window || 0;
         document.getElementById('cc-reasoning-max-tokens').value = cfg.reasoning_max_tokens || 16384;
         document.getElementById('cc-system-prefix').value = cfg.system_prompt_prefix || '';
         document.getElementById('cc-stream-think').checked = !!cfg.stream_think;
@@ -2518,6 +2541,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           tool_endpoint,
           tool_choice:          document.getElementById('cc-tool-choice').value,
           tool_max_tokens:      parseInt(document.getElementById('cc-tool-max-tokens').value) || 8192,
+          context_window:       parseInt(document.getElementById('cc-context-window').value) || 0,
           reasoning_max_tokens: parseInt(document.getElementById('cc-reasoning-max-tokens').value) || 16384,
           system_prompt_prefix: document.getElementById('cc-system-prefix').value.trim(),
           stream_think:         document.getElementById('cc-stream-think').checked,

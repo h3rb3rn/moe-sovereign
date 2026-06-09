@@ -9,6 +9,7 @@
   "system_prompt_prefix": "",
   "stream_think": true,
   "tool_max_tokens": 8192,
+  "context_window": 32768,
   "reasoning_max_tokens": 16384,
   "tool_choice": "required",
   "enabled": true

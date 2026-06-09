@@ -72,6 +72,7 @@ def _resolve_user_experts(
         result: dict = {}
         for cat, cat_cfg in tmpl.get("experts", {}).items():
             _sys_prompt = (cat_cfg.get("system_prompt") or "").strip() if isinstance(cat_cfg, dict) else ""
+            _cat_ctx = int(cat_cfg.get("context_window") or 0) if isinstance(cat_cfg, dict) else 0
             if isinstance(cat_cfg, dict) and "models" in cat_cfg:
                 models_list = []
                 for m in cat_cfg.get("models", []):
@@ -98,6 +99,7 @@ def _resolve_user_experts(
                         "forced":         forced,
                         "_tier":          model_tier,
                         "_system_prompt": _sys_prompt,
+                        "context_window": _cat_ctx,
                     })
                 result[cat] = models_list
             elif isinstance(cat_cfg, dict):
@@ -112,6 +114,7 @@ def _resolve_user_experts(
                     "forced":         True,
                     "_tier":          None,
                     "_system_prompt": _sys_prompt,
+                    "context_window": _cat_ctx,
                 }]
         return result or None
     except Exception:
@@ -130,6 +133,7 @@ def _resolve_template_prompts(
         "planner_prompt": "", "judge_prompt": "",
         "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
         "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
+        "planner_num_ctx": 0, "judge_num_ctx": 0,
         "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
         "search_fallback_ddg": _WEB_SEARCH_FALLBACK_DDG,
         "graphrag_max_chars": 0,
@@ -201,6 +205,8 @@ def _resolve_template_prompts(
             "planner_model_override":  planner_m,
             "planner_url_override":    planner_url,
             "planner_token_override":  planner_tok,
+            "planner_num_ctx":         int(tmpl.get("planner_num_ctx", 0)),
+            "judge_num_ctx":           int(tmpl.get("judge_num_ctx", 0)),
             "enable_cache":            tmpl.get("enable_cache", True),
             "enable_graphrag":         tmpl.get("enable_graphrag", True),
             "enable_web_research":     tmpl.get("enable_web_research", True),

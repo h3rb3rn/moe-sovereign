@@ -21,6 +21,7 @@ from config import (
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
     MAX_EXPERT_OUTPUT_CHARS, MAX_JUDGE_TOKENS, THOMPSON_SAMPLING_ENABLED,
     JUDGE_NUM_CTX, PLANNER_NUM_CTX,
+    MAX_PLANNER_TOKENS,
 )
 from context_budget import get_model_context_window as _static_ctx
 from metrics import PROM_THOMPSON
@@ -354,7 +355,7 @@ async def _invoke_judge_with_retry(
             if _j_api_type == "ollama" and _jm and _j_url_base:
                 # Native Ollama /api/chat — respects options.num_ctx unlike /v1/chat/completions.
                 _ollama_base = _j_url_base.removesuffix("/v1")
-                _ctx = JUDGE_NUM_CTX or _static_ctx(_jm)
+                _ctx = int(state.get("judge_num_ctx") or 0) or JUDGE_NUM_CTX or _static_ctx(_jm)
                 _opts: dict = {}
                 if _ctx > 0:
                     _opts["num_ctx"] = _ctx
@@ -414,38 +415,47 @@ async def _invoke_judge_with_retry(
     return SimpleNamespace(content=f"[Judge unavailable after {max_retries} retries: {last_error}]")
 
 
-def _judge_model_kw(model: str) -> dict:
+def _judge_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a judge call.
 
     Contains model_kwargs (max_tokens) and, when ctx is known, extra_body as a
     top-level key.  extra_body must NOT be placed inside model_kwargs — LangChain
     silently drops it from there, causing Ollama to use its Modelfile default
     num_ctx (8192) and reload the already-warm model.
+
+    Priority: state_num_ctx (per-template) > JUDGE_NUM_CTX (global env) > static table.
     """
     out: dict = {"max_tokens": MAX_JUDGE_TOKENS}
-    ctx = JUDGE_NUM_CTX or _static_ctx(model)
+    ctx = state_num_ctx or JUDGE_NUM_CTX or _static_ctx(model)
     if ctx > 0:
         out["extra_body"] = {"options": {"num_ctx": ctx}}
     return out
 
 
-def _planner_model_kw(model: str) -> dict:
+def _planner_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a planner call.
 
     Same contract as _judge_model_kw: extra_body is a top-level key, not nested
-    inside model_kwargs.
+    inside model_kwargs. Both num_ctx and num_predict are set so Ollama does not
+    fall back to Modelfile defaults that may truncate the plan JSON.
+
+    Priority: state_num_ctx (per-template) > PLANNER_NUM_CTX (global env) > static table.
     """
-    out: dict = {}
-    ctx = PLANNER_NUM_CTX or _static_ctx(model)
+    out: dict = {"max_tokens": MAX_PLANNER_TOKENS}
+    ctx = state_num_ctx or PLANNER_NUM_CTX or _static_ctx(model)
+    opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
-        out["extra_body"] = {"options": {"num_ctx": ctx}}
+        opts["num_ctx"] = ctx
+    out["extra_body"] = {"options": opts}
     return out
 
 
 async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template judge LLM, or global judge_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
-    When the configured endpoint is in degraded state, returns the fallback node directly."""
+    When the configured endpoint is in degraded state, returns the fallback node directly.
+    Respects state['judge_num_ctx'] for per-template context window override."""
+    _state_num_ctx = int(state.get("judge_num_ctx") or 0)
     m = (state.get("judge_model_override") or "").strip()
     u = (state.get("judge_url_override")   or "").strip()
     t = (state.get("judge_token_override") or "ollama").strip()
@@ -454,7 +464,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
-                          **_judge_model_kw(m))
+                          **_judge_model_kw(m, _state_num_ctx))
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -463,14 +473,23 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
-                          **_judge_model_kw(m))
+                          **_judge_model_kw(m, _state_num_ctx))
+    # No model override — if num_ctx differs from global, create a fresh instance
+    if _state_num_ctx > 0:
+        from services.llm_instances import _judge_num_ctx as _global_judge_ctx
+        if _state_num_ctx != _global_judge_ctx:
+            return ChatOpenAI(model=JUDGE_MODEL, base_url=JUDGE_URL, api_key=JUDGE_TOKEN,
+                              timeout=JUDGE_TIMEOUT,
+                              **_judge_model_kw(JUDGE_MODEL, _state_num_ctx))
     return judge_llm
 
 
 async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
     """Returns per-template planner LLM, or global planner_llm as fallback.
     Supports floating mode: if model is set but URL is empty, discovers the best node.
-    When the configured endpoint is in degraded state, returns the fallback node directly."""
+    When the configured endpoint is in degraded state, returns the fallback node directly.
+    Respects state['planner_num_ctx'] for per-template context window override."""
+    _state_num_ctx = int(state.get("planner_num_ctx") or 0)
     m = (state.get("planner_model_override") or "").strip()
     u = (state.get("planner_url_override")   or "").strip()
     t = (state.get("planner_token_override") or "ollama").strip()
@@ -479,7 +498,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT,
-                          **_planner_model_kw(m))
+                          **_planner_model_kw(m, _state_num_ctx))
     if m and not u:
         # Floating planner: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -488,7 +507,14 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT,
-                          **_planner_model_kw(m))
+                          **_planner_model_kw(m, _state_num_ctx))
+    # No model override — if num_ctx differs from global, create a fresh instance
+    if _state_num_ctx > 0:
+        from services.llm_instances import _planner_num_ctx as _global_planner_ctx
+        if _state_num_ctx != _global_planner_ctx:
+            return ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN,
+                              timeout=PLANNER_TIMEOUT,
+                              **_planner_model_kw(PLANNER_MODEL, _state_num_ctx))
     return planner_llm
 
 
@@ -568,19 +594,79 @@ def _get_model_node_load(model: str) -> float:
 def _estimate_model_vram_gb(model_name: str) -> float:
     """Estimate VRAM requirement in GB from model name.
 
-    Parses parameter count from name (e.g. 'llama3.3:70b' → 70) and estimates
-    VRAM based on common quantization: Q4 ≈ 0.55 * params + 1.5 GB overhead.
-    Returns 0 if parameter count cannot be parsed (disables VRAM filtering).
+    Parses the parameter count AND quantization from the name and applies the
+    correct bytes-per-parameter multiplier.  The default Q4 estimate is only
+    correct for GGUF Q4_K_M models; fp16/fp32/q8 variants need different math.
+
+    Examples
+    --------
+    phi4:14b-fp16     → 14 × 2.0 + 2 ≈ 30 GB   (fp16, 2 B/param)
+    qwen3.6:35b       → 35 × 0.55 + 1.5 ≈ 21 GB (Q4 default)
+    llama3.3:70b-q8_0 → 70 × 1.1  + 2  ≈ 79 GB  (Q8)
+    gemma4:31b-fp32   → 31 × 4.0  + 2  ≈ 126 GB (fp32)
+
+    Returns 0 when the parameter count cannot be parsed (disables filtering).
     """
     import re as _re
-    # Extract parameter count: "phi4:14b", "llama3.3:70b", "gemma4:31b"
-    m = _re.search(r"[:\-](\d+(?:\.\d+)?)b", model_name.lower())
+    name = model_name.lower()
+
+    # Extract parameter count: "phi4:14b-fp16", "llama3.3:70b", "gemma4:31b"
+    m = _re.search(r"[:\-](\d+(?:\.\d+)?)b", name)
     if not m:
-        # Try GGUF names: "Q4_0" → no param info, return 0
         return 0.0
     params_b = float(m.group(1))
-    # Q4_K_M estimate: ~0.55 bytes/param + 1.5 GB context/overhead
-    return params_b * 0.55 + 1.5
+
+    # Quantization-aware bytes-per-parameter
+    if _re.search(r"[-_]?fp32", name):
+        bpp = 4.0
+    elif _re.search(r"[-_]?fp16", name):
+        bpp = 2.0
+    elif _re.search(r"[-_]?fp8", name):
+        bpp = 1.0
+    elif _re.search(r"[-_]?q8", name):
+        bpp = 1.1
+    elif _re.search(r"[-_]?q6", name):
+        bpp = 0.75
+    elif _re.search(r"[-_]?q2", name):
+        bpp = 0.30
+    else:
+        bpp = 0.55  # Q4_K_M default
+
+    # Overhead: KV-cache, runtime tensors, activations (~1.5–2 GB for small models,
+    # larger for fp16/fp32 due to bigger activation buffers)
+    overhead = 2.0 if bpp >= 2.0 else 1.5
+    return params_b * bpp + overhead
+
+
+def _node_vram_by_url(base_url: str) -> float:
+    """Return the configured vram_gb for the node that serves base_url, or 0."""
+    url = base_url.rstrip("/")
+    for srv in INFERENCE_SERVERS_LIST:
+        if srv.get("url", "").rstrip("/") == url:
+            return float(srv.get("vram_gb", 0))
+    return 0.0
+
+
+def _can_coexist_on_node(model_a: str, model_b: str, node_vram_gb: float) -> bool:
+    """Return True if both models fit simultaneously in node_vram_gb.
+
+    Used before proactively unloading a model: if both models fit, let Ollama
+    manage VRAM naturally instead of evicting a warm model unnecessarily.
+    Returns False (conservative — unload) when any estimate is unavailable.
+    """
+    if node_vram_gb <= 0:
+        return False
+    est_a = _estimate_model_vram_gb(model_a)
+    est_b = _estimate_model_vram_gb(model_b)
+    if est_a <= 0 or est_b <= 0:
+        return False  # unknown size → don't risk it
+    fits = (est_a + est_b) <= node_vram_gb
+    if fits:
+        logger.debug(
+            "🔵 VRAM coexist: %s (%.1fGB) + %s (%.1fGB) = %.1fGB ≤ %.0fGB — skip unload",
+            model_a, est_a, model_b, est_b, est_a + est_b, node_vram_gb,
+        )
+    return fits
 
 
 async def _select_node(model_name: str, allowed_endpoints: List[str],

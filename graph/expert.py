@@ -48,7 +48,8 @@ from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
     _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
-    _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
+    _estimate_model_vram_gb, _can_coexist_on_node, _node_vram_by_url,
+    _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
@@ -270,7 +271,7 @@ async def expert_worker(state_: AgentState):
             _max_input_chars = 0
             if _expert_ctx_window > 0:
                 # Reserve 1/EXPERT_OUTPUT_DIVISOR of window for output, capped at category cap
-                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window // EXPERT_OUTPUT_DIVISOR))
+                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, (_expert_ctx_window // EXPERT_OUTPUT_DIVISOR) * EXPERT_CHARS_PER_TOKEN))
                 # EXPERT_CHARS_PER_TOKEN chars/token conservative estimate for mixed content
                 _max_input_chars = max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window * EXPERT_CHARS_PER_TOKEN)
                 _available_task_chars = _max_input_chars - len(sys_prompt)
@@ -460,13 +461,22 @@ async def expert_worker(state_: AgentState):
                 # (graph/synthesis.py), where the judge's verdict is available:
                 # a category the judge had to refine counts as negative. Self-
                 # confidence is used only as a fallback when refinement is disabled.
-                # Unload model — unless the same model is needed as judge LLM
+                # Unload model — unless the same model is needed as judge LLM,
+                # OR both models fit simultaneously in the node's VRAM (avoid
+                # evicting a warm model when there is enough space for both).
                 if api_type == "ollama":
                     _judge_model_name = (state_.get("judge_model_override") or JUDGE_MODEL).strip()
                     if model_name == _judge_model_name:
                         logger.debug(f"⏭️ VRAM unload skipped: {model_name} will be reused as judge")
                     else:
-                        asyncio.create_task(_ollama_unload(model_name, expert_base_url))
+                        _node_vram = _node_vram_by_url(expert_base_url)
+                        if _can_coexist_on_node(model_name, _judge_model_name, _node_vram):
+                            logger.debug(
+                                "⏭️ VRAM unload skipped: %s and %s coexist on %.0f GB node",
+                                model_name, _judge_model_name, _node_vram,
+                            )
+                        else:
+                            asyncio.create_task(_ollama_unload(model_name, expert_base_url))
                 res_prefix = f"ENSEMBLE: {model_name.upper()}" if model_cfg.get("forced") else model_name.upper()
                 result = {"res": f"[{res_prefix} / {cat}]: {content}", "model_cat": f"{model_name}::{cat}", **usage}
                 # User-owned connection tokens are tracked separately for budget exclusion.
