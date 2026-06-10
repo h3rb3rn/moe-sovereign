@@ -35,7 +35,8 @@ from metrics import (
 from parsing import _truncate_history as _truncate_history_pure
 from services.templates import _read_expert_templates
 from services.kafka import _kafka_publish
-from services.llm_instances import judge_llm, search
+from services.llm_instances import search
+from services.inference import ainvoke_judge_llm
 from web_search import _web_search_with_citations as _web_search_with_citations_impl
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -319,7 +320,7 @@ async def _self_evaluate(
             f"ANSWER: {answer[:600]}\n\n"
             "Reply ONLY with: SELF_RATING: N"
         )
-        eval_res = await judge_llm.ainvoke(eval_prompt)
+        eval_res = await ainvoke_judge_llm(eval_prompt)
         m = re.search(r'SELF_RATING:\s*([1-5])', eval_res.content)
         score = int(m.group(1)) if m else 3
         PROM_SELF_EVAL.observe(score)

@@ -416,6 +416,149 @@ async def _invoke_judge_with_retry(
     return SimpleNamespace(content=f"[Judge unavailable after {max_retries} retries: {last_error}]")
 
 
+async def ainvoke_judge_llm(prompt):
+    """ainvoke()-compatible call to the global judge LLM for background tasks
+    (self-rating, GraphRAG entity extraction, Open WebUI internal requests) that
+    have no AgentState/per-template overrides.
+
+    `prompt` may be a plain string (wrapped as a single user message) or a list of
+    `{"role", "content"}` message dicts (used as-is — e.g. Open WebUI's lc_messages).
+
+    For Ollama endpoints, posts to native /api/chat with options.num_ctx=JUDGE_NUM_CTX
+    — the same fix as _invoke_judge_with_retry. /v1/chat/completions silently drops
+    `options` (Ollama <=0.30.7), which previously caused these background calls to run
+    at the model's Modelfile-default ctx (e.g. 8192 for qwen3.6:35b instead of 98304),
+    additionally forcing a VRAM reload between this call and the native judge path.
+
+    The returned object exposes `.content` and `.usage_metadata` (input_tokens/
+    output_tokens from Ollama's prompt_eval_count/eval_count), matching the shape
+    `_extract_usage()` expects.
+
+    Non-Ollama endpoints fall back to judge_llm (ChatOpenAI) unchanged. Raises on
+    failure, like judge_llm.ainvoke() — callers already handle exceptions.
+    """
+    from types import SimpleNamespace
+    _j_url_base = (JUDGE_URL or "").rstrip("/")
+    if _url_api_type(_j_url_base) == "ollama" and JUDGE_MODEL and _j_url_base:
+        _ollama_base = _j_url_base.removesuffix("/v1")
+        _ctx = JUDGE_NUM_CTX or _static_ctx(JUDGE_MODEL)
+        _opts: dict = {}
+        if _ctx > 0:
+            _opts["num_ctx"] = _ctx
+        if MAX_JUDGE_TOKENS > 0:
+            _opts["num_predict"] = MAX_JUDGE_TOKENS
+        _messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
+        _payload: dict = {
+            "model":      JUDGE_MODEL,
+            "messages":   _messages,
+            "stream":     False,
+            "keep_alive": "5m",
+        }
+        if _opts:
+            _payload["options"] = _opts
+        async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
+            _r = await _hc.post(
+                f"{_ollama_base}/api/chat", json=_payload,
+                headers={"Authorization": f"Bearer {JUDGE_TOKEN}"},
+            )
+        _r.raise_for_status()
+        _data = _r.json()
+        return SimpleNamespace(
+            content=_data.get("message", {}).get("content", ""),
+            usage_metadata={
+                "input_tokens":  int(_data.get("prompt_eval_count", 0)),
+                "output_tokens": int(_data.get("eval_count", 0)),
+            },
+        )
+    return await judge_llm.ainvoke(prompt)
+
+
+class _OllamaAwareJudgeLLM:
+    """ainvoke()-compatible wrapper around ainvoke_judge_llm.
+
+    Drop-in replacement for the raw judge_llm singleton at call sites that expect
+    an object with an async .ainvoke(prompt) method (e.g. extract_and_ingest's
+    `llm` parameter).
+    """
+
+    async def ainvoke(self, prompt):
+        return await ainvoke_judge_llm(prompt)
+
+
+judge_llm_ollama_aware = _OllamaAwareJudgeLLM()
+
+
+async def _invoke_planner_with_retry(
+    state: "AgentState", prompt: str, temperature: float | None = None
+) -> tuple:
+    """Invoke the planner LLM, returns (res, used_fallback: bool).
+
+    For Ollama endpoints, posts directly to /api/chat with options.num_ctx set —
+    the same fix as _invoke_judge_with_retry. The OpenAI-compat /v1/chat/completions
+    endpoint silently drops the `options` dict (Ollama <=0.30.6), so a planner call
+    routed through ChatOpenAI/_get_planner_llm causes Ollama to reload the model at
+    its Modelfile-default num_ctx (8192) — even when the same model is already warm
+    at a much larger ctx for the judge/CC-tool path on the same node.
+    """
+    from types import SimpleNamespace as _NS
+    from config import PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN
+
+    _pm = (state.get("planner_model_override") or "").strip() or (PLANNER_MODEL or "")
+    _pu = (state.get("planner_url_override")   or "").strip() or (PLANNER_URL or "")
+    _pt = (state.get("planner_token_override") or "").strip() or (PLANNER_TOKEN or "ollama")
+    # Floating mode: model set but URL empty → discover best node
+    if (state.get("planner_model_override") or "").strip() and not (state.get("planner_url_override") or "").strip():
+        _all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
+        _node = await _select_node(_pm, _all_eps, user_id=state.get("user_id", ""))
+        _pu = _node.get("url") or URL_MAP.get(_node["name"], "")
+        _pt = _node.get("token", "ollama")
+        logger.info("🌐 Floating planner: %s → %s", _pm, _node["name"])
+    _p_url_base = (_pu or "").rstrip("/")
+    _p_api_type = _url_api_type(_p_url_base)
+
+    if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
+        _ollama_base = _p_url_base.removesuffix("/v1")
+        _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        _opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
+        if _ctx > 0:
+            _opts["num_ctx"] = _ctx
+        if temperature is not None:
+            _opts["temperature"] = temperature
+        _payload: dict = {
+            "model":      _pm,
+            "messages":   [{"role": "user", "content": prompt}],
+            "stream":     False,
+            "keep_alive": "5m",
+            "options":    _opts,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT) as _hc:
+                _r = await _hc.post(
+                    f"{_ollama_base}/api/chat", json=_payload,
+                    headers={"Authorization": f"Bearer {_pt}"},
+                )
+            _r.raise_for_status()
+            _data = _r.json()
+            _content = _data.get("message", {}).get("content", "")
+            if _content and _content.strip():
+                return _NS(
+                    content=_content,
+                    usage_metadata={
+                        "input_tokens":  int(_data.get("prompt_eval_count", 0)),
+                        "output_tokens": int(_data.get("eval_count", 0)),
+                    },
+                ), False
+            logger.warning("⚠️ Planner: empty response from native /api/chat — falling back")
+        except Exception as e:
+            logger.warning("⚠️ Planner: native /api/chat failed (%s) — falling back", str(e)[:80])
+
+    # Non-Ollama endpoint, or native call failed/empty → ChatOpenAI path with fallback chain
+    llm = await _get_planner_llm(state)
+    if temperature is not None:
+        llm = llm.bind(temperature=temperature)
+    return await _invoke_llm_with_fallback(llm, _p_url_base, prompt, timeout=PLANNER_TIMEOUT, label="Planner")
+
+
 def _judge_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a judge call.
 

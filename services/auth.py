@@ -176,12 +176,7 @@ async def _validate_oidc_token(token: str) -> Optional[dict]:
 async def _validate_api_key(raw_key: str) -> Optional[dict]:
     """Validate API key or OIDC JWT. Returns user-dict or {"error": "..."}."""
     if not raw_key:
-        logger.warning("auth: raw_key is empty or None")
         return {"error": "invalid_key"}
-    logger.warning(
-        "auth: validate_api_key prefix=%r len=%d is_moe_sk=%s",
-        raw_key[:10], len(raw_key), raw_key.startswith("moe-sk-")
-    )
     if OIDC_ENABLED and not raw_key.startswith("moe-sk-"):
         oidc_ctx = await _validate_oidc_token(raw_key)
         if oidc_ctx:
@@ -243,11 +238,23 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
 
 
 def _extract_api_key(request: Request) -> Optional[str]:
-    """Extract API key from Authorization header or x-api-key."""
+    """Extract API key from x-api-key or Authorization header.
+
+    x-api-key takes priority: it is the header used for MoE Sovereign
+    `moe-sk-...` keys configured explicitly for a CC profile/template.
+    Authorization: Bearer is only used as a fallback (e.g. OIDC JWTs).
+    This order matters because Claude Code clients that are also logged
+    in via `claude login` send their own Anthropic OAuth token
+    (`sk-ant-oat...`) in Authorization: Bearer alongside x-api-key —
+    that unrelated token must not shadow the configured moe-sk- key.
+    """
+    api_key = request.headers.get("x-api-key", "").strip()
+    if api_key:
+        return api_key
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    return request.headers.get("x-api-key", "").strip() or None
+    return None
 
 
 def _extract_session_id(request: Request) -> Optional[str]:
