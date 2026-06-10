@@ -15,7 +15,7 @@ import httpx
 import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
-    PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
+    MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS, PLANNER_NUM_CTX, PLANNER_MODEL,
     EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
@@ -43,8 +43,9 @@ from metrics import (
     PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
 )
 from services.inference import (
-    _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
-    _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
+    _select_node, _invoke_judge_with_retry,
+    _invoke_planner_with_retry,
+    _get_judge_llm, _get_expert_score, _record_expert_outcome,
     _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
     _estimate_model_vram_gb, _can_coexist_on_node, _node_vram_by_url,
     _mark_endpoint_degraded, _endpoint_is_degraded,
@@ -619,13 +620,7 @@ JSON array:"""
     from config import PLANNER_URL, PLANNER_MODEL, PLANNER_TOKEN
 
     for attempt in range(PLANNER_RETRIES):
-        _planner_llm_inst = await _get_planner_llm(state_)
-        _planner_url = (state_.get("planner_url_override") or PLANNER_URL or "").rstrip("/")
-        _planner_llm_inst = _planner_llm_inst.bind(temperature=_query_temp)
-        res, _planner_fb = await _invoke_llm_with_fallback(
-            _planner_llm_inst, _planner_url, prompt,
-            timeout=PLANNER_TIMEOUT, label="Planner",
-        )
+        res, _planner_fb = await _invoke_planner_with_retry(state_, prompt, temperature=_query_temp)
         if _planner_fb:
             await _report("⚠️ Planner: used local fallback (primary endpoint degraded)")
         u = _extract_usage(res)

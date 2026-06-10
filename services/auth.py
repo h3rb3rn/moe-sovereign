@@ -176,16 +176,27 @@ async def _validate_oidc_token(token: str) -> Optional[dict]:
 async def _validate_api_key(raw_key: str) -> Optional[dict]:
     """Validate API key or OIDC JWT. Returns user-dict or {"error": "..."}."""
     if not raw_key:
-        logger.warning("auth: raw_key is empty or None")
         return {"error": "invalid_key"}
-    logger.warning(
-        "auth: validate_api_key prefix=%r len=%d is_moe_sk=%s",
-        raw_key[:10], len(raw_key), raw_key.startswith("moe-sk-")
-    )
     if OIDC_ENABLED and not raw_key.startswith("moe-sk-"):
+        # Anthropic OAuth tokens (sk-ant-oat...) arrive here when a Claude Code
+        # client has `claude login` active and ANTHROPIC_API_KEY is not set or
+        # CC ignores it. We try OIDC first, but if the JWKS server is unreachable
+        # we log a clear warning so the admin can diagnose the rejection.
+        if raw_key.startswith("sk-ant-"):
+            logger.warning(
+                "auth: rejected Anthropic OAuth/session token (sk-ant-...). "
+                "Client must configure ANTHROPIC_API_KEY=moe-sk-... and run "
+                "`claude logout` so the moe-sk- key is used for authentication. "
+                "Key prefix: %.20s...", raw_key,
+            )
+            return {"error": "invalid_key"}
         oidc_ctx = await _validate_oidc_token(raw_key)
         if oidc_ctx:
             return oidc_ctx
+        logger.warning(
+            "auth: non-moe-sk- key rejected (OIDC validation failed or OIDC disabled). "
+            "Key prefix: %.16s...", raw_key,
+        )
         return {"error": "invalid_key"}
     if not raw_key.startswith("moe-sk-"):
         return {"error": "invalid_key"}
@@ -243,11 +254,45 @@ async def _validate_api_key(raw_key: str) -> Optional[dict]:
 
 
 def _extract_api_key(request: Request) -> Optional[str]:
-    """Extract API key from Authorization header or x-api-key."""
+    """Extract API key from x-api-key, anthropic-api-key, or Authorization header.
+
+    Priority order (highest to lowest):
+    1. x-api-key — explicit MoE Sovereign key, always wins
+    2. anthropic-api-key — Anthropic SDK canonical header (same semantics as x-api-key)
+    3. Authorization: Bearer moe-sk-... — moe-sk- keys via Bearer are fine
+    4. Authorization: Bearer sk-ant-oat... — Anthropic OAuth tokens, logged as warning
+
+    This order matters: Claude Code clients that are also logged in via
+    `claude login` may send their Anthropic OAuth token (`sk-ant-oat...`)
+    in Authorization: Bearer. When ANTHROPIC_API_KEY=moe-sk-... is also set,
+    CC sends it as x-api-key (SDK header), so x-api-key always wins.
+
+    If only a Bearer token is present and it looks like an Anthropic OAuth token,
+    we still return it — _validate_api_key will reject it with a clear log message
+    instead of silently failing after an unreachable JWKS endpoint.
+    """
+    # 1. x-api-key (highest priority — explicit MoE Sovereign key)
+    api_key = request.headers.get("x-api-key", "").strip()
+    if api_key:
+        return api_key
+    # 2. anthropic-api-key (Anthropic SDK canonical header)
+    api_key = request.headers.get("anthropic-api-key", "").strip()
+    if api_key:
+        return api_key
+    # 3 & 4. Authorization: Bearer
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return request.headers.get("x-api-key", "").strip() or None
+        token = auth[7:].strip()
+        if token.startswith("sk-ant-"):
+            # Anthropic OAuth / session token — will be rejected by _validate_api_key
+            # Log as debug so the rejection is traceable in logs
+            logger.debug(
+                "auth: received Anthropic OAuth token (sk-ant-...) — "
+                "rejected (not a moe-sk- key). Configure ANTHROPIC_API_KEY=moe-sk-... "
+                "or run `claude logout` on the client to suppress this."
+            )
+        return token
+    return None
 
 
 def _extract_session_id(request: Request) -> Optional[str]:

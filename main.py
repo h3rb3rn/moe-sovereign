@@ -460,7 +460,7 @@ class FeedbackRequest(BaseModel):
 # See that module for full field documentation grouped by purpose.
 
 # LLM instances and SearxNG search singleton moved to services/llm_instances.py
-from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
+from services.llm_instances import planner_llm, ingest_llm, search
 # state.graph_manager, state.redis_client, state.kafka_producer are already None
 # in state.py — do NOT re-assign here because main.py is lazy-imported as
 # "main" (not "__main__") by services/pipeline/chat.py on the first request,
@@ -472,6 +472,7 @@ from services.inference import (
     _degraded_endpoints, _mark_endpoint_degraded, _endpoint_is_degraded,
     _get_fallback_llm, _is_external_endpoint_url, _invoke_llm_with_fallback,
     _invoke_judge_with_retry, _get_judge_llm, _get_planner_llm,
+    ainvoke_judge_llm, judge_llm_ollama_aware,
     _refine_expert_response,
     _ps_cache, _PS_CACHE_TTL, _get_model_node_load, _estimate_model_vram_gb,
     _select_node, _get_expert_score, _record_expert_outcome, _infer_tier,
@@ -531,7 +532,7 @@ async def _kafka_consumer_loop() -> None:
                         or "ontology_gap_healer" in _src_model
                     )
                     if state.graph_manager is not None:
-                        _llm_for_ingest = ingest_llm if ingest_llm is not None else judge_llm
+                        _llm_for_ingest = ingest_llm if ingest_llm is not None else judge_llm_ollama_aware
                         _source_expert  = payload.get("source_expert", "")
                         # Persist synthesis insight as a :Synthesis node if present
                         _synthesis = payload.get("synthesis_insight")
@@ -612,7 +613,7 @@ async def _kafka_consumer_loop() -> None:
                             logger.debug(f"Planner pattern save failed: {e}")
                 elif msg.topic == KAFKA_TOPIC_LINTING:
                     if state.graph_manager is not None:
-                        _llm_for_lint = ingest_llm if ingest_llm is not None else judge_llm
+                        _llm_for_lint = ingest_llm if ingest_llm is not None else judge_llm_ollama_aware
                         async def _run_linting_tracked(_llm=_llm_for_lint):
                             PROM_LINTING_RUNS.inc()
                             try:
@@ -1656,7 +1657,7 @@ async def _handle_internal_direct(messages: List[Message], chat_id: str, stream:
     """Route internal Open WebUI requests directly to Judge LLM — no MoE pipeline."""
     logger.info(f"⚡ Open WebUI internal request detected — direct to Judge LLM (no pipeline)")
     lc_messages = [{"role": m.role, "content": m.content} for m in messages]
-    res = await judge_llm.ainvoke(lc_messages)
+    res = await ainvoke_judge_llm(lc_messages)
     content = res.content
     created = int(time.time())
     u = _extract_usage(res)

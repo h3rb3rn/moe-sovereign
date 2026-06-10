@@ -242,22 +242,39 @@ async def expert_worker(state_: AgentState):
                 redis_client=state.redis_client,
                 override=_expert_ctx_override,
             )
-            # Pin context to JUDGE_NUM_CTX for all large local Ollama models (≥25 B params).
-            # This keeps all expert calls aligned with the CC-tool keepalive-loop warmup
-            # context, preventing Ollama from reloading the model on every request.
-            # Without this, /api/show can return the GGUF native context (e.g. 40960),
-            # which differs from the keepalive-loaded 32768 and triggers a reload.
-            if (
-                token == "ollama"
-                and JUDGE_NUM_CTX > 0
-                and _pfn(model_name) >= 25.0
-                and _expert_ctx_window != JUDGE_NUM_CTX
-            ):
-                logger.info(
-                    "expert: ctx pinned to JUDGE_NUM_CTX=%d model=%s (was %d)",
-                    JUDGE_NUM_CTX, model_name, _expert_ctx_window,
+            # Pin context to min(resolved_window, JUDGE_NUM_CTX) for all large local
+            # Ollama models (>=25B params). This aligns expert calls with the CC-tool
+            # keepalive-loop warmup context (preventing Ollama reload-thrashing)
+            # while still respecting a smaller explicit template `context_window`
+            # override. Only models whose resolved window EXCEEDS JUDGE_NUM_CTX
+            # (e.g. a 262144 GGUF native default) get pinned DOWN to JUDGE_NUM_CTX;
+            # an unresolved window (0) falls back to JUDGE_NUM_CTX as a best guess.
+            if token == "ollama" and JUDGE_NUM_CTX > 0 and _pfn(model_name) >= 25.0:
+                _pinned_ctx = (
+                    JUDGE_NUM_CTX if _expert_ctx_window <= 0
+                    else min(_expert_ctx_window, JUDGE_NUM_CTX)
                 )
-                _expert_ctx_window = JUDGE_NUM_CTX
+                if _pinned_ctx != _expert_ctx_window:
+                    logger.info(
+                        "expert: ctx pinned to min(resolved=%d, JUDGE_NUM_CTX=%d)=%d model=%s",
+                        _expert_ctx_window, JUDGE_NUM_CTX, _pinned_ctx, model_name,
+                    )
+                    _expert_ctx_window = _pinned_ctx
+            # Clamp to the model's native max context length. Ollama silently caps
+            # an oversized num_ctx request to the GGUF's trained context_length
+            # (e.g. 32768 for qwen2.5-coder:32b, regardless of a 98304/262144
+            # template setting or the JUDGE_NUM_CTX pin above). Without this clamp,
+            # _max_input_chars below would assume more context than Ollama actually
+            # allocates, risking silent input overflow.
+            if token == "ollama" and url and _expert_ctx_window > 0:
+                from context_budget import fetch_ollama_native_ctx_max as _native_ctx_max
+                _native_max = await _native_ctx_max(model_name, url, token, state.redis_client)
+                if _native_max > 0 and _expert_ctx_window > _native_max:
+                    logger.info(
+                        "expert[%s]: ctx clamped to model native max=%d (requested %d, model=%s)",
+                        cat, _native_max, _expert_ctx_window, model_name,
+                    )
+                    _expert_ctx_window = _native_max
             # Categories that generate large code artifacts need higher token/output limits.
             # Defined here (before first use) to avoid Python's "referenced before assignment"
             # error that occurs when the name appears anywhere in the enclosing scope.

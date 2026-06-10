@@ -343,19 +343,25 @@ Four new templates created:
 
 ---
 
-## [auto-2026-06-10] - 2026-06-10
+## 2026-06-10 — Context-Budget Refactor, Tier-3 Reactivation & Ollama Judge Ctx Fix
+
+> `impact: minor` · `breaking: no` · `domain: context_budget, graph/expert, graph/synthesis, services/pipeline/anthropic, services/context_index, services/inference`
+
+### Added
+
+- **`context_budget.py`**: new `resolve_io_budget()` and `estimate_overflow()` helpers generalize the proven CC-tool input/output budget split (cap output → derive input budget → enforce output floor) for reuse across `graph/expert.py`, `graph/synthesis.py`, and `services/pipeline/anthropic.py`.
+- **Pre-flight overflow monitoring**: `graph/expert.py` and `graph/synthesis.py` now log a warning and increment `moe_budget_exceeded_total{limit_type="expert_preflight"|"merger_preflight"}` when a model's context window is too small for the requested input/output split.
+- **Summarization-on-drop**: `services/pipeline/anthropic.py` now summarizes message groups dropped from history (instead of silently discarding them) via a small background LLM, and injects the summary into the CC work context (`cc:work:{session_id}`).
 
 ### Changed
 
-- **Infrastructure / Docker**: `docker-compose.yml`
+- **`graph/expert.py`**: `_expert_max_output`/`_max_input_chars` now derived via `resolve_io_budget()`. JUDGE_NUM_CTX pinning for large local Ollama models (≥25B params) changed from an unconditional override to `min(resolved_window, JUDGE_NUM_CTX)`, so a smaller explicit template `context_window` is no longer pinned upward.
+- **`services/context_index.py`** (Tier-3 GraphRAG context index): embedding function switched from ChromaDB's bundled in-process ONNX model to the `moe-embed` sidecar (`nomic-embed-text` via Ollama HTTP, reusing `memory_retrieval.HttpxOllamaEF`), removing the embedding model from the memory-limited orchestrator container. Added chunk-count cap (`CONTEXT_MAX_CHUNKS`) and batched upsert (`CONTEXT_INDEX_BATCH_SIZE`).
+- **`docker-compose.yml`**: `langgraph-app` memory limit raised 4G → 6G as additional safety margin.
 
-| Metadata | Value |
-|---|---|
-| `impact` | patch |
-| `breaking` | no |
-| `domain` | Infrastructure / Docker |
-| `git` | `6f997b1e` on `main` |
-| `files changed` | 1 |
+### Fixed
+
+- **Ollama judge-LLM context window for background tasks**: `services/inference.py` adds `ainvoke_judge_llm()` / `judge_llm_ollama_aware`, which post directly to Ollama's native `/api/chat` with `options.num_ctx=JUDGE_NUM_CTX` for self-rating (`services/helpers.py`), GraphRAG ingest/linting and Open WebUI internal requests (`main.py`). Previously these calls went through `judge_llm.ainvoke()` (OpenAI-compat `/v1/chat/completions`), which Ollama ≤0.30.7 silently ignores `options` on — causing the model to reload at its Modelfile-default context (e.g. 8192 instead of 98304) and VRAM-thrash against the native judge/CC-tool path.
 
 ---
 

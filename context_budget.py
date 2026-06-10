@@ -293,6 +293,58 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
     return 0
 
 
+async def fetch_ollama_native_ctx_max(
+    model: str, base_url: str, token: str = "ollama",
+    redis_client=None, timeout: float = 5.0,
+) -> int:
+    """Query Ollama /api/show for a model's trained max context length.
+
+    This is the hard ceiling from the GGUF metadata (model_info.*.context_length,
+    e.g. 32768 for qwen2.5-coder:32b) — independent of any configured/requested
+    num_ctx. Ollama silently caps an oversized num_ctx request to this value, so
+    callers use it to clamp template-configured context_window overrides that
+    exceed what a given model can physically serve.
+
+    Cached in Redis for 24h (static GGUF property). Returns 0 if unavailable.
+    """
+    cache_key = ""
+    if redis_client and base_url:
+        url_hash = hashlib.sha256(base_url.encode()).hexdigest()[:12]
+        cache_key = f"moe:ctxmax:{url_hash}:{model}"
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return int(cached)
+        except Exception:
+            pass
+
+    result = 0
+    try:
+        import httpx
+        api_base = base_url.rstrip("/").removesuffix("/v1")
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{api_base}/api/show",
+                json={"model": model},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 200:
+                model_info = resp.json().get("model_info") or {}
+                for key, val in model_info.items():
+                    if key.endswith("context_length") and isinstance(val, int) and val > 0:
+                        result = val
+                        break
+    except Exception:
+        pass
+
+    if redis_client and cache_key and result > 0:
+        try:
+            await redis_client.setex(cache_key, 86400, str(result))
+        except Exception:
+            pass
+    return result
+
+
 async def get_model_ctx_async(
     model: str,
     base_url: str = "",
