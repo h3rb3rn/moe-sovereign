@@ -176,7 +176,12 @@ async def _validate_oidc_token(token: str) -> Optional[dict]:
 async def _validate_api_key(raw_key: str) -> Optional[dict]:
     """Validate API key or OIDC JWT. Returns user-dict or {"error": "..."}."""
     if not raw_key:
+        logger.warning("auth: raw_key is empty or None")
         return {"error": "invalid_key"}
+    logger.warning(
+        "auth: validate_api_key prefix=%r len=%d is_moe_sk=%s",
+        raw_key[:10], len(raw_key), raw_key.startswith("moe-sk-")
+    )
     if OIDC_ENABLED and not raw_key.startswith("moe-sk-"):
         oidc_ctx = await _validate_oidc_token(raw_key)
         if oidc_ctx:
