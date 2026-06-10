@@ -17,6 +17,12 @@ Tier 3 — COLD       (Neo4j, disk-bound)        GraphRAG entity/fact extraction
 Tier 4 — EPISODIC   (Neo4j, :Episode nodes)    Past task outcomes + routing hints
 ```
 
+> **CC tool-call path note:** The Claude Code (CC) tool path layers two additional,
+> *request-scoped* compression mechanisms on top of T1/T2 above — a session-scoped
+> Context Index and a Summarization-on-Drop step. These are distinct from the
+> long-term T3 (Neo4j GraphRAG) / T4 (Episodic) tiers despite similar numbering.
+> See [CC Tool-Path Context Compression](#cc-tool-path-context-compression-layers-14).
+
 | Tier | Type (Tulving) | Backend | Capacity | Retrieval | TTL |
 |---|---|---|---|---|---|
 | **T1 — Hot** | Working memory | LLM native context | Model-dependent (4k–128k) | Verbatim, instant | Session duration |
@@ -193,11 +199,14 @@ only as a last-resort fallback when embeddings are unavailable.
 | GPT-4o | 128,000 tokens | 128,000 tokens | Cloud | Per token |
 | Claude 3.5 Sonnet | 200,000 tokens | 200,000 tokens | Cloud | Per token |
 | Local 7B (no SM) | 4,000–32,000 tokens | 4,000–32,000 tokens | Local | 0 |
-| **MoE Sovereign + Tier-2 SM** | 4,000–32,000 (model) | **1,000,000+ (infra)** | **Local** | **0** |
+| MoE Sovereign + Tier-2 SM only | 4,000–32,000 (model) | 1,000,000+ (infra, conversation history) | Local | 0 |
+| **MoE Sovereign + Tier-2 SM + Tier-3 Context Index + Summarization-on-Drop** | 4,000–32,000 (model) | **1,000,000+ (infra, conversation history *and* per-request documents/codebase)** | **Local** | **0** |
 
 **Key insight:** The effective context window is no longer a model property — it is an
 infrastructure property. Upgrading from a 7B to a 70B model does not increase the
-recall range. Enabling Tier-2 Semantic Memory does, for any model.
+recall range. Enabling Tier-2 Semantic Memory does, for any model; the CC tool path's
+Tier-3 Context Index and Summarization-on-Drop (see below) extend this further to
+large per-request `system_prompt` content (codebases, documents) and long CC sessions.
 
 ### Accuracy comparison at different depths
 
@@ -209,6 +218,40 @@ recall range. Enabling Tier-2 Semantic Memory does, for any model.
 | 100 turns | 0.00 (evicted) | 1.00 | **1.00*** |
 
 *Unit-test verified retrieval at depth 100; end-to-end LLM benchmark pending.
+
+---
+
+## CC Tool-Path Context Compression (Layers 1–4)
+
+The Claude Code (CC) tool-call path (`services/pipeline/anthropic.py`) extends the
+effective context window of the configured `tool_model` through four layers. The
+numbering below parallels the T1–T4 memory tiers above but is **request-scoped**:
+"Layer 3" (Context Index) and "Layer 4" (Summarization-on-Drop) are ephemeral,
+per-session mechanisms — distinct from the long-term T3 (Neo4j GraphRAG) / T4
+(Episodic) tiers, which persist across sessions indefinitely.
+
+| Layer | Mechanism | Component | Status |
+|---|---|---|---|
+| 1 — Hot | Native LLM context (`tool_max_tokens` / `context_window`, verbatim) | Model | Always on |
+| 2 — Warm retrieval | Tier-2 Semantic Memory — cross-turn ANN retrieval (see above) | `memory_retrieval.py` | Per-template opt-in (`enable_semantic_memory`) |
+| 3 — Context Index | Chunk + ChromaDB-index a large `system_prompt` for the session; retrieve semantically relevant chunks per expert call | `services/context_index.py` | `CC_CONTEXT_INDEX_ENABLED=false` (default; see [context-variables.md](context-variables.md#13-tier-3-context-index-status)) |
+| 4 — Summarization-on-Drop | When conversation history must still be trimmed to fit `avail_input_tokens`, the dropped message groups are LLM-summarized into `cc:work:{session_id}["dropped_history_summary"]` and re-injected on the next request | `services/pipeline/anthropic.py` (`_trim_oai_to_budget_async`) | Active when `CC_HISTORY_COMPRESS_LLM` resolves to a non-empty model (falls back to `GRAPH_COMPRESS_LLM`) |
+
+Layers 3 and 4 are also the targets of **pre-flight overflow monitoring**
+(`estimate_overflow()` / `PROM_BUDGET_EXCEEDED`): an overflowing CC request triggers
+Tier-3 indexing on the spot, regardless of the normal `CONTEXT_INDEX_THRESHOLD`.
+
+Full variable/threshold reference, including `resolve_io_budget()` (the shared
+input/output budget split used by the CC tool path, `graph/expert.py`, and
+`graph/synthesis.py`): [docs/system/context-variables.md](context-variables.md).
+
+**Important:** No `context_window` / `num_ctx` value configured anywhere in this
+system is ever `1,000,000`. The static context-window heuristic
+(`_PARAM_CTX_HEURISTIC` in `context_budget.py`) caps at `32768` for models
+≥ 25B parameters, and all current CC profiles set `context_window: 32768` explicitly.
+"1M+" in the comparison table above refers to the **aggregate retrievable context**
+across Layers 1–4 — how much prior conversation/document content can influence a
+response — not any single model's `num_ctx`.
 
 ---
 
@@ -279,7 +322,7 @@ Users control their memory behaviour in the **User Portal → Profile → Conver
 | Component | File | Description |
 |---|---|---|
 | Memory store | `memory_retrieval.py` | `ConversationMemoryStore` — storage, retrieval, merge |
-| Embedding function | `memory_retrieval._HttpxOllamaEF` | httpx-based Ollama embedding, no `ollama` package required |
+| Embedding function | `memory_retrieval.HttpxOllamaEF` | httpx-based Ollama embedding, no `ollama` package required; reused by `services/context_index.py` for Tier-3 |
 | Retrieval strategy | `memory_retrieval._retrieve_sync()` | Always-numpy cosine ranking; HNSW last resort only |
 | Cross-session retrieval | `memory_retrieval.retrieve_cross_session()` | Privacy-scoped retrieval across sessions |
 | Merge strategy | `memory_retrieval.merge_session_results()` | Recency-first + hard cap (current always precedes cross) |

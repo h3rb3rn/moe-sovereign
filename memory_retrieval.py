@@ -134,7 +134,7 @@ _EMBED_SLUG   = (
 _COLLECTION_NAME = f"conversation_memory_{_EMBED_SLUG}"
 
 
-class _HttpxOllamaEF:
+class HttpxOllamaEF:
     """Minimal ChromaDB-compatible embedding function calling Ollama via httpx.
 
     Uses the batch /api/embed endpoint (Ollama ≥0.3) for all texts in one
@@ -231,7 +231,7 @@ def _build_embedding_function():
             import httpx
             httpx.get(base_url.rstrip("/") + "/api/tags", timeout=3.0).raise_for_status()
             logger.info(f"Semantic memory: Ollama embedding '{model_name}' at {base_url}")
-            return _HttpxOllamaEF(model_name=model_name, base_url=base_url)
+            return HttpxOllamaEF(model_name=model_name, base_url=base_url)
         except Exception as _e:
             logger.warning(
                 f"Semantic memory: Ollama not reachable ({_e}), "

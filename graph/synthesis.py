@@ -42,6 +42,7 @@ from metrics import (
     PROM_CORRECTIONS_INJECTED, PROM_CORRECTIONS_STORED,
     PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES, PROM_SYNTHESIS_CREATED,
     PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
+    PROM_BUDGET_EXCEEDED,
 )
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
@@ -378,13 +379,27 @@ async def merger_node(state_: AgentState):
     _merger_judge_tok   = (state_.get("judge_token_override") or "ollama")
     from context_budget import (get_model_ctx_async as _get_ctx_async,
                                 get_model_max_output_async as _get_max_out_async,
-                                MERGER_FIXED_TOKENS, CHARS_PER_TOKEN)
+                                MERGER_FIXED_TOKENS, MERGER_HEADROOM_TOKENS, CHARS_PER_TOKEN,
+                                resolve_io_budget)
     _merger_ctx    = await _get_ctx_async(_merger_judge_model, _merger_judge_url,
                                           _merger_judge_tok, state.redis_client)
     _merger_maxout = await _get_max_out_async(_merger_judge_model, _merger_judge_url,
                                               _merger_judge_tok, state.redis_client)
     if _merger_ctx > 0:
-        _max_input_chars = (_merger_ctx - MERGER_FIXED_TOKENS - _merger_maxout) * CHARS_PER_TOKEN
+        _budget = resolve_io_budget(
+            ctx_tokens=_merger_ctx, desired_max_tokens=_merger_maxout,
+            static_overhead_tokens=MERGER_FIXED_TOKENS, chars_per_token=CHARS_PER_TOKEN,
+            min_output_tokens=MERGER_HEADROOM_TOKENS, min_input_ratio=0.5,
+        )
+        if _budget["overflow"]:
+            logger.warning(
+                "synthesis: PRE-FLIGHT merger overflow — ctx=%d, fixed=%d",
+                _merger_ctx, MERGER_FIXED_TOKENS,
+            )
+            PROM_BUDGET_EXCEEDED.labels(
+                user_id=state_.get("session_id", "unknown"), limit_type="merger_preflight"
+            ).inc()
+        _max_input_chars = _budget["avail_input_chars"]
         _query_in = state_["input"]
         if len(_query_in) > _max_input_chars:
             _query_in = _query_in[:_max_input_chars] + "\n[…input truncated to fit context window]"

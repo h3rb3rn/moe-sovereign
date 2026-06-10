@@ -43,6 +43,7 @@ from metrics import (
     PROM_CORRECTIONS_INJECTED, PROM_CORRECTIONS_STORED,
     PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES, PROM_SYNTHESIS_CREATED,
     PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
+    PROM_BUDGET_EXCEEDED,
 )
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
@@ -271,7 +272,23 @@ async def expert_worker(state_: AgentState):
             _max_input_chars = 0
             if _expert_ctx_window > 0:
                 # Reserve 1/EXPERT_OUTPUT_DIVISOR of window for output, capped at category cap
-                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, (_expert_ctx_window // EXPERT_OUTPUT_DIVISOR) * EXPERT_CHARS_PER_TOKEN))
+                from context_budget import resolve_io_budget as _resolve_io_budget
+                _budget = _resolve_io_budget(
+                    ctx_tokens=_expert_ctx_window,
+                    desired_max_tokens=_max_output_cap // EXPERT_CHARS_PER_TOKEN,
+                    chars_per_token=EXPERT_CHARS_PER_TOKEN,
+                    min_output_tokens=EXPERT_INPUT_MIN_CHARS // EXPERT_CHARS_PER_TOKEN,
+                    min_input_ratio=1 - (1.0 / EXPERT_OUTPUT_DIVISOR),
+                )
+                if _budget["overflow"]:
+                    logger.warning(
+                        "expert[%s]: PRE-FLIGHT overflow — ctx=%d too small (model=%s)",
+                        cat, _expert_ctx_window, model_name,
+                    )
+                    PROM_BUDGET_EXCEEDED.labels(
+                        user_id=state_.get("session_id", "unknown"), limit_type="expert_preflight"
+                    ).inc()
+                _expert_max_output = min(_max_output_cap, max(EXPERT_INPUT_MIN_CHARS, _budget["max_output_tokens"] * EXPERT_CHARS_PER_TOKEN))
                 # EXPERT_CHARS_PER_TOKEN chars/token conservative estimate for mixed content
                 _max_input_chars = max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window * EXPERT_CHARS_PER_TOKEN)
                 _available_task_chars = _max_input_chars - len(sys_prompt)

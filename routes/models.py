@@ -211,12 +211,12 @@ async def list_models(raw_request: Request):
                     continue
                 try:
                     _api_type = _api_type_map.get(node, "ollama")
-                    _wc_url   = URL_MAP[node].rstrip("/")
+                    _wc_base  = URL_MAP[node].rstrip("/").removesuffix("/v1")
                     _wc_token = TOKEN_MAP.get(node, "ollama")
                     async with httpx.AsyncClient(timeout=5) as _wc_client:
                         if _api_type == "ollama":
                             _r = await _wc_client.get(
-                                f"{_wc_url}/api/tags",
+                                f"{_wc_base}/api/tags",
                                 headers={"Authorization": f"Bearer {_wc_token}"},
                             )
                             _wc_models = [
@@ -224,7 +224,7 @@ async def list_models(raw_request: Request):
                             ] if _r.status_code == 200 else []
                         else:
                             _r = await _wc_client.get(
-                                f"{_wc_url}/v1/models",
+                                f"{_wc_base}/v1/models",
                                 headers={"Authorization": f"Bearer {_wc_token}"},
                             )
                             _wc_models = [

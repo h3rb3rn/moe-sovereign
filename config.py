@@ -202,7 +202,7 @@ EXPERT_CHARS_PER_TOKEN  = int(os.getenv("EXPERT_CHARS_PER_TOKEN",  "3"))    # co
 
 # ── CC pipeline safety buffer ─────────────────────────────────────────────────
 # Token headroom reserved for message framing overhead in Claude Code tool calls.
-CC_SAFETY_BUFFER_TOKENS = int(os.getenv("CC_SAFETY_BUFFER_TOKENS", "500"))
+CC_SAFETY_BUFFER_TOKENS = int(os.getenv("CC_SAFETY_BUFFER_TOKENS", "1000"))
 
 CACHE_HIT_THRESHOLD       = float(os.getenv("CACHE_HIT_THRESHOLD",      "0.15"))
 SOFT_CACHE_THRESHOLD      = float(os.getenv("SOFT_CACHE_THRESHOLD",     "0.50"))
@@ -263,16 +263,20 @@ HISTORY_MAX_ENTRIES = int(os.getenv("HISTORY_MAX_ENTRIES", "5000"))
 # CC history compression: long assistant/tool messages in the conversation history
 # are condensed and their full content cached in Redis (TTL 3600 s) to prevent
 # context flooding without dropping entire turns.
-CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD",  "3000"))
-CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "2"))
+CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD",  "8000"))
+CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "8"))
 # Fallback delay (seconds) before the CC pre-analysis planner fires.
 # Overridden per-server via model_load_delay in Admin UI → Servers.
 CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 
 # Master kill-switch for the infrastructure-side "1M+ context" path on CC tool
 # requests: ChromaDB context indexing (Tier-3), Tier-2 semantic-memory injection
-# and Tier-3 retrieval. Default OFF — this path caused per-request OOM kills of the
-# orchestrator (4 GiB cgroup limit). When disabled, CC tool requests use the plain
+# and Tier-3 retrieval. Default OFF — this path previously caused per-request OOM
+# kills of the orchestrator (4 GiB cgroup limit) because the ChromaDB embedding
+# function loaded an in-process ONNX model. services/context_index.py now uses
+# the moe-embed sidecar over HTTP instead, removing that memory load. Re-enable
+# via .env (CC_CONTEXT_INDEX_ENABLED=true) after verifying orchestrator memory
+# stays stable under docker stats. When disabled, CC tool requests use the plain
 # pass-through path (system prompt forwarded verbatim, budget-trimmed).
 CC_CONTEXT_INDEX_ENABLED = os.getenv("CC_CONTEXT_INDEX_ENABLED", "false").lower() in ("1", "true", "yes")
 
@@ -361,6 +365,14 @@ _FUZZY_GRAPH_THRESHOLD           = float(os.getenv("FUZZY_GRAPH_THRESHOLD",     
 _GRAPH_COMPRESS_THRESHOLD_FACTOR = float(os.getenv("GRAPH_COMPRESS_THRESHOLD_FACTOR", "2.0"))
 _GRAPH_COMPRESS_LLM_MODEL        = os.getenv("GRAPH_COMPRESS_LLM", "")
 _GRAPH_COMPRESS_LLM_TIMEOUT      = float(os.getenv("GRAPH_COMPRESS_LLM_TIMEOUT", "3.0"))
+
+# Background summarizer for messages dropped by the CC tool path's history
+# trimmer (_trim_oai_to_budget). Falls back to GRAPH_COMPRESS_LLM so a single
+# configured "small summarizer" model covers both compression paths. Empty
+# value disables summarization-on-drop — dropped history is silently discarded
+# (the original behavior).
+CC_HISTORY_COMPRESS_LLM         = os.getenv("CC_HISTORY_COMPRESS_LLM", _GRAPH_COMPRESS_LLM_MODEL)
+CC_HISTORY_COMPRESS_LLM_TIMEOUT = float(os.getenv("CC_HISTORY_COMPRESS_LLM_TIMEOUT", str(_GRAPH_COMPRESS_LLM_TIMEOUT)))
 
 # =============================================================================
 # HTTP limits & CORS (used in middleware setup)

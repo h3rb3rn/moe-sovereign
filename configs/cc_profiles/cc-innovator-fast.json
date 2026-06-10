@@ -14,7 +14,7 @@
   "stream_think": false,
   "tool_max_tokens": 4096,
   "context_window": 32768,
-  "reasoning_max_tokens": 4096,
+  "reasoning_max_tokens": 8192,
   "tool_choice": "required",
   "enabled": true
 }

@@ -47,6 +47,13 @@ INDEX_TTL_SECS: int = int(os.getenv("CONTEXT_INDEX_TTL_SECS", "14400"))
 # Fallback: when no index exists, how many chars of context to pass verbatim
 FALLBACK_CONTEXT_CHARS: int = int(os.getenv("CONTEXT_FALLBACK_CHARS", "8000"))
 
+# Hard cap on chunks indexed per session — bounds embedding/upsert memory and
+# request time for pathologically large system prompts.
+MAX_CHUNKS_PER_INDEX: int = int(os.getenv("CONTEXT_MAX_CHUNKS", "200"))
+
+# Upsert chunks in batches to bound peak memory during embedding.
+INDEX_BATCH_SIZE: int = int(os.getenv("CONTEXT_INDEX_BATCH_SIZE", "16"))
+
 
 # ── ChromaDB collection helper ────────────────────────────────────────────────
 
@@ -65,22 +72,36 @@ def _collection_name(session_id: str) -> str:
 
 
 def _get_embedding_function():
-    """Return an in-process ONNX embedding function (all-MiniLM-L6-v2).
+    """Embedding helper backed by the moe-embed sidecar (HttpxOllamaEF).
 
-    Uses ChromaDB's bundled DefaultEmbeddingFunction, which runs fully in-process
-    via ONNX Runtime — no external service, no inference-GPU load.  The model
-    artifact (~90 MB) is cached in the chroma-onnx-cache volume on first use.
+    Calls nomic-embed-text via Ollama HTTP (HttpxOllamaEF from
+    memory_retrieval.py) instead of loading an in-process ONNX model. This
+    keeps the embedding model out of the 4G-limited orchestrator container,
+    fixing the OOM that previously forced CC_CONTEXT_INDEX_ENABLED=false.
 
-    Falls back to None (keyword-based retrieval) if the ONNX runtime is not
-    available, and logs a warning so the failure is visible in container logs.
+    NOTE: this is called DIRECTLY (e.g. ``ef(texts)``) to precompute
+    embeddings in the calling thread — it is intentionally NOT passed as
+    ChromaDB's ``embedding_function=`` kwarg. Attaching it to the collection
+    causes the Rust client to call back into Python from a different OS
+    thread/runtime than the one that first initialised chromadb's client
+    (e.g. the asyncio-event-loop thread vs. an ``asyncio.to_thread`` worker),
+    which deadlocks for ~90s and fails with "timed out in upsert."
+
+    Returns None (caller should skip indexing) if the sidecar helper is
+    unavailable, logging a warning so the failure is visible in container logs.
     """
     try:
-        import chromadb.utils.embedding_functions as cef
-        return cef.DefaultEmbeddingFunction()
+        from memory_retrieval import HttpxOllamaEF
+        base_url = os.getenv(
+            "CONTEXT_INDEX_EMBED_URL",
+            os.getenv("SEMANTIC_MEMORY_EMBED_URL", "http://moe-embed:11434"),
+        )
+        model_name = os.getenv("CONTEXT_INDEX_EMBED_MODEL", "nomic-embed-text")
+        return HttpxOllamaEF(model_name=model_name, base_url=base_url)
     except Exception as exc:
         logger.warning(
-            "context_index: no embedding function available — retrieval will use "
-            "chromadb keyword fallback (degraded quality). Error: %s", exc
+            "context_index: embedding function unavailable — Tier-3 indexing "
+            "skipped for this session. Error: %s", exc
         )
         return None
 
@@ -265,9 +286,18 @@ def _index_sync(session_id: str, content: str) -> Optional[dict]:
     chunks = _chunk_text(content)
     if not chunks:
         return None
+    if len(chunks) > MAX_CHUNKS_PER_INDEX:
+        logger.warning(
+            "context_index: truncating %d chunks to %d for session %s (CONTEXT_MAX_CHUNKS)",
+            len(chunks), MAX_CHUNKS_PER_INDEX, session_id[:12],
+        )
+        chunks = chunks[:MAX_CHUNKS_PER_INDEX]
+
+    ef = _get_embedding_function()
+    if ef is None:
+        return None
 
     client = _get_chromadb_client()
-    ef = _get_embedding_function()
     coll_name = _collection_name(session_id)
 
     try:
@@ -275,10 +305,9 @@ def _index_sync(session_id: str, content: str) -> Optional[dict]:
             client.delete_collection(coll_name)
         except Exception:
             pass
-        kw: dict = {"name": coll_name, "metadata": {"hnsw:space": "cosine"}}
-        if ef is not None:
-            kw["embedding_function"] = ef
-        coll = client.get_or_create_collection(**kw)
+        # No embedding_function attached — embeddings are precomputed below and
+        # passed explicitly to upsert() (see _get_embedding_function docstring).
+        coll = client.get_or_create_collection(name=coll_name, metadata={"hnsw:space": "cosine"})
     except Exception as exc:
         logger.warning("context_index: collection create failed: %s", exc)
         return None
@@ -297,9 +326,21 @@ def _index_sync(session_id: str, content: str) -> Optional[dict]:
         })
 
     try:
-        coll.upsert(documents=docs, ids=ids, metadatas=metas)
+        for i in range(0, len(docs), INDEX_BATCH_SIZE):
+            batch_docs = docs[i:i + INDEX_BATCH_SIZE]
+            t_embed0 = time.time()
+            embeddings = [e.tolist() for e in ef(batch_docs)]
+            logger.info("context_index: batch %d embedded in %.1fs", i // INDEX_BATCH_SIZE, time.time() - t_embed0)
+            t_upsert0 = time.time()
+            coll.upsert(
+                documents=batch_docs,
+                embeddings=embeddings,
+                ids=ids[i:i + INDEX_BATCH_SIZE],
+                metadatas=metas[i:i + INDEX_BATCH_SIZE],
+            )
+            logger.info("context_index: batch %d upserted in %.1fs", i // INDEX_BATCH_SIZE, time.time() - t_upsert0)
     except Exception as exc:
-        logger.warning("context_index: upsert failed: %s", exc)
+        logger.warning("context_index: upsert failed: %r", exc, exc_info=True)
         return None
 
     toc = _build_toc(content)
@@ -355,21 +396,24 @@ async def retrieve_context_for_task(
 
 
 def _retrieve_sync(session_id: str, query: str, n_results: int) -> str:
-    client = _get_chromadb_client()
     ef = _get_embedding_function()
+    if ef is None:
+        return ""
+
+    client = _get_chromadb_client()
     coll_name = _collection_name(session_id)
 
     try:
-        kw: dict = {"name": coll_name}
-        if ef is not None:
-            kw["embedding_function"] = ef
-        coll = client.get_collection(**kw)
+        # No embedding_function attached — see _get_embedding_function docstring;
+        # the query embedding is precomputed below and passed explicitly.
+        coll = client.get_collection(name=coll_name)
     except Exception:
         return ""
 
     try:
+        query_embeddings = [e.tolist() for e in ef([query[:500]])]
         results = coll.query(
-            query_texts=[query[:500]],
+            query_embeddings=query_embeddings,
             n_results=min(n_results, coll.count()),
             where={"session_id": session_id},
         )

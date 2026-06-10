@@ -343,6 +343,22 @@ Four new templates created:
 
 ---
 
+## [auto-2026-06-10] - 2026-06-10
+
+### Changed
+
+- **Infrastructure / Docker**: `docker-compose.yml`
+
+| Metadata | Value |
+|---|---|
+| `impact` | patch |
+| `breaking` | no |
+| `domain` | Infrastructure / Docker |
+| `git` | `6f997b1e` on `main` |
+| `files changed` | 1 |
+
+---
+
 ## [2.8.0] - 2026-04-24
 
 > `impact: minor` · `breaking: no` · `domain: orchestrator, mcp, benchmarks, routing`

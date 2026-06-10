@@ -136,7 +136,7 @@ services:
       resources:
         limits:
           cpus: '${LANGGRAPH_CPU_LIMIT}'
-          memory: 4G
+          memory: 6G
         reservations:
           memory: 512M
     env_file:

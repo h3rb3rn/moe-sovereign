@@ -48,6 +48,8 @@ from config import (
     CC_SAFETY_BUFFER_TOKENS,
     CC_PREANALYSIS_DELAY_SECS,
     CC_CONTEXT_INDEX_ENABLED,
+    CC_HISTORY_COMPRESS_LLM,
+    CC_HISTORY_COMPRESS_LLM_TIMEOUT,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -60,6 +62,7 @@ from metrics import (
     PROM_CORRECTIONS_INJECTED, PROM_CORRECTIONS_STORED,
     PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES,
     PROM_SYNTHESIS_CREATED, PROM_THOMPSON,
+    PROM_BUDGET_EXCEEDED,
 )
 from services.auth import _validate_api_key, _extract_api_key, _extract_session_id
 from services.kafka import _kafka_publish
@@ -98,6 +101,9 @@ from context_budget import (
     get_model_ctx_async as _get_tool_ctx_async,
     get_model_context_window as _get_static_ctx_window,
     CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
+    resolve_io_budget,
+    estimate_overflow,
+    MIN_OUTPUT_BUDGET_TOKENS,
 )
 # CC tool conversations contain code, JSON, shell output and tool results —
 # all denser than prose. Use 3 chars/token for input estimation to avoid
@@ -108,22 +114,25 @@ from services.pipeline.cc_session import CCSession, _resolve_cc_session
 logger = logging.getLogger("MOE-SOVEREIGN")
 
 
-def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
+def _trim_oai_to_budget_impl(oai_msgs: list, available_input_tokens: int) -> tuple:
     """Remove oldest non-system message groups until history fits the token budget.
 
     Groups are defined by: one non-tool message + all immediately following tool messages.
     This preserves tool_call/tool_result integrity — they are dropped as atomic pairs.
     The last group (current user turn) is never dropped.
+
+    Returns (kept_messages, dropped_flag, dropped_groups) where dropped_groups is
+    the list of message-groups removed, oldest first.
     """
-    budget_chars = int(available_input_tokens * _CHARS_PER_TOKEN)
+    budget_chars = int(available_input_tokens * _CC_TOOL_CHARS_PER_TOKEN)
     total_chars  = sum(len(json.dumps(m)) for m in oai_msgs)
     if total_chars <= budget_chars:
-        return oai_msgs, False
+        return oai_msgs, False, []
 
     sys_msgs  = [m for m in oai_msgs if m.get("role") == "system"]
     conv_msgs = [m for m in oai_msgs if m.get("role") != "system"]
     if len(conv_msgs) <= 1:
-        return oai_msgs, False
+        return oai_msgs, False, []
 
     # Build groups: each starts with a non-tool message, collects trailing tool messages
     groups: list = []
@@ -133,19 +142,96 @@ def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
         elif groups:
             groups[-1].append(msg)
     if len(groups) <= 1:
-        return oai_msgs, False
+        return oai_msgs, False, []
 
-    sys_chars   = sum(len(json.dumps(m)) for m in sys_msgs)
-    kept_groups = list(groups)
-    dropped     = False
+    sys_chars     = sum(len(json.dumps(m)) for m in sys_msgs)
+    kept_groups   = list(groups)
+    dropped       = False
+    dropped_groups: list = []
     while len(kept_groups) > 1:
         cand = sys_chars + sum(len(json.dumps(m)) for g in kept_groups for m in g)
         if cand <= budget_chars:
             break
-        kept_groups.pop(0)
+        dropped_groups.append(kept_groups.pop(0))
         dropped = True
 
-    return sys_msgs + [m for g in kept_groups for m in g], dropped
+    return sys_msgs + [m for g in kept_groups for m in g], dropped, dropped_groups
+
+
+def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
+    """Thin wrapper over _trim_oai_to_budget_impl discarding the dropped groups."""
+    kept_msgs, dropped, _dropped_groups = _trim_oai_to_budget_impl(oai_msgs, available_input_tokens)
+    return kept_msgs, dropped
+
+
+async def _summarize_dropped_groups_llm(dropped_groups: list, budget_hint_chars: int = 1500) -> Optional[str]:
+    """Summarise message groups dropped by history trimming using a small local LLM.
+
+    Returns a compact summary string on success, or None on missing config,
+    timeout, or any error — callers fall back to silent dropping (the
+    pre-existing behaviour).
+    """
+    from langchain_openai import ChatOpenAI
+    if not CC_HISTORY_COMPRESS_LLM or not dropped_groups or judge_llm is None:
+        return None
+    try:
+        lines: list = []
+        for group in dropped_groups:
+            for msg in group:
+                role = msg.get("role", "")
+                content = msg.get("content")
+                if not isinstance(content, str):
+                    content = json.dumps(content) if content is not None else ""
+                lines.append(f"[{role}] {content[:500]}")
+        flattened = "\n".join(lines)[:8000]
+        if not flattened.strip():
+            return None
+
+        compress_prompt = (
+            f"Summarise the following conversation history in at most {budget_hint_chars} characters. "
+            "Preserve concrete facts: file paths touched, decisions made, commands run, "
+            "and outstanding next steps. Output plain text only — no JSON, no headers.\n\n"
+            f"{flattened}"
+        )
+        _compress_llm = ChatOpenAI(
+            model=CC_HISTORY_COMPRESS_LLM,
+            base_url=judge_llm.openai_api_base,
+            api_key=judge_llm.openai_api_key,
+            timeout=CC_HISTORY_COMPRESS_LLM_TIMEOUT,
+        )
+        result = await asyncio.wait_for(
+            _compress_llm.ainvoke(compress_prompt),
+            timeout=CC_HISTORY_COMPRESS_LLM_TIMEOUT + 0.5,
+        )
+        summary = result.content.strip()
+        if summary:
+            logger.info(
+                "cc_tool: summarized %d dropped group(s) into %d chars",
+                len(dropped_groups), len(summary),
+            )
+            return summary
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.debug("cc_tool: dropped-history summarization skipped: %s", e)
+    return None
+
+
+async def _trim_oai_to_budget_async(
+    oai_msgs: list,
+    available_input_tokens: int,
+    redis_client,
+    session_id: str | None,
+) -> tuple:
+    """Trim history to budget; on drop, summarize dropped groups into cc:work.
+
+    Falls back to pure dropping (no summary) when CC_HISTORY_COMPRESS_LLM is
+    unset, redis_client/session_id are unavailable, or summarization fails.
+    """
+    kept_msgs, dropped, dropped_groups = _trim_oai_to_budget_impl(oai_msgs, available_input_tokens)
+    if dropped and dropped_groups and redis_client and session_id:
+        summary = await _summarize_dropped_groups_llm(dropped_groups)
+        if summary:
+            await _append_dropped_history_summary(redis_client, session_id, summary)
+    return kept_msgs, dropped
 
 
 import hashlib as _hashlib
@@ -297,6 +383,26 @@ async def _update_cc_work_summary(
         logger.debug("cc_work: update failed: %s", _e)
 
 
+async def _append_dropped_history_summary(redis_client, session_id: str, summary: str) -> None:
+    """Append an LLM-generated summary of dropped history to cc:work:{session_id}.
+
+    Keeps only the last 5 summaries (each capped at 1500 chars) so the
+    [CONTEXT TRIMMED] block injected by _inject_cc_work_context stays bounded.
+    """
+    if not redis_client or not session_id or not summary:
+        return
+    key = f"cc:work:{session_id}"
+    try:
+        raw = await redis_client.get(key)
+        work: dict = json.loads(raw) if raw else {"steps": [], "files_read": [], "findings": []}
+        history = work.get("dropped_history_summary", [])
+        history.append(summary[:1500])
+        work["dropped_history_summary"] = history[-5:]
+        await redis_client.set(key, json.dumps(work, ensure_ascii=False), ex=_CC_WORK_TTL)
+    except Exception as _e:
+        logger.debug("cc_work: dropped-history summary append failed: %s", _e)
+
+
 async def _inject_cc_work_context(
     oai_msgs: list,
     redis_client,
@@ -314,7 +420,7 @@ async def _inject_cc_work_context(
         if not raw:
             return oai_msgs
         work = json.loads(raw)
-        if not any(work.get(k) for k in ("steps", "files_read", "findings", "task_plan")):
+        if not any(work.get(k) for k in ("steps", "files_read", "findings", "task_plan", "dropped_history_summary")):
             return oai_msgs
 
         lines = ["[CC_WORK_CONTEXT — already completed in this session]"]
@@ -322,6 +428,11 @@ async def _inject_cc_work_context(
             lines.append("[EXPERT ANALYSIS — task plan from specialist model]")
             lines.append(work["task_plan"])
             lines.append("[End of expert analysis]")
+        if work.get("dropped_history_summary"):
+            lines.append("[CONTEXT TRIMMED — summary of removed conversation history]")
+            for s in work["dropped_history_summary"]:
+                lines.append(f"  • {s}")
+            lines.append("[End of trimmed-history summary]")
         if work.get("files_read"):
             lines.append("Files already read: " + ", ".join(work["files_read"]))
         if work.get("steps"):
@@ -555,6 +666,26 @@ async def _anthropic_tool_handler(
     _tool_ctx = await _get_tool_ctx_async(
         effective_model, effective_url, _info_token, state.redis_client
     )
+    # P0 fix: when context-window resolution returns 0 (API timeout, model
+    # not loaded, Redis miss), fall back to the profile's context_window
+    # (usually 32768) so the budget system does not collapse to 0 → 256
+    # output tokens → 1–3 character responses.
+    _ctx_profile = session.context_window if session.context_window else 0
+    if _tool_ctx == 0:
+        if _ctx_profile > 0:
+            logger.warning(
+                "cc_tool: context_window lookup returned 0 — "
+                "falling back to profile context_window=%d "
+                "(model=%s url=%s)", _ctx_profile, effective_model, effective_url,
+            )
+            _tool_ctx = _ctx_profile
+        else:
+            logger.warning(
+                "cc_tool: context_window lookup returned 0 and no profile "
+                "context_window — falling back to TOOL_MAX_TOKENS*4 = %d "
+                "(model=%s)", TOOL_MAX_TOKENS * 4, effective_model,
+            )
+            _tool_ctx = TOOL_MAX_TOKENS * 4
     # For Ollama endpoints: the loaded num_ctx may be smaller than the model's native
     # context window (e.g. 8192 default vs 32768 for qwen3-coder:30b).  Claude Code's
     # 26-tool schemas alone consume ~7 800 tokens, leaving only 1 output token at 8192.
@@ -614,14 +745,18 @@ async def _anthropic_tool_handler(
     # to strip all conversation history — model receives "3" with no context.
     # When context window is small (e.g. 8192), split the context budget 50/50
     # to ensure history is not trimmed to nothing.
-    _MIN_INPUT_BUDGET = min(TOOL_MAX_TOKENS, _tool_ctx // 2) if _tool_ctx > 0 else TOOL_MAX_TOKENS
-    _max_allowed_out = _tool_ctx - _MIN_INPUT_BUDGET - CC_SAFETY_BUFFER_TOKENS if _tool_ctx > 0 else 0
-    if _max_allowed_out > 0 and max_tokens > _max_allowed_out:
+    _budget1 = resolve_io_budget(
+        ctx_tokens=_tool_ctx, desired_max_tokens=max_tokens,
+        chars_per_token=_CC_TOOL_CHARS_PER_TOKEN,
+        safety_buffer_tokens=CC_SAFETY_BUFFER_TOKENS,
+        min_output_tokens=0, min_input_ratio=0.5,
+    )
+    if _tool_ctx > 0 and _budget1["max_output_tokens"] < max_tokens:
         logger.info(
-            "cc_tool: capping max_tokens %d → %d (ctx=%d, reserving %d tok input budget)",
-            max_tokens, _max_allowed_out, _tool_ctx, _MIN_INPUT_BUDGET,
+            "cc_tool: capping max_tokens %d → %d (ctx=%d, reserving input budget)",
+            max_tokens, _budget1["max_output_tokens"], _tool_ctx,
         )
-        max_tokens = _max_allowed_out
+    max_tokens = _budget1["max_output_tokens"]
 
     # Eval timing + input classification
     _eval_t0 = time.monotonic()
@@ -793,9 +928,48 @@ async def _anthropic_tool_handler(
     oai_tools    = _anthropic_tools_to_openai(tools) if tools else None
 
     if _tool_ctx > 0:
-        _CC_SAFETY_BUFFER = CC_SAFETY_BUFFER_TOKENS
-        _avail_input = _tool_ctx - max_tokens - _CC_SAFETY_BUFFER
-        oai_messages, _history_trimmed = _trim_oai_to_budget(oai_messages, _avail_input)
+        # CRITICAL FIX: Tool-Schemas (~7800 Token) und System-Prompt fressen Kontext,
+        # werden aber von oai_messages chars NICHT erfasst. Sie vom Budget abziehen
+        # BEVOR das History-Trimming beginnt — sonst trimmt der Algorithmus zu wenig.
+        # NOTE: JSON-Schemas tokenisieren effizienter als Text (~3 chars/token gilt NICHT).
+        # Der Code-Comment (line 560) dokumentiert: 26-tool schemas ≈ 7800 Token.
+        # Use this as a hard-coded overhead estimate for schema token count.
+        _schema_overhead_tok = 7800 if oai_tools else 0
+        _system_prompt_tok = len(system) // _CC_TOOL_CHARS_PER_TOKEN if system else 0
+        _static_overhead = _schema_overhead_tok + _system_prompt_tok
+
+        _budget2 = resolve_io_budget(
+            ctx_tokens=_tool_ctx, desired_max_tokens=max_tokens,
+            static_overhead_tokens=_static_overhead,
+            chars_per_token=_CC_TOOL_CHARS_PER_TOKEN,
+            safety_buffer_tokens=CC_SAFETY_BUFFER_TOKENS,
+            min_output_tokens=MIN_OUTPUT_BUDGET_TOKENS, min_input_ratio=0.5,
+        )
+
+        # PRE-FLIGHT overflow check (before trimming): would the untouched
+        # payload + desired output exceed the context window? If so, this is
+        # a strong signal to offload the system prompt into the Tier-3
+        # context index regardless of CONTEXT_INDEX_THRESHOLD.
+        _input_est_preflight = sum(len(json.dumps(m)) for m in oai_messages) / _CC_TOOL_CHARS_PER_TOKEN \
+            + _static_overhead
+        if estimate_overflow(int(_input_est_preflight), max_tokens, _tool_ctx, CC_SAFETY_BUFFER_TOKENS):
+            logger.warning(
+                "cc_tool: PRE-FLIGHT overflow — est_input=%d tok + max_out=%d tok + buffer=%d > ctx=%d "
+                "(session=%s, model=%s)",
+                int(_input_est_preflight), max_tokens, CC_SAFETY_BUFFER_TOKENS, _tool_ctx,
+                session_id[:8] if session_id else "none", effective_model,
+            )
+            PROM_BUDGET_EXCEEDED.labels(user_id=session_id or "unknown", limit_type="cc_tool_preflight").inc()
+            if CC_CONTEXT_INDEX_ENABLED and session_id and system and state.redis_client:
+                try:
+                    from services.context_index import ensure_indexed as _ensure_ctx_preflight
+                    await _ensure_ctx_preflight(session_id, system, state.redis_client)
+                except Exception:
+                    pass
+
+        oai_messages, _history_trimmed = await _trim_oai_to_budget_async(
+            oai_messages, _budget2["avail_input_tokens"], state.redis_client, session_id,
+        )
         if _history_trimmed:
             logger.info(
                 "cc_tool: trimmed message history to fit ctx_window=%d (max_out=%d, model=%s)",
@@ -805,12 +979,17 @@ async def _anthropic_tool_handler(
         # Use _CC_TOOL_CHARS_PER_TOKEN=3 (not the prose default of 4) because CC
         # conversations are code-heavy — tool results, JSON, shell output tokenize
         # at ~3 chars/token. Underestimating input causes num_ctx to be hit mid-response.
-        _input_est_tok = sum(len(json.dumps(m)) for m in oai_messages) / _CC_TOOL_CHARS_PER_TOKEN
-        _safe_max_out  = max(256, _tool_ctx - int(_input_est_tok) - _CC_SAFETY_BUFFER)
+        # Recompute against the ACTUAL trimmed payload size so _safe_max_out
+        # accounts for the FULL payload (schema + system prompt + history).
+        _input_est_tok = sum(len(json.dumps(m)) for m in oai_messages) / _CC_TOOL_CHARS_PER_TOKEN \
+            + _static_overhead
+        _safe_max_out = max(MIN_OUTPUT_BUDGET_TOKENS, _tool_ctx - int(_input_est_tok) - CC_SAFETY_BUFFER_TOKENS)
         if max_tokens > _safe_max_out:
             logger.info(
-                "cc_tool: capping max_tokens %d → %d (ctx=%d, est_input=%d tok, model=%s)",
-                max_tokens, _safe_max_out, _tool_ctx, int(_input_est_tok), effective_model,
+                "cc_tool: capping max_tokens %d → %d (ctx=%d, est_input=%d tok, schema=%d tok, "
+                "sys=%d tok, model=%s)",
+                max_tokens, _safe_max_out, _tool_ctx, int(_input_est_tok),
+                _schema_overhead_tok, _system_prompt_tok, effective_model,
             )
             max_tokens = _safe_max_out
 
@@ -918,7 +1097,7 @@ async def _anthropic_tool_handler(
             "messages":   _ollama_messages,
             "stream":     _do_ollama_stream,
             "keep_alive": "4h",
-            "options":    {"num_ctx": _ollama_num_ctx, "num_predict": max_tokens},
+            "options":    {"num_ctx": max(_ollama_num_ctx, 32768), "num_predict": max_tokens},
         }
         if oai_tools:
             _call_payload["tools"] = oai_tools
@@ -928,9 +1107,13 @@ async def _anthropic_tool_handler(
         # think:false is a top-level parameter (not inside options) per Ollama 0.30 API.
         if not session.stream_think:
             _call_payload["think"] = False
+        _msg_count = len(_ollama_messages)
+        _total_chars = sum(len(json.dumps(m)) for m in _ollama_messages)
+        _first_role = _ollama_messages[0].get("role") if _ollama_messages else "none"
+        _last_role = _ollama_messages[-1].get("role") if _ollama_messages else "none"
         logger.info(
-            "cc_tool: Ollama native /api/chat — num_ctx=%d num_predict=%d model=%s think=%s",
-            _ollama_num_ctx, max_tokens, effective_model, session.stream_think,
+            "cc_tool: Ollama native /api/chat — num_ctx=%d num_predict=%d model=%s think=%s msg_count=%d total_chars=%d first=%s last=%s",
+            _ollama_num_ctx, max_tokens, effective_model, session.stream_think, _msg_count, _total_chars, _first_role, _last_role,
         )
     else:
         _call_url = f"{effective_url}/chat/completions"
@@ -1077,6 +1260,12 @@ async def _anthropic_tool_handler(
                     if _done:
                         _in_tok = _chunk.get("prompt_eval_count", 0)
                         _out_tok = _chunk.get("eval_count", 0)
+                        _done_reason = _chunk.get("done_reason", "")
+                        _cmsg_content = _cmsg.get("content", "") or ""
+                        logger.info(
+                            "cc_tool: Ollama done — done_reason=%s text_chars=%d in_tok=%d out_tok=%s msg_preview=%.100r",
+                            _done_reason, len(_cmsg_content), _in_tok, _out_tok, _cmsg_content,
+                        )
             except Exception as _loop_err:
                 _stream_error = str(_loop_err)
                 logger.warning("cc_tool stream loop error: %s", _loop_err)

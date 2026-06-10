@@ -63,20 +63,21 @@ async def _get_available_models(node: str) -> Optional[frozenset]:
             ts, models = _model_avail_cache[node]
             if now - ts < _MODEL_AVAIL_TTL:
                 return models
-    url = URL_MAP.get(node, "").rstrip("/")
-    token = TOKEN_MAP.get(node, "ollama")
-    api_type = API_TYPE_MAP.get(node, "ollama")
+    url = URL_MAP.get(node, "")
     if not url:
         return None
+    base_url = url.rstrip("/").removesuffix("/v1")
+    token = TOKEN_MAP.get(node, "ollama")
+    api_type = API_TYPE_MAP.get(node, "ollama")
     try:
         async with httpx.AsyncClient(timeout=5) as _c:
             if api_type == "ollama":
-                _r = await _c.get(f"{url}/api/tags",
+                _r = await _c.get(f"{base_url}/api/tags",
                                   headers={"Authorization": f"Bearer {token}"})
                 models = frozenset(m["name"] for m in _r.json().get("models", [])) \
                          if _r.status_code == 200 else None
             else:  # openai-compatible
-                _r = await _c.get(f"{url}/v1/models",
+                _r = await _c.get(f"{base_url}/v1/models",
                                   headers={"Authorization": f"Bearer {token}"})
                 models = frozenset(m["id"] for m in _r.json().get("data", [])) \
                          if _r.status_code == 200 else None

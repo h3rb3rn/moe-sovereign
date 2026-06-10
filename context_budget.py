@@ -449,3 +449,102 @@ def web_research_budget(
         return 3, 700
     else:
         return 2, max(MIN_WEB_CHARS // 2, web_chars // 2)
+
+
+# ── Generic input/output budget split ────────────────────────────────────────
+# Reserve at least this many tokens for generation, regardless of how tight the
+# context window is. Below this, output is too short to be useful.
+MIN_OUTPUT_BUDGET_TOKENS: int = 1024
+
+
+def resolve_io_budget(
+    ctx_tokens: int,
+    desired_max_tokens: int,
+    *,
+    static_overhead_tokens: int = 0,
+    chars_per_token: int = CHARS_PER_TOKEN,
+    safety_buffer_tokens: int = 0,
+    min_output_tokens: int = 0,
+    min_input_ratio: float = 0.5,
+) -> dict:
+    """Split a model's context window into input/output token & char budgets.
+
+    Mirrors the two-stage capping logic originally inlined in the Claude Code
+    tool path (services/pipeline/anthropic.py): first cap the output budget so
+    a minimum input budget survives, then derive the remaining input budget
+    from whatever output budget was settled on (plus any static overhead such
+    as tool schemas or a system prompt that isn't part of the trimmable
+    message history).
+
+    Args:
+        ctx_tokens: Model's context window in tokens. <= 0 disables all
+            capping — returns desired_max_tokens unchanged with
+            avail_input_tokens=0 (caller should not rely on the input budget
+            in this case).
+        desired_max_tokens: The output budget the caller would like to use.
+        static_overhead_tokens: Tokens consumed by content outside the
+            trimmable message history (tool schemas, system prompt).
+        chars_per_token: Chars-per-token ratio for this content (dense
+            code/JSON traffic tokenizes denser than prose).
+        safety_buffer_tokens: Extra headroom subtracted at every stage.
+        min_output_tokens: Floor for max_output_tokens. <= 0 means no floor —
+            a pure cap, matching the CC tool path's first narrowing stage.
+        min_input_ratio: Fraction of ctx_tokens reserved for input when
+            capping desired_max_tokens in stage 1.
+
+    Returns:
+        dict with keys ``max_output_tokens``, ``avail_input_tokens``,
+        ``avail_input_chars``, ``overflow`` (True if the input budget had to
+        be clamped to 0 even after enforcing ``min_output_tokens``), and
+        ``static_overhead_tokens`` (echoed back for convenience).
+    """
+    if ctx_tokens <= 0:
+        return {
+            "max_output_tokens": desired_max_tokens,
+            "avail_input_tokens": 0,
+            "avail_input_chars": 0,
+            "overflow": False,
+            "static_overhead_tokens": static_overhead_tokens,
+        }
+
+    # Stage 1: cap the desired output so a minimum input budget survives.
+    min_input_budget = min(desired_max_tokens, int(ctx_tokens * min_input_ratio))
+    max_allowed_out = ctx_tokens - min_input_budget - safety_buffer_tokens
+    max_output_tokens = desired_max_tokens
+    if max_allowed_out > 0 and max_output_tokens > max_allowed_out:
+        max_output_tokens = max_allowed_out
+
+    # Stage 2: derive the input budget from the settled output budget.
+    avail_input_tokens = ctx_tokens - max_output_tokens - safety_buffer_tokens - static_overhead_tokens
+    overflow = avail_input_tokens < 0
+    avail_input_tokens = max(0, avail_input_tokens)
+
+    # Stage 3: enforce an output floor, recomputing the input budget.
+    if min_output_tokens > 0 and max_output_tokens < min_output_tokens:
+        max_output_tokens = min_output_tokens
+        avail_input_tokens = ctx_tokens - max_output_tokens - safety_buffer_tokens - static_overhead_tokens
+        overflow = avail_input_tokens < 0
+        avail_input_tokens = max(0, avail_input_tokens)
+
+    return {
+        "max_output_tokens": max_output_tokens,
+        "avail_input_tokens": avail_input_tokens,
+        "avail_input_chars": avail_input_tokens * chars_per_token,
+        "overflow": overflow,
+        "static_overhead_tokens": static_overhead_tokens,
+    }
+
+
+def estimate_overflow(
+    estimated_input_tokens: int,
+    desired_max_tokens: int,
+    ctx_tokens: int,
+    safety_buffer_tokens: int = 0,
+) -> bool:
+    """Pure pre-flight check: would input + output (+ buffer) exceed ctx_tokens?
+
+    Returns False when ctx_tokens <= 0 (no window to overflow).
+    """
+    if ctx_tokens <= 0:
+        return False
+    return (estimated_input_tokens + desired_max_tokens + safety_buffer_tokens) > ctx_tokens
