@@ -283,6 +283,7 @@ async def _store_response_metadata(
     chroma_doc_id: str,
     plan: Optional[List[Dict]] = None,
     cost_tier: str = "",
+    template_id: str = "",
 ) -> None:
     """Stores response metadata for later feedback in Valkey (TTL 7 days)."""
     if state.redis_client is None:
@@ -295,6 +296,7 @@ async def _store_response_metadata(
             "ts":                  datetime.now().isoformat(),
             "plan_cats":           json.dumps([t.get("category", "") for t in (plan or [])]),
             "cost_tier":           cost_tier,
+            "template_id":         template_id,
         }
         key = f"moe:response:{response_id}"
         await state.redis_client.hset(key, mapping=meta)

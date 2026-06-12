@@ -908,6 +908,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # If the matched template sets force_think=true and no explicit mode was requested,
     # upgrade to agent_orchestrated so the thinking_node activates before routing.
     # (Resolved after _tmpl_prompts is populated below; pre-read here to avoid circular dep.)
+    _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
     if _tmpl_override:
         _early_tmpl = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
         if _early_tmpl and _early_tmpl.get("force_think") and mode == "default":
@@ -968,8 +969,69 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             "api_type":   _uc.get("api_type", "openai"),
                             "_user_conn": True,
                         }
-                        break
-    _user_tmpls_json = user_ctx.get("user_templates_json", "{}")
+
+
+    # ── Dynamic Router Integration ───────────────────────────────────────────
+    # Triggers when:
+    #   • global DYNAMIC_ROUTER_ENABLED env-var is set, OR
+    #   • this API key has dynamic_routing=1 in its context, OR
+    #   • the requested model is the explicit "moe-auto" virtual model
+    _key_dynamic_routing = user_ctx.get("dynamic_routing") == "1"
+    _is_moe_auto = request.model == "moe-auto"
+    if (
+        os.getenv("DYNAMIC_ROUTER_ENABLED", "false").lower() in ("1", "true", "yes")
+        or _key_dynamic_routing
+        or _is_moe_auto
+    ):
+        is_default_moe = request.model in ("moe-orchestrator", "moe-orchestrator-code", "moe-orchestrator-concise", "moe-orchestrator-agent", "moe-orchestrator-agent-orchestrated")
+        if not _tmpl_override or is_default_moe or _is_moe_auto:
+            from services.dynamic_router import get_dynamic_template
+            user_msgs = [m for m in request.messages if m.role == "user"]
+            last_prompt = _oai_content_to_str(user_msgs[-1].content) if user_msgs else ""
+
+            # ── Constraint resolution (priority: permission > key-flag > global env-var) ──
+            _moe_modes_granted = set(user_perms.get("moe_mode", []))
+            # local_only: permission flag > key flag > global env
+            _perm_local_only     = "moe-auto:local-only"      in _moe_modes_granted
+            _key_local_only      = user_ctx.get("local_only_routing") == "1"
+            local_only = (
+                _perm_local_only
+                or _key_local_only
+                or os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
+            )
+            # global_only: restrict router to global admin connections only
+            _perm_global_only = "moe-auto:global-only" in _moe_modes_granted
+            # user_conns_only: restrict router to user-created private connections only
+            _perm_user_conns_only = "moe-auto:user-conns-only" in _moe_modes_granted
+
+            _user_conns_for_router: dict = {}
+            if not _perm_global_only:
+                try:
+                    _user_conns_for_router = json.loads(
+                        user_ctx.get("user_connections_json", "{}") or "{}"
+                    )
+                except Exception:
+                    _user_conns_for_router = {}
+            # ─────────────────────────────────────────────────────────────────────
+
+            dynamic_tmpl = await get_dynamic_template(
+                last_prompt,
+                local_only=local_only,
+                user_connections=_user_conns_for_router,
+                global_only=_perm_global_only,
+                user_conns_only=_perm_user_conns_only,
+            )
+            if dynamic_tmpl:
+                try:
+                    user_tmpls = json.loads(_user_tmpls_json or "{}")
+                except Exception:
+                    user_tmpls = {}
+                tmpl_id = dynamic_tmpl["id"]
+                user_tmpls[tmpl_id] = dynamic_tmpl
+                _user_tmpls_json = json.dumps(user_tmpls)
+                _tmpl_override = tmpl_id
+    # ──────────────────────────────────────────────────────────────────────────
+
     # Template name match is NOT authorization — check expert_template permissions explicitly.
     # Exception: user-owned templates (present in user_templates_json) are authorized by ownership.
     if _tmpl_override:
@@ -1348,6 +1410,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "enable_cache": _tmpl_prompts.get("enable_cache", True),
          "enable_graphrag": _tmpl_prompts.get("enable_graphrag", True),
          "enable_web_research": _tmpl_prompts.get("enable_web_research", True),
+         "complexity_level": _tmpl_prompts.get("complexity_level", ""),
          "search_fallback_ddg": _tmpl_prompts.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG),
          "graphrag_max_chars": _tmpl_prompts.get("graphrag_max_chars", 0),
          "history_max_turns": _tmpl_prompts.get("history_max_turns", 0),
@@ -1361,6 +1424,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "planner_url_override":   _tmpl_prompts["planner_url_override"],
          "planner_token_override": _tmpl_prompts["planner_token_override"],
          "template_name":  _tmpl_name,
+         "template_id":    _tmpl_override or "",
          "pending_reports": _pending_reports,
          "max_agentic_rounds": _tmpl_prompts.get("max_agentic_rounds", 0),
          "agentic_iteration": 0,

@@ -1,7 +1,8 @@
 # EuroHPC Grant — Training Concept
+**Proposal No. EHPC-DEV-2026D06-XXX**
 **4,500 Node-Hours · 18,000 GPU-Hours · AMD MI250X · ROCm Stack · 2 TB Storage · 6 Months**
 
-> Brainstorming document — code analysis based, June 2026.
+> Official Development Access Call Award notice received on 2026-06-05.
 
 ---
 

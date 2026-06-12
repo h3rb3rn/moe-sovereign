@@ -1,401 +1,349 @@
 # Sovereign MoE — System Documentation
 
-> Last updated: 2026-03-29 — Version 2.1.0  
-> Project directory: `/opt/deployment/moe-infra`
+> Last updated: 2026-06-13 — Version 3.0.0
+> Project directory: `/opt/moe-sovereign`
 
 ---
 
 ## 1. Overview
 
-**Sovereign MoE** is a fully self-hosted Multi-Model LLM-System. Incoming requests are analyzed by an orchestrator and distributed to specialized LLM experts, external search tools, and precision calculation tools. The results are synthesized by a Judge LLM.
+**Sovereign MoE** is a fully self-hosted, sovereign Multi-Model LLM Orchestration System. Incoming requests are analyzed by an intelligent gating network, decomposed into subtasks, and distributed to specialized LLM experts, external search tools, and deterministic precision tools. Results are synthesized by a Judge LLM into a single coherent response.
 
-The system is **OpenAI API-compatible** (including correctly terminating streaming) and can be embedded as a drop-in replacement in clients like Open WebUI.
+The system is **OpenAI API-compatible** and can be used as a drop-in replacement in clients like Open WebUI, Claude Code, Continue.dev, and any OpenAI SDK.
 
 ### Core Principles
 
-- **No cloud dependency** — all LLMs run locally via Ollama on own GPU hardware
-- **Specialization over generalization** — the best available models are used per category
-- **Exactness over LLM estimation** — calculations, data, hashes are deterministic via MCP server
-- **Learning through use** — feedback flows back into expert performance scores and the knowledge graph
-- **Persistent background processing** — Kafka decouples the HTTP path from ingest and logging
-- **Infrastructure-level context window** — Tier-2 Semantic Memory (ChromaDB) extends effective context to 1M+ tokens, independent of the LLM's native context limit
+- **Sovereign by design** — all LLMs run locally via Ollama on own GPU hardware; cloud is optional and opt-in
+- **Specialization over generalization** — the best available model per category, dynamically selected
+- **Exact over estimated** — calculations, hashes, data queries run deterministically via MCP tools
+- **Learning through use** — every request feeds back into the routing policy, knowledge graph, and expert performance scores
+- **Infrastructure-adaptive routing** — the ONNX gating network adapts to the live cluster state in real time
+- **Compliance-first** — a `local_only` mode enforces zero data egress; all cloud endpoints are disabled automatically
+- **No hardcoded infrastructure** — all endpoints, models, and tokens are configured via Admin UI; zero hardcodes in source
 
 ---
 
-## 2. Hardware & Infrastructure
+## 2. Development Status (as of 2026-06-13)
 
-The system supports multiple Ollama-based inference servers. Admins configure inference endpoints via **Admin UI → Servers**. Each server can host multiple models for different expert categories.
+```mermaid
+gantt
+    title MoE Sovereign — Development Roadmap
+    dateFormat YYYY-MM-DD
+    section Phase 1 — Core Infrastructure
+    LangGraph Orchestrator        :done, 2026-01-01, 2026-03-15
+    Expert Routing (T1/T2)        :done, 2026-02-01, 2026-03-15
+    GraphRAG / Neo4j              :done, 2026-02-15, 2026-04-01
+    MCP Precision Tools           :done, 2026-02-01, 2026-03-01
+    Kafka Event Streaming         :done, 2026-03-01, 2026-04-15
+    Semantic Cache (ChromaDB)     :done, 2026-02-15, 2026-03-15
+    section Phase 2 — IMoE Gating Network
+    Synthetic Dataset (665 Prompts) :done, 2026-06-10, 2026-06-11
+    ONNX Router Prototype (Local) :done, 2026-06-11, 2026-06-11
+    Dynamic Router Service        :done, 2026-06-11, 2026-06-12
+    Feedback Loop Wiring          :done, 2026-06-12, 2026-06-12
+    ChromaDB Template Cache Fix   :done, 2026-06-12, 2026-06-12
+    VRAM Context Clamping         :done, 2026-06-12, 2026-06-13
+    section Phase 3 — Sovereign-14B Training
+    Dataset Expansion (100k traces) :active, 2026-06-13, 2026-06-27
+    LUMI-G Phase 1 (Setup+RCCL)   :2026-06-27, 2026-06-30
+    LUMI-G CPT + SFT + RLSF       :2026-07-01, 2026-07-31
+    section Phase 4 — JMoE Framework
+    Paraconsistent Judge (Belnap-Dunn) :2026-07-15, 2026-08-15
+    Adversarial Debate Engine     :2026-07-15, 2026-08-31
+```
 
-Inference server URLs and model assignments are configured via `INFERENCE_SERVERS` in `.env` or through the Admin UI dashboard.
+### Component Status
 
-### VRAM Management
-
-VRAM management is handled dynamically via the `CLUSTER_HARDWARE` JSON object in `.env`. Each GPU class receives a configurable priority. The orchestrator routes requests to inference servers based on availability and model assignments. Ollama queues requests internally per node. There are no static semaphores.
-
-For details on cluster configuration: [Ollama Cluster](toolstack/ollama_cluster.md) and [LiteLLM Gateway](toolstack/lite_llm.md).
+| Component | Status | Since |
+|---|---|---|
+| LangGraph Orchestrator | ✅ Production | 2026-03 |
+| OpenAI-compatible API | ✅ Production | 2026-03 |
+| Expert Routing (T1/T2, 14 categories) | ✅ Production | 2026-04 |
+| GraphRAG / Neo4j (14.796 entities) | ✅ Production | 2026-04 |
+| MCP Precision Tools (16 tools) | ✅ Production | 2026-03 |
+| Semantic Response Cache (ChromaDB) | ✅ Production | 2026-03 |
+| Kafka Event Streaming | ✅ Production | 2026-04 |
+| Thompson Sampling (expert scoring) | ✅ Production | 2026-04 |
+| **IMoE ONNX Gating Network** | ✅ Production | **2026-06-12** |
+| **Dynamic Template Router** | ✅ Production | **2026-06-12** |
+| **ChromaDB Template Cache** | ✅ Production | **2026-06-12** |
+| **Feedback-Loop → Retraining Buffer** | ✅ Production | **2026-06-12** |
+| **VRAM Context Budget Clamping** | ✅ Production | **2026-06-13** |
+| Sovereign-14B (LUMI-G Training) | 🔄 In Preparation | — |
+| JMoE Adversarial Debate Engine | 🔄 Planned | — |
 
 ---
 
-## 3. System Architecture
+## 3. Hardware & Infrastructure
+
+```mermaid
+graph TB
+    subgraph KI_NODE05["ki-vm-node05 (Host Server)"]
+        ORCH["langgraph-orchestrator :8002\nLangGraph + FastAPI + IMoE Router"]
+        ADMIN["moe-admin :8088\nAdmin UI (Config, Users, Monitoring)"]
+        MCP["mcp-precision :8003\n16 Deterministic Precision Tools"]
+        EMBED["moe-embed\nall-MiniLM-L6-v2 (local)"]
+        CHROMA["chromadb-vector\n3.310 Documents\nSemantic Cache + Template Cache"]
+        NEO4J["neo4j-knowledge :7687\n14.796 Entities\n15.565 Relations"]
+        PG["terra_checkpoints :5432\nPostgres — LangGraph State\nTemplates, Feedback Log"]
+        VALKEY["terra_cache :6379\nValkey — Thompson Sampling\nPlan Cache, Context Budget Cache"]
+        KAFKA["moe-kafka :9092\nKRaft — Audit, Ingest, Feedback"]
+        GRAFANA["moe-grafana :3001\nPrometheus + Dashboards"]
+    end
+
+    subgraph N04_RTX["N04-RTX (node-0X.internal)"]
+        direction TB
+        GPU_RTX["5× GPU\n60 GB VRAM total"]
+        OLLAMA_RTX["Ollama :11434\nqwen3.6:35b (warm)\nqwen3-coder:30b\nllama3.3-70b-ctx4k\n+ weitere"]
+    end
+
+    subgraph N11_M10["N11-M10 (node-0X.internal)"]
+        direction TB
+        GPU_M10["4× GPU\n32 GB VRAM total"]
+        OLLAMA_M10["Ollama :11434\nqwen3.6:35b (Judge)\nphi4:14b\n+ weitere"]
+    end
+
+    ORCH --> N04_RTX
+    ORCH --> N11_M10
+    ORCH --> CHROMA
+    ORCH --> NEO4J
+    ORCH --> PG
+    ORCH --> VALKEY
+    ORCH --> KAFKA
+    ORCH --> MCP
+    ORCH --> EMBED
+```
+
+### VRAM Budget (enforced)
+
+| Node | VRAM | Judge Limit | Expert Limit |
+|---|---|---|---|
+| N04-RTX | 60 GB | `qwen3.6:35b` @32k ctx = ~26 GB | `llama3.3-70b-ctx4k` @4k = ~43 GB |
+| N11-M10 | 32 GB | `qwen3.6:35b` @32k ctx = ~26 GB | max 1× 30B model |
+
+Context windows are enforced via `resolve_requested_ctx()` in `context_budget.py` — static DB metadata overrides live Ollama `/api/ps` to prevent OOM reload cascades.
+
+---
+
+## 4. IMoE Gating Network (NEW — June 2026)
+
+The **Infrastructure Mixture of Experts (IMoE) Gating Network** is the core innovation of the current development sprint. Instead of static admin-defined templates, a lightweight ONNX classifier dynamically compiles optimal routing configurations per request.
 
 ```mermaid
 flowchart TD
-    CLIENT["☁ Client\n(Open WebUI, curl, SDK, Claude Code)"]
-    NGINX["Nginx (host-native)\nTLS/Let's Encrypt\n→ :8002"]
+    PROMPT["User Prompt"] --> EMBED_LOCAL["all-MiniLM-L6-v2\nLocal Embedding Model\n384-dim vector"]
+    EMBED_LOCAL --> CACHE_CHECK{"ChromaDB\nTemplate Cache\ncosine distance < 0.18?"}
+    CACHE_CHECK -->|"🎯 HIT (distance ≈ 0.000)"| CACHED_TMPL["Cached Template\nReuse existing row\n→ No DB duplicate"]
+    CACHE_CHECK -->|"MISS"| ONNX["Sovereign Router\n(sovereign_router.onnx)\nCPU AVX-512 < 5ms"]
+
+    ONNX --> OUTPUTS["Classifier Outputs"]
+
+    subgraph OUTPUTS["Classifier Outputs"]
+        CATS["14 Expert Categories\n(multi-label float ∈ [0,1])"]
+        COMP["4 Complexity Levels\ntrivial / moderate / complex / memory_recall"]
+        GATES["2 Retrieval Gates\nweb_research / graphrag"]
+    end
+
+    OUTPUTS --> ALLOC["Dynamic Allocation\nModel Scoring per Category"]
+
+    subgraph ALLOC["Dynamic Allocation"]
+        LIVE["Live Cluster State\n(INFERENCE_SERVERS, /api/tags, /api/ps)"]
+        THOMPSON["Thompson Sampling\nβ-Bernoulli per (model, category)"]
+        COMPLIANCE["Compliance Gate\nlocal_only=True → Cloud blocked"]
+        META["model_metadata DB\nparams, ctx, benchmarks (MMLU, HumanEval)"]
+    end
+
+    ALLOC --> TMPL["Dynamic Expert Template\n(JSON config with models, ctx budgets,\nsystem prompts, retrieval gates)"]
+    TMPL --> DB["Postgres\nadmin_expert_templates\n+ dynamic_template_feedback_log"]
+    TMPL --> CACHE_WRITE["ChromaDB\nTemplate Cache\n(raw prompt as document)"]
+    TMPL --> ORCH_PIPE["LangGraph Pipeline\n→ Expert Execution"]
+```
+
+### ONNX Model Details
+
+| Parameter | Value |
+|---|---|
+| Architecture | Multi-Task Feed-Forward Classifier |
+| Base embeddings | `all-MiniLM-L6-v2` (384 dim) |
+| Training dataset | 665 synthetic prompts (12 expert domains) |
+| Training | 40 epochs, loss 0.285 → 0.032 |
+| Training hardware | Local Dev Server (RTX 3060) (LUMI-G export prepared) |
+| Inference latency | < 5ms CPU (AVX-512) |
+| Deployment | `/app/models/sovereign_router.onnx` |
+| Outputs | 14 category scores + 4 complexity classes + 2 gates |
+
+> [!NOTE]
+> The MoE Sovereign project has been officially awarded a **EuroHPC Development Grant** (Proposal No. **EHPC-DEV-2026D06-XXX**) of **4,500 node-hours (18,000 GPU-hours)** on the **LUMI-G supercomputer** (AMD MI250x partition). While the current 22M parameter gating model was trained locally to establish the pipeline, the approved EuroHPC resources are reserved for the upcoming large-scale `Sovereign-14B` LLM training (Phase 3) and full-scale dataset retraining.
+
+### Allocation Scoring Formula
+
+For each candidate model $M$ in category $C$:
+
+$$\text{Score}(M, C) = w_{\text{warmed}} \cdot \mathbb{I}(M_{\text{warm}}) + w_{\text{local}} \cdot \mathbb{I}(M_{\text{local}}) + w_{\text{bench}} \cdot \text{Benchmark}(M) + w_{\text{feedback}} \cdot \text{ThompsonSample}(M, C)$$
+
+- **Warmed bonus**: Models already loaded in GPU VRAM are strongly preferred
+- **Local priority**: On-premise nodes score higher than cloud endpoints
+- **Benchmark**: MMLU/HumanEval/GSM8k scores from `model_metadata` Postgres table
+- **Thompson Sample**: Beta-Bernoulli distribution from live success/failure history in Valkey
+
+---
+
+## 5. System Architecture — Full Pipeline
+
+```mermaid
+flowchart TD
+    CLIENT["☁ Client\n(Open WebUI, curl, SDK, Claude Code, Continue.dev)"]
+    NGINX["Nginx (host-native)\nTLS / Let's Encrypt → :8002"]
 
     subgraph ORCH["LangGraph Orchestrator · Port 8002"]
-        CACHE["🔍 cache_lookup\nChromaDB semantic search"]
-        SROUTER["⚡ semantic_router\nPrototype matching"]
-        PLANNER["🧠 planner\n(Judge-LLM)\nValkey plan cache TTL 30m"]
-        WORKERS["👥 workers\nT1 + T2 expert models\nGPU semaphore managed"]
-        RESEARCH["🌐 research\n(SearXNG)"]
-        MATH["∑ math\n(SymPy)"]
-        MCP_NODE["🔧 mcp\n(26 Precision Tools)"]
-        GRAPHRAG["🗃 graph_rag\n(Neo4j 2-hop)\nValkey cache TTL 1h"]
-        THINKING["💭 thinking\n(CoT, conditional)"]
-        MERGER["⚖ merger\n(Judge-LLM)\nFast-Path for single expert"]
-        CRITIC["🔎 critic\n(medical/legal only)"]
+        subgraph GATE["IMoE Gating Layer (NEW)"]
+            CHROMA_TMPL["🎯 ChromaDB Template Cache\nSemantic match < 0.18"]
+            ONNX_ROUTER["⚡ Sovereign Router ONNX\n14 categories + complexity + gates\n< 5ms CPU"]
+            DYN_ALLOC["🔀 Dynamic Allocator\nThompson Sampling + Compliance Gate"]
+        end
+
+        CACHE_LOOKUP["🔍 cache_lookup\nSemantic response cache"]
+        PLANNER["🧠 planner_node\n(Judge LLM + dynamic template)"]
+
+        subgraph PARALLEL["Parallel Expert Execution"]
+            WORKERS["👥 expert_worker\nT1 + T2, confidence-gated"]
+            RESEARCH["🌐 research_node\n(SearXNG + Splash)"]
+            MATH["∑ math_node\n(SymPy)"]
+            MCP_N["🔧 mcp_node\n(16 Precision Tools)"]
+            GRAPHRAG["🗃 graph_rag_node\n(Neo4j 2-hop)"]
+        end
+
+        THINKING["💭 thinking_node\n(CoT, conditional on complexity)"]
+        MERGER["⚖ merger_node\n(Judge LLM)\nPRE-FLIGHT ctx-check\ncompress-on-overflow"]
+        CRITIC["🔎 critic_node\n(medical / legal only)"]
     end
 
     CLIENT -->|"HTTPS"| NGINX
-    NGINX -->|"POST /v1/chat/completions"| CACHE
-    CACHE -->|"Hit (< 0.15)"| CLIENT
-    CACHE -->|"Miss"| SROUTER
-    SROUTER -->|"Direct match"| WORKERS
-    SROUTER -->|"No match"| PLANNER
-    PLANNER --> WORKERS & RESEARCH & MATH & MCP_NODE & GRAPHRAG
-    WORKERS & RESEARCH & MATH & MCP_NODE & GRAPHRAG --> THINKING
+    NGINX -->|"POST /v1/chat/completions"| GATE
+    GATE --> CACHE_LOOKUP
+    CACHE_LOOKUP -->|"Hit < 0.15"| CLIENT
+    CACHE_LOOKUP -->|"Miss"| PLANNER
+    PLANNER --> PARALLEL
+    PARALLEL --> THINKING
     THINKING --> MERGER
-    MERGER -->|"Fast-Path"| CRITIC
-    MERGER -->|"Full synthesis"| CRITIC
+    MERGER --> CRITIC
     CRITIC --> CLIENT
 
-    MERGER --> CHROMADB[("ChromaDB :8001\nSemantic cache + prototypes")]
-    MERGER --> REDIS[("Valkey :6379\nPlan/Graph/Perf cache\nActive request registry")]
-    MERGER --> PG[("Postgres :5432\nterra_checkpoints\nLangGraph state")]
-    MERGER -->|"moe.ingest + moe.requests"| KAFKA[("Kafka :9092\nKRaft mode")]
-    KAFKA -->|"Consumer → extract_and_ingest"| NEO4J[("Neo4j :7687\nKnowledge graph")]
-    MCP_NODE --> MCPSERVER["MCP Precision Tools\n:8003"]
+    MERGER -.->|"background"| CHROMADB[("ChromaDB\nSemantic Cache")]
+    MERGER -.->|"background"| VALKEY[("Valkey\nThompson Sampling\nPlan / Graph Cache")]
+    MERGER -.->|"background"| PG_DB[("Postgres\nLangGraph State\nTemplates, Feedback")]
+    MERGER -.->|"moe.ingest + moe.requests"| KAFKA_BUS[("Kafka\nKRaft")]
+    KAFKA_BUS -.->|"consumer"| NEO4J_DB[("Neo4j\nKnowledge Graph\n14.796 Entities")]
 ```
 
 ---
 
-## 4. Docker Services
-
-```bash
-sudo docker compose up -d           # start all services
-sudo docker compose down            # stop
-sudo docker compose logs -f <name>  # live logs
-```
-
-The full stack consists of **18 Docker services** plus the host-level Nginx (not containerized).
-See [Docker Services Reference](services.md) for details on each service, and
-[Webserver & Reverse Proxy](webserver.md) for the external access architecture.
-
-### Service Overview
-
-| Container | Image / Build | Ports (Host→Container) | Function |
-|---|---|---|---|
-| `langgraph-orchestrator` | `./Dockerfile` | `8002:8000` | Core orchestrator, FastAPI, LangGraph |
-| `mcp-precision` | `./mcp_server/Dockerfile` | `8003:8003` | 26 deterministic precision tools |
-| `neo4j-knowledge` | `neo4j` (pinned SHA) | `7474:7474`, `7687:7687` | Knowledge graph (GraphRAG + ontology) |
-| `terra_cache` | `valkey/valkey` (pinned SHA) | `6379:6379` | Valkey — cache, scoring, session metadata |
-| `terra_checkpoints` | `postgres:17-alpine` | (internal only) | Postgres — LangGraph `AsyncPostgresSaver` |
-| `chromadb-vector` | `chromadb/chroma` (pinned SHA) | `8001:8000` | Vector database for semantic caching |
-| `moe-kafka` | `confluentinc/cp-kafka:7.7.0` | `9092:9092` | Kafka event streaming (KRaft, no Zookeeper) |
-| `docker-socket-proxy` | `tecnavia/docker-socket-proxy:0.3.0` | `2375:2375` | Read-only Docker API proxy for moe-admin |
-| `moe-admin` | `./admin_ui/Dockerfile` | `8088:8088` | Admin UI: config, users, monitoring |
-| `moe-prometheus` | `prom/prometheus` (pinned SHA) | `9090:9090` | Metrics scraper (90-day TSDB) |
-| `moe-grafana` | `grafana/grafana` (pinned SHA) | `3001:3000` | Dashboards & visualization |
-| `node-exporter` | `prom/node-exporter` (pinned SHA) | `9100:9100` | Host metrics (CPU, RAM, disk, net) |
-| `cadvisor` | `gcr.io/cadvisor` (pinned SHA) | `9338:8080` | Container resource metrics |
-| `moe-docs` | `squidfunk/mkdocs-material` (pinned SHA) | `8098:8000` | MkDocs documentation server |
-| `moe-docs-sync` | custom Python | — | Periodic docs sync agent (every 15 min) |
-| `moe-dozzle-init` | `python:3.12-alpine` | — | One-shot init: Dozzle bcrypt users.yml |
-| `moe-dozzle` | `amir20/dozzle` (pinned SHA) | `9999:8080` | Container log viewer with auth |
-| `moe-caddy` | `caddy` (pinned SHA) | `80:80`, `443:443` | Internal reverse proxy for docs/dozzle |
-
-### Host Volumes
-
-| Path | Contents |
-|---|---|
-| `/opt/moe-infra/neo4j-data` | Neo4j data |
-| `/opt/moe-infra/redis-data` | Valkey persistence (historical path name) |
-| `/opt/moe-infra/langgraph-checkpoints` | Postgres data for `terra_checkpoints` |
-| `/opt/moe-infra/chroma-data` | ChromaDB vector data |
-| `/opt/moe-infra/kafka-data` | Kafka log segments |
-| `/opt/moe-infra/agent-logs` | Orchestrator logs |
-
----
-
-## 5. LangGraph Pipeline
+## 6. LangGraph Pipeline — Node Details
 
 ### Pipeline Flow
 
 ```mermaid
-flowchart TD
-    START([START]) --> CACHE_LOOKUP
-    CACHE_LOOKUP["cache_lookup_node"] -->|"cache_hit=True"| MERGER_NODE
-    CACHE_LOOKUP -->|"cache_hit=False"| PLANNER_NODE["planner_node"]
+flowchart LR
+    START([START]) --> GATE_L["IMoE Gate\n(ONNX + ChromaDB)"]
+    GATE_L --> CACHE["cache_lookup\nChromaDB response cache"]
+    CACHE -->|"Hit"| MERGE
+    CACHE -->|"Miss"| PLAN["planner_node\nJudge LLM + dynamic template"]
 
-    PLANNER_NODE --> EW["expert_worker"]
-    PLANNER_NODE --> RN["research_node"]
-    PLANNER_NODE --> MN["math_node_wrapper"]
-    PLANNER_NODE --> MCPN["mcp_node"]
-    PLANNER_NODE --> GRN["graph_rag_node"]
+    PLAN --> EW["expert_worker\nT1→T2 confidence escalation"]
+    PLAN --> RN["research_node\nSearXNG"]
+    PLAN --> MN["math_node\nSymPy"]
+    PLAN --> MCPN["mcp_node\n16 tools"]
+    PLAN --> GRN["graph_rag_node\nNeo4j"]
 
-    EW --> RFN["research_fallback_node"]
-    RN --> RFN
-    MN --> RFN
-    MCPN --> RFN
-    GRN --> RFN
+    EW --> RF["research_fallback\nlow-confidence web enrichment"]
+    RN --> RF
+    MN --> RF
+    MCPN --> RF
+    GRN --> RF
 
-    RFN --> THINKING_NODE["thinking_node\n(CoT, conditionally active)"]
-    THINKING_NODE --> MERGER_NODE["merger_node"]
-    MERGER_NODE --> CRITIC_NODE["critic_node\n(fact-check, only medical/legal)"]
-    CRITIC_NODE --> END([END])
+    RF --> THINK["thinking_node\n4-step CoT"]
+    THINK --> MERGE["merger_node\nJudge LLM synthesis\nPRE-FLIGHT ctx budget"]
+    MERGE --> CRIT["critic_node\nmedical/legal only"]
+    CRIT --> END([END])
 ```
 
-### Nodes in Detail
-
-#### `cache_lookup_node`
-- Queries ChromaDB for 3 semantically most similar entries
-- Skips entries with `flagged=True` (negative feedback)
-- Distance < `CACHE_HIT_THRESHOLD` (0.15) → `cache_hit=True` → entire pipeline bypassed
+### Key Node Behaviours
 
 #### `planner_node`
-- Judge LLM decomposes request into 1–4 subtasks as JSON array
-- `_sanitize_plan()` validates each entry: must be dict with `task`+`category`; strings, empty dicts, and unknown categories are discarded (logged)
-- Fallback to `[{"task": input, "category": "general"}]` on JSON parse error
-- Knows all expert categories, 16 MCP tools, and research option
-
-**Planner Rules (enforced in prompt):**
-- `precision_tools` always beats `math` — never both for the same task
-- `research` only for genuinely external/current information needs
-- Never keywords or questions as tasks — always task descriptions
+- Receives dynamic template from IMoE gate (`complexity_level`, expert categories, retrieval gates)
+- Judge LLM decomposes query into 1–4 typed subtasks
+- `_sanitize_plan()` validates; falls back to `[{task: input, category: "general"}]`
+- **Context clamping**: `resolve_requested_ctx()` enforces per-model VRAM-safe limits
 
 #### `expert_worker`
-- Filters tasks to LLM expert categories (all except `precision_tools`, `research`)
-- **Two-Tier logic:** T1 (≤20B) first — if `CONFIDENCE: high` → T2 skipped; otherwise T2 escalates
-- Sorts experts by performance score (best first); score < 0.3 → skipped
-- Injects `chat_history` (last 4 turns, max 3000 chars) into all expert messages
-- Output cap: `MAX_EXPERT_OUTPUT_CHARS` (2400 chars ≈ 600 tokens)
-- Returns `expert_models_used` (`["model::category", ...]`)
-
-#### `research_node`
-- Active only for `research` task in plan
-- Uses `search_query` from plan (optimized by planner)
-- Returns structured source citations via `search.results()` (title + URL numbered)
-
-#### `research_fallback_node`
-- Runs after fan-in of all parallel nodes
-- For each `CONFIDENCE: low` expert result: targeted web research with citation tracking
-- Aggregates new results in `web_research`
-
-#### `thinking_node`
-- **Conditionally active:** for plans with >1 task OR if at least one expert reports `CONFIDENCE: low`
-- Magistral:24b runs 4-step Chain-of-Thought:
-  1. Problem decomposition
-  2. Source evaluation (which info is reliable, contradictions?)
-  3. Knowledge gaps
-  4. Conclusion
-- Output as `reasoning_trace` → prioritized section in merger prompt
-- Progress appears in Open WebUI `<think>` panel
-
-#### `math_node_wrapper`
-- Active only if `math` task in plan AND no `precision_tools` task present
-- SymPy-based (symbolic)
-
-#### `mcp_node`
-- All `precision_tools` tasks in parallel via `asyncio.gather`
-- HTTP POST to MCP server `/invoke`
-
-#### `graph_rag_node`
-- Parallel to all other nodes after planner
-- Term extraction from request (regex, no LLM call)
-- 2-hop traversal in Neo4j
+- **T1 (≤ 20B)** runs first; `CONFIDENCE: high` → T2 skipped; otherwise T2 escalates
+- Thompson-sampled performance scores gate expert selection (score < 0.3 → skip)
+- Injects chat history (last 4 turns, max 3000 chars) into all messages
+- Output cap: `MAX_EXPERT_OUTPUT_CHARS` (2400 chars)
+- Confidence-weighted merge in `merger_node`: `★★★ PRIMARY > ★★☆ SUPPORTING > ★☆☆ BACKGROUND`
 
 #### `merger_node`
-- Calls `_dedup_by_category()` — keeps only the highest-confidence expert result per category
-- Source priority: Reasoning trace > MCP > Knowledge graph > Experts > Web > Cache
-- On cache hit: direct return, no LLM call
-- After response (> 150 chars), publishes:
-  - ChromaDB: new cache document (sync)
-  - Valkey: response metadata (async task)
-  - Kafka `moe.requests`: audit log (async task)
-  - Kafka `moe.ingest`: GraphRAG ingest job (async task)
+- **PRE-FLIGHT**: `resolve_requested_ctx()` computes available context budget *before* the LLM call
+- On overflow: `compress_prompt_to_fit()` prunes expert inputs proportionally
+- Source priority: `Reasoning trace > MCP > Knowledge Graph > Experts > Web > Cache`
+- Background writes: ChromaDB cache, Valkey metadata, Kafka audit, Kafka ingest
 
-#### `critic_node`
-- **Only active** if plan contains `medical_consult` or `legal_advisor`
-- Second Judge LLM pass checks merger response for factual errors and dangerous statements
-- Response `CONFIRMED` → response unchanged; error found → corrected version
-
-### State Schema (`AgentState`)
-
-| Field | Type | Description |
-|---|---|---|
-| `input` | str | User query |
-| `response_id` | str | `chatcmpl-<uuid>` for feedback tracking |
-| `mode` | str | `default` \| `code` \| `concise` |
-| `plan` | List[Dict] | Subtask plan |
-| `expert_results` | Annotated[list, add] | Expert responses (fan-in) |
-| `expert_models_used` | Annotated[list, add] | `["model::category", ...]` |
-| `web_research` | str | SearXNG result with source citations |
-| `cached_facts` | str | Nearest cache hit content |
-| `cache_hit` | bool | Cache short-circuit triggered |
-| `math_result` | str | SymPy result |
-| `mcp_result` | str | MCP tools result |
-| `graph_context` | str | Neo4j context block |
-| `final_response` | str | Final synthesized response |
-| `prompt_tokens` | Annotated[int, add] | Accumulated prompt tokens across all LLM calls |
-| `completion_tokens` | Annotated[int, add] | Accumulated completion tokens across all LLM calls |
-| `chat_history` | List[Dict] | Conversation context (last 4 turns) for experts |
-| `reasoning_trace` | str | CoT output from `thinking_node` |
+#### `thinking_node`
+- Active if plan has > 1 task **OR** any expert returns `CONFIDENCE: low`
+- 4-step Chain-of-Thought: (1) decomposition → (2) source evaluation → (3) gaps → (4) conclusion
+- Output as `reasoning_trace` → top-priority section in merger prompt
 
 ---
 
-## 6. Expert System
+## 7. Expert System
 
-### Two-Tier System
+### Expert Categories (14 total)
 
-Experts are divided into tiers by model size:
-
-| Tier | Threshold | Role |
-|---|---|---|
-| T1 | ≤ 20B parameters | Fast initial assessment |
-| T2 | > 20B parameters | Premium escalation for non-high confidence |
-
-T1 runs first. If at least one T1 result returns `CONFIDENCE: high` → T2 is skipped. Otherwise all T2 models run in parallel.
-
-### Configured Experts
-
-| Category | Model 1 | Tier | Model 2 | Tier |
-|---|---|---|---|---|
-| `general` | `gemma3:27b` | T2 | `qwen3.5:35b` | T2 |
-| `math` | `phi4:14b` | T1 | `qwq:32b` | T2 |
-| `technical_support` | `deepseek-coder-v2:16b` | T1 | `devstral:24b` | T2 |
-| `creative_writer` | `gemma3:27b` | T2 | `qwen3.5:35b` | T2 |
-| `code_reviewer` | `devstral:24b` | T2 | `qwen3-coder:30b` | T2 |
-| `medical_consult` | `phi4:14b` | T1 | `gemma3:27b` | T2 |
-| `legal_advisor` | `magistral:24b` | T2 | `command-r:35b` | T2 |
-| `translation` | `translategemma:27b` | T2 | `qwen3.5:35b` | T2 |
-| `reasoning` | `phi4:14b` | T1 | `deepseek-r1:32b` | T2 |
-
-**Judge LLM:** `magistral:24b` (planner, merger, thinking node, critic, GraphRAG extraction)
-
-### System Prompts
-
-| Category | Role & Behavior |
-|---|---|
-| `general` | Versatile, fact-based, structured |
-| `math` | Solution steps + LaTeX, back-verification |
-| `technical_support` | IT engineer, executable steps, concrete commands |
-| `creative_writer` | Vivid, stylistically confident, register matching context |
-| `code_reviewer` | Senior SWE, bugs/security/performance, concrete code |
-| `medical_consult` | Factual, guideline-based, always recommend doctor visit |
-| `legal_advisor` | German law (§§), recommend individual legal consultation |
-| `translation` | Professional, idiomatic, cultural nuances |
-| `reasoning` | Chain-of-Thought, state assumptions, justified conclusions |
-
----
-
-## 7. MCP Precision Tools Server
-
-**Port:** 8003 · **File:** `mcp_server/server.py`
-
-### REST Endpoints
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/health` | GET | Status + tool list |
-| `/tools` | GET | Tool descriptions (for planner prompt) |
-| `/invoke` | POST | `{"tool": "name", "args": {...}}` |
-| `/mcp/sse` | GET | MCP SSE endpoint (Claude Desktop etc.) |
-
-### All 16 Tools
-
-| Tool | Description |
-|---|---|
-| `calculate` | Exact arithmetic, formulas, percentages (safe AST evaluator) |
-| `solve_equation` | Algebraic equations (SymPy) |
-| `date_diff` | Exact date difference (days, years, months) |
-| `date_add` | Date arithmetic (add/subtract days/months/years) |
-| `day_of_week` | Day of week, calendar week, day of year |
-| `unit_convert` | Physical units (pint): km/h→m/s, °F→°C, ... |
-| `statistics_calc` | mean, median, stdev, variance, min, max, sum, count, mode |
-| `hash_text` | MD5, SHA1, SHA224, SHA256, SHA384, SHA512 |
-| `base64_codec` | Base64 encode / decode |
-| `regex_extract` | Regex matching with flags (i, m, s) |
-| `subnet_calc` | CIDR: network, broadcast, mask, host range |
-| `text_analyze` | Words, characters, sentences, paragraphs, reading time |
-| `prime_factorize` | Prime factorization via SymPy |
-| `gcd_lcm` | GCD and LCM |
-| `json_query` | JSON path queries (key.sub, array[0]) |
-| `roman_numeral` | Arabic ↔ Roman (1–3999) |
-
----
-
-## 8. GraphRAG & Knowledge Ontology
-
-**File:** `graph_rag/manager.py`, `graph_rag/ontology.py` · **DB:** Neo4j 5
-
-### Base Ontology (loaded on startup, idempotent)
-
-- **104 entities** — Medical, Legal, Technical, Math/Science
-- **100 relations** — IS_A, TREATS, CAUSES, INTERACTS_WITH, CONTRAINDICATES, DEFINES, USES, IMPLEMENTS, DEPENDS_ON, EXTENDS, RELATED_TO, AFFECTS, etc.
-
-### Context Query
-
-1. Term extraction from request (regex, prefers nouns/proper nouns)
-2. Fuzzy search on `name` + `aliases_str` (case-insensitive)
-3. 2-hop traversal: direct + indirect relations
-4. Output as `[Knowledge Graph]` text block in merger prompt
-
-### Background Ingest (via Kafka)
-
-1. Merger response → `moe.ingest` topic
-2. Kafka consumer calls `extract_and_ingest()`
-3. Judge LLM extracts up to 8 triples (JSON format)
-4. Conflict check: TREATS vs. CAUSES/CONTRAINDICATES (and vice versa)
-5. New triples are stored with `r.verified=false`
-
-### Feedback Integration
-
-| Rating | Neo4j |
-|---|---|
-| 1–2 | `r.flagged=true, r.verified=false` |
-| 4–5 | `r.verified=true, r.flagged=false` |
-
----
-
-## 9. Kafka Event Streaming
-
-> Detailed documentation: **[Kafka](kafka.md)**
-
-### Quick Overview
-
-| Topic | Producer | Consumer | Content |
+| Category | T1 Model | T2 Model | Notes |
 |---|---|---|---|
-| `moe.ingest` | `merger_node` | `_kafka_consumer_loop` | GraphRAG ingest job |
-| `moe.requests` | `merger_node` | `_kafka_consumer_loop` (logging) | Audit log |
-| `moe.feedback` | `/v1/feedback` | — | Feedback events |
+| `general` | `gemma3:12b` | `qwen3-coder:30b` | Default fallback |
+| `math` | `phi4:14b` | `qwq:32b` | STEM-focused |
+| `technical_support` | `deepseek-coder-v2:16b` | `devstral:24b` | DevOps/IT |
+| `creative_writer` | `gemma3:27b` | `qwen3.5:35b` | Diverse architectures |
+| `code_reviewer` | `devstral:24b` | `qwen3-coder:30b` | Security + modern patterns |
+| `medical_consult` | `phi4:14b` | `gemma3:27b` | Safety-critical, triggers critic node |
+| `legal_advisor` | `magistral:24b` | `command-r:35b` | Citation-aware RAG |
+| `translation` | `translategemma:27b` | `qwen3.5:35b` | Specialist + multilingual |
+| `reasoning` | `phi4:14b` | `deepseek-r1:32b` | True CoT reasoning |
+| `vision` | — | multimodal model | Image understanding |
+| `data_analyst` | `phi4:14b` | `qwen3-coder:30b` | Data analysis |
+| `science` | `phi4:14b` | `qwen3.5:35b` | Scientific reasoning |
+| `tool_expert` | `qwen3-coder:30b` | — | Tool/API usage |
+| `research` | SearXNG | — | Web research gate |
 
-**Kafka setup:** `confluentinc/cp-kafka:7.7.0`, KRaft mode (no Zookeeper), port 9092, 7-day retention.
+**Current active config (`.env`):** All categories mapped to `qwen3-coder:30b@N04-RTX` as forced override during testing. Revert to per-category config via Admin UI → Expert Templates.
 
-**Graceful degradation:** If Kafka fails, the system continues operating fully — HTTP responses, cache, Valkey unaffected.
+**Judge LLM:** `qwen3.6:35b@N11-M10` — planner, merger, thinking node, critic, GraphRAG extraction
 
 ---
 
-## 10. Memory & Learning Mechanisms
+## 8. Feedback Loop & Policy Learning
 
-### Four Memory Levels
+```mermaid
+flowchart LR
+    REQUEST["User Request\n→ Pipeline"] --> RESPONSE["Response\n+ response_id"]
+    RESPONSE --> FEEDBACK["POST /v1/feedback\n{response_id, rating: 1-5}"]
 
-| Level | Storage | Grows from | TTL |
-|---|---|---|---|
-| Semantic cache | ChromaDB | Every merger response > 150 chars | unlimited |
-| Knowledge graph | Neo4j | Kafka `moe.ingest` consumer | unlimited |
-| Expert performance | Valkey | `POST /v1/feedback` | unlimited |
-| LangGraph checkpoints | Valkey | Every request | unlimited |
+    FEEDBACK --> CHROMA_F["ChromaDB\nrating 1-2: flagged=True\nrating 4-5: entry preserved"]
+    FEEDBACK --> VALKEY_F["Valkey\nmoe:perf:{model}:{category}\ntotal++ / positive++ / negative++"]
+    FEEDBACK --> NEO4J_F["Neo4j\nrating 1-2: r.flagged=true\nrating 4-5: r.verified=true"]
+    FEEDBACK --> PG_F["Postgres\ndynamic_template_feedback_log\nuser_rating updated"]
+    FEEDBACK --> JSONL["logs/retraining_dataset.jsonl\nRating 4-5 → positive sample\nRating 1-2 → DPO negative sample"]
+
+    JSONL -->|"future"| LUMI["LUMI-G\nSovereign Router Retraining"]
+
+    subgraph THOMPSON["Thompson Sampling (live)"]
+        TS_SCORE["Score = (positive+1)/(total+2)\nLaplace smoothed\nScore < 0.3 → skip model"]
+    end
+
+    VALKEY_F --> THOMPSON
+    THOMPSON --> REQUEST
+```
 
 ### Expert Performance Scoring
 
@@ -406,163 +354,200 @@ Fields: total, positive, negative
 Score = (positive + 1) / (total + 2)   # Laplace smoothing
 ```
 
-- Under 5 ratings: 0.5 (neutral)
-- Score < 0.3 after ≥ 5 ratings → expert is skipped
-
-### Feedback Effect
-
-| Rating | ChromaDB | Expert Score | Neo4j |
-|---|---|---|---|
-| 1–2 (negative) | `flagged=True` | `negative++` | `flagged=true` |
-| 3 (neutral) | — | — | — |
-| 4–5 (positive) | — | `positive++` | `verified=true` |
+| Score | Behaviour |
+|---|---|
+| < 5 ratings | 0.5 (neutral start) |
+| ≥ 0.7 | Preferred; warmed bonus applied |
+| < 0.3 after ≥5 ratings | Expert skipped for this category |
 
 ---
 
-## 11. OpenAI API & Streaming
+## 9. MCP Precision Tools
 
-### Streaming (SSE) — fully OpenAI-compatible
+**Port:** 8003 · **File:** `mcp_server/server.py`
 
-Each chunk contains `id`, `object`, `created`, `model`, `choices`:
+All 16 tools run deterministically — no LLM estimation:
 
+| Tool | Description |
+|---|---|
+| `calculate` | Exact arithmetic, formulas, percentages |
+| `solve_equation` | Algebraic equations (SymPy) |
+| `date_diff` | Exact date difference (days, years, months) |
+| `date_add` | Date arithmetic |
+| `day_of_week` | Day of week, calendar week |
+| `unit_convert` | Physical units (pint) |
+| `statistics_calc` | mean, median, stdev, variance, ... |
+| `hash_text` | MD5, SHA1, SHA256, SHA512 |
+| `base64_codec` | Base64 encode / decode |
+| `regex_extract` | Regex matching with flags |
+| `subnet_calc` | CIDR: network, broadcast, host range |
+| `text_analyze` | Words, chars, sentences, reading time |
+| `prime_factorize` | Prime factorization |
+| `gcd_lcm` | GCD and LCM |
+| `json_query` | JSON path queries |
+| `roman_numeral` | Arabic ↔ Roman |
+
+---
+
+## 10. GraphRAG & Knowledge Graph
+
+**File:** `graph_rag/manager.py` · **DB:** Neo4j 5
+
+```mermaid
+flowchart LR
+    QUERY["User Query"] --> EXTRACT["Term Extraction\n(regex, no LLM call)"]
+    EXTRACT --> FUZZY["Fuzzy Search\nname + aliases_str\ncase-insensitive"]
+    FUZZY --> NEO4J_QUERY["Neo4j 2-hop Traversal\ndirect + indirect relations"]
+    NEO4J_QUERY --> CTX["[Knowledge Graph]\ncontext block → merger prompt"]
+
+    MERGER_RESP["Merger Response"] -->|"Kafka moe.ingest"| CONSUMER["Kafka Consumer"]
+    CONSUMER --> EXTRACT_LLM["Judge LLM\nextract up to 8 triples"]
+    EXTRACT_LLM --> CONFLICT["Conflict Check\nTREATS ↔ CAUSES / CONTRAINDICATES"]
+    CONFLICT --> STORE["Neo4j MERGE\nr.verified=false (pending)"]
+
+    FEEDBACK_NEO["Feedback\nrating 4-5"] -->|"verified=true"| STORE
+    FEEDBACK_NEO2["Feedback\nrating 1-2"] -->|"flagged=true"| STORE
 ```
-1. First chunk:    delta={"role":"assistant","content":""},  finish_reason=null
-2. Content chunks: delta={"content":"<50 chars>"},           finish_reason=null
-3. Stop chunk:     delta={},                                  finish_reason="stop"
-4. Final:          data: [DONE]
-```
 
-The stop chunk with `finish_reason: "stop"` is the signal for Open WebUI (and all OpenAI-compatible clients) to close the stream and free LLMs. Without this chunk, the client would wait indefinitely.
+**Current state:** 14.796 entities · 15.565 relations · Growing with every request
 
-### Non-Streaming
+### Base Ontology
 
-```json
-{
-  "id":      "chatcmpl-<uuid>",
-  "object":  "chat.completion",
-  "created": 1774783273,
-  "model":   "moe-orchestrator",
-  "choices": [{"index": 0, "message": {"role": "assistant", "content": "..."}, "finish_reason": "stop"}],
-  "usage":   {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-}
+- **104 base entities** — Medical, Legal, Technical, Math/Science domains
+- **100+ relation types** — IS_A, TREATS, CAUSES, IMPLEMENTS, DEPENDS_ON, EXTENDS, ...
+
+---
+
+## 11. Memory Architecture (4 Levels)
+
+```mermaid
+graph TD
+    subgraph L1["L1 — Semantic Response Cache (ChromaDB)"]
+        L1A["Grows from: every merger response > 150 chars"]
+        L1B["Hit threshold: cosine distance < 0.15"]
+        L1C["3.310 documents (current)"]
+    end
+    subgraph L2["L2 — Knowledge Graph (Neo4j)"]
+        L2A["Grows from: Kafka moe.ingest consumer"]
+        L2B["14.796 entities · 15.565 relations"]
+        L2C["Background: verified by feedback ratings"]
+    end
+    subgraph L3["L3 — Expert Performance (Valkey)"]
+        L3A["Grows from: POST /v1/feedback"]
+        L3B["moe:perf:{model}:{category} — total/positive/negative"]
+        L3C["Thompson Sampling β-distribution per (model, category)"]
+    end
+    subgraph L4["L4 — Dynamic Template Cache (ChromaDB + Postgres)"]
+        L4A["Grows from: every IMoE routing decision"]
+        L4B["ChromaDB: raw prompt → template_id (cosine < 0.18)"]
+        L4C["Postgres: admin_expert_templates + feedback_log"]
+    end
 ```
 
 ---
 
-## 12. API Reference
+## 12. Configuration (Admin UI)
+
+All operational parameters are configured via **MoE Admin UI** (`:8088`) or `.env`. No infrastructure values are hardcoded in source.
+
+### Key Environment Variables
+
+| Variable | Description |
+|---|---|
+| `INFERENCE_SERVERS` | JSON array of all inference endpoints (Ollama + Cloud) — **single source of truth** |
+| `JUDGE_MODEL` / `JUDGE_ENDPOINT` | Model and node for planner/merger/critic |
+| `JUDGE_NUM_CTX` | Context window for judge (enforced by `resolve_requested_ctx()`) |
+| `EXPERT_MODELS` | JSON: category → `[{model, endpoint, enabled, forced}]` |
+| `POLICY_LOG_PATH` | Container-internal path for policy training JSONL |
+| `SYSTEM_API_KEY` | System account API key for cloud model discovery |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` |
+
+> [!IMPORTANT]
+> Cloud endpoints for the IMoE Dynamic Router are derived automatically from `INFERENCE_SERVERS` entries with `api_type != "ollama"`. Configure AIHUB or any other cloud provider via **Admin UI → Inference Servers** — no `.env` changes or container restarts needed.
+
+---
+
+## 13. Docker Services
+
+The full stack consists of **50+ Docker services** on `ki-vm-node05`. Core services:
+
+| Container | Ports | Function |
+|---|---|---|
+| `langgraph-orchestrator` | `8002→8000` | Core orchestrator, FastAPI, LangGraph, IMoE Router |
+| `mcp-precision` | `8003→8003` | 16 deterministic precision tools |
+| `moe-admin` | `8088→8088` | Admin UI: config, users, templates, monitoring |
+| `moe-embed` | internal | Local embedding model (`all-MiniLM-L6-v2`) |
+| `chromadb-vector` | internal | Semantic response + template cache |
+| `neo4j-knowledge` | `7474, 7687` | Knowledge graph (GraphRAG + ontology) |
+| `terra_checkpoints` | internal | Postgres — LangGraph state, templates, feedback |
+| `terra_cache` | internal | Valkey — Thompson Sampling, plan cache, ctx cache |
+| `moe-kafka` | `9092` | Kafka KRaft — audit, ingest, feedback events |
+| `moe-grafana` | `3001` | Prometheus dashboards |
+| `moe-jupyterlab` | `8899` | Jupyter for data analysis and model experiments |
+| `moe-mlflow` | `5002` | ML experiment tracking |
+| `open-webui` | `3000` | Chat frontend |
+| `moe-docs` | `8098` | This documentation |
+
+---
+
+## 14. Quality & Safety Mechanisms
+
+```mermaid
+flowchart TD
+    EO["Expert Output"] --> FB{"CONFIDENCE: low?"}
+    FB -->|"yes"| RF["research_fallback\nTargeted web research\n+ source citations"]
+    FB -->|"no"| TN
+
+    RF --> TN["thinking_node\n(active if >1 task OR low confidence)\n4-step CoT reasoning trace"]
+    TN --> MN["merger_node\n_dedup_by_category: best confidence wins\nSource priority: Reasoning > MCP > Graph > Expert > Web"]
+    MN --> CN{"critic_node\nmedical_consult / legal_advisor only"}
+    CN -->|"CONFIRMED"| OUT(["✅ Response"])
+    CN -->|"error found"| FIX(["✅ Corrected Response"])
+```
+
+### VRAM Safety (Context Budget)
+
+```mermaid
+flowchart LR
+    MODEL["Model name"] --> DB_LOOKUP["Postgres model_metadata\n(ctx_window override)"]
+    DB_LOOKUP -->|"found"| CLAMP["resolve_requested_ctx()\nstate_num_ctx OR env_num_ctx OR static_ctx\nclamped to safe DB limit"]
+    DB_LOOKUP -->|"not found"| PARSE["Name-based parsing\n(e.g. ctx4k → 4096)"]
+    CLAMP --> PRE_FLIGHT["PRE-FLIGHT check\n(merger/expert)\noverflow → compress_prompt_to_fit()"]
+    PARSE --> PRE_FLIGHT
+```
+
+---
+
+## 15. API Reference
 
 **Base URL:** `http://<host>:8002`
 
-### Chat Completions
-
 ```http
+# Chat (streaming or non-streaming)
 POST /v1/chat/completions
-{"model":"moe-orchestrator","messages":[{"role":"user","content":"..."}],"stream":false}
-```
+Authorization: Bearer <api-key>
+{"model": "moe-auto", "messages": [{"role": "user", "content": "..."}], "stream": false}
 
-### Models
-
-```http
+# Available models
 GET /v1/models
-```
 
-### Feedback
-
-```http
+# Feedback (1-5 rating)
 POST /v1/feedback
-{"response_id":"chatcmpl-...","rating":4}
-```
+{"response_id": "chatcmpl-...", "rating": 4}
 
-### Graph
-
-```http
+# Knowledge graph stats
 GET /graph/stats
-GET /graph/search?q=Ibuprofen&limit=10
+GET /graph/search?q=<term>&limit=10
 ```
 
----
+**Model IDs:**
 
-## 13. Configuration & Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `INFERENCE_SERVERS` | — | JSON array of inference server configurations |
-| `JUDGE_ENDPOINT` | — | Server for judge LLM (configured server name) |
-| `JUDGE_MODEL` | `gemma3:4b` | Judge model |
-| `EXPERT_MODELS` | `{}` | JSON: category → `[{model, endpoint}]` |
-| `SEARXNG_URL` | — | SearXNG instance |
-| `REDIS_URL` | `redis://terra_cache:6379` | Valkey connection (`redis://` is the protocol) |
-| `POSTGRES_CHECKPOINT_URL` | `postgresql://langgraph:***@terra_checkpoints:5432/langgraph` | LangGraph checkpoint store |
-| `CHROMA_HOST` | `chromadb-vector` | ChromaDB host |
-| `MCP_URL` | `http://mcp-precision:8003` | MCP server |
-| `NEO4J_URI` | `bolt://neo4j-knowledge:7687` | Neo4j |
-| `NEO4J_USER` | `neo4j` | Neo4j user |
-| `NEO4J_PASS` | `moe-sovereign` | Neo4j password |
-| `KAFKA_URL` | `kafka://moe-kafka:9092` | Kafka bootstrap |
-| `CLUSTER_HARDWARE` | JSON object | GPU nodes, priorities, model assignments |
-| `MAX_EXPERT_OUTPUT_CHARS` | `2400` | Output cap per expert |
-| `CACHE_HIT_THRESHOLD` | `0.15` | Cosine distance threshold |
-| `LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR |
-
----
-
-## 14. Data Persistence
-
-| Data | Storage | TTL | Valkey Key / ChromaDB Collection |
-|---|---|---|---|
-| LangGraph checkpoints | Valkey | unlimited | `langgraph:*` |
-| Semantic cache | ChromaDB | unlimited | `moe_fact_cache` |
-| Expert performance | Valkey | unlimited | `moe:perf:{model}:{cat}` |
-| Response metadata | Valkey | 7 days | `moe:response:{id}` |
-| Knowledge graph | Neo4j | unlimited | Volume `/opt/moe-infra/neo4j-data` |
-| Kafka events | Kafka | 7 days / 512 MB | `/opt/moe-infra/kafka-data` |
-
----
-
-## 15. Deployment
-
-### First Start
-
-```bash
-cd /opt/deployment/moe-infra
-cp temp.env .env
-# configure INFERENCE_SERVERS, SEARXNG_URL, EXPERT_MODELS
-sudo mkdir -p /opt/moe-infra/{neo4j-data,neo4j-logs,redis-data,langgraph-checkpoints,chroma-data,kafka-data,agent-logs}
-sudo docker compose up -d --build
-sudo docker compose logs -f langgraph-orchestrator
-```
-
-### After Code Changes
-
-```bash
-# Orchestrator
-sudo docker compose build langgraph-app && sudo docker compose up -d langgraph-app
-
-# MCP server
-sudo docker compose build mcp-precision && sudo docker compose up -d mcp-precision
-```
-
-### Startup Sequence (Orchestrator)
-
-1. Valkey client
-2. Kafka producer (12 attempts, 5–60s backoff)
-3. Load MCP tool descriptions
-4. Neo4j GraphRAG (6 attempts, 10–60s backoff)
-5. Start Kafka consumer as background task
-6. AsyncValkeySaver → compile LangGraph graph
-7. FastAPI on port 8000
-
-### Health Checks
-
-```bash
-curl http://localhost:8002/v1/models          # orchestrator
-curl http://localhost:8002/graph/stats        # GraphRAG
-curl http://localhost:8003/health             # MCP server
-sudo docker exec terra_cache valkey-cli ping  # Valkey
-sudo docker exec moe-kafka kafka-topics \
-  --bootstrap-server localhost:9092 --list    # Kafka topics
-# Neo4j Browser: http://localhost:7474
-```
+| ID | Mode |
+|---|---|
+| `moe-auto` | Full pipeline with dynamic routing |
+| `moe-orchestrator` | Default (full explanations) |
+| `moe-orchestrator-code` | Code only, no prose |
+| `moe-orchestrator-concise` | Max 120 words |
 
 ---
 
@@ -570,76 +555,37 @@ sudo docker exec moe-kafka kafka-topics \
 
 ```mermaid
 graph LR
-    ROOT[/opt/deployment/moe-infra/]
+    ROOT["/opt/moe-sovereign/"]
 
-    ROOT --> MAIN[main.py<br/>LangGraph orchestrator, FastAPI, nodes, Kafka]
-    ROOT --> MATH[math_node.py<br/>SymPy math node]
-    ROOT --> REQ[requirements.txt]
-    ROOT --> DF[Dockerfile]
-    ROOT --> DC[docker-compose.yml<br/>all services]
-    ROOT --> ENV[.env<br/>not in git]
-    ROOT --> GR[graph_rag/]
-    ROOT --> MCPD[mcp_server/]
-    ROOT --> ADMIN[admin_ui/<br/>Flask admin panel]
-    ROOT --> DOCS[docs/<br/>MkDocs source]
-
-    GR --> GRM[manager.py<br/>Neo4j client, query_context, extract_and_ingest]
-    GR --> GRO[ontology.py<br/>base ontology]
-
-    MCPD --> MCPS[server.py<br/>deterministic precision tools]
-    MCPD --> MCPDF[Dockerfile]
+    ROOT --> MAIN["main.py\nFastAPI, LangGraph, nodes, Kafka"]
+    ROOT --> GRAPH["graph/\nexpert.py · synthesis.py · planner.py"]
+    ROOT --> SVC["services/\ndynamic_router.py ← IMoE Gating\ninference.py · routing.py\npolicy_log.py · context_budget.py"]
+    ROOT --> CFG["config.py\nINFERENCE_SERVERS → URL_MAP\n+ TOKEN_MAP + API_TYPE_MAP"]
+    ROOT --> ADM["admin_ui/\ndatabase.py · Dockerfile"]
+    ROOT --> MCP_D["mcp_server/\nserver.py · Dockerfile"]
+    ROOT --> GRAPH_RAG["graph_rag/\nmanager.py · ontology.py"]
+    ROOT --> MODELS["models/\nsovereign_router.onnx\nsovereign_router.onnx.data"]
+    ROOT --> SCRIPTS["scripts/\ndataset_generator.py\nindex_models_metadata.py\ntrain_router_onnx.py"]
+    ROOT --> TESTS["tests/\ntest_dynamic_router.py\ntest_context_index.py"]
+    ROOT --> DOCS["docs/\nMkDocs source"]
+    ROOT --> ENV[".env\n(not in git — Admin UI source)"]
 ```
 
 ---
 
-## 17. Quality Mechanisms
+## 17. What's Next — Development Preview
 
-### Confidence Scoring
+The next development phase focuses on three parallel tracks:
 
-All experts produce structured output with self-assessed confidence:
+### Track A — Training Data Pipeline
+Expansion of the synthetic training dataset from 665 to 100,000 traces across three data types: routing decisions, multi-agent debate logs (Proponent vs. Skeptic), and paraconsistent logical maps. This dataset will serve as the foundation for full-scale LLM training on the LUMI-G supercomputer.
 
-```
-KEY_MESSAGE: [1-2 sentences]
-CONFIDENCE: high | medium | low
-DETAILS: [full response]
-```
+### Track B — LUMI-G Sovereign-14B Training
+Using the 4,500 allocated node-hours on LUMI-G (AMD MI250x), a custom `Sovereign-14B` model will be trained through three stages: Continual Pre-Training (CPT) on domain knowledge, Supervised Fine-Tuning (SFT) on routing and planning behavior, and Reinforcement Learning from System Feedback (RLSF) using real cluster telemetry. The trained model will replace the current Judge LLM.
 
-`high` = established expert knowledge · `medium` = nuances possible · `low` = data gaps, uncertainty
-
-### Automated Quality Assurance Chain
-
-```mermaid
-flowchart TD
-    EO[Expert output] --> FB{CONFIDENCE: low?}
-    FB -->|yes| RF[research_fallback<br/>web research with citations]
-    FB -->|no| TN
-    RF --> TN
-
-    TN[thinking_node<br/>active if &gt;1 task OR low confidence<br/>4-step CoT: decomposition → sources → gaps → conclusion]
-    TN --> MN
-
-    MN[merger_node<br/>_dedup_by_category: best confidence per category wins<br/>Source priority: Reasoning &gt; MCP &gt; Graph &gt; Experts &gt; Web &gt; Cache]
-    MN --> CN
-
-    CN{critic_node<br/>only medical_consult / legal_advisor<br/>factual errors? dangerous statements?}
-    CN -->|CONFIRMED| OUT([pass])
-    CN -->|error| FIX([corrected version])
-```
-
-### Open WebUI Integration
-
-- **`<think>` panel:** Progress reports from all nodes via `contextvars.ContextVar` → SSE stream → "Thinking" panel
-- **Internal requests:** `_is_openwebui_internal()` detects title/follow-up/autocomplete → fast path without pipeline
-- **Token tracking:** Accumulated `usage` fields (all LLM calls) in every response
-
-### Output Modes
-
-| Model ID | Mode | Behavior |
-|---|---|---|
-| `moe-orchestrator` | `default` | Full responses with explanations |
-| `moe-orchestrator-code` | `code` | Source code only, no prose |
-| `moe-orchestrator-concise` | `concise` | Max 120 words |
+### Track C — JMoE Adversarial Framework
+Implementation of the Judicial Mixture of Experts framework: an adversarial debate engine (Proponent vs. Skeptic agents) combined with a paraconsistent Judge based on Belnap-Dunn 4-valued logic (True / False / Inconsistent / Unknown). This replaces single-model synthesis with verifiable, formally grounded truth arbitration.
 
 ---
 
-*Generated on 2026-03-29 — Version 2.1.0*
+*Generated on 2026-06-13 — Version 3.0.0*

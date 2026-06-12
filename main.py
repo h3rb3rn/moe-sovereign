@@ -460,7 +460,7 @@ class FeedbackRequest(BaseModel):
 # See that module for full field documentation grouped by purpose.
 
 # LLM instances and SearxNG search singleton moved to services/llm_instances.py
-from services.llm_instances import planner_llm, ingest_llm, search
+from services.llm_instances import planner_llm, ingest_llm, search, judge_llm
 # state.graph_manager, state.redis_client, state.kafka_producer are already None
 # in state.py — do NOT re-assign here because main.py is lazy-imported as
 # "main" (not "__main__") by services/pipeline/chat.py on the first request,
@@ -1038,7 +1038,11 @@ async def _warmup_cc_tool_model() -> None:
         return  # only needed for Ollama; OpenAI-compatible providers are always ready
 
     _base_url = _cc_url.rstrip("/").removesuffix("/v1")
+    from context_budget import get_model_context_window as _static_ctx
+    _safe_ctx = _static_ctx(_cc_model)
     _num_ctx  = _jnctx if _jnctx > 0 else 32768
+    if _safe_ctx > 0 and _safe_ctx < _num_ctx:
+        _num_ctx = _safe_ctx
 
     try:
         async with _httpx.AsyncClient(timeout=300.0) as _cl:
@@ -1085,7 +1089,11 @@ async def _cc_keepalive_loop() -> None:
         return
 
     _base_url = _cc_url.rstrip("/").removesuffix("/v1")
+    from context_budget import get_model_context_window as _static_ctx
+    _safe_ctx = _static_ctx(_cc_model)
     _num_ctx  = _jnctx if _jnctx > 0 else 32768
+    if _safe_ctx > 0 and _safe_ctx < _num_ctx:
+        _num_ctx = _safe_ctx
 
     while True:
         await asyncio.sleep(150)  # 2.5 minutes — safely below any 3-min server cap

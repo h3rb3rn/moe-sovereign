@@ -4564,7 +4564,7 @@ async def api_resources():
         "expert_template": expert_tmpl_list,
         "cc_profile":      cc_profiles,
         "model_endpoint":  sorted(model_endpoints),
-        "moe_mode":        ["native", "moe_orchestrated", "moe_reasoning"],
+        "moe_mode":        ["native", "moe_orchestrated", "moe_reasoning", "moe-auto", "moe-auto:local-only", "moe-auto:global-only", "moe-auto:user-conns-only"],
         "skill":           skill_items,
         "mcp_tool":        mcp_items,
         "feature":         feature_items,
@@ -5265,6 +5265,36 @@ async def user_update_key_cc_profile(
         if profile_id not in own_ids and profile_id not in (cc_perm_ids & admin_ids):
             raise HTTPException(status_code=403, detail="Access to this profile is not permitted")
     ok = await db.set_api_key_cc_profile(key_id, user_id, profile_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"ok": True}
+
+
+@app.patch("/user/api/keys/{key_id}/dynamic-routing")
+async def user_update_key_dynamic_routing(
+    key_id:  str,
+    request: Request,
+    user_id: str = Depends(require_user_login),
+):
+    """Enables or disables AI-driven dynamic expert routing for an API key."""
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    ok = await db.set_api_key_dynamic_routing(key_id, user_id, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"ok": True}
+
+
+@app.patch("/user/api/keys/{key_id}/local-only-routing")
+async def user_update_key_local_only_routing(
+    key_id:  str,
+    request: Request,
+    user_id: str = Depends(require_user_login),
+):
+    """Beschränkt den dynamischen Router auf ausschließlich lokale Endpoints für diesen API-Key."""
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    ok = await db.set_api_key_local_only_routing(key_id, user_id, enabled)
     if not ok:
         raise HTTPException(status_code=404, detail="Key not found")
     return {"ok": True}

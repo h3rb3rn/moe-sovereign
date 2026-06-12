@@ -250,14 +250,18 @@ async def expert_worker(state_: AgentState):
             # (e.g. a 262144 GGUF native default) get pinned DOWN to JUDGE_NUM_CTX;
             # an unresolved window (0) falls back to JUDGE_NUM_CTX as a best guess.
             if token == "ollama" and JUDGE_NUM_CTX > 0 and _pfn(model_name) >= 25.0:
+                from context_budget import get_model_context_window as _static_ctx
+                _safe_ctx = _static_ctx(model_name)
                 _pinned_ctx = (
                     JUDGE_NUM_CTX if _expert_ctx_window <= 0
                     else min(_expert_ctx_window, JUDGE_NUM_CTX)
                 )
+                if _safe_ctx > 0 and _pinned_ctx > _safe_ctx:
+                    _pinned_ctx = _safe_ctx
                 if _pinned_ctx != _expert_ctx_window:
                     logger.info(
-                        "expert: ctx pinned to min(resolved=%d, JUDGE_NUM_CTX=%d)=%d model=%s",
-                        _expert_ctx_window, JUDGE_NUM_CTX, _pinned_ctx, model_name,
+                        "expert: ctx pinned to min(resolved=%d, JUDGE_NUM_CTX=%d, safe=%d)=%d model=%s",
+                        _expert_ctx_window, JUDGE_NUM_CTX, _safe_ctx, _pinned_ctx, model_name,
                     )
                     _expert_ctx_window = _pinned_ctx
             # Clamp to the model's native max context length. Ollama silently caps
@@ -310,7 +314,11 @@ async def expert_worker(state_: AgentState):
                 _max_input_chars = max(EXPERT_INPUT_MIN_CHARS, _expert_ctx_window * EXPERT_CHARS_PER_TOKEN)
                 _available_task_chars = _max_input_chars - len(sys_prompt)
                 if len(task_text) > _available_task_chars > 0:
-                    task_text = task_text[:_available_task_chars] + "\n[…truncated for context window]"
+                    from context_budget import compress_prompt_to_fit
+                    task_text = await compress_prompt_to_fit(
+                        task_text, _available_task_chars,
+                        model=model_name, url=url, token=token
+                    )
 
             # Context-aware history trimming: keep as much history as fits within the
             # model's actual context window after system prompt and task are accounted for.

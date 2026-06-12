@@ -114,6 +114,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
     container_name: langgraph-orchestrator
     restart: always
     healthcheck:
@@ -357,6 +358,7 @@ services:
     build:
       context: ./admin_ui
       dockerfile: Dockerfile
+      network: host
     container_name: moe-admin
     restart: always
     ports:

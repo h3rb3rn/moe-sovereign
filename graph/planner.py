@@ -237,7 +237,7 @@ async def planner_node(state_: AgentState):
 
     # Complexity estimation: determine routing hints before LLM planner call
     from complexity_estimator import estimate_complexity, complexity_routing_hint
-    _complexity = estimate_complexity(state_["input"])
+    _complexity = state_.get("complexity_level") or estimate_complexity(state_["input"])
     # Day-2 upgrade: factual questions inside a multi-turn conversation are
     # almost always asking about something the user stated earlier — not
     # web-searchable facts. Upgrade trivial AND moderate to memory_recall

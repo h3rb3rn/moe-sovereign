@@ -144,6 +144,7 @@ def _resolve_template_prompts(
         "semantic_memory_n_results": 0, "semantic_memory_ttl_hours": 0,
         "enable_cross_session_memory": False,
         "cross_session_scopes": ["private"], "cross_session_ttl_days": 0,
+        "complexity_level": "",
     }
     try:
         perms     = json.loads(permissions_json or "{}")
@@ -223,6 +224,7 @@ def _resolve_template_prompts(
             "enable_cross_session_memory": bool(tmpl.get("enable_cross_session_memory", False)),
             "cross_session_scopes":    list(tmpl.get("cross_session_scopes", ["private"])),
             "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days", 0)),
+            "complexity_level":        tmpl.get("complexity_level", ""),
         }
     except Exception:
         return empty

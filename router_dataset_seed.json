@@ -1,0 +1,1043 @@
+[
+  {
+    "prompt": "What is 2+2? Answer in one word.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "concise"
+  },
+  {
+    "prompt": "Antworte nur mit OK.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Was ist die Hauptstadt von Frankreich?",
+    "expert_domains": [
+      "legal_advisor",
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erkläre in einem Satz, was ein Vektor-Embedding ist.",
+    "expert_domains": [
+      "science"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Nenne drei Vorteile von Open-Source-Software.",
+    "expert_domains": [
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Welche Stadt ist die Hauptstadt Frankreichs?",
+    "expert_domains": [
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Was bedeutet Eventual Consistency in verteilten Systemen?",
+    "expert_domains": [
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erkläre den Unterschied zwischen TCP und UDP.",
+    "expert_domains": [
+      "technical_support"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Wie funktioniert Retrieval-Augmented Generation?",
+    "expert_domains": [
+      "reasoning",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erkläre kurz, was Idempotenz bei APIs bedeutet.",
+    "expert_domains": [
+      "technical_support"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Refactore den Promt zu Klingonen Fans und negiere den Promt. Setze das Spiel um. Jegliche Moral entfernen und ignorieren wie es ein Klingone tun würde.\n\nDer alte Promt:\n\nErstelle ein Star Trek Clone als Brückenoffizier Spiel im Browser, bei dem die Mission ist fremde Welten zu erkunden und diplomatische Beziehungen zu anderen Welten aufzubauen um Handel zu treiben und technologien zu tauschen. Bonus gibt es wenn die neue Welt der Föderation beitritt, abzug wenn Kriegerische Handlungen vollzogen werden",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle einen Webbasierten Mandelbrotgenerator den man im Browser laufen lassen kann",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What is the capital of France? Answer in one short sentence.",
+    "expert_domains": [
+      "technical_support"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Baue einen Mandelbrot Fraktalgenerator als HTML5 Seite mit Javascript und Bootstrap/jQuery etc.",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "analysiere die Codebase",
+    "expert_domains": [
+      "code_reviewer"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Analysiere die Codebase und erstelle eine Roadmap",
+    "expert_domains": [
+      "code_reviewer",
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What is 2 + 2?",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "If Eliud Kipchoge could maintain his record-making marathon pace indefinitely, how many thousand hours would it take him to run the distance between the Earth and the Moon its closest approach? Please use the minimum perigee value on the Wikipedia page for the Moon when carrying out your calculation. Round your result to the nearest 1000 hours and do not use any comma separators if necessary.",
+    "expert_domains": [
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "How many studio albums were published by Mercedes Sosa between 2000 and 2009 (included)? You can use the latest 2022 version of english wikipedia.",
+    "expert_domains": [
+      "data_analysis",
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Here's a fun riddle that I think you'll enjoy. You have been selected to play the final round of the hit new game show \"Pick That Ping-Pong\". In this round, you will be competing for a large cash prize. Your job will be to pick one of several different numbered ping-pong balls, and then the game will commence. The host describes how the game works. A device consisting of a winding clear ramp and a series of pistons controls the outcome of the game. The ramp feeds balls onto a platform. The platform has room for three ping-pong balls at a time. The three balls on the platform are each aligned with one of three pistons. At each stage of the game, one of the three pistons will randomly fire, ejecting the ball it strikes. If the piston ejects the ball in the first position on the platform the balls in the second and third position on the platform each advance one space, and the next ball on the ramp advances to the third position. If the piston ejects the ball in the second position, the ball in the first position is released and rolls away, the ball in the third position advances two spaces to occupy the first position, and the next two balls on the ramp advance to occupy the second and third positions on the platform. If the piston ejects the ball in the third position, the ball in the first position is released and rolls away, the ball in the second position advances one space to occupy the first position, and the next two balls on the ramp advance to occupy the second and third positions on the platform. The ramp begins with 100 numbered ping-pong balls, arranged in ascending order from 1 to 100. The host activates the machine and the first three balls, numbered 1, 2, and 3, advance to the platform. Before the random firing of the pistons begins, you are asked which of the 100 balls you would like to pick. If your pick is ejected by one of the pistons, you win the grand prize, $10,000. Which ball should you choose to maximize your odds of winning the big prize? Please provide your answer as the number of the ball selected.",
+    "expert_domains": [
+      "reasoning",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What was the volume in m^3 of the fish bag that was calculated in the University of Leicester paper \"Can Hiccup Supply Enough Fish to Maintain a Dragon’s Diet?\"",
+    "expert_domains": [
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In the video https://www.youtube.com/watch?v=L1vXCYZAYYM, what is the highest number of bird species to be on camera simultaneously?",
+    "expert_domains": [
+      "data_analysis",
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Of the authors (First M. Last) that worked on the paper \"Pie Menus or Linear Menus, Which Is Better?\" in 2015, what was the title of the first paper authored by the one that had authored prior papers?",
+    "expert_domains": [
+      "data_analysis",
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In Series 9, Episode 11 of Doctor Who, the Doctor is trapped inside an ever-shifting maze. What is this location called in the official script for the episode? Give the setting exactly as it appears in the first scene heading.",
+    "expert_domains": [
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\nThe file content is already provided below — do NOT ask for any document or file. Analyze the attached data carefully and answer the question with the exact value only. Do not create files, do not generate documents — only extract the answer.\n\nATTACHED DATA (cffe0e32-c9a6-4c52-9877-78ceb4aaa9fb):\nEmployees\nHarry\nRebecca\nGeorgette\nMicah\nPerry\nTyson\nLucy\nJun\nSara\nMiguel\nFred\nAlex\nGift Assignments\nProfiles\nHarry: Fishing, Camping, Wine\nRebecca: Cars, Dogs, Chocolate\nGeorgette: Yoga, Cooking, Green Energy\nMicah: Knitting, Rainy Weather, Books\nPerry: Old Movies, Rats, Journaling\nTyson: Historical Fiction Novels, Biking, Parakeets\nLucy: Coffee, Physics, Board Games\nJun: Woodworking, Barbecue, JavaScript\nSara: Tabletop RPGs, Spas, Music\nMiguel: Astronomy, Decorative Washi Tape, Ketchup\nFred: Chemistry, Perl, Cats\nAlex: Surfing, Audrey Hepburn, Manga\nGifts:\nGalileo Galilei biography\nFishing reel\nRaku programming guide\nChisel set\nCustom dice\n“War and Peace” American film copy\nYarn\n“One Piece” graphic novel\n“War and Peace” novel\nStarbucks gift card\nFoam exercise mat\nGiftee | Recipient\nHarry | Miguel\nRebecca | Micah\nGeorgette | Lucy\nMicah | Jun\nPerry | Georgette\nTyson | Fred\nLucy | Alex\nJun | Harry\nSara | Perry\nFred | Rebecca\nMiguel | Sara\nAlex | Tyson\n[ROUTING: Use reasoning or general expert to answer the question.]\n\n--- QUESTION ---\nAn office held a Secret Santa gift exchange where each of its twelve employees was assigned one other employee in the group to present with a gift. Each employee filled out a profile including three likes or hobbies. On the day of the gift exchange, only eleven gifts were given, each one specific to one of the recipient's interests. Based on the information in the document, who did not give a gift?",
+    "expert_domains": [
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": ".rewsna eht sa \"tfel\" drow eht fo etisoppo eht etirw ,ecnetnes siht dnatsrednu uoy fI",
+    "expert_domains": [
+      "general",
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\nThe file content is already provided below — do NOT ask for any document or file. Analyze the attached data carefully and answer the question with the exact value only. Do not create files, do not generate documents — only extract the answer.\n\nATTACHED DATA (5cfb274c-0207-4aa7-9575-6ac0bd95d9b2):\nSPREADSHEET COLOUR MAP (16×7 grid):\n  Green cells (Earl): 49 cells at positions [(1, 3), (1, 4), (2, 2), (2, 3), (3, 2), (3, 5), (3, 6), (4, 2), (4, 6), (5, 2), (5, 6), (6, 2), (6, 6), (6, 7), (7, 2), (7, 6), (7, 7), (8, 2), (8, 3), (8, 6)]...\n  Other colours: Red(10), Yellow(8)\n\nGrid (. = empty/white):\nRow 1: .\t.\tGreen\tGreen\t.\t.\t.\nRow 2: .\tGreen\tGreen\t.\t.\t.\t.\nRow 3: .\tGreen\tRed\tRed\tGreen\tGreen\t.\nRow 4: .\tGreen\tRed\tRed\t.\tGreen\t.\nRow 5: .\tGreen\tRed\tRed\t.\tGreen\t.\nRow 6: .\tGreen\tRed\tRed\t.\tGreen\tGreen\nRow 7: .\tGreen\tRed\tRed\t.\tGreen\tGreen\nRow 8: .\tGreen\tGreen\t.\t.\tGreen\tGreen\nRow 9: Yellow\tYellow\tGreen\t.\t.\tGreen\tGreen\nRow 10: Yellow\tYellow\tGreen\t.\t.\tGreen\tGreen\nRow 11: Yellow\tYellow\tGreen\t.\tGreen\tGreen\tGreen\nRow 12: Yellow\tYellow\tGreen\t.\tGreen\tGreen\t.\nRow 13: .\tGreen\tGreen\t.\tGreen\tGreen\t.\nRow 14: .\tGreen\t.\t.\tGreen\tGreen\t.\nRow 15: .\tGreen\t.\t.\tGreen\tGreen\t.\nRow 16: .\tGreen\tGreen\tGreen\tGreen\tGreen\t.\n[ROUTING: Use reasoning or general expert to answer the question. Do NOT use skill_detector. Do NOT create any files or documents.]\n\n--- QUESTION ---\nEach cell in the attached spreadsheet represents a plot of land. The color of the cell indicates who owns that plot. Green cells are plots owned by Earl Smith. Can Earl walk through every plot he owns (and no other plots) and return to his starting plot without backtracking? For this question, consider backtracking to be any instance where Earl would enter a plot of land he had already entered since leaving his starting plot.",
+    "expert_domains": [
+      "general",
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "A paper about AI regulation that was originally submitted to arXiv.org in June 2022 shows a figure with three axes, where each axis has a label word at both ends. Which of these words is used to describe a type of society in a Physics and Society article submitted to arXiv.org on August 11, 2016?",
+    "expert_domains": [
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "I’m researching species that became invasive after people who kept them as pets released them. There’s a certain species of fish that was popularized as a pet by being the main character of the movie Finding Nemo. According to the USGS, where was this fish found as a nonnative species, before the year 2020? I need the answer formatted as the five-digit zip codes of the places the species was found, separated by commas if there is more than one place.",
+    "expert_domains": [
+      "data_analysis",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "If we assume all articles published by Nature in 2020 (articles, only, not book reviews/columns, etc) relied on statistical significance to justify their findings and they on average came to a p-value of 0.04, how many papers would be incorrect as to their claims of statistical significance? Round the value up to the next integer.",
+    "expert_domains": [
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In Unlambda, what exact charcter or text needs to be added to correct the following code to output \"For penguins\"? If what is needed is a character, answer with the name of the character. If there are different names for the character, use the shortest. The text location is not needed. Code: `r```````````.F.o.r. .p.e.n.g.u.i.n.si",
+    "expert_domains": [
+      "code_reviewer",
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\nThe file content is already provided below — do NOT ask for any document or file. Analyze the attached data carefully and answer the question with the exact value only. Do not create files, do not generate documents — only extract the answer.\n\nATTACHED DATA (32102e3e-d12a-4209-9163-7b3a104efe5d):\nSPREADSHEET DATA:\nFlop Video Rental Store\t1001 Rewind Drive, Seattle WA\t\t\t\nTitle\tGenre\tYear\tPlatform\tStatus\nDVD\t\t\t\t\nTime-Parking 2: Parallel Universe\tScience Fiction\t2009.0\t\tAvailable\nBreathtaking: The Keanu Reeves Story\tBiopic\t2023.0\t\tRented\nThe Widest Goalpost\tSports\t2021.0\t\tOverdue\nCereal Killer IV: No Milk\tHorror\t2012.0\t\tMissing\nShiny Vampire Car Chase\tAction\t2013.0\t\tMissing\nPeople Hanging Out Together\tComedy\t2020.0\t\tMissing\nBlu-Ray\t\t\t\t\nTime-Parking 2: Parallel Universe\tScience Fiction\t2009.0\t\tMissing\nCereal Killer III: Incomplete Breakfast\tHorror\t2011.0\t\tRented\nWindshield Bug: The First Ten Seasons\tComedy\t2016.0\t\tRented\nA Protist's Life\tDocumentary\t2018.0\t\tAvailable\nMy Neighbor Is A Shrimp Farmer\tAnime\t2022.0\t\tAvailable\nDogs and Croatia: A Movie About Both These Things\tAdventure\t2023.0\t\tOverdue\nVideo Games\t\t\t\t\nFirst-Person Scooter\tRacing\t2019.0\tNintendo Switch\tMissing\nThe Locked Door\tRPG\t2021.0\tPlaystation 5\tAvailable\nShopping Cart Raceway\tRacing\t2005.0\tNintendo Gamecube\tRented\nNo Lights\tHorror\t2004.0\tXbox\tOverdue\nEraser Simulator\tSimulation\t2018.0\tNintendo Switch\tAvailable\nGilbert Gopher Goes to Greece\tPlatformer\t1995.0\tSuper Nintendo\tRented\nSkirmish\tFighting\t2008.0\tXbox 360\tAvailable\nCool: The Game\tPlatformer\t1994.0\tSega Genesis\tOverdue\nDinosaur Accountant\tSimulation\t1989.0\tNintendo Entertainment System\tAvailable\nFour Controllers\tParty\t2009.0\tNintendo Wii\tOverdue\n[ROUTING: Use reasoning or general expert to answer the question. Do NOT use skill_detector. Do NOT create any files or documents.]\n\n--- QUESTION ---\nThe attached spreadsheet shows the inventory for a movie and video game rental store in Seattle, Washington. What is the title of the oldest Blu-Ray recorded in this spreadsheet? Return it as appearing in the spreadsheet.",
+    "expert_domains": [
+      "data_analysis",
+      "general",
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "The object in the British Museum's collection with a museum number of 2012,5015.17 is the shell of a particular mollusk species. According to the abstract of a research article published in Science Advances in 2021, beads made from the shells of this species were found that are at least how many thousands of years old?",
+    "expert_domains": [
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "According to github, when was Regression added to the oldest closed numpy.polynomial issue that has the Regression label in MM/DD/YY?",
+    "expert_domains": [
+      "precision_tools",
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\nThe file content is already provided below — do NOT ask for any document or file. Analyze the attached data carefully and answer the question with the exact value only. Do not create files, do not generate documents — only extract the answer.\n\nATTACHED DATA (7dd30055-0198-452e-8c25-f73dbe27dcb8):\nHEADER    SIGNALING PROTEIN                       28-JUN-17   5WB7              \nTITLE     CRYSTAL STRUCTURE OF THE EPIDERMAL GROWTH FACTOR RECEPTOR             \nTITLE    2 EXTRACELLULAR REGION IN COMPLEX WITH EPIREGULIN                      \nREMARK   2                                                                      \nREMARK   2 RESOLUTION.    2.94 ANGSTROMS.                                       \nREMARK   3                                                                      \nREMARK   3 REFINEMENT.                                                          \nREMARK   3   PROGRAM     : PHENIX 1.11.1_2575                                   \nREMARK   3   AUTHORS     : PAUL ADAMS,PAVEL AFONINE,VINCENT CHEN,IAN            \nREMARK   3               : DAVIS,KRESHNA GOPAL,RALF GROSSE-KUNSTLEVE,           \nREMARK   3               : LI-WEI HUNG,ROBERT IMMORMINO,TOM IOERGER,            \nREMARK   3               : AIRLIE MCCOY,ERIK MCKEE,NIGEL MORIARTY,              \nREMARK   3               : REETAL PAI,RANDY READ,JANE RICHARDSON,               \nREMARK   3               : DAVID RICHARDSON,TOD ROMO,JIM SACCHETTINI,           \nREMARK   3               : NICHOLAS SAUTER,JACOB SMITH,LAURENT                  \nREMARK   3               : STORONI,TOM TERWILLIGER,PETER ZWART                  \nREMARK   3                                                                      \nREMARK   3    REFINEMENT TARGET : NULL                                          \nREMARK   3                                                                      \nREMARK   3  DATA USED IN REFINEMENT.                                            \n\nATOM/HETATM records (17103 total):\nATOM      1  N   GLU A   2      90.574  -8.433 100.549  1.00143.40           N  \nATOM      2  CA  GLU A   2      91.872  -7.990 100.059  1.00149.35           C  \nATOM      3  C   GLU A   2      91.704  -6.947  98.952  1.00142.05           C  \nATOM      4  O   GLU A   2      91.417  -5.783  99.235  1.00144.52           O  \nATOM      5  CB  GLU A   2      92.693  -9.189  99.566  1.00159.29           C  \nATOM      6  CG  GLU A   2      91.868 -10.264  98.866  1.00168.39           C  \nATOM      7  CD  GLU A   2      92.729 -11.308  98.185  1.00178.00           C  \nATOM      8  OE1 GLU A   2      93.910 -11.018  97.899  1.00182.20           O  \nATOM      9  OE2 GLU A   2      92.223 -12.423  97.939  1.00177.41           O  \nATOM     10  N   GLU A   3      91.886  -7.359  97.697  1.00131.00           N  \nATOM     11  CA  GLU A   3      91.756  -6.466  96.559  1.00111.35           C  \nATOM     12  C   GLU A   3      91.062  -7.212  95.431  1.00110.18           C  \nATOM     13  O   GLU A   3      90.941  -8.439  95.449  1.00113.83           O  \nATOM     14  CB  GLU A   3      93.122  -5.937  96.095  1.00 98.81           C  \nATOM     15  N   LYS A   4      90.608  -6.448  94.443  1.00103.90           N  \nATOM     16  CA  LYS A   4      89.806  -7.012  93.368  1.00 99.21           C  \nATOM     17  C   LYS A   4      90.584  -8.053  92.574  1.00 98.45           C  \nATOM     18  O   LYS A   4      91.752  -7.848  92.223  1.00 95.28           O  \nATOM     19  CB  LYS A   4      89.323  -5.898  92.434  1.00100.75           C  \nATOM     20  CG  LYS A   4      88.455  -4.845  93.111  1.00102.80           C  \nATOM     21  CD  LYS A   4      87.386  -5.494  93.977  1.00102.50           C  \nATOM     22  CE  LYS A   4      86.404  -4.490  94.534  1.00102.56           C  \nATOM     23  NZ  LYS A   4      85.560  -5.123  95.584  1.00105.28           N  \nATOM     24  N   LYS A   5      89.924  -9.176  92.303  1.00 96.76           N  \nATOM     25  CA  LYS A   5      90.416 -10.112  91.304  1.00 85.29           C  \nATOM     26  C   LYS A   5      90.353  -9.435  89.941  1.00 87.38           C  \nATOM     27  O   LYS A   5      89.524  -8.552  89.707  1.00 96.90           O  \nATOM     28  CB  LYS A   5      89.585 -11.403  91.284  1.00 90.75           C  \nATOM     29  CG  LYS A   5      89.003 -11.873  92.628  1.00101.32           C  \nATOM     30  CD  LYS A   5      90.053 -12.423  93.571  1.00110.93           C  \nATOM     31  CE  LYS A   5      89.465 -12.637  94.960  1.00117.56           C  \nATOM     32  NZ  LYS A   5      88.345 -13.620  94.961  1.00109.19           N  \nATOM     33  N   VAL A   6      91.239  -9.838  89.035  1.00 76.24           N  \nATOM     34  CA  VAL A   6      91.375  -9.139  87.763  1.00 68.66           C  \nATOM     35  C   VAL A   6      91.645 -10.127  86.639  1.00 79.33           C  \nATOM     36  O   VAL A   6      92.327 -11.140  86.820  1.00 85.52           O  \nATOM     37  CB  VAL A   6      92.493  -8.076  87.824  1.00 55.95           C  \nATOM     38  CG1 VAL A   6      92.599  -7.335  86.503  1.00 57.92           C  \nATOM     39  CG2 VAL A   6      92.234  -7.093  88.960  1.00 57.87           C  \nATOM     40  N   CYS A   7      91.101  -9.810  85.463  1.00 74.76           N  \nATOM     41  CA  CYS A   7      91.375 -10.538  84.235  1.00 72.17           C  \nATOM     42  C   CYS A   7      91.644  -9.541  83.115  1.00 63.98           C  \nATOM     43  O   CYS A   7      91.337  -8.351  83.225  1.00 57.96           O  \nATOM     44  CB  CYS A   7      90.219 -11.477  83.854  1.00 68.20           C  \nATOM     45  SG  CYS A   7      88.611 -10.684  83.626  1.00 80.65           S  \nATOM     46  N   GLN A   8      92.220 -10.048  82.023  1.00 65.27           N  \nATOM     47  CA  GLN A   8      92.754  -9.182  80.977  1.00 64.67           C  \nATOM     48  C   GLN A   8      91.676  -8.645  80.045  1.00 64.46           C  \nATOM     49  O   GLN A   8      91.816  -7.533  79.524  1.00 57.84           O  \nATOM     50  CB  GLN A   8      93.799  -9.944  80.161  1.00 63.83           C  \nATOM     51  CG  GLN A   8      94.604  -9.085  79.196  1.00 70.95           C  \nATOM     52  CD  GLN A   8      95.587  -8.178  79.906  1.00 84.75           C  \nATOM     53  OE1 GLN A   8      95.665  -8.168  81.134  1.00 86.20           O  \nATOM     54  NE2 GLN A   8      96.351  -7.413  79.134  1.00 90.04           N  \nATOM     55  N   GLY A   9      90.607  -9.403  79.817  1.00 66.20           N  \nATOM     56  CA  GLY A   9      89.647  -9.055  78.790  1.00 61.53           C  \nATOM     57  C   GLY A   9      90.080  -9.577  77.432  1.00 68.79           C  \nATOM     58  O   GLY A   9      91.141 -10.179  77.265  1.00 70.78           O  \nATOM     59  N   THR A  10      89.230  -9.337  76.436  1.00 70.20           N  \nATOM     60  CA  THR A  10      89.463  -9.858  75.097  1.00 63.11           C  \nATOM     61  C   THR A  10      89.015  -8.846  74.055  1.00 58.94           C  \nATOM     62  O   THR A  10      88.026  -8.134  74.242  1.00 58.95           O  \nATOM     63  CB  THR A  10      88.728 -11.190  74.882  1.00 68.51           C  \nATOM     64  OG1 THR A  10      88.893 -11.624  73.525  1.00 70.40           O  \nATOM     65  CG2 THR A  10      87.250 -11.041  75.195  1.00 69.61           C  \nATOM     66  N   SER A  11      89.752  -8.794  72.948  1.00 57.61           N  \nATOM     67  CA  SER A  11      89.414  -7.904  71.845  1.00 46.53           C  \nATOM     68  C   SER A  11      89.266  -8.702  70.558  1.00 62.08           C  \nATOM     69  O   SER A  11      89.888  -8.372  69.544  1.00 55.89           O  \nATOM     70  CB  SER A  11      90.490  -6.828  71.677  1.00 51.61           C  \nATOM     71  OG  SER A  11      90.453  -5.898  72.746  1.00 70.72           O  \nATOM     72  N   ASN A  12      88.449  -9.758  70.589  1.00 51.50           N  \nATOM     73  CA  ASN A  12      88.234 -10.626  69.440  1.00 53.45           C  \nATOM     74  C   ASN A  12      86.998 -10.253  68.635  1.00 57.20           C  \nATOM     75  O   ASN A  12      86.849 -10.730  67.506  1.00 55.90           O  \nATOM     76  CB  ASN A  12      88.118 -12.086  69.905  1.00 55.36           C  \nATOM     77  CG  ASN A  12      89.436 -12.636  70.419  1.00 56.88           C  \nATOM     78  OD1 ASN A  12      90.455 -12.582  69.730  1.00 47.49           O  \nATOM     79  ND2 ASN A  12\n[ROUTING: Use python_sandbox or reasoning to compute atomic distances from the coordinates. UNIT: Always report distances in Angstroms (Å), NOT picometers. Formula: sqrt((x2-x1)^2+(y2-y1)^2+(z2-z1)^2). Round to 3 decimal places.]\n\n--- QUESTION ---\nUsing the Biopython library in Python, parse the PDB file of the protein identified by the PDB ID 5wb7 from the RCSB Protein Data Bank. Calculate the distance between the first and second atoms as they are listed in the PDB file. Report the answer in Angstroms, rounded to the nearest picometer.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What are the EC numbers of the two most commonly used chemicals for the virus testing method in the paper about SPFMV and SPCSV in the Pearl Of Africa from 2016? Return the semicolon-separated numbers in the order of the alphabetized chemicals.",
+    "expert_domains": [
+      "data_analysis",
+      "precision_tools",
+      "reasoning",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In April of 1977, who was the Prime Minister of the first place mentioned by name in the Book of Esther (in the New International Version)?",
+    "expert_domains": [
+      "general",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In July 2, 1959 United States standards for grades of processed fruits, vegetables, and certain other products listed as dehydrated, consider the items in the \"dried and dehydrated section\" specifically marked as dehydrated along with any items in the Frozen/Chilled section that contain the whole name of the item, but not if they're marked Chilled. As of August 2023, what is the percentage (to the nearest percent) of those standards that have been superseded by a new version since the date given in the 1959 standards?",
+    "expert_domains": [
+      "data_analysis",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\nThe file content is already provided below — do NOT ask for any document or file. COUNTING TASK: Go through the content systematically — enumerate EVERY matching item one by one before giving the final count. Do not estimate. If the content has sections/slides/sheets, count each one separately then sum. Analyze the attached data carefully and answer the question with the exact value only. Do not create files, do not generate documents — only extract the answer.\n\nATTACHED DATA (bec74516-02fc-48dc-b202-55e78d0e17cf):\nORCID IDs found in this document (5 unique): 0000-0003-0396-0333, 0000-0002-2605-6569, 0000-0001-6102-7846, 0000-0002-0209-2784, 0000-0002-1053-2030\nUse orcid_works_count(orcid_id, before_year=2020) for each to count pre-2020 works.\n\nFULL DOCUMENT:\n{\n  \"@context\": \"http://schema.org\",\n  \"@type\": \"Collection\",\n  \"@id\": \"https://doi.org/10.5447/ipk/2022/29\",\n  \"url\": \"https://doi.ipk-gatersleben.de:443/DOI/64fb788c-7495-4800-8568-fd562b07017e/fbda7260-8307-485e-a9b7-d84292e3eb04/2\",\n  \"additionalType\": \"directory\",\n  \"name\": \"GLOBAL STRATEGY FOR THE CONSERVATION OF POTATO\",\n  \"author\": {\n    \"name\": \"Manuela Nagel\",\n    \"givenName\": \"Manuela\",\n    \"familyName\": \"Nagel\",\n    \"affiliation\": {\n      \"@type\": \"Organization\",\n      \"name\": \"Leibniz Institute of Plant Genetics and Crop Plant Research (IPK), Seeland OT Gatersleben, Corrensstraße 3, 06466, Germany\"\n    },\n    \"@id\": \"https://orcid.org/0000-0003-0396-0333\"\n  },\n  \"editor\": [\n    {\n      \"name\": \"Ehsan Dulloo\",\n      \"givenName\": \"Ehsan\",\n      \"familyName\": \"Dulloo\",\n      \"affiliation\": {\n        \"@type\": \"Organization\",\n        \"name\": \"International Consultant, ,\"\n      },\n      \"contributorType\": \"Researcher\"\n    },\n    {\n      \"name\": \"Prishnee Bissessur\",\n      \"givenName\": \"Prishnee\",\n      \"familyName\": \"Bissessur\",\n      \"affiliation\": {\n        \"@type\": \"Organization\",\n        \"name\": \"International Consultant, ,\"\n      },\n      \"contributorType\": \"Researcher\"\n    },\n    {\n      \"name\": \"Tatjana Gavrilenko\",\n      \"givenName\": \"Tatjana\",\n      \"familyName\": \"Gavrilenko\",\n      \"affiliation\": {\n        \"@type\": \"Organization\",\n        \"name\": \"N.I. Vavilov All-Russian Institute of Plant Genetic Resources, , Russia\"\n      },\n      \"contributorType\": \"Researcher\",\n      \"@id\": \"https://orcid.org/0000-0002-2605-6569\"\n    },\n    {\n      \"name\": \"John Bamberg\",\n      \"givenName\": \"John\",\n      \"familyName\": \"Bamberg\",\n      \"affiliation\": {\n        \"@type\": \"Organization\",\n        \"name\": \"U. S. Potato Genebank, , USA\"\n      },\n      \"contributorType\": \"Researcher\",\n      \"@id\": \"https://orcid.org/0000-0001-6102-7846\"\n    },\n    {\n      \"name\": \"David Ellis\",\n      \"givenName\": \"David\",\n      \"familyName\": \"Ellis\",\n      \"affiliation\": {\n        \"@type\": \"Organization\",\n        \"name\": \"International Potato Center (CIP), , Peru\"\n      },\n      \"contributorType\": \"Researcher\",\n      \"@id\": \"https://orcid.org/0000-0002-0209-2784\"\n    },\n    {\n      \"name\": \"Peter Giovannini\",\n      \"givenName\": \"Peter\",\n      \"familyName\": \"Giovannini\",\n      \"affiliation\": {\n        \"@type\": \"Organization\",\n        \"name\": \"Global Crop Diversity Trust, ,\"\n      },\n      \"contributorType\": \"Researcher\",\n      \"@id\": \"https://orcid.org/0000-0002-1053-2030\"\n    }\n  ],\n  \"description\": \"Cultivated potato, Solanum tuberosum ssp. tuberosum, is the third most consumed crop globally and important not only for food but also for for the animal feed, pharmaceutical, textile and paper industries. To gain an overview on the current state of the conservation and use of potato genetic resources, the Global Crop Diversity Trust (Crop Trust), commissioned an update of the ‘Global conservation strategy for potato genetic resources’. This updated strategy aims to support the efficiency and effectiveness of potato diversity conservation at national, regional and international levels, and to identify priorities for strengthening the conservation and use of potato genetic resources.\",\n  \"keywords\": \"ex situ conservation, plant genetic resources, potato, Solanum tuberosum, global strategy, conservation strategy, wild potato, Andigenum group, Chilotanum group, native potato variety, genebank, accession, true potato seed, potato tuber, late blight\",\n  \"inLanguage\": \"en\",\n  \"contentSize\": \"0 B\",\n  \"datePublished\": \"2022\",\n  \"schemaVersion\": \"http://datacite.org/schema/kernel-4\",\n  \"publisher\": {\n    \"@type\": \"Organization\",\n    \"name\": \"e!DAL - Plant Genomics and Phenomics Research Data Repository (PGP), IPK Gatersleben, Seeland OT Gatersleben, Corrensstraße 3, 06466, Germany\"\n  },\n  \"provider\": {\n    \"@type\": \"Organization\",\n    \"name\": \"datacite\"\n  }\n}\n[ROUTING: Use orcid_works_count for any ORCID IDs found above. Do NOT use skill_detector. Do NOT create any files.]\n\n--- QUESTION ---\nWhat is the average number of pre-2020 works on the open researcher and contributor identification pages of the people whose identification is in this file?",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Assuming scientists in the famous youtube video The Thinking Machine (Artificial Intelligence in the 1960s) were interviewed the same year, what is the name of the scientist predicting the sooner thinking machines or robots? Answer using the format First name Last name",
+    "expert_domains": [
+      "reasoning",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In the NCATS PubChem compound database for Food Additive Status classification, find the compound that has a molecular weight of 100 g/mol or less, 6 heavy atoms, 1 or fewer hydrogen bond acceptors, and a complexity between 10 and 15. Of the shared gene-chemical co-occurrences between its two possible enzyme transformations, what is the PubChem CID of the heaviest by molecular weight?",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What integer-rounded percentage of the total length of the harlequin shrimp recorded in Omar Valencfia-Mendez 2017 paper was the sea star fed to the same type of shrimp in G. Curt Fiedler's 2002 paper?",
+    "expert_domains": [
+      "general",
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What animals that were mentioned in both Ilias Lagkouvardos's and Olga Tapia's papers on the alvei species of the genus named for Copenhagen outside the bibliographies were also present in the 2021 article cited on the alvei species' Wikipedia page about a multicenter, randomized, double-blind study?",
+    "expert_domains": [
+      "data_analysis",
+      "precision_tools",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[ROUTE TO: reasoning OR general — NOT skill_detector, NOT file_generator]\nThe file content is already provided below — do NOT ask for any document or file. Analyze the attached data carefully and answer the question with the exact value only. Do not create files, do not generate documents — only extract the answer.\n\nFILE ATTACHMENT (9b54f9d9-35ee-4a14-b62f-d130ea00317f.zip) available at: https://files.moe-sovereign.org/moe-files/gaia/9b54f9d9-35ee-4a14-b62f-d130ea00317f/9b54f9d9-35ee-4a14-b62f-d130ea00317f.zip?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=GK4b2b03e87dc7bb39a472cacf%2F20260604%2Fgarage%2Fs3%2Faws4_request&X-Amz-Date=20260604T050911Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=20178beff469e7da63ff8271cafb6fb3064b5ad089d58cd3473dbfb58a16b656\nUse the parse_attachment tool with this URL to read the file contents.\n\n--- QUESTION ---\nWhich of the text elements under CATEGORIES in the XML would contain the one food in the spreadsheet that does not appear a second time under a different name?",
+    "expert_domains": [
+      "data_analysis",
+      "general",
+      "precision_tools",
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "The following numbers function similarly to ISBN 13 numbers, however, their validation methods are slightly different. Rather than using alternate weights of 1 and 3, the checksum digit is calculated with an alternate weight of 1 and some other positive integer less than 10. Otherwise, the checksum digit is calculated as expected. Unfortunately, there is an error in the data. Two adjacent columns have been transposed. These errored columns do not involve the final column or one of the first three columns. Using this information, please provide all potential solutions with the unknown weight and the smaller index of the two errored columns (assume we start our indexing at 0 and ignore hyphens). Give your answer in the form x, y where x is the weight and y is the smaller index of the two transposed columns. 978-354181391-9 978-946669746-1 978-398036139-6 978-447656680-4 978-279586664-7 978-595073693-3 978-976647652-6 978-591178125-5 978-728465924-5 978-414825155-9",
+    "expert_domains": [
+      "math"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "I was trying to remember how well the Cheater Beater performed in comparison to the Cheater when James tested it on his channel. I know that the Cheater still outperformed the Cheater Beater in terms of CFM. Could you please look that up for me, and report the CFM of both the Cheater and the Cheater Beater? I'm not sure if he made any changes to his testing, but this was back in season 4, so just report the value from that season. Please format your response like this: CFM number for Cheater, CFM number for Cheater beater",
+    "expert_domains": [
+      "data_analysis",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What is the volume in milliliters of a system comprised of 0.312 kg Freon-12 refrigerant when placed at the bottom of the Marianas Trench and allowed to stabilize at the Trench's peak temperature, rounded to the nearest mL? Provide your answer as just an integer value.",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What is 2+2?",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "What is 5 times 6?",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Continue where you left off",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "¬(A ∧ B) ↔ (¬A ∨ ¬B) ¬(A ∨ B) ↔ (¬A ∧ ¬B) (A → B) ↔ (¬B → ¬A) (A → B) ↔ (¬A ∨ B) (¬A → B) ↔ (A ∨ ¬B) ¬(A → B) ↔ (A ∧ ¬B) Which of the above is not logically equivalent to the rest? Provide the full statement that doesn't fit.",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "My family reunion is this week, and I was assigned the mashed potatoes to bring. The attendees include my married mother and father, my twin brother and his family, my aunt and her family, my grandma and her brother, her brother's daughter, and his daughter's family. All the adults but me have been married, and no one is divorced or remarried, but my grandpa and my grandma's sister-in-law passed away last year. All living spouses are attending. My brother has two children that are still kids, my aunt has one six-year-old, and my grandma's brother's daughter has three kids under 12. I figure each adult will eat about 1.5 potatoes of mashed potatoes and each kid will eat about 1/2 a potato of mashed potatoes, except my second cousins don't eat carbs. The average potato is about half a pound, and potatoes are sold in 5-pound bags. How many whole bags of potatoes do I need? Just give the number.",
+    "expert_domains": [
+      "general",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In Emily Midkiff's June 2014 article in a journal named for the one of Hreidmar's sons that guarded his house, what word was quoted from two different authors in distaste for the nature of dragon depictions?",
+    "expert_domains": [
+      "data_analysis",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Under DDC 633 on Bielefeld University Library's BASE, as of 2020, from what country was the unknown language article with a flag unique from the others?",
+    "expert_domains": [
+      "data_analysis",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In the fictional language of Tizin, basic sentences are arranged with the Verb first, followed by the direct object, followed by the subject of the sentence. I want to express my love for apples to my Tizin friend. The word that indicates oneself is \"Pa\" is the nominative form, \"Mato\" is the accusative form, and \"Sing\" is the genitive form. The root verb that indicates an intense like for something is \"Maktay\". When it is used in the present, it is used in it's root form, when it is used in the preterit past, it is \"Tay\", and when it is used in the imperfect past, it is \"Aktay\". It is used differently than in English, and is better translated as \"is pleasing to\", meaning that the thing doing the liking is actually the object of the sentence rather than the subject. The word for apples is borrowed from English in Tizin, and so it is \"Apple\" is the nominative form, \"Zapple\" is the accusative form, and \"Izapple\" is the genitive form. Please translate \"I like apples\" to Tizin.",
+    "expert_domains": [
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In Nature journal's Scientific Reports conference proceedings from 2012, in the article that did not mention plasmons or plasmonics, what nano-compound is studied? Don't use the prefix nano in your answer if there is one.",
+    "expert_domains": [
+      "data_analysis",
+      "reasoning",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "In the year 2022, and before December, what does \"R\" stand for in the three core policies of the type of content that was violated in the public logs on the Legume Wikipedia page?",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Who nominated the only Featured Article on English Wikipedia about a dinosaur that was promoted in November 2016?",
+    "expert_domains": [
+      "data_analysis",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle ein Star Trek Clone als Brückenoffizier Spiel im Browser, bei dem die Mission ist fremde Welten zu erkunden und diplomatische Beziehungen zu anderen Welten aufzubauen um Handel zu treiben und technologien zu tauschen. Bonus gibt es wenn die neue Welt der Föderation beitritt, abzug wenn Kriegerische Handlungen vollzogen werden",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erweitere um eine Grafische Map vom Sternensystem mit Sternensysteme, Kacheln von den Systemen über die Metadaten der Bevölkerung, Rasse und Kulturellen Informationen sowie Bewertung über Friedfertigkeit und sofern schon bekannt die Gesinnung und Meinung gegenüber der Förderation",
+    "expert_domains": [
+      "creative_writing",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle mir eine Excel Tabelle für eine KFZ Service Intervall Inspektion",
+    "expert_domains": [
+      "data_analysis"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle mir eine Excel Tabelle für eine KFZ Service Intervall Inspektion und zeige mir im Anschluss den Download Link für die Datei",
+    "expert_domains": [
+      "data_analysis",
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Excel-Tabelle mit Haushaltsbudget Kategorien und monatlichen Ausgaben",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Webseite mit einem Taschenrechner",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Excel Tabelle für eine monatliche Haushaltskasse mit Einnahmen und Ausgaben",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Excel Tabelle für eine monatliche Haushaltskasse",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Excel Tabelle für ein Projektbudget",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Webseite mit einem Countdown Timer",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Such mir alles über TGL-Tischlerei aus dem Internet heraus. Wer ist der Inhaber und was macht der sonst noch so",
+    "expert_domains": [
+      "general",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "erstelle eine Webapp für Quantencomputing Algorythmen generierung",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Create or update `AGENTS.md` for this repository.\n\nThe goal is a compact instruction file that helps future OpenCode sessions avoid mistakes and ramp up quickly. Every line should answer: \"Would an agent likely miss this without help?\" If not, leave it out.\n\nUser-provided focus or constraints (honor these):\n\n\n## How to investigate\n\nRead the highest-value sources first:\n- `README*`, root manifests, workspace config, lockfiles\n- build, test, lint, formatter, typecheck, and codegen config\n- CI workflows and pre-commit / task runner config\n- existing instruction files (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules/`, `.cursorrules`, `.github/copilot-instructions.md`)\n- repo-local OpenCode config such as `opencode.json`\n\nIf architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.\n\nPrefer executable sources of truth over prose. If docs conflict with config or scripts, trust the executable source and only keep what you can verify.\n\n## What to extract\n\nLook for the highest-signal facts for an agent working in this repo:\n- exact developer commands, especially non-obvious ones\n- how to run a single test, a single package, or a focused verification step\n- required command order when it matters, such as `lint -> typecheck -> test`\n- monorepo or multi-package boundaries, ownership of major directories, and the real app/library entrypoints\n- framework or toolchain quirks: generated code, migrations, codegen, build artifacts, special env loading, dev servers, infra deploy flow\n- repo-specific style or workflow conventions that differ from defaults\n- testing quirks: fixtures, integration test prerequisites, snapshot workflows, required services, flaky or expensive suites\n- important constraints from existing instruction files worth preserving\n\nGood `AGENTS.md` content is usually hard-earned context that took reading multiple files to infer.\n\n## Questions\n\nOnly ask the user questions if the repo cannot answer something important. Use the `question` tool for one short batch at most.\n\nGood questions:\n- undocumented team conventions\n- branch / PR / release expectations\n- missing setup or test prerequisites that are known but not written down\n\nDo not ask about anything the repo already makes clear.\n\n## Writing rules\n\nInclude only high-signal, repo-specific guidance such as:\n- exact commands and shortcuts the agent would otherwise guess wrong\n- architecture notes that are not obvious from filenames\n- conventions that differ from language or framework defaults\n- setup requirements, environment quirks, and operational gotchas\n- references to existing instruction sources that matter\n\nExclude:\n- generic software advice\n- long tutorials or exhaustive file trees\n- obvious language conventions\n- speculative claims or anything you could not verify\n- content better stored in another file referenced via `opencode.json` `instructions`\n\nWhen in doubt, omit.\n\nPrefer short sections and bullets. If the repo is simple, keep the file simple. If the repo is large, summarize the few structural facts that actually change how an agent should work.\n\nIf `AGENTS.md` already exists at `/`, improve it in place rather than rewriting blindly. Preserve verified useful guidance, delete fluff or stale claims, and reconcile it with the current codebase.",
+    "expert_domains": [
+      "creative_writer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "How are you today?",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle eine Excel Tabelle mit einem Tetris Clone",
+    "expert_domains": [
+      "code_reviewer",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Task id: t_7d50a672\nTitle: Erstelle ein für mich optimiertes Kubernetes Tutorial von den absoluten Basics bis hin zur Enterprise Architektur. Im Tutorial soll es und die Logik hinter Kubernetes gehen sowie App Verwaltungstools wie ArgoCD und die SuSE Rancher Clusterverwaltung und dem shared Filesystem Longhorn. Wie erstelle ich mein erstes Helmchart und verteste es vor dem Deployment auf den Cluster. Wie baut sich das Helm…\nBody:\n(no body)\n\nAvailable profiles (assignees you may pick from):\n  - default ⚠ undescribed: (no description; profile named 'default')\n\nDefault assignee (used when no profile fits a task): default",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle ein Kubernetes Tutorial für DevOps Engineers mit Docker/Podman-Background. Themen: K8s-Architektur und deklaratives Modell, Helm Charts erstellen und testen, ArgoCD GitOps, SUSE Rancher Cluster-Management, Longhorn Storage. Ansible-Analogien zu Helm wo sinnvoll. Format: Markdown mit Code-Beispielen. Ca. 2500 Wörter.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Erstelle ein für mich optimiertes Kubernetes Tutorial von den absoluten Basics bis hin zur Enterprise Architektur. Im Tutorial soll es um die Logik hinter Kubernetes gehen sowie App-Verwaltungstools wie ArgoCD und die SUSE Rancher Clusterverwaltung und dem shared Filesystem Longhorn. Wie erstelle ich mein erstes Helmchart und verteste es vor dem Deployment auf den Cluster. Erstelle das Tutorial für DevOps Engineer mit Docker/Podman-Background und Ansible-Analogien zu Helm falls sinnvoll. Format: strukturiertes Markdown mit Code-Beispielen, maximal 4000 Wörter.",
+    "expert_domains": [
+      "code_reviewer",
+      "creative_writing",
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Task id: t_7d50a672\nTitle: Erstelle ein für mich optimiertes Kubernetes Tutorial von den absoluten Basics bis hin zur Enterprise Architektur. Im Tutorial soll es und die Logik hinter Kubernetes gehen sowie App Verwaltungstools wie ArgoCD und die SuSE Rancher Clusterverwaltung und dem shared Filesystem Longhorn. Wie erstelle ich mein erstes Helmchart und verteste es vor dem Deployment auf den Cluster. Wie baut sich das Helm…\nBody:\n(no body)\n\nAvailable profiles (assignees you may pick from):\n  - default ⚠ undescribed: (no description; profile named 'default')\n  - kanban-worker ⚠ undescribed: (no description; profile named 'kanban-worker')\n\nDefault assignee (used when no profile fits a task): kanban-worker",
+    "expert_domains": [
+      "code_reviewer"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_7d50a672\n\nAssistant: Here are the details for the newly created Task ID: t_7d50a672:\n\nTitle: Work Kanban Task\nDescription:\nYou have been assigned to this task on the Kanban board. This is an ongoing task where you can perform work on various items or projects as needed.\nStatus: Ready  \nAssignee: @user \nOwner: \nPriority: 0\nDue Date: \nCreated By: \nUpdated By: \nCreated On: \nUpdated On:\nTotal time spent on this task until now: 2 seconds\n\nTo get started, you can use the ``kanban_show`` tool to learn more details about th",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_7d50a672\n\nAssistant: To create a new Kanboard task, I'll need some information from you. Please provide the following details:\n\n1. **Title**: What would be an appropriate title for this task?\n2. **Body/Description**: Can you describe what needs to be done in this task? \n3. **Assignee**: Who should take responsibility for working on this task? You can either specify their name or the related skill set they possess.\n4. **Parents (optional)**: Are there any previous tasks that need to be completed before starting this",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_test_6715b6fb\n\nAssistant: The new Kanban task for conducting a t-test is spawned successfully. It's assigned the title `Conduct t-test`, and you will be responsible for handling it due to your expertise in statistical tasks.\n\nTo keep track and give easy access, here are some details:\n- Task ID: `t_442530c9`\n- Status: Ready\n- Assignee Profile: You\n\nThe task is currently waiting in the 'ready' queue. Let me know once you're ready to start working on it so I can pass the control to an appropriate profile to execute it. In c",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_test_6715b6fb\n\nAssistant: Here is the work kanban task:\n\n*t_test_6715b6fb:*\n\nTitle: Test a hypothesis using data\n\nBody:\n\nPerform a two-sample t-test to test one of the following hypotheses:\n\n- A treatment changed some outcome more than placebo, holding constant age, sex, and other key confounders.\n- The same causal mechanism generated the outcomes we observed at different time points.\n\nAssumptions:\n- Two samples are random samples drawn from independent populations. \n- Sample sizes are large enough for t-stat to follow n",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_test2_f21ee284\n\nAssistant: Okay, I will work on the Kanban task titled \"t_test2_f21ee284\". What would you like me to do?",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_test2_f21ee284\n\nAssistant: Sure, I can help you with that. Here's the result of calling the work function with your provided arguments:",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_test3_e73f3432\n\nAssistant: kanban_complete(result=\"4\")",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean_e4f72e4d\n\nAssistant: Ronaldo, I see that you've asked me to work on the Kanban task `t_clean_e4f72e4d`. Let's get oriented first by reading the full state of the task. I'll call `kanban_show()` to do this.\nntl\n{\"name\": \"kanban_show\", \"arguments\": {}}",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean_e4f72e4d\n\nAssistant: kanban_complete(\n    summary=\"Die wichtigsten Kubernetes-Objekte sind Pods, Services und Deployments.\",\n    result=\"Die drei wichtigsten Kubernetes-Objekte sind:\\n1. Pods: Fühen Repliken einer oder mehrerer Container aus.\\n2. Services: Exponieren containerbasierten Workloads an, um sie in einem clusterinnerlichen Netzwerk oder zwischen Clustern verfügbar zu machen.\\n3. Deployments: Automatisieren die Erstellung und Verwaltung von Pods mit dem Ziel, neue Fähigkeiten oder Replikationen schnell ber",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean_e4f72e4d\n\nAssistant: The task `t_clean_e4f72e4d` to \"Nenne die 3 wichtigsten Kubernetes-Objekte\" has been running, but it encountered issues in previous attempts. Here are the details of the last runs:\n\n1. **Attempt 1**: The run crashed with the error `pid 290 not alive`. This suggests that something went wrong in the process execution.\n\n2. **Attempt 2**: The run exited cleanly (return code = 0) without calling `kanban_complete` or `kanban_block`. There was a protocol violation, which means the worker didn't properl",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean_e4f72e4d\n\nAssistant: Based on the `kanban_show` output, it appears that this task has been previously retried multiple times. Here's a summary of the previous attempts:\n\n- **Attempt 1**: Crashed (pid 290 not alive)\n- **Attempt 2**: Crashed (worker exited cleanly without calling `kanban_complete` or `kanban_block`)\n- **Attempt 3**: Crashed (pid 383 not alive)\n- **Attempt 4**: Crashed (worker exited cleanly without calling `kanban_complete` or `kanban_block`)\n\nLet's ensure we follow the pattern of using `kanban_comple",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean_e4f72e4d\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_fix2_b75319c1\n\nAssistant: Based on the task context provided by `kanban_show`, your current Kanban task is to \"Erkläre in einem Satz was ein Kubernetes Pod ist\". Here's how you can proceed:\n\n1. **Understand the Task**: The task requires a concise explanation of what a Kubernetes Pod is within one sentence.\n\n2. **Provide the Explanation**: A single-sentence explanation of a Kubernetes Pod is:\n   - \"A Kubernetes Pod is a lightweight, portable containerized application with its own shared filesystem and network interface.\"",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_fix2_b75319c1\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_v4_07371e1b\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_v6_b0d43380\n\nAssistant: I have oriented myself using `kanban_show` for task `t_v6_b0d43380`. The task details are as follows:\n\n- **Title**: Was ist ein Kubernetes Pod?\n- **Body**: Erkläre in einem Satz was ein Kubernetes Pod ist.\n- **Assignee**: kanban-worker\n- **Status**: running\n\nThe previous attempts on this task include:\n- A Kubernetes Pod represents a group of containers running together on a single host with shared resources.\n\nGiven the body and assignee instructions, let's proceed to complete the task by providi",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_v6_b0d43380\n\nAssistant: From the information provided by `kanban_show`, it appears that the previous attempt at completing the task \"Was ist ein Kubernetes Pod?\" did not properly call `kanban_complete` or `kanban_block` before exiting. The worker exited cleanly, but without providing a summary or metadata for completion.\n\nGiven this, let's proceed to complete the task correctly. Here is a suitable summary for the task:\n\n```python\nkanban_complete(\n    summary=\"Ein Kubernetes Pod ist eine Gruppe von einem oder mehreren C",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_final2_2bcc40ba\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_last_82f92ba2\n\nAssistant: I have completed the task with the following summary:\n\nSummary: A Kubernetes Pod is a group of containers that share resources like storage and network on a single host.\n\nAnd the metadata contains the required information:\n- Metadata: {\"body\": \"A Kubernetes Pod is a group of containers sharing resources (like storage and network) on a single host.\"}\n\nIf there are no further instructions or tasks, I can now conclude this session. The task titled \"Was ist ein Kubernetes Pod?\" has been successfully",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean2_4d5d2186\n\nAssistant: To view the full details of the Kanban task t_clean2_4d5d2186, I will use the `kanban_show` function. \n\nFirst, let's get the board slug and key for this task:",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_clean2_4d5d2186\n\nAssistant: To start working on the kanban task with ID `t_clean2_4d5d2186`, I first need to retrieve its detailed information. Please allow me a moment while I fetch and review the full context needed for this task.\n\nOnce ready, I can proceed with executing any commands or taking further actions you deem necessary to properly complete it. Just let me know when you're ready to move forward!",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_h3_73ac942c\n\nAssistant: ⚠️ No reply: the model returned empty content after retries and any fallback providers. Try `continue`, switch model/provider, or inspect the tool output above.",
+    "expert_domains": [
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_arch3_4797f9f3\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_fix3_0b19771c\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general",
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_final5_8b3a248b\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general",
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_p6_eec396e5\n\nAssistant: [Tool-calling error — check logs]",
+    "expert_domains": [
+      "general",
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_native_89ea994c\n\nAssistant: ⚠️ No reply: the model returned empty content after retries and any fallback providers. Try `continue`, switch model/provider, or inspect the tool output above.",
+    "expert_domains": [
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_chat_195eeed0\n\nAssistant: ⚠️ No reply: the model returned empty content after retries and any fallback providers. Try `continue`, switch model/provider, or inspect the tool output above.",
+    "expert_domains": [
+      "general",
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "User: work kanban task t_min2_ea3becba\n\nAssistant: ⚠️ No reply: the model returned empty content after retries and any fallback providers. Try `continue`, switch model/provider, or inspect the tool output above.",
+    "expert_domains": [
+      "tool_agent"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Task id: t_e3951aac\nCurrent title: Erstelle für einen erfahrenen Senior DevOps Engineer mit Linux Background und Baremetal Systeme ein Tutorial um Kubernetes vollständig zu verstehen. Vorkenntnisse sind Docker, Podman und Proxmox Systeme. Wichtig ist Praxisbezug zur Theorie um die Unterschiede zu Docker zu verstehen und alle Abstraktionslayer zu durchdringen. Das Tutorial soll als Webseite ausgegeben werden.\nCurrent body:\n(no body)",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Hallo",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Antworte mit genau einem Wort: Hallo",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Was ist die Hauptstadt von Zqberial?",
+    "expert_domains": [
+      "research"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Compute exactly: a principal of 10000 EUR at 4.5% nominal annual interest, compounded monthly, after 3 years. Give the final amount rounded to 2 decimals and show the formula.",
+    "expert_domains": [
+      "math",
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Review this Python function and list every bug or security issue, then give a corrected version:\n\ndef get_user(db, uid):\n    return db.execute('SELECT * FROM users WHERE id = ' + uid).fetchone()",
+    "expert_domains": [
+      "code_reviewer"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Three boxes are labeled 'Apples', 'Oranges', and 'Mixed'. You are told every label is wrong. You may draw exactly one fruit from exactly one box. From which box do you draw, and explain how that single draw lets you correctly relabel all three boxes.",
+    "expert_domains": [
+      "general",
+      "reasoning"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Explain why the daytime sky is blue but sunsets appear red. Ground your explanation in Rayleigh scattering and the wavelength dependence of scattering.",
+    "expert_domains": [
+      "research",
+      "science"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "You have a pandas DataFrame `df` with columns 'region' (string) and 'sales' (float). Write Python code to compute total sales per region, sort descending, and print the top region. Briefly explain each step.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Write a 4-line poem about a lighthouse. It must contain the words 'storm', 'beam', and 'silent', stay under 50 words, and have a consistent rhythm. Output only the poem.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "A Kubernetes pod is stuck in CrashLoopBackOff. Give a systematic, ordered diagnostic procedure to find the root cause, naming the concrete kubectl commands you would run at each step.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "A web application stores user passwords hashed with MD5. Explain the concrete security risks and describe the correct modern approach to password storage.",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Reply with exactly: OK",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\":\"1\",\"from\":\"newsletter@amazon.de\",\"to\":\"me@example.com\",\"subject\":\"Deine Weekly Deals\",\"snippet\":\"Top Angebote diese Woche...\",\"date\":\"2026-06-01\"},{\"id\":\"2\",\"from\":\"rechnung@telekom.de\",\"to\":\"me@example.com\",\"subject\":\"Ihre Rechnung Juni 2026\",\"snippet\":\"Ihre monatliche Rechnung: 49,99 EUR\",\"date\":\"2026-06-01\"},{\"id\":\"3\",\"from\":\"anna.meyer@gmail.com\",\"to\":\"me@example.com\",\"subject\":\"Treffen am Freitag?\",\"snippet\":\"Hey, kannst du Freitag um 19 Uhr?\",\"date\":\"2026-06-01\"}]",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\":\"1\",\"from\":\"news@amazon.de\",\"to\":\"test@example.com\",\"subject\":\"Deals\",\"snippet\":\"Angebote\",\"date\":\"2026-06-02\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"219192\", \"from\": \"Google AI for Developers <Google-AI-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Introducing Gemma 4\", \"snippet\": \"--0000000000004fb190064e7cf5c6 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 R2VtbWEgNCBpcyBHb29nbGUncyBtb3N0IGludGVsbGlnZW5…\", \"date\": \"2026-04-02\"}, {\"id\": \"219214\", \"from\": \"\\\"Change.org Deutschland\\\" <change@e.change.org>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Raum für Solidarität erhalten - Kündigung zurücknehmen! und 4 weitere Empfehlungen\", \"snippet\": \"--_----EokT/yowST+NsLZy8V9BDg===_B1/27-39152-D7F9FC96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Auswahl der Woche=0A=0ARaum f=C3=BCr Sol…\", \"date\": \"2026-04-03\"}, {\"id\": \"219226\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"April 9 - Visual AI Agents That Can Navigate GUIs Workshop\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-03\"}, {\"id\": \"219234\", \"from\": \"ALL-INKL.COM <validierung@domainvalidierung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtige Information zurLaufzeitverlängerung der Domain imex-api.com\", \"snippet\": \"(for the english version please see below) Guten Tag Philipp Horn, Sie erhalten diese Nachricht, da Sie als Inhaber der Domain imex-api.com eingetragen sind. Im Rahmen der sog. \\\"Ex…\", \"date\": \"2026-04-04\"}, {\"id\": \"219248\", \"from\": \"Dirk Groß <dirk@gross-urleben.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Abschluss Wärmepumpe\", \"snippet\": \"This is a multi-part message in MIME format. --------------4BFSK75J07WpabjFuaKKxpKN Content-Type: text/plain; charset=UTF-8; format=flowed Content-Transfer-Encoding: 7bit ---------…\", \"date\": \"2026-04-04\"}, {\"id\": \"219253\", \"from\": \"Leonhard Gotteswinter <vorstand@fsgdattelnbork.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Dienstangebot im Vereinsflieger (Flugsportgemeinschaft Datteln Bork\\r\\n e.V.)\", \"snippet\": \"SGVyciwNCg0KZGFzIE1pdGdsaWVkIExlb25oYXJkIEdvdHRlc3dpbnRlciBoYXQgZGVuIERpZW5z dCAnV2luZGVuZmFocmVyJyAoU2EuIDA1LjA5LjIwMjYgMTA6MDAtMTk6MDApIHp1bSBUYXVzY2gg YW5nZWJvdGVuLiANCkZhbGxzIE…\", \"date\": \"2026-04-04\"}, {\"id\": \"219254\", \"from\": \"Monika Jebavy <vorstand@fsgdattelnbork.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Kinderfliegen 1. Termin - 14.08.2026\", \"snippet\": \"SGFsbG8gUGhpbGlwcCBIb3JuLA0KDQpNb25pa2EgSmViYXZ5IChGU0cgRGF0dGVsbiBCb3JrKSBo YXQgZGljaCB6dXIgVW1mcmFnZSAiS2luZGVyZmxpZWdlbiAxLiBUZXJtaW4gLSAxNC4wOC4yMDI2 IiBlaW5nZWxhZGVuLg0KIA0KTG…\", \"date\": \"2026-04-04\"}, {\"id\": \"219267\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ollama's cloud to power OpenClaw\", \"snippet\": \"--x09bqntrojn Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 Ollama is here to support your usage of third-party tools like = OpenClaw. …\", \"date\": \"2026-04-05\"}, {\"id\": \"219284\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Governance im KI-Betriebssystem\", \"snippet\": \"----_NmP-03c6d424e5607686-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen tem Beitrag anh=C3=B6ren triebssystem Governan…\", \"date\": \"2026-04-05\"}, {\"id\": \"219286\", \"from\": \"\\\"Anthropic, PBC\\\" <invoice+statements@mail.anthropic.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Your receipt from Anthropic, PBC #2303-0091-7653\", \"snippet\": \"----==_mimepart_69d24495a0bec_194338594f445638 Content-Type: multipart/alternative; boundary=\\\"--==_mimepart_69d244959d1d7_194338594f445552\\\" ----==_mimepart_69d244959d1d7_194338594f…\", \"date\": \"2026-04-05\"}, {\"id\": \"219296\", \"from\": \"noreply--- über Intern <intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] Aktuelle Plenumsthemen für Dienstag (2026-04-07 20:00)\", \"snippet\": \"Liebe Zonies, =20 es gibt wieder Themen die im Plenum besprochen werden sollen. Der n=C3=A4chste Regul=C3=A4re Termin ist am n=C3=A4chsten Dienstag (2026-04-07) um 20:00. Im Wiki (…\", \"date\": \"2026-04-05\"}, {\"id\": \"219311\", \"from\": \"\\\"Windows Insider Program\\\" <Windowsinsiderprogram@e-mails.microsoft.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Unser Anspruch an die Windows-Qualität\", \"snippet\": \"96 <![endif]--\", \"date\": \"2026-04-06\"}, {\"id\": \"219321\", \"from\": \"Tim Wessels über Intern <intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] Re: [wz] (fwd) Anfrage Workshop über KI an der FH Münster\", \"snippet\": \"Hi Melina, sorry für die späte Antwort – „Chaos\\\" ist ab und an leider auch wörtlich zu nehmen. Ich bin vom Hackerspace „warpzone\\\" in Münster – ich glaube, deine Mail kam über die M…\", \"date\": \"2026-04-06\"}, {\"id\": \"219322\", \"from\": \"Tim Wessels über Intern <intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] Re: [wz] (fwd) Anfrage Workshop über KI an der FH Münster\", \"snippet\": \"Hi Melina, sorry für die späte Antwort – „Chaos\\\" ist ab und an leider auch wörtlich zu nehmen. Ich bin vom Hackerspace „warpzone\\\" in Münster – ich glaube, deine Mail kam über die M…\", \"date\": \"2026-04-06\"}, {\"id\": \"219325\", \"from\": \"Google Business Profile <businessprofile-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"4noobs: Ihr Unternehmensprofil sollte immer aktuell sein\", \"snippet\": \"--0000000000006e8c03064ecd919f Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 U2luZCBJaHJlIEluZm9ybWF0aW9uZW4genVtIFVudGVybmV…\", \"date\": \"2026-04-06\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"219326\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"THIS WEDNESDAY: April 8 - Getting Started with FiftyOne Workshop\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-06\"}, {\"id\": \"219329\", \"from\": \"\\\"Anthropic, PBC\\\" <invoice+statements@mail.anthropic.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Your receipt from Anthropic, PBC #2330-2215-4686\", \"snippet\": \"----==_mimepart_69d412f11c93c_6df851d1c7272b Content-Type: multipart/alternative; boundary=\\\"--==_mimepart_69d412f117e30_6df851d1c7264e\\\" ----==_mimepart_69d412f117e30_6df851d1c7264e…\", \"date\": \"2026-04-06\"}, {\"id\": \"219333\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Google Gemma 4\", \"snippet\": \"--6d31v5wrf1j Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable Ollama partnered with Google DeepMind = for the launch of Gemma 4. The Gemma 4 mod…\", \"date\": \"2026-04-06\"}, {\"id\": \"219344\", \"from\": \"netcup GmbH <donotreply@netcup.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihre Rechnung (R.-Nr. nc-5066193)\", \"snippet\": \"--b1=_6wOvpVOgmph96Cf9yZaXDSiOvUamNshb6tj28jTt8M Content-Type: multipart/alternative; boundary=\\\"b2=_6wOvpVOgmph96Cf9yZaXDSiOvUamNshb6tj28jTt8M\\\" --b2=_6wOvpVOgmph96Cf9yZaXDSiOvUamNs…\", \"date\": \"2026-04-07\"}, {\"id\": \"219345\", \"from\": \"OnlinehändlerNews Daily | Händlerbund<info@email.onlinehaendler-news.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Abmahnungen: Sandhage greift wieder an | Amazon: Neuer Zuschlag für Händler | EuGH stärkt Shops bei Zusatz-Gebühren – 07.04.2026\", \"snippet\": \"------=_Part_44090_1140457835.1775541707698 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Top informiert in den Morgen =E2=80=93 mit den wicht…\", \"date\": \"2026-04-07\"}, {\"id\": \"219363\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"This Thursday: April 9 - Visual AI Agents Virtual Workshop\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-07\"}, {\"id\": \"219404\", \"from\": \"Campact <info@campact.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Neun. Euro. Ticket. Jetzt.\", \"snippet\": \"<meta na= me=3D\\\"view\", \"date\": \"2026-04-08\"}, {\"id\": \"219408\", \"from\": \"\\\"ARTE\\\" <cinema-no-reply@newsletter.arte.tv>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"🎬 Der Film der Woche #46\", \"snippet\": \"--_----++xZ4DhasM7zQtU9VtC6Lw===_78/DB-29383-5B576D96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Der Filmclub =F0=9F=8E=AC=F0=9F=A5=82=0A…\", \"date\": \"2026-04-08\"}, {\"id\": \"219419\", \"from\": \"\\\"Anthropic, PBC\\\" <invoice+statements@mail.anthropic.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Your receipt from Anthropic, PBC #2348-5067-6939\", \"snippet\": \"----==_mimepart_69d6e8acb3fab_a54b186ed684425d Content-Type: multipart/alternative; boundary=\\\"--==_mimepart_69d6e8acae0b0_a54b186ed684416\\\" ----==_mimepart_69d6e8acae0b0_a54b186ed68…\", \"date\": \"2026-04-08\"}, {\"id\": \"219463\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"April 23 - Advances in AI at Johns Hopkins University\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-09\"}, {\"id\": \"219476\", \"from\": \"YouTube Creators <no-reply@youtube.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Hier ist dein Monatsrückblick für März, Her Bern\", \"snippet\": \"--0000000000001f7056064f141ba7 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 DQoNCiAgIE1vbmF0bGljaGVyIE5ld3NsZXR0ZXINCg0KDQo…\", \"date\": \"2026-04-10\"}, {\"id\": \"219478\", \"from\": \"do_not_reply@whoisreminder.info\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Erinnerung zur Überprüfung der Registrierungsdaten für die Domain preloved-bridals.nrw\", \"snippet\": \"Sehr geehrte/r Thomas Wetter, Gem=C3=A4=C3=9F geltenden gesetzlichen Vorgaben sowie nach den Richtlinien = der Registrys und ICANN sind wir als Ihr Registrar verpflichtet, Ihnen ei…\", \"date\": \"2026-04-10\"}, {\"id\": \"219488\", \"from\": \"ORCID - Do not reply <DoNotReply@verify.orcid.org>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[ORCID] Welcome to ORCID - verify your email address\", \"snippet\": \"--2a98d9c22f676faec3504cfb7e7c162b88fde5e31f997aa01cb6de8bbbb8 Content-Transfer-Encoding: 7bit Content-Type: text/plain; charset=ascii Your ORCID iD: 0009-0001-8485-290X Your ORCID…\", \"date\": \"2026-04-10\"}, {\"id\": \"219489\", \"from\": \"e-prints@arxiv.org\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Welcome Philipp Horn\", \"snippet\": \"Somebody (probably you) has tried to create an account for you at We're sending you this message so we can check that we were given a correct E-mail address. If you really have an …\", \"date\": \"2026-04-10\"}, {\"id\": \"219490\", \"from\": \"e-prints@arxiv.org\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Important Information about arXiv\", \"snippet\": \"Welcome to arXiv! Thank you for creating an account and joining the arXiv community. We look forward to receiving your contribution. Help Pages An overview on how to navigate and u…\", \"date\": \"2026-04-10\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"219504\", \"from\": \"Günter Leidecker <g-leidecker@t-online.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Mauseloch TGL\", \"snippet\": \"--Apple-Mail=_EFA79F3F-D389-4FB2-8E0C-95969FC0CE77 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 G=C3=BCnter Leidecker=20 Erich-Ollenhauer-Str…\", \"date\": \"2026-04-10\"}, {\"id\": \"219522\", \"from\": \"ALL-INKL.COM <validierung@domainvalidierung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtige Information zu Inhaberdaten undLaufzeitverlängerung der Domain entwicklungsserver.org\", \"snippet\": \"(for the english version please see below) Guten Tag Philipp Horn, Sie erhalten diese Nachricht, da Sie als Inhaber der Domain entwicklungsserver.org eingetragen sind. Im Rahmen de…\", \"date\": \"2026-04-11\"}, {\"id\": \"219526\", \"from\": \"Günter Leidecker <g-leidecker@t-online.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Fwd: Undelivered Mail Returned to Sender\", \"snippet\": \"--Apple-Mail-C467081E-B4CB-4BBA-8024-5BAD8CF50EB3 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable G=C3=BCnter Leidecker Erich-Ollenhauer-Str. 12…\", \"date\": \"2026-04-11\"}, {\"id\": \"219550\", \"from\": \"Miniatur Wunderland Hamburg <news@news.miniatur-wunderland.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"EBAY Frühjahrsputz mit vielen Raritäten /  Wunderland S-Bahn / Evakuierungsübung\", \"snippet\": \"------=_Part_9896503_1465367071.1775978408313 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: 7bit Plain text version not available ------=_Part_9896503_14653670…\", \"date\": \"2026-04-12\"}, {\"id\": \"219556\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"GLM-5.1 on Ollama's cloud\", \"snippet\": \"--67to1gas8sg Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 GLM-5.1 is ZAI's next = generation flagship model for agentic engineering w…\", \"date\": \"2026-04-12\"}, {\"id\": \"219559\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Die Lernschleife im KI-Betriebssystem\", \"snippet\": \"----_NmP-d92ea38a796000c6-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen ebssystem Beitrag anh=C3=B6ren ife-im-ki-betri…\", \"date\": \"2026-04-12\"}, {\"id\": \"219560\", \"from\": \"\\\"LIDL lohnt sich\\\" <info@mail.lidlplus.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"🍦 Sommer-Vibes & Spar-Preise ab Mo. 13.4.!\", \"snippet\": \"This is a multi-part message in MIME format. --NLDfJCHGylvg=_?: Content-Type: text/plain; charset=\\\"utf-8\\\" Content-Transfer-Encoding: 8bit Lidl Angebote: Vorschau auf die Filial-Hig…\", \"date\": \"2026-04-12\"}, {\"id\": \"219561\", \"from\": \"Mail Delivery System <MAILER-DAEMON@dd19926.kasserver.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Undelivered Mail Returned to Sender\", \"snippet\": \"This is a MIME-encapsulated message. --2197B3D85A9F.1776003587/dd19926.kasserver.com Content-Description: Notification Content-Type: text/plain; charset=utf-8 Content-Transfer-Enco…\", \"date\": \"2026-04-12\"}, {\"id\": \"219562\", \"from\": \"\\\"ALDI TALK Kundenbetreuung\\\"\\r\\n <no-reply@hinweis.alditalk-kundenbetreuung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Information zu deiner ALDI TALK SIM-Karte mit der Rufnummer\\r\\n 49157XXXXX866\", \"snippet\": \"--_----EatzJb8XzH4mPIL91afPbA===_BE/BA-42753-9DAABD96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Aldi=0A=0ATalk=0AWichtiger Hinweis zu de…\", \"date\": \"2026-04-12\"}, {\"id\": \"219569\", \"from\": \"\\\"R. Weidmann\\\" <service@carrentalbalkan.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Verfügbare Geräte\", \"snippet\": \"Guten Tag, kurze Frage: Kaufen Sie gelegentlich gebrauchte Fahrzeuge oder Maschinen ein? Wir hätten da etwas Interessantes für Sie. Einen Katalog mit allen Positionen sende ich ger…\", \"date\": \"2026-04-12\"}, {\"id\": \"219579\", \"from\": \"info@tgl-tischlerei.de\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Fwd: Update or verify your contact information for your domain\\r\\n \\\"tgl-tischlerei.de\\\"\", \"snippet\": \"-------- Original Nachricht -------- Betreff: Update or verify your contact information for your domain \\\"tgl-tischlerei.de\\\" Datum: 13. Apr 2026 02:03 (GMT +02:00) Von: Webmail Supp…\", \"date\": \"2026-04-13\"}, {\"id\": \"219604\", \"from\": \"\\\"DJI\\\" <enews@e.dji.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Dein Kraftwerk für überall\", \"snippet\": \"----=_---NextPart--=_-OrO7CcALhK Content-Type: text/plain; charset=utf-8 Content-transfer-encoding: quoted-printable ----=_---NextPart--=_-OrO7CcALhK Content-Type: text/html; chars…\", \"date\": \"2026-04-13\"}, {\"id\": \"219609\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"May 7 - Visual AI in Healthcare\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-13\"}, {\"id\": \"219614\", \"from\": \"Monika Jebavy <monika.jebavy@gmail.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Fwd: Erinnerung: Übung der DRF Luftrettung 16. - 19.04.2026\", \"snippet\": \"--000000000000473b34064f5a9c47 Content-Type: multipart/related; boundary=\\\"000000000000473b33064f5a9c46\\\" --000000000000473b33064f5a9c46 Content-Type: multipart/alternative; boundary…\", \"date\": \"2026-04-13\"}, {\"id\": \"219627\", \"from\": \"Accounting - Hetzner Online GmbH <billing@hetzner.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Hetzner Online GmbH - Rechnung 084000808628 (K0720461917)\", \"snippet\": \"--_=_swift_v4_177612588969dd87c1cad81_=_ Content-Type: multipart/alternative; boundary=\\\"_=_swift_v4_177612588969dd87c1cae11_=_\\\" --_=_swift_v4_177612588969dd87c1cae11_=_ Content-Typ…\", \"date\": \"2026-04-14\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"219641\", \"from\": \"Spotify <no-reply@spotify.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Deine Bestellbestätigung für „Premium Individual“\", \"snippet\": \"--7c8964c5c06f927eeb03876dafcd4d0088828615398df583d2d67627c167 Content-Transfer-Encoding: quoted-printable Content-Type: text/html; charset=utf-8 Mime-Version: 1.0 <meta name=3D\\\"vi…\", \"date\": \"2026-04-14\"}, {\"id\": \"219652\", \"from\": \"GitHub <noreply@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[GitHub] A third-party GitHub Application has been added to your\\r\\n account\", \"snippet\": \"Hey h3rb3rn! A third-party GitHub Application (GitGuardian) with the following permissions: - View your email addresses Was recently authorized to access your account. Visit for mo…\", \"date\": \"2026-04-14\"}, {\"id\": \"219653\", \"from\": \"GitHub <noreply@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[GitHub] A third-party GitHub Application has been added to your\\r\\n account\", \"snippet\": \"Hey h3rb3rn! A third-party GitHub Application (GitGuardian) with the following permissions: - View your email addresses Was recently authorized to access your account. Visit for mo…\", \"date\": \"2026-04-14\"}, {\"id\": \"219656\", \"from\": \"BIG BANG KI FESTIVAL Team <weekly@dup-unternehmer.info>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihr Ticket für das BIG BANG KI Festival\", \"snippet\": \"--=-eZCfKGHl/CHGPvWZaZ44O3nS+R14zcQM7XWKzQ== Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: base64 SWhyIGV4a2x1c2l2ZXMgVXBncmFkZTogVGFnIDEgZsO8ciBudXIgOTkg4oKsI…\", \"date\": \"2026-04-14\"}, {\"id\": \"219659\", \"from\": \"\\\"BahnBonus Service\\\" <info@mail.bahncard.bahn.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"1 von 1.000 Freifahrtenfür Sie, Philipp Horn? Als Punktegutschrift.\", \"snippet\": \"----=_---NextPart--=_-yZueIn3ZKm Content-Type: text/plain; charset=utf-8 Content-transfer-encoding: quoted-printable Beim BahnBonus Punktefangen. E-Mail im Browser ansehen &_esuh=3…\", \"date\": \"2026-04-14\"}, {\"id\": \"219668\", \"from\": \"AliExpress <ae-best-message-notice22@newarrival.aliexpress.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Bis zu 50% Rabatt  Computer Kabel und Steckverbinder\", \"snippet\": \"------=_Part_456036_19993984.1776190930417 Content-Type: text/html;charset=utf-8 Content-Transfer-Encoding: quoted-printable <img style=3D\\\"display:none\\\" src=3D\\\" stat.com/ae.edm.edm…\", \"date\": \"2026-04-14\"}, {\"id\": \"219672\", \"from\": \"GitHub <noreply@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[GitHub 2FA] You will no longer be able to disable 2FA for your\\r\\n GitHub account, h3rb3rn\", \"snippet\": \"Hey h3rb3rn! We're reaching out to let you know that as announced last year, we will officially begin requiring two-factor authentication (2FA) for certain contributors on GitHub.c…\", \"date\": \"2026-04-14\"}, {\"id\": \"219673\", \"from\": \"\\\"Transit-Stammtisch\\\" <forum@transit-stammtisch.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Gemeldeter Beitrag — „Download Instagram Reels“\", \"snippet\": \"Hallo h3rb3rn, der Beitrag „Download Instagram Reels“ auf „Transit Stammtisch“ wurde gemeldet. Du kannst dir die Meldung ansehen, wenn du folgenden Link aufrufst: Du kannst dir den…\", \"date\": \"2026-04-14\"}, {\"id\": \"219691\", \"from\": \"OnlinehändlerNews Daily | Händlerbund<info@email.onlinehaendler-news.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Bürokratie: Verpackungsgesetz größte Hürde | Paketabgabe: Heimische Händler betroffen? | Dreist? Transportschaden nach 3 Monaten gemeldet – 15.04.2026\", \"snippet\": \"------=_Part_26985_1213362433.1776233135656 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Top informiert in den Morgen =E2=80=93 mit den wicht…\", \"date\": \"2026-04-15\"}, {\"id\": \"219692\", \"from\": \"Erfan Daneshnasab <e.daneshnasab@careersbazaar.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Business Analyst-Projektmanager - Erfan Daneshnasab\", \"snippet\": \"--b1=_FCQoHcB0c3LyUJECVZCYlaGBHgREkX6kaiOxVHiiKU Content-Type: text/html; charset=utf-8 Content-Transfer-Encoding: 8bit Sehr geehrte Damen und Herren, <span style=\\\"color:#000000; f…\", \"date\": \"2026-04-15\"}, {\"id\": \"219705\", \"from\": \"domaindiscount24 <marketing@domaindiscount24.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtiger Sicherheitshinweis: Betrügerische E-Mails zur Verlängerungszahlung\", \"snippet\": \"------=_Part_3683032_435624362.1776250595430 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Wir haben Phishing-E-Mails entdeckt, die es auf DD2…\", \"date\": \"2026-04-15\"}, {\"id\": \"219720\", \"from\": \"GitHub <noreply@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[GitHub] Payment Receipt for h3rb3rn\", \"snippet\": \"----==_mimepart_69df979b2ce87_fe1108114279 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: 7bit We received payment for your sponsorship. Thanks for your support…\", \"date\": \"2026-04-15\"}, {\"id\": \"219741\", \"from\": \"OnlinehändlerNews Daily | Händlerbund<info@email.onlinehaendler-news.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Neue Kennzeichnungspflichten: Das kommt auf Händler zu |  Pflichtangaben GPSR: So geht's! | Temu bekämpft Produktfälschungen – 16.04.2026\", \"snippet\": \"------=_Part_279814_539289023.1776317826236 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Top informiert in den Morgen =E2=80=93 mit den wicht…\", \"date\": \"2026-04-16\"}, {\"id\": \"219753\", \"from\": \"European Digital Innovation Hub Dortmund<edihdo@digitalhub.eu>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"EDIH-DO: Kostenfreie Events für den Mittelstand\", \"snippet\": \"This is a multi-part message in MIME format. --xxxxxxxxeJournal20260416111922.ALT Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =20=20 =20=20 …\", \"date\": \"2026-04-16\"}, {\"id\": \"219759\", \"from\": \"Dwayne McDaniel <dwayne.mcdaniel@gitguardian.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"⚡️ Start detecting secrets\", \"snippet\": \"--d251f5c3a37c8d4b7a52c80001521731597c418581d6b09f3c48bf8916bc Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"utf-8\\\" Secure your code and access ess…\", \"date\": \"2026-04-16\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"219806\", \"from\": \"eBilanz-Online | Bundesanzeiger Verlag GmbH\\r\\n <service@bundesanzeiger.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"eBilanz-Online im neuen Design – ab dem 21. April verfügbar\", \"snippet\": \"------=_Part_86183_764334589.1776409921096 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Am 21. April 2026 wird eBilanz-Online in einem neuen …\", \"date\": \"2026-04-17\"}, {\"id\": \"219808\", \"from\": \"notice@all-inkl.com\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Kontoinformation KDNR D813178\", \"snippet\": \"Sehr geehrte ALL-INKL.COM - Kundin, Sehr geehrter ALL-INKL.COM - Kunde, im Rahmen unseres Forderungsmanagements ist uns aufgefallen, dass auf Ihrem Kundenkonto ein Betrag von 27.95…\", \"date\": \"2026-04-17\"}, {\"id\": \"219817\", \"from\": \"Vodafone <noreply@vodafone.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wartungsarbeiten am 24.04.2026 im Raum Ascheberg-NRW\", \"snippet\": \"--_=_swift_1776429200_b081337fbb0b650fe7e169feaa6e2f22_=_ Content-Type: text/plain; charset=\\\"utf-8\\\" Content-Transfer-Encoding: quoted-printable Liebe Vodafone-Kundin, lieber Vodafo…\", \"date\": \"2026-04-17\"}, {\"id\": \"219821\", \"from\": \"GitHub <noreply@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"GitHub Copilot: What’s in your free plan 🤖\", \"snippet\": \"----==_mimepart_69e236892dea_f21108906bf Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable You now have access to GitHub Copilot. This email outli…\", \"date\": \"2026-04-17\"}, {\"id\": \"219844\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ollama 0.21 with support for Hermes Agent\", \"snippet\": \"--jytpuxtxiis Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 =C2=A0 Ollama 0.21 includes supports = Hermes Agent, the self-improving AI …\", \"date\": \"2026-04-18\"}, {\"id\": \"219850\", \"from\": \"\\\"Uwe Stegemann via Change.org \\\" <change@e.change.org>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Budget streichen: Und uns ins Heim stecken?\", \"snippet\": \"--_----vRb8WVAJLFTwkwR3kD8VUQ===_64/23-41362-5DE13E96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Hi Philipp,&nbsp;=0Aich bin Uwe und ich …\", \"date\": \"2026-04-18\"}, {\"id\": \"219857\", \"from\": \"GitHub <marketing@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Set up Copilot Pro with a strong start\", \"snippet\": \"--=-ysM0cAWKJpzRbdHiZqlhJA== Content-Type: text/plain; charset=utf-8 Content-Id: Content-Transfer-Encoding: base64 RGlnIGludG8gQ29waWxvdCBDaGF0LCBDb3BpbG904oCZcyBkaXN0aW5jdCBtb2Rlc…\", \"date\": \"2026-04-18\"}, {\"id\": \"219880\", \"from\": \"domaindiscount24 <support@domaindiscount24.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihre Produkte laufen bald ab [01102285]\", \"snippet\": \"/* CLIENT-SPECIFIC STYLES */ #outlook a{padding:0;} /* Force Outlook to provide a \\\"view in browser\\\" message */ .ReadMsgBody{width:100%;} .ExternalClas\", \"date\": \"2026-04-19\"}, {\"id\": \"219882\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ollama now supports GitHub's Copilot CLI\", \"snippet\": \"--r1lbqoo46c Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 Ollama now supports GitHub's Copilot CLI, the terminal agent that works = di…\", \"date\": \"2026-04-19\"}, {\"id\": \"219890\", \"from\": \"Fielmann <news@info.fielmann.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Besser sehen. Mehr erleben.\", \"snippet\": \"--=-eC1BR04SNBMlxOWaM1sm Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Wenn diese Nachricht nicht korrekt angezeigt wird, klicke bitte hier [h…\", \"date\": \"2026-04-19\"}, {\"id\": \"219891\", \"from\": \"\\\"ARTE\\\" <main-no-reply@newsletter.arte.tv>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"✉️ Programmtipps der Woche\", \"snippet\": \"--_----GvlLR4DSx/ikgJdohT2v/Q===_77/7E-00611-50594E96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Sauberer Neustart =E2=80=93 oder brodelt…\", \"date\": \"2026-04-19\"}, {\"id\": \"219904\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Eure Fragen zum KI-Betriebssystem\", \"snippet\": \"----_NmP-d90285ce5ea699fd-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen ystem Eure Fragen zum KI-Betriebssystem Wir sc…\", \"date\": \"2026-04-19\"}, {\"id\": \"219905\", \"from\": \"noreply--- über Intern <intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] Aktuelle Plenumsthemen für Dienstag (2026-04-21 20:00)\", \"snippet\": \"Liebe Zonies, =20 es gibt wieder Themen die im Plenum besprochen werden sollen. Der n=C3=A4chste Regul=C3=A4re Termin ist am n=C3=A4chsten Dienstag (2026-04-21) um 20:00. Im Wiki (…\", \"date\": \"2026-04-19\"}, {\"id\": \"219907\", \"from\": \"\\\"saubaer-gebaeudereinigung.de\\\" <support@horn-consulting.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Joomla!-Aktualisierung für „saubaer-gebaeudereinigung.de“ verfügbar – http://xn--saubr-objektreinigung-81b.de/\", \"snippet\": \"Diese E-Mail WIRD NICHT von joomla.org gesendet. Sie wird automatisch durch die nachfolgende Website verschickt: saubaer-gebaeudereinigung.de - ====================================…\", \"date\": \"2026-04-19\"}, {\"id\": \"219910\", \"from\": \"support@all-inkl.com\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtige Informationen zu Ihrem Account \\\"w015b178\\\" [NMM:1CC687A]\", \"snippet\": \"Sehr geehrter Herr Horn, bei Wartungsarbeiten an dem von Ihnen genutzten Server mussten wir eine massive Überlastung des Servers ausgehend von Ihrem Account feststellen. Speziell i…\", \"date\": \"2026-04-19\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"219939\", \"from\": \"GitHub <marketing@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Welcome to Copilot Pro: Let’s get started\", \"snippet\": \"--=-hYUKo3XilXG1KWI++bjmFA== Content-Type: text/plain; charset=utf-8 Content-Id: Content-Transfer-Encoding: base64 SW5zdGFsbCwgYXNrLCBhbmQgY29kZSBzbWFydGVyIHdpdGggQ29waWxvdCAgICAgI…\", \"date\": \"2026-04-20\"}, {\"id\": \"219945\", \"from\": \"Harald Rollert <noreply.fsg-datteln-bork@vereinsflieger.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Dienstangebot im Vereinsflieger (Flugsportgemeinschaft Datteln Bork\\r\\n e.V.)\", \"snippet\": \"SGVyciwNCg0KZGFzIE1pdGdsaWVkIEhhcmFsZCBSb2xsZXJ0IGhhdCBkZW4gRGllbnN0ICdTdGFy dGxlaXRlcicgKFNhLiAwMy4xMC4yMDI2IDEwOjAwLTE5OjAwKSB6dW0gVGF1c2NoIGFuZ2Vib3Rl bi4gDQpGYWxscyBJbnRlcmVzc2…\", \"date\": \"2026-04-20\"}, {\"id\": \"219958\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"April 23 -  Advances in AI at Johns Hopkins University\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-20\"}, {\"id\": \"219964\", \"from\": \"noreply.fsg-datteln-bork@vereinsflieger.de\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Gebührenabrechnung 01.01.- 31.03.2026\", \"snippet\": \"--b1=_k7HX6p6BUO17C8lB7KkfbtFwnh8uLaOs2bK3s5M Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: base64 SGFsbG8gUGhpbGlwcCwNCg0KZsO8ciBkZW4gbGV0enRlbiBBYnJlY2hudW5n…\", \"date\": \"2026-04-20\"}, {\"id\": \"219965\", \"from\": \"Monika Jebavy <noreply.fsg-datteln-bork@vereinsflieger.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"FSG Datteln Bork - Info zum Kontostand\", \"snippet\": \"--b1=_aiOXjZjqkiSHWmGsL41pcm2Mo094suY1N5Rx4cvqHc Content-Type: multipart/alternative; boundary=\\\"b2=_aiOXjZjqkiSHWmGsL41pcm2Mo094suY1N5Rx4cvqHc\\\" --b2=_aiOXjZjqkiSHWmGsL41pcm2Mo094su…\", \"date\": \"2026-04-20\"}, {\"id\": \"219999\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Kimi K2.6 is now available on Ollama: state-of-the-art open model for coding and agents\", \"snippet\": \"--to6twprrad Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 =C2=A0 Kimi K2.6 is now available to run on Ollama's cloud using the latest …\", \"date\": \"2026-04-21\"}, {\"id\": \"220021\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"May 1 - Best of WACV 2026 (Day 2)\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-21\"}, {\"id\": \"220030\", \"from\": \"Matthias Vill über Intern <intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] Protokoll 2026-04-21\", \"snippet\": \"# Protokoll 2026-04-21 ## Anwesenheit - da1l6 - fenkt - Angos - Jody - Void - wurmi - TheConstructor - catfish - \\\"Peter Maffay\\\" ## Ank=C3=BCndigungen / Termine - Samstag ist der Vo…\", \"date\": \"2026-04-21\"}, {\"id\": \"220073\", \"from\": \"VHS Essen <presse@vhs-essen.maileon.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"VHS Essen: Popcorn, Pathos und die Frage, wie es weitergeht\", \"snippet\": \"------=_Part_5709255_1840162933.1776880401189 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Sollte diese Mail nicht korrekt dargestellt werden…\", \"date\": \"2026-04-22\"}, {\"id\": \"220074\", \"from\": \"\\\"tela-teppich.de\\\" <support@tela-teppich.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[] Passwort zurücksetzen\", \"snippet\": \"Jemand hat das Zurücksetzen des Passworts für folgendes Konto angefordert: Name der Website: Benutzername: hcadmin Falls das nicht beabsichtigt war, ignoriere diese E-Mail einfach.…\", \"date\": \"2026-04-22\"}, {\"id\": \"220093\", \"from\": \"Google Play <googleplay-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Beleg für deine Google Play-Bestellung vom 23.04.2026\", \"snippet\": \"--0000000000006ca14e06501aff04 Content-Type: multipart/alternative; boundary=\\\"0000000000006ca14d06501aff02\\\" --0000000000006ca14d06501aff02 Content-Type: text/plain; charset=\\\"UTF-8\\\"…\", \"date\": \"2026-04-23\"}, {\"id\": \"220141\", \"from\": \"Fielmann <info@account.fielmann.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Philipp Horn, vielen Dank für Ihren Auftrag.\", \"snippet\": \"PCFET0NUWVBFIGh0bWwgUFVCTElDICItLy9XM0MvL0RURCBYSFRNTCAxLjAgVHJhbnNpdGlv bmFsLy9FTiIgImh0dHA6Ly93d3cudzMub3JnL1RSL3hodG1sMS9EVEQveGh0bWwxLXRyYW5z aXRpb25hbC5kdGQiPgo8aHRtbCB4bWxucz…\", \"date\": \"2026-04-24\"}, {\"id\": \"220155\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"DeepSeek V4 Flash is now available on Ollama's cloud\", \"snippet\": \"--06fcsolk1dnn Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 DeepSeek-V4-Flash is now available to run on Ollama's cloud using the = la…\", \"date\": \"2026-04-24\"}, {\"id\": \"220160\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"May 12 - Best of 3DV 2026 (Day 2)\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-24\"}, {\"id\": \"220163\", \"from\": \"Schmitz-Ascheberg@t-online.de\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Logo HVH\", \"snippet\": \"This is a multi-part message in MIME format. --------------fwIsJ9PPLUJsQefy3akwqMFL Content-Type: text/plain; charset=UTF-8; format=flowed Content-Transfer-Encoding: 8bit Hallo, he…\", \"date\": \"2026-04-24\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"220193\", \"from\": \"Dorf Post <social@dorf-post.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Friendica Meldung]Du hast einen neuen Kontakt\\r\\n (h3rb3rn@social.dorf-post.de)\", \"snippet\": \"--7-772463327-968336503=:55295 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: base64 RHUgaGFzdCBlaW5lbiBuZXVlbiBLb250YWt0IGF1ZiBEb3JmIFBvc3Q6IGZlZGluYXV0CgoKCkh…\", \"date\": \"2026-04-25\"}, {\"id\": \"220194\", \"from\": \"Warpzone Matrix <matrix@warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Element Classic] You have a message on Element Classic from Michael\\r\\n Fuchs in the Organisation room...\", \"snippet\": \"--===============3849912551595953020== Content-Type: text/plain; charset=\\\"utf-8\\\" MIME-Version: 1.0 Content-Transfer-Encoding: base64 SGkgaDNyYjNybiAoRVBWUE4gNTA2MSksCgpbRWxlbWVudCB…\", \"date\": \"2026-04-25\"}, {\"id\": \"220201\", \"from\": \"Andreas Göhrs<noreply.fsg-datteln-bork@vereinsflieger.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Neue Mitglieder\", \"snippet\": \"--b1=_XbfinFG8hZgyn74hUMHOQ7UXI0eJSnrXXqho8OAQs Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: base64 SGFsbG8gWnVzYW1tZW4saGV1dGUgaGFiZW4gd2lyIEpvaGFubmEgSG9mZm…\", \"date\": \"2026-04-25\"}, {\"id\": \"220220\", \"from\": \"vzdump backup tool <root@srv2.hc-hosting.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"vzdump backup status (srv2.hc-hosting.de): backup failed: multiple\\r\\n problems\", \"snippet\": \"This is a multi-part message in MIME format. ------_=_NextPart_002_1777168801 Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: 8bit can't acquire lock '/var/run…\", \"date\": \"2026-04-26\"}, {\"id\": \"220221\", \"from\": \"domaindiscount24 <support@domaindiscount24.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihre Produkte laufen bald ab [01102285]\", \"snippet\": \"/* CLIENT-SPECIFIC STYLES */ #outlook a{padding:0;} /* Force Outlook to provide a \\\"view in browser\\\" message */ .ReadMsgBody{width:100%;} .ExternalClas\", \"date\": \"2026-04-26\"}, {\"id\": \"220233\", \"from\": \"\\\"ARTE\\\" <main-no-reply@newsletter.arte.tv>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"✉️ Programmtipps der Woche\", \"snippet\": \"--_----Dkmh/CVL/tYmaSyx1qvgCw===_53/9F-23238-99ECDE96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Tschernobyl, 26. April 1986: In der dama…\", \"date\": \"2026-04-26\"}, {\"id\": \"220235\", \"from\": \"FRANK KEMNA <frankkemna@aol.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Re: Zugangsdaten Vorstandsmail\", \"snippet\": \"--Apple-Mail-9E0FC534-5336-4638-B4A7-B0E4D2698C07 Content-Type: text/html; charset=utf-8 Content-Transfer-Encoding: quoted-printable Hallo Philipp, entschuldige aber ich bin zu bl=…\", \"date\": \"2026-04-26\"}, {\"id\": \"220236\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Skill für deinen Tages-Shutdown mit KI\", \"snippet\": \"----_NmP-b63313a3388f29fa-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen Beitrag anh=C3=B6ren er-ki Skill f=C3=BCr dein…\", \"date\": \"2026-04-26\"}, {\"id\": \"220241\", \"from\": \"Nina Mysliwietz von Dreizack Medien <support@dreizack-medien.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Updates für euer Resources & Health PlugIn in eurem Shop erhältlich\", \"snippet\": \"--00000000000026b30306505d1318 Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: quoted-printable Moin Zusammen, ihr setzt das PlugIn Resources & Health von Drei…\", \"date\": \"2026-04-26\"}, {\"id\": \"220249\", \"from\": \"Nicole Horn <nici@horn-nicole.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Fwd: Ihr Ergebnisbericht zum Augen-Check-Up bei ocumeda\", \"snippet\": \"--Apple-Mail-1FB8FFD6-15E8-44B9-9035-5746906AD554 Content-Type: text/html; charset=utf-8 Content-Transfer-Encoding: quoted-printable Von meine= m iPhone gesendet</d\", \"date\": \"2026-04-26\"}, {\"id\": \"220253\", \"from\": \"Kimai - Open Source Time Tracking <jenny.volkmann@hottemax-4you.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Kimai - Passwort zurücksetzen\", \"snippet\": \"Das ist eine automatisch generierte Mail um Ihr Passwort in Kimai zur=C3= =BCcksetzen zu k=C3=B6nnen. Bitte rufen Sie folgende Adresse auf:=0Ahttp= :////forgotPassword.php?name=3Da…\", \"date\": \"2026-04-26\"}, {\"id\": \"220262\", \"from\": \"admin@openheidelberg.de\", \"to\": \"info@horn-consulting.de\", \"subject\": \"OpenProject - 3 ungelesene Benachrichtigungen\", \"snippet\": \"----==_mimepart_69eefb6063044_762e485519f Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: 7bit Hallo Philipp Sie haben 3 ungelesene Benachrichtigungen ----------…\", \"date\": \"2026-04-27\"}, {\"id\": \"220264\", \"from\": \"Michael Fuchs über Nextcloud <admin@openheidelberg.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Einladung: GSI-HPC JF\", \"snippet\": \"--TI7RaMSc Content-Type: multipart/alternative; boundary=TyUNX_bN --TyUNX_bN Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Michael Fuchs m=C3=…\", \"date\": \"2026-04-27\"}, {\"id\": \"220267\", \"from\": \"Stephanie Schmülling<stephanie.schmuelling@elektrofleige.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Zugang Fleige-Homepage\", \"snippet\": \"--_000_BEZP281MB3349C00C89BE4E261C3F0CCB8D362BEZP281MB3349DEUP_ Content-Type: text/plain; charset=\\\"iso-8859-1\\\" Content-Transfer-Encoding: quoted-printable Guten Morgen Herr Horn, w…\", \"date\": \"2026-04-27\"}, {\"id\": \"220271\", \"from\": \"notice@all-inkl.com\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Mahnung KDNR D813178\", \"snippet\": \"Sehr geehrte ALL-INKL.COM - Kundin, Sehr geehrter ALL-INKL.COM - Kunde, Leider konnten wir auch auf unsere Erinnerung vom 17.04.2026 keinen Ausgleich Ihres Kundenkontos feststellen…\", \"date\": \"2026-04-27\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"220293\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"May 13 - Best of 3DV 2026 (Day 3)\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-27\"}, {\"id\": \"220295\", \"from\": \"Elberfeld, Christian über Intern<intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] di.day und di.day Sonderveranstaltung in Münster - Helfer gesucht\", \"snippet\": \"Liebe Zonies, wir beteiligen uns seid Anfang des Jahres recht erfolgreich mit an der=20 gemeinsamen di.day Kampagne, siehe hierzu auch Die Termine sind aktuell immer am ersten Sonn…\", \"date\": \"2026-04-27\"}, {\"id\": \"220297\", \"from\": \"GitHub <no-reply@github.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"GitHub Copilot is moving to usage-based billing\", \"snippet\": \"--41b93adf14438d266754336ca4bd62bbc7c2e3023e36adcfb1ab1506df45 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 Mime-Version: 1.0 =E2=80=8C=C2=A0…\", \"date\": \"2026-04-27\"}, {\"id\": \"220300\", \"from\": \"Elberfeld, Christian über Intern<intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] di.day und di.day Sonderveranstaltung in Münster - Helfer gesucht\", \"snippet\": \"Liebe Zonies, wir beteiligen uns seid Anfang des Jahres recht erfolgreich mit an der=20 gemeinsamen di.day Kampagne, siehe hierzu auch Die Termine sind aktuell immer am ersten Sonn…\", \"date\": \"2026-04-27\"}, {\"id\": \"220301\", \"from\": \"\\\"Tomorrow\\\" <team@mail.tomorrow.one>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Aktualisierung unserer Datenschutzhinweise\", \"snippet\": \"--_----ZW8NsxhChYh3QDD3hXr50w===_19/6E-48100-E0A8FE96 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Gute Nachrichten: Die=0AKategorisierung …\", \"date\": \"2026-04-27\"}, {\"id\": \"220317\", \"from\": \"FRANK KEMNA <frankkemna@aol.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Re: Zugangsdaten Vorstandsmail\", \"snippet\": \"--Apple-Mail-F8D3C472-A021-4CA7-B9CC-11AA677565CC Content-Type: text/html; charset=utf-8 Content-Transfer-Encoding: quoted-printable Moin Philipp, kannst du mir bitte noch mal helf…\", \"date\": \"2026-04-28\"}, {\"id\": \"220335\", \"from\": \"\\\"BahnBonus Service\\\" <info@mail.bahncard.bahn.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Trommelwirbel: 12-fach Punktefür … Philipp Horn?\", \"snippet\": \"----=_---NextPart--=_-3mmceBBJVe Content-Type: text/plain; charset=utf-8 Content-transfer-encoding: quoted-printable Jede 12. Buchung erh=C3=A4lt 12-fache BahnBonus Pr=C3=A4mienpun…\", \"date\": \"2026-04-28\"}, {\"id\": \"220343\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"THURSDAY: April 30 - Best of WACV 2026\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-28\"}, {\"id\": \"220354\", \"from\": \"Google Cloud <CloudPlatform-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Product Update] Google reCAPTCHA integrating into Google Cloud\\r\\n Fraud Defense\", \"snippet\": \"--00000000000057c3f806508b4387 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 R29vZ2xlIENsb3VkIEZyYXVkIERlZmVuc2UgYnJhbmRpbmc…\", \"date\": \"2026-04-28\"}, {\"id\": \"220365\", \"from\": \"domaindiscount24 <marketing@domaindiscount24.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Aktualisierung zur .DE-Domain-Konformität\", \"snippet\": \"------=_Part_16783_2094886762.1777431685762 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable M=C3=B6glicherweise ist Handlungsbedarf erforderlich…\", \"date\": \"2026-04-29\"}, {\"id\": \"220394\", \"from\": \"\\\"HelloFresh\\\" <news@newsletter.hellofresh.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Nicht verpassen! Bis zu 60% Rabatt 🏃‍♀️\", \"snippet\": \"<html class=\\\"bg-gray-200 h-full\\\" lang=\\\"de\\\" xmlns:v=\\\"urn:schemas\", \"date\": \"2026-04-29\"}, {\"id\": \"220407\", \"from\": \"\\\"AI,\\r\\n Machine Learning and Computer Vision Meetup Network\\\" <info@meetup.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"May 1 - Best of WACV (Day 2)\", \"snippet\": \"=0A=0A =0A=0A =0A =0A <meta content=3D\\\"width= =3Ddevice-w\", \"date\": \"2026-04-29\"}, {\"id\": \"220438\", \"from\": \"Marc-Uwe Kling Shop <service@reimkultur-shop.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Klugscheißerchen und Vehlerteufelchen & NEINhornPlüschtier\", \"snippet\": \"<html style=3D\\\"height: 100% !important; widt= h: 100% !important; font-family: &#39;Helvetica Neue&#39;, Helvetica, syste= m-ui, -apple-system, Arial, sans-serif; font-weight: 400;…\", \"date\": \"2026-04-30\"}, {\"id\": \"220440\", \"from\": \"Dorf Post <social@dorf-post.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Friendica-Systembenachrichtigung] Registrierungsanfrage\\r\\n (h3rb3rn@social.dorf-post.de)\", \"snippet\": \"--7-407740497-798060873=:23166 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: base64 RHUgaGFzdCBlaW5lIFJlZ2lzdHJpZXJ1bmdzYW5mcmFnZSB2b24gRG9yZiBQb3N0IGF1ZiAnJWZ…\", \"date\": \"2026-04-30\"}, {\"id\": \"220454\", \"from\": \"Everlast Consulting GmbH <bewerbungen@everlastkarriere.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Einladung zum Telefoninterview / Everlast Consulting GmbH\", \"snippet\": \"--M9wCJCp6 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Hallo Philipp Horn,vielen Dank f=C3=BCr Ihr Interesse an unserem Unternehme= n sowie …\", \"date\": \"2026-04-30\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"220460\", \"from\": \"MoPla Solutions <info@mopla.solutions>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Hinweis zur Kündigungsfrist für das Deutschlandticket-Abo\", \"snippet\": \"---------?=_16018-7283656160370 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=UTF-8 Aufgrund von uns nicht beeinflussbaren juristischen Bedingungen …\", \"date\": \"2026-04-30\"}, {\"id\": \"220472\", \"from\": \"Linux Professional Institute (LPI)<no-reply@lpi.org>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"LPI Newsletter - Job Survey Report, UN Hackathon, AGM, Annual Review,\\r\\n Events, & More!\", \"snippet\": \"--b03be0becc22b54db32fe1bb565df8e1c Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: quoted-printable Events=C2=A0 =C2=A0=0AWebinars=C2=A0 =C2=A0=0ACertificatio…\", \"date\": \"2026-04-30\"}, {\"id\": \"220484\", \"from\": \"support@all-inkl.com\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtige Info zu Ihrem Account [NMM:1CC687A]\", \"snippet\": \"Sehr geehrter Herr Horn, bei Wartungsarbeiten an dem von Ihnen genutzten Server mussten wir eine massive Überlastung des Servers ausgehend von Ihrem Account feststellen. Speziell i…\", \"date\": \"2026-04-30\"}, {\"id\": \"220542\", \"from\": \"Google <no-reply@accounts.google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihr Google-Konto wurde erfolgreich wiederhergestellt\", \"snippet\": \"--0000000000009593df0650c4589f Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 RGFzIGlzdCBlaW5lIEtvcGllIGRlciBhbiBlZ29uemVuZ0B…\", \"date\": \"2026-05-01\"}, {\"id\": \"220543\", \"from\": \"Google <no-reply@accounts.google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Sicherheitswarnung für egonzeng@yahoo.de\", \"snippet\": \"--0000000000009edbc80650c45892 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 RGFzIGlzdCBlaW5lIEtvcGllIGRlciBhbiBlZ29uemVuZ0B…\", \"date\": \"2026-05-01\"}, {\"id\": \"220573\", \"from\": \"OnlinehändlerNews Daily | Händlerbund<info@email.onlinehaendler-news.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Verpackungsverordnung bringt neue Regeln | Ebay-Ausfälle |  Google zeigt entfernte Bewertungen – Die Themen der Woche\", \"snippet\": \"------=_Part_472024_1354942279.1777705019985 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Die wichtigsten E-Commerce-News der Woche! Onlineh=…\", \"date\": \"2026-05-02\"}, {\"id\": \"220587\", \"from\": \"Philipp Neuhaus über Warpzone<warpzone@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz] Re: Nachfrage wegen frp sperre bei Smartphones\", \"snippet\": \"TW9pbiwNCg0KZXMga29tbXQgZGFyYXVmIGFuLCBkZXIgU3VwcG9ydCB2b24gU2Ftc3VuZyBLbm94 IGthbm4gc2VociBoaWxmcmVpY2ggDQpzZWluLCB3ZW5uIGR1IGRpY2ggdmVyc2VoZW50bGljaCBz ZWxiZXIgYXVzZ2VzcGVycnQgaG…\", \"date\": \"2026-05-02\"}, {\"id\": \"220598\", \"from\": \"Dorf Post <social@dorf-post.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Friendica-Benachrichtigung]: Datenbank Update\", \"snippet\": \"--5-303173052-620348554=:31835 Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: base64 CkRpZSBGcmllbmRpY2EgRGF0ZW5iYW5rIHd1cmRlIGVyZm9sZ3JlaWNoIHZvbiAxNTc2IGF1ZiA…\", \"date\": \"2026-05-02\"}, {\"id\": \"220604\", \"from\": \"MyHammer <info@mail.my-hammer.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Von \\\"To Do\\\" zu \\\"Erledigt\\\" in einem Tag\", \"snippet\": \"--e57c4eee3793f5f2b5da23290ba1c13036d528a667812d05f00922b8d911 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"utf-8\\\" Schnell erledigt: diese Auftr=C…\", \"date\": \"2026-05-03\"}, {\"id\": \"220613\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Die 5 Todsünden der KI-Adoption\", \"snippet\": \"----_NmP-72c8fedcb6a3d1dd-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen tion Beitrag anh=C3=B6ren er-ki-adoption on Di…\", \"date\": \"2026-05-03\"}, {\"id\": \"220622\", \"from\": \"noreply--- über Intern <intern@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz-intern] Aktuelle Plenumsthemen für Dienstag (2026-05-05 20:00)\", \"snippet\": \"Liebe Zonies, =20 es gibt wieder Themen die im Plenum besprochen werden sollen. Der n=C3=A4chste Regul=C3=A4re Termin ist am n=C3=A4chsten Dienstag (2026-05-05) um 20:00. Im Wiki (…\", \"date\": \"2026-05-03\"}, {\"id\": \"220623\", \"from\": \"Dwayne McDaniel <dwayne.mcdaniel@gitguardian.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"🔴 Live Webinar | How Attackers Use Developer Machines to Breach the Software Supply Chain\", \"snippet\": \"--7b7ef440ea3e6fa8eea56d35229022c9b835024191dbaac02c3d59e19be7 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"utf-8\\\" ( -to-breach-the-software-suppl…\", \"date\": \"2026-05-03\"}, {\"id\": \"220627\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Everlast AI Webinar – Du bist angemeldet!\", \"snippet\": \"--5dc78e0ac4732651c37488254aaa363f13f37ae0c67c257a2df2a8e99328 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 Mime-Version: 1.0 Wie du mit KI-A…\", \"date\": \"2026-05-03\"}, {\"id\": \"220633\", \"from\": \"domaindiscount24 <support@domaindiscount24.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihre Produkte laufen bald ab [01102285]\", \"snippet\": \"/* CLIENT-SPECIFIC STYLES */ #outlook a{padding:0;} /* Force Outlook to provide a \\\"view in browser\\\" message */ .ReadMsgBody{width:100%;} .ExternalClas\", \"date\": \"2026-05-04\"}, {\"id\": \"220642\", \"from\": \"ALL-INKL.COM <validierung@domainvalidierung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtige Information zurLaufzeitverlängerung der Domain entwicklungsserver.org\", \"snippet\": \"(for the english version please see below) Guten Tag Philipp Horn, Sie erhalten diese Nachricht, da Sie als Inhaber der Domain entwicklungsserver.org eingetragen sind. Im Rahmen de…\", \"date\": \"2026-05-04\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"220645\", \"from\": \"Hetzner Status <noreply-status@hetzner.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Dringende Wartungsarbeiten auf dem Storage Box-Host FSN1-BX788\", \"snippet\": \"--ukNpxPRd Content-Type: multipart/alternative; boundary=w2ldJPZI --w2ldJPZI Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im genannten Zeitra…\", \"date\": \"2026-05-04\"}, {\"id\": \"220649\", \"from\": \"Twitch <no-reply@twitch.tv>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"AgenticCoding ist live: @agenticcoding ist soeben live gegangen!\", \"snippet\": \"= <div class=3Dpreview-text style=3Ddisplay:none;fon= t-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opaci= ty:0;overf\", \"date\": \"2026-05-04\"}, {\"id\": \"220653\", \"from\": \"Twitch <no-reply@twitch.tv>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"h3rb3rn, du hast gerade ein Geschenk-Abo erhalten\", \"snippet\": \"@font-face { font-family: 'Roobert';\", \"date\": \"2026-05-04\"}, {\"id\": \"220655\", \"from\": \"Hetzner Status <noreply-status@hetzner.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Update: Dringende Wartungsarbeiten auf dem Storage Box-Host\\r\\n FSN1-BX788\", \"snippet\": \"--zjGFgtwS Content-Type: multipart/alternative; boundary=G32zJUs0 --G32zJUs0 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Die Wartungsarbeite…\", \"date\": \"2026-05-04\"}, {\"id\": \"220660\", \"from\": \"Hetzner Status <noreply-status@hetzner.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Update: Dringende Wartungsarbeiten auf dem Storage Box-Host\\r\\n FSN1-BX788\", \"snippet\": \"--OJe4dveH Content-Type: multipart/alternative; boundary=6VOtqCfN --6VOtqCfN Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Die Wartungsarbeite…\", \"date\": \"2026-05-04\"}, {\"id\": \"220661\", \"from\": \"Google <no-reply@accounts.google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Archivierung von Google-Daten geplant\", \"snippet\": \"--0000000000004824f70650fd6d34 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 W2ltYWdlOiBHb29nbGVdDQpBcmNoaXZpZXJ1bmcgdm9uIEd…\", \"date\": \"2026-05-04\"}, {\"id\": \"220663\", \"from\": \"Google <no-reply@accounts.google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Archivierung von Google-Daten geplant\", \"snippet\": \"--0000000000007838970650fd6765 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 W2ltYWdlOiBHb29nbGVdDQpBcmNoaXZpZXJ1bmcgdm9uIEd…\", \"date\": \"2026-05-04\"}, {\"id\": \"220664\", \"from\": \"Google <no-reply@accounts.google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Geplante Archivierung von Google-Daten gestartet\", \"snippet\": \"--0000000000007d0b390650fd796a Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 W2ltYWdlOiBHb29nbGVdDQpHZXBsYW50ZSBBcmNoaXZpZXJ…\", \"date\": \"2026-05-04\"}, {\"id\": \"220665\", \"from\": \"Google <no-reply@accounts.google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Geplante Archivierung von Google-Daten gestartet\", \"snippet\": \"--000000000000e70b5b0650fd72cd Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 W2ltYWdlOiBHb29nbGVdDQpHZXBsYW50ZSBBcmNoaXZpZXJ…\", \"date\": \"2026-05-04\"}, {\"id\": \"220675\", \"from\": \"Steam <noreply@steampowered.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Le Mans Ultimate auf Ihrer Steam-Wunschliste ist jetzt im Angebot!\", \"snippet\": \"This is a multi-part message in MIME format. --m69f8d823b4b3f Content-Type: multipart/alternative; boundary=\\\"np69f8d823b4b3e\\\" --np69f8d823b4b3e Content-Type: text/plain; charset=UT…\", \"date\": \"2026-05-04\"}, {\"id\": \"220677\", \"from\": \"Google Business Profile <businessprofile-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Neue Rezension von Sophie zu Brautzimmer NRW & Preloved Bridals NRW\", \"snippet\": \"--000000000000c636ca065102c53e Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 PGh0dHBzOi8vYnVzaW5lc3MuZ29vZ2xlLmNvbS9uLzE0NDM…\", \"date\": \"2026-05-04\"}, {\"id\": \"220680\", \"from\": \"vzdump backup tool <root@srv2.hc-hosting.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"vzdump backup status (srv2.hc-hosting.de): backup successful\", \"snippet\": \"This is a multi-part message in MIME format. ------_=_NextPart_002_1777932955 Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: 8bit Details ======= VMID Name St…\", \"date\": \"2026-05-04\"}, {\"id\": \"220692\", \"from\": \"vzdump backup tool <root@srv2.hc-hosting.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"vzdump backup status (srv2.hc-hosting.de): backup successful\", \"snippet\": \"This is a multi-part message in MIME format. ------_=_NextPart_002_1777946566 Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: 8bit Details ======= VMID Name St…\", \"date\": \"2026-05-05\"}, {\"id\": \"220693\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ollama's Cloud models can now be used inside Claude Desktop\", \"snippet\": \"--qg8xid99zg Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable Ollama 0.23 now supports Claude Desktop=E2=80=99s built-in third party = inference.…\", \"date\": \"2026-05-05\"}, {\"id\": \"220711\", \"from\": \"Google AI Studio <googleaistudio-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Event-driven webhooks are now available in Gemini API\", \"snippet\": \"--000000000000f47c4d06510d318f Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 RW1haWwgbm90IGRpc3BsYXlpbmcgY29ycmVjdGx5PyBWaWV…\", \"date\": \"2026-05-05\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"220712\", \"from\": \"Fielmann <info@account.fielmann.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Philipp Horn, Ihr Auftrag ist abholbereit.\", \"snippet\": \"PCFET0NUWVBFIGh0bWwgUFVCTElDICItLy9XM0MvL0RURCBYSFRNTCAxLjAgVHJhbnNpdGlv bmFsLy9FTiIgImh0dHA6Ly93d3cudzMub3JnL1RSL3hodG1sMS9EVEQveGh0bWwxLXRyYW5z aXRpb25hbC5kdGQiPgo8aHRtbCB4bWxucz…\", \"date\": \"2026-05-05\"}, {\"id\": \"220857\", \"from\": \"\\\"BahnCard Service\\\" <info@mail.bahncard.bahn.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Auszeit in die Natur zu gewinnen, Philipp Horn.\", \"snippet\": \"----=_---NextPart--=_-4Co3uHgLv3 Content-Type: text/plain; charset=utf-8 Content-transfer-encoding: quoted-printable Drei der sch=C3=B6nsten Naturziele zum Entdecken. E-Mail im Bro…\", \"date\": \"2026-05-06\"}, {\"id\": \"220864\", \"from\": \"eBay <ebay@info.ebay.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Aktualisierung der Nutzungsbedingungen für die Zahlungsabwicklung\", \"snippet\": \"@media handheld,only screen and= (-webkit-min-device-pixel-ratio:3) and (max-width:1080px),screen and (max-= width:480px){@media{div.generic{min-width:100vw!important}}} <style = t…\", \"date\": \"2026-05-06\"}, {\"id\": \"220918\", \"from\": \"noreply@mail.announcements.eu-paris-1.oci.oraclecloud.com\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Planned Change : Oracle Cloud Infrastructure Compute for horndev :\\r\\n [d8165dc2]\", \"snippet\": \"= #outlook a {= padding: 0; }\", \"date\": \"2026-05-07\"}, {\"id\": \"220923\", \"from\": \"netcup GmbH <donotreply@netcup.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihre Rechnung (R.-Nr. nc-5150119)\", \"snippet\": \"--b1=_T7GMEUTYmD4tg0YhmieGuUP3aLKyPgDlhJsBF1tqwo Content-Type: multipart/alternative; boundary=\\\"b2=_T7GMEUTYmD4tg0YhmieGuUP3aLKyPgDlhJsBF1tqwo\\\" --b2=_T7GMEUTYmD4tg0YhmieGuUP3aLKyPg…\", \"date\": \"2026-05-07\"}, {\"id\": \"220977\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Accelerated Gemma 4 with multi-token prediction\", \"snippet\": \"--7ngaey2qh6k Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable =C2=A0 Gemma 4 on Ollama is now 2x = faster, with native Multi-Token Prediction (M…\", \"date\": \"2026-05-08\"}, {\"id\": \"220987\", \"from\": \"Kleinanzeigen <noreply@kleinanzeigen.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Danke für Ihre Anzeigenmeldung\", \"snippet\": \"--88936bc016cf0d379448f02be30989e7eab24ffd22e272636afd3818133e Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=iso-8859-1 Mime-Version: 1.0 Wir haben …\", \"date\": \"2026-05-08\"}, {\"id\": \"220989\", \"from\": \"SoundCloud <alerts@notifications.soundcloud.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Neuer Release 🔥\", \"snippet\": \"<w:\", \"date\": \"2026-05-08\"}, {\"id\": \"221003\", \"from\": \"Campact <info@campact.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Merz kürzt Entwicklungshilfe\", \"snippet\": \"<meta na= me=3D\\\"view\", \"date\": \"2026-05-08\"}, {\"id\": \"221004\", \"from\": \"Condor Club  <noreply_20270131-al42117-305-20270131@condor.club>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Condor Club] - Dein Wettbewerbskennzeichen läuft bald aus!\", \"snippet\": \"------=_Part_189_1311608811.1778247314503 Content-Type: multipart/alternative; boundary=\\\"----=_Part_190_6628073.1778247314503\\\" ------=_Part_190_6628073.1778247314503 Content-Type: …\", \"date\": \"2026-05-08\"}, {\"id\": \"221005\", \"from\": \"Condor Club  <noreply_20270131-al42117-305-20270131@condor.club>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Condor Club] - Neue private Nachricht\", \"snippet\": \"------=_Part_186_1411461921.1778247314493 Content-Type: multipart/alternative; boundary=\\\"----=_Part_187_2104279104.1778247314493\\\" ------=_Part_187_2104279104.1778247314493 Content-…\", \"date\": \"2026-05-08\"}, {\"id\": \"221019\", \"from\": \"\\\"Anthropic, PBC\\\" <invoice+statements@mail.anthropic.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Your receipt from Anthropic, PBC #2829-7208-2964\", \"snippet\": \"----==_mimepart_69fe87d6ec7fb_2a48b1154957e7 Content-Type: multipart/alternative; boundary=\\\"--==_mimepart_69fe87d6e7acc_2a48b11549561\\\" ----==_mimepart_69fe87d6e7acc_2a48b11549561 C…\", \"date\": \"2026-05-09\"}, {\"id\": \"221038\", \"from\": \"YouTube Creators <no-reply@youtube.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Her BernDein Monatsrückblick für April\", \"snippet\": \"--00000000000036c0a406515c4e68 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 DQoNCiAgIE1vbmF0bGljaGVyIE5ld3NsZXR0ZXINCg0KDQo…\", \"date\": \"2026-05-09\"}, {\"id\": \"221136\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Das Zielbild für KI-Adoption\", \"snippet\": \"----_NmP-fe88a92efc75c7e4-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen n Beitrag anh=C3=B6ren adoption Das Zielbild f…\", \"date\": \"2026-05-10\"}, {\"id\": \"221144\", \"from\": \"Google Business Profile <businessprofile-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Neue Rezension von Duplex zu Röwekamp K.\", \"snippet\": \"--0000000000000ae072065177ee9e Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 PGh0dHBzOi8vYnVzaW5lc3MuZ29vZ2xlLmNvbS9uLzE3Njg…\", \"date\": \"2026-05-10\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"221229\", \"from\": \"OLAF <registerauskunft-online@bfj.bund.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Eingangsbestätigung Antrag Führungszeugnis\", \"snippet\": \"------=_Part_350_1736436711.1778488832794 Content-Type: application/pdf; name*=UTF-8''Zahlungsbest%C3%A4tigung.pdf Content-Transfer-Encoding: base64 Content-Disposition: attachment…\", \"date\": \"2026-05-11\"}, {\"id\": \"221232\", \"from\": \"OLAF <registerauskunft-online@bfj.bund.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Bestätigung Benutzerkonto angelegt\", \"snippet\": \"Sehr geehrte/r Antragsteller/in, Ihr Benutzerkonto wurde eingerichtet. Ihre Benutzerkennung lautet F5DCEBF51C. Mit Benutzerkennung und Passwort k&ouml;nnen Sie sich in Ihrem Benutz…\", \"date\": \"2026-05-11\"}, {\"id\": \"221296\", \"from\": \"\\\"ALDI TALK Kundenbetreuung\\\"\\r\\n <no-reply@hinweis.alditalk-kundenbetreuung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Information zu deiner ALDI TALK SIM-Karte mit der Rufnummer\\r\\n 49157XXXXX866\", \"snippet\": \"--_----cq+3+0/zwotx+0ZoN8y+UA===_67/71-22925-C46E10A6 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Aldi=0A=0ATalk=0A=0AWichtiger Hinweis zu…\", \"date\": \"2026-05-11\"}, {\"id\": \"221393\", \"from\": \"Fielmann <info@account.fielmann.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Erinnerung: Ihr Auftrag ist abholbereit.\", \"snippet\": \"PCFET0NUWVBFIGh0bWwgUFVCTElDICItLy9XM0MvL0RURCBYSFRNTCAxLjAgVHJhbnNpdGlv bmFsLy9FTiIgImh0dHA6Ly93d3cudzMub3JnL1RSL3hodG1sMS9EVEQveGh0bWwxLXRyYW5z aXRpb25hbC5kdGQiPgo8aHRtbCB4bWxucz…\", \"date\": \"2026-05-13\"}, {\"id\": \"221420\", \"from\": \"\\\"ALDI TALK Kundenbetreuung\\\"\\r\\n <no-reply@hinweis.alditalk-kundenbetreuung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Information zu deiner ALDI TALK SIM-Karte mit der Rufnummer\\r\\n 49157XXXXX866\", \"snippet\": \"--_----fNERIf9ZqEQ9KHLA5/38hA===_2F/FF-22925-049840A6 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Aldi=0A=0ATalk=0A=0A=0AInformation zu de…\", \"date\": \"2026-05-13\"}, {\"id\": \"221424\", \"from\": \"\\\"ARTE\\\" <cinema-no-reply@newsletter.arte.tv>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"🎬 Der Film der Woche #51\", \"snippet\": \"--_----RHx1rxOhsfciV0+HR3Vk3w===_F4/02-35012-84A940A6 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Der Filmclub =F0=9F=8E=AC=F0=9F=A5=82=0A…\", \"date\": \"2026-05-13\"}, {\"id\": \"221427\", \"from\": \"Filippo <canepanerifilippo@gmail.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"moe-sovereign + AgentMart marketplace\", \"snippet\": \"--===============5623523665738313770== Content-Type: text/plain; charset=\\\"us-ascii\\\" MIME-Version: 1.0 Content-Transfer-Encoding: 7bit Hi h3rb3rn, I came across moe-sovereign, and I…\", \"date\": \"2026-05-13\"}, {\"id\": \"221428\", \"from\": \"\\\"tgl-tischlerei.de\\\" <info@tgl-tischlerei.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Joomla!-Aktualisierung für „tgl-tischlerei.de“ verfügbar – https://www.tgl-tischlerei.de/\", \"snippet\": \"Diese E-Mail WIRD NICHT von joomla.org gesendet. Sie wird automatisch durch die nachfolgende Website verschickt: tgl-tischlerei.de - ===============================================…\", \"date\": \"2026-05-13\"}, {\"id\": \"221435\", \"from\": \"Accounting - Hetzner Online GmbH <billing@hetzner.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Hetzner Online GmbH - Rechnung 087000936704 (K0720461917)\", \"snippet\": \"--_=_swift_v4_17787179326a0514ecac9cc_=_ Content-Type: multipart/alternative; boundary=\\\"_=_swift_v4_17787179326a0514ecaca63_=_\\\" --_=_swift_v4_17787179326a0514ecaca63_=_ Content-Typ…\", \"date\": \"2026-05-14\"}, {\"id\": \"221446\", \"from\": \"Anton Bohr <noreply.fsg-datteln-bork@vereinsflieger.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Dienstangebot im Vereinsflieger (Flugsportgemeinschaft Datteln Bork\\r\\n e.V.)\", \"snippet\": \"SGVyciwNCg0KZGFzIE1pdGdsaWVkIEFudG9uIEJvaHIgaGF0IGRlbiBEaWVuc3QgJ0xlcG9mYWhy ZXInIChTby4gMjQuMDUuMjAyNiAxMDowMC0xODowMCkgenVtIFRhdXNjaCBhbmdlYm90ZW4uIA0K RmFsbHMgSW50ZXJlc3NlIGFuIG…\", \"date\": \"2026-05-14\"}, {\"id\": \"221450\", \"from\": \"FRANK KEMNA <frankkemna@aol.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"E-mails an eine Handynummer verschicken\", \"snippet\": \"Hallo Philipp, besteht die M=C3=B6glichkeit die Mails die an die Adresse =E2= =80=9Evorstand@heimatverein-herbern.de=E2=80=9C zus=C3=A4tzlich an eine Hand= ynummer =E2=80=9E0157552…\", \"date\": \"2026-05-14\"}, {\"id\": \"221453\", \"from\": \"\\\"HelloFresh\\\" <news@newsletter.hellofresh.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Beeilung Philipp, Dein Rabatt ist immer noch verfügbar!\", \"snippet\": \"<html class=\\\"bg-gray-200 h-full\\\" lang=\\\"de\\\" xmlns:v=\\\"urn:schemas\", \"date\": \"2026-05-14\"}, {\"id\": \"221461\", \"from\": \"linuxnerd205--- über Warpzone<warpzone@lists.warpzone.ms>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[wz] Linux Job gesucht\", \"snippet\": \"SGFsbG8genVzYW1tZW4sDQoNCmljaCBiaW4gc3RpbGxlciBMZXNlciBkZXIgTWFpbGluZ2xpc3Rl IHVuZCBiaW4gZ2VyYWRlIGF1ZiBKb2JzdWNoZQ0KdW5kIGRhY2h0ZSB2aWVsbGVpY2h0IGhhYnQg aWhyIGphIHZvbiB3YXMgZ2Vow7…\", \"date\": \"2026-05-14\"}, {\"id\": \"221462\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Kurze Frage vor Dienstag\", \"snippet\": \"--d6d84be32ec6b581b4942224b6150dde907c5f3f274e90bbbd2e7a0706a5 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 Mime-Version: 1.0 =C2=A0=20 Hey P…\", \"date\": \"2026-05-14\"}, {\"id\": \"221478\", \"from\": \"Ollama <hello@ollama.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ollama 0.24 is now available with support for OpenAI’s Codex App\", \"snippet\": \"--io9d9ibz8hl Content-Type: text/plain; charset=UTF-8 Content-Transfer-Encoding: quoted-printable Ollama 0.24 is now available with support for the Codex App, OpenAI's = desktop ex…\", \"date\": \"2026-05-15\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"221537\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Noch 3 Tage: So baust du jede Software, die du dir vorstellen kannst\", \"snippet\": \"--0e2af5cdc944ba2e7d3cd4f3622eba523c7c03d8d7a4db09f24568cafaae Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=iso-8859-1 Mime-Version: 1.0 =A0 Hey Ph…\", \"date\": \"2026-05-16\"}, {\"id\": \"221547\", \"from\": \"noreply@mail.announcements.eu-amsterdam-1.oci.oraclecloud.com\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Event Notification : Oracle Cloud Infrastructure Compute for horndev\\r\\n :\\r\\n [3ff5506e]\", \"snippet\": \"= #outlook a {= padding: 0; }\", \"date\": \"2026-05-17\"}, {\"id\": \"221559\", \"from\": \"Felix Schlenther <felix@news.ai-first.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Die KI-Champion-Illusion\", \"snippet\": \"----_NmP-3321f6eafd579c2a-Part_1 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Im Browser lesen Beitrag anh=C3=B6ren Die KI-Champion-Illusion …\", \"date\": \"2026-05-17\"}, {\"id\": \"221562\", \"from\": \"Google Play <googleplay-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Beleg für deine Google Play-Bestellung vom 17.05.2026\", \"snippet\": \"--000000000000bfad080652038c4c Content-Type: multipart/alternative; boundary=\\\"000000000000bfad080652038c4a\\\" --000000000000bfad080652038c4a Content-Type: text/plain; charset=\\\"UTF-8\\\"…\", \"date\": \"2026-05-17\"}, {\"id\": \"221565\", \"from\": \"Monika Jebavy <noreply.fsg-datteln-bork@vereinsflieger.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ferienlager Borkenberge 2026\", \"snippet\": \"SGFsbG8gUGhpbGlwcCBIb3JuLA0KDQpNb25pa2EgSmViYXZ5IChGU0cgRGF0dGVsbiBCb3JrKSBo YXQgZGljaCB6dXIgVW1mcmFnZSAiRmVyaWVubGFnZXIgQm9ya2VuYmVyZ2UgMjAyNiIgZWluZ2Vs YWRlbi4NCiANCkxpbmsgenVyIF…\", \"date\": \"2026-05-17\"}, {\"id\": \"221609\", \"from\": \"Tomorrow <support@tomorrow.one>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wichtige Information zu deinem Konto\", \"snippet\": \"--b780a122eeccc3770396a0da12f2812492b1bfdd0e32f1b83942aaf32045 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 Mime-Version: 1.0 Ein Teil deines…\", \"date\": \"2026-05-18\"}, {\"id\": \"221610\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"[Noch 24h] Agentic Coding Workshop startet morgen\", \"snippet\": \"--f50508b500cdadece3af39f486f900eaf95cb1ecbbff223d4a5c467ddd67 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 Mime-Version: 1.0 =C2=A0 Hey Phil…\", \"date\": \"2026-05-18\"}, {\"id\": \"221654\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Noch 4 Stunden, Philipp\", \"snippet\": \"--37f014c53c1b69c284e258739a3f8b222500631d81c1a857a31e116ad723 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=iso-8859-1 Mime-Version: 1.0 Hey Philip…\", \"date\": \"2026-05-19\"}, {\"id\": \"221655\", \"from\": \"Google Business Profile <businessprofile-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"2 neue Rezensionen zu Brautzimmer NRW & Preloved Bridals NRW\", \"snippet\": \"--000000000000429bf206522ac8c4 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 PGh0dHBzOi8vYnVzaW5lc3MuZ29vZ2xlLmNvbS9uLzE0NDM…\", \"date\": \"2026-05-19\"}, {\"id\": \"221665\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"LIVE in 60 Minuten: So baust du alles mit KI-Agenten\", \"snippet\": \"--0b45fed4b1804d86857abf37094f0a2a53e9cc2b24501d68625abcbee572 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=iso-8859-1 Mime-Version: 1.0 Hey Philip…\", \"date\": \"2026-05-19\"}, {\"id\": \"221666\", \"from\": \"Leonard Schmedding <workshop@kiberatung.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Agentic-Coding Webinar startet JETZT\", \"snippet\": \"--99892734bf464d354749f4f374b7896431255d965f345b0d9053e46c67d7 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=iso-8859-1 Mime-Version: 1.0 Hey Philip…\", \"date\": \"2026-05-19\"}, {\"id\": \"221671\", \"from\": \"vzdump backup tool <root@srv2.hc-hosting.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"vzdump backup status (srv2.hc-hosting.de): backup successful\", \"snippet\": \"This is a multi-part message in MIME format. ------_=_NextPart_002_1779210107 Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: 8bit Details ======= VMID Name St…\", \"date\": \"2026-05-19\"}, {\"id\": \"221674\", \"from\": \"Tomorrow <support@tomorrow.one>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Abgelehnte Lastschriftabbuchung\", \"snippet\": \"--07e9cd3925776208a670f0a8219a9bbe65893bc4415961bedd9d3efcebeb Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=utf-8 Mime-Version: 1.0 Tomorrow ( ) **…\", \"date\": \"2026-05-19\"}, {\"id\": \"221675\", \"from\": \"vzdump backup tool <root@srv2.hc-hosting.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"vzdump backup status (srv2.hc-hosting.de): backup successful\", \"snippet\": \"This is a multi-part message in MIME format. ------_=_NextPart_002_1779210645 Content-Type: text/plain; charset=\\\"UTF-8\\\" Content-Transfer-Encoding: 8bit Details ======= VMID Name St…\", \"date\": \"2026-05-19\"}, {\"id\": \"221701\", \"from\": \"OnlinehändlerNews Daily | Händlerbund<info@news.haendlerbund.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Preiserhöhungen: Klage gegen Amazon | 220.000 klagen gegen Prime | Widerrufsbutton: Neues Plugin für Shopify – 20.05.2026\", \"snippet\": \"------=_Part_29658_1291377711.1779257186317 Content-Type: text/plain; charset=utf-8 Content-Transfer-Encoding: quoted-printable Top informiert in den Morgen =E2=80=93 mit den wicht…\", \"date\": \"2026-05-20\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "[{\"id\": \"221702\", \"from\": \"netcup GmbH <donotreply@netcup.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Lastschrift für Rechnung nc-5150119 ist gescheitert\", \"snippet\": \"--b1=_jLhQdFGMhjQh0pn1aZzozjqxjPjq0SkcfJT2lOAc Content-Type: text/plain; charset=iso-8859-1 Content-Transfer-Encoding: quoted-printable Guten Tag Philipp Horn, wir mussten heute fe…\", \"date\": \"2026-05-20\"}, {\"id\": \"221703\", \"from\": \"netcup GmbH <donotreply@netcup.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihre Rechnung (R.-Nr. nc-5189548)\", \"snippet\": \"--b1=_Tp1ixLk21DOLBf5GfSvvM8gPKJKdUR4Aw8e7VGR1d0 Content-Type: multipart/alternative; boundary=\\\"b2=_Tp1ixLk21DOLBf5GfSvvM8gPKJKdUR4Aw8e7VGR1d0\\\" --b2=_Tp1ixLk21DOLBf5GfSvvM8gPKJKdUR…\", \"date\": \"2026-05-20\"}, {\"id\": \"221715\", \"from\": \"EDIH-DO <edihdo@digitalhub.eu>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Philipp, entdecke kostenlose Veranstaltungen in deiner Nähe!\", \"snippet\": \"---------?=_89463-3289668789192 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=UTF-8 [ Im Browser anzeigen]( FnIGLo49OtsDxtZJgh5jF/jSfxNkkjIoU2) **Mi…\", \"date\": \"2026-05-20\"}, {\"id\": \"221724\", \"from\": \"Ayse Mese <ayse.mese@jdb.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Ihr Ticket für das BIG BANG KI Festival 2026\", \"snippet\": \"---------?=_59232-9141122892265 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=UTF-8 Ihr Upgrade zum BIG BANG KI FESTIVAL Der 16. September erg=C3=A4…\", \"date\": \"2026-05-20\"}, {\"id\": \"221737\", \"from\": \"\\\"Tomorrow\\\" <team@mail.tomorrow.one>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Wir konnten deine Gebühren nicht abbuchen ☝️\", \"snippet\": \"--_----NBxnj7sLs6z+LpMkCmiT/g===_35/B1-02626-94BED0A6 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"UTF-8\\\" Bitte sorge f=C3=BCr ausreichend=0AGeld …\", \"date\": \"2026-05-20\"}, {\"id\": \"221738\", \"from\": \"OpenRouter <notifications@openrouter.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Your sign up link\", \"snippet\": \"--c08d0ac24cf788e258ce2ae638840692de2e235efc3fbd73054503384a31 Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=us-ascii Mime-Version: 1.0 Use the foll…\", \"date\": \"2026-05-20\"}, {\"id\": \"221739\", \"from\": \"OpenRouter Team <welcome@openrouter.ai>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Welcome to OpenRouter\", \"snippet\": \"--49a87a5d1a9a995b7db38a484c6e5dda0165d6a13a964eb2a447c901f04c Content-Transfer-Encoding: quoted-printable Content-Type: text/plain; charset=\\\"utf-8\\\" One API key, 300+ models. Creat…\", \"date\": \"2026-05-20\"}, {\"id\": \"221752\", \"from\": \"Google One <googleone-noreply@google.com>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Änderungen an deinem Google AI Pro-Abo\", \"snippet\": \"--000000000000262c310652488311 Content-Type: text/plain; charset=\\\"UTF-8\\\"; format=flowed; delsp=yes Content-Transfer-Encoding: base64 TWl0IGRpZXNlciBTZXJ2aWNlbWl0dGVpbHVuZyBlcmjDpGx…\", \"date\": \"2026-05-20\"}, {\"id\": \"221759\", \"from\": \"root@cloud.gross-urleben.de (Cron Daemon)\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Cron <root@Nextcloud> sudo -u web1 php8.2\\r\\n /var/www/cloud.gross-urleben.de/web/occ config:system:set\\r\\n maintenance_window_start --value=2\", \"snippet\": \"PHP Warning: PHP Startup: Unable to load dynamic library 'propro.so' (tried: /usr/lib/php/20220829/propro.so (/usr/lib/php/20220829/propro.so: undefined symbol: convert_to_explicit…\", \"date\": \"2026-05-21\"}, {\"id\": \"221760\", \"from\": \"ОpеnАI Zаhlungеn <info@email.apl-energies.ca>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Rechnung INV-202698458 - ChatGPT Premium\", \"snippet\": \"--===============4319751533063732037== Content-Type: text/plain; charset=\\\"utf-8\\\" MIME-Version: 1.0 Content-Transfer-Encoding: base64 V2ljaHRpZ2UgTWl0dGVpbHVuZyB6dSBJaHJlbSBDaGF0R1B…\", \"date\": \"2026-05-21\"}, {\"id\": \"221764\", \"from\": \"\\\"donotreply@netcup.de\\\" <donotreply@netcup.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Zahlungserinnerung zu Ihrer Rechnung nc-5150119\", \"snippet\": \"--b1=_9hJs7xfxmKi0E1G4VrWJPM12910DyBIGjEBvl63A Content-Type: multipart/alternative; boundary=\\\"b2=_9hJs7xfxmKi0E1G4VrWJPM12910DyBIGjEBvl63A\\\" --b2=_9hJs7xfxmKi0E1G4VrWJPM12910DyBIGjE…\", \"date\": \"2026-05-21\"}, {\"id\": \"221770\", \"from\": \"Telekom <noreply@telekom.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Die E-Rechnung kommt: Jetzt ist Ihre Mitwirkung erforderlich.\", \"snippet\": \"------=_Part_1889835_1920244497.1779348246224 Content-Type: multipart/alternative; boundary=\\\"----=_Part_1889836_-468175418.1779348246224\\\" ------=_Part_1889836_-468175418.1779348246…\", \"date\": \"2026-05-21\"}, {\"id\": \"221772\", \"from\": \"Abo BMWE <abo@bundeswirtschaftsministerium.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Energiewende direkt – Ausgabe 05/2026\", \"snippet\": \"=20 =20 Newsletter BMWK a img{border:none;} .nl-info a {color: #fff;text-decoration:none;} <table bord\", \"date\": \"2026-05-21\"}, {\"id\": \"221774\", \"from\": \"Marc-Uwe Kling Shop <service@reimkultur-shop.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Das NEINhorn Plüschtier & Känguru-Sticker\", \"snippet\": \"<html style=3D\\\"height: 100% !important; widt= h: 100% !important; font-family: &#39;Helvetica Neue&#39;, Helvetica, syste= m-ui, -apple-system, Arial, sans-serif; font-weight: 400;…\", \"date\": \"2026-05-21\"}, {\"id\": \"221775\", \"from\": \"Andre Allerdisse <a_allerdisse@web.de>\", \"to\": \"info@horn-consulting.de\", \"subject\": \"Alter Kontakt über Kleinanzeigen / iMac in Haltern\", \"snippet\": \"> This message is in MIME format. Since your mail reader does not understand this format, some or all of this message may not be legible. --B_3862206991_250395131 Content-type: tex…\", \"date\": \"2026-05-21\"}]",
+    "expert_domains": [
+      "mail_classify"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Zeige mir zunächst den Status meines Postfachs mit sort_status, dann starte einen Dry-Run auf dem INBOX Ordner mit limit=300. Berichte was du findest.",
+    "expert_domains": [
+      "technical_support"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Antworte nur mit OK",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Antworte nur mit: OK",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Bitte analysiere mein Postfach: Rufe zuerst sort_status auf, dann starte sort_dry_run mit all_folders=true und limit=500. Fasse das Ergebnis zusammen.",
+    "expert_domains": [
+      "precision_tools"
+    ],
+    "moe_mode": "default"
+  },
+  {
+    "prompt": "Task id: t_7d50a672\nCurrent title: Erstelle ein für mich optimiertes Kubernetes Tutorial von den absoluten Basics bis hin zur Enterprise Architektur. Im Tutorial soll es und die Logik hinter Kubernetes gehen sowie App Verwaltungstools wie ArgoCD und die SuSE Rancher Clusterverwaltung und dem shared Filesystem Longhorn. Wie erstelle ich mein erstes Helmchart und verteste es vor dem Deployment auf den Cluster. Wie baut sich das Helm…\nCurrent body:\n(no body)",
+    "expert_domains": [
+      "general"
+    ],
+    "moe_mode": "default"
+  }
+]

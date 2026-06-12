@@ -550,6 +550,18 @@ MODES: dict = {
         ),
         "force_think": True,
     },
+    "auto": {
+        "model_id":    "moe-auto",
+        "description": "Auto — KI wählt dynamisch die optimalen Experten für jeden Prompt",
+        "expert_suffix": "",
+        "merger_prefix": (
+            "Synthesize the following information into a clear, complete answer.\n"
+            "Priority: MCP calculations > knowledge graph > experts (high/medium) > web > experts (low).\n"
+            "LANGUAGE: Always answer in the same language as the original question."
+        ),
+        # Sentinel: this model ID always triggers the dynamic router in chat.py.
+        "_is_dynamic_auto": True,
+    },
 }
 
 _MODEL_ID_TO_MODE: dict = {v["model_id"]: k for k, v in MODES.items()}

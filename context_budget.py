@@ -141,6 +141,26 @@ def get_model_context_window(model: str) -> int:
     This replaces the old name-based lookup table, which required manual maintenance
     and silently returned wrong values for renamed or future models.
     """
+    # First check for explicit ctx suffixes (e.g. ctx4k, ctx8k, 32k, 128k) in name
+    name_lower = (model or "").lower()
+    ctx_match = re.search(r'ctx(\d+)k', name_lower)
+    if not ctx_match:
+        ctx_match = re.search(r'-(\d+)k\b', name_lower)
+    if not ctx_match:
+        # Avoid matching parameter sizes like "32b" by matching "32k"
+        ctx_match = re.search(r'\b(\d+)k\b', name_lower)
+        
+    if ctx_match:
+        return int(ctx_match.group(1)) * 1024
+    if "128k" in name_lower or "ctx128k" in name_lower:
+        return 131072
+    if "32k" in name_lower:
+        return 32768
+    if "8k" in name_lower:
+        return 8192
+    if "4k" in name_lower:
+        return 4096
+
     params = _params_from_name(model)
     if params <= 0:
         return 0
@@ -148,6 +168,32 @@ def get_model_context_window(model: str) -> int:
         if params <= threshold:
             return ctx
     return _DEFAULT_CTX_HEURISTIC
+
+
+def resolve_requested_ctx(model: str, state_num_ctx: int = 0, num_ctx_env: int = 0, label: str = "") -> int:
+    """Resolve the context window a call to *model* will actually request.
+
+    This mirrors the resolution used to build a call's ``extra_body.options.num_ctx``
+    (see ``_judge_model_kw``/``_planner_model_kw`` in ``services/inference.py``):
+    per-template override → global env default → static parameter-count heuristic,
+    clamped to that heuristic if it is smaller (VRAM-safety clamp).
+
+    PRE-FLIGHT budget checks MUST use this instead of querying the model's
+    *currently loaded* state via Ollama ``/api/ps`` (``get_model_ctx_async``) —
+    that reflects whatever a prior call loaded, which can disagree with what
+    THIS call will request and cause spurious overflow warnings.
+    """
+    requested_ctx = state_num_ctx or num_ctx_env or get_model_context_window(model)
+    safe_ctx = get_model_context_window(model)
+    if safe_ctx > 0 and safe_ctx < requested_ctx:
+        if label:
+            import logging
+            logging.getLogger("MOE-SOVEREIGN").info(
+                "%s: context clamped from requested %d to safe limit %d for model %s",
+                label, requested_ctx, safe_ctx, model,
+            )
+        return safe_ctx
+    return requested_ctx
 
 
 async def _fetch_litellm_model_info(model: str, base_url: str, token: str,
@@ -372,16 +418,36 @@ async def get_model_ctx_async(
         except Exception:
             pass
 
+    # Database metadata lookup (takes priority over live /api/ps check if configured)
+    db_ctx = 0
+    if base_url:
+        try:
+            from config import INFERENCE_SERVERS_LIST
+            node_name = ""
+            for s in INFERENCE_SERVERS_LIST:
+                s_url = s.get("url", "").rstrip("/")
+                if s_url and (s_url in base_url or base_url in s_url):
+                    node_name = s["name"]
+                    break
+            
+            lookup_id = f"{model}@{node_name}" if node_name else model
+            from admin_ui.database import get_model_metadata
+            meta = await get_model_metadata(lookup_id)
+            if meta and meta.get("context_window"):
+                db_ctx = int(meta["context_window"])
+        except Exception:
+            pass
+
     # Dynamic fetch — Ollama via /api/show, OpenAI-compatible via /v1/models/{id}
     fetched = 0
-    if base_url:
+    if not db_ctx and base_url:
         if token == "ollama":  # heuristic: local Ollama nodes use "ollama" token
             fetched = await fetch_ollama_num_ctx(model, base_url, token)
         else:
             fetched = await fetch_openai_context_window(model, base_url, token)
 
     # Static table fallback (local model families only — no deployment-specific names)
-    result = fetched or get_model_context_window(model)
+    result = db_ctx or fetched or get_model_context_window(model)
 
     # Cache the result.
     # Ollama nodes use a short TTL (120 s) because context_window reflects the
@@ -600,3 +666,77 @@ def estimate_overflow(
     if ctx_tokens <= 0:
         return False
     return (estimated_input_tokens + desired_max_tokens + safety_buffer_tokens) > ctx_tokens
+
+
+def prune_filler_words(text: str) -> str:
+    """Removes verbose filler words and common politeness/introductory boilerplate from prompts."""
+    if not text:
+        return ""
+    # List of regex patterns to strip (case-insensitive)
+    patterns = [
+        # Introductory fluff / politeness
+        (r"\b(please|kindly|could you|would you be so kind as to|i would like you to|please be sure to|don't forget to|make sure that you)\b", ""),
+        (r"\b(bitte|sei so gut und|ich möchte dich bitten|vergiss nicht zu|stelle sicher, dass du)\b", ""),
+        # Wordy transitions
+        (r"\b(in order to|as a matter of fact|at the end of the day|for all intents and purposes|it goes without saying|needless to say)\b", ""),
+        (r"\b(um zu|in diesem zusammenhang|im grunde genommen|schlicht und ergreifend|selbstverständlich)\b", ""),
+    ]
+    
+    result = text
+    for pattern, repl in patterns:
+        result = re.sub(pattern, repl, result, flags=re.IGNORECASE)
+    # Cleanup double spaces and newlines
+    result = re.sub(r" +", " ", result)
+    return result.strip()
+
+
+async def compress_prompt_to_fit(
+    prompt: str,
+    max_chars: int,
+    model: str = "",
+    url: str = "",
+    token: str = "",
+) -> str:
+    """Compresses a prompt text to fit into max_chars by removing filler words and condensing phrasing without losing requirements."""
+    if not prompt:
+        return ""
+    
+    # 1. Apply fast regex-based heuristic pruning first (zero-cost)
+    compressed = prune_filler_words(prompt)
+    if len(compressed) <= max_chars:
+        return compressed
+        
+    # 2. If it's still too long, and we have a model/url, use the fast planner model to condense it
+    if max_chars > 150 and model and url:
+        try:
+            import asyncio
+            import logging
+            logger = logging.getLogger("MOE-SOVEREIGN")
+            # We use a very strict, zero-temperature system instruction to condense the text
+            condense_instruction = (
+                f"You are a text compression utility. Condense the following instructions/text to fit in at most {max_chars} characters. "
+                "CRITICAL: Keep all concrete rules, parameters, file paths, and technical requirements. "
+                "Remove all polite filler words, introductory fluff, corporate explanations, and verbose phrasing. "
+                "Output ONLY the compressed text."
+            )
+            # Invoke the local model
+            from langchain_openai import ChatOpenAI
+            _c_llm = ChatOpenAI(
+                model=model,
+                base_url=url,
+                api_key=token,
+                timeout=10.0,
+                temperature=0.0,
+                max_tokens=max(50, max_chars // CHARS_PER_TOKEN),
+            )
+            _r = await _c_llm.ainvoke(f"{condense_instruction}\n\nTEXT:\n{compressed}")
+            res = _r.content.strip()
+            if res and len(res) <= max_chars:
+                logger.info("🗜️ LLM Prompt Compression succeeded: %d -> %d chars", len(prompt), len(res))
+                return res
+        except Exception as e:
+            import logging
+            logging.getLogger("MOE-SOVEREIGN").debug("LLM Prompt Compression failed/skipped: %s", e)
+            
+    # Fallback to simple slicing if it's still too long
+    return compressed[:max_chars] + "\n[…truncated to fit context window]"

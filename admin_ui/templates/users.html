@@ -335,7 +335,7 @@ async function _loadResources() {
   try {
     const r = await fetch('/api/resources');
     _resourcesCache = await r.json();
-  } catch(e) { _resourcesCache = {expert_template:[],cc_profile:[],model_endpoint:[],moe_mode:['native','moe_orchestrated','moe_reasoning'],skill:[],mcp_tool:[]}; }
+  } catch(e) { _resourcesCache = {expert_template:[],cc_profile:[],model_endpoint:[],moe_mode:['native','moe_orchestrated','moe_reasoning','moe-auto','moe-auto:local-only','moe-auto:global-only','moe-auto:user-conns-only'],skill:[],mcp_tool:[]}; }
   return _resourcesCache;
 }
 
@@ -808,7 +808,91 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
       </div>
     </div>
 
-    <!-- Section 6: User Features -->
+    <!-- Section 6a: MoE Auto Routing -->
+    <div class="card mb-2">
+      <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
+           style="background:#e8f5e9;cursor:pointer"
+           data-bs-toggle="collapse" data-bs-target="#perm_moeauto_collapse_${uid}" aria-expanded="false">
+        <i class="bi bi-stars text-success"></i>
+        <span class="small fw-bold">MoE Auto Routing</span>
+        <span class="text-muted small ms-1">— KI wählt dynamisch die optimalen Experten per Prompt</span>
+        <i class="bi bi-chevron-down ms-auto small text-muted"></i>
+      </div>
+      <div class="collapse" id="perm_moeauto_collapse_${uid}">
+        <div class="card-body py-2 px-3">
+          ${(()=>{
+            // Helper: returns {isGranted, permId, btnCls, ico, lbl} for a given resource_id
+            function moePermState(rid) {
+              const found = perms.filter(p => p.resource_type === 'moe_mode' && p.resource_id === rid);
+              const isGranted = found.length > 0;
+              return {
+                isGranted, permId: isGranted ? found[0].id : '',
+                btnCls: isGranted ? 'btn-success' : 'btn-outline-secondary',
+                ico:    isGranted ? 'bi-toggle-on'  : 'bi-toggle-off',
+                lbl:    isGranted ? 'Aktiviert'     : 'Deaktiviert',
+              };
+            }
+            const base   = moePermState('moe-auto');
+            const local  = moePermState('moe-auto:local-only');
+            const glob   = moePermState('moe-auto:global-only');
+            const uconn  = moePermState('moe-auto:user-conns-only');
+
+            const rows = [
+              {
+                icon:'bi-stars', color:'text-success',
+                title:'moe-auto Modell-Zugriff',
+                desc:'Zeigt <code>moe-auto</code> in der Modell-Liste. Dynamic Router baut das Experten-Template automatisch. <strong>Muss aktiv sein</strong>, damit die anderen Optionen wirken.',
+                ...base,
+                onclick: `toggleMoeAutoPerm('${uid}',${base.isGranted},'${base.permId}','${name}')`
+              },
+              {
+                icon:'bi-hdd-rack', color:'text-info',
+                title:'Nur lokale Endpoints',
+                desc:'Dynamic Router darf ausschließlich Verbindungen zu lokalen Inference-Endpoints (z.B. eigene Ollama-Server) nutzen. Cloud-APIs werden blockiert.',
+                ...local,
+                onclick: `toggleMoeAutoSubPerm('${uid}','moe-auto:local-only',${local.isGranted},'${local.permId}','${name}')`
+              },
+              {
+                icon:'bi-globe', color:'text-primary',
+                title:'Nur globale Verbindungen',
+                desc:'Dynamic Router darf ausschließlich globale, vom Admin definierte Verbindungen nutzen. Vom User selbst angelegte Verbindungen werden ignoriert.',
+                ...glob,
+                onclick: `toggleMoeAutoSubPerm('${uid}','moe-auto:global-only',${glob.isGranted},'${glob.permId}','${name}')`
+              },
+              {
+                icon:'bi-person-gear', color:'text-warning',
+                title:'Nur User-Verbindungen',
+                desc:'Dynamic Router darf ausschließlich Verbindungen verwenden, die der User selbst angelegt hat (persönliche API Connections). Globale Admin-Endpoints werden ignoriert.',
+                ...uconn,
+                onclick: `toggleMoeAutoSubPerm('${uid}','moe-auto:user-conns-only',${uconn.isGranted},'${uconn.permId}','${name}')`
+              },
+            ];
+
+            let html = rows.map((r, i) => `
+              <div class="d-flex align-items-start gap-3 py-2 px-1${i < rows.length-1 ? ' border-bottom' : ''}">
+                <i class="bi ${r.icon} ${r.color} mt-1" style="font-size:1.15rem;min-width:1.3rem"></i>
+                <div class="flex-grow-1">
+                  <div class="small fw-semibold">${r.title}</div>
+                  <div class="text-muted" style="font-size:.73rem">${r.desc}</div>
+                </div>
+                <button class="btn btn-sm ${r.btnCls} flex-shrink-0" onclick="${r.onclick}">
+                  <i class="bi ${r.ico} me-1"></i>${r.lbl}
+                </button>
+              </div>`).join('');
+
+            html += `
+              <div class="mt-2 p-2 rounded text-muted bg-light" style="font-size:.7rem">
+                <i class="bi bi-info-circle me-1 text-primary"></i>
+                <strong>Hinweis:</strong> Wenn sowohl <em>Nur globale Verbindungen</em> als auch <em>Nur User-Verbindungen</em> deaktiviert sind, werden standardmäßig beide Verbindungstypen kombiniert.
+              </div>`;
+
+            return html;
+          })()}
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 7: User Features -->
     <div class="card mb-2">
       <div class="card-header py-1 px-3 d-flex align-items-center gap-2 user-select-none"
            style="background:#f0f4c3;cursor:pointer"
@@ -1023,6 +1107,30 @@ async function toggleFeaturePerm(uid, feature, isGranted, permId, name) {
     await fetch(`/api/users/${uid}/permissions`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({resource_type: 'feature', resource_id: feature})
+    });
+  }
+  openUserDetail(uid, name, 'tab-perms');
+}
+
+async function toggleMoeAutoPerm(uid, isGranted, permId, name) {
+  if (isGranted && permId) {
+    await fetch(`/api/users/${uid}/permissions/${permId}`, {method: 'DELETE'});
+  } else if (!isGranted) {
+    await fetch(`/api/users/${uid}/permissions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({resource_type: 'moe_mode', resource_id: 'moe-auto'})
+    });
+  }
+  openUserDetail(uid, name, 'tab-perms');
+}
+
+async function toggleMoeAutoSubPerm(uid, resourceId, isGranted, permId, name) {
+  if (isGranted && permId) {
+    await fetch(`/api/users/${uid}/permissions/${permId}`, {method: 'DELETE'});
+  } else if (!isGranted) {
+    await fetch(`/api/users/${uid}/permissions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({resource_type: 'moe_mode', resource_id: resourceId})
     });
   }
   openUserDetail(uid, name, 'tab-perms');

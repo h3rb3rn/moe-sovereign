@@ -100,10 +100,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_prefix    TEXT NOT NULL,
     label         TEXT NOT NULL DEFAULT '',
     is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-    cc_profile_id TEXT,
-    created_at    TEXT NOT NULL,
-    last_used_at  TEXT,
-    expires_at    TEXT
+    cc_profile_id      TEXT,
+    dynamic_routing    BOOLEAN NOT NULL DEFAULT FALSE,
+    local_only_routing BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at         TEXT NOT NULL,
+    last_used_at       TEXT,
+    expires_at         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS token_budgets (
@@ -207,6 +209,28 @@ CREATE TABLE IF NOT EXISTS admin_expert_templates (
     is_active   BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TEXT NOT NULL DEFAULT '',
     updated_at  TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS model_metadata (
+    model_id         TEXT PRIMARY KEY,
+    base_model       TEXT NOT NULL DEFAULT '',
+    parameter_size_b DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    context_window   INTEGER NOT NULL DEFAULT 4096,
+    family           TEXT NOT NULL DEFAULT '',
+    strengths        TEXT[] NOT NULL DEFAULT '{}',
+    benchmark_scores JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at       TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS dynamic_template_feedback_log (
+    template_id TEXT PRIMARY KEY,
+    prompt      TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    user_rating INTEGER,
+    latency_ms  BIGINT,
+    tokens_used INTEGER,
+    status      TEXT NOT NULL DEFAULT 'success',
+    created_at  TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS federation_config (
@@ -313,6 +337,11 @@ ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS agentic_rounds    INTEGER NOT NUL
 
 -- Conversation audit log retention: per-user override (NULL = global default)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS conversation_log_retention_days INTEGER;
+
+-- Dynamic routing flag on API keys
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS dynamic_routing    BOOLEAN NOT NULL DEFAULT FALSE;
+-- Local-only compliance flag on API keys (restrict dynamic router to local endpoints)
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS local_only_routing BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
 
@@ -915,7 +944,8 @@ async def create_api_key(user_id: str, label: str = "") -> tuple[str, dict]:
             )
     key_dict = {"id": kid, "user_id": user_id, "key_prefix": key_prefix,
                 "label": label, "is_active": True, "created_at": now,
-                "last_used_at": None, "expires_at": None}
+                "last_used_at": None, "expires_at": None, "cc_profile_id": None,
+                "dynamic_routing": False, "local_only_routing": False}
     return raw, key_dict
 
 
@@ -923,7 +953,8 @@ async def list_api_keys(user_id: str) -> list[dict]:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id,user_id,key_prefix,label,is_active,created_at,last_used_at,expires_at,cc_profile_id "
+                "SELECT id,user_id,key_prefix,label,is_active,created_at,last_used_at,expires_at,"
+                "cc_profile_id,dynamic_routing,local_only_routing "
                 "FROM api_keys WHERE user_id=%s ORDER BY created_at DESC",
                 (user_id,),
             )
@@ -948,7 +979,8 @@ async def get_active_key_hashes(user_id: str) -> list[dict]:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, key_hash, cc_profile_id FROM api_keys WHERE user_id=%s AND is_active=TRUE",
+                "SELECT id, key_hash, cc_profile_id, dynamic_routing, local_only_routing "
+                "FROM api_keys WHERE user_id=%s AND is_active=TRUE",
                 (user_id,),
             )
             return await cur.fetchall()
@@ -1004,6 +1036,34 @@ async def set_api_key_cc_profile(key_id: str, user_id: str, profile_id: Optional
             await cur.execute(
                 "UPDATE api_keys SET cc_profile_id=%s WHERE id=%s AND user_id=%s",
                 (profile_id, key_id, user_id),
+            )
+            ok = cur.rowcount > 0
+    if ok:
+        await sync_user_to_redis(user_id)
+    return ok
+
+
+async def set_api_key_dynamic_routing(key_id: str, user_id: str, enabled: bool) -> bool:
+    """Weist einem API-Key den Status für dynamisches Routing zu."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE api_keys SET dynamic_routing=%s WHERE id=%s AND user_id=%s",
+                (enabled, key_id, user_id),
+            )
+            ok = cur.rowcount > 0
+    if ok:
+        await sync_user_to_redis(user_id)
+    return ok
+
+
+async def set_api_key_local_only_routing(key_id: str, user_id: str, enabled: bool) -> bool:
+    """Aktiviert/deaktiviert die Beschränkung auf lokale Endpoints für einen API-Key."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE api_keys SET local_only_routing=%s WHERE id=%s AND user_id=%s",
+                (enabled, key_id, user_id),
             )
             ok = cur.rowcount > 0
     if ok:
@@ -1671,6 +1731,8 @@ async def sync_user_to_redis(user_id: str) -> None:
                     "key_id":                 rec["id"],
                     "default_cc_profile_id":  user.get("default_cc_profile_id") or "",
                     "key_cc_profile_id":      rec.get("cc_profile_id") or "",
+                    "dynamic_routing":        "1" if rec.get("dynamic_routing") else "0",
+                    "local_only_routing":     "1" if rec.get("local_only_routing") else "0",
                 })
                 await r.expire(redis_key, 86400)
             else:
@@ -2390,3 +2452,93 @@ async def check_team_budget(team_id: str, tokens: int) -> tuple[bool, str]:
     if budget.get("daily_limit") and (budget["daily_used"] + tokens) > budget["daily_limit"]:
         return False, f"Team daily budget exhausted ({budget['daily_used']}/{budget['daily_limit']} tokens)"
     return True, ""
+
+
+# ─── Dynamic Router & Model Metadata Helpers ─────────────────────────────────
+
+async def upsert_model_metadata(
+    model_id: str,
+    base_model: str,
+    parameter_size_b: float,
+    context_window: int,
+    family: str,
+    strengths: list[str],
+    benchmark_scores: dict,
+) -> None:
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO model_metadata (model_id, base_model, parameter_size_b, context_window, family, strengths, benchmark_scores, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT(model_id) DO UPDATE SET "
+                "base_model=excluded.base_model, parameter_size_b=excluded.parameter_size_b, "
+                "context_window=excluded.context_window, family=excluded.family, "
+                "strengths=excluded.strengths, benchmark_scores=excluded.benchmark_scores, "
+                "updated_at=excluded.updated_at",
+                (model_id, base_model, parameter_size_b, context_window, family, strengths, json.dumps(benchmark_scores), now),
+            )
+
+
+async def get_model_metadata(model_id: str) -> Optional[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM model_metadata WHERE model_id=%s", (model_id,))
+            row = await cur.fetchone()
+            if row:
+                res = dict(row)
+                if isinstance(res.get("benchmark_scores"), str):
+                    try:
+                        res["benchmark_scores"] = json.loads(res["benchmark_scores"])
+                    except Exception:
+                        pass
+                return res
+            return None
+
+
+async def list_all_model_metadata() -> list[dict]:
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT * FROM model_metadata")
+            rows = await cur.fetchall()
+            result = []
+            for r in rows:
+                res = dict(r)
+                if isinstance(res.get("benchmark_scores"), str):
+                    try:
+                        res["benchmark_scores"] = json.loads(res["benchmark_scores"])
+                    except Exception:
+                        pass
+                result.append(res)
+            return result
+
+
+async def log_dynamic_template_feedback(
+    template_id: str,
+    prompt: str,
+    config_json: str,
+    latency_ms: Optional[int],
+    tokens_used: Optional[int],
+    status: str = "success",
+) -> None:
+    now = now_iso()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO dynamic_template_feedback_log (template_id, prompt, config_json, latency_ms, tokens_used, status, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (template_id, prompt, config_json, latency_ms, tokens_used, status, now),
+            )
+
+
+async def update_dynamic_template_feedback_rating(template_id: str, rating: int) -> bool:
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE dynamic_template_feedback_log SET user_rating=%s WHERE template_id=%s",
+                (rating, template_id),
+            )
+            return cur.rowcount > 0
+

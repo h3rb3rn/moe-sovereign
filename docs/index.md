@@ -1,6 +1,6 @@
 # Sovereign MoE – Documentation
 
-**Self-hosted Multi-Model Orchestrator** — Routes requests to specialized local LLMs, enriches context via Neo4j Knowledge Graph and web search, and synthesizes results with a Judge LLM. OpenAI-compatible API endpoint — works with Claude Code, Continue.dev, and any OpenAI-compatible client.
+**Self-hosted, Sovereign Multi-Model Orchestrator** — An intelligent ONNX gating network routes each request to the optimal specialist LLMs on local GPU hardware, enriches context via Neo4j Knowledge Graph and web search, and synthesizes results with a Judge LLM. OpenAI-compatible API — works with Claude Code, Continue.dev, and any OpenAI-compatible client.
 
 ---
 
@@ -11,6 +11,7 @@
 | **Installation** | [Installation](guide/installation.md) · [First-Time Setup](guide/first-setup.md) | Install on Debian, deploy the stack, run the Setup Wizard |
 | **User Handbook** | [Quick Start](guide/quickstart.md) · [Handbook](guide/handout.md) · [API](guide/api.md) | Getting started, modes, skills, vision, API usage |
 | **Admin Backend** | [Overview](admin/index.md) | Manage users, budgets, templates, profiles |
+| **IMoE Gating Network** | [System Overview](system/overview.md#4-imoe-gating-network-new-june-2026) | Dynamic ONNX router, template cache, allocation scoring |
 | **Federation** | [Overview](federation/index.md) | MoE Libris -- federated knowledge exchange between nodes |
 | **User Portal** | [Overview](portal/index.md) | Self-service for end users: usage, keys, billing |
 | **Intelligence** | [Agentic Loop](system/intelligence/agentic_loop.md) · [7B Ensemble](system/intelligence/7b_ensemble_capability.md) · [Causal Learning](system/intelligence/causal_learning.md) | Agentic re-planning, ensemble benchmarks, knowledge accumulation |
@@ -52,6 +53,60 @@ leads SWE-bench in its class. Routing each sub-task to its specialist model comp
 advantages without requiring any single model to be large enough to cover all domains.
 
 → [Full benchmark report and LLM comparison](system/intelligence/7b_ensemble_capability.md)
+
+---
+
+## What's New (June 2026) — IMoE Gating Network
+
+### Infrastructure Mixture of Experts (IMoE) — Dynamic Routing Intelligence
+
+The biggest architectural leap since the initial release: a lightweight **ONNX gating classifier** now intercepts every request *before* the LangGraph pipeline. The project is officially supported by the **EuroHPC Joint Undertaking** (Proposal No. **EHPC-DEV-2026D06-XXX**), having been awarded a compute grant of **4,500 node-hours (18,000 GPU-hours)** on the **LUMI-G supercomputer** (AMD MI250x) for custom model training. The current gating classifier acts as the production prototype, while the approved EuroHPC resources are designated for the upcoming full-scale `Sovereign-14B` model and Phase 3 dataset retraining. In < 5ms on CPU, the classifier routes the prompt into:
+
+- **14 Expert Categories** (multi-label, float ∈ [0,1])
+- **4 Complexity Levels** (`trivial` / `moderate` / `complex` / `memory_recall`)
+- **2 Retrieval Gates** (`web_research` / `graphrag`)
+
+The classifier's outputs are used by a **Dynamic Allocator** to compile an optimal routing template at runtime — selecting the best available model for each category from the live cluster, scored by:
+
+| Factor | Detail |
+|---|---|
+| **Warmed bonus** | Models already in GPU VRAM are strongly preferred |
+| **Local priority** | On-premise nodes score higher than cloud |
+| **Benchmark score** | MMLU / HumanEval / GSM8k from `model_metadata` DB |
+| **Thompson Sampling** | Beta-Bernoulli per (model, category) from live feedback history |
+
+```mermaid
+flowchart LR
+    P["User Prompt"] --> E["Local Embedding\nall-MiniLM-L6-v2"]
+    E --> C{"ChromaDB\nTemplate Cache\ndist < 0.18?"}
+    C -->|"🎯 HIT"| R["Reuse Template"]
+    C -->|"MISS"| O["ONNX Router\n< 5ms CPU"]
+    O --> A["Dynamic Allocator\nThompson + Compliance Gate"]
+    A --> T["Expert Template\n→ LangGraph Pipeline"]
+    T --> DB["Postgres + ChromaDB\n(cached for future hits)"]
+```
+
+### ChromaDB Semantic Template Cache
+
+Every dynamically compiled template is stored in ChromaDB with the **raw prompt** as the embedded document. Subsequent requests with semantically similar prompts (`distance < 0.18`) skip ONNX inference entirely and reuse the existing template — preventing database bloat and redundant VRAM model reloads.
+
+### Compliance Gate
+
+`local_only` mode now works end-to-end through the full gating layer: all cloud endpoint entries from `INFERENCE_SERVERS` are excluded automatically. Zero data egress is guaranteed without any configuration change.
+
+### Cloud Endpoints — Fully Admin-Configurable
+
+Cloud providers (AIHUB, OpenRouter, etc.) are configured exclusively via **Admin UI → Inference Servers** as `api_type: openai` entries. The dynamic router discovers them automatically from `INFERENCE_SERVERS` — no hardcoded URLs or tokens anywhere in the codebase.
+
+### Feedback Loop Fully Wired
+
+User ratings (`POST /v1/feedback`) now propagate through all four layers: ChromaDB flagging, Valkey Thompson Sampling, Neo4j relation verification, **and** the `dynamic_template_feedback_log` Postgres table. Rated entries feed the `retraining_dataset.jsonl` buffer for future LUMI-G router retraining.
+
+### VRAM Context Budget Enforcement
+
+A new `resolve_requested_ctx()` helper in `context_budget.py` acts as a single source of truth for context window limits. It cross-references `model_metadata` DB overrides (e.g. `llama3.3-70b-ctx4k → 4096`) before any LLM call, preventing OOM reload cascades on the 60 GB N04-RTX node.
+
+→ [Full technical documentation](system/overview.md)
 
 ---
 
@@ -153,10 +208,12 @@ graph LR
 |-----------|-------|
 | LangGraph | Pipeline orchestration |
 | Ollama | Local LLM inference |
-| ChromaDB | Semantic vector cache |
-| Valkey | Checkpoints, budget counters, scoring |
+| **ONNX Runtime** | **IMoE gating network (< 5ms CPU)** |
+| ChromaDB | Semantic response + template cache |
+| Valkey | Checkpoints, Thompson Sampling, plan cache |
 | Neo4j 5 | Knowledge graph (GraphRAG) |
 | Apache Kafka | Event streaming & async learning |
 | Prometheus + Grafana | Metrics & dashboards |
 | FastAPI + uvicorn | HTTP API layer |
-| PostgreSQL | User database |
+| PostgreSQL | User DB, templates, feedback log |
+| all-MiniLM-L6-v2 | Local prompt embedding (IMoE gating) |

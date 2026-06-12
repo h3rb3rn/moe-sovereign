@@ -65,17 +65,32 @@ async def submit_feedback(req: FeedbackRequest):
     if not meta:
         return {"status": "error", "message": "Response ID not found or expired"}
 
+    # Decode bytes key/values if necessary
+    def decode_val(k):
+        v = meta.get(k)
+        if v is None:
+            k_bytes = k.encode("utf-8") if isinstance(k, str) else k
+            v = meta.get(k_bytes)
+        if isinstance(v, bytes):
+            return v.decode("utf-8")
+        return str(v) if v is not None else ""
+
+    expert_models_used_str = decode_val("expert_models_used") or "[]"
+    chroma_doc_id = decode_val("chroma_doc_id")
+    user_input = decode_val("input")
+    plan_cats_str = decode_val("plan_cats") or "[]"
+    template_id = decode_val("template_id")
+
     positive = req.rating >= FEEDBACK_POSITIVE_THRESHOLD
     negative = req.rating <= FEEDBACK_NEGATIVE_THRESHOLD
 
     PROM_FEEDBACK.observe(req.rating)
 
-    for model_cat in json.loads(meta.get("expert_models_used", "[]")):
+    for model_cat in json.loads(expert_models_used_str):
         if "::" in model_cat:
             model, cat = model_cat.split("::", 1)
             await _record_expert_outcome(model, cat, positive)
 
-    chroma_doc_id = meta.get("chroma_doc_id", "")
     if negative and chroma_doc_id and state.cache_collection is not None:
         try:
             await asyncio.to_thread(
@@ -87,11 +102,41 @@ async def submit_feedback(req: FeedbackRequest):
             pass
 
     if state.graph_manager is not None:
-        user_input = meta.get("input", "")
         if negative and user_input:
             await state.graph_manager.mark_triples_unverified(user_input)
         elif positive and user_input:
             await state.graph_manager.verify_triples(user_input)
+
+    # Update dynamic template feedback rating in Postgres
+    if template_id and template_id.startswith("moe-dyn-"):
+        from admin_ui.database import update_dynamic_template_feedback_rating
+        try:
+            await update_dynamic_template_feedback_rating(template_id, req.rating)
+        except Exception as e:
+            pass
+
+        # Write to retraining dataset JSONL file if positive or negative
+        if positive or negative:
+            import os
+            try:
+                retraining_file = os.getenv("RETRAINING_DATASET_PATH", "/app/logs/retraining_dataset.jsonl")
+                try:
+                    os.makedirs(os.path.dirname(retraining_file), exist_ok=True)
+                except Exception:
+                    retraining_file = "logs/retraining_dataset.jsonl"
+                    os.makedirs(os.path.dirname(retraining_file), exist_ok=True)
+                
+                cats = json.loads(plan_cats_str)
+                sample = {
+                    "prompt": user_input,
+                    "expert_domains": cats,
+                    "rating": req.rating,
+                    "moe_mode": "default"
+                }
+                with open(retraining_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+            except Exception as e:
+                pass
 
     asyncio.create_task(
         _telemetry.record_user_feedback(state._userdb_pool, req.response_id, req.rating)

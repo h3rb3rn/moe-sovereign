@@ -24,6 +24,7 @@ from config import (
     MAX_PLANNER_TOKENS,
 )
 from context_budget import get_model_context_window as _static_ctx
+from context_budget import resolve_requested_ctx
 from metrics import PROM_THOMPSON
 from services.routing import _server_info, _is_endpoint_error
 from typing import Dict, List, Optional, TYPE_CHECKING
@@ -530,6 +531,17 @@ async def _invoke_planner_with_retry(
             "stream":     False,
             "keep_alive": "5m",
             "options":    _opts,
+            "format": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"},
+                        "category": {"type": "string"}
+                    },
+                    "required": ["task", "category"]
+                }
+            }
         }
         try:
             async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT) as _hc:
@@ -568,9 +580,11 @@ def _judge_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     num_ctx (8192) and reload the already-warm model.
 
     Priority: state_num_ctx (per-template) > JUDGE_NUM_CTX (global env) > static table.
+    Clamps the resolved context window to the model's VRAM-safe context limit (or explicit tag in model name)
+    to prevent overloading VRAM for large models (e.g. 70B).
     """
     out: dict = {"max_tokens": MAX_JUDGE_TOKENS}
-    ctx = state_num_ctx or JUDGE_NUM_CTX or _static_ctx(model)
+    ctx = resolve_requested_ctx(model, state_num_ctx, JUDGE_NUM_CTX, label="judge")
     if ctx > 0:
         out["extra_body"] = {"options": {"num_ctx": ctx}}
     return out
@@ -584,9 +598,10 @@ def _planner_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     fall back to Modelfile defaults that may truncate the plan JSON.
 
     Priority: state_num_ctx (per-template) > PLANNER_NUM_CTX (global env) > static table.
+    Clamps the resolved context window to the model's VRAM-safe context limit to prevent VRAM overflow.
     """
     out: dict = {"max_tokens": MAX_PLANNER_TOKENS}
-    ctx = state_num_ctx or PLANNER_NUM_CTX or _static_ctx(model)
+    ctx = resolve_requested_ctx(model, state_num_ctx, PLANNER_NUM_CTX, label="planner")
     opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
         opts["num_ctx"] = ctx

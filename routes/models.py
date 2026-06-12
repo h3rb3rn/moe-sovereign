@@ -126,9 +126,10 @@ async def list_models(raw_request: Request):
 
     _model_created = int(time.time())
 
+    main_models = []
     if allowed_templates:
         all_templates = _read_expert_templates()
-        main_models = [
+        main_models.extend([
             {
                 "id":           t.get("name", t["id"]),
                 "object":       "model",
@@ -141,26 +142,24 @@ async def list_models(raw_request: Request):
                 ),
             }
             for t in all_templates if t.get("id") in allowed_templates
-        ]
-    else:
-        _has_other_perms = bool(
-            user_perms.get("model_endpoint") or user_perms.get("cc_profile")
-        )
-        if allowed_modes is not None or not _has_other_perms:
-            main_models = [
-                {
-                    "id":           cfg["model_id"],
-                    "object":       "model",
-                    "owned_by":     "moe-sovereign",
-                    "created":      _model_created,
-                    "description":  cfg["description"],
-                    "display_name": _model_display_name(cfg["model_id"], cfg["description"]),
-                }
-                for cfg in MODES.values()
-                if allowed_modes is None or cfg["model_id"] in allowed_modes
-            ]
-        else:
-            main_models = []
+        ])
+
+    _has_other_perms = bool(
+        user_perms.get("model_endpoint") or user_perms.get("cc_profile")
+    )
+    if allowed_modes is not None or (not allowed_templates and not _has_other_perms):
+        main_models.extend([
+            {
+                "id":           cfg["model_id"],
+                "object":       "model",
+                "owned_by":     "moe-sovereign",
+                "created":      _model_created,
+                "description":  cfg["description"],
+                "display_name": _model_display_name(cfg["model_id"], cfg["description"]),
+            }
+            for cfg in MODES.values()
+            if allowed_modes is None or cfg["model_id"] in allowed_modes or (cfg["model_id"] == "moe-auto" and any(m.startswith("moe-auto") for m in allowed_modes))
+        ])
 
     existing_ids = {m["id"] for m in main_models}
 

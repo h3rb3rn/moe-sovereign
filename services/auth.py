@@ -80,6 +80,8 @@ async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
             "user_connections_json": "{}",
             "default_cc_profile_id": "",
             "key_cc_profile_id": "",
+            "dynamic_routing":  "1" if row.get("dynamic_routing") else "0",
+            "local_only_routing": "1" if row.get("local_only_routing") else "0",
         }
     except Exception as e:
         logger.warning("DB fallback auth error: %s", e)

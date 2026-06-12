@@ -373,16 +373,22 @@ async def merger_node(state_: AgentState):
 
     # Only include non-empty sections in the prompt
     # Guard: truncate very long inputs to prevent context overflow.
-    # Both ctx and max_output are resolved dynamically (Redis → API → static table).
-    _merger_judge_model = state_.get("judge_model_override") or JUDGE_MODEL
-    _merger_judge_url   = (state_.get("judge_url_override") or "").rstrip("/")
-    _merger_judge_tok   = (state_.get("judge_token_override") or "ollama")
-    from context_budget import (get_model_ctx_async as _get_ctx_async,
-                                get_model_max_output_async as _get_max_out_async,
+    # max_output is resolved dynamically (Redis → API → static table). ctx is resolved
+    # via resolve_requested_ctx() — the same priority logic _judge_model_kw() uses to
+    # build this call's actual num_ctx, NOT the model's currently-loaded /api/ps state
+    # (which can be stale and cause spurious overflow warnings).
+    _merger_overflow = False
+    _merger_truncated = False
+    _merger_judge_model   = state_.get("judge_model_override") or JUDGE_MODEL
+    _merger_judge_url     = (state_.get("judge_url_override") or "").rstrip("/")
+    _merger_judge_tok     = (state_.get("judge_token_override") or "ollama")
+    _merger_judge_num_ctx = int(state_.get("judge_num_ctx") or 0)
+    from context_budget import (get_model_max_output_async as _get_max_out_async,
+                                resolve_requested_ctx,
                                 MERGER_FIXED_TOKENS, MERGER_HEADROOM_TOKENS, CHARS_PER_TOKEN,
                                 resolve_io_budget)
-    _merger_ctx    = await _get_ctx_async(_merger_judge_model, _merger_judge_url,
-                                          _merger_judge_tok, state.redis_client)
+    _merger_ctx    = resolve_requested_ctx(_merger_judge_model, _merger_judge_num_ctx,
+                                           JUDGE_NUM_CTX, label="synthesis")
     _merger_maxout = await _get_max_out_async(_merger_judge_model, _merger_judge_url,
                                               _merger_judge_tok, state.redis_client)
     if _merger_ctx > 0:
@@ -392,6 +398,7 @@ async def merger_node(state_: AgentState):
             min_output_tokens=MERGER_HEADROOM_TOKENS, min_input_ratio=0.5,
         )
         if _budget["overflow"]:
+            _merger_overflow = True
             logger.warning(
                 "synthesis: PRE-FLIGHT merger overflow — ctx=%d, fixed=%d",
                 _merger_ctx, MERGER_FIXED_TOKENS,
@@ -399,13 +406,34 @@ async def merger_node(state_: AgentState):
             PROM_BUDGET_EXCEEDED.labels(
                 user_id=state_.get("session_id", "unknown"), limit_type="merger_preflight"
             ).inc()
+        
+        # Recognize if Output Context Size is constrained/too small compared to desired maxout
+        if _budget["max_output_tokens"] < _merger_maxout:
+            _merger_overflow = True
+            logger.warning(
+                "synthesis: Output context budget downscaled from %d to %d (limited window)",
+                _merger_maxout, _budget["max_output_tokens"]
+            )
+            
         _max_input_chars = _budget["avail_input_chars"]
         _query_in = state_["input"]
+        
+        # Apply filler word pruning first (content-preserving optimization)
+        from context_budget import prune_filler_words
+        _query_in = prune_filler_words(_query_in)
+        
         if len(_query_in) > _max_input_chars:
-            _query_in = _query_in[:_max_input_chars] + "\n[…input truncated to fit context window]"
-            await _report(f"⚠️ Input truncated to {_max_input_chars} chars (model ctx limit)")
+            from context_budget import compress_prompt_to_fit
+            _query_in = await compress_prompt_to_fit(
+                _query_in, _max_input_chars,
+                model=_merger_judge_model, url=_merger_judge_url, token=_merger_judge_tok
+            )
+            _merger_truncated = True
+            await _report(f"⚠️ Input compressed/truncated to {_max_input_chars} chars (model ctx limit)")
     else:
         _query_in = state_["input"]
+        from context_budget import prune_filler_words
+        _query_in = prune_filler_words(_query_in)
     sections: List[str] = [f"REQUEST: {_query_in}"]
     if reasoning:
         sections.append(f"REASONING ANALYSIS:\n{reasoning}")
@@ -442,6 +470,7 @@ async def merger_node(state_: AgentState):
         _graph_raw_chars = len(_gctx)
         _compression_method = "none"
         if _effective_limit > 0 and _graph_raw_chars > _effective_limit:
+            _merger_truncated = True
             threshold = _effective_limit * _GRAPH_COMPRESS_THRESHOLD_FACTOR
             if _graph_raw_chars > threshold and _GRAPH_COMPRESS_LLM_MODEL:
                 # Very large context: attempt LLM-based semantic compression first
@@ -495,10 +524,11 @@ async def merger_node(state_: AgentState):
             weight_rows.append(
                 f"  {stars} [{cat:<22}]  CONFIDENCE: {conf.upper():<6}  →  {weight_label}"
             )
-            trimmed.append(
-                er[:MAX_EXPERT_CHARS] + "\n[...truncated for merger efficiency]"
-                if len(er) > MAX_EXPERT_CHARS else er
-            )
+            if len(er) > MAX_EXPERT_CHARS:
+                trimmed.append(er[:MAX_EXPERT_CHARS] + "\n[...truncated for merger efficiency]")
+                _merger_truncated = True
+            else:
+                trimmed.append(er)
 
         if _n_experts > 1:
             expert_header = (
@@ -533,6 +563,14 @@ async def merger_node(state_: AgentState):
             graphrag_chars_used=len(_gctx) if "_gctx" in dir() else 0,
         )
         web_blocks = [b.strip() for b in re.split(r'\n\[(?:Research|Recherche|\d+)', web) if b.strip()]
+        _web_trunc = False
+        if len(web_blocks) > MAX_WEB_BLOCKS:
+            _web_trunc = True
+        for block in web_blocks[:MAX_WEB_BLOCKS]:
+            if len(block) > MAX_BLOCK_CHARS:
+                _web_trunc = True
+        if _web_trunc:
+            _merger_truncated = True
         compressed_web = "\n\n".join(
             block[:MAX_BLOCK_CHARS] + ("…" if len(block) > MAX_BLOCK_CHARS else "")
             for block in web_blocks[:MAX_WEB_BLOCKS]
@@ -554,7 +592,10 @@ async def merger_node(state_: AgentState):
             logger.info("🛡️ PRIOR KNOWLEDGE suppressed: primary source + cache both contain code (prevents judge interleaving)")
             await _report("🛡️ Prior knowledge suppressed (code duplication guard)")
         else:
-            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:_judge_ctx_budget(state_.get('judge_num_ctx', 0))['cached_prior']]}")
+            _cached_limit = _judge_ctx_budget(state_.get('judge_num_ctx', 0))['cached_prior']
+            if len(cached) > _cached_limit:
+                _merger_truncated = True
+            sections.append(f"PRIOR KNOWLEDGE (Cache):\n{cached[:_cached_limit]}")
     soft_examples = state_.get("soft_cache_examples") or ""
     if soft_examples:
         _soft_has_code = any(m in soft_examples for m in _CODE_MARKERS)
@@ -587,6 +628,19 @@ async def merger_node(state_: AgentState):
         + SYNTHESIS_PERSISTENCE_INSTRUCTION
         + (PROVENANCE_INSTRUCTION if _has_graph_ctx else "")
     )
+    # Optimize final prompt token consumption without content loss by removing filler words
+    from context_budget import prune_filler_words
+    prompt = prune_filler_words(prompt)
+
+    # Check if prompt length exceeds allowed input characters (danger of squeezing output room)
+    if _merger_ctx > 0:
+        _max_allowed_input_chars = (_merger_ctx - _budget["max_output_tokens"]) * CHARS_PER_TOKEN
+        if len(prompt) > _max_allowed_input_chars:
+            _merger_overflow = True
+            logger.warning(
+                "synthesis: Assembled prompt length %d exceeds max allowed input chars %d",
+                len(prompt), _max_allowed_input_chars
+            )
 
     # Inject output skill formatting instructions if planner suggested one.
     # Guard: suppress skill body when BOTH primary expert output AND the skill
@@ -650,7 +704,8 @@ async def merger_node(state_: AgentState):
             asyncio.create_task(_store_response_metadata(
                 state_.get("response_id", ""), state_["input"],
                 state_.get("expert_models_used", []), _fp_cid,
-                plan=state_.get("plan", []), cost_tier=state_.get("cost_tier", "")))
+                plan=state_.get("plan", []), cost_tier=state_.get("cost_tier", ""),
+                template_id=state_.get("template_id", "")))
             asyncio.create_task(_self_evaluate(
                 state_.get("response_id", ""), state_["input"], fast_resp, _fp_cid,
                 template_name=state_.get("template_name", ""),
@@ -735,6 +790,21 @@ async def merger_node(state_: AgentState):
         res_content_clean = _SYNTH_RE.sub("", res.content).rstrip()
     else:
         res_content_clean = res.content
+
+    # Prepend context warning/compression banner if context limit thresholds were hit
+    _warnings = []
+    if _merger_overflow:
+        _warnings.append(
+            "⚠️ **Context Window Alert:** The available model context window is heavily constrained relative to the input prompt size. This limits output generation room and may result in a truncated or incomplete response."
+        )
+    if _merger_truncated:
+        _warnings.append(
+            "⚠️ **Prompt Compressed:** The input prompt exceeded context budget limits. To fit the context window, irrelevant filler words were pruned, and some input details, search results, or history may have been truncated or summarized."
+        )
+
+    if _warnings:
+        warning_banner = "> [!WARNING]\n" + "\n".join(f"> * {w}" for w in _warnings) + "\n\n"
+        res_content_clean = warning_banner + res_content_clean
 
     # ── Provenance tag extraction ──────────────────────────────────────────
     _REF_RE = re.compile(r'\[REF:([^\]]+)\]')
@@ -838,6 +908,7 @@ async def merger_node(state_: AgentState):
                 chroma_doc_id,
                 plan=state_.get("plan", []),
                 cost_tier=state_.get("cost_tier", ""),
+                template_id=state_.get("template_id", ""),
             )
         )
         # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)

@@ -66,12 +66,14 @@ def _format_results(raw_results: list) -> str:
     """Format a list of result dicts (SearXNG or DDG) into a cited text block."""
     parts: List[str] = []
     citations: List[str] = []
+    from context_budget import prune_filler_words
     for i, r in enumerate(raw_results, 1):
         snippet = r.get("snippet", r.get("content", r.get("body", ""))).strip()
         title   = r.get("title", "").strip()
         link    = r.get("link",  r.get("url", r.get("href", ""))).strip()
         label   = _reliability_label(_domain_score(link))
         if snippet:
+            snippet = prune_filler_words(snippet)
             parts.append(f"[{i}] {snippet}")
         if link:
             citations.append(f"[{i}] [{label}] {title or link}: {link}")
