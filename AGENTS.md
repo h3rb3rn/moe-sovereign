@@ -39,3 +39,15 @@ As an AI assistant, you must maintain and execute the following ongoing tasks:
 *   **Graph Database:** Neo4j (bolt protocol).
 *   **Inference:** OpenAI-compatible APIs (hosted via Ollama or LiteLLM).
 *   **Schema Enforcement:** Always validate dynamic JSON templates against the predefined configuration schema.
+
+---
+
+## 4. GitOps Publish-Workflow (Sync & Normalization)
+
+All code and documentation edits must be performed in the dev repository first, then synchronized and published using the following pipeline:
+1. **Develop:** Make edits and commit them in the dev repository (`/opt/moe-sovereign`).
+2. **Pull:** Change directory to the publish repository (`/opt/deployment/Github/moe-sovereign`) and pull the latest state: `git checkout main && git pull origin main`.
+3. **Sync:** Return to the dev repository and run the synchronization script: `bash scripts/sync-to-publish.sh`.
+4. **Branch:** In the publish repository, create a **feature branch**: `git checkout -b <branch-name>`.
+5. **Commit:** Stage and commit: `git add -A && git commit -m 'Sync from dev: <description>'`.
+6. **Push & PR:** Push the branch to GitHub: `git push origin <branch-name>`. Open a Pull Request (PR) on GitHub. **Never push directly to the `main` branch of the public GitHub repository.**
