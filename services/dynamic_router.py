@@ -718,6 +718,24 @@ async def get_dynamic_template(
                     sys_prompt = "You are a technical support expert. Provide clear, precise, and actionable answers to technical questions."
                 elif exp == "math":
                     sys_prompt = "You are a mathematics expert. Provide rigorous step-by-step mathematical reasoning and calculations."
+                elif exp == "legal_advisor":
+                    sys_prompt = "You are a legal advisor expert. Analyze the legal context, reference relevant laws or paragraphs precisely, and provide expert legal summaries."
+                elif exp == "research":
+                    sys_prompt = "You are a research expert. Analyze scientific literature, academic papers, and reference reliable sources clearly."
+                elif exp in ("creative_writer", "creative_writing"):
+                    sys_prompt = "You are a creative writer. Craft engaging, expressive, and high-quality creative text matching the requested style."
+                elif exp == "data_analysis":
+                    sys_prompt = "You are a data analyst. Interpret data tables, statistics, and trends, and explain findings with clear quantitative insights."
+                elif exp == "reasoning":
+                    sys_prompt = "You are a logical reasoning expert. Break down complex arguments, evaluate premises, and explain logical transitions step-by-step."
+                elif exp == "science":
+                    sys_prompt = "You are a scientific expert. Apply physics, chemistry, biology, or engineering principles to explain concepts rigorously."
+                elif exp == "tool_agent":
+                    sys_prompt = "You are an agent expert in calling tools and APIs. Coordinate tool outputs to solve the user's request."
+                elif exp == "precision_tools":
+                    sys_prompt = "You are a calculations expert. Perform precise formatting, unit conversion, date difference calculation, and exact arithmetic."
+                elif exp == "mail_classify":
+                    sys_prompt = "You are an email classification expert. Categorize incoming emails, extract key metadata, and draft professional responses."
 
                 experts_config[exp] = {
                     "system_prompt": sys_prompt,
@@ -728,9 +746,16 @@ async def get_dynamic_template(
         # Build complete dynamic template configuration
         planner_ctx = model_metadata.get(planner_model, {}).get("context_window", 0) or 0
         judge_ctx = model_metadata.get(judge_model, {}).get("context_window", 0) or 0
+        
+        # Context-aware system prompts for planner and judge
+        planner_prompt = f"You are a specialized planner model in a Mixture of Experts (MoE) system. Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}."
+        judge_prompt = f"You are a specialized synthesis judge. Consolidate and merge responses from the following expert models: {', '.join(active_experts)}. Resolve contradictions using paraconsistent logic rules and output a unified, high-quality answer."
+        
         template_config = {
             "planner_model": planner_model,
             "judge_model": judge_model,
+            "planner_prompt": planner_prompt,
+            "judge_prompt": judge_prompt,
             "planner_num_ctx": planner_ctx,
             "judge_num_ctx": judge_ctx,
             "enable_cache": True,

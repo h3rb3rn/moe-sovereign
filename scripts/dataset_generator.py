@@ -5,10 +5,13 @@ import asyncio
 
 # Config
 SEEDS_FILE = "/home/philipp/router_dataset_seed.json"
-OUTPUT_FILE = "/home/philipp/synthetic_router_dataset.json"
+OUTPUT_FILE = os.getenv("DATASET_OUTPUT_FILE", "/home/philipp/synthetic_router_dataset.json")
 API_URL = os.getenv("MOE_API_URL", "http://node-0X.internal:8002/v1/chat/completions")
 API_TOKEN = os.getenv("SYSTEM_API_KEY", "")
 MODEL_NAME = os.getenv("DATASET_GENERATOR_MODEL", "qwen-3.6-35b-sovereign@AIHUB")
+# Allow splitting the expert-domain groups across parallel runs (e.g. one per backend)
+GROUP_START = int(os.getenv("GROUP_START", "0"))
+GROUP_END = int(os.getenv("GROUP_END", "999999"))
 
 
 async def generate_variants(client, category_str, prompts, count=15):
@@ -44,8 +47,8 @@ async def generate_variants(client, category_str, prompts, count=15):
     
     for attempt in range(3):
         try:
-            # We set a large timeout of 180s in case the GPU is under load
-            response = await client.post(API_URL, json=payload, headers=headers, timeout=180.0)
+            # We set a large timeout of 400s in case the GPU is under load (exceeds the 300s native-passthrough timeout)
+            response = await client.post(API_URL, json=payload, headers=headers, timeout=400.0)
             if response.status_code == 200:
                 data = response.json()
                 content = data["choices"][0]["message"]["content"].strip()
@@ -95,7 +98,7 @@ async def main():
     
     async with httpx.AsyncClient() as client:
         # We process strictly sequentially (batch_size=1) to prevent VRAM queuing and ensure high stability
-        cat_keys = list(groups.keys())
+        cat_keys = list(groups.keys())[GROUP_START:GROUP_END]
         for idx, cat_key in enumerate(cat_keys):
             print(f"[{idx+1}/{len(cat_keys)}] Processing: {cat_key}...")
             prompts = groups[cat_key]
