@@ -189,7 +189,14 @@ async def _get_fallback_llm(timeout: float = 120.0, model: str = "") -> "ChatOpe
 
 
 def _is_external_endpoint_url(url: str) -> bool:
-    """Return True when the URL points to an external (non-local) inference endpoint."""
+    """Return True when the URL points to an external (non-local) inference endpoint.
+
+    An endpoint counts as external when its admin-configured api_type is not
+    "ollama" (e.g. a paid OpenAI-compatible gateway like AIHUB), or when it
+    matches an EXTERNAL_ENDPOINT_PATTERNS entry.
+    """
+    if _url_api_type(url) != "ollama":
+        return True
     u = url.lower()
     return any(p and p in u for p in _EXTERNAL_ENDPOINT_PATTERNS)
 
