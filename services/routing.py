@@ -242,4 +242,5 @@ def _is_endpoint_error(exc: Exception) -> bool:
         "401", "unauthorized", "403", "forbidden",
         "429", "rate limit", "quota exceeded",
         "authentication", "x-api-key",
+        "402", "insufficient", "payment required",
     ))
