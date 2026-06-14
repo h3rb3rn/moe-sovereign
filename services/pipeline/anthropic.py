@@ -693,20 +693,19 @@ async def _anthropic_tool_handler(
     # (b) we can inject it into the Ollama payload later.
     _ollama_num_ctx: int = 0
     if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
-        # Derive num_ctx from the CC profile's tool_max_tokens.
-        # When JUDGE_NUM_CTX is set, cap at that value so the CC tool model and
-        # the judge singleton are loaded at the same num_ctx — this prevents Ollama
-        # from reloading the model between every judge call and every tool call
-        # (a reload cycle that can take 2-3 min for 35B models and causes 502s).
-        # Prefer the CC profile's explicit num_ctx; fall back to JUDGE_NUM_CTX so the
-        # model loads with the same context window as the warmup call.  Never fall back
-        # to max_tokens — that is the max OUTPUT tokens, not the context window size.
-        # Using max_tokens as num_ctx would force a model reload every CC request
-        # (e.g. from warmup 32768 → request 8192) which takes 60-90 s at 35 B params.
-        _profile_ctx = session.context_window or session.tool_max_tokens or JUDGE_NUM_CTX or 32768
-        _ollama_num_ctx = _profile_ctx
-        if JUDGE_NUM_CTX > 0 and _ollama_num_ctx > JUDGE_NUM_CTX:
-            _ollama_num_ctx = JUDGE_NUM_CTX
+        # Derive num_ctx with the CC profile's / expert template's context window
+        # taking priority over the global judge defaults. Never fall back to
+        # max_tokens — that is the max OUTPUT tokens, not the context window size.
+        # JUDGE_NUM_CTX is only used when neither the profile nor its template
+        # define a context window — it must not silently override an explicit
+        # per-profile/template setting (those take precedence by design).
+        _ollama_num_ctx = (
+            session.context_window
+            or session.tool_max_tokens
+            or session.template_num_ctx
+            or JUDGE_NUM_CTX
+            or 32768
+        )
         # Never downgrade a warm model: if Ollama already has the model loaded with a
         # larger context window, reuse that window instead of forcing a costly reload.
         # A model loaded at 32768 can serve any request that needs ≤32768 tokens.
@@ -732,7 +731,7 @@ async def _anthropic_tool_handler(
             pass  # non-fatal — fall through to the configured num_ctx
         if _ollama_num_ctx != (_tool_ctx or 0):
             logger.info(
-                "cc_tool: Ollama num_ctx=%d (from CC profile tool_max_tokens, model=%s)",
+                "cc_tool: Ollama num_ctx=%d (from CC profile/template context window, model=%s)",
                 _ollama_num_ctx, effective_model,
             )
             _tool_ctx = _ollama_num_ctx
