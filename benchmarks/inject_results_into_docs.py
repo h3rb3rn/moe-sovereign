@@ -3,8 +3,8 @@ inject_results_into_docs.py — Post-benchmark documentation updater.
 
 Reads eval_*.json result files, computes per-category scores, and updates:
   - docs/system/benchmarks.md          (April 2026 campaign table)
-  - /home/philipp/whitepaper/de/sections/14_evaluation_and_lessons.tex
-  - /home/philipp/whitepaper/en/sections/14_evaluation_and_lessons.tex
+  - /home/user/whitepaper/de/sections/14_evaluation_and_lessons.tex
+  - /home/user/whitepaper/en/sections/14_evaluation_and_lessons.tex
 
 Usage:
     python3 benchmarks/inject_results_into_docs.py [--run-dir <path>]
@@ -26,8 +26,8 @@ SCRIPT_DIR  = pathlib.Path(__file__).parent
 RESULTS_DIR = SCRIPT_DIR / "results"
 DOCS_BENCH  = SCRIPT_DIR.parent / "docs" / "system" / "benchmarks.md"
 
-WP_DE = pathlib.Path("/home/philipp/whitepaper/de/sections/14_evaluation_and_lessons.tex")
-WP_EN = pathlib.Path("/home/philipp/whitepaper/en/sections/14_evaluation_and_lessons.tex")
+WP_DE = pathlib.Path("/home/user/whitepaper/de/sections/14_evaluation_and_lessons.tex")
+WP_EN = pathlib.Path("/home/user/whitepaper/en/sections/14_evaluation_and_lessons.tex")
 
 # Category groups for the summary table
 CATEGORIES = {

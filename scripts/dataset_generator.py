@@ -4,8 +4,8 @@ import httpx
 import asyncio
 
 # Config
-SEEDS_FILE = "/home/philipp/router_dataset_seed.json"
-OUTPUT_FILE = os.getenv("DATASET_OUTPUT_FILE", "/home/philipp/synthetic_router_dataset.json")
+SEEDS_FILE = os.getenv("SEEDS_FILE", "/home/user/router_dataset_seed.json")
+OUTPUT_FILE = os.getenv("DATASET_OUTPUT_FILE", "/home/user/synthetic_router_dataset.json")
 API_URL = os.getenv("MOE_API_URL", "http://node-0X.internal:8002/v1/chat/completions")
 API_TOKEN = os.getenv("SYSTEM_API_KEY", "")
 MODEL_NAME = os.getenv("DATASET_GENERATOR_MODEL", "qwen-3.6-35b-sovereign@AIHUB")
