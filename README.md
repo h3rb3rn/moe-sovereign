@@ -8,6 +8,7 @@
 [![Deployment](https://img.shields.io/badge/Deployment-Docker_%7C_LXC_%7C_Podman_%7C_Helm-2ea44f.svg)](#deployment-targets)
 [![Air-Gap](https://img.shields.io/badge/Air--Gap-100%25_Local-brightgreen.svg)](#)
 [![Docs](https://img.shields.io/badge/Docs-docs.moe--sovereign.org-informational.svg)](https://docs.moe-sovereign.org)
+[![EuroHPC](https://img.shields.io/badge/EuroHPC-LUMI--G_Grant_Awarded-orange.svg)](#funded-research-eurohpc-lumi-g)
 
 [Documentation](https://docs.moe-sovereign.org) &bull;
 [Website](https://moe-sovereign.org) &bull;
@@ -438,6 +439,38 @@ Local preview: `pip install mkdocs-material && mkdocs serve`
 |---|---|---|
 | [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | PDF | ~60 |
 | [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | PDF | ~63 |
+| [arXiv Paper (IEEE format)](https://moe-sovereign.org/arxiv-paper.pdf) | PDF | ~12 |
+
+---
+
+## Funded Research: EuroHPC LUMI-G
+
+In June 2026, proposal `EHPC-DEV-2026D06-XXX` was awarded under the **EuroHPC
+Development Access** programme (award notice received 2026-06-05): **4,500
+node-hours (18,000 GPU-hours)** on the **LUMI-G** supercomputer (AMD MI250X,
+128GB HBM2e/node, ROCm stack, 2TB storage), 6-month duration.
+
+The grant funds a distillation programme covering the five highest-impact
+LLM-dependent decision points in the orchestration graph, replacing
+cloud-routed inference with locally executable Small Language Models (SLMs)
+where decision quality can be preserved:
+
+| Component | Target model | Goal |
+|---|---|---|
+| `planner_node` (primary lever) | Qwen2.5-1.5B / SmolLM2-1.7B, GGUF Q4_K_M | ≥90% of 35B-teacher GAIA plan quality at ~1/20 cost, 200–500ms CPU |
+| `complexity_estimator` | DeBERTa-v3-small, ONNX INT8 | 3–6ms inference |
+| Semantic router | multilingual MiniLM-L12-v2 + triplet loss + FAISS | 8–12ms inference |
+| RL routing policy | 3-layer MLP, offline RL | <1ms inference |
+| Node ranker | XGBoost, ONNX | 0.3ms inference |
+
+The 18,000 GPU-hours are budgeted across synthetic data generation, encoder/
+reward-model training, planner SFT+DPO with ablations, offline RL, and a
+final RLHF pass over six months. Rollout is gated behind a `PLANNER_MODE`
+flag (`llm` / `slm_local` / `hybrid`) with confidence-based fallback to the
+cloud teacher — the same fail-open principle already used for expert routing.
+Details: [CHANGELOG.md](CHANGELOG.md) (v2.7.1) and the
+[arXiv paper](https://moe-sovereign.org/arxiv-paper.pdf), Section
+"Funded Research: EuroHPC LUMI-G SLM Distillation Programme".
 
 ---
 

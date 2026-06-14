@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.7.1] - 2026-06-13
+
+### Research & Funding
+
+- **EuroHPC LUMI-G Grant Awarded**: Proposal `EHPC-DEV-2026D06-XXX` approved under the
+  EuroHPC Development Access programme (award notice received 2026-06-05). Grants
+  **4,500 node-hours (18,000 GPU-hours)** on the **LUMI-G** partition (AMD MI250X,
+  128GB HBM2e/node, ROCm stack, 2TB storage) over a 6-month period.
+- Funds a 5-target SLM distillation programme: `planner_node` (primary lever,
+  targeting Qwen2.5-1.5B / SmolLM2-1.7B as GGUF Q4_K_M, ≥90% of the 35B-teacher
+  GAIA plan quality at ~1/20 cost), `complexity_estimator` (DeBERTa-v3-small, ONNX
+  INT8), semantic router (multilingual MiniLM-L12-v2 + FAISS), RL routing policy
+  (offline-RL MLP), and node ranker (XGBoost, ONNX).
+- Rollout gated behind a new `PLANNER_MODE` flag (`llm` / `slm_local` / `hybrid`)
+  with confidence-based fallback to the cloud teacher — same fail-open principle as
+  expert routing. 18,000 GPU-h budgeted across synthetic data generation, encoder/
+  reward-model training, planner SFT+DPO, offline RL, and a final RLHF pass.
+- See whitepaper section "Funded SLM distillation programme (EuroHPC LUMI-G)" for
+  the full phase plan.
+
 ## [2.7.0] - 2026-06-02
 
 ### Added
