@@ -586,6 +586,23 @@ stable for a while.
 
 ---
 
+### TASK-7: Implement Dynamic System Prompts in Dataset Generation & Gating Templates
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** The upcoming Sovereign-14B SFT model training on LUMI-G requires training pairs `(Prompt, Optimal_Template_JSON)` where the template contains custom, prompt-specific system prompts for the planner, the judge, and every selected expert (e.g. `experts[exp]["system_prompt"]`, `planner_prompt`, `judge_prompt`).
+- **Instructions:**
+  1. Modify `scripts/dataset_generator.py`'s `generate_variants()` system instruction to require generating full template configurations (including custom system prompts for experts, planner, and judge) instead of simple prompt strings.
+  2. Extend `services/dynamic_router.py`'s `get_dynamic_template()` function to support generating these system prompts dynamically (either using a fallback-prompt generator LLM call or via structured templates mapping categories to custom personas/prompts).
+  3. Ensure `"planner_prompt"` and `"judge_prompt"` fields are populated in the dynamically compiled template JSON and verified.
+- **Acceptance criteria:**
+  - `dataset_generator.py` prompts the model to generate full `Optimal_Template_JSON` entries containing custom prompts for planner, judge, and experts.
+  - Dynamically compiled templates include customized system prompts for experts, planner, and judge.
+  - Verification test queries show these custom prompts propagated correctly to `AgentState`.
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on

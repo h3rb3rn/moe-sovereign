@@ -405,22 +405,33 @@ Tier 3: Optional RL policy adjusts routing flags based on historical performance
 
 **Gold standard pairs:** `(Prompt, Optimal_Template_JSON)`
 
+The training pairs must teach the Sovereign-14B model how to generate context-aware, tailored system prompts for the planner, the judge, and every selected expert to optimize orchestration quality.
+
 ```
 Prompt:  "Our FastAPI app transfers user data to US service providers under Art. 46 GDPR."
 → Optimal template:
   {
-    "legal_advisor": {"_system_prompt": "GDPR Art. 46/47, standard contractual clauses,
-                       Schrems-II, Transfer Impact Assessment"},
-    "code_reviewer": {"_system_prompt": "FastAPI data protection audit: check consents,
-                       data minimization, encryption in transit"},
+    "planner_model": "qwen-3.6-35b-sovereign@AIHUB",
+    "judge_model": "llama3.3-70b-ctx4k:latest@N04-RTX",
+    "planner_prompt": "You are a specialized planner coordinating a legal compliance and code audit. Plan retrieval step first, followed by expert audit tasks.",
+    "judge_prompt": "You are a GDPR compliance judge. Synthesize legal findings and code recommendations, ensuring strict alignment with Art. 46.",
     "enable_graphrag": true,
     "enable_web_research": true,
-    "judge_prompt": "Priority: legal correctness > code correctness"
+    "experts": {
+      "legal_advisor": {
+        "system_prompt": "You are a specialist in GDPR Art. 46/47 cross-border transfers. Analyze Transfer Impact Assessments (TIA) and standard contractual clauses.",
+        "context_window": 32768
+      },
+      "code_reviewer": {
+        "system_prompt": "You are a security code auditor. Audit the FastAPI codebase for encryption in transit, data minimization, and consent validation flows.",
+        "context_window": 16384
+      }
+    }
   }
 ```
 
 **Generation method:**
-1. Frontier LLM (Llama-3.3-70B on MI250X) generates 300K `(Prompt, Template)` pairs
+1. **Frontier LLM SFT Pair Generation:** A frontier LLM (e.g. Llama-3.3-70B on MI250X) will generate 300K `(Prompt, Template)` training pairs. The generation instructions must enforce creating tailored, prompt-specific system prompts (`planner_prompt`, `judge_prompt`, and expert `system_prompt`s) instead of generic defaults.
 2. Existing GAIA logs: prompts that led to **high judge confidence** → extract their effective routing decisions as gold standard
 3. Own benchmark logs (Prometheus/Grafana): `(input, expert_calls_made, judge_confidence)` → reconstruct templates retroactively
 
