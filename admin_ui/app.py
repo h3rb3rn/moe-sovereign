@@ -1440,12 +1440,7 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
                 logger.warning("post-save cleanup failed: %s", e)
             try:
                 redis_cli = await _get_provision_redis()
-                for srv in server_diff["added"]:
-                    if srv.get("ontology_enabled"):
-                        await _curator_provisioner.provision_curator_for_server(
-                            srv, redis_cli=redis_cli,
-                            refresh_cache_cb=refresh_expert_templates_cache,
-                        )
+                await _provision_added_servers(server_diff["added"], redis_cli)
             except Exception as e:
                 logger.warning("post-save provision failed: %s", e)
         asyncio.create_task(_post_save_hooks())
@@ -1491,6 +1486,7 @@ async def save_config(request: Request, _=Depends(require_login)):
     old_names      = {s.get("name") for s in old_servers if s.get("name")}
     new_names      = {s.get("name") for s in servers    if s.get("name")}
     removed_names  = sorted(old_names - new_names)
+    added          = [s for s in servers if s.get("name") not in old_names]
 
     updates = {
         "INFERENCE_SERVERS":         servers_json,
@@ -1585,17 +1581,41 @@ async def save_config(request: Request, _=Depends(require_login)):
 
     write_env(updates)
 
-    if removed_names:
-        async def _permission_cleanup():
-            await _maintenance.cleanup_orphans(servers, dry_run=False)
-            for name in removed_names:
+    if removed_names or added:
+        async def _post_save_hooks():
+            if removed_names:
                 try:
-                    n = await db.revoke_all_model_endpoints_by_node(name)
-                    if n:
-                        logger.info("Revoked %d permission(s) for removed/renamed server %s", n, name)
+                    await _maintenance.cleanup_orphans(servers, dry_run=False)
+                    for name in removed_names:
+                        try:
+                            n = await db.revoke_all_model_endpoints_by_node(name)
+                            if n:
+                                logger.info("Revoked %d permission(s) for removed/renamed server %s", n, name)
+                        except Exception as e:
+                            logger.warning("Permission cleanup failed for %s: %s", name, e)
                 except Exception as e:
-                    logger.warning("Permission cleanup failed for %s: %s", name, e)
-        asyncio.create_task(_permission_cleanup())
+                    logger.warning("post-save cleanup failed: %s", e)
+            if added:
+                try:
+                    stale_before = await db.scan_stale_model_endpoint_permissions(sorted(old_names))
+                    redis_cli = await _get_provision_redis()
+                    await _provision_added_servers(added, redis_cli)
+                    stale_after = await db.scan_stale_model_endpoint_permissions(sorted(new_names))
+                    reactivated = sorted(
+                        set(stale_before["stale_resource_ids"]) - set(stale_after["stale_resource_ids"])
+                    )
+                    normalize = lambda s: s.lower().replace("-", "").replace("_", "")
+                    for srv in added:
+                        name = srv.get("name", "")
+                        hits = [r for r in reactivated if normalize(r.rsplit("@", 1)[-1]) == normalize(name)]
+                        if hits:
+                            logger.info(
+                                "Server '%s' added — %d previously-orphaned model_endpoint permission(s) are valid again: %s",
+                                name, len(hits), hits,
+                            )
+                except Exception as e:
+                    logger.warning("post-save provision failed: %s", e)
+        asyncio.create_task(_post_save_hooks())
 
     # Push updated public URLs to Authentik's OAuth2 provider (fails open).
     asyncio.create_task(_sync_authentik_redirect_uris(read_env()))
@@ -2515,6 +2535,16 @@ async def _get_provision_redis():
         return cli
     except Exception:
         return None
+
+
+async def _provision_added_servers(added: list[dict], redis_cli) -> None:
+    """Provision curator templates for newly added ontology-enabled servers."""
+    for srv in added:
+        if srv.get("ontology_enabled"):
+            await _curator_provisioner.provision_curator_for_server(
+                srv, redis_cli=redis_cli,
+                refresh_cache_cb=refresh_expert_templates_cache,
+            )
 
 
 def _update_server_flags(server_name: str, updates: dict) -> Optional[dict]:
