@@ -3,8 +3,8 @@ inject_results_into_docs.py — Post-benchmark documentation updater.
 
 Reads eval_*.json result files, computes per-category scores, and updates:
   - docs/system/benchmarks.md          (April 2026 campaign table)
-  - /home/philipp/whitepaper/de/sections/14_evaluation_and_lessons.tex
-  - /home/philipp/whitepaper/en/sections/14_evaluation_and_lessons.tex
+  - ~/whitepaper/de/sections/14_evaluation_and_lessons.tex
+  - ~/whitepaper/en/sections/14_evaluation_and_lessons.tex
 
 Usage:
     python3 benchmarks/inject_results_into_docs.py [--run-dir <path>]
@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import os
 import re
 import sys
 from statistics import mean
@@ -26,8 +27,9 @@ SCRIPT_DIR  = pathlib.Path(__file__).parent
 RESULTS_DIR = SCRIPT_DIR / "results"
 DOCS_BENCH  = SCRIPT_DIR.parent / "docs" / "system" / "benchmarks.md"
 
-WP_DE = pathlib.Path("/home/philipp/whitepaper/de/sections/14_evaluation_and_lessons.tex")
-WP_EN = pathlib.Path("/home/philipp/whitepaper/en/sections/14_evaluation_and_lessons.tex")
+WHITEPAPER_BASE = os.getenv("WHITEPAPER_DIR", str(pathlib.Path.home() / "whitepaper"))
+WP_DE = pathlib.Path(WHITEPAPER_BASE) / "de" / "sections" / "14_evaluation_and_lessons.tex"
+WP_EN = pathlib.Path(WHITEPAPER_BASE) / "en" / "sections" / "14_evaluation_and_lessons.tex"
 
 # Category groups for the summary table
 CATEGORIES = {

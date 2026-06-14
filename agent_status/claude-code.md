@@ -108,7 +108,7 @@ Plan / progress:
   `~/.ssh/id_efp.lumi.csc.fi-cert.pub`).
 - Next: locate `train_router_onnx.py` and `train_router.sh` (check agy
   session scratch dirs / repo), confirm
-  `/home/philipp/synthetic_router_dataset.json` exists, copy dataset +
+  `~/synthetic_router_dataset.json` exists, copy dataset +
   scripts to LUMI-G scratch (`/scratch/project_465003058/hornphil/data/`),
   submit `sbatch train_router.sh`, poll via `squeue`/`sacct`.
 - Will checkpoint here again before/after `sbatch` submission (long-running

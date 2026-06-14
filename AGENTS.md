@@ -18,9 +18,9 @@ As an AI assistant, you must maintain and execute the following ongoing tasks:
 
 ### Task 1: Co-Create and Maintain the JMoE Research Paper / Whitepaper
 *   **Objective:** Parallel to code development, document all new theoretical insights and architecture designs in a new academic paper under the path:
-    📁 `/home/philipp/whitepaper/arxiv_paper/jmoe_paper.tex`
+    📁 `~/whitepaper/arxiv_paper/jmoe_paper.tex`
 *   **Trigger:** Whenever you implement or refine routing logic, Optimal Transport algorithms, paraconsistent logic arbitration, or RLSF policy gradients, you **must** update the corresponding LaTeX sections of `jmoe_paper.tex` to ensure the academic documentation mirrors the production implementation.
-*   **Compilation:** Recompile the paper using `pdflatex` or `latexmk` inside the `/home/philipp/whitepaper/arxiv_paper/` folder after edits.
+*   **Compilation:** Recompile the paper using `pdflatex` or `latexmk` inside the `~/whitepaper/arxiv_paper/` folder after edits.
 
 ### Task 2: Continuous RLSF & Feedback Optimization
 *   **Objective:** Maintain and optimize the reinforcement learning loop.

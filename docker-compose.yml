@@ -173,6 +173,7 @@ services:
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR}:/app/skills:ro
       - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
+      - ./models:/app/models:ro
     depends_on:
       terra_cache:
         condition: service_started

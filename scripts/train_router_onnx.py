@@ -147,7 +147,10 @@ def mean_pooling(model_output, attention_mask):
 
 def main():
     parser = argparse.ArgumentParser(description="Train Sovereign Router Multi-Task Classifier and export to ONNX")
-    parser.add_argument("--dataset_path", type=str, default="/home/philipp/synthetic_router_dataset.json", help="Path to JSON dataset")
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+    default_dataset = os.path.join(PROJECT_ROOT, "synthetic_router_dataset.json")
+    parser.add_argument("--dataset_path", type=str, default=default_dataset, help="Path to JSON dataset")
     parser.add_argument("--output_onnx", type=str, default="sovereign_router.onnx", help="Path to output ONNX file")
     parser.add_argument("--epochs", type=int, default=30, help="Training epochs")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
