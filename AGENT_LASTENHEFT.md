@@ -240,7 +240,7 @@ stable for a while.
 - **Depends on:** none (independent of TASK-1/3, but TASK-3 depends on its output)
 - **Context:** The IMoE gating network's multi-task head needs training on
   LUMI-G (AMD MI250x partition). The dataset (665 prompts) is already
-  generated at `/home/user/synthetic_router_dataset.json`. The blocker is
+  generated at `~/synthetic_router_dataset.json`. The blocker is
   an expired SSH certificate `~/.ssh/id_efp.lumi.csc.fi-cert.pub` (CSC
   federated EFP/MyAccessID cert — these typically require interactive
   browser-based re-authentication and CANNOT be renewed non-interactively).
@@ -256,7 +256,7 @@ stable for a while.
      authentication issue, not a connectivity issue.
   3. Once the cert is valid (verify with `ssh lumi.csc.fi true` or
      equivalent), copy the dataset:
-     `scp /home/user/synthetic_router_dataset.json lumi:/scratch/project_465003058/hornphil/data/`
+     `scp ~/synthetic_router_dataset.json lumi:/scratch/project_465003058/hornphil/data/`
   4. Copy the training script `train_router_onnx.py` (locate it in the agy
      session's scratch dir or the repo) to LUMI-G.
   5. Submit the SLURM training job via `train_router.sh` (`sbatch
