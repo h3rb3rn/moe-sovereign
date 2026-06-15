@@ -4,7 +4,7 @@ import os
 import sys
 
 def main():
-    url = os.getenv("MOE_API_URL", "http://node-0X.internal:8002/v1/chat/completions")
+    url = os.getenv("MOE_API_URL", "http://localhost:8002/v1/chat/completions")
     token = os.getenv("SYSTEM_API_KEY", "")
     headers = {
         "Authorization": f"Bearer {token}",

@@ -84,7 +84,7 @@ from services.helpers import (
     _shadow_request, _shadow_lock,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
-from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
+from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc, _is_external_endpoint_url
 from services.skills import _build_skill_catalog, _resolve_skill_secure, _detect_file_skill
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -814,6 +814,18 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     api_key_id   = user_ctx.get("key_id", "")
     user_perms   = json.loads(user_ctx.get("permissions_json", "{}"))
 
+    # ── Local-Only compliance flag (priority: permission > key flag > global env) ──
+    # Computed early so both the native-endpoint resolution below and the Dynamic
+    # Router enforce the same constraint.
+    _moe_modes_granted = set(user_perms.get("moe_mode", []))
+    _perm_local_only   = "moe-auto:local-only" in _moe_modes_granted
+    _key_local_only    = user_ctx.get("local_only_routing") == "1"
+    local_only = (
+        _perm_local_only
+        or _key_local_only
+        or os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
+    )
+
     # Template names and MoE mode IDs take precedence over native endpoints.
     # Wildcard permissions (*@node) would otherwise intercept template names and
     # route them as direct Ollama calls (model does not exist → empty response).
@@ -934,6 +946,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _is_wildcard = _ep_model == "*"
                 if _is_wildcard != _wildcard_pass:
                     continue
+                # Compliance Gate: a Local-Only key may not be routed to an
+                # external node (e.g. AIHUB) via a direct "model@node" call,
+                # even when "*@<node>" is part of its inherited permissions.
+                if local_only and _is_external_endpoint_url(URL_MAP[_ep_node]):
+                    continue
                 if (_ep_model == _req_model_base or _is_wildcard) and \
                    (_req_node_hint is None or _req_node_hint == _ep_node):
                     _native_endpoint = {
@@ -947,20 +964,24 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 break
         # Fallback: user-owned private connections (lower priority than global URL_MAP)
         if not _native_endpoint and _user_conns_map:
+            from services.dynamic_router import _is_local_url
             if _req_node_hint and _req_node_hint in _user_conns_map:
                 _uc = _user_conns_map[_req_node_hint]
-                _native_endpoint = {
-                    "url":        _uc["url"],
-                    "token":      _uc.get("api_key") or "ollama",
-                    "model":      _req_model_base,
-                    "node":       _req_node_hint,
-                    "api_type":   _uc.get("api_type", "openai"),
-                    "_user_conn": True,
-                }
+                if not (local_only and not _is_local_url(_uc.get("url", ""))):
+                    _native_endpoint = {
+                        "url":        _uc["url"],
+                        "token":      _uc.get("api_key") or "ollama",
+                        "model":      _req_model_base,
+                        "node":       _req_node_hint,
+                        "api_type":   _uc.get("api_type", "openai"),
+                        "_user_conn": True,
+                    }
             elif not _req_node_hint:
                 # Bare model name: check models_cache of each user connection
                 for _cname, _uc in _user_conns_map.items():
                     if _req_model_base in _uc.get("models_cache", []):
+                        if local_only and not _is_local_url(_uc.get("url", "")):
+                            continue
                         _native_endpoint = {
                             "url":        _uc["url"],
                             "token":      _uc.get("api_key") or "ollama",
@@ -976,12 +997,21 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     #   • global DYNAMIC_ROUTER_ENABLED env-var is set, OR
     #   • this API key has dynamic_routing=1 in its context, OR
     #   • the requested model is the explicit "moe-auto" virtual model
+    # Explicit "model@node" selections (Open WebUI native-model picker) express
+    # clear native-LLM intent and must never be hijacked into a dynamically
+    # generated expert template — even when the per-key dynamic_routing flag
+    # is set. Only the literal "moe-auto" virtual model may still trigger
+    # dynamic routing for such requests.
     _key_dynamic_routing = user_ctx.get("dynamic_routing") == "1"
     _is_moe_auto = request.model == "moe-auto"
+    _native_model_selected = _req_node_hint is not None and not _is_moe_auto
     if (
-        os.getenv("DYNAMIC_ROUTER_ENABLED", "false").lower() in ("1", "true", "yes")
-        or _key_dynamic_routing
-        or _is_moe_auto
+        not _native_model_selected
+        and (
+            os.getenv("DYNAMIC_ROUTER_ENABLED", "false").lower() in ("1", "true", "yes")
+            or _key_dynamic_routing
+            or _is_moe_auto
+        )
     ):
         is_default_moe = request.model in ("moe-orchestrator", "moe-orchestrator-code", "moe-orchestrator-concise", "moe-orchestrator-agent", "moe-orchestrator-agent-orchestrated")
         if not _tmpl_override or is_default_moe or _is_moe_auto:
@@ -989,16 +1019,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             user_msgs = [m for m in request.messages if m.role == "user"]
             last_prompt = _oai_content_to_str(user_msgs[-1].content) if user_msgs else ""
 
-            # ── Constraint resolution (priority: permission > key-flag > global env-var) ──
-            _moe_modes_granted = set(user_perms.get("moe_mode", []))
-            # local_only: permission flag > key flag > global env
-            _perm_local_only     = "moe-auto:local-only"      in _moe_modes_granted
-            _key_local_only      = user_ctx.get("local_only_routing") == "1"
-            local_only = (
-                _perm_local_only
-                or _key_local_only
-                or os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
-            )
+            # ── Constraint resolution (moe_mode permissions; local_only computed earlier) ──
             # global_only: restrict router to global admin connections only
             _perm_global_only = "moe-auto:global-only" in _moe_modes_granted
             # user_conns_only: restrict router to user-created private connections only

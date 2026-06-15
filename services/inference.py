@@ -15,7 +15,7 @@ import state
 from config import (
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
     EXPERT_MIN_DATAPOINTS, EXPERT_TIER_BOUNDARY_B,
-    JUDGE_TIMEOUT, PLANNER_TIMEOUT,
+    JUDGE_TIMEOUT, PLANNER_TIMEOUT, EXPERT_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
     _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
@@ -189,7 +189,14 @@ async def _get_fallback_llm(timeout: float = 120.0, model: str = "") -> "ChatOpe
 
 
 def _is_external_endpoint_url(url: str) -> bool:
-    """Return True when the URL points to an external (non-local) inference endpoint."""
+    """Return True when the URL points to an external (non-local) inference endpoint.
+
+    An endpoint counts as external when its admin-configured api_type is not
+    "ollama" (e.g. a paid OpenAI-compatible gateway like AIHUB), or when it
+    matches an EXTERNAL_ENDPOINT_PATTERNS entry.
+    """
+    if _url_api_type(url) != "ollama":
+        return True
     u = url.lower()
     return any(p and p in u for p in _EXTERNAL_ENDPOINT_PATTERNS)
 
@@ -370,8 +377,7 @@ async def _invoke_judge_with_retry(
                     "messages":   [{"role": "user", "content": prompt}],
                     "stream":     False,
                     # Short lease: frees VRAM within 5m after pipeline completes so expert/planner
-                    # models can load without eviction. _cc_keepalive_loop overrides to "4h" for
-                    # the CC tool model independently, so this does not affect CC tool availability.
+                    # models can load without eviction.
                     "keep_alive": "5m",
                 }
                 if _opts:
@@ -718,6 +724,52 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
         return None
 
 
+async def _invoke_council_expert(
+    category: str, task_text: str, user_experts: Optional[dict],
+    excluded_node: str, tool_model: str,
+) -> Optional[tuple[str, str]]:
+    """Invoke the best-scored expert for `category` as a Claude Code council member.
+
+    Best-effort: returns None on any failure so a missing council member
+    never blocks the Claude Code response (Piece A of the CC expert council).
+    """
+    from config import EXPERTS
+    from main import _get_expert_prompt
+
+    experts_for_cat = EXPERTS.get(category, [])
+    if not experts_for_cat:
+        return None
+    try:
+        scored = [(await _get_expert_score(e["model"], category), e) for e in experts_for_cat]
+        scored.sort(key=lambda x: -x[0])
+        best_expert = scored[0][1]
+        endpoints = best_expert.get("endpoints") or [best_expert.get("endpoint", "")]
+        if not endpoints or endpoints == [""]:
+            endpoints = [s["name"] for s in INFERENCE_SERVERS_LIST]
+        endpoints = _filter_endpoints_excluding_node(endpoints, excluded_node, tool_model, best_expert["model"])
+        node = await _select_node(best_expert["model"], endpoints)
+        url     = node.get("url") or URL_MAP.get(node["name"])
+        token   = node.get("token", "ollama")
+        timeout = float(node.get("timeout", EXPERT_TIMEOUT))
+        sys_prompt = _get_expert_prompt(category, user_experts)
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user",   "content": task_text},
+        ]
+        extra: dict = {}
+        if token == "ollama":
+            extra = {"extra_body": {"options": {"num_ctx": int(JUDGE_NUM_CTX or 32768)}}}
+        llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
+                         timeout=timeout, **extra)
+        res = await llm.ainvoke(messages)
+        if not res.content:
+            return None
+        return category, res.content[:MAX_EXPERT_OUTPUT_CHARS]
+    except Exception as e:
+        logger.warning(f"⚠️ Council expert [{category}]: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # PS cache and node load
 # ---------------------------------------------------------------------------
@@ -826,6 +878,28 @@ def _can_coexist_on_node(model_a: str, model_b: str, node_vram_gb: float) -> boo
             model_a, est_a, model_b, est_b, est_a + est_b, node_vram_gb,
         )
     return fits
+
+
+def _filter_endpoints_excluding_node(
+    candidate_endpoints: List[str], excluded_node: str,
+    tool_model: str, council_model: str,
+) -> List[str]:
+    """Drop excluded_node from candidate_endpoints unless tool_model and
+    council_model both fit on it simultaneously.
+
+    Keeps council experts off the node serving Claude Code's own tool model,
+    preventing the council call from queuing behind that model's generation
+    (the same Ollama-scheduler serialization pattern that caused the
+    SEMANTIC_MEMORY_EMBED_URL ReadTimeout incident).
+    """
+    if not excluded_node or excluded_node not in candidate_endpoints:
+        return candidate_endpoints
+    node_vram = _node_vram_by_url(URL_MAP.get(excluded_node, ""))
+    if _can_coexist_on_node(tool_model, council_model, node_vram):
+        return candidate_endpoints
+    filtered = [ep for ep in candidate_endpoints if ep != excluded_node]
+    # Liveness over isolation: if excluding leaves nothing, keep the original pool.
+    return filtered or candidate_endpoints
 
 
 async def _select_node(model_name: str, allowed_endpoints: List[str],

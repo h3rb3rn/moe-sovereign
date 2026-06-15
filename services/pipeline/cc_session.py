@@ -46,6 +46,7 @@ class CCSession:
     tool_timeout: int = 120
     tool_max_tokens: int = 0
     context_window: int = 0
+    template_num_ctx: int = 0
     tool_choice: str = "auto"
     is_user_conn: bool = False
 
@@ -254,6 +255,7 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
         tool_timeout=tool_timeout,
         tool_max_tokens=tool_max_tokens,
         context_window=context_window,
+        template_num_ctx=_tmpl_ctx,
         tool_choice=tool_choice,
         is_user_conn=is_user_conn,
         reasoning_max_tokens=reasoning_max_tokens,

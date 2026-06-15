@@ -168,7 +168,7 @@ def main():
     print(f"Using device: {device}")
     
     embed_model_name = "sentence-transformers/all-MiniLM-L6-v2"
-    local_path = "/scratch/project_465003058/hornphil/data/all-MiniLM-L6-v2"
+    local_path = os.getenv("EMBED_MODEL_LOCAL_PATH", os.path.join(PROJECT_ROOT, "models", "all-MiniLM-L6-v2"))
     if os.path.exists(local_path):
         print(f"Loading embedding model from local directory: {local_path}")
         embed_model_name = local_path
