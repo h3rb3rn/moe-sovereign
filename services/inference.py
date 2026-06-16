@@ -140,6 +140,87 @@ async def _ollama_unload(model: str, base_url: str) -> None:
         logger.debug(f"⚠️ VRAM-Unload {model}: {e}")
 
 
+async def _evict_competing_models(
+    ollama_base: str, keep_model: str, ctx: int = 0
+) -> None:
+    """Evict competing models from an Ollama node only when necessary to fit keep_model.
+
+    Uses actual size_vram from /api/ps for loaded models and estimates the target's
+    VRAM requirement (model weights + KV cache at ctx). Keeps competing models warm
+    when everything fits on the node. Evicts the minimum set (largest first) when it
+    doesn't fit. Falls back to evicting all competitors when the target's VRAM cannot
+    be estimated (e.g. model name has no parameter count suffix).
+    """
+    # Resolve node total VRAM — INFERENCE_SERVERS URLs carry the /v1 suffix
+    node_vram_gb = _node_vram_by_url(f"{ollama_base}/v1")
+    if node_vram_gb <= 0:
+        logger.debug("⚠️ VRAM pre-evict: node VRAM unknown for %s — skipping", ollama_base)
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ollama_base}/api/ps")
+            r.raise_for_status()
+            loaded = r.json().get("models", [])
+    except Exception as e:
+        logger.debug("⚠️ VRAM pre-evict: /api/ps query failed: %s", e)
+        return
+
+    target_entry = next((m for m in loaded if m.get("name", "") == keep_model), None)
+    competing = [m for m in loaded if m.get("name", "") != keep_model]
+
+    # Fast path: target already warm at the exact requested context
+    if target_entry is not None and ctx > 0 and target_entry.get("context_length", 0) == ctx:
+        logger.debug("✅ VRAM pre-evict: %s already warm at ctx=%d — no eviction needed", keep_model, ctx)
+        return
+
+    if not competing:
+        return
+
+    # Estimate target VRAM: model weights from name + KV cache at requested ctx.
+    # KV cache empirical constant: ~0.40 GB per 1024 tokens for q8_0 on large models.
+    weights_gb = _estimate_model_vram_gb(keep_model)
+    kv_gb = (ctx * 0.40 / 1024) if ctx > 0 else 0.0
+    target_gb = (weights_gb + kv_gb) if weights_gb > 0 else 0.0
+
+    competing_vram_gb = sum(m.get("size_vram", 0) / 1e9 for m in competing)
+
+    if target_gb > 0:
+        # Smart path: only evict what is actually needed
+        if competing_vram_gb + target_gb <= node_vram_gb:
+            logger.info(
+                "✅ VRAM pre-evict: %.1f GB (competing) + %.1f GB (target %s @ ctx=%d) ≤ %.0f GB — keeping warm",
+                competing_vram_gb, target_gb, keep_model, ctx, node_vram_gb,
+            )
+            return
+        needed_gb = (competing_vram_gb + target_gb) - node_vram_gb
+        logger.info(
+            "🗑️ VRAM pre-evict: need %.1f GB more for %s (est. %.1f GB) on %.0f GB node",
+            needed_gb, keep_model, target_gb, node_vram_gb,
+        )
+        for m in sorted(competing, key=lambda x: x.get("size_vram", 0), reverse=True):
+            name = m.get("name", "")
+            if not name:
+                continue
+            freed_gb = m.get("size_vram", 0) / 1e9
+            logger.info("🗑️ VRAM pre-evict: unloading %s (%.1f GB)", name, freed_gb)
+            await _ollama_unload(name, ollama_base)
+            needed_gb -= freed_gb
+            if needed_gb <= 0:
+                break
+    else:
+        # Conservative fallback: model size unknown (no parameter count in name)
+        logger.info(
+            "⚠️ VRAM pre-evict: no VRAM estimate for %s — evicting all competing models on node",
+            keep_model,
+        )
+        for m in competing:
+            name = m.get("name", "")
+            if name:
+                logger.info("🗑️ VRAM pre-evict: unloading %s (%.1f GB)", name, m.get("size_vram", 0) / 1e9)
+                await _ollama_unload(name, ollama_base)
+
+
 # ---------------------------------------------------------------------------
 # Endpoint degradation tracking
 # ---------------------------------------------------------------------------
@@ -526,6 +607,8 @@ async def _invoke_planner_with_retry(
     if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
         _ollama_base = _p_url_base.removesuffix("/v1")
         _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        if _ctx >= 65536:
+            await _evict_competing_models(_ollama_base, _pm, ctx=_ctx)
         _opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
         if _ctx > 0:
             _opts["num_ctx"] = _ctx
