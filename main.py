@@ -1177,11 +1177,12 @@ from config import _CLAUDE_PRETTY_NAMES, _model_display_name
 async def _stream_native_llm(
     request: "ChatCompletionRequest",
     chat_id: str,
-    endpoint: dict,   # {url, token, model}
+    endpoint: dict,   # {url, token, model, [api_type], [native_num_ctx]}
     user_id: str,
     model_name: str,
     session_id: str = None,
     is_user_conn: bool = False,
+    num_ctx: int = 0,
 ):
     """Direct proxy: forward request directly to inference endpoint, no MoE pipeline."""
     url     = endpoint["url"].rstrip("/") + "/chat/completions"
@@ -1195,6 +1196,11 @@ async def _stream_native_llm(
     }
     if request.max_tokens:                    payload["max_tokens"]  = request.max_tokens
     if request.temperature is not None:       payload["temperature"] = request.temperature
+    # Inject Ollama num_ctx when explicitly configured — forces context-window reallocation.
+    # Only sent for Ollama endpoints; OpenAI-compatible providers reject unknown fields.
+    _ep_api_type = endpoint.get("api_type", "ollama")
+    if num_ctx > 0 and _ep_api_type == "ollama":
+        payload["options"] = {"num_ctx": num_ctx}
 
     _t_start = time.monotonic()
     _t_first: Optional[float] = None

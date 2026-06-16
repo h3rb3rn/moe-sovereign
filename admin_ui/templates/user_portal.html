@@ -1270,6 +1270,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 <th>CC Profile</th>
                 <th title="KI-gestützte dynamische Experten-Auswahl">Dyn. Routing</th>
                 <th title="Nur lokale Inference-Endpoints verwenden (kein Cloud-API-Zugriff)">Local Only</th>
+                <th title="{{ t(request, 'portal.native_num_ctx_hint') }}">{{ t(request, 'portal.native_num_ctx_col') }}</th>
                 <th>{{ t(request, 'portal.col_created') }}</th>
                 <th>{{ t(request, 'lbl.last_used') }}</th>
                 <th>Status</th>
@@ -1318,6 +1319,17 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                            {% if k.local_only_routing %}checked{% endif %}
                            onchange="saveKeyLocalOnlyRouting('{{ k.id }}', this.checked)">
                   </div>
+                </td>
+                <td>
+                  <input type="number" class="form-control form-control-sm text-center"
+                         id="native-num-ctx-{{ k.id }}"
+                         style="width:90px;font-size:.75rem"
+                         min="0" step="1024"
+                         value="{{ k.native_num_ctx or 0 }}"
+                         placeholder="0"
+                         title="{{ t(request, 'portal.native_num_ctx_hint') }}"
+                         onchange="saveKeyNativeNumCtx('{{ k.id }}', this.value)"
+                         onblur="saveKeyNativeNumCtx('{{ k.id }}', this.value)">
                 </td>
                 <td><small class="text-muted">{{ k.created_at[:10] }}</small></td>
                 <td><small class="text-muted">{{ k.last_used_at[:16] if k.last_used_at else t(request, 'lbl.never') }}</small></td>
@@ -1432,6 +1444,21 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           alert(d.detail || 'Fehler beim Speichern');
           const cb = document.getElementById(`local-only-${keyId}`);
           if (cb) cb.checked = !enabled;
+        }
+      }
+
+      async function saveKeyNativeNumCtx(keyId, value) {
+        const num_ctx = Math.max(0, parseInt(value) || 0);
+        const inp = document.getElementById(`native-num-ctx-${keyId}`);
+        if (inp) inp.value = num_ctx;
+        const r = await fetch(`/user/api/keys/${keyId}/native-num-ctx`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({num_ctx})
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          alert(d.detail || 'Fehler beim Speichern');
         }
       }
       </script>

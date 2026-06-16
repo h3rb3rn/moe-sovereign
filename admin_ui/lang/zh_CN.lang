@@ -624,6 +624,8 @@
   "portal.no_cc_profiles": "暂无CC配置。",
   "portal.no_data_admin_hint": "该账户无使用数据。管理员：通过\"用户管理 → 模拟\"查看其他用户。",
   "portal.key_note": "密钥仅在创建时显示一次，请确保复制。",
+  "portal.native_num_ctx_col": "原生上下文",
+  "portal.native_num_ctx_hint": "Ollama num_ctx用于原生model@server调用（0=使用Modelfile默认值），强制指定上下文窗口大小。",
   "portal.display_name_hint": "您希望我们如何称呼您？",
   "portal.cc_profiles_desc": "基于已解锁的推理服务器创建自定义Claude Code配置。每个配置可立即通过API密钥使用。",
   "portal.btn_new_cc_profile": "新建CC配置",

@@ -954,10 +954,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 if (_ep_model == _req_model_base or _is_wildcard) and \
                    (_req_node_hint is None or _req_node_hint == _ep_node):
                     _native_endpoint = {
-                        "url":   URL_MAP[_ep_node],
-                        "token": TOKEN_MAP.get(_ep_node, "ollama"),
-                        "model": _req_model_base,
-                        "node":  _ep_node,
+                        "url":      URL_MAP[_ep_node],
+                        "token":    TOKEN_MAP.get(_ep_node, "ollama"),
+                        "model":    _req_model_base,
+                        "node":     _ep_node,
+                        "api_type": API_TYPE_MAP.get(_ep_node, "ollama"),
                     }
                     break
             if _native_endpoint:
@@ -1255,13 +1256,22 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # Native LLM: forward directly to endpoint, no MoE pipeline
     if _native_endpoint:
         _native_is_user_conn = bool(_native_endpoint.get("_user_conn"))
+        # Per-key Ollama num_ctx override — 0 means use the model's Modelfile default.
+        _native_num_ctx = int(user_ctx.get("native_num_ctx") or 0)
         if request.stream:
             return StreamingResponse(
                 _stream_native_llm(request, chat_id, _native_endpoint, user_id, request.model,
-                                   session_id=session_id, is_user_conn=_native_is_user_conn),
+                                   session_id=session_id, is_user_conn=_native_is_user_conn,
+                                   num_ctx=_native_num_ctx),
                 media_type="text/event-stream",
             )
         # Non-streaming native: blockierender httpx-Call
+        _ep_api_type = _native_endpoint.get("api_type", "ollama")
+        _non_stream_extra = (
+            {"options": {"num_ctx": _native_num_ctx}}
+            if _native_num_ctx > 0 and _ep_api_type == "ollama"
+            else {}
+        )
         async with httpx.AsyncClient(timeout=300) as _hc:
             _nr = await _hc.post(
                 _native_endpoint["url"].rstrip("/") + "/chat/completions",
@@ -1270,7 +1280,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                       "messages": [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
                       "stream": False,
                       **({"max_tokens": request.max_tokens} if request.max_tokens else {}),
-                      **({"temperature": request.temperature} if request.temperature is not None else {})},
+                      **({"temperature": request.temperature} if request.temperature is not None else {}),
+                      **_non_stream_extra},
             )
         _nr.raise_for_status()
         _nj = _nr.json()
