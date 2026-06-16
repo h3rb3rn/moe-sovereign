@@ -543,7 +543,15 @@ async def planner_node(state_: AgentState):
         _agentic_state_reset = {"web_research": "", "mcp_result": "", "math_result": ""}
         logger.info(f"🔄 Agentic re-plan iteration {_agentic_iteration}/{_agentic_max_rounds} depth={_depth}: gap={_gap[:80]}")
 
-    prompt = f"""{_planner_role}{_context_toc_block}{_agentic_context_block}
+    # ── Advice Taker: declarative rule constraints ──
+    from services.advice_store import get_active_advice
+    _advice_list = get_active_advice(state_["input"])
+    _advice_block = ""
+    if _advice_list:
+        _advice_items = "\n".join(f"- {rule}" for rule in _advice_list)
+        _advice_block = f"\n\n[DECLARATIVE CONSTRAINTS / RULES - you must follow these!]\n{_advice_items}\n"
+
+    prompt = f"""{_planner_role}{_context_toc_block}{_advice_block}{_agentic_context_block}
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).

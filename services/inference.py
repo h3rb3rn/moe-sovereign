@@ -140,18 +140,67 @@ async def _ollama_unload(model: str, base_url: str) -> None:
         logger.debug(f"⚠️ VRAM-Unload {model}: {e}")
 
 
+_model_arch_cache: dict[str, dict] = {}
+
+
+async def _query_model_arch(ollama_base: str, model_name: str) -> dict:
+    """Return Ollama /api/show model_info for model_name, cached per (node, model).
+
+    Returns an empty dict on failure so callers can handle gracefully.
+    """
+    cache_key = f"{ollama_base}|{model_name}"
+    if cache_key in _model_arch_cache:
+        return _model_arch_cache[cache_key]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{ollama_base}/api/show", json={"name": model_name})
+            r.raise_for_status()
+            info = r.json().get("model_info", {})
+    except Exception as e:
+        logger.debug("⚠️ VRAM arch query: /api/show failed for %s: %s", model_name, e)
+        return {}
+    _model_arch_cache[cache_key] = info
+    return info
+
+
+def _kv_cache_gb_from_arch(arch: dict, ctx: int) -> float:
+    """Compute KV cache size in GB from Ollama model_info architecture fields.
+
+    Ollama exposes per-architecture keys such as llama4.block_count,
+    llama.attention.head_count_kv, etc. Searches by suffix so it works across
+    model families (llama, llama4, qwen2, mistral, …). Assumes q8_0 KV quantization
+    (1 byte per element) as the conservative upper bound.
+    Returns 0.0 when required fields are missing.
+    """
+    def _find(suffix: str) -> int:
+        return next((int(v) for k, v in arch.items() if k.endswith(suffix)), 0)
+
+    block_count = _find(".block_count")
+    kv_heads    = _find(".attention.head_count_kv")
+    key_len     = _find(".attention.key_length")
+    val_len     = _find(".attention.value_length") or key_len
+
+    if not all([block_count, kv_heads, key_len]):
+        return 0.0
+
+    kv_bytes = block_count * kv_heads * (key_len + val_len) * ctx  # q8_0: 1 byte/element
+    return kv_bytes / 1e9
+
+
 async def _evict_competing_models(
     ollama_base: str, keep_model: str, ctx: int = 0
 ) -> None:
     """Evict competing models from an Ollama node only when necessary to fit keep_model.
 
-    Uses actual size_vram from /api/ps for loaded models and estimates the target's
-    VRAM requirement (model weights + KV cache at ctx). Keeps competing models warm
-    when everything fits on the node. Evicts the minimum set (largest first) when it
-    doesn't fit. Falls back to evicting all competitors when the target's VRAM cannot
-    be estimated (e.g. model name has no parameter count suffix).
+    All inputs are derived dynamically from Ollama's APIs:
+    - /api/ps  → actual size_vram of every currently loaded model
+    - /api/show → model architecture (block_count, kv_heads, key_length) for KV cache math
+    - INFERENCE_SERVERS config → node total VRAM
+
+    Keeps competing models warm when everything fits. Evicts the minimum set (largest
+    first) when it doesn't. Falls back to evicting all competitors only when the target
+    model's VRAM cannot be determined (neither name-parse nor /api/show succeed).
     """
-    # Resolve node total VRAM — INFERENCE_SERVERS URLs carry the /v1 suffix
     node_vram_gb = _node_vram_by_url(f"{ollama_base}/v1")
     if node_vram_gb <= 0:
         logger.debug("⚠️ VRAM pre-evict: node VRAM unknown for %s — skipping", ollama_base)
@@ -177,16 +226,29 @@ async def _evict_competing_models(
     if not competing:
         return
 
-    # Estimate target VRAM: model weights from name + KV cache at requested ctx.
-    # KV cache empirical constant: ~0.40 GB per 1024 tokens for q8_0 on large models.
-    weights_gb = _estimate_model_vram_gb(keep_model)
-    kv_gb = (ctx * 0.40 / 1024) if ctx > 0 else 0.0
-    target_gb = (weights_gb + kv_gb) if weights_gb > 0 else 0.0
+    # Estimate target VRAM from actual /api/ps entry (if already loaded) or /api/show arch
+    if target_entry is not None:
+        # Model is loaded at a different ctx — use its actual size as the weight baseline
+        weights_gb = target_entry.get("size_vram", 0) / 1e9
+        # Adjust for KV cache difference between current and requested ctx
+        current_ctx = target_entry.get("context_length", 0)
+        if current_ctx > 0 and ctx > 0:
+            arch = await _query_model_arch(ollama_base, keep_model)
+            kv_current = _kv_cache_gb_from_arch(arch, current_ctx)
+            kv_target  = _kv_cache_gb_from_arch(arch, ctx)
+            target_gb = max(0.0, weights_gb - kv_current + kv_target)
+        else:
+            target_gb = weights_gb
+    else:
+        # Model not loaded — estimate from name (weights) + /api/show arch (KV cache)
+        weights_gb = _estimate_model_vram_gb(keep_model)
+        arch = await _query_model_arch(ollama_base, keep_model)
+        kv_gb = _kv_cache_gb_from_arch(arch, ctx) if ctx > 0 else 0.0
+        target_gb = (weights_gb + kv_gb) if weights_gb > 0 else 0.0
 
     competing_vram_gb = sum(m.get("size_vram", 0) / 1e9 for m in competing)
 
     if target_gb > 0:
-        # Smart path: only evict what is actually needed
         if competing_vram_gb + target_gb <= node_vram_gb:
             logger.info(
                 "✅ VRAM pre-evict: %.1f GB (competing) + %.1f GB (target %s @ ctx=%d) ≤ %.0f GB — keeping warm",
@@ -209,7 +271,7 @@ async def _evict_competing_models(
             if needed_gb <= 0:
                 break
     else:
-        # Conservative fallback: model size unknown (no parameter count in name)
+        # Conservative fallback: /api/show failed AND name has no parameter count
         logger.info(
             "⚠️ VRAM pre-evict: no VRAM estimate for %s — evicting all competing models on node",
             keep_model,
