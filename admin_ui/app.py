@@ -5448,6 +5448,24 @@ async def user_update_key_local_only_routing(
     return {"ok": True}
 
 
+@app.patch("/user/api/keys/{key_id}/native-num-ctx")
+async def user_update_key_native_num_ctx(
+    key_id:  str,
+    request: Request,
+    user_id: str = Depends(require_user_login),
+):
+    """Sets the Ollama num_ctx override for native model calls on an API key (0 = model default)."""
+    body = await request.json()
+    try:
+        num_ctx = max(0, int(body.get("num_ctx", 0)))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="num_ctx must be a non-negative integer")
+    ok = await db.set_api_key_native_num_ctx(key_id, user_id, num_ctx)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"ok": True}
+
+
 @app.patch("/user/usage/{usage_id}/note")
 async def user_update_note(
     usage_id: str,

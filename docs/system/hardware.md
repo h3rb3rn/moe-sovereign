@@ -7,9 +7,9 @@
 | **N1** | AMD Ryzen 5 5600G | 64 GB DDR4 | 3× RTX 2060 12 GB<br>2× RTX 3060 12 GB | 60 GB | Ollama (Docker CE) | Consumer GPUs |
 | **N2** | Intel Core i5-4590 | 32 GB DDR3 | 1× Tesla M10 (4× 8 GB) | 32 GB | Ollama (Docker CE) | Legacy Enterprise |
 | **N3** | AMD Athlon II X2 270 | 16 GB DDR3 | 1× Tesla M10 (4× 8 GB) | 32 GB | Ollama (Docker CE) | Ultra-Legacy CPU |
-| **N4** | AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 3× Tesla M10 (96 GB) | 96 GB | Ollama (Docker CE) | HPC Server (4U) |
+| **N4 (RTX)**| AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 10× Heterogeneous GPUs (RTX) | 113 GB | Ollama (Docker CE) | Main Workstation (llama4:scout / qwen3.6:35b) |
 | **N5** | AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 3× Tesla M10 (96 GB) | 96 GB | Ollama (Docker CE) | HPC Server (4U) |
-| **N6** | AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 7× Tesla K80 (168 GB) | 168 GB | **Ollama37** (Docker CE) | Kepler CC3.7 |
+| **N6 (HPC)**| AMD EPYC Embedded 3151 | 128 GB DDR4 ECC | 7× Tesla K80 (14× GPU dies) | 144 GB | **Ollama37** (Docker CE) | Gigabyte HPC G431-MM0 (FP64 Deterministic) |
 | **EXP** | Dell Wyse Thin Client | minimal | Tesla M10 (32 GB) via eGPU | 32 GB | Ollama (Docker CE) | MiniPCI → PCIe x16 |
 
 **Total VRAM: ~516 GB**
@@ -30,9 +30,9 @@ graph TD
     end
 
     subgraph HPC-Servers
-        N4["N4\nEPYC 3151\n3× GPU (96 GB)\nOllama"]
+        N4["N4 (RTX)\nEPYC 3151\n10× RTX GPU (113 GB)\nOllama"]
         N5["N5\nEPYC 3151\n3× GPU (96 GB)\nOllama"]
-        N6["N6\nEPYC 3151\n7× GPU (168 GB)\nOllama37"]
+        N6["N6 (HPC)\nEPYC 3151\n14× K80 GPU (144 GB)\nOllama37 / Python FP64"]
     end
 
     Reverse["Reverse Proxy\n(nginx/caddy)"] --> Orchestrator
@@ -41,7 +41,7 @@ graph TD
     Orchestrator <-->|Ollama API| N3
     Orchestrator <-->|Ollama API| N4
     Orchestrator <-->|Ollama API| N5
-    Orchestrator <-->|Ollama37 API| N6
+    Orchestrator <-->|Ollama37 API / Standby| N6
 ```
 
 ## Ollama37 – Kepler Fork (PoC)
@@ -69,10 +69,11 @@ Node N6 uses the **Ollama37 fork**, which reactivates Tesla K80 GPUs (Kepler arc
 |---------|-------|-------------|------------|------------|
 | RTX 2060 12 GB | N1 | 12 GB | 3 | 36 GB |
 | RTX 3060 12 GB | N1 | 12 GB | 2 | 24 GB |
-| Tesla M10 (4× 8 GB) | N2, N3, N4, N5 | 32 GB | 8 | 256 GB |
-| Tesla K80 (2× 12 GB) | N6 | 24 GB | 7 | 168 GB |
+| Tesla M10 (4× 8 GB) | N2, N3, N5 | 32 GB | 5 | 160 GB |
+| RTX Workstation Mix | N4 | — | 10 | 113 GB |
+| Tesla K80 (2× 12 GB) | N6 | 24 GB | 7 (14 dies) | 144 GB |
 | Tesla M10 (eGPU) | EXP | 32 GB | 1 | 32 GB |
-| **Total** | | | | **~516 GB** |
+| **Total** | | | | **~509 GB** |
 
 ## Operating System & Runtime
 

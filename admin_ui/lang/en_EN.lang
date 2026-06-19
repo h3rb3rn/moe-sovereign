@@ -624,6 +624,8 @@
   "portal.no_cc_profiles": "No CC profiles yet.",
   "portal.no_data_admin_hint": "No usage data for this account. Admins: view other users via 'User Management → Impersonate'.",
   "portal.key_note": "A key is only shown once at creation time. Make sure to copy it.",
+  "portal.native_num_ctx_col": "Native Ctx",
+  "portal.native_num_ctx_hint": "Ollama num_ctx for native model@server calls (0 = Modelfile default). Forces a specific context window size.",
   "portal.display_name_hint": "What should we call you?",
   "portal.cc_profiles_desc": "Create your own Claude Code profiles based on your unlocked inference servers. Each profile is immediately available via your API key.",
   "portal.btn_new_cc_profile": "New CC Profile",

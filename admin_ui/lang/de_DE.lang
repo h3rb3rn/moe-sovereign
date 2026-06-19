@@ -623,6 +623,8 @@
   "portal.no_cc_profiles": "Noch keine CC Profile.",
   "portal.no_data_admin_hint": "Keine Nutzungsdaten für diesen Account. Admins: andere Nutzer über 'User-Verwaltung → Impersonieren' einsehen.",
   "portal.key_note": "Ein Key wird nur beim Erstellen einmalig angezeigt. Stelle sicher, dass du ihn kopierst.",
+  "portal.native_num_ctx_col": "Native Ctx",
+  "portal.native_num_ctx_hint": "Ollama num_ctx für native model@server Aufrufe (0 = Modelfile-Standard). Erzwingt eine bestimmte Kontextfenstergröße.",
   "portal.display_name_hint": "Wie sollen wir dich nennen?",
   "portal.cc_profiles_desc": "Erstelle eigene Claude Code Profile basierend auf deinen freigeschalteten Inferenz-Servern. Jedes Profil ist sofort über deinen API-Key verfügbar.",
   "portal.btn_new_cc_profile": "Neues CC Profil",

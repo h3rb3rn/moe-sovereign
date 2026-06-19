@@ -624,6 +624,8 @@
   "portal.no_cc_profiles": "Aucun profil CC.",
   "portal.no_data_admin_hint": "Aucune donnée d'utilisation pour ce compte. Admins : consultez d'autres utilisateurs via 'Gestion des utilisateurs → Imiter'.",
   "portal.key_note": "Un token n'est affiché qu'une seule fois à la création. Assurez-vous de le copier.",
+  "portal.native_num_ctx_col": "Ctx natif",
+  "portal.native_num_ctx_hint": "Ollama num_ctx pour les appels natifs model@server (0 = défaut Modelfile). Force une taille de fenêtre de contexte spécifique.",
   "portal.display_name_hint": "Comment vous appeler ?",
   "portal.cc_profiles_desc": "Créez vos propres profils Claude Code basés sur vos serveurs d'inférence débloqués. Chaque profil est disponible immédiatement via votre clé API.",
   "portal.btn_new_cc_profile": "Nouveau profil CC",
