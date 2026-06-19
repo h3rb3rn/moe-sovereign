@@ -1204,23 +1204,59 @@ async def _stream_native_llm(
     is_user_conn: bool = False,
     num_ctx: int = 0,
 ):
-    """Direct proxy: forward request directly to inference endpoint, no MoE pipeline."""
-    url     = endpoint["url"].rstrip("/") + "/chat/completions"
-    token   = endpoint["token"]
-    created = int(time.time())
-    payload: dict = {
-        "model":          endpoint["model"],
-        "messages":       [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
-        "stream":         True,
-        "stream_options": {"include_usage": True},
-    }
-    if request.max_tokens:                    payload["max_tokens"]  = request.max_tokens
-    if request.temperature is not None:       payload["temperature"] = request.temperature
-    # Inject Ollama num_ctx when explicitly configured — forces context-window reallocation.
-    # Only sent for Ollama endpoints; OpenAI-compatible providers reject unknown fields.
+    """Direct proxy: forward request directly to inference endpoint, no MoE pipeline.
+
+    Supports api_type: "ollama" | "openai" (default) | "anthropic".
+    For "anthropic", converts OAI format → Anthropic Messages API and back.
+    """
     _ep_api_type = endpoint.get("api_type", "ollama")
-    if num_ctx > 0 and _ep_api_type == "ollama":
-        payload["options"] = {"num_ctx": num_ctx}
+    token        = endpoint["token"]
+    created      = int(time.time())
+
+    if _ep_api_type == "anthropic":
+        # ── Anthropic Messages API path ────────────────────────────────────────
+        # Separate system messages from conversation; Anthropic puts system at top level.
+        _sys_parts = [m for m in request.messages if m.role == "system"]
+        _conv      = [m for m in request.messages if m.role != "system"]
+        _ant_payload: dict = {
+            "model":      endpoint["model"],
+            "max_tokens": request.max_tokens or 4096,
+            "messages":   [
+                {"role": m.role, "content": m.content if m.content is not None else ""}
+                for m in _conv
+            ],
+            "stream": True,
+        }
+        if _sys_parts:
+            _ant_payload["system"] = "\n\n".join(
+                m.content for m in _sys_parts if m.content
+            )
+        if request.temperature is not None:
+            _ant_payload["temperature"] = request.temperature
+        url     = endpoint["url"].rstrip("/") + "/v1/messages"
+        headers = {
+            "x-api-key":         token,
+            "anthropic-version": "2023-06-01",
+            "Content-Type":      "application/json",
+        }
+        # Some Anthropic-compatible proxies (e.g. AIHUB) also accept Bearer
+        if token and not token.startswith("sk-ant-"):
+            headers["Authorization"] = f"Bearer {token}"
+        payload = _ant_payload
+    else:
+        # ── OpenAI / Ollama path (existing behaviour) ──────────────────────────
+        url     = endpoint["url"].rstrip("/") + "/chat/completions"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {
+            "model":          endpoint["model"],
+            "messages":       [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
+            "stream":         True,
+            "stream_options": {"include_usage": True},
+        }
+        if request.max_tokens:              payload["max_tokens"]  = request.max_tokens
+        if request.temperature is not None: payload["temperature"] = request.temperature
+        if num_ctx > 0 and _ep_api_type == "ollama":
+            payload["options"] = {"num_ctx": num_ctx}
 
     _t_start = time.monotonic()
     _t_first: Optional[float] = None
@@ -1237,33 +1273,67 @@ async def _stream_native_llm(
             async with httpx.AsyncClient(timeout=_http_timeout, follow_redirects=False) as client:
                 async with client.stream(
                     "POST", url,
-                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    headers=headers,
                     json=payload,
                 ) as resp:
-                    # Fail fast on non-2xx: don't consume a redirect or error page as SSE
+                    # Fail fast on non-2xx
                     if resp.status_code >= 300:
                         err_body = await resp.aread()
                         raise RuntimeError(
                             f"Upstream returned HTTP {resp.status_code}: {err_body[:200].decode(errors='replace')}"
                         )
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        raw = line[6:].strip()
-                        if raw == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(raw)
-                            if chunk.get("usage"):
-                                p_tok = chunk["usage"].get("prompt_tokens", p_tok)
-                                c_tok = chunk["usage"].get("completion_tokens", c_tok)
-                            chunk["id"] = chat_id
-                            delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-                            if delta.get("content") and _t_first is None:
-                                _t_first = time.monotonic()
-                            yield f"data: {json.dumps(chunk)}\n\n"
-                        except Exception:
-                            continue
+
+                    if _ep_api_type == "anthropic":
+                        # ── Anthropic SSE → OpenAI SSE conversion ─────────────
+                        _current_event = ""
+                        async for line in resp.aiter_lines():
+                            line = line.strip()
+                            if line.startswith("event: "):
+                                _current_event = line[7:]
+                                continue
+                            if not line.startswith("data: "):
+                                continue
+                            raw = line[6:]
+                            try:
+                                evt = json.loads(raw)
+                            except Exception:
+                                continue
+                            evt_type = evt.get("type", _current_event)
+                            if evt_type == "message_start":
+                                u = evt.get("message", {}).get("usage", {})
+                                p_tok = u.get("input_tokens", 0)
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
+                            elif evt_type == "content_block_delta":
+                                text = evt.get("delta", {}).get("text", "")
+                                if text:
+                                    if _t_first is None:
+                                        _t_first = time.monotonic()
+                                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': text}, 'finish_reason': None}]})}\n\n"
+                            elif evt_type == "message_delta":
+                                c_tok = evt.get("usage", {}).get("output_tokens", c_tok)
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}})}\n\n"
+                            elif evt_type == "message_stop":
+                                break
+                    else:
+                        # ── OpenAI SSE passthrough ─────────────────────────────
+                        async for line in resp.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            raw = line[6:].strip()
+                            if raw == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(raw)
+                                if chunk.get("usage"):
+                                    p_tok = chunk["usage"].get("prompt_tokens", p_tok)
+                                    c_tok = chunk["usage"].get("completion_tokens", c_tok)
+                                chunk["id"] = chat_id
+                                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                                if delta.get("content") and _t_first is None:
+                                    _t_first = time.monotonic()
+                                yield f"data: {json.dumps(chunk)}\n\n"
+                            except Exception:
+                                continue
         except Exception as _e:
             logger.warning(f"Native LLM proxy error: {_e}")
             yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': f'[Error: {_e}]'}, 'finish_reason': 'stop'}]})}\n\n"
