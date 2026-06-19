@@ -111,6 +111,7 @@
             <th class="sort-hd" data-col="username" style="cursor:pointer" onclick="sortBy('username')">User <span id="si-username"></span></th>
             <th class="sort-hd" data-col="model" style="cursor:pointer" onclick="sortBy('model')">Model <span id="si-model"></span></th>
             <th class="sort-hd" data-col="moe_mode" style="cursor:pointer" onclick="sortBy('moe_mode')">Mode <span id="si-moe_mode"></span></th>
+            <th>Template</th>
             <th class="sort-hd" data-col="complexity_level" style="cursor:pointer" onclick="sortBy('complexity_level')">Complexity <span id="si-complexity_level"></span></th>
             <th>Experts</th>
             <th class="sort-hd" data-col="total_tokens" style="cursor:pointer" onclick="sortBy('total_tokens')">Tokens <span id="si-total_tokens"></span></th>
@@ -121,7 +122,7 @@
           </tr>
         </thead>
         <tbody id="log-body">
-          <tr><td colspan="11" class="text-center text-muted py-4">
+          <tr><td colspan="12" class="text-center text-muted py-4">
             <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'loading') }}
           </td></tr>
         </tbody>
@@ -193,7 +194,7 @@ function buildUrl(fmt) {
 
 async function loadLog() {
   document.getElementById('log-body').innerHTML =
-    '<tr><td colspan="11" class="text-center text-muted py-4">' +
+    '<tr><td colspan="12" class="text-center text-muted py-4">' +
     '<div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
   try {
     const r = await fetch(buildUrl(''));
@@ -207,7 +208,7 @@ async function loadLog() {
     document.getElementById('csv-export-btn').href = buildUrl('csv');
   } catch (e) {
     document.getElementById('log-body').innerHTML =
-      `<tr><td colspan="11" class="text-danger text-center py-3">${e.message}</td></tr>`;
+      `<tr><td colspan="12" class="text-danger text-center py-3">${e.message}</td></tr>`;
   }
 }
 
@@ -240,6 +241,12 @@ function renderTable(rows) {
       <td class="small">${r.username || r.user_id?.substring(0,8) || '—'}</td>
       <td class="small text-truncate" style="max-width:120px" title="${r.model}">${r.model}</td>
       <td><span class="badge bg-secondary">${r.moe_mode}</span></td>
+      <td>${r.dynamic_tmpl_id
+        ? `<a href="/dynamic-templates#${r.dynamic_tmpl_id}" class="text-decoration-none small font-monospace"
+              title="${r.dynamic_tmpl_name || r.dynamic_tmpl_id}">
+             <i class="bi bi-diagram-3 me-1 text-warning"></i>${(r.dynamic_tmpl_name || r.dynamic_tmpl_id).substring(0,20)}
+           </a>`
+        : '<span class="text-muted">—</span>'}</td>
       <td>${cxHtml}</td>
       <td>${domains || '<span class="text-muted">—</span>'}</td>
       <td class="small text-nowrap">${(r.total_tokens||0).toLocaleString()}</td>
@@ -249,7 +256,7 @@ function renderTable(rows) {
       <td>${st}</td>
     </tr>`;
   }).join('');
-  document.getElementById('log-body').innerHTML = tbody || '<tr><td colspan="11" class="text-center text-muted py-4">No records</td></tr>';
+  document.getElementById('log-body').innerHTML = tbody || '<tr><td colspan="12" class="text-center text-muted py-4">No records</td></tr>';
 }
 
 function renderPagination(limit) {

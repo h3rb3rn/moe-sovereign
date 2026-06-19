@@ -31,6 +31,7 @@ async def _log_usage_to_db(
     expert_domains: str = "",
     cache_hit: bool = False,
     agentic_rounds: int = 0,
+    dynamic_tmpl_id: str = "",
 ) -> None:
     """Fire-and-forget Postgres usage log. Never raises exceptions."""
     try:
@@ -43,13 +44,13 @@ async def _log_usage_to_db(
                     "INSERT INTO usage_log "
                     "(id,user_id,api_key_id,request_id,session_id,model,moe_mode,prompt_tokens,"
                     "completion_tokens,total_tokens,status,requested_at,"
-                    "latency_ms,complexity_level,expert_domains,cache_hit,agentic_rounds) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
+                    "latency_ms,complexity_level,expert_domains,cache_hit,agentic_rounds,dynamic_tmpl_id) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
                     (uuid.uuid4().hex, user_id, api_key_id or None, request_id,
                      session_id or None, model, moe_mode, prompt_tokens, completion_tokens,
                      prompt_tokens + completion_tokens, status, now_iso,
                      latency_ms, complexity_level or None, expert_domains or None,
-                     cache_hit, agentic_rounds),
+                     cache_hit, agentic_rounds, dynamic_tmpl_id or None),
                 )
                 await cur.execute(
                     "UPDATE api_keys SET last_used_at=%s WHERE user_id=%s AND is_active=TRUE",
