@@ -342,6 +342,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS conversation_log_retention_days INTEG
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS dynamic_routing    BOOLEAN NOT NULL DEFAULT FALSE;
 -- Local-only compliance flag on API keys (restrict dynamic router to local endpoints)
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS local_only_routing BOOLEAN NOT NULL DEFAULT FALSE;
+-- Per-key Ollama num_ctx override for native model calls (0 = use model default)
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS native_num_ctx INTEGER NOT NULL DEFAULT 0;
 """
 
 
@@ -945,7 +947,7 @@ async def create_api_key(user_id: str, label: str = "") -> tuple[str, dict]:
     key_dict = {"id": kid, "user_id": user_id, "key_prefix": key_prefix,
                 "label": label, "is_active": True, "created_at": now,
                 "last_used_at": None, "expires_at": None, "cc_profile_id": None,
-                "dynamic_routing": False, "local_only_routing": False}
+                "dynamic_routing": False, "local_only_routing": False, "native_num_ctx": 0}
     return raw, key_dict
 
 
@@ -954,7 +956,7 @@ async def list_api_keys(user_id: str) -> list[dict]:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT id,user_id,key_prefix,label,is_active,created_at,last_used_at,expires_at,"
-                "cc_profile_id,dynamic_routing,local_only_routing "
+                "cc_profile_id,dynamic_routing,local_only_routing,native_num_ctx "
                 "FROM api_keys WHERE user_id=%s ORDER BY created_at DESC",
                 (user_id,),
             )
@@ -979,7 +981,7 @@ async def get_active_key_hashes(user_id: str) -> list[dict]:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, key_hash, cc_profile_id, dynamic_routing, local_only_routing "
+                "SELECT id, key_hash, cc_profile_id, dynamic_routing, local_only_routing, native_num_ctx "
                 "FROM api_keys WHERE user_id=%s AND is_active=TRUE",
                 (user_id,),
             )
@@ -1064,6 +1066,20 @@ async def set_api_key_local_only_routing(key_id: str, user_id: str, enabled: boo
             await cur.execute(
                 "UPDATE api_keys SET local_only_routing=%s WHERE id=%s AND user_id=%s",
                 (enabled, key_id, user_id),
+            )
+            ok = cur.rowcount > 0
+    if ok:
+        await sync_user_to_redis(user_id)
+    return ok
+
+
+async def set_api_key_native_num_ctx(key_id: str, user_id: str, num_ctx: int) -> bool:
+    """Sets the Ollama num_ctx override for native model calls on an API key (0 = model default)."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE api_keys SET native_num_ctx=%s WHERE id=%s AND user_id=%s",
+                (max(0, int(num_ctx)), key_id, user_id),
             )
             ok = cur.rowcount > 0
     if ok:
@@ -1733,6 +1749,7 @@ async def sync_user_to_redis(user_id: str) -> None:
                     "key_cc_profile_id":      rec.get("cc_profile_id") or "",
                     "dynamic_routing":        "1" if rec.get("dynamic_routing") else "0",
                     "local_only_routing":     "1" if rec.get("local_only_routing") else "0",
+                    "native_num_ctx":         str(rec.get("native_num_ctx") or 0),
                 })
                 await r.expire(redis_key, 86400)
             else:

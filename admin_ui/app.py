@@ -1947,6 +1947,7 @@ async def api_create_expert_template(request: Request):
         "experts":                 body.get("experts", {}),
         "enable_cache":            body.get("enable_cache", True),
         "enable_graphrag":         body.get("enable_graphrag", True),
+        "enable_habe":             body.get("enable_habe", False),
         "enable_web_research":     body.get("enable_web_research", True),
         "force_think":             body.get("force_think", False),
         "enable_mission_context":  body.get("enable_mission_context", False),
@@ -1977,6 +1978,7 @@ async def api_export_expert_templates(ids: str = ""):
             "experts":                 t.get("experts", {}),
             "enable_cache":            t.get("enable_cache", True),
             "enable_graphrag":         t.get("enable_graphrag", True),
+            "enable_habe":             t.get("enable_habe", False),
             "enable_web_research":     t.get("enable_web_research", True),
             "force_think":             t.get("force_think", False),
             "enable_mission_context":  t.get("enable_mission_context", False),
@@ -2049,6 +2051,7 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "experts":                 item.get("experts") or {},
             "enable_cache":            item.get("enable_cache", True),
             "enable_graphrag":         item.get("enable_graphrag", True),
+            "enable_habe":             item.get("enable_habe", False),
             "enable_web_research":     item.get("enable_web_research", True),
             "force_think":             item.get("force_think", False),
             "enable_mission_context":  item.get("enable_mission_context", False),
@@ -2081,6 +2084,7 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["experts"]                = body.get("experts",               t.get("experts", {}))
             t["enable_cache"]           = body.get("enable_cache",          t.get("enable_cache", True))
             t["enable_graphrag"]        = body.get("enable_graphrag",       t.get("enable_graphrag", True))
+            t["enable_habe"]            = body.get("enable_habe",           t.get("enable_habe", False))
             t["enable_web_research"]    = body.get("enable_web_research",   t.get("enable_web_research", True))
             t["force_think"]            = body.get("force_think",           t.get("force_think", False))
             t["enable_mission_context"] = body.get("enable_mission_context",t.get("enable_mission_context", False))
@@ -5325,6 +5329,24 @@ async def user_update_key_local_only_routing(
     body = await request.json()
     enabled = bool(body.get("enabled", False))
     ok = await db.set_api_key_local_only_routing(key_id, user_id, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"ok": True}
+
+
+@app.patch("/user/api/keys/{key_id}/native-num-ctx")
+async def user_update_key_native_num_ctx(
+    key_id:  str,
+    request: Request,
+    user_id: str = Depends(require_user_login),
+):
+    """Sets the Ollama num_ctx override for native model calls on an API key (0 = model default)."""
+    body = await request.json()
+    try:
+        num_ctx = max(0, int(body.get("num_ctx", 0)))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="num_ctx must be a non-negative integer")
+    ok = await db.set_api_key_native_num_ctx(key_id, user_id, num_ctx)
     if not ok:
         raise HTTPException(status_code=404, detail="Key not found")
     return {"ok": True}

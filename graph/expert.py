@@ -249,7 +249,8 @@ async def expert_worker(state_: AgentState):
             # override. Only models whose resolved window EXCEEDS JUDGE_NUM_CTX
             # (e.g. a 262144 GGUF native default) get pinned DOWN to JUDGE_NUM_CTX;
             # an unresolved window (0) falls back to JUDGE_NUM_CTX as a best guess.
-            if token == "ollama" and JUDGE_NUM_CTX > 0 and _pfn(model_name) >= 25.0:
+            # Skip JUDGE_NUM_CTX cap when template explicitly sets a larger context_window.
+            if token == "ollama" and JUDGE_NUM_CTX > 0 and _pfn(model_name) >= 25.0 and _expert_ctx_override <= 0:
                 from context_budget import get_model_context_window as _static_ctx
                 _safe_ctx = _static_ctx(model_name)
                 _pinned_ctx = (

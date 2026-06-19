@@ -394,6 +394,59 @@ async def graph_rag_node(state_: AgentState):
                     "confidence": float(_match.group(3)),
                 })
 
+        # VSA Background (HABE) Injection
+        if state_.get("enable_habe"):
+            try:
+                import os
+                import numpy as np
+                from services.vsa_background import HolographicBackgroundEngine
+                
+                # Resolve paths relative to tool_nodes.py directory
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                repo_root = os.path.dirname(script_dir)
+                models_dir = os.path.join(repo_root, "models")
+                vector_path = os.path.join(models_dir, "habe_vector.npy")  # numpy saves with .npy by default
+                vocab_path = os.path.join(models_dir, "habe_vocab.json")
+                
+                if os.path.exists(vector_path) and os.path.exists(vocab_path):
+                    engine = HolographicBackgroundEngine(dimension=2048)
+                    if engine.load_vocab(vocab_path):
+                        hav = np.load(vector_path)
+                        
+                        # Extract simple concepts from the query input (words >= 4 chars)
+                        import re
+                        query_words = re.findall(r"\b\w{4,}\b", state_["input"].lower())
+                        
+                        # Find matching subjects in the VSA vocabulary
+                        found_subjects = []
+                        for word in query_words:
+                            for vocab_key in engine.vocab.keys():
+                                if vocab_key.startswith("subj:") and word in vocab_key.lower():
+                                    found_subjects.append(vocab_key.split("subj:", 1)[1])
+                        
+                        # Unique subjects
+                        found_subjects = list(set(found_subjects))
+                        
+                        # Query relations for these subjects
+                        habe_facts = []
+                        predicates = list({
+                            k.split("pred:", 1)[1] for k in engine.vocab.keys() if k.startswith("pred:")
+                        })
+                        
+                        for s in found_subjects:
+                            for p in predicates:
+                                matches = engine.query_vsa_relation(hav, s, p)
+                                for obj, sim in matches:
+                                    habe_facts.append(f"- (VSA Unconscious Background): {s} --[{p}]--> {obj} (similarity: {sim:.2f})")
+                        
+                        if habe_facts:
+                            habe_section = "\n\nHOLOGRAPHIC AMBIENT BACKGROUND KNOWLEDGE (HABE):\n" + "\n".join(habe_facts)
+                            ctx = ctx + habe_section if ctx else habe_section
+                            logger.info(f"🧠 HABE: Injected {len(habe_facts)} background facts dynamically.")
+                            await _report(f"🧠 HABE: Injected {len(habe_facts)} background facts")
+            except Exception as _habe_exc:
+                logger.warning(f"HABE background retrieval failed: {_habe_exc}")
+
         return {"graph_context": ctx, "graphrag_entities": _entity_meta}
     except Exception as e:
         logger.warning(f"GraphRAG query_context error: {e}")

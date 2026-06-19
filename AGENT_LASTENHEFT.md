@@ -603,6 +603,27 @@ stable for a while.
 
 ---
 
+### TASK-8: Implement Holographic Ambient Background Engine (HABE) and GUI controls
+
+- **Status:** done (2026-06-16)
+- **Owner:** Antigravity (Google Antigravity CLI)
+- **Depends on:** none
+- **Context:** Dreyfus background simulation via VSA (Holographic Reduced Representations) to bundle Neo4j/Cache triples into an ambient background vector. Requires integration with Admin UI expert templates and the routing pipeline.
+- **Instructions:**
+  1. Create a VSA module `services/vsa_background.py` implementing binding (circular convolution via FFT), unbinding, bundling, and cleanup.
+  2. Implement GUI toggle (`enable_habe`) in `admin_ui/templates/expert_templates.html` (creation + edit modals) and JS payload serialization.
+  3. Update `admin_ui/app.py` endpoints to process, export, import, and update the template payload with `enable_habe`.
+  4. Modify `services/routing.py` to resolve and parse `enable_habe` from the database.
+  5. Sync the changes to the public repository branch `docs/eurohpc-lumig-grant`.
+- **Resolution notes:**
+  - **HABE Service:** Created `services/vsa_background.py` with HRR (circular convolution/FFT) and unit-tested it successfully.
+  - **UI Integration:** Modified `expert_templates.html` (Z. 267 & Z. 845) to add HABE toggles, and updated Javascript handlers to serialise the state.
+  - **Backend Integration:** Updated `admin_ui/app.py` and `services/routing.py` to support `enable_habe` in all template database operations.
+  - **Repository Sync:** Ran the sync script and pushed the updated codebase to the public GitHub repository branch `docs/eurohpc-lumig-grant`.
+  - **Resource Strategy:** Documented K80 cluster as a deterministic FP64 scientific node (CUDA 11 constraint) and LUMI-G as the training node for the SFT/DPO orchestrator models.
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on

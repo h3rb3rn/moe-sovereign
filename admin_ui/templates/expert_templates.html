@@ -265,6 +265,7 @@
           <div class="col-12"><small class="text-muted fw-bold">Pipeline Toggles</small></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_cache" checked><label class="form-check-label small" for="ct_enable_cache">Cache</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_graphrag" checked><label class="form-check-label small" for="ct_enable_graphrag">GraphRAG</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_habe"><label class="form-check-label small" for="ct_enable_habe">HABE (VSA)</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_web_research" checked><label class="form-check-label small" for="ct_enable_web_research">Web Research</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_force_think"><label class="form-check-label small" for="ct_force_think">{{ t(request, 'label.force_think') }}</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_mission_context"><label class="form-check-label small" for="ct_enable_mission_context">Mission Context</label></div></div>
@@ -713,6 +714,7 @@ async function createTemplate() {
         experts:          collectExperts('ct'),
         enable_cache:            document.getElementById('ct_enable_cache').checked,
         enable_graphrag:         document.getElementById('ct_enable_graphrag').checked,
+        enable_habe:             document.getElementById('ct_enable_habe').checked,
         enable_web_research:     document.getElementById('ct_enable_web_research').checked,
         force_think:             document.getElementById('ct_force_think').checked,
         enable_mission_context:  document.getElementById('ct_enable_mission_context').checked,
@@ -848,6 +850,12 @@ async function openEditModal(tmplId) {
       </div>
       <div class="col-3">
         <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_enable_habe" ${tmpl.enable_habe ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_enable_habe">HABE (VSA)</label>
+        </div>
+      </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" id="et_enable_web_research" ${tmpl.enable_web_research !== false ? 'checked' : ''}>
           <label class="form-check-label small" for="et_enable_web_research">Web Research</label>
         </div>
@@ -933,6 +941,7 @@ async function saveEditTemplate() {
         experts:          collectExperts('et'),
         enable_cache:            document.getElementById('et_enable_cache').checked,
         enable_graphrag:         document.getElementById('et_enable_graphrag').checked,
+        enable_habe:             document.getElementById('et_enable_habe').checked,
         enable_web_research:     document.getElementById('et_enable_web_research').checked,
         force_think:             document.getElementById('et_force_think').checked,
         enable_mission_context:  document.getElementById('et_enable_mission_context').checked,
