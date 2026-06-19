@@ -199,6 +199,83 @@ def init_router():
             logger.error(f"❌ Failed to connect to ChromaDB moe_template_cache: {e}")
 
 
+async def _run_sovereign_classifier(prompt: str) -> Optional[dict]:
+    """Run the Sovereign Router ONNX classifier on prompt.
+
+    Returns a dict with active_experts (EXPERT_CLASSES order), expert_probs,
+    complexity, enable_web_research, enable_graphrag — or None if the
+    classifier/embedding function is unavailable or inference fails.
+    """
+    global _onnx_session
+    if _onnx_session is None:
+        init_router()
+    if _onnx_session is None or _embedding_function is None:
+        return None
+
+    try:
+        # Embed user prompt using the local MiniLM function
+        embeds = _embedding_function([prompt])
+        embedding = np.array(embeds, dtype=np.float32)  # shape [1, 384]
+
+        outputs = _onnx_session.run(
+            ["experts", "complexity", "gates"],
+            {"input_embedding": embedding}
+        )
+
+        expert_logits = outputs[0][0]      # shape [14]
+        complexity_logits = outputs[1][0]  # shape [4]
+        gate_logits = outputs[2][0]        # shape [2]
+
+        expert_probs = 1.0 / (1.0 + np.exp(-expert_logits))
+        gate_probs = 1.0 / (1.0 + np.exp(-gate_logits))
+
+        active_expert_indices = np.where(expert_probs >= 0.5)[0]
+        active_experts = [EXPERT_CLASSES[idx] for idx in active_expert_indices]
+        if not active_experts:
+            active_experts = ["general"]
+
+        complexity_idx = np.argmax(complexity_logits)
+        complexity = COMPLEXITY_CLASSES[complexity_idx]
+
+        enable_web_research = bool(gate_probs[0] >= 0.5)
+        enable_graphrag = bool(gate_probs[1] >= 0.5)
+        if complexity in ("trivial", "memory_recall"):
+            enable_web_research = False
+            enable_graphrag = False
+
+        return {
+            "active_experts": active_experts,
+            "expert_probs": expert_probs,
+            "complexity": complexity,
+            "enable_web_research": enable_web_research,
+            "enable_graphrag": enable_graphrag,
+        }
+    except Exception as e:
+        logger.error(f"❌ Sovereign Router ONNX inference failed: {e}")
+        return None
+
+
+async def classify_active_experts(prompt: str) -> tuple[list[str], str]:
+    """Lightweight classification for the Claude Code expert council (no
+    ChromaDB template match, no model allocation).
+
+    Returns (active_experts sorted by probability descending, complexity).
+    Falls back to (["general"], "moderate") if the classifier is unavailable.
+    """
+    classification = await _run_sovereign_classifier(prompt)
+    if classification is None:
+        return ["general"], "moderate"
+
+    active_experts = classification["active_experts"]
+    expert_probs = classification["expert_probs"]
+    active_experts = sorted(
+        active_experts,
+        key=lambda exp: expert_probs[EXPERT_CLASSES.index(exp)],
+        reverse=True,
+    )
+    return active_experts, classification["complexity"]
+
+
 async def _get_cluster_state() -> list[dict]:
     """Gets lists of available models and warmed state, cached for 10s."""
     now = time.monotonic()
@@ -546,51 +623,14 @@ async def get_dynamic_template(
     # 2. Run Gating Classifier ONNX Inference
     if _embedding_function is None:
         return None
-        
-    try:
-        # Embed user prompt using the local MiniLM function
-        # Embeddings return a list of lists of floats
-        embeds = _embedding_function([prompt])
-        embedding = np.array(embeds, dtype=np.float32) # shape [1, 384]
-        
-        # Run inference session
-        outputs = _onnx_session.run(
-            ["experts", "complexity", "gates"],
-            {"input_embedding": embedding}
-        )
-        
-        # Extract logits
-        expert_logits = outputs[0][0]      # shape [14]
-        complexity_logits = outputs[1][0]  # shape [4]
-        gate_logits = outputs[2][0]        # shape [2]
-        
-        # Apply Sigmoid to experts and gates
-        expert_probs = 1.0 / (1.0 + np.exp(-expert_logits))
-        gate_probs = 1.0 / (1.0 + np.exp(-gate_logits))
-        
-        # Get active experts (prob >= 0.5)
-        active_expert_indices = np.where(expert_probs >= 0.5)[0]
-        active_experts = [EXPERT_CLASSES[idx] for idx in active_expert_indices]
-        
-        if not active_experts:
-            active_experts = ["general"]
-            
-        # Get complexity (Argmax)
-        complexity_idx = np.argmax(complexity_logits)
-        complexity = COMPLEXITY_CLASSES[complexity_idx]
-        
-        # Get active gates
-        enable_web_research = bool(gate_probs[0] >= 0.5)
-        enable_graphrag = bool(gate_probs[1] >= 0.5)
-        
-        # Override gates for trivial/memory-recall
-        if complexity in ("trivial", "memory_recall"):
-            enable_web_research = False
-            enable_graphrag = False
-            
-    except Exception as e:
-        logger.error(f"❌ Sovereign Router ONNX inference failed: {e}")
+
+    classification = await _run_sovereign_classifier(prompt)
+    if classification is None:
         return None
+    active_experts = classification["active_experts"]
+    complexity = classification["complexity"]
+    enable_web_research = classification["enable_web_research"]
+    enable_graphrag = classification["enable_graphrag"]
 
     # 3. Model Scoring and Allocation
     try:

@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid py-3">
+
+  <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+    <div>
+      <h4 class="mb-0">
+        <i class="bi bi-diagram-3 me-2 text-warning"></i>Dynamic Templates
+        <span class="badge bg-secondary ms-2" style="font-size:.7rem">moe-auto</span>
+      </h4>
+      <p class="text-muted small mb-0 mt-1">
+        Von moe-auto automatisch generierte Templates — read-only. Zeigt alle verwendeten Modelle, Experten und Datenquellen zur Auditierung.
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <span class="badge bg-secondary align-self-center">{{ templates|length }} Templates</span>
+      <button class="btn btn-outline-danger btn-sm" onclick="deleteAll()">
+        <i class="bi bi-trash me-1"></i>Alle löschen
+      </button>
+    </div>
+  </div>
+
+  {% if not templates %}
+  <div class="text-center text-muted py-5">
+    <i class="bi bi-diagram-3" style="font-size:2.5rem"></i>
+    <p class="mt-2">Noch keine Dynamic Templates vorhanden.</p>
+    <p class="small">Templates werden automatisch von moe-auto erzeugt wenn der dynamische Router aktiv ist.</p>
+  </div>
+  {% else %}
+
+  <!-- Filter / Suche -->
+  <div class="card mb-3 border-0 bg-body-tertiary">
+    <div class="card-body py-2 d-flex gap-2 flex-wrap align-items-center">
+      <input type="search" id="dt-search" class="form-control form-control-sm" style="max-width:280px"
+             placeholder="Prompt, Modell, Domain…" oninput="filterTable()">
+      <select id="dt-filter-cap" class="form-select form-select-sm" style="max-width:160px" onchange="filterTable()">
+        <option value="">Alle Capabilities</option>
+        <option value="graphrag">GraphRAG</option>
+        <option value="web">Web Research</option>
+        <option value="cache">Cache</option>
+      </select>
+      <span class="ms-auto text-muted small" id="dt-count">{{ templates|length }} / {{ templates|length }}</span>
+    </div>
+  </div>
+
+  <div class="accordion" id="dt-accordion">
+  {% for t in templates %}
+  {% set cfg = t.config %}
+  {% set experts = cfg.get('experts', {}) %}
+  {% set all_models = [] %}
+  {% for cat, exp in experts.items() %}
+    {% for m in exp.get('models', []) %}{% if all_models.append(m.get('model','?')) %}{% endif %}{% endfor %}
+  {% endfor %}
+  <div class="accordion-item dt-item border-0 border-bottom"
+       data-prompt="{{ (t.prompt or '') | lower }}"
+       data-models="{{ all_models | join(' ') | lower }}"
+       data-has-graphrag="{{ 'graphrag' if cfg.get('enable_graphrag') else '' }}"
+       data-has-web="{{ 'web' if cfg.get('enable_web_research') else '' }}"
+       data-has-cache="{{ 'cache' if cfg.get('enable_cache') else '' }}">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed py-2" type="button"
+              data-bs-toggle="collapse" data-bs-target="#dt-{{ t.id }}">
+        <div class="d-flex w-100 align-items-center gap-3 flex-wrap">
+          <code class="text-warning" style="font-size:.75rem">{{ t.id }}</code>
+          <span class="text-muted small text-truncate" style="max-width:400px">
+            {{ (t.prompt or t.name or '') }}
+          </span>
+          <div class="ms-auto d-flex gap-1 flex-wrap">
+            {% for cat in experts.keys() %}
+            <span class="badge bg-primary" style="font-size:.65rem">{{ cat }}</span>
+            {% endfor %}
+            {% if cfg.get('enable_graphrag') %}<span class="badge bg-success" style="font-size:.65rem">graphrag</span>{% endif %}
+            {% if cfg.get('enable_web_research') %}<span class="badge bg-info text-dark" style="font-size:.65rem">web</span>{% endif %}
+            {% if cfg.get('enable_cache') %}<span class="badge bg-secondary" style="font-size:.65rem">cache</span>{% endif %}
+            {% if t.user_rating %}<span class="badge bg-warning text-dark" style="font-size:.65rem">★ {{ t.user_rating }}</span>{% endif %}
+          </div>
+          <span class="text-muted" style="font-size:.72rem;white-space:nowrap">{{ t.created_at[:10] if t.created_at else '—' }}</span>
+        </div>
+      </button>
+    </h2>
+
+    <div id="dt-{{ t.id }}" class="accordion-collapse collapse">
+      <div class="accordion-body pt-2 pb-3">
+        <div class="row g-3">
+
+          <!-- Prompt / Metadata -->
+          <div class="col-12 col-lg-6">
+            <div class="card h-100 border-0 bg-body-secondary">
+              <div class="card-body py-2">
+                <h6 class="card-title text-muted mb-2" style="font-size:.8rem">
+                  <i class="bi bi-chat-left-text me-1"></i>Auslösender Prompt
+                </h6>
+                <p class="font-monospace small mb-2" style="white-space:pre-wrap">{{ t.prompt or t.description or '—' }}</p>
+                <hr class="my-2">
+                <div class="row g-1 small text-muted mb-2">
+                  <div class="col-6"><strong>Planner:</strong> <code style="font-size:.72rem">{{ cfg.get('planner_model','—') }}</code></div>
+                  <div class="col-6"><strong>Judge:</strong> <code style="font-size:.72rem">{{ cfg.get('judge_model','—') }}</code></div>
+                  {% if t.latency_ms %}<div class="col-6"><strong>Latenz:</strong> {{ t.latency_ms }} ms</div>{% endif %}
+                  {% if t.tokens_used %}<div class="col-6"><strong>Tokens:</strong> {{ t.tokens_used }}</div>{% endif %}
+                  {% if t.user_rating %}<div class="col-6"><strong>Rating:</strong> {{ '★' * t.user_rating }}</div>{% endif %}
+                  <div class="col-6"><strong>Status:</strong> {{ t.status or '—' }}</div>
+                </div>
+
+                <!-- Planner Systemprompt -->
+                {% if cfg.get('planner_prompt') %}
+                <div class="mb-1">
+                  <a class="small text-muted text-decoration-none" data-bs-toggle="collapse"
+                     href="#pp-{{ t.id }}"><i class="bi bi-chevron-right me-1"></i>Planner Systemprompt</a>
+                  <div class="collapse" id="pp-{{ t.id }}">
+                    <pre class="mt-1 p-2 rounded bg-dark text-light" style="font-size:.72rem;white-space:pre-wrap;max-height:160px;overflow-y:auto">{{ cfg.planner_prompt }}</pre>
+                  </div>
+                </div>
+                {% endif %}
+
+                <!-- Judge Systemprompt -->
+                {% if cfg.get('judge_prompt') %}
+                <div>
+                  <a class="small text-muted text-decoration-none" data-bs-toggle="collapse"
+                     href="#jp-{{ t.id }}"><i class="bi bi-chevron-right me-1"></i>Judge Systemprompt</a>
+                  <div class="collapse" id="jp-{{ t.id }}">
+                    <pre class="mt-1 p-2 rounded bg-dark text-light" style="font-size:.72rem;white-space:pre-wrap;max-height:160px;overflow-y:auto">{{ cfg.judge_prompt }}</pre>
+                  </div>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <!-- Experts / Datenquellen -->
+          <div class="col-12 col-lg-6">
+            <div class="card h-100 border-0 bg-body-secondary">
+              <div class="card-body py-2">
+                <h6 class="card-title text-muted mb-2" style="font-size:.8rem">
+                  <i class="bi bi-cpu me-1"></i>Experten & Datenquellen
+                </h6>
+                {% if experts %}
+                <table class="table table-sm mb-2" style="font-size:.78rem">
+                  <thead class="table-dark">
+                    <tr><th>Domäne</th><th>Modelle (Rolle)</th></tr>
+                  </thead>
+                  <tbody>
+                  {% for cat, exp in experts.items() %}
+                  <tr>
+                    <td class="text-warning fw-semibold align-top">{{ cat }}</td>
+                    <td>
+                      {% for m in exp.get('models', []) %}
+                      <span class="badge {% if m.get('role')=='primary' %}bg-primary{% elif m.get('role')=='always' %}bg-danger{% else %}bg-secondary{% endif %} me-1 font-monospace" style="font-size:.65rem">
+                        {{ m.get('model','?') }}
+                        {% if m.get('endpoint') %}<span class="opacity-75">@{{ m.get('endpoint') }}</span>{% endif %}
+                        <span class="opacity-50">({{ m.get('role','?') }})</span>
+                      </span>
+                      {% endfor %}
+                      {% if exp.get('system_prompt') %}
+                      <div class="mt-1">
+                        <a class="small text-muted text-decoration-none" data-bs-toggle="collapse"
+                           href="#sp-{{ t.id }}-{{ cat | replace(' ','_') }}">
+                          <i class="bi bi-chevron-right" style="font-size:.65rem"></i> Systemprompt
+                        </a>
+                        <div class="collapse" id="sp-{{ t.id }}-{{ cat | replace(' ','_') }}">
+                          <pre class="mt-1 p-2 rounded bg-dark text-light" style="font-size:.7rem;white-space:pre-wrap;max-height:120px;overflow-y:auto">{{ exp.system_prompt }}</pre>
+                        </div>
+                      </div>
+                      {% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted small">Keine Experten konfiguriert.</p>
+                {% endif %}
+
+                <!-- Capabilities -->
+                <div class="d-flex gap-2 flex-wrap mt-1">
+                  <span class="badge {% if cfg.get('enable_graphrag') %}bg-success{% else %}bg-dark opacity-50{% endif %}">
+                    <i class="bi bi-diagram-3 me-1"></i>GraphRAG {{ 'an' if cfg.get('enable_graphrag') else 'aus' }}
+                  </span>
+                  <span class="badge {% if cfg.get('enable_web_research') %}bg-info text-dark{% else %}bg-dark opacity-50{% endif %}">
+                    <i class="bi bi-globe2 me-1"></i>Web {{ 'an' if cfg.get('enable_web_research') else 'aus' }}
+                  </span>
+                  <span class="badge {% if cfg.get('enable_cache') %}bg-secondary{% else %}bg-dark opacity-50{% endif %}">
+                    <i class="bi bi-lightning me-1"></i>Cache {{ 'an' if cfg.get('enable_cache') else 'aus' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- row -->
+
+        <div class="text-end mt-2">
+          <button class="btn btn-outline-danger btn-sm" onclick="deleteTemplate('{{ t.id }}')">
+            <i class="bi bi-trash me-1"></i>Löschen
+          </button>
+        </div>
+      </div>
+    </div>
+  </div><!-- accordion-item -->
+  {% endfor %}
+  </div><!-- accordion -->
+  {% endif %}
+</div>
+
+<script>
+function filterTable() {
+  const q   = document.getElementById('dt-search').value.toLowerCase();
+  const cap = document.getElementById('dt-filter-cap').value;
+  let shown = 0;
+  document.querySelectorAll('.dt-item').forEach(el => {
+    const prompt = el.dataset.prompt || '';
+    const models = el.dataset.models || '';
+    const matchQ   = !q   || prompt.includes(q) || models.includes(q);
+    const matchCap = !cap || el.dataset['has' + cap.charAt(0).toUpperCase() + cap.slice(1)] === cap;
+    const show = matchQ && matchCap;
+    el.style.display = show ? '' : 'none';
+    if (show) shown++;
+  });
+  const total = document.querySelectorAll('.dt-item').length;
+  document.getElementById('dt-count').textContent = `${shown} / ${total}`;
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Dynamic Template löschen?')) return;
+  const res = await fetch(`/api/dynamic-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (res.ok) window.location.reload();
+}
+
+async function deleteAll() {
+  if (!confirm('Alle ' + document.querySelectorAll('.dt-item').length + ' Dynamic Templates löschen?')) return;
+  const res = await fetch('/api/dynamic-templates', { method: 'DELETE' });
+  if (res.ok) window.location.reload();
+}
+</script>
+{% endblock %}

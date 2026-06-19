@@ -282,14 +282,17 @@ function profileById(id) { return PROFILES.find(p => p.id === id); }
 
 // ─── LLM dropdown ────────────────────────────────────────────────────────────
 let _availableLlms = null;
+let _availableLlmsRich = null;
 
 async function fetchAvailableLlms() {
   if (_availableLlms) return _availableLlms;
   try {
-    const r = await fetch('/api/available-llms');
-    _availableLlms = await r.json();
+    const r = await fetch('/api/available-llms-rich');
+    _availableLlmsRich = await r.json();
+    _availableLlms     = _availableLlmsRich.map(m => m.id || m);
   } catch(e) {
     _availableLlms = [];
+    _availableLlmsRich = [];
   }
   return _availableLlms;
 }
@@ -297,9 +300,13 @@ async function fetchAvailableLlms() {
 function buildLlmDropdown(containerId, availableLlms, selectedVal) {
   const container = document.getElementById(containerId);
   if (!container) return;
+  const richMap = Object.fromEntries((_availableLlmsRich||[]).map(m => [m.id||m, m]));
   const opts = availableLlms.map(v => {
-    const sel = v === selectedVal ? 'selected' : '';
-    return `<option value="${v}" ${sel}>${v}</option>`;
+    const id  = typeof v === 'string' ? v : v.id;
+    const sel = id === selectedVal ? 'selected' : '';
+    const m   = richMap[id] || {};
+    const tagSuffix = (m.tags && m.tags.length) ? ` [${m.tags.join(', ')}]` : '';
+    return `<option value="${id}" ${sel}>${id}${tagSuffix}</option>`;
   }).join('');
   container.innerHTML = `<select class="form-select font-monospace" style="font-size:.85rem" id="pm-llm-select-inner">
     <option value="">— Select model —</option>${opts}

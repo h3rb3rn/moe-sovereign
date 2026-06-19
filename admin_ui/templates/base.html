@@ -96,7 +96,7 @@
     {% set _p = request.url.path %}
     {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log'] %}
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
-    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
+    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
     {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance', '/workshop', '/timeseries', '/notes', '/geo', '/dossier'] %}
 
@@ -152,6 +152,9 @@
           <li><a class="dropdown-item {% if _p == '/knowledge' %}active{% endif %}" href="/knowledge">
             <i class="bi bi-database-gear me-2 text-success"></i>Knowledge
           </a></li>
+          <li><a class="dropdown-item {% if _p == '/model-metadata' %}active{% endif %}" href="/model-metadata">
+            <i class="bi bi-cpu me-2 text-info"></i>{{ t(request, 'nav.model_metadata') }}
+          </a></li>
           <li><a class="dropdown-item {% if _p == '/federation' %}active{% endif %}" href="/federation">
             <i class="bi bi-globe2 me-2 text-success"></i>Federation
           </a></li>
@@ -185,6 +188,9 @@
             <i class="bi bi-clipboard-data me-2 text-warning"></i>{{ t(request, 'nav.tool_eval') }}
           </a></li>
           <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/dynamic-templates' %}active{% endif %}" href="/dynamic-templates">
+            <i class="bi bi-diagram-3 me-2 text-warning"></i>Dynamic Templates
+          </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/templates') %}active{% endif %}" href="/templates">
             <i class="bi bi-collection me-2 text-warning"></i>{{ t(request, 'nav.templates') }}
           </a></li>

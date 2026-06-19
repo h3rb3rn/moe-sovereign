@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid py-3">
+
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+    <div>
+      <h4 class="mb-0"><i class="bi bi-database-gear me-2 text-info"></i>{{ t(request, 'model_meta.title') }}</h4>
+      <p class="text-muted small mb-0 mt-1">{{ t(request, 'model_meta.subtitle') }}</p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-info btn-sm" onclick="syncConnTags(this)"
+              title="Manuell gesetzte Tags aus Verbindungs-Caches in model_metadata übernehmen">
+        <i class="bi bi-plug me-1"></i>Tags aus Verbindungen sync
+      </button>
+      <button class="btn btn-outline-secondary btn-sm" onclick="triggerIndexer(this)"
+              title="{{ t(request, 'model_meta.refresh_hint') }}">
+        <i class="bi bi-arrow-repeat me-1"></i>{{ t(request, 'model_meta.btn_refresh') }}
+      </button>
+      <button class="btn btn-primary btn-sm" onclick="openModal(null)">
+        <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'model_meta.btn_new') }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Search + Tag filter -->
+  <div class="card mb-3 border-0 bg-body-tertiary">
+    <div class="card-body py-2 d-flex flex-wrap gap-2 align-items-center">
+      <input type="search" id="mm-search" class="form-control form-control-sm" style="max-width:280px"
+             placeholder="Model ID, Family…" oninput="renderTable()">
+      <div class="d-flex gap-1 flex-wrap ms-1" id="tag-filter-btns">
+        <button class="btn btn-sm btn-outline-secondary active" data-tag="" onclick="setTagFilter(this, '')">
+          {{ t(request, 'model_meta.filter_all') }}
+        </button>
+        <button class="btn btn-sm btn-success" data-tag="free" onclick="setTagFilter(this, 'free')">free</button>
+        <button class="btn btn-sm btn-info text-dark" data-tag="vision" onclick="setTagFilter(this, 'vision')">vision</button>
+        <button class="btn btn-sm btn-warning text-dark" data-tag="agentic" onclick="setTagFilter(this, 'agentic')">agentic</button>
+        <button class="btn btn-sm btn-primary" data-tag="reasoning" onclick="setTagFilter(this, 'reasoning')">reasoning</button>
+        <button class="btn btn-sm btn-secondary" data-tag="code" onclick="setTagFilter(this, 'code')">code</button>
+      </div>
+      <span class="ms-auto text-muted small" id="mm-count"></span>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle" style="font-size:.83rem">
+      <thead class="table-dark sticky-top">
+        <tr>
+          <th>{{ t(request, 'model_meta.col_model') }}</th>
+          <th>{{ t(request, 'model_meta.col_family') }}</th>
+          <th class="text-end">{{ t(request, 'model_meta.col_size') }}</th>
+          <th class="text-end">{{ t(request, 'model_meta.col_ctx') }}</th>
+          <th>{{ t(request, 'model_meta.col_strengths') }}</th>
+          <th>{{ t(request, 'model_meta.col_tags') }}</th>
+          <th>{{ t(request, 'model_meta.col_updated') }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="mm-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Edit / New Modal -->
+<div class="modal fade" id="mmModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="mmModalTitle"><i class="bi bi-database-gear me-2"></i></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="mm-orig-id">
+        <div class="row g-3">
+          <div class="col-12 col-md-8">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_model_id') }}</label>
+            <input type="text" id="mm-model-id" class="form-control font-monospace" placeholder="publisher/model-name">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_family') }}</label>
+            <input type="text" id="mm-family" class="form-control" placeholder="llama, qwen, mistral…">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_base_model') }}</label>
+            <input type="text" id="mm-base-model" class="form-control font-monospace">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_size') }}</label>
+            <input type="number" id="mm-size" class="form-control" step="0.1" min="0" placeholder="7.0">
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_ctx') }}</label>
+            <input type="number" id="mm-ctx" class="form-control" step="1024" min="0" placeholder="4096">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_strengths') }}</label>
+            <input type="text" id="mm-strengths" class="form-control" placeholder="code, reasoning, math">
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_tags') }}</label>
+            <div class="d-flex flex-wrap gap-2 mb-1" id="mm-tag-pills">
+              {% for tag, color in [('free','bg-success'),('vision','bg-info text-dark'),('agentic','bg-warning text-dark'),('reasoning','bg-primary'),('code','bg-secondary')] %}
+              <span class="badge rounded-pill {{ color }}" style="cursor:pointer;user-select:none;opacity:.4"
+                    data-tag="{{ tag }}" data-active="false" onclick="toggleModalTag(this)">{{ tag }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">{{ t(request, 'model_meta.lbl_benchmarks') }}</label>
+            <textarea id="mm-benchmarks" class="form-control font-monospace" rows="3"
+                      placeholder='{"mmlu": 75.0, "gsm8k": 82.0, "human_eval": 68.0}'></textarea>
+          </div>
+        </div>
+        <div id="mm-error" class="alert alert-danger mt-3 d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+        <button class="btn btn-primary" onclick="saveEntry()">{{ t(request, 'btn.save') }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const _rows = {{ rows | tojson }};
+let _activeTag = '';
+let _modal = null;
+
+const _TAG_COLORS = {
+  free: 'bg-success', vision: 'bg-info text-dark',
+  agentic: 'bg-warning text-dark', reasoning: 'bg-primary', code: 'bg-secondary',
+};
+
+function _esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _fmtCtx(n) { if (!n) return '—'; return n >= 1024 ? `${(n/1024).toFixed(0)}k` : n; }
+function _fmtDate(s) { if (!s) return '—'; return s.slice(0,10); }
+
+function _tagBadge(tag) {
+  const c = _TAG_COLORS[tag] || 'bg-dark';
+  return `<span class="badge rounded-pill ${c} me-1">${_esc(tag)}</span>`;
+}
+
+function renderTable() {
+  const q   = document.getElementById('mm-search').value.toLowerCase();
+  const rows = _rows.filter(r => {
+    if (_activeTag && !(r.tags || []).includes(_activeTag)) return false;
+    if (q && !r.model_id.toLowerCase().includes(q) && !(r.family||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  document.getElementById('mm-count').textContent = `${rows.length} / ${_rows.length}`;
+  const tbody = document.getElementById('mm-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Keine Einträge</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const tags      = (r.tags || []).map(_tagBadge).join('');
+    const strengths = (r.strengths || []).map(s => `<span class="badge bg-dark-subtle text-dark me-1">${_esc(s)}</span>`).join('');
+    const size      = r.parameter_size_b ? `${r.parameter_size_b}B` : '—';
+    return `<tr>
+      <td class="font-monospace text-break" style="max-width:300px">${_esc(r.model_id)}</td>
+      <td>${_esc(r.family||'—')}</td>
+      <td class="text-end text-muted">${size}</td>
+      <td class="text-end text-muted">${_fmtCtx(r.context_window)}</td>
+      <td>${strengths||'—'}</td>
+      <td>${tags||'—'}</td>
+      <td class="text-muted">${_fmtDate(r.updated_at)}</td>
+      <td class="text-end">
+        <button class="btn btn-outline-secondary btn-sm me-1" onclick='openModal(${JSON.stringify(r)})'>
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-outline-danger btn-sm" onclick="deleteEntry(${JSON.stringify(r.model_id)})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function setTagFilter(btn, tag) {
+  _activeTag = tag;
+  document.querySelectorAll('#tag-filter-btns button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTable();
+}
+
+function _getModal() {
+  if (!_modal) _modal = new bootstrap.Modal(document.getElementById('mmModal'));
+  return _modal;
+}
+
+function openModal(row) {
+  document.getElementById('mmModalTitle').textContent =
+    row ? '{{ t(request, "model_meta.modal_title_edit") }}' : '{{ t(request, "model_meta.modal_title_new") }}';
+  document.getElementById('mm-orig-id').value      = row?.model_id || '';
+  document.getElementById('mm-model-id').value     = row?.model_id || '';
+  document.getElementById('mm-model-id').readOnly  = !!row;
+  document.getElementById('mm-base-model').value   = row?.base_model || '';
+  document.getElementById('mm-family').value       = row?.family || '';
+  document.getElementById('mm-size').value         = row?.parameter_size_b ?? '';
+  document.getElementById('mm-ctx').value          = row?.context_window ?? '';
+  document.getElementById('mm-strengths').value    = (row?.strengths || []).join(', ');
+  document.getElementById('mm-benchmarks').value   = row?.benchmark_scores
+    ? JSON.stringify(row.benchmark_scores, null, 2) : '';
+  document.getElementById('mm-error').classList.add('d-none');
+
+  const activeTags = new Set(row?.tags || []);
+  document.querySelectorAll('#mm-tag-pills .badge').forEach(el => {
+    const active = activeTags.has(el.dataset.tag);
+    el.dataset.active = active;
+    el.style.opacity  = active ? '1' : '.4';
+  });
+  _getModal().show();
+}
+
+function toggleModalTag(el) {
+  const active = el.dataset.active === 'true';
+  el.dataset.active = !active;
+  el.style.opacity  = active ? '.4' : '1';
+}
+
+async function saveEntry() {
+  const modelId = document.getElementById('mm-model-id').value.trim();
+  if (!modelId) { showErr('Model ID required'); return; }
+  const tags = Array.from(document.querySelectorAll('#mm-tag-pills .badge[data-active="true"]'))
+                     .map(el => el.dataset.tag);
+  let benchmarks = {};
+  const braw = document.getElementById('mm-benchmarks').value.trim();
+  if (braw) {
+    try { benchmarks = JSON.parse(braw); }
+    catch { showErr('Benchmark-Scores: ungültiges JSON'); return; }
+  }
+  const body = {
+    base_model:       document.getElementById('mm-base-model').value.trim() || modelId,
+    parameter_size_b: parseFloat(document.getElementById('mm-size').value) || 0,
+    context_window:   parseInt(document.getElementById('mm-ctx').value) || 4096,
+    family:           document.getElementById('mm-family').value.trim() || 'other',
+    strengths:        document.getElementById('mm-strengths').value.split(',').map(s => s.trim()).filter(Boolean),
+    tags,
+    benchmark_scores: benchmarks,
+  };
+  const res = await fetch(`/api/model-metadata/${encodeURIComponent(modelId)}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  });
+  if (res.ok) {
+    // Update local cache and re-render without full reload
+    const idx = _rows.findIndex(r => r.model_id === modelId);
+    const merged = { model_id: modelId, updated_at: new Date().toISOString(), ...body };
+    if (idx >= 0) _rows[idx] = merged; else _rows.push(merged);
+    _rows.sort((a,b) => a.model_id.localeCompare(b.model_id));
+    _getModal().hide();
+    renderTable();
+  } else {
+    const err = await res.json().catch(() => ({}));
+    showErr(err.detail || 'Fehler beim Speichern');
+  }
+}
+
+async function deleteEntry(modelId) {
+  if (!confirm('{{ t(request, "model_meta.confirm_delete") }}')) return;
+  const res = await fetch(`/api/model-metadata/${encodeURIComponent(modelId)}`, { method: 'DELETE' });
+  if (res.ok) {
+    const idx = _rows.findIndex(r => r.model_id === modelId);
+    if (idx >= 0) _rows.splice(idx, 1);
+    renderTable();
+  }
+}
+
+async function syncConnTags(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Syncing…';
+  const res  = await fetch('/api/admin/sync-connection-tags', { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  const msg  = data.message || (res.ok ? 'Sync abgeschlossen' : 'Fehler');
+  btn.innerHTML = `<i class="bi bi-check-circle me-1"></i>${msg}`;
+  if (res.ok && (data.updated || data.created)) {
+    setTimeout(() => window.location.reload(), 1500);
+  } else {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-plug me-1"></i>Tags aus Verbindungen sync';
+    }, 4000);
+  }
+}
+
+async function triggerIndexer(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Gestartet…';
+  const res  = await fetch('/api/admin/refresh-model-metadata', { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Läuft';
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>{{ t(request, "model_meta.btn_refresh") }}';
+  }, 5000);
+}
+
+function showErr(msg) {
+  const el = document.getElementById('mm-error');
+  el.textContent = msg;
+  el.classList.remove('d-none');
+}
+
+// Initial render
+renderTable();
+</script>
+{% endblock %}

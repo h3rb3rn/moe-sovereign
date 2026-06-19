@@ -1529,7 +1529,12 @@ async def setup_wizard_save(request: Request, _=Depends(require_login)):
                 logger.warning("post-save cleanup failed: %s", e)
             try:
                 redis_cli = await _get_provision_redis()
-                await _provision_added_servers(server_diff["added"], redis_cli)
+                for srv in server_diff["added"]:
+                    if srv.get("ontology_enabled"):
+                        await _curator_provisioner.provision_curator_for_server(
+                            srv, redis_cli=redis_cli,
+                            refresh_cache_cb=refresh_expert_templates_cache,
+                        )
             except Exception as e:
                 logger.warning("post-save provision failed: %s", e)
         asyncio.create_task(_post_save_hooks())
@@ -1575,7 +1580,6 @@ async def save_config(request: Request, _=Depends(require_login)):
     old_names      = {s.get("name") for s in old_servers if s.get("name")}
     new_names      = {s.get("name") for s in servers    if s.get("name")}
     removed_names  = sorted(old_names - new_names)
-    added          = [s for s in servers if s.get("name") not in old_names]
 
     updates = {
         "INFERENCE_SERVERS":         servers_json,
@@ -1670,41 +1674,17 @@ async def save_config(request: Request, _=Depends(require_login)):
 
     write_env(updates)
 
-    if removed_names or added:
-        async def _post_save_hooks():
-            if removed_names:
+    if removed_names:
+        async def _permission_cleanup():
+            await _maintenance.cleanup_orphans(servers, dry_run=False)
+            for name in removed_names:
                 try:
-                    await _maintenance.cleanup_orphans(servers, dry_run=False)
-                    for name in removed_names:
-                        try:
-                            n = await db.revoke_all_model_endpoints_by_node(name)
-                            if n:
-                                logger.info("Revoked %d permission(s) for removed/renamed server %s", n, name)
-                        except Exception as e:
-                            logger.warning("Permission cleanup failed for %s: %s", name, e)
+                    n = await db.revoke_all_model_endpoints_by_node(name)
+                    if n:
+                        logger.info("Revoked %d permission(s) for removed/renamed server %s", n, name)
                 except Exception as e:
-                    logger.warning("post-save cleanup failed: %s", e)
-            if added:
-                try:
-                    stale_before = await db.scan_stale_model_endpoint_permissions(sorted(old_names))
-                    redis_cli = await _get_provision_redis()
-                    await _provision_added_servers(added, redis_cli)
-                    stale_after = await db.scan_stale_model_endpoint_permissions(sorted(new_names))
-                    reactivated = sorted(
-                        set(stale_before["stale_resource_ids"]) - set(stale_after["stale_resource_ids"])
-                    )
-                    normalize = lambda s: s.lower().replace("-", "").replace("_", "")
-                    for srv in added:
-                        name = srv.get("name", "")
-                        hits = [r for r in reactivated if normalize(r.rsplit("@", 1)[-1]) == normalize(name)]
-                        if hits:
-                            logger.info(
-                                "Server '%s' added — %d previously-orphaned model_endpoint permission(s) are valid again: %s",
-                                name, len(hits), hits,
-                            )
-                except Exception as e:
-                    logger.warning("post-save provision failed: %s", e)
-        asyncio.create_task(_post_save_hooks())
+                    logger.warning("Permission cleanup failed for %s: %s", name, e)
+        asyncio.create_task(_permission_cleanup())
 
     # Push updated public URLs to Authentik's OAuth2 provider (fails open).
     asyncio.create_task(_sync_authentik_redirect_uris(read_env()))
@@ -1981,6 +1961,45 @@ async def api_activate_profile_tombstone(profile_id: str):
     )
 
 
+# ─── Dynamic Templates (moe-auto generated) ──────────────────────────────────
+
+@app.get("/dynamic-templates", response_class=HTMLResponse)
+async def dynamic_templates_page(request: Request, _=Depends(require_login)):
+    """Read-only audit view for moe-auto generated dynamic templates."""
+    templates = await db.list_dynamic_templates()
+    return TEMPLATES.TemplateResponse(request, "dynamic_templates.html", {
+        "templates":  templates,
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/dynamic-templates", dependencies=[Depends(require_login)])
+async def api_list_dynamic_templates():
+    return await db.list_dynamic_templates()
+
+
+@app.delete("/api/dynamic-templates/{tmpl_id}", dependencies=[Depends(require_login)])
+async def api_delete_dynamic_template(tmpl_id: str):
+    """Delete a single moe-auto dynamic template and its feedback log entry."""
+    deleted = await db.delete_dynamic_template(tmpl_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Dynamic template not found")
+    await refresh_expert_templates_cache()
+    return {"ok": True}
+
+
+@app.delete("/api/dynamic-templates", dependencies=[Depends(require_login)])
+async def api_delete_all_dynamic_templates():
+    """Delete ALL moe-auto dynamic templates (bulk cleanup)."""
+    templates = await db.list_dynamic_templates()
+    count = 0
+    for t in templates:
+        if await db.delete_dynamic_template(t["id"]):
+            count += 1
+    await refresh_expert_templates_cache()
+    return {"ok": True, "deleted": count}
+
+
 # ─── Expert Template Routes ───────────────────────────────────────────────────
 
 @app.get("/templates", response_class=HTMLResponse)
@@ -2036,6 +2055,7 @@ async def api_create_expert_template(request: Request):
         "experts":                 body.get("experts", {}),
         "enable_cache":            body.get("enable_cache", True),
         "enable_graphrag":         body.get("enable_graphrag", True),
+        "enable_habe":             body.get("enable_habe", False),
         "enable_web_research":     body.get("enable_web_research", True),
         "force_think":             body.get("force_think", False),
         "enable_mission_context":  body.get("enable_mission_context", False),
@@ -2066,6 +2086,7 @@ async def api_export_expert_templates(ids: str = ""):
             "experts":                 t.get("experts", {}),
             "enable_cache":            t.get("enable_cache", True),
             "enable_graphrag":         t.get("enable_graphrag", True),
+            "enable_habe":             t.get("enable_habe", False),
             "enable_web_research":     t.get("enable_web_research", True),
             "force_think":             t.get("force_think", False),
             "enable_mission_context":  t.get("enable_mission_context", False),
@@ -2138,6 +2159,7 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "experts":                 item.get("experts") or {},
             "enable_cache":            item.get("enable_cache", True),
             "enable_graphrag":         item.get("enable_graphrag", True),
+            "enable_habe":             item.get("enable_habe", False),
             "enable_web_research":     item.get("enable_web_research", True),
             "force_think":             item.get("force_think", False),
             "enable_mission_context":  item.get("enable_mission_context", False),
@@ -2170,6 +2192,7 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["experts"]                = body.get("experts",               t.get("experts", {}))
             t["enable_cache"]           = body.get("enable_cache",          t.get("enable_cache", True))
             t["enable_graphrag"]        = body.get("enable_graphrag",       t.get("enable_graphrag", True))
+            t["enable_habe"]            = body.get("enable_habe",           t.get("enable_habe", False))
             t["enable_web_research"]    = body.get("enable_web_research",   t.get("enable_web_research", True))
             t["force_think"]            = body.get("force_think",           t.get("force_think", False))
             t["enable_mission_context"] = body.get("enable_mission_context",t.get("enable_mission_context", False))
@@ -2236,8 +2259,23 @@ async def _fetch_available_llms() -> list[str]:
 
 @app.get("/api/available-llms", dependencies=[Depends(require_login)])
 async def api_available_llms():
-    """Returns all available LLMs across all inference servers as 'model@node' strings."""
-    return await _fetch_available_llms()
+    """Returns available LLMs as 'model@node [tag1, tag2]' strings.
+
+    Tags from model_metadata are appended in brackets so callers that cannot use
+    the rich endpoint still see capability hints without breaking value parsing
+    (the bracket suffix is display-only — the orchestrator strips it via split('[')[0]).
+    """
+    plain = await _fetch_available_llms()
+    try:
+        meta_map = {r["model_id"]: r for r in await db.list_all_model_metadata()}
+    except Exception:
+        return plain
+    result = []
+    for llm_id in plain:
+        base = llm_id.split("@")[0] if "@" in llm_id else llm_id
+        tags = list(meta_map.get(llm_id, meta_map.get(base, {})).get("tags") or [])
+        result.append(f"{llm_id} [{', '.join(tags)}]" if tags else llm_id)
+    return result
 
 
 # ─── Prometheus helpers ───────────────────────────────────────────────────────
@@ -2624,16 +2662,6 @@ async def _get_provision_redis():
         return cli
     except Exception:
         return None
-
-
-async def _provision_added_servers(added: list[dict], redis_cli) -> None:
-    """Provision curator templates for newly added ontology-enabled servers."""
-    for srv in added:
-        if srv.get("ontology_enabled"):
-            await _curator_provisioner.provision_curator_for_server(
-                srv, redis_cli=redis_cli,
-                refresh_cache_cb=refresh_expert_templates_cache,
-            )
 
 
 def _update_server_flags(server_name: str, updates: dict) -> Optional[dict]:
@@ -5179,6 +5207,7 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
     active: list[dict] = []
     recent: list[dict] = []
     _safe_fields_active    = ("chat_id", "model", "moe_mode", "template_name",
+                               "resolved_tmpl_name", "resolved_tmpl_id",
                                "backend_model", "backend_host", "started_at",
                                "duration_s", "key_label", "key_prefix")
     _safe_fields_completed = ("chat_id", "model", "moe_mode", "template_name",
@@ -6318,6 +6347,10 @@ async def user_connections_page(request: Request, user_id: str = Depends(require
             c["models_cache"] = json.loads(c.get("models_cache", "[]"))
         except Exception:
             c["models_cache"] = []
+        try:
+            c["rate_limit_config"] = json.loads(c.get("rate_limit_config") or "{}")
+        except Exception:
+            c["rate_limit_config"] = {}
     return TEMPLATES.TemplateResponse(request, "user_portal.html", {
         "page":               "connections",
         "user":               user,
@@ -6409,11 +6442,116 @@ async def user_api_delete_connection(conn_id: str, user_id: str = Depends(requir
     return {"ok": True}
 
 
+_ALLOWED_TAGS = {"free", "vision", "agentic", "reasoning", "code"}
+
+
+@app.patch("/user/api/connections/{conn_id}/model-tags")
+async def user_api_update_model_tags(
+    conn_id: str, request: Request, user_id: str = Depends(require_user_login)
+):
+    """Set the tags list for a single model in a connection's models_cache.
+
+    Body: {model_id: str, tags: list[str]}
+    Tags must be drawn from: free, vision, agentic, reasoning, code.
+    """
+    await _require_connections_access(user_id)
+    body     = await request.json()
+    model_id = (body.get("model_id") or "").strip()
+    tags_raw = body.get("tags")
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not isinstance(tags_raw, list):
+        raise HTTPException(status_code=400, detail="tags must be a list")
+    invalid = [t for t in tags_raw if t not in _ALLOWED_TAGS]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown tags: {invalid}. Allowed: {sorted(_ALLOWED_TAGS)}")
+    ok = await db.update_model_tags_in_cache(conn_id, user_id, model_id, tags_raw)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Model not found in cache — refresh models first")
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True, "model_id": model_id, "tags": tags_raw}
+
+
+@app.patch("/user/api/connections/{conn_id}/rate-limit")
+async def user_api_update_rate_limit(
+    conn_id: str, request: Request, user_id: str = Depends(require_user_login)
+):
+    """Store rate-limit config for a connection.
+
+    Body: {window_seconds: int, max_requests: int, tagged: list[str]}
+    tagged defaults to ["free"]. Pass {} to clear the rate limit.
+    """
+    await _require_connections_access(user_id)
+    body = await request.json()
+    if body:
+        window   = int(body.get("window_seconds", 60))
+        max_req  = int(body.get("max_requests", 60))
+        tagged   = body.get("tagged", ["free"])
+        if not isinstance(tagged, list):
+            raise HTTPException(status_code=400, detail="tagged must be a list")
+        config = {"window_seconds": window, "max_requests": max_req, "tagged": tagged}
+    else:
+        config = {}
+    conn = await db.update_connection_rate_limit(conn_id, user_id, config)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return {"ok": True, "rate_limit_config": config}
+
+
+@app.get("/api/available-llms-rich")
+async def api_available_llms_rich(user_id: str = Depends(require_user_login)):
+    """Returns available LLMs enriched with tags and context_window from models_cache + model_metadata.
+
+    Format: [{id: "model@host", tags: [], context_window: N}]
+    Falls back to plain strings for models without cache metadata.
+    """
+    plain = await _get_user_llm_options(user_id)
+    meta_map: dict = {}
+    try:
+        for row in await db.list_all_model_metadata():
+            meta_map[row["model_id"]] = row
+    except Exception:
+        pass
+
+    # Build per-connection models_cache lookup: model@conn_name → {tags, context_window}
+    conn_cache: dict = {}
+    try:
+        for conn in await db.list_user_connections(user_id):
+            if not conn.get("is_active", True):
+                continue
+            cache = _safe_json(conn.get("models_cache", "[]"), [])
+            for m in cache:
+                if isinstance(m, dict) and m.get("id"):
+                    key = f"{m['id']}@{conn['name']}"
+                    conn_cache[key] = {
+                        "tags":           m.get("tags") or [],
+                        "context_window": m.get("context_window"),
+                    }
+    except Exception:
+        pass
+
+    result = []
+    for llm_id in plain:
+        entry: dict = {"id": llm_id}
+        if llm_id in conn_cache:
+            entry["tags"]           = conn_cache[llm_id]["tags"]
+            entry["context_window"] = conn_cache[llm_id]["context_window"]
+        else:
+            # Fall back to model_metadata global tags
+            base_id = llm_id.split("@")[0] if "@" in llm_id else llm_id
+            meta = meta_map.get(llm_id) or meta_map.get(base_id) or {}
+            entry["tags"]           = list(meta.get("tags") or [])
+            entry["context_window"] = meta.get("context_window")
+        result.append(entry)
+    return result
+
+
 async def _probe_connection(conn: dict) -> dict:
     """Test connectivity and fetch model list with metadata from a user API connection.
 
-    Returns models as a list of dicts: {id, context_window, param_size, families}.
+    Returns models as a list of dicts: {id, context_window, param_size, families, tags}.
     Fields are None when the provider does not expose them.
+    tags are auto-suggested from model_metadata but never overwrite existing user tags.
     """
     api_key  = db.decrypt_api_key(conn.get("api_key_enc", ""))
     api_type = conn.get("api_type", "openai")
@@ -6435,6 +6573,7 @@ async def _probe_connection(conn: dict) -> dict:
                         "param_size":     details.get("parameter_size"),
                         "families":       details.get("families") or [],
                         "size_gb":        round(size_bytes / 1_073_741_824, 1) if size_bytes else None,
+                        "tags":           [],
                     })
             else:
                 r = await client.get(f"{base_url}/models", headers=headers)
@@ -6448,6 +6587,7 @@ async def _probe_connection(conn: dict) -> dict:
                         "param_size":     None,
                         "families":       [],
                         "size_gb":        None,
+                        "tags":           [],
                     })
         return {"ok": r.status_code == 200, "status_code": r.status_code, "models": models}
     except Exception as exc:
@@ -6468,13 +6608,40 @@ async def user_api_test_connection(conn_id: str, user_id: str = Depends(require_
 async def user_api_refresh_connection_models(
     conn_id: str, user_id: str = Depends(require_user_login)
 ):
-    """Probe the connection, persist the model list to models_cache, and sync Redis."""
+    """Probe the connection, persist the model list to models_cache, and sync Redis.
+
+    Preserves existing user-set tags on models that survive the refresh.
+    Auto-suggests tags from model_metadata for new models (tags set to [] when no metadata exists).
+    """
     await _require_connections_access(user_id)
     conn = await db.get_user_connection(conn_id, user_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     result = await _probe_connection(conn)
     if result["ok"]:
+        # Build lookup from existing cache to preserve user-set tags
+        old_cache = _safe_json(conn.get("models_cache", "[]"), [])
+        old_tags: dict[str, list] = {
+            m["id"]: m.get("tags", [])
+            for m in old_cache
+            if isinstance(m, dict) and m.get("id")
+        }
+        # Fetch global model_metadata tags to auto-suggest for models with no existing tags
+        meta_tags: dict[str, list] = {}
+        try:
+            for row in await db.list_all_model_metadata():
+                meta_tags[row["model_id"]] = list(row.get("tags") or [])
+        except Exception:
+            pass
+
+        for m in result["models"]:
+            mid = m.get("id", "")
+            if mid in old_tags and old_tags[mid]:
+                m["tags"] = old_tags[mid]          # keep user-set tags
+            else:
+                base = mid.split(":")[0] if ":" in mid else mid
+                m["tags"] = meta_tags.get(mid) or meta_tags.get(base) or []
+
         await db.update_connection_models_cache(conn_id, user_id, result["models"])
         await db.sync_user_to_redis(user_id)
     return result
@@ -8647,6 +8814,135 @@ async def api_explorer_cypher(request: Request):
         "sql":      body.get("query", ""),
         "max_rows": body.get("limit", 250),
     })
+
+
+# ─── Model Metadata (Admin CRUD) ─────────────────────────────────────────────
+
+@app.get("/model-metadata", response_class=HTMLResponse)
+async def model_metadata_page(request: Request, _=Depends(require_login)):
+    """Admin view for model_metadata. Connection tags are already merged into the table."""
+    rows = await db.list_all_model_metadata()
+    return TEMPLATES.TemplateResponse(request, "model_metadata.html", {
+        "rows":       rows,
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/model-metadata", dependencies=[Depends(require_login)])
+async def api_model_metadata_list():
+    """Return all model_metadata entries (connection tags already merged in)."""
+    return await db.list_all_model_metadata()
+
+
+@app.post("/api/admin/sync-connection-tags", dependencies=[Depends(require_login)])
+async def api_sync_connection_tags():
+    """Merge manually assigned connection-cache tags into existing model_metadata rows.
+
+    Lookup priority per model:
+    1. Exact match on model@connname key
+    2. Any existing entry that shares the same base model_id (before the @)
+    3. Only if nothing found: create a new stub entry as model@connname
+
+    This ensures tags are always added to existing data instead of creating
+    redundant entries for models already indexed under a different @suffix.
+    """
+    conn_tags = await db.aggregate_connection_model_tags()
+    if not conn_tags:
+        return {"ok": True, "updated": 0, "created": 0, "message": "No tagged models in connection caches."}
+
+    updated = created = skipped = 0
+    for key, new_tags in conn_tags.items():
+        base_id = key.rsplit("@", 1)[0]  # strip @connname → bare model ID
+
+        # Priority 1: exact match on model@connname
+        existing = await db.get_model_metadata(key)
+        # Priority 2: any existing entry sharing the base model_id
+        if not existing:
+            existing = await db.find_model_metadata_by_base(base_id)
+
+        if existing:
+            merged = sorted(set(existing.get("tags") or []) | set(new_tags))
+            if merged == sorted(existing.get("tags") or []):
+                skipped += 1
+                continue
+            await db.upsert_model_metadata(
+                model_id         = existing["model_id"],   # preserve original key
+                base_model       = existing["base_model"] or base_id,
+                parameter_size_b = existing.get("parameter_size_b") or 0.0,
+                context_window   = existing.get("context_window") or 4096,
+                family           = existing.get("family") or "other",
+                strengths        = existing.get("strengths") or [],
+                benchmark_scores = existing.get("benchmark_scores") or {},
+                tags             = merged,
+            )
+            updated += 1
+        else:
+            # No existing entry at all → create minimal stub with @connname key
+            await db.upsert_model_metadata(
+                model_id         = key,
+                base_model       = base_id,
+                parameter_size_b = 0.0,
+                context_window   = 4096,
+                family           = "other",
+                strengths        = [],
+                benchmark_scores = {},
+                tags             = sorted(new_tags),
+            )
+            created += 1
+
+    return {
+        "ok": True, "updated": updated, "created": created, "skipped": skipped,
+        "message": f"{updated} existing rows updated, {created} new stubs created, {skipped} already up-to-date.",
+    }
+
+
+@app.put("/api/model-metadata/{model_id:path}", dependencies=[Depends(require_login)])
+async def api_model_metadata_upsert(model_id: str, request: Request):
+    """Create or update a model_metadata entry (upsert by model_id)."""
+    body = await request.json()
+    try:
+        await db.upsert_model_metadata(
+            model_id         = model_id,
+            base_model       = (body.get("base_model") or model_id).strip(),
+            parameter_size_b = float(body.get("parameter_size_b") or 0),
+            context_window   = int(body.get("context_window") or 4096),
+            family           = (body.get("family") or "other").strip(),
+            strengths        = [s.strip() for s in (body.get("strengths") or []) if s.strip()],
+            benchmark_scores = body.get("benchmark_scores") or {},
+            tags             = [t.strip() for t in (body.get("tags") or []) if t.strip()],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "model_id": model_id}
+
+
+@app.delete("/api/model-metadata/{model_id:path}", dependencies=[Depends(require_login)])
+async def api_model_metadata_delete(model_id: str):
+    """Delete a model_metadata entry by model_id."""
+    deleted = await db.delete_model_metadata(model_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return {"ok": True}
+
+
+@app.post("/api/admin/refresh-model-metadata", dependencies=[Depends(require_login)])
+async def api_refresh_model_metadata():
+    """Trigger the model metadata indexer script as a background process.
+
+    The script probes all configured inference servers and stores metadata.
+    Returns immediately — check the model_metadata table for progress.
+    """
+    import subprocess, sys
+    script = Path(__file__).parent.parent / "scripts" / "index_models_metadata.py"
+    if not script.exists():
+        raise HTTPException(status_code=404, detail=f"Indexer script not found: {script}")
+    subprocess.Popen(
+        [sys.executable, str(script)],
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"ok": True, "message": "Indexer started in background — refresh page in ~30 s to see results."}
 
 
 @app.post("/admin/features/{name}/toggle", dependencies=[Depends(require_admin)])

@@ -2686,6 +2686,26 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 </div>
               </div>
               <div class="text-muted small font-monospace text-truncate mb-2">{{ conn.url }}</div>
+              {% set rl = conn.rate_limit_config if conn.rate_limit_config is mapping else {} %}
+              {% if rl and rl.get('max_requests') %}
+              <div class="mb-2">
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size:.75rem">
+                  <i class="bi bi-speedometer2 me-1"></i>{{ rl.max_requests }} req / {{ rl.window_seconds }}s
+                  {% if rl.get('tagged') %}<span class="text-muted ms-1">({{ rl.tagged | join(', ') }})</span>{% endif %}
+                </span>
+                <button class="btn btn-link btn-sm text-muted p-0 ms-2" style="font-size:.75rem"
+                        onclick="openRateLimitModal('{{ conn.id }}', {{ rl | tojson | forceescape }})">
+                  <i class="bi bi-pencil"></i>
+                </button>
+              </div>
+              {% else %}
+              <div class="mb-2">
+                <button class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.75rem"
+                        onclick="openRateLimitModal('{{ conn.id }}', null)">
+                  <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'portal.conn_rate_limit_lbl') }}
+                </button>
+              </div>
+              {% endif %}
               <div class="d-flex gap-2 align-items-center flex-wrap">
                 <button class="btn btn-outline-secondary btn-sm" id="conn-models-btn-{{ conn.id }}"
                         onclick="toggleConnModels('{{ conn.id }}')">
@@ -2705,11 +2725,12 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               </div>
               <div id="conn-models-{{ conn.id }}" style="display:none" class="mt-2">
                 {% if conn.models_cache %}
-                <div class="border rounded" style="max-height:240px;overflow-y:auto;font-size:.8rem">
+                <div class="border rounded" style="max-height:300px;overflow-y:auto;font-size:.8rem">
                   <table class="table table-sm table-hover mb-0">
                     <thead class="table-light sticky-top" style="font-size:.75rem">
                       <tr>
                         <th>{{ t(request, 'portal.conn_col_model') }}</th>
+                        <th>{{ t(request, 'portal.conn_col_tags') }}</th>
                         <th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th>
                         <th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th>
                       </tr>
@@ -2718,13 +2739,30 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                     {% for m in conn.models_cache %}
                       {% if m is mapping %}
                       <tr>
-                        <td class="font-monospace text-truncate" style="max-width:280px">{{ m.id }}</td>
+                        <td class="font-monospace text-truncate" style="max-width:200px">{{ m.id }}</td>
+                        <td>
+                          <div class="d-flex gap-1 flex-wrap" id="tags-{{ conn.id }}-{{ loop.index0 }}"
+                               data-conn-id="{{ conn.id }}" data-model-id="{{ m.id }}">
+                            {% for tag in (m.tags or []) %}
+                            <span class="badge rounded-pill {% if tag == 'free' %}bg-success{% elif tag == 'vision' %}bg-info text-dark{% elif tag == 'agentic' %}bg-warning text-dark{% elif tag == 'reasoning' %}bg-primary{% elif tag == 'code' %}bg-secondary{% else %}bg-dark{% endif %} tag-pill" style="cursor:pointer"
+                                  onclick="toggleTagPill(this)"
+                                  data-tag="{{ tag }}">{{ tag }}</span>
+                            {% endfor %}
+                            <button class="btn btn-outline-secondary btn-sm py-0 px-1 tag-add-btn"
+                                    style="font-size:.7rem;line-height:1.3"
+                                    data-conn-id="{{ conn.id }}"
+                                    data-model-id="{{ m.id | e }}"
+                                    data-tags="{{ (m.tags or []) | tojson | forceescape }}"
+                                    onclick="openTagEditor(this.dataset.connId, this.dataset.modelId, JSON.parse(this.dataset.tags))"
+                                    title="Edit tags">+</button>
+                          </div>
+                        </td>
                         <td class="text-end text-muted">{% if m.context_window %}{{ "{:,}".format(m.context_window) }}{% else %}—{% endif %}</td>
                         <td class="text-end text-muted">{% if m.param_size %}{{ m.param_size }}{% elif m.size_gb %}{{ m.size_gb }} GB{% else %}—{% endif %}</td>
                       </tr>
                       {% else %}
                       <tr>
-                        <td class="font-monospace text-truncate" colspan="3" style="max-width:360px">{{ m }}</td>
+                        <td class="font-monospace text-truncate" colspan="4" style="max-width:360px">{{ m }}</td>
                       </tr>
                       {% endif %}
                     {% endfor %}
@@ -2750,6 +2788,62 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         <p class="mt-2">{{ t(request, 'portal.my_connections_desc') | safe }}</p>
       </div>
       {% endif %}
+
+      <!-- Tag Editor Modal -->
+      <div class="modal fade" id="tagEditorModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+          <div class="modal-content">
+            <div class="modal-header py-2">
+              <h6 class="modal-title"><i class="bi bi-tags me-2"></i>{{ t(request, 'portal.conn_col_tags') }}</h6>
+              <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body py-2">
+              <input type="hidden" id="te-conn-id">
+              <input type="hidden" id="te-model-id">
+              <div class="d-flex flex-wrap gap-2" id="te-tag-pills">
+                <!-- tag pills rendered by openTagEditor() -->
+              </div>
+              <div id="te-error" class="text-danger small mt-2 d-none"></div>
+            </div>
+            <div class="modal-footer py-2">
+              <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+              <button class="btn btn-primary btn-sm" onclick="saveTagEditorTags()">{{ t(request, 'btn.save') }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rate-Limit Modal -->
+      <div class="modal fade" id="rateLimitModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+          <div class="modal-content">
+            <div class="modal-header py-2">
+              <h6 class="modal-title"><i class="bi bi-speedometer2 me-2"></i>{{ t(request, 'portal.conn_rate_limit_lbl') }}</h6>
+              <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body py-2">
+              <input type="hidden" id="rl-conn-id">
+              <div class="mb-2">
+                <label class="form-label small fw-semibold mb-1">{{ t(request, 'portal.conn_rate_limit_window') }}</label>
+                <input type="number" id="rl-window" class="form-control form-control-sm" value="3600" min="1">
+              </div>
+              <div class="mb-2">
+                <label class="form-label small fw-semibold mb-1">{{ t(request, 'portal.conn_rate_limit_max') }}</label>
+                <input type="number" id="rl-max" class="form-control form-control-sm" value="60" min="1">
+              </div>
+              <div class="form-text small">{{ t(request, 'portal.conn_rate_limit_hint') | safe }}</div>
+              <div id="rl-error" class="text-danger small mt-2 d-none"></div>
+            </div>
+            <div class="modal-footer py-2 justify-content-between">
+              <button class="btn btn-outline-danger btn-sm" onclick="clearRateLimit()">{{ t(request, 'portal.conn_rate_limit_clear') }}</button>
+              <div>
+                <button class="btn btn-secondary btn-sm me-1" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+                <button class="btn btn-primary btn-sm" onclick="saveRateLimit()">{{ t(request, 'btn.save') }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Connection Modal -->
       <div class="modal fade" id="connModal" tabindex="-1">
@@ -2874,6 +2968,20 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         if (div) div.style.display = div.style.display === 'none' ? 'block' : 'none';
       }
 
+      function _renderTagPills(connId, modelId, tags) {
+        const _qa = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+        const pills = (tags || []).map(tag => {
+          const clr = _TAG_COLORS[tag] || 'bg-dark';
+          return `<span class="badge rounded-pill ${clr} tag-pill me-1" style="cursor:pointer;user-select:none"
+                        data-tag="${_qa(tag)}" data-active="true" onclick="toggleTagPill(this)">${_connEscHtml(tag)}</span>`;
+        }).join('');
+        const btn = `<button class="btn btn-outline-secondary btn-sm py-0 px-1 tag-add-btn" style="font-size:.7rem;line-height:1.3"
+                 data-conn-id="${_qa(connId)}" data-model-id="${_qa(modelId)}" data-tags="${_qa(JSON.stringify(tags||[]))}"
+                 onclick="openTagEditor(this.dataset.connId, this.dataset.modelId, JSON.parse(this.dataset.tags))"
+                 title="Edit tags">+</button>`;
+        return pills + btn;
+      }
+
       function _updateConnModelList(id, models) {
         const div = document.getElementById(`conn-models-${id}`);
         if (!div) return;
@@ -2885,20 +2993,27 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         }
         const rows = models.map(m => {
           if (typeof m === 'string') {
-            return `<tr><td class="font-monospace text-truncate" colspan="3" style="max-width:360px">${_connEscHtml(m)}</td></tr>`;
+            return `<tr><td class="font-monospace text-truncate" colspan="4" style="max-width:360px">${_connEscHtml(m)}</td></tr>`;
           }
-          const ctx = m.context_window ? Number(m.context_window).toLocaleString() : '—';
-          const sz  = m.param_size ? _connEscHtml(m.param_size) : (m.size_gb ? `${m.size_gb} GB` : '—');
+          const ctx  = m.context_window ? Number(m.context_window).toLocaleString() : '—';
+          const sz   = m.param_size ? _connEscHtml(m.param_size) : (m.size_gb ? `${m.size_gb} GB` : '—');
+          const tags = _renderTagPills(id, m.id || '', m.tags || []);
           return `<tr>
-            <td class="font-monospace text-truncate" style="max-width:280px">${_connEscHtml(m.id || '')}</td>
+            <td class="font-monospace text-truncate" style="max-width:200px">${_connEscHtml(m.id || '')}</td>
+            <td><div class="d-flex gap-1 flex-wrap">${tags}</div></td>
             <td class="text-end text-muted">${ctx}</td>
             <td class="text-end text-muted">${sz}</td>
           </tr>`;
         }).join('');
-        div.innerHTML = `<div class="border rounded" style="max-height:240px;overflow-y:auto;font-size:.8rem">
+        div.innerHTML = `<div class="border rounded" style="max-height:300px;overflow-y:auto;font-size:.8rem">
           <table class="table table-sm table-hover mb-0">
             <thead class="table-light sticky-top" style="font-size:.75rem">
-              <tr><th>{{ t(request, 'portal.conn_col_model') }}</th><th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th><th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th></tr>
+              <tr>
+                <th>{{ t(request, 'portal.conn_col_model') }}</th>
+                <th>{{ t(request, 'portal.conn_col_tags') }}</th>
+                <th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th>
+                <th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th>
+              </tr>
             </thead>
             <tbody>${rows}</tbody>
           </table></div>`;
@@ -2920,6 +3035,106 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         } catch(e) {
           el.innerHTML = `<span class="badge bg-danger">Error: ${e.message}</span>`;
         }
+      }
+
+      // ─── Tag Editor ────────────────────────────────────────────────────────────
+
+      const _ALL_TAGS = ['free', 'vision', 'agentic', 'reasoning', 'code'];
+      const _TAG_COLORS = {
+        free: 'bg-success', vision: 'bg-info text-dark',
+        agentic: 'bg-warning text-dark', reasoning: 'bg-primary', code: 'bg-secondary',
+      };
+
+      let _tagEditorModal = null;
+      function _getTagEditorModal() {
+        if (!_tagEditorModal) _tagEditorModal = new bootstrap.Modal(document.getElementById('tagEditorModal'));
+        return _tagEditorModal;
+      }
+
+      function openTagEditor(connId, modelId, currentTags) {
+        document.getElementById('te-conn-id').value = connId;
+        document.getElementById('te-model-id').value = modelId;
+        document.getElementById('te-error').classList.add('d-none');
+        const container = document.getElementById('te-tag-pills');
+        container.innerHTML = _ALL_TAGS.map(tag => {
+          const active  = currentTags.includes(tag);
+          const clr     = _TAG_COLORS[tag] || 'bg-dark';
+          const opacity = active ? '' : 'opacity-50';
+          return `<span class="badge rounded-pill ${clr} tag-pill ${opacity}" style="cursor:pointer;user-select:none"
+                        data-tag="${tag}" data-active="${active}" onclick="toggleTagPill(this)">${tag}</span>`;
+        }).join('');
+        _getTagEditorModal().show();
+      }
+
+      function toggleTagPill(el) {
+        const isActive = el.dataset.active === 'true';
+        el.dataset.active = isActive ? 'false' : 'true';
+        el.classList.toggle('opacity-50', isActive);
+      }
+
+      async function saveTagEditorTags() {
+        const connId  = document.getElementById('te-conn-id').value;
+        const modelId = document.getElementById('te-model-id').value;
+        const tags    = Array.from(
+          document.querySelectorAll('#te-tag-pills [data-active="true"]')
+        ).map(el => el.dataset.tag);
+        const res = await fetch(`/user/api/connections/${connId}/model-tags`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({model_id: modelId, tags}),
+        });
+        if (res.ok) {
+          _getTagEditorModal().hide();
+          window.location.reload();
+        } else {
+          const err = await res.json().catch(() => ({}));
+          const el  = document.getElementById('te-error');
+          el.textContent = err.detail || 'Error saving tags';
+          el.classList.remove('d-none');
+        }
+      }
+
+      // ─── Rate-Limit Modal ──────────────────────────────────────────────────────
+
+      let _rlModal = null;
+      function _getRlModal() {
+        if (!_rlModal) _rlModal = new bootstrap.Modal(document.getElementById('rateLimitModal'));
+        return _rlModal;
+      }
+
+      function openRateLimitModal(connId, existing) {
+        document.getElementById('rl-conn-id').value = connId;
+        document.getElementById('rl-window').value  = existing?.window_seconds ?? 3600;
+        document.getElementById('rl-max').value     = existing?.max_requests   ?? 60;
+        document.getElementById('rl-error').classList.add('d-none');
+        _getRlModal().show();
+      }
+
+      async function saveRateLimit() {
+        const connId = document.getElementById('rl-conn-id').value;
+        const body = {
+          window_seconds: parseInt(document.getElementById('rl-window').value) || 3600,
+          max_requests:   parseInt(document.getElementById('rl-max').value)    || 60,
+          tagged:         ['free'],
+        };
+        const res = await fetch(`/user/api/connections/${connId}/rate-limit`, {
+          method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+        });
+        if (res.ok) { _getRlModal().hide(); window.location.reload(); }
+        else {
+          const err = await res.json().catch(() => ({}));
+          const el  = document.getElementById('rl-error');
+          el.textContent = err.detail || 'Error saving rate limit';
+          el.classList.remove('d-none');
+        }
+      }
+
+      async function clearRateLimit() {
+        const connId = document.getElementById('rl-conn-id').value;
+        const res = await fetch(`/user/api/connections/${connId}/rate-limit`, {
+          method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: '{}',
+        });
+        if (res.ok) { _getRlModal().hide(); window.location.reload(); }
       }
       </script>
 

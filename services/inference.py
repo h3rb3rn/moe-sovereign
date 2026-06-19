@@ -15,7 +15,7 @@ import state
 from config import (
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
     EXPERT_MIN_DATAPOINTS, EXPERT_TIER_BOUNDARY_B,
-    JUDGE_TIMEOUT, PLANNER_TIMEOUT,
+    JUDGE_TIMEOUT, PLANNER_TIMEOUT, EXPERT_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
     _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
@@ -138,6 +138,149 @@ async def _ollama_unload(model: str, base_url: str) -> None:
         logger.debug(f"🗑️ VRAM: {model} unloaded")
     except Exception as e:
         logger.debug(f"⚠️ VRAM-Unload {model}: {e}")
+
+
+_model_arch_cache: dict[str, dict] = {}
+
+
+async def _query_model_arch(ollama_base: str, model_name: str) -> dict:
+    """Return Ollama /api/show model_info for model_name, cached per (node, model).
+
+    Returns an empty dict on failure so callers can handle gracefully.
+    """
+    cache_key = f"{ollama_base}|{model_name}"
+    if cache_key in _model_arch_cache:
+        return _model_arch_cache[cache_key]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{ollama_base}/api/show", json={"name": model_name})
+            r.raise_for_status()
+            info = r.json().get("model_info", {})
+    except Exception as e:
+        logger.debug("⚠️ VRAM arch query: /api/show failed for %s: %s", model_name, e)
+        return {}
+    _model_arch_cache[cache_key] = info
+    return info
+
+
+def _kv_cache_gb_from_arch(arch: dict, ctx: int) -> float:
+    """Compute KV cache size in GB from Ollama model_info architecture fields.
+
+    Ollama exposes per-architecture keys such as llama4.block_count,
+    llama.attention.head_count_kv, etc. Searches by suffix so it works across
+    model families (llama, llama4, qwen2, mistral, …). Assumes q8_0 KV quantization
+    (1 byte per element) as the conservative upper bound.
+    Returns 0.0 when required fields are missing.
+    """
+    def _find(suffix: str) -> int:
+        return next((int(v) for k, v in arch.items() if k.endswith(suffix)), 0)
+
+    block_count = _find(".block_count")
+    kv_heads    = _find(".attention.head_count_kv")
+    key_len     = _find(".attention.key_length")
+    val_len     = _find(".attention.value_length") or key_len
+
+    if not all([block_count, kv_heads, key_len]):
+        return 0.0
+
+    kv_bytes = block_count * kv_heads * (key_len + val_len) * ctx  # q8_0: 1 byte/element
+    return kv_bytes / 1e9
+
+
+async def _evict_competing_models(
+    ollama_base: str, keep_model: str, ctx: int = 0
+) -> None:
+    """Evict competing models from an Ollama node only when necessary to fit keep_model.
+
+    All inputs are derived dynamically from Ollama's APIs:
+    - /api/ps  → actual size_vram of every currently loaded model
+    - /api/show → model architecture (block_count, kv_heads, key_length) for KV cache math
+    - INFERENCE_SERVERS config → node total VRAM
+
+    Keeps competing models warm when everything fits. Evicts the minimum set (largest
+    first) when it doesn't. Falls back to evicting all competitors only when the target
+    model's VRAM cannot be determined (neither name-parse nor /api/show succeed).
+    """
+    node_vram_gb = _node_vram_by_url(f"{ollama_base}/v1")
+    if node_vram_gb <= 0:
+        logger.debug("⚠️ VRAM pre-evict: node VRAM unknown for %s — skipping", ollama_base)
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ollama_base}/api/ps")
+            r.raise_for_status()
+            loaded = r.json().get("models", [])
+    except Exception as e:
+        logger.debug("⚠️ VRAM pre-evict: /api/ps query failed: %s", e)
+        return
+
+    target_entry = next((m for m in loaded if m.get("name", "") == keep_model), None)
+    competing = [m for m in loaded if m.get("name", "") != keep_model]
+
+    # Fast path: target already warm at the exact requested context
+    if target_entry is not None and ctx > 0 and target_entry.get("context_length", 0) == ctx:
+        logger.debug("✅ VRAM pre-evict: %s already warm at ctx=%d — no eviction needed", keep_model, ctx)
+        return
+
+    if not competing:
+        return
+
+    # Estimate target VRAM from actual /api/ps entry (if already loaded) or /api/show arch
+    if target_entry is not None:
+        # Model is loaded at a different ctx — use its actual size as the weight baseline
+        weights_gb = target_entry.get("size_vram", 0) / 1e9
+        # Adjust for KV cache difference between current and requested ctx
+        current_ctx = target_entry.get("context_length", 0)
+        if current_ctx > 0 and ctx > 0:
+            arch = await _query_model_arch(ollama_base, keep_model)
+            kv_current = _kv_cache_gb_from_arch(arch, current_ctx)
+            kv_target  = _kv_cache_gb_from_arch(arch, ctx)
+            target_gb = max(0.0, weights_gb - kv_current + kv_target)
+        else:
+            target_gb = weights_gb
+    else:
+        # Model not loaded — estimate from name (weights) + /api/show arch (KV cache)
+        weights_gb = _estimate_model_vram_gb(keep_model)
+        arch = await _query_model_arch(ollama_base, keep_model)
+        kv_gb = _kv_cache_gb_from_arch(arch, ctx) if ctx > 0 else 0.0
+        target_gb = (weights_gb + kv_gb) if weights_gb > 0 else 0.0
+
+    competing_vram_gb = sum(m.get("size_vram", 0) / 1e9 for m in competing)
+
+    if target_gb > 0:
+        if competing_vram_gb + target_gb <= node_vram_gb:
+            logger.info(
+                "✅ VRAM pre-evict: %.1f GB (competing) + %.1f GB (target %s @ ctx=%d) ≤ %.0f GB — keeping warm",
+                competing_vram_gb, target_gb, keep_model, ctx, node_vram_gb,
+            )
+            return
+        needed_gb = (competing_vram_gb + target_gb) - node_vram_gb
+        logger.info(
+            "🗑️ VRAM pre-evict: need %.1f GB more for %s (est. %.1f GB) on %.0f GB node",
+            needed_gb, keep_model, target_gb, node_vram_gb,
+        )
+        for m in sorted(competing, key=lambda x: x.get("size_vram", 0), reverse=True):
+            name = m.get("name", "")
+            if not name:
+                continue
+            freed_gb = m.get("size_vram", 0) / 1e9
+            logger.info("🗑️ VRAM pre-evict: unloading %s (%.1f GB)", name, freed_gb)
+            await _ollama_unload(name, ollama_base)
+            needed_gb -= freed_gb
+            if needed_gb <= 0:
+                break
+    else:
+        # Conservative fallback: /api/show failed AND name has no parameter count
+        logger.info(
+            "⚠️ VRAM pre-evict: no VRAM estimate for %s — evicting all competing models on node",
+            keep_model,
+        )
+        for m in competing:
+            name = m.get("name", "")
+            if name:
+                logger.info("🗑️ VRAM pre-evict: unloading %s (%.1f GB)", name, m.get("size_vram", 0) / 1e9)
+                await _ollama_unload(name, ollama_base)
 
 
 # ---------------------------------------------------------------------------
@@ -377,8 +520,7 @@ async def _invoke_judge_with_retry(
                     "messages":   [{"role": "user", "content": prompt}],
                     "stream":     False,
                     # Short lease: frees VRAM within 5m after pipeline completes so expert/planner
-                    # models can load without eviction. _cc_keepalive_loop overrides to "4h" for
-                    # the CC tool model independently, so this does not affect CC tool availability.
+                    # models can load without eviction.
                     "keep_alive": "5m",
                 }
                 if _opts:
@@ -527,6 +669,8 @@ async def _invoke_planner_with_retry(
     if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
         _ollama_base = _p_url_base.removesuffix("/v1")
         _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        if _ctx >= 65536:
+            await _evict_competing_models(_ollama_base, _pm, ctx=_ctx)
         _opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
         if _ctx > 0:
             _opts["num_ctx"] = _ctx
@@ -569,10 +713,20 @@ async def _invoke_planner_with_retry(
                 ), False
             logger.warning("⚠️ Planner: empty response from native /api/chat — falling back")
         except Exception as e:
-            logger.warning("⚠️ Planner: native /api/chat failed (%s) — falling back", str(e)[:80])
+            logger.warning(
+                "⚠️ Planner: native /api/chat failed [%s] (%s) — falling back",
+                type(e).__name__, str(e)[:120],
+            )
 
-    # Non-Ollama endpoint, or native call failed/empty → ChatOpenAI path with fallback chain
+    # Non-Ollama endpoint, or native call failed/empty → ChatOpenAI path with fallback chain.
+    # Bind extra_body so Ollama honours num_ctx — the OpenAI-compat endpoint silently drops
+    # the options dict unless it is sent as extra_body at the top level of the request.
     llm = await _get_planner_llm(state)
+    if _p_api_type == "ollama":
+        # Re-derive ctx here; _ctx may be unbound when endpoint was degraded/skipped.
+        _fb_ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or 0
+        if _fb_ctx > 0:
+            llm = llm.bind(extra_body={"options": {"num_ctx": _fb_ctx}})
     if temperature is not None:
         llm = llm.bind(temperature=temperature)
     return await _invoke_llm_with_fallback(llm, _p_url_base, prompt, timeout=PLANNER_TIMEOUT, label="Planner")
@@ -725,6 +879,52 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
         return None
 
 
+async def _invoke_council_expert(
+    category: str, task_text: str, user_experts: Optional[dict],
+    excluded_node: str, tool_model: str,
+) -> Optional[tuple[str, str]]:
+    """Invoke the best-scored expert for `category` as a Claude Code council member.
+
+    Best-effort: returns None on any failure so a missing council member
+    never blocks the Claude Code response (Piece A of the CC expert council).
+    """
+    from config import EXPERTS
+    from main import _get_expert_prompt
+
+    experts_for_cat = EXPERTS.get(category, [])
+    if not experts_for_cat:
+        return None
+    try:
+        scored = [(await _get_expert_score(e["model"], category), e) for e in experts_for_cat]
+        scored.sort(key=lambda x: -x[0])
+        best_expert = scored[0][1]
+        endpoints = best_expert.get("endpoints") or [best_expert.get("endpoint", "")]
+        if not endpoints or endpoints == [""]:
+            endpoints = [s["name"] for s in INFERENCE_SERVERS_LIST]
+        endpoints = _filter_endpoints_excluding_node(endpoints, excluded_node, tool_model, best_expert["model"])
+        node = await _select_node(best_expert["model"], endpoints)
+        url     = node.get("url") or URL_MAP.get(node["name"])
+        token   = node.get("token", "ollama")
+        timeout = float(node.get("timeout", EXPERT_TIMEOUT))
+        sys_prompt = _get_expert_prompt(category, user_experts)
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user",   "content": task_text},
+        ]
+        extra: dict = {}
+        if token == "ollama":
+            extra = {"extra_body": {"options": {"num_ctx": int(JUDGE_NUM_CTX or 32768)}}}
+        llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
+                         timeout=timeout, **extra)
+        res = await llm.ainvoke(messages)
+        if not res.content:
+            return None
+        return category, res.content[:MAX_EXPERT_OUTPUT_CHARS]
+    except Exception as e:
+        logger.warning(f"⚠️ Council expert [{category}]: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # PS cache and node load
 # ---------------------------------------------------------------------------
@@ -833,6 +1033,28 @@ def _can_coexist_on_node(model_a: str, model_b: str, node_vram_gb: float) -> boo
             model_a, est_a, model_b, est_b, est_a + est_b, node_vram_gb,
         )
     return fits
+
+
+def _filter_endpoints_excluding_node(
+    candidate_endpoints: List[str], excluded_node: str,
+    tool_model: str, council_model: str,
+) -> List[str]:
+    """Drop excluded_node from candidate_endpoints unless tool_model and
+    council_model both fit on it simultaneously.
+
+    Keeps council experts off the node serving Claude Code's own tool model,
+    preventing the council call from queuing behind that model's generation
+    (the same Ollama-scheduler serialization pattern that caused the
+    SEMANTIC_MEMORY_EMBED_URL ReadTimeout incident).
+    """
+    if not excluded_node or excluded_node not in candidate_endpoints:
+        return candidate_endpoints
+    node_vram = _node_vram_by_url(URL_MAP.get(excluded_node, ""))
+    if _can_coexist_on_node(tool_model, council_model, node_vram):
+        return candidate_endpoints
+    filtered = [ep for ep in candidate_endpoints if ep != excluded_node]
+    # Liveness over isolation: if excluding leaves nothing, keep the original pool.
+    return filtered or candidate_endpoints
 
 
 async def _select_node(model_name: str, allowed_endpoints: List[str],

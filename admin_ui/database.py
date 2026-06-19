@@ -342,6 +342,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS conversation_log_retention_days INTEG
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS dynamic_routing    BOOLEAN NOT NULL DEFAULT FALSE;
 -- Local-only compliance flag on API keys (restrict dynamic router to local endpoints)
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS local_only_routing BOOLEAN NOT NULL DEFAULT FALSE;
+-- Per-key Ollama num_ctx override for native model calls (0 = use model default)
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS native_num_ctx INTEGER NOT NULL DEFAULT 0;
+
+-- Connection-level rate limit config for tagged models (JSON: {window_seconds, max_requests, tagged})
+ALTER TABLE user_api_connections ADD COLUMN IF NOT EXISTS rate_limit_config TEXT NOT NULL DEFAULT '{}';
+
+-- Global auto-detected tags on model metadata (free, vision, agentic, reasoning, code)
+ALTER TABLE model_metadata ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
 """
 
 
@@ -945,7 +953,7 @@ async def create_api_key(user_id: str, label: str = "") -> tuple[str, dict]:
     key_dict = {"id": kid, "user_id": user_id, "key_prefix": key_prefix,
                 "label": label, "is_active": True, "created_at": now,
                 "last_used_at": None, "expires_at": None, "cc_profile_id": None,
-                "dynamic_routing": False, "local_only_routing": False}
+                "dynamic_routing": False, "local_only_routing": False, "native_num_ctx": 0}
     return raw, key_dict
 
 
@@ -954,7 +962,7 @@ async def list_api_keys(user_id: str) -> list[dict]:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT id,user_id,key_prefix,label,is_active,created_at,last_used_at,expires_at,"
-                "cc_profile_id,dynamic_routing,local_only_routing "
+                "cc_profile_id,dynamic_routing,local_only_routing,native_num_ctx "
                 "FROM api_keys WHERE user_id=%s ORDER BY created_at DESC",
                 (user_id,),
             )
@@ -979,7 +987,7 @@ async def get_active_key_hashes(user_id: str) -> list[dict]:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, key_hash, cc_profile_id, dynamic_routing, local_only_routing "
+                "SELECT id, key_hash, cc_profile_id, dynamic_routing, local_only_routing, native_num_ctx "
                 "FROM api_keys WHERE user_id=%s AND is_active=TRUE",
                 (user_id,),
             )
@@ -1064,6 +1072,20 @@ async def set_api_key_local_only_routing(key_id: str, user_id: str, enabled: boo
             await cur.execute(
                 "UPDATE api_keys SET local_only_routing=%s WHERE id=%s AND user_id=%s",
                 (enabled, key_id, user_id),
+            )
+            ok = cur.rowcount > 0
+    if ok:
+        await sync_user_to_redis(user_id)
+    return ok
+
+
+async def set_api_key_native_num_ctx(key_id: str, user_id: str, num_ctx: int) -> bool:
+    """Sets the Ollama num_ctx override for native model calls on an API key (0 = model default)."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE api_keys SET native_num_ctx=%s WHERE id=%s AND user_id=%s",
+                (max(0, int(num_ctx)), key_id, user_id),
             )
             ok = cur.rowcount > 0
     if ok:
@@ -1616,6 +1638,53 @@ async def update_connection_models_cache(conn_id: str, user_id: str, models: lis
             )
 
 
+async def update_model_tags_in_cache(conn_id: str, user_id: str, model_id: str, tags: list[str]) -> bool:
+    """Update tags for a single model entry within a connection's models_cache.
+
+    Returns True when the model was found and updated, False when it was not present
+    in the cache (caller should refresh models first).
+    """
+    conn_row = await get_user_connection(conn_id, user_id)
+    if not conn_row:
+        return False
+    try:
+        models: list = json.loads(conn_row.get("models_cache") or "[]")
+    except Exception:
+        models = []
+    found = False
+    for m in models:
+        if isinstance(m, dict) and m.get("id") == model_id:
+            m["tags"] = list(dict.fromkeys(tags))  # deduplicate, preserve order
+            found = True
+            break
+    if not found:
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE user_api_connections SET models_cache=%s, updated_at=%s "
+                "WHERE id=%s AND user_id=%s",
+                (json.dumps(models), now, conn_id, user_id),
+            )
+    return True
+
+
+async def update_connection_rate_limit(conn_id: str, user_id: str, rate_limit_config: dict) -> Optional[dict]:
+    """Persist the rate-limit config for a connection. Returns the updated row or None."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE user_api_connections SET rate_limit_config=%s, updated_at=%s "
+                "WHERE id=%s AND user_id=%s",
+                (json.dumps(rate_limit_config), now, conn_id, user_id),
+            )
+            if cur.rowcount == 0:
+                return None
+    return await get_user_connection(conn_id, user_id)
+
+
 # ─── Valkey Sync ──────────────────────────────────────────────────────────────
 
 async def _get_redis():
@@ -1733,6 +1802,7 @@ async def sync_user_to_redis(user_id: str) -> None:
                     "key_cc_profile_id":      rec.get("cc_profile_id") or "",
                     "dynamic_routing":        "1" if rec.get("dynamic_routing") else "0",
                     "local_only_routing":     "1" if rec.get("local_only_routing") else "0",
+                    "native_num_ctx":         str(rec.get("native_num_ctx") or 0),
                 })
                 await r.expire(redis_key, 86400)
             else:
@@ -1807,12 +1877,14 @@ async def get_redis_budget_usage(user_id: str) -> dict:
 # ─── Admin Expert Templates (database-backed) ────────────────────────────────
 
 async def list_admin_templates() -> list[dict]:
-    """List all admin expert templates from the database."""
+    """List manually created admin expert templates (excludes moe-auto dynamic templates)."""
     async with _pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT id, name, description, config_json, is_active, created_at, updated_at "
-                "FROM admin_expert_templates ORDER BY created_at ASC"
+                "FROM admin_expert_templates "
+                "WHERE id NOT LIKE 'moe-dyn-%' "
+                "ORDER BY created_at ASC"
             )
             rows = await cur.fetchall()
     result = []
@@ -1824,6 +1896,43 @@ async def list_admin_templates() -> list[dict]:
         tmpl["is_active"] = row["is_active"]
         result.append(tmpl)
     return result
+
+
+async def list_dynamic_templates() -> list[dict]:
+    """List moe-auto generated dynamic templates joined with feedback log data."""
+    async with _pool.connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT t.id, t.name, t.description, t.config_json,
+                       t.is_active, t.created_at, t.updated_at,
+                       f.prompt, f.user_rating, f.latency_ms, f.tokens_used, f.status
+                FROM admin_expert_templates t
+                LEFT JOIN dynamic_template_feedback_log f ON f.template_id = t.id
+                WHERE t.id LIKE 'moe-dyn-%'
+                ORDER BY t.created_at DESC
+            """)
+            rows = await cur.fetchall()
+    result = []
+    for row in rows:
+        r = dict(row)
+        try:
+            r["config"] = json.loads(r.pop("config_json"))
+        except Exception:
+            r["config"] = {}
+        result.append(r)
+    return result
+
+
+async def delete_dynamic_template(tmpl_id: str) -> bool:
+    """Delete a moe-auto dynamic template and its feedback log entry."""
+    if not tmpl_id.startswith("moe-dyn-"):
+        return False
+    async with _pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM dynamic_template_feedback_log WHERE template_id=%s", (tmpl_id,))
+            await cur.execute("DELETE FROM admin_expert_templates WHERE id=%s", (tmpl_id,))
+            return cur.rowcount > 0
 
 
 async def get_admin_template(tmpl_id: str) -> Optional[dict]:
@@ -2464,19 +2573,21 @@ async def upsert_model_metadata(
     family: str,
     strengths: list[str],
     benchmark_scores: dict,
+    tags: Optional[list[str]] = None,
 ) -> None:
     now = now_iso()
+    effective_tags = list(dict.fromkeys(tags or []))  # deduplicate, preserve order
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "INSERT INTO model_metadata (model_id, base_model, parameter_size_b, context_window, family, strengths, benchmark_scores, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "INSERT INTO model_metadata (model_id, base_model, parameter_size_b, context_window, family, strengths, benchmark_scores, tags, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT(model_id) DO UPDATE SET "
                 "base_model=excluded.base_model, parameter_size_b=excluded.parameter_size_b, "
                 "context_window=excluded.context_window, family=excluded.family, "
                 "strengths=excluded.strengths, benchmark_scores=excluded.benchmark_scores, "
-                "updated_at=excluded.updated_at",
-                (model_id, base_model, parameter_size_b, context_window, family, strengths, json.dumps(benchmark_scores), now),
+                "tags=excluded.tags, updated_at=excluded.updated_at",
+                (model_id, base_model, parameter_size_b, context_window, family, strengths, json.dumps(benchmark_scores), effective_tags, now),
             )
 
 
@@ -2501,7 +2612,7 @@ async def list_all_model_metadata() -> list[dict]:
     async with _get_pool().connection() as conn:
         conn.row_factory = dict_row
         async with conn.cursor() as cur:
-            await cur.execute("SELECT * FROM model_metadata")
+            await cur.execute("SELECT * FROM model_metadata ORDER BY model_id")
             rows = await cur.fetchall()
             result = []
             for r in rows:
@@ -2513,6 +2624,74 @@ async def list_all_model_metadata() -> list[dict]:
                         pass
                 result.append(res)
             return result
+
+
+async def find_model_metadata_by_base(base_model_id: str) -> Optional[dict]:
+    """Find a model_metadata entry by base model ID, ignoring any @suffix.
+
+    Lookup priority:
+    1. Exact match on base_model_id (no suffix)
+    2. base_model_id@anything (any server/connection suffix)
+    Returns the best matching row, preferring the entry with the most metadata
+    (non-zero parameter_size_b), or None if nothing found.
+    """
+    async with _get_pool().connection() as conn:
+        conn.row_factory = dict_row
+        async with conn.cursor() as cur:
+            # Exact match first
+            await cur.execute("SELECT * FROM model_metadata WHERE model_id = %s", (base_model_id,))
+            row = await cur.fetchone()
+            if row:
+                return dict(row)
+            # Any @suffix variant — prefer entries with real metadata (size > 0)
+            await cur.execute(
+                "SELECT * FROM model_metadata WHERE model_id LIKE %s "
+                "ORDER BY (parameter_size_b > 0) DESC, model_id LIMIT 1",
+                (base_model_id + "@%",),
+            )
+            row = await cur.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+
+async def delete_model_metadata(model_id: str) -> bool:
+    """Delete a model_metadata entry by its primary key. Returns True if deleted."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM model_metadata WHERE model_id=%s", (model_id,))
+            return cur.rowcount > 0
+
+
+async def aggregate_connection_model_tags() -> dict[str, list[str]]:
+    """Collect tags assigned to models in any user's connection cache.
+
+    Returns {model_id@conn_name: sorted_list_of_tags} — the @conn_name suffix makes
+    each entry uniquely identifiable by connection, consistent with the model_metadata
+    format used for locally-indexed models (e.g. model@N04-RTX).
+    """
+    buckets: dict[str, set] = {}
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT name, models_cache FROM user_api_connections WHERE is_active=TRUE")
+            rows = await cur.fetchall()
+    for row in rows:
+        conn_name = row.get("name", "")
+        try:
+            models = json.loads(row.get("models_cache") or "[]")
+        except Exception:
+            continue
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            mid  = m.get("id", "")
+            tags = m.get("tags") or []
+            if mid and tags and conn_name:
+                key = f"{mid}@{conn_name}"
+                if key not in buckets:
+                    buckets[key] = set()
+                buckets[key].update(tags)
+    return {key: sorted(tags) for key, tags in buckets.items()}
 
 
 async def log_dynamic_template_feedback(
