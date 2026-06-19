@@ -173,22 +173,85 @@ def parse_model_params(model_name: str) -> tuple[float, int, str, list[str], dic
     
     return param_size, context_window, family, strengths, benchmarks, has_explicit_ctx
 
-async def fetch_local_models(client: httpx.AsyncClient) -> set[str]:
-    models = set()
-    for endpoint in OLLAMA_ENDPOINTS:
+def _parse_size_str(size_str: str) -> float:
+    """Parse Ollama parameter_size strings like '30.5B', '7B', '8x7B' → billions."""
+    s = size_str.strip().upper()
+    moe = re.match(r'(\d+)X(\d+(?:\.\d+)?)B', s)
+    if moe:
+        return float(moe.group(1)) * float(moe.group(2))
+    single = re.search(r'(\d+(?:\.\d+)?)B', s)
+    if single:
+        return float(single.group(1))
+    return 0.0
+
+
+async def fetch_local_models_with_metadata(client: httpx.AsyncClient) -> dict[str, dict]:
+    """Probe all Ollama inference servers and fetch per-model metadata via /api/show.
+
+    /api/show returns exact GGUF metadata (context_length, family, parameter_size)
+    directly from the model tensor header — more reliable than name-heuristics or
+    HuggingFace lookups. Falls back gracefully when a server is unreachable.
+
+    Returns: {model_id@node: {context_window, family, parameter_size_b, quantization}}
+    """
+    result: dict[str, dict] = {}
+    ollama_servers = [
+        s for s in _inference_servers
+        if s.get("api_type", "ollama") == "ollama" and s.get("enabled", True)
+    ]
+    for server in ollama_servers:
+        node_name = server["name"]
+        base = server["url"].rstrip("/v1").rstrip("/")
         try:
-            url = f"{endpoint}/api/tags"
-            response = await client.get(url, timeout=5.0)
-            if response.status_code == 200:
-                data = response.json()
-                for m in data.get("models", []):
-                    # Local models in DB are cached as name@node
-                    # Node name is derived from endpoint
-                    node_name = "N04-RTX" if "224" in endpoint else "N11-M10"
-                    models.add(f"{m['name']}@{node_name}")
+            r = await client.get(f"{base}/api/tags", timeout=5.0)
+            if r.status_code != 200:
+                continue
+            raw_models = r.json().get("models", [])
         except Exception as e:
-            print(f"Error fetching from {endpoint}: {e}")
-    return models
+            print(f"Error listing models from {node_name} ({base}): {e}")
+            continue
+
+        print(f"{node_name}: {len(raw_models)} models")
+        for m in raw_models:
+            model_name = m.get("name", "")
+            if not model_name:
+                continue
+            model_id = f"{model_name}@{node_name}"
+            try:
+                rs = await client.post(
+                    f"{base}/api/show", json={"model": model_name}, timeout=8.0
+                )
+                if rs.status_code == 200:
+                    show   = rs.json()
+                    dtails = show.get("details", {})
+                    mi     = show.get("model_info", {})
+                    # Context window from GGUF tensor header (most accurate source)
+                    ctx = next(
+                        (int(v) for k, v in mi.items()
+                         if "context_length" in k.lower() and isinstance(v, (int, float))),
+                        None,
+                    )
+                    size_b = _parse_size_str(dtails.get("parameter_size", ""))
+                    family = (dtails.get("family") or
+                              (dtails.get("families") or [""])[0] or "").lower()
+                    result[model_id] = {
+                        "context_window":   ctx,
+                        "family":           family,
+                        "parameter_size_b": size_b,
+                        "quantization":     dtails.get("quantization_level", ""),
+                    }
+                    continue
+            except Exception as e:
+                print(f"  /api/show failed for {model_name}: {e}")
+            # Fallback: add without metadata (name-heuristics applied in main())
+            result[model_id] = {}
+    return result
+
+
+async def fetch_local_models(client: httpx.AsyncClient) -> set[str]:
+    """Legacy wrapper — returns just the model@node IDs. Use fetch_local_models_with_metadata for full data."""
+    meta = await fetch_local_models_with_metadata(client)
+    return set(meta.keys())
 
 async def fetch_cloud_models(client: httpx.AsyncClient) -> set[str]:
     models = set()
@@ -206,98 +269,196 @@ async def fetch_cloud_models(client: httpx.AsyncClient) -> set[str]:
             print(f"Error fetching cloud models from {cloud['name']}: {e}")
     return models
 
+async def fetch_ollama_library_metadata(client: httpx.AsyncClient, model_name: str) -> dict:
+    """Query Ollama.com search API for model description and capability tags.
+
+    Returns {description, tags: list[str], pull_count} or {}.
+    Tags are inferred from the description text (code/vision/agentic/reasoning).
+    """
+    base_name = model_name.split(":")[0].split("@")[0]
+    try:
+        r = await client.get(
+            "https://ollama.com/api/search",
+            params={"q": base_name, "limit": 5},
+            headers={"Accept": "application/json"},
+            timeout=8.0,
+        )
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        models = data if isinstance(data, list) else data.get("models", [])
+        for m in models:
+            name = m.get("name", "")
+            if not name:
+                continue
+            # Accept if base names overlap (e.g. "north-mini-code" ↔ "north-mini-code-1.0")
+            n1 = base_name.lower().replace("-", "").replace("_", "").replace(".", "")
+            n2 = name.lower().replace("-", "").replace("_", "").replace(".", "")
+            if n1 not in n2 and n2 not in n1:
+                continue
+            desc = (m.get("description") or "").lower()
+            tags: list[str] = []
+            if any(w in desc for w in ["code", "coder", "programming", "developer"]):
+                tags.append("code")
+            if any(w in desc for w in ["vision", "image", "multimodal", "vlm", "visual"]):
+                tags.append("vision")
+            if any(w in desc for w in ["agent", "tool call", "function call", "agentic"]):
+                tags.append("agentic")
+            if any(w in desc for w in ["reasoning", "thinking", "chain-of-thought", "r1"]):
+                tags.append("reasoning")
+            return {
+                "description": m.get("description", ""),
+                "tags": tags,
+                "pull_count": m.get("pulls", 0) or m.get("pullCount", 0),
+            }
+    except Exception as e:
+        print(f"Ollama library search failed for {model_name}: {e}")
+    return {}
+
+
 async def research_model_metadata_online(client: httpx.AsyncClient, model_name: str) -> dict:
-    """Query Hugging Face Hub API to research real model configuration and context length."""
+    """Query Ollama Library first, then HuggingFace Hub as fallback.
+
+    Priority: Ollama.com (always has context about Ollama models) →
+              HuggingFace config.json (accurate context window for HF models).
+    """
+    # 1. Ollama Library
+    ollama_meta = await fetch_ollama_library_metadata(client, model_name)
+    if ollama_meta:
+        print(f"  → Ollama Library: {ollama_meta.get('description','')[:60]!r}")
+
+    # 2. HuggingFace (for context_window and family)
     query = model_name.replace(":", "-").replace("_", "-").replace(".", "-").lower()
+    hf_meta: dict = {}
     try:
         url = f"https://huggingface.co/api/models?search={query}&limit=3"
         res = await client.get(url, timeout=5.0)
         if res.status_code == 200:
-            models = res.json()
-            for m in models:
+            hf_models = res.json()
+            for m in hf_models:
                 repo_id = m.get("modelId", "")
                 if query.replace("-", "") in repo_id.lower().replace("/", "").replace("-", ""):
-                    # Fetch config.json directly
                     config_url = f"https://huggingface.co/api/models/{repo_id}/config"
                     cfg_res = await client.get(config_url, timeout=5.0)
                     if cfg_res.status_code == 200:
                         cfg = cfg_res.json()
                         context = (
-                            cfg.get("max_position_embeddings") or 
-                            cfg.get("model_max_length") or 
+                            cfg.get("max_position_embeddings") or
+                            cfg.get("model_max_length") or
                             cfg.get("seq_length") or
                             cfg.get("max_seq_len")
                         )
-                        return {
-                            "repo_id": repo_id,
+                        hf_meta = {
+                            "repo_id":        repo_id,
                             "context_window": context,
-                            "family": cfg.get("model_type"),
-                            "tags": m.get("tags", [])
+                            "family":         cfg.get("model_type"),
+                            "hf_tags":        m.get("tags", []),
                         }
+                        print(f"  → HuggingFace: {repo_id!r} ctx={context}")
+                    break
     except Exception as e:
         print(f"HF online search failed for {model_name}: {e}")
-    return {}
+
+    # Merge: HF wins for context_window/family, Ollama wins for description/tags
+    merged: dict = {}
+    if hf_meta.get("context_window"):
+        merged["context_window"] = hf_meta["context_window"]
+    if hf_meta.get("family"):
+        merged["family"] = hf_meta["family"]
+    if ollama_meta.get("tags"):
+        merged["tags"] = ollama_meta["tags"]
+    elif hf_meta.get("hf_tags"):
+        # Derive tags from HF pipeline tags
+        hft = [t.lower() for t in hf_meta["hf_tags"]]
+        merged["tags"] = [
+            t for t, kw in [
+                ("code",      ["code", "coder"]),
+                ("vision",    ["vision", "image-text", "visual"]),
+                ("reasoning", ["reasoning"]),
+            ]
+            if any(k in tag for k in kw for tag in hft)
+        ]
+    return merged
 
 async def main():
     print("Initializing Database...")
     await init_db()
-    
-    all_models = set()
+
     async with httpx.AsyncClient() as client:
-        print("Polling local Ollama endpoints...")
-        local_models = await fetch_local_models(client)
-        all_models.update(local_models)
-        print(f"Discovered {len(local_models)} local models.")
-        
-        print("Polling cloud API models...")
+        # ── Local Ollama models: /api/show gives GGUF-exact metadata ──────────
+        print("\nPolling local Ollama endpoints via /api/show...")
+        local_meta = await fetch_local_models_with_metadata(client)
+        print(f"Discovered {len(local_meta)} local models with GGUF metadata.")
+
+        # ── Cloud models from configured INFERENCE_SERVERS ────────────────────
+        print("\nPolling cloud API models...")
         cloud_models = await fetch_cloud_models(client)
-        all_models.update(cloud_models)
         print(f"Discovered {len(cloud_models)} cloud models.")
-        
-        print(f"Total active models discovered: {len(all_models)}")
-        
+
+        # ── OpenRouter free/vision/agentic tags ───────────────────────────────
+        print("\nFetching OpenRouter model metadata...")
+        or_meta = await fetch_openrouter_models(client)
+
+        all_model_ids = set(local_meta.keys()) | cloud_models
+        print(f"\nTotal models to index: {len(all_model_ids)}")
         upsert_count = 0
-        for model_id in all_models:
+
+        for model_id in sorted(all_model_ids):
             try:
-                # Parse components from model id
-                if "@" in model_id:
-                    base_name, endpoint = model_id.split("@", 1)
+                base_name = model_id.split("@", 1)[0] if "@" in model_id else model_id
+                is_local  = model_id in local_meta
+                show_data = local_meta.get(model_id, {})
+
+                # Seed from /api/show (local) or name-heuristics (cloud)
+                if is_local and show_data.get("context_window"):
+                    # GGUF values are authoritative — don't override with online guesses
+                    param_size       = show_data.get("parameter_size_b", 0.0)
+                    context          = show_data["context_window"]
+                    family           = show_data.get("family", "")
+                    has_explicit_ctx = True
+                    _, _, _, strengths, benchmarks, _ = parse_model_params(base_name)
                 else:
-                    base_name, endpoint = model_id, ""
-                    
-                param_size, context, family, strengths, benchmarks, has_explicit_ctx = parse_model_params(base_name)
-                
-                # Refine with online research
+                    param_size, context, family, strengths, benchmarks, has_explicit_ctx = \
+                        parse_model_params(base_name)
+
+                # Tags: strengths + OpenRouter
+                tags: list[str] = []
+                or_entry = or_meta.get(model_id) or or_meta.get(base_name) or {}
+                tags.extend(or_entry.get("tags") or [])
+                if "vision"    in strengths and "vision"    not in tags: tags.append("vision")
+                if any(s in strengths for s in ("reasoning", "math")) and "reasoning" not in tags:
+                    tags.append("reasoning")
+                if "code"      in strengths and "code"      not in tags: tags.append("code")
+                tags = list(dict.fromkeys(tags))
+
+                # Online enrichment: Ollama Library → HuggingFace
                 print(f"Researching online metadata for: {base_name}...")
-                online_meta = await research_model_metadata_online(client, base_name)
-                if online_meta:
-                    if online_meta.get("context_window"):
-                        if has_explicit_ctx:
-                            print(f"  -> Skipping online context window override due to explicit context tag in name ({context})")
-                        else:
-                            try:
-                                context = int(online_meta["context_window"])
-                                print(f"  -> Found online context window: {context}")
-                            except Exception:
-                                pass
-                    if online_meta.get("family"):
-                        family = online_meta["family"]
-                        print(f"  -> Found online model family: {family}")
-                
+                online = await research_model_metadata_online(client, base_name)
+                if online.get("context_window") and not has_explicit_ctx:
+                    context = int(online["context_window"])
+                if online.get("family") and not family:
+                    family = online["family"]
+                for t in (online.get("tags") or []):
+                    if t not in tags:
+                        tags.append(t)
+                if or_entry.get("context_window") and not has_explicit_ctx:
+                    context = or_entry["context_window"]
+
                 await upsert_model_metadata(
-                    model_id=model_id,
-                    base_model=base_name,
-                    parameter_size_b=param_size,
-                    context_window=context,
-                    family=family,
-                    strengths=strengths,
-                    benchmark_scores=benchmarks
+                    model_id         = model_id,
+                    base_model       = base_name,
+                    parameter_size_b = param_size,
+                    context_window   = context,
+                    family           = family or "other",
+                    strengths        = strengths,
+                    benchmark_scores = benchmarks,
+                    tags             = tags,
                 )
                 upsert_count += 1
             except Exception as e:
                 print(f"Failed to index {model_id}: {e}")
-            
-    print(f"Successfully upserted {upsert_count} models to model_metadata.")
+
+    print(f"\nSuccessfully upserted {upsert_count} models to model_metadata.")
     print("Closing Database Connection...")
     await close_db()
     print("Metadata indexing job completed.")

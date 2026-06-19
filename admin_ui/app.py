@@ -367,6 +367,95 @@ async def _startup_permission_cleanup() -> None:
 
 app = FastAPI(docs_url=None, redoc_url=None, title="MoE Admin", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# ─── PWA: manifest + service worker ──────────────────────────────────────────
+
+_PWA_CACHE_VERSION = "moe-admin-v1"
+_STATIC_ASSETS_TO_CACHE = [
+    "/static/css/bootstrap.min.css",
+    "/static/css/bootstrap-icons.min.css",
+    "/static/js/bootstrap.bundle.min.js",
+    "/",
+]
+
+@app.get("/manifest.json")
+async def pwa_manifest():
+    """Web App Manifest — enables 'Add to Home Screen' on Android/iOS."""
+    return JSONResponse({
+        "name":             "MoE Admin",
+        "short_name":       "MoE",
+        "description":      "MoE Sovereign — Mixture of Experts Administration",
+        "start_url":        "/",
+        "display":          "standalone",
+        "background_color": "#1a1d21",
+        "theme_color":      "#1a1d21",
+        "orientation":      "portrait-primary",
+        "icons": [
+            {
+                "src":     "/static/icons/icon-192.svg",
+                "sizes":   "192x192",
+                "type":    "image/svg+xml",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-512.svg",
+                "sizes":   "512x512",
+                "type":    "image/svg+xml",
+                "purpose": "any maskable",
+            },
+        ],
+        "categories": ["productivity", "utilities"],
+        "shortcuts": [
+            {"name": "Monitoring",  "url": "/monitoring",   "description": "Live monitoring"},
+            {"name": "Templates",   "url": "/templates",    "description": "Expert templates"},
+            {"name": "Modelle",     "url": "/model-metadata","description": "Model metadata"},
+        ],
+    }, headers={"Content-Type": "application/manifest+json"})
+
+
+@app.get("/sw.js")
+async def pwa_service_worker():
+    """Service worker for offline-first static asset caching."""
+    assets_json = json.dumps(_STATIC_ASSETS_TO_CACHE)
+    sw_code = f"""
+const CACHE  = '{_PWA_CACHE_VERSION}';
+const ASSETS = {assets_json};
+
+self.addEventListener('install', e => {{
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
+}});
+
+self.addEventListener('activate', e => {{
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+}});
+
+self.addEventListener('fetch', e => {{
+  const url = new URL(e.request.url);
+  // Cache-first for static assets; network-first for everything else
+  if (url.pathname.startsWith('/static/')) {{
+    e.respondWith(
+      caches.match(e.request).then(cached => cached || fetch(e.request).then(resp => {{
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return resp;
+      }}))
+    );
+  }} else {{
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match(e.request))
+    );
+  }}
+}});
+"""
+    return Response(content=sw_code, media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/"})
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
