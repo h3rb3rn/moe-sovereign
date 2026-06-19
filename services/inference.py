@@ -713,10 +713,20 @@ async def _invoke_planner_with_retry(
                 ), False
             logger.warning("⚠️ Planner: empty response from native /api/chat — falling back")
         except Exception as e:
-            logger.warning("⚠️ Planner: native /api/chat failed (%s) — falling back", str(e)[:80])
+            logger.warning(
+                "⚠️ Planner: native /api/chat failed [%s] (%s) — falling back",
+                type(e).__name__, str(e)[:120],
+            )
 
-    # Non-Ollama endpoint, or native call failed/empty → ChatOpenAI path with fallback chain
+    # Non-Ollama endpoint, or native call failed/empty → ChatOpenAI path with fallback chain.
+    # Bind extra_body so Ollama honours num_ctx — the OpenAI-compat endpoint silently drops
+    # the options dict unless it is sent as extra_body at the top level of the request.
     llm = await _get_planner_llm(state)
+    if _p_api_type == "ollama":
+        # Re-derive ctx here; _ctx may be unbound when endpoint was degraded/skipped.
+        _fb_ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or 0
+        if _fb_ctx > 0:
+            llm = llm.bind(extra_body={"options": {"num_ctx": _fb_ctx}})
     if temperature is not None:
         llm = llm.bind(temperature=temperature)
     return await _invoke_llm_with_fallback(llm, _p_url_base, prompt, timeout=PLANNER_TIMEOUT, label="Planner")

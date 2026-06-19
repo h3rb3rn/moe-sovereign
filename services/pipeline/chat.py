@@ -84,7 +84,7 @@ from services.helpers import (
     _shadow_request, _shadow_lock,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
-from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc, _is_external_endpoint_url
+from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
 from services.skills import _build_skill_catalog, _resolve_skill_secure, _detect_file_skill
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -814,22 +814,14 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     api_key_id   = user_ctx.get("key_id", "")
     user_perms   = json.loads(user_ctx.get("permissions_json", "{}"))
 
-    # ── Local-Only compliance flag (priority: permission > key flag > global env) ──
-    # Computed early so both the native-endpoint resolution below and the Dynamic
-    # Router enforce the same constraint.
-    _moe_modes_granted = set(user_perms.get("moe_mode", []))
-    _perm_local_only   = "moe-auto:local-only" in _moe_modes_granted
-    _key_local_only    = user_ctx.get("local_only_routing") == "1"
-    local_only = (
-        _perm_local_only
-        or _key_local_only
-        or os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
-    )
-
     # Template names and MoE mode IDs take precedence over native endpoints.
     # Wildcard permissions (*@node) would otherwise intercept template names and
     # route them as direct Ollama calls (model does not exist → empty response).
     _req_raw = request.model
+    # Strip optional " [tag1, tag2]" suffix that /v1/models appends to the 'name' field
+    # for Open-WebUI display. If Open-WebUI sends the 'name' value as model ID, the suffix
+    # would break routing because it hides the @connname and doesn't match models_cache IDs.
+    _req_raw = re.sub(r'\s+\[.*?\]\s*$', '', _req_raw).strip()
     _req_at = _req_raw.rindex("@") if "@" in _req_raw else -1
     _req_model_base = _req_raw[:_req_at] if _req_at >= 0 else _req_raw
     _req_node_hint  = _req_raw[_req_at + 1:] if _req_at >= 0 else None
@@ -946,11 +938,6 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _is_wildcard = _ep_model == "*"
                 if _is_wildcard != _wildcard_pass:
                     continue
-                # Compliance Gate: a Local-Only key may not be routed to an
-                # external node (e.g. AIHUB) via a direct "model@node" call,
-                # even when "*@<node>" is part of its inherited permissions.
-                if local_only and _is_external_endpoint_url(URL_MAP[_ep_node]):
-                    continue
                 if (_ep_model == _req_model_base or _is_wildcard) and \
                    (_req_node_hint is None or _req_node_hint == _ep_node):
                     _native_endpoint = {
@@ -965,24 +952,26 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 break
         # Fallback: user-owned private connections (lower priority than global URL_MAP)
         if not _native_endpoint and _user_conns_map:
-            from services.dynamic_router import _is_local_url
             if _req_node_hint and _req_node_hint in _user_conns_map:
                 _uc = _user_conns_map[_req_node_hint]
-                if not (local_only and not _is_local_url(_uc.get("url", ""))):
-                    _native_endpoint = {
-                        "url":        _uc["url"],
-                        "token":      _uc.get("api_key") or "ollama",
-                        "model":      _req_model_base,
-                        "node":       _req_node_hint,
-                        "api_type":   _uc.get("api_type", "openai"),
-                        "_user_conn": True,
-                    }
+                _native_endpoint = {
+                    "url":        _uc["url"],
+                    "token":      _uc.get("api_key") or "ollama",
+                    "model":      _req_model_base,
+                    "node":       _req_node_hint,
+                    "api_type":   _uc.get("api_type", "openai"),
+                    "_user_conn": True,
+                }
             elif not _req_node_hint:
-                # Bare model name: check models_cache of each user connection
+                # Bare model name: check models_cache of each user connection.
+                # models_cache stores rich dicts {id, tags, ...} — match on the 'id' field.
                 for _cname, _uc in _user_conns_map.items():
-                    if _req_model_base in _uc.get("models_cache", []):
-                        if local_only and not _is_local_url(_uc.get("url", "")):
-                            continue
+                    _mc = _uc.get("models_cache", [])
+                    _mc_ids = {
+                        (m.get("id", "") if isinstance(m, dict) else str(m))
+                        for m in _mc
+                    }
+                    if _req_model_base in _mc_ids:
                         _native_endpoint = {
                             "url":        _uc["url"],
                             "token":      _uc.get("api_key") or "ollama",
@@ -991,7 +980,12 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             "api_type":   _uc.get("api_type", "openai"),
                             "_user_conn": True,
                         }
+                        break  # first matching connection wins
 
+
+    # Resolved template info for live monitoring (populated when dynamic routing fires).
+    _resolved_tmpl_name: str = ""
+    _resolved_tmpl_id:   str = ""
 
     # ── Dynamic Router Integration ───────────────────────────────────────────
     # Triggers when:
@@ -1020,7 +1014,16 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             user_msgs = [m for m in request.messages if m.role == "user"]
             last_prompt = _oai_content_to_str(user_msgs[-1].content) if user_msgs else ""
 
-            # ── Constraint resolution (moe_mode permissions; local_only computed earlier) ──
+            # ── Constraint resolution (priority: permission > key-flag > global env-var) ──
+            _moe_modes_granted = set(user_perms.get("moe_mode", []))
+            # local_only: permission flag > key flag > global env
+            _perm_local_only     = "moe-auto:local-only"      in _moe_modes_granted
+            _key_local_only      = user_ctx.get("local_only_routing") == "1"
+            local_only = (
+                _perm_local_only
+                or _key_local_only
+                or os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
+            )
             # global_only: restrict router to global admin connections only
             _perm_global_only = "moe-auto:global-only" in _moe_modes_granted
             # user_conns_only: restrict router to user-created private connections only
@@ -1052,7 +1055,16 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 user_tmpls[tmpl_id] = dynamic_tmpl
                 _user_tmpls_json = json.dumps(user_tmpls)
                 _tmpl_override = tmpl_id
+                _resolved_tmpl_name = dynamic_tmpl.get("name", "")
+                _resolved_tmpl_id   = tmpl_id
     # ──────────────────────────────────────────────────────────────────────────
+
+    # For direct template requests (not via moe-auto routing), look up the display name.
+    if _tmpl_override and not _resolved_tmpl_id:
+        _resolved_tmpl_id = _tmpl_override
+        _direct_t = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
+        if _direct_t:
+            _resolved_tmpl_name = _direct_t.get("name", "")
 
     # Template name match is NOT authorization — check expert_template permissions explicitly.
     # Exception: user-owned templates (present in user_templates_json) are authorized by ownership.
@@ -1215,6 +1227,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         backend_model=_native_endpoint["model"] if _native_endpoint else "",
         backend_host=_native_endpoint["node"]  if _native_endpoint else "",
         api_key_id=api_key_id,
+        resolved_tmpl_name=_resolved_tmpl_name,
+        resolved_tmpl_id=_resolved_tmpl_id,
     ))
 
     # Conversation history: only user/assistant messages (no system messages)

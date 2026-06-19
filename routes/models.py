@@ -266,22 +266,29 @@ async def list_models(raw_request: Request):
             # models_cache may contain rich dicts {id, ...} or legacy plain strings.
             # Strip any existing @node suffix so we don't produce model@node@conn double-suffixes.
             if isinstance(_cm, dict):
-                _raw = _cm.get("id") or ""
+                _raw  = _cm.get("id") or ""
+                _tags = _cm.get("tags") or []
             else:
-                _raw = str(_cm)
+                _raw  = str(_cm)
+                _tags = []
             _base = _raw.rsplit("@", 1)[0] if "@" in _raw else _raw
             if not _base:
                 continue
             _mid = f"{_base}@{_conn_name}"
             if _mid not in _seen_conn:
                 _seen_conn.add(_mid)
+                # 'name' is the field Open-WebUI displays in the model selector.
+                # Tags are appended to 'name' so users can filter by capability.
+                # 'id' stays clean (model@conn) so API calls remain valid.
+                _disp = f"{_base} [{', '.join(_tags)}]" if _tags else _base
                 conn_models.append({
                     "id":           _mid,
                     "object":       "model",
                     "owned_by":     "moe-sovereign",
                     "created":      _model_created,
-                    "description":  f"Via {_conn_name}",
-                    "display_name": _base,
+                    "name":         _disp,          # Open-WebUI uses 'name' for display
+                    "display_name": _disp,          # MoE-internal compat
+                    "description":  f"Via {_conn_name}" + (f" [{', '.join(_tags)}]" if _tags else ""),
                 })
 
     return {

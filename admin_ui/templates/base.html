@@ -2,7 +2,15 @@
 <html lang="{{ get_lang(request)[:2] }}" data-bs-theme="light">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MoE Admin">
+  <meta name="theme-color" content="#1a1d21" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#1a1d21">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
   <title>{% block title %}MoE Admin{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/bootstrap.min.css">
   <link rel="stylesheet" href="/static/css/bootstrap-icons.min.css">
@@ -13,6 +21,13 @@
       const t = localStorage.getItem('moe-theme') || 'light';
       document.documentElement.setAttribute('data-bs-theme', t);
     })();
+    /* Register service worker */
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () =>
+        navigator.serviceWorker.register('/sw.js', {scope: '/'})
+          .catch(e => console.debug('SW registration skipped:', e.message))
+      );
+    }
   </script>
   <style>
     body { background-color: var(--bs-body-bg); }
@@ -31,6 +46,30 @@
     /* Collapse chevron rotation */
     [data-bs-toggle="collapse"] .bi-chevron-down { transition: transform .2s ease; }
     [data-bs-toggle="collapse"][aria-expanded="true"] .bi-chevron-down { transform: rotate(-180deg); }
+    /* ── Mobile / PWA optimizations ─────────────────────────────────────────── */
+    @media (max-width: 767.98px) {
+      /* Make all tables scrollable on small screens */
+      .table-responsive-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .table { font-size: .8rem; }
+      /* Larger touch targets */
+      .btn { min-height: 2.25rem; }
+      .btn-sm { min-height: 1.9rem; padding: .3rem .6rem; }
+      /* Accordion headers easier to tap */
+      .accordion-button { padding: .75rem 1rem; font-size: .9rem; }
+      /* Navbar spacing */
+      .container-fluid { padding-left: .75rem; padding-right: .75rem; }
+      /* Cards full-width on mobile */
+      .card { margin-bottom: .75rem; }
+      /* Stat numbers readable */
+      h3, h4 { font-size: 1.1rem; }
+      /* Hide low-priority columns on mobile via utility class */
+      .d-mobile-none { display: none !important; }
+    }
+    /* PWA standalone: add top padding for status bar */
+    @media (display-mode: standalone) {
+      body { padding-top: env(safe-area-inset-top); }
+      .navbar { padding-top: calc(.5rem + env(safe-area-inset-top)); }
+    }
     /* Sortable table headers */
     th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
     th.sortable:hover { background: rgba(0,0,0,.05); }
@@ -57,7 +96,7 @@
     {% set _p = request.url.path %}
     {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log'] %}
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
-    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval'] or _p.startswith('/templates') %}
+    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates'] or _p.startswith('/templates') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
     {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance', '/workshop', '/timeseries', '/notes', '/geo', '/dossier'] %}
 
@@ -113,6 +152,9 @@
           <li><a class="dropdown-item {% if _p == '/knowledge' %}active{% endif %}" href="/knowledge">
             <i class="bi bi-database-gear me-2 text-success"></i>Knowledge
           </a></li>
+          <li><a class="dropdown-item {% if _p == '/model-metadata' %}active{% endif %}" href="/model-metadata">
+            <i class="bi bi-cpu me-2 text-info"></i>{{ t(request, 'nav.model_metadata') }}
+          </a></li>
           <li><a class="dropdown-item {% if _p == '/federation' %}active{% endif %}" href="/federation">
             <i class="bi bi-globe2 me-2 text-success"></i>Federation
           </a></li>
@@ -146,6 +188,9 @@
             <i class="bi bi-clipboard-data me-2 text-warning"></i>{{ t(request, 'nav.tool_eval') }}
           </a></li>
           <li><hr class="dropdown-divider border-secondary"></li>
+          <li><a class="dropdown-item {% if _p == '/dynamic-templates' %}active{% endif %}" href="/dynamic-templates">
+            <i class="bi bi-diagram-3 me-2 text-warning"></i>Dynamic Templates
+          </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/templates') %}active{% endif %}" href="/templates">
             <i class="bi bi-collection me-2 text-warning"></i>{{ t(request, 'nav.templates') }}
           </a></li>
@@ -285,6 +330,11 @@
           <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳</option>
         </select>
       </form>
+      {# PWA Install Button — only shown when browser fires beforeinstallprompt #}
+      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary d-none"
+              onclick="pwaDeferredPrompt?.prompt()" title="Als App installieren">
+        <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">App</span>
+      </button>
       {# Theme Toggle #}
       <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
               onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
@@ -732,5 +782,29 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% block scripts %}{% endblock %}
+<script>
+/* ─── PWA Install Prompt ────────────────────────────────────────────────── */
+let pwaDeferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  pwaDeferredPrompt = e;
+  const btn = document.getElementById('pwaInstallBtn');
+  if (btn) btn.classList.remove('d-none');
+});
+window.addEventListener('appinstalled', () => {
+  pwaDeferredPrompt = null;
+  const btn = document.getElementById('pwaInstallBtn');
+  if (btn) btn.classList.add('d-none');
+});
+/* Hide install button when already running as standalone PWA */
+if (window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true) {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('pwaInstallBtn')?.classList.add('d-none');
+    /* Add safe-area padding for notched phones */
+    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+  });
+}
+</script>
 </body>
 </html>

@@ -1039,11 +1039,31 @@ async def lifespan(app_: FastAPI):
         logger.info("✅ admin_ui.database pool initialized (for API key fallback sync)")
     except Exception as e:
         logger.warning("admin_ui.database pool not initialized: %s", e)
-    # Clean up orphaned active-request keys from the previous process
+    # Clean up orphaned active-request keys from the previous process.
+    # Move each to the history set with status "interrupted" before deleting,
+    # so the Live Monitoring history reflects requests that were cut short by restart.
     _stale_keys = await state.redis_client.keys("moe:active:*")
     if _stale_keys:
+        _now_ts  = datetime.now(timezone.utc)
+        _now_iso = _now_ts.isoformat()
+        _score   = _now_ts.timestamp()
+        _raw_vals = await state.redis_client.mget(*_stale_keys)
+        for _rv in _raw_vals:
+            if not _rv:
+                continue
+            try:
+                _meta = json.loads(_rv)
+                _meta["status"]   = "interrupted"
+                _meta["ended_at"] = _now_iso
+                await state.redis_client.zadd(
+                    "moe:admin:completed", {json.dumps(_meta, default=str): _score}
+                )
+                await state.redis_client.zremrangebyrank("moe:admin:completed", 0, -101)
+            except Exception as _exc:
+                logger.debug("Stale-key history write failed: %s", _exc)
         await state.redis_client.delete(*_stale_keys)
-        logger.info(f"🧹 {len(_stale_keys)} orphaned moe:active:* keys deleted on startup")
+        logger.info("🧹 %d orphaned moe:active:* keys moved to history (interrupted) on startup",
+                    len(_stale_keys))
     # Initialize semaphores in event loop context
     await _init_semaphores()
     # Ensure skill registry schema and populate from filesystem

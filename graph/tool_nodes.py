@@ -414,7 +414,6 @@ async def graph_rag_node(state_: AgentState):
                         hav = np.load(vector_path)
                         
                         # Extract simple concepts from the query input (words >= 4 chars)
-                        import re
                         query_words = re.findall(r"\b\w{4,}\b", state_["input"].lower())
                         
                         # Find matching subjects in the VSA vocabulary

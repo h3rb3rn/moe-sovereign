@@ -65,6 +65,7 @@ async def _register_active_request(
     template_name: str = "", client_ip: str = "",
     backend_model: str = "", backend_host: str = "",
     api_key_id: str = "",
+    resolved_tmpl_name: str = "", resolved_tmpl_id: str = "",
 ) -> None:
     """Register a running request in Redis for live monitoring."""
     if state.redis_client is None:
@@ -88,19 +89,21 @@ async def _register_active_request(
             except Exception:
                 pass
         meta = {
-            "chat_id":       chat_id,
-            "user_id":       user_id,
-            "model":         model,
-            "moe_mode":      moe_mode,
-            "type":          req_type,
-            "template_name": template_name,
-            "client_ip":     client_ip,
-            "backend_model": backend_model,
-            "backend_host":  backend_host,
-            "api_key_id":    api_key_id,
-            "key_label":     _key_label,
-            "key_prefix":    _key_prefix,
-            "started_at":    datetime.utcnow().isoformat() + "Z",
+            "chat_id":            chat_id,
+            "user_id":            user_id,
+            "model":              model,
+            "moe_mode":           moe_mode,
+            "type":               req_type,
+            "template_name":      template_name,
+            "resolved_tmpl_name": resolved_tmpl_name,
+            "resolved_tmpl_id":   resolved_tmpl_id,
+            "client_ip":          client_ip,
+            "backend_model":      backend_model,
+            "backend_host":       backend_host,
+            "api_key_id":         api_key_id,
+            "key_label":          _key_label,
+            "key_prefix":         _key_prefix,
+            "started_at":         datetime.utcnow().isoformat() + "Z",
         }
         await state.redis_client.set(f"moe:active:{chat_id}", json.dumps(meta), ex=7200)
     except Exception as e:

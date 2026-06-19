@@ -367,26 +367,39 @@ function fillDefaultPrompt(prefix, type) {
 }
 
 // ─── Load available LLMs ─────────────────────────────────────────────────────
-let _availableLlms = null;
+let _availableLlms = null;      // plain string IDs ["model@host", ...]
+let _availableLlmsRich = null;  // [{id, tags, context_window}]
+
 async function fetchAvailableLlms() {
   if (_availableLlms) return _availableLlms;
   try {
-    const r = await fetch('/api/available-llms');
-    _availableLlms = await r.json();
+    const r = await fetch('/api/available-llms-rich');
+    _availableLlmsRich = await r.json();
+    _availableLlms     = _availableLlmsRich.map(m => m.id || m);
   } catch(e) {
     _availableLlms = [];
+    _availableLlmsRich = [];
   }
   return _availableLlms;
+}
+
+function _llmTagBadge(tag) {
+  const colors = {free:'#198754', vision:'#0dcaf0', agentic:'#ffc107', reasoning:'#0d6efd', code:'#6c757d'};
+  const c = colors[tag] || '#333';
+  return `<span style="display:inline-block;padding:.1em .4em;border-radius:.25em;font-size:.7em;background:${c};color:${tag==='vision'||tag==='agentic'?'#000':'#fff'}">${tag}</span>`;
 }
 
 // ─── LLM-Dropdown (Bootstrap dropdown mit Suche) ─────────────────────────────
 function buildLlmDropdown(containerId, availableLlms, selectedVal) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  const uid = containerId.replace(/[^a-zA-Z0-9]/g, '_');
+  const richMap = Object.fromEntries((_availableLlmsRich||[]).map(m => [m.id||m, m]));
   const opts = availableLlms.map(v => {
-    const sel = v === selectedVal ? 'selected' : '';
-    return `<option value="${v}" ${sel}>${v}</option>`;
+    const id  = typeof v === 'string' ? v : v.id;
+    const sel = id === selectedVal ? 'selected' : '';
+    const m   = richMap[id] || {};
+    const tagSuffix = (m.tags && m.tags.length) ? ` [${m.tags.join(', ')}]` : '';
+    return `<option value="${id}" ${sel}>${id}${tagSuffix}</option>`;
   }).join('');
   container.innerHTML = `<select class="form-select form-select-sm llm-select" style="font-family:monospace;font-size:.82rem">
     <option value="">— Select model —</option>${opts}
@@ -536,7 +549,13 @@ function addModelRow(prefix, cat) {
   const key = `${prefix}_${cat}`;
   if (!_rowCounters[key]) _rowCounters[key] = 0;
   const rowId = `${prefix}_mr_${cat}_${_rowCounters[key]++}`;
-  const opts = llms.map(v => `<option value="${v}">${v}</option>`).join('');
+  const richMap = Object.fromEntries((_availableLlmsRich||[]).map(m => [m.id||m, m]));
+  const opts = llms.map(v => {
+    const id = typeof v === 'string' ? v : v.id;
+    const m  = richMap[id] || {};
+    const tagSuffix = (m.tags && m.tags.length) ? ` [${m.tags.join(', ')}]` : '';
+    return `<option value="${id}">${id}${tagSuffix}</option>`;
+  }).join('');
   const roleOpts = [['primary','Primary'],['fallback','Fallback'],['always','Always']]
     .map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
   tbody.insertAdjacentHTML('beforeend', `<tr id="${rowId}">
