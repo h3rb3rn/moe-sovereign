@@ -1,5 +1,5 @@
 # --- LangChain & LangGraph ---
-langchain>=0.3.0
+langchain>=1.3.9
 langchain-openai
 langchain-community
 langchain-chroma
@@ -11,7 +11,7 @@ psycopg[binary,pool]>=3.2.0
 fastapi>=0.115.0
 uvicorn[standard]
 pydantic>=2.0.0
-python-multipart>=0.0.27
+python-multipart>=0.0.31
 python-dotenv
 
 # --- Datenbanken & Mathe ---
@@ -33,8 +33,8 @@ aiokafka>=0.11.0
 prometheus_client>=0.21.0
 
 # --- OIDC/JWT ---
-PyJWT>=2.8.0
-cryptography>=46.0.7
+PyJWT>=2.13.0
+cryptography>=48.0.1
 
 # --- Pinned transitive deps (guard against unwanted bumps) ---
 urllib3==2.7.0
