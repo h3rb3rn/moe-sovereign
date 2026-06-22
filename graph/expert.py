@@ -404,7 +404,13 @@ async def expert_worker(state_: AgentState):
             # model_kwargs — LangChain warns and silently drops extra_body from model_kwargs,
             # which causes Ollama to use the Modelfile default (8192) instead of JUDGE_NUM_CTX
             # (32768), triggering a reload of the already-warm model on every expert call.
-            _extra_body = {"options": {"num_ctx": _expert_ctx_window}} if _expert_ctx_window > 0 else None
+            _extra_body = {"options": {"num_ctx": _expert_ctx_window}} if _expert_ctx_window > 0 else {}
+            if state_.get("enable_habe"):
+                from services.inference import _inject_habe_prefix_embeddings
+                _opts = _extra_body.setdefault("options", {})
+                _inject_habe_prefix_embeddings(_opts, state_)
+            if not _extra_body:
+                _extra_body = None
             _llm_kwargs: dict = {"model": model_name, "base_url": url, "api_key": token,
                                  "timeout": _expert_node_timeout,
                                  "model_kwargs": _model_kw}
@@ -451,6 +457,9 @@ async def expert_worker(state_: AgentState):
                         "options":    {"num_ctx": _expert_ctx_window, "num_predict": _expert_max_tokens},
                         "keep_alive": "4h",
                     }
+                    if state_.get("enable_habe"):
+                        from services.inference import _inject_habe_prefix_embeddings
+                        _inject_habe_prefix_embeddings(_native_payload["options"], state_)
                     if not _thinking_enabled:
                         _native_payload["think"] = False
                     async with httpx.AsyncClient(timeout=_expert_node_timeout) as _acl:

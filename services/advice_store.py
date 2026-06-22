@@ -35,6 +35,18 @@ def save_advice_rules(rules: list[dict]) -> None:
     except Exception as e:
         logger.error(f"AdviceTaker: Failed to save advice rules to {ADVICE_FILE}: {e}")
 
+def _semantic_overlap(s1: str, s2: str) -> float:
+    """Calculates character 3-gram Jaccard similarity for local semantic fallback matching."""
+    if not s1 or not s2:
+        return 0.0
+    def ngrams(s, n=3):
+        return set(s[i:i+n] for i in range(len(s)-n+1))
+    g1, g2 = ngrams(s1.lower()), ngrams(s2.lower())
+    if not g1 or not g2:
+        return 0.0
+    return len(g1 & g2) / len(g1 | g2)
+
+
 def add_advice_rule(
     rule_text: str,
     category_scope: str = "all",
@@ -42,7 +54,8 @@ def add_advice_rule(
     category: str = "",
     mcp_tool: str = "",
     default_task_description: str = "",
-    enabled: bool = True
+    enabled: bool = True,
+    parameter_extractors: dict = None
 ) -> dict:
     """Adds a new advice rule with rich constraints."""
     import secrets
@@ -55,7 +68,8 @@ def add_advice_rule(
         "category": category.strip(),
         "mcp_tool": mcp_tool.strip(),
         "default_task_description": default_task_description.strip(),
-        "enabled": enabled
+        "enabled": enabled,
+        "parameter_extractors": parameter_extractors or {}
     }
     rules.append(new_rule)
     save_advice_rules(rules)
@@ -78,7 +92,7 @@ def get_active_advice(query: str = None) -> list[str]:
         if not r.get("enabled", True):
             continue
             
-        # Match using pattern or scope
+        # Match using pattern, scope, or semantic overlap
         matched = False
         pattern = r.get("pattern", "")
         if pattern and query:
@@ -92,6 +106,8 @@ def get_active_advice(query: str = None) -> list[str]:
             if scope == "all":
                 matched = True
             elif query and scope in query.lower():
+                matched = True
+            elif query and _semantic_overlap(scope, query) >= 0.3:
                 matched = True
                 
         if matched:
@@ -112,7 +128,7 @@ def enforce_advice_rules(query: str, plan: list) -> list:
         mcp_tool = r.get("mcp_tool", "")
         category = r.get("category", "")
         
-        # Match using regex or substring
+        # Match using regex, substring, or semantic overlap
         matched = False
         if pattern:
             try:
@@ -123,6 +139,8 @@ def enforce_advice_rules(query: str, plan: list) -> list:
         else:
             scope = r.get("category_scope", "all")
             if scope == "all" or (query and scope in query.lower()):
+                matched = True
+            elif query and _semantic_overlap(scope, query) >= 0.3:
                 matched = True
                 
         if matched:
@@ -145,19 +163,30 @@ def enforce_advice_rules(query: str, plan: list) -> list:
                 }
                 if mcp_tool:
                     new_task["mcp_tool"] = mcp_tool
-                    # Extract parameter values based on mcp_tool type
-                    if mcp_tool == "legal_get_paragraph":
+                    new_task["mcp_args"] = {}
+                    
+                    # 1. Custom Regex Parameter Extractors (Declarative extraction)
+                    extractors = r.get("parameter_extractors") or {}
+                    for param_name, param_pattern in extractors.items():
+                        try:
+                            match = re.search(param_pattern, query, re.I)
+                            if match:
+                                # if there are capturing groups, use the first group, else full match
+                                new_task["mcp_args"][param_name] = match.group(1) if match.groups() else match.group(0)
+                        except Exception as ee:
+                            logger.warning(f"AdviceTaker: Extractor failed for param '{param_name}': {ee}")
+                    
+                    # 2. Hardcoded extractors as fallback for standard tools
+                    if mcp_tool == "legal_get_paragraph" and not new_task["mcp_args"]:
                         law_match = re.search(r'§\s*(\d+\w*)\s*(bgb|stgb|gg|hgb)', query, re.I)
                         if law_match:
                             new_task["mcp_args"] = {"law": law_match.group(2).upper(), "paragraph": law_match.group(1)}
                         else:
                             new_task["mcp_args"] = {"law": "BGB", "paragraph": "242"}
-                    elif mcp_tool == "subnet_calc":
+                    elif mcp_tool == "subnet_calc" and not new_task["mcp_args"]:
                         cidr_match = re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}\b', query)
                         if cidr_match:
                             new_task["mcp_args"] = {"cidr": cidr_match.group(0)}
-                    else:
-                        new_task["mcp_args"] = {}
                             
                 # Inject at the beginning of the plan so it runs before general experts
                 modified_plan.insert(0, new_task)
