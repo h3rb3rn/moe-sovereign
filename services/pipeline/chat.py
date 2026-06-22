@@ -1471,6 +1471,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "planner_token_override": _tmpl_prompts["planner_token_override"],
          "template_name":  _tmpl_name,
          "template_id":    _tmpl_override or "",
+         "causal_intervention": _tmpl_prompts.get("causal_intervention"),
          "pending_reports": _pending_reports,
          "max_agentic_rounds": _tmpl_prompts.get("max_agentic_rounds", 0),
          "agentic_iteration": 0,

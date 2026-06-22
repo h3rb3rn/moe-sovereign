@@ -28,6 +28,8 @@ import re
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
+from context_compressor import compress_message_content
+
 
 # ── Token accounting ───────────────────────────────────────────────────────────
 
@@ -101,6 +103,9 @@ def _parse_expert_confidence(result: str) -> str:
         return "low"
     lower = result.lower().lstrip()
     if lower.startswith(("[error", "error:", "none", "n/a", "null")):
+        return "low"
+    # Catch run_single() error format: "[model-name ERROR]: <message>"
+    if re.search(r'^\[\S.*?\s+error\]:', lower[:120]):
         return "low"
     m = re.search(r'CONFIDENCE:\s*(high|medium|low)', result, re.I)
     return m.group(1).lower() if m else "medium"
@@ -331,16 +336,28 @@ def _truncate_history(
     if max_chars == -1:
         return list(history)
 
-    # Compress older assistant answers when total history length > 2/3 of the limit
+    # Compress older assistant answers when total history length > 2/3 of the limit.
+    # Strategy: compress content first (content-aware), collapse to '[…]' only if
+    # it still doesn't fit — preserves more information than immediate erasure.
     _total_chars = sum(len(m["content"]) for m in history)
     if _total_chars > max_chars * 2 // 3:
         if prom_compressed is not None:
             prom_compressed.inc()
         compressed = []
+        _old_assistant_count = sum(
+            1 for i, m in enumerate(history)
+            if m["role"] == "assistant" and i < len(history) - 2
+        )
+        _per_msg_budget = max(120, max_chars // max(_old_assistant_count, 1))
         for i, msg in enumerate(history):
-            # Always keep the last 2 messages (current turn) in full
             if msg["role"] == "assistant" and i < len(history) - 2:
-                compressed.append({"role": "assistant", "content": "[…]"})
+                raw = msg["content"]
+                if isinstance(raw, str):
+                    shrunk = compress_message_content(raw, _per_msg_budget)
+                    compressed.append({"role": "assistant", "content": shrunk if shrunk else "[…]"})
+                else:
+                    # Multimodal content (list of blocks) — collapse to placeholder
+                    compressed.append({"role": "assistant", "content": "[…]"})
             else:
                 compressed.append(msg)
         history = compressed

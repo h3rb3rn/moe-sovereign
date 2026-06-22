@@ -72,7 +72,8 @@ async def test_score_and_allocate_model():
     }
     
     # 1. Normal mode (allows cloud)
-    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)):
+    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)), \
+         patch("random.random", return_value=1.0):
         allocated = await _score_and_allocate_model("general", models, metadata, local_only=False)
         assert len(allocated) == 2
         # RTX is primary since it has warmed and local priority bonuses
@@ -80,7 +81,8 @@ async def test_score_and_allocate_model():
         assert allocated[1]["model_id"] == "llama3.3:70b@cloud"
         
     # 2. Local-only mode (strictly blocks cloud)
-    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)):
+    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)), \
+         patch("random.random", return_value=1.0):
         allocated_local = await _score_and_allocate_model("general", models, metadata, local_only=True)
         assert len(allocated_local) == 1
         assert allocated_local[0]["model_id"] == "qwen3.6:35b@N04-RTX"
@@ -245,6 +247,35 @@ async def test_generate_prompt_specific_prompts_llm():
         assert res["judge_prompt"] == "LLM custom judge prompt"
         assert res["experts"]["math"]["system_prompt"] == "LLM custom math expert prompt"
         mock_llm.ainvoke.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_score_and_allocate_model_intervention():
+    models = [
+        {"model_id": "model_A@node", "model_name": "model_A", "endpoint": "node", "is_warmed": True, "is_local": True},
+        {"model_id": "model_B@node", "model_name": "model_B", "endpoint": "node", "is_warmed": True, "is_local": True}
+    ]
+    
+    metadata = {
+        "model_A@node": {"context_window": 4096, "benchmark_scores": {"mmlu": 90.0}},
+        "model_B@node": {"context_window": 4096, "benchmark_scores": {"mmlu": 80.0}}
+    }
+    
+    interventions = []
+    # Force random.random to return 0.01 so that intervention is triggered
+    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)), \
+         patch("random.random", return_value=0.01):
+        allocated = await _score_and_allocate_model("general", models, metadata, local_only=False, interventions=interventions)
+        # Check that swap occurred: primary model should be model_B instead of model_A
+        assert len(allocated) == 2
+        assert allocated[0]["model_id"] == "model_B@node"
+        assert allocated[1]["model_id"] == "model_A@node"
+        assert len(interventions) == 1
+        assert interventions[0]["is_intervention"] is True
+        assert interventions[0]["intervened"] == "model_B@node"
+        assert interventions[0]["default"] == "model_A@node"
+        assert interventions[0]["expert"] == "general"
+
 
 
 def tmer_or_not_none(val):

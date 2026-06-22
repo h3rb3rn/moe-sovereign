@@ -126,7 +126,7 @@
                   <th style="width:45px" title="{{ t(request, 'tip.active_toggle') }}">{{ t(request, 'status.active') }}</th>
                   <th style="width:55px" title="{{ t(request, 'tip.ontology_cronjob') }}">{{ t(request, 'lbl.ontology_short') }}</th>
                   <th style="width:90px">Status</th>
-                  <th style="width:36px"></th>
+                  <th style="width:68px"></th>
                 </tr>
               </thead>
               <tbody id="server-tbody">
@@ -156,6 +156,7 @@
                     <select name="srv_api_type_{{ loop.index0 }}" class="form-select form-select-sm">
                       <option value="ollama" {% if srv.get('api_type','ollama')=='ollama' %}selected{% endif %}>Ollama</option>
                       <option value="openai" {% if srv.get('api_type','ollama')=='openai' %}selected{% endif %}>OpenAI</option>
+                      <option value="anthropic" {% if srv.get('api_type','ollama')=='anthropic' %}selected{% endif %}>Anthropic Messages API</option>
                     </select>
                   </td>
                   <td><input type="password" name="srv_token_{{ loop.index0 }}"
@@ -173,8 +174,14 @@
                            {% if srv.get('ontology_enabled') %}checked{% endif %}>
                   </td>
                   <td><span class="badge bg-secondary srv-status-badge" style="font-size:.75rem">–</span></td>
-                  <td><button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
-                              onclick="removeServerRow(this)"><i class="bi bi-x"></i></button></td>
+                  <td class="d-flex gap-1">
+                    <button type="button" class="btn btn-sm btn-outline-secondary px-1 py-0"
+                            title="Modell-Tags bearbeiten"
+                            onclick="openSrvTagModal(this.closest('tr').querySelector('input[name^=srv_name_]').value)">
+                      <i class="bi bi-tags"></i></button>
+                    <button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
+                            onclick="removeServerRow(this)"><i class="bi bi-x"></i></button>
+                  </td>
                 </tr>
                 {% endfor %}
               </tbody>
@@ -760,6 +767,40 @@
 
 </form>
 
+<!-- ── Server-Modell-Tag-Editor ───────────────────────────────────────────── -->
+<div class="modal fade" id="srvTagModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-tags me-2"></i>Modell-Tags: <span id="srv-tag-modal-name" class="font-monospace"></span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="srv-tag-loading" class="text-center py-4 text-muted">
+          <div class="spinner-border spinner-border-sm me-2"></div>Modelle werden geladen…
+        </div>
+        <div id="srv-tag-error" class="alert alert-danger m-3 d-none" style="white-space:pre-wrap;font-size:.85rem"></div>
+        <table class="table table-sm table-hover mb-0 d-none" id="srv-tag-table">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th>Model ID</th>
+              <th style="width:320px">Tags</th>
+            </tr>
+          </thead>
+          <tbody id="srv-tag-tbody"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer py-2">
+        <span class="text-muted small me-auto" id="srv-tag-status"></span>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="saveSrvModelTags()" id="srv-tag-save-btn">
+          <i class="bi bi-floppy me-1"></i>Save tags
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 
 {% endblock %}
 
@@ -821,8 +862,9 @@ function escHtml(str) {
 // ─── Inference-Server Editor ─────────────────────────────────────────────────
 
 function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeout, costFactor, enabled, loadDelay) {
-  const apiOpts = ['ollama','openai'].map(t =>
-    `<option value="${t}" ${t===(apiType||'ollama')?'selected':''}>${t==='openai'?'OpenAI':'Ollama'}</option>`
+  const apiLabels = {ollama:'Ollama', openai:'OpenAI', anthropic:'Anthropic Messages API'};
+  const apiOpts = ['ollama','openai','anthropic'].map(t =>
+    `<option value="${t}" ${t===(apiType||'ollama')?'selected':''}>${apiLabels[t]}</option>`
   ).join('');
   const checkedAttr = (enabled !== false) ? 'checked' : '';
   const tr = document.createElement('tr');
@@ -853,8 +895,14 @@ function buildServerRow(idx, name, url, gpuCount, vramGb, apiType, token, timeou
        <input type="checkbox" name="srv_ontology_enabled_${idx}" value="1" class="form-check-input">
      </td>
      <td><span class="badge bg-secondary srv-status-badge" style="font-size:.75rem">–</span></td>
-     <td><button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
-                 onclick="removeServerRow(this)"><i class="bi bi-x"></i></button></td>`;
+     <td class="d-flex gap-1">
+       <button type="button" class="btn btn-sm btn-outline-secondary px-1 py-0"
+               title="Modell-Tags bearbeiten"
+               onclick="openSrvTagModal(this.closest('tr').querySelector('input[name^=srv_name_]').value)">
+         <i class="bi bi-tags"></i></button>
+       <button type="button" class="btn btn-sm btn-outline-danger px-1 py-0"
+               onclick="removeServerRow(this)"><i class="bi bi-x"></i></button>
+     </td>`;
   return tr;
 }
 
@@ -902,10 +950,10 @@ async function testAllServers() {
         if (!badge) return;
         if (srv.ok) {
           badge.className   = 'badge bg-success srv-status-badge';
-          badge.textContent = `${srv.latency_ms} ms · ${srv.models_count} Modelle`;
+          badge.textContent = `${srv.latency_ms} ms · ${srv.models_count} models`;
         } else {
           badge.className   = 'badge bg-danger srv-status-badge';
-          badge.textContent = 'Fehler';
+          badge.textContent = 'Error';
         }
       });
     });
@@ -914,7 +962,7 @@ async function testAllServers() {
   }
 }
 
-// ─── Dienste-Status Polling ──────────────────────────────────────────────────
+// ─── Service Status Polling ──────────────────────────────────────────────────
 
 function updateStatus() {
   fetch('/api/status')
@@ -968,7 +1016,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// ─── Claude Code Reasoning-Row Sichtbarkeit ─────────────────────────────────
+// ─── Claude Code Reasoning-Row Visibility ─────────────────────────────────
 
 (function () {
   var modeSelect    = document.getElementById('CLAUDE_CODE_MODE');
@@ -1008,5 +1056,156 @@ document.getElementById('config-form').addEventListener('submit', () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
 });
+
+// ─── Server-Modell-Tag-Editor ─────────────────────────────────────────────────
+
+const _SRV_TAG_COLORS = {
+  free: 'bg-success', vision: 'bg-info text-dark',
+  agentic: 'bg-warning text-dark', reasoning: 'bg-primary', code: 'bg-secondary',
+};
+const _SRV_ALL_TAGS = ['free', 'vision', 'agentic', 'reasoning', 'code'];
+
+let _srvTagModal = null;
+let _srvTagMeta  = {};   // model_id → full metadata row
+let _srvTagDirty = {};   // model_id → new tags[]
+
+function _getSrvTagModal() {
+  if (!_srvTagModal) _srvTagModal = new bootstrap.Modal(document.getElementById('srvTagModal'));
+  return _srvTagModal;
+}
+
+async function openSrvTagModal(srvName) {
+  if (!srvName) { alert('Bitte zuerst den Server-Namen eintragen.'); return; }
+  _srvTagDirty = {};
+  document.getElementById('srv-tag-modal-name').textContent = srvName;
+  document.getElementById('srv-tag-loading').classList.remove('d-none');
+  document.getElementById('srv-tag-table').classList.add('d-none');
+  document.getElementById('srv-tag-error').classList.add('d-none');
+  document.getElementById('srv-tag-status').textContent = '';
+  document.getElementById('srv-tag-save-btn').disabled = false;
+  _getSrvTagModal().show();
+
+  try {
+    const [modelsRes, metaRes] = await Promise.all([
+      fetch(`/api/servers/models?server=${encodeURIComponent(srvName)}`),
+      fetch('/api/model-metadata'),
+    ]);
+    if (!modelsRes.ok) {
+      const detail = await modelsRes.json().catch(() => ({}));
+      throw new Error(`Modelle konnten nicht geladen werden (HTTP ${modelsRes.status}): ${detail.detail || modelsRes.statusText}`);
+    }
+    const models = await modelsRes.json();
+    if (!Array.isArray(models)) throw new Error(`Unerwartetes Antwortformat vom Server: ${JSON.stringify(models).slice(0, 120)}`);
+    const allMeta = metaRes.ok ? await metaRes.json() : [];
+
+    _srvTagMeta = {};
+    for (const row of allMeta) _srvTagMeta[row.model_id] = row;
+
+    const tbody = document.getElementById('srv-tag-tbody');
+    tbody.innerHTML = '';
+    for (const m of models) {
+      const mid  = m.name || m.id || '';
+      if (!mid) continue;
+      const meta = _srvTagMeta[mid] || {};
+      const cur  = meta.tags || [];
+      tbody.insertAdjacentHTML('beforeend', `
+        <tr>
+          <td class="align-middle font-monospace small">${_escHtmlSrv(mid)}</td>
+          <td class="align-middle">
+            <div class="d-flex flex-wrap gap-1" data-model-id="${_escHtmlSrv(mid)}">
+              ${_SRV_ALL_TAGS.map(tag => {
+                const active = cur.includes(tag);
+                const clr = _SRV_TAG_COLORS[tag] || 'bg-dark';
+                return `<span class="badge ${clr} ${active ? '' : 'opacity-25'} srv-tag-pill"
+                              style="cursor:pointer;user-select:none"
+                              data-tag="${tag}" data-active="${active}"
+                              onclick="toggleSrvTag(this)">${tag}</span>`;
+              }).join('')}
+            </div>
+          </td>
+        </tr>`);
+    }
+
+    document.getElementById('srv-tag-loading').classList.add('d-none');
+    document.getElementById('srv-tag-table').classList.remove('d-none');
+    if (!models.length) {
+      document.getElementById('srv-tag-status').textContent = 'No models found.';
+    }
+  } catch (e) {
+    document.getElementById('srv-tag-loading').classList.add('d-none');
+    const err = document.getElementById('srv-tag-error');
+    err.textContent = e.message;
+    err.classList.remove('d-none');
+  }
+}
+
+function toggleSrvTag(pill) {
+  const active = pill.dataset.active === 'true';
+  pill.dataset.active = active ? 'false' : 'true';
+  pill.classList.toggle('opacity-25', active);
+  // Track which model_id was changed
+  const mid = pill.closest('[data-model-id]').dataset.modelId;
+  const tags = Array.from(
+    pill.closest('[data-model-id]').querySelectorAll('.srv-tag-pill[data-active="true"]')
+  ).map(p => p.dataset.tag);
+  _srvTagDirty[mid] = tags;
+}
+
+async function saveSrvModelTags() {
+  if (!Object.keys(_srvTagDirty).length) {
+    _getSrvTagModal().hide();
+    return;
+  }
+  const btn    = document.getElementById('srv-tag-save-btn');
+  const status = document.getElementById('srv-tag-status');
+  const errBox = document.getElementById('srv-tag-error');
+  btn.disabled = true;
+  errBox.classList.add('d-none');
+  status.textContent = 'Saving...';
+
+  const errors = [];
+  let saved = 0;
+  for (const [mid, tags] of Object.entries(_srvTagDirty)) {
+    const existing = _srvTagMeta[mid] || {};
+    const body = {
+      base_model:       existing.base_model       || mid,
+      parameter_size_b: Number(existing.parameter_size_b) || 0,
+      context_window:   Number(existing.context_window)   || 4096,
+      family:           existing.family           || 'other',
+      strengths:        Array.isArray(existing.strengths) ? existing.strengths : [],
+      benchmark_scores: (existing.benchmark_scores && typeof existing.benchmark_scores === 'object')
+                          ? existing.benchmark_scores : {},
+      tags,
+    };
+    try {
+      const r = await fetch(`/api/model-metadata/${encodeURIComponent(mid)}`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+      });
+      if (r.ok) {
+        saved++;
+        _srvTagMeta[mid] = { ...existing, tags };
+      } else {
+        const detail = await r.json().catch(() => ({}));
+        errors.push(`${mid}: HTTP ${r.status} — ${detail.detail || r.statusText}`);
+      }
+    } catch (e) {
+      errors.push(`${mid}: ${e.message}`);
+    }
+  }
+
+  _srvTagDirty = {};
+  btn.disabled = false;
+  if (errors.length) {
+    errBox.textContent = errors.join('\n');
+    errBox.classList.remove('d-none');
+    status.textContent = `${saved} saved, ${errors.length} errors`;
+  } else {
+    status.textContent = `${saved} model${saved !== 1 ? 's' : ''} updated ✓`;
+  }
+}
+
+function _escHtmlSrv(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 </script>
 {% endblock %}

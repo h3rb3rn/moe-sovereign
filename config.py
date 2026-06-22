@@ -552,7 +552,7 @@ MODES: dict = {
     },
     "auto": {
         "model_id":    "moe-auto",
-        "description": "Auto — KI wählt dynamisch die optimalen Experten für jeden Prompt",
+        "description": "Auto — AI dynamically selects the optimal experts for each prompt",
         "expert_suffix": "",
         "merger_prefix": (
             "Synthesize the following information into a clear, complete answer.\n"

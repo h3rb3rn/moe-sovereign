@@ -80,6 +80,7 @@ async def submit_feedback(req: FeedbackRequest):
     user_input = decode_val("input")
     plan_cats_str = decode_val("plan_cats") or "[]"
     template_id = decode_val("template_id")
+    causal_intervention_str = decode_val("causal_intervention")
 
     positive = req.rating >= FEEDBACK_POSITIVE_THRESHOLD
     negative = req.rating <= FEEDBACK_NEGATIVE_THRESHOLD
@@ -90,6 +91,61 @@ async def submit_feedback(req: FeedbackRequest):
         if "::" in model_cat:
             model, cat = model_cat.split("::", 1)
             await _record_expert_outcome(model, cat, positive)
+
+    # ─── Causal Credit Assignment ──────────────────────────────────────────
+    if causal_intervention_str:
+        import re as _re
+        try:
+            intervention = json.loads(causal_intervention_str)
+            if intervention and intervention.get("is_intervention"):
+                intervened_model = intervention.get("intervened")
+                default_model = intervention.get("default")
+                category = intervention.get("expert")
+                actual_rating = req.rating
+                
+                # Query default model's historical average rating
+                historical_avg = None
+                if state._userdb_pool is not None:
+                    try:
+                        async with state._userdb_pool.connection() as conn:
+                            async with conn.cursor() as cur:
+                                like_pattern = f'%"{default_model}::{category}"%'
+                                await cur.execute(
+                                    "SELECT AVG(user_rating) FROM routing_telemetry WHERE user_rating IS NOT NULL AND experts_used::text LIKE %s",
+                                    (like_pattern,)
+                                )
+                                row = await cur.fetchone()
+                                if row and row[0] is not None:
+                                    historical_avg = float(row[0])
+                    except Exception:
+                        pass
+                
+                if historical_avg is None:
+                    # Fall back to Valkey estimation
+                    try:
+                        safe_default = _re.sub(r"[^a-zA-Z0-9_\-]", "_", default_model)
+                        default_key = f"moe:perf:{safe_default}:{category}"
+                        data = await state.redis_client.hgetall(default_key)
+                        dtot = int(data.get(b"total", data.get("total", 0)))
+                        if dtot > 0:
+                            dpos = int(data.get(b"positive", data.get("positive", 0)))
+                            dneg = int(data.get(b"negative", data.get("negative", 0)))
+                            dneu = dtot - dpos - dneg
+                            historical_avg = (dpos * 4.5 + dneg * 1.5 + dneu * 3.0) / dtot
+                        else:
+                            historical_avg = 3.0
+                    except Exception:
+                        historical_avg = 3.0
+                
+                # Calculate difference
+                diff = actual_rating - historical_avg
+                is_positive_reward = diff > 0
+                
+                # Apply reward/penalty to intervened model in Valkey moe:perf
+                from services.inference import _record_expert_outcome as _rec_outcome
+                await _rec_outcome(intervened_model, category, is_positive_reward)
+        except Exception:
+            pass
 
     if negative and chroma_doc_id and state.cache_collection is not None:
         try:

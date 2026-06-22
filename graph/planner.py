@@ -126,16 +126,18 @@ def _sanitize_plan(raw: list, fallback_input: str,
     Strings, empty dicts or dicts without 'task' key are discarded.
     Returns at least one fallback task.
 
-    user_expert_cats: categories defined in the active user template — these are
-    valid even when not present in the global EXPERTS registry.
+    user_expert_cats: categories defined in the active user template.
+    When non-empty, routing is restricted to those categories so global
+    expert fallbacks (with different models) cannot be triggered.
     """
     NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
-    valid_cats = (
-        set(EXPERTS.keys())
-        | NON_EXPERT_CATEGORIES
-        | {"agentic_coder", "memory_recall"}
-        | (user_expert_cats or set())
-    )
+    _special = {"agentic_coder", "memory_recall"}
+    if user_expert_cats:
+        # Template active: only allow template categories + non-expert types.
+        # Global EXPERTS categories are excluded to prevent silent model substitution.
+        valid_cats = user_expert_cats | NON_EXPERT_CATEGORIES | _special
+    else:
+        valid_cats = set(EXPERTS.keys()) | NON_EXPERT_CATEGORIES | _special
     result = []
     for item in raw:
         if not isinstance(item, dict):
@@ -658,7 +660,9 @@ JSON array:"""
                         logger.info(f"🎯 Planner suggested skill: /{_skill_name}")
                     break
             _user_expert_cats = set((state_.get("user_experts") or {}).keys())
+            from services.advice_store import enforce_advice_rules
             plan = _sanitize_plan(raw, state_["input"], _user_expert_cats)
+            plan = enforce_advice_rules(state_["input"], plan)
             categories = [t.get("category", "?") for t in plan]
             logger.info(f"📋 Plan ({len(plan)} Tasks): {json.dumps(plan, ensure_ascii=False)}")
             await _report(f"📋 Plan: {len(plan)} Task(s) → {', '.join(categories)}")

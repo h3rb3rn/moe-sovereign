@@ -115,6 +115,7 @@
                   <select name="srv_api_type_{{ loop.index0 }}" class="form-select form-select-sm">
                     <option value="ollama" {% if srv.api_type == 'ollama' %}selected{% endif %}>Ollama</option>
                     <option value="openai" {% if srv.api_type == 'openai' %}selected{% endif %}>OpenAI</option>
+                    <option value="anthropic" {% if srv.api_type == 'anthropic' %}selected{% endif %}>Anthropic Messages API</option>
                   </select>
                 </td>
                 <td><input type="password" name="srv_token_{{ loop.index0 }}"
@@ -139,6 +140,7 @@
                   <select name="srv_api_type_0" class="form-select form-select-sm">
                     <option value="ollama">Ollama</option>
                     <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic Messages API</option>
                   </select>
                 </td>
                 <td><input type="password" name="srv_token_0"
@@ -339,6 +341,7 @@ function addWizardServerRow() {
      <td><select name="srv_api_type_${idx}" class="form-select form-select-sm">
            <option value="ollama">Ollama</option>
            <option value="openai">OpenAI</option>
+           <option value="anthropic">Anthropic Messages API</option>
          </select></td>
      <td><input type="password" name="srv_token_${idx}"
                class="form-control form-control-sm font-monospace"

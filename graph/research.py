@@ -62,6 +62,7 @@ from services.helpers import (
     _report,
     _shadow_request, _shadow_lock,
 )
+from context_compressor import compress_json_content
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.skills import _build_skill_catalog
 from prompts import (
@@ -321,9 +322,17 @@ def _rerank_graph_context(ctx: str, budget: int) -> str:
     Splits the raw graph string into entity blocks, sorts highest-confidence
     first, then reassembles within the character budget — preserving complete
     blocks rather than cutting mid-sentence.
+
+    If the context arrives as JSON (e.g. from MCP/tool outputs), it is
+    structurally compressed first so the block-splitter sees a smaller input.
     """
     if not ctx or budget <= 0:
         return ctx
+
+    # Pre-compress JSON context before block-based reranking
+    stripped = ctx.lstrip()
+    if stripped and stripped[0] in ("{", "[") and len(ctx) > budget:
+        ctx = compress_json_content(ctx, budget * 2)  # 2× headroom — reranking trims further
 
     # Split into blocks; keep non-empty blocks only
     blocks = [b.strip() for b in _ENTITY_BLOCK_RE.split(ctx) if b.strip()]

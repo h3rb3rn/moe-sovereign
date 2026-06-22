@@ -106,14 +106,14 @@ function escHtml(str) {
 
 function statusBadge(is_active) {
   return is_active
-    ? '<span class="badge bg-success">aktiv</span>'
-    : '<span class="badge bg-danger">deaktiviert</span>';
+    ? '<span class="badge bg-success">active</span>'
+    : '<span class="badge bg-danger">disabled</span>';
 }
 
 function renderTemplates(rows) {
   const tbody = document.getElementById('templates-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Keine Templates vorhanden.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No templates available.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(t => `
@@ -127,11 +127,11 @@ function renderTemplates(rows) {
       <td class="text-end">
         <div class="btn-group btn-group-sm">
           <button class="btn btn-outline-${t.is_active ? 'warning' : 'success'}"
-                  title="${t.is_active ? 'Deaktivieren' : 'Aktivieren'}"
+                  title="${t.is_active ? 'Disable' : 'Enable'}"
                   onclick="toggleTemplate('${escHtml(t.id)}', ${t.is_active ? 0 : 1})">
             <i class="bi bi-${t.is_active ? 'pause-fill' : 'play-fill'}"></i>
           </button>
-          <button class="btn btn-outline-danger" title="Löschen"
+          <button class="btn btn-outline-danger" title="Delete"
                   onclick="deleteTemplate('${escHtml(t.id)}', '${escHtml(t.name)}')">
             <i class="bi bi-trash"></i>
           </button>
@@ -143,7 +143,7 @@ function renderTemplates(rows) {
 function renderCcProfiles(rows) {
   const tbody = document.getElementById('cc-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Keine CC Profile vorhanden.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No CC profiles available.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(p => {
@@ -162,11 +162,11 @@ function renderCcProfiles(rows) {
       <td class="text-end">
         <div class="btn-group btn-group-sm">
           <button class="btn btn-outline-${p.is_active ? 'warning' : 'success'}"
-                  title="${p.is_active ? 'Deaktivieren' : 'Aktivieren'}"
+                  title="${p.is_active ? 'Disable' : 'Enable'}"
                   onclick="toggleCcProfile('${escHtml(p.id)}', ${p.is_active ? 0 : 1})">
             <i class="bi bi-${p.is_active ? 'pause-fill' : 'play-fill'}"></i>
           </button>
-          <button class="btn btn-outline-danger" title="Löschen"
+          <button class="btn btn-outline-danger" title="Delete"
                   onclick="deleteCcProfile('${escHtml(p.id)}', '${escHtml(p.name)}')">
             <i class="bi bi-trash"></i>
           </button>

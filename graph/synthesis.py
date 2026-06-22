@@ -705,7 +705,8 @@ async def merger_node(state_: AgentState):
                 state_.get("response_id", ""), state_["input"],
                 state_.get("expert_models_used", []), _fp_cid,
                 plan=state_.get("plan", []), cost_tier=state_.get("cost_tier", ""),
-                template_id=state_.get("template_id", "")))
+                template_id=state_.get("template_id", ""),
+                causal_intervention=state_.get("causal_intervention")))
             asyncio.create_task(_self_evaluate(
                 state_.get("response_id", ""), state_["input"], fast_resp, _fp_cid,
                 template_name=state_.get("template_name", ""),
@@ -909,6 +910,7 @@ async def merger_node(state_: AgentState):
                 plan=state_.get("plan", []),
                 cost_tier=state_.get("cost_tier", ""),
                 template_id=state_.get("template_id", ""),
+                causal_intervention=state_.get("causal_intervention"),
             )
         )
         # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)

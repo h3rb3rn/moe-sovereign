@@ -2000,6 +2000,79 @@ async def api_delete_all_dynamic_templates():
     return {"ok": True, "deleted": count}
 
 
+@app.get("/advice", response_class=HTMLResponse)
+async def advice_page(request: Request, _=Depends(require_login)):
+    from services.advice_store import load_advice_rules
+    rules = load_advice_rules()
+    return TEMPLATES.TemplateResponse(request, "advice_templates.html", {
+        "rules": rules,
+        "csrf_token": get_csrf_token(request),
+        "flash": request.query_params.get("flash"),
+        "flash_type": request.query_params.get("flash_type", "success"),
+    })
+
+
+@app.get("/api/advice", dependencies=[Depends(require_login)])
+async def api_get_advice():
+    from services.advice_store import load_advice_rules
+    return load_advice_rules()
+
+
+@app.post("/api/advice", dependencies=[Depends(require_login)])
+async def api_create_advice(request: Request):
+    from services.advice_store import add_advice_rule
+    body = await request.json()
+    rule_text = body.get("rule", "").strip()
+    if not rule_text:
+        raise HTTPException(status_code=400, detail="Rule text is required")
+        
+    new_rule = add_advice_rule(
+        rule_text=rule_text,
+        category_scope=body.get("category_scope", "all").strip(),
+        pattern=body.get("pattern", "").strip(),
+        category=body.get("category", "").strip(),
+        mcp_tool=body.get("mcp_tool", "").strip(),
+        default_task_description=body.get("default_task_description", "").strip(),
+        enabled=body.get("enabled", True)
+    )
+    return {"ok": True, "rule": new_rule}
+
+
+@app.delete("/api/advice/{rule_id}", dependencies=[Depends(require_login)])
+async def api_delete_advice(rule_id: str):
+    from services.advice_store import delete_advice_rule
+    deleted = delete_advice_rule(rule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"ok": True}
+
+
+@app.patch("/api/advice/{rule_id}/toggle", dependencies=[Depends(require_login)])
+async def api_toggle_advice(rule_id: str):
+    from services.advice_store import load_advice_rules, save_advice_rules
+    rules = load_advice_rules()
+    found = False
+    for r in rules:
+        if r.get("id") == rule_id:
+            r["enabled"] = not r.get("enabled", True)
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    save_advice_rules(rules)
+    return {"ok": True}
+
+
+@app.post("/api/eurisko/optimize", dependencies=[Depends(require_login)])
+async def api_eurisko_optimize():
+    from scripts.eurisko_template_optimizer import run_optimization_loop
+    try:
+        await run_optimization_loop()
+        return {"ok": True, "message": "Eurisko optimization completed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Expert Template Routes ───────────────────────────────────────────────────
 
 @app.get("/templates", response_class=HTMLResponse)
@@ -2224,7 +2297,7 @@ async def _fetch_available_llms() -> list[str]:
             try:
                 api_type = srv.get("api_type", "ollama")
                 token    = srv.get("token", "ollama")
-                if api_type == "openai":
+                if api_type in ("openai", "anthropic"):
                     r = await client.get(
                         f"{srv['url'].rstrip('/')}/models",
                         headers={"Authorization": f"Bearer {token}"},
@@ -2457,7 +2530,7 @@ async def api_servers_health(request: Request, _=Depends(require_login)):
         t0       = _time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                if api_type == "openai":
+                if api_type in ("openai", "anthropic"):
                     r = await client.get(
                         f"{srv['url'].rstrip('/')}/models",
                         headers={"Authorization": f"Bearer {token}"},
@@ -2566,7 +2639,7 @@ async def api_servers_models(request: Request, server: str, _=Depends(require_lo
     token    = srv.get("token", "ollama")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            if api_type == "openai":
+            if api_type in ("openai", "anthropic"):
                 r = await client.get(
                     f"{srv['url'].rstrip('/')}/models",
                     headers={"Authorization": f"Bearer {token}"},
@@ -2623,7 +2696,7 @@ async def _fetch_server_models(srv: dict) -> list:
     token    = srv.get("token", "ollama")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            if api_type == "openai":
+            if api_type in ("openai", "anthropic"):
                 r = await client.get(
                     f"{srv['url'].rstrip('/')}/models",
                     headers={"Authorization": f"Bearer {token}"},

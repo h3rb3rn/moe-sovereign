@@ -370,7 +370,7 @@ async def _get_thompson_score(model: str, category: str) -> float:
         return 0.5
 
 
-async def _score_and_allocate_model(category: str, models: list[dict], model_metadata: dict, local_only: bool, complexity: str = "moderate") -> list[dict]:
+async def _score_and_allocate_model(category: str, models: list[dict], model_metadata: dict, local_only: bool, complexity: str = "moderate", interventions: list = None) -> list[dict]:
     """Scores models based on parameter size, context window, warmed status, strengths, and Thompson Sampling."""
     scored_models = []
     
@@ -448,6 +448,25 @@ async def _score_and_allocate_model(category: str, models: list[dict], model_met
         
     # Sort models by score descending
     scored_models.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Causal Intervention Roll (5% rate)
+    if len(scored_models) > 1 and random.random() < 0.05:
+        default_model = scored_models[0]["model_id"]
+        # pick a random runner-up model
+        runner_up_idx = random.randint(1, len(scored_models) - 1)
+        intervened_model = scored_models[runner_up_idx]["model_id"]
+        
+        # swap them
+        scored_models[0], scored_models[runner_up_idx] = scored_models[runner_up_idx], scored_models[0]
+        
+        if interventions is not None:
+            interventions.append({
+                "is_intervention": True,
+                "expert": category,
+                "intervened": intervened_model,
+                "default": default_model
+            })
+            
     return scored_models
 
 
@@ -858,12 +877,13 @@ async def get_dynamic_template(
         # Resolve prompt-specific system prompts dynamically
         resolved_prompts = await _generate_prompt_specific_prompts(prompt, active_experts)
 
+        interventions = []
         for exp in active_experts:
             # Allocate models for this expert category
-            allocated = await _score_and_allocate_model(exp, models, model_metadata, local_only, complexity)
+            allocated = await _score_and_allocate_model(exp, models, model_metadata, local_only, complexity, interventions)
             if not allocated:
                 # If local_only is active but no local model is available, fall back to whatever is available
-                allocated = await _score_and_allocate_model(exp, models, model_metadata, False, complexity)
+                allocated = await _score_and_allocate_model(exp, models, model_metadata, False, complexity, interventions)
                 
             if allocated:
                 models_cfg = []
@@ -922,7 +942,8 @@ async def get_dynamic_template(
             "enable_cache": True,
             "enable_graphrag": enable_graphrag,
             "enable_web_research": enable_web_research,
-            "experts": experts_config
+            "experts": experts_config,
+            "causal_intervention": interventions[0] if interventions else None
         }
         
         # Save to Postgres and cache in ChromaDB

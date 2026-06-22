@@ -178,14 +178,14 @@ async function loadKnowledge() {
     const types = d.top_types || [];
     document.getElementById('know-types').innerHTML = types.map(t =>
       `<span class="badge bg-secondary me-1 mb-1">${t.type}: ${t.n}</span>`
-    ).join('') || '<span class="text-muted">keine Daten</span>';
+    ).join('') || '<span class="text-muted">no data</span>';
 
     const curators = d.entities_by_curator || [];
     document.getElementById('know-curators').innerHTML = curators.length
       ? `<table class="table table-sm mb-0"><tbody>${curators.map(c =>
           `<tr><td class="font-monospace small">${c.template}</td><td class="text-end"><strong>${c.n}</strong></td></tr>`
         ).join('')}</tbody></table>`
-      : '<span class="text-muted">keine Daten</span>';
+      : '<span class="text-muted">no data</span>';
   } catch (e) { console.error(e); }
 }
 
@@ -195,7 +195,7 @@ async function loadHealer() {
     const d = await fetch('/api/statistics/healer?limit=50').then(r => r.json());
     const runs = d.runs || [];
     if (runs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">Noch keine Runs im Cache</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">No runs in cache yet</td></tr>';
       return;
     }
     tbody.innerHTML = runs.map(r => {
@@ -203,11 +203,11 @@ async function loadHealer() {
       const dur = r.finished_at ? Math.round(r.finished_at - r.started_at) + 's' : '–';
       const isDedicated = r.type === 'dedicated';
       const typeBadge = isDedicated
-        ? `<span class="badge bg-warning text-dark" title="${r.template || ''}">Dauerlauf</span>`
-        : `<span class="badge bg-secondary">Einmalig</span>`;
+        ? `<span class="badge bg-warning text-dark" title="${r.template || ''}">Continuous run</span>`
+        : `<span class="badge bg-secondary">One-time</span>`;
       return `<tr>
         <td>${typeBadge}</td>
-        <td class="small">${ts.toLocaleString('de-DE')}</td>
+        <td class="small">${ts.toLocaleString('en-US')}</td>
         <td>${dur}</td>
         <td>${r.processed || 0}</td>
         <td class="text-success">${r.written || 0}</td>
