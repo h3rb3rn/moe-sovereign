@@ -84,10 +84,10 @@ function updateStats(tools) {
   const enabled = tools.filter(t => t.enabled).length;
   const disabled = tools.length - enabled;
   document.getElementById('total-count').textContent = tools.length;
-  document.getElementById('enabled-count').textContent = `${enabled} aktiv`;
-  document.getElementById('disabled-count').textContent = `${disabled} deaktiviert`;
+  document.getElementById('enabled-count').textContent = `${enabled} active`;
+  document.getElementById('disabled-count').textContent = `${disabled} disabled`;
   document.getElementById('last-update').textContent =
-    'Stand: ' + new Date().toLocaleTimeString('de-DE');
+    'As of: ' + new Date().toLocaleTimeString('en-US');
   document.getElementById('stats-row').classList.remove('d-none');
 }
 
@@ -97,7 +97,7 @@ function renderTable(tools) {
 
   const tbody = document.getElementById('tools-tbody');
   if (!tools.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Keine Tools gefunden</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">No tools found</td></tr>';
     return;
   }
   tbody.innerHTML = tools.map(t => renderRow(t)).join('');
@@ -106,10 +106,10 @@ function renderTable(tools) {
 function renderRow(t) {
   const enabled = t.enabled !== false;
   const badgeCls = enabled ? 'bg-success' : 'bg-secondary';
-  const badgeTxt = enabled ? 'Aktiv' : 'Deaktiviert';
+  const badgeTxt = enabled ? 'Active' : 'Disabled';
   const btnCls   = enabled ? 'btn-outline-warning' : 'btn-outline-success';
-  const btnTxt   = enabled ? '<i class="bi bi-pause-circle me-1"></i>Deaktivieren'
-                           : '<i class="bi bi-play-circle me-1"></i>Aktivieren';
+  const btnTxt   = enabled ? '<i class="bi bi-pause-circle me-1"></i>Disable'
+                           : '<i class="bi bi-play-circle me-1"></i>Enable';
   return `<tr id="row-${escHtml(t.name)}">
     <td><code class="fw-bold">${escHtml(t.name)}</code></td>
     <td><span class="text-muted small">${escHtml(t.description || '')}</span></td>

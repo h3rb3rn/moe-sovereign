@@ -385,6 +385,7 @@ services:
     volumes:
       - ./.env:/app/.env:rw
       - ./.moe-services.json:/app/.moe-services.json:ro
+      - ./services:/app/services:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw

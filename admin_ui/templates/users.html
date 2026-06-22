@@ -314,13 +314,13 @@ async function createUser() {
       })
     });
     const data = await res.json();
-    if (!res.ok) { err.textContent = data.detail || 'Fehler'; err.classList.remove('d-none'); return; }
+    if (!res.ok) { err.textContent = data.detail || 'Error'; err.classList.remove('d-none'); return; }
     window.location.reload();
   } finally { btn.disabled = false; }
 }
 
 async function toggleUser(uid, active, name) {
-  if (!confirm(`User "${name}" ${active ? 'aktivieren' : 'sperren'}?`)) return;
+  if (!confirm(`User "${name}" ${active ? 'activate' : 'suspend'}?`)) return;
   const res = await fetch(`/api/users/${uid}`, {
     method: 'PUT', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({is_active: active})
@@ -497,7 +497,7 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
     </div>
   </div>
   <ul class="nav nav-tabs mb-3" id="detailTabs">
-    <li class="nav-item"><a class="nav-link active" href="#tab-stammdaten" data-bs-toggle="tab">{{ t(request, 'section.personal_data') }}</a></li>
+    <li class="nav-item"><a class="nav-link active" href="#tab-profiledata" data-bs-toggle="tab">{{ t(request, 'section.personal_data') }}</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-budget" data-bs-toggle="tab">Budget</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-perms" data-bs-toggle="tab">Permissions</a></li>
     <li class="nav-item"><a class="nav-link" href="#tab-connections" data-bs-toggle="tab" onclick="loadAdminConnections('${uid}')">Connections</a></li>
@@ -506,8 +506,8 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
   </ul>
   <div class="tab-content">
 
-  <!-- Stammdaten Tab -->
-  <div class="tab-pane active" id="tab-stammdaten">
+  <!-- Profile Data Tab -->
+  <div class="tab-pane active" id="tab-profiledata">
     <div class="row g-2">
       <div class="col-sm-6">
         <label class="form-label small fw-semibold">{{ t(request, 'lbl.first_name') }} <span class="text-danger">*</span></label>
@@ -555,7 +555,7 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
         </select>
       </div>
       <div class="col-12 mt-2">
-        <button class="btn btn-primary btn-sm" onclick="saveStammdaten('${uid}')">
+        <button class="btn btn-primary btn-sm" onclick="saveProfileData('${uid}')">
           <i class="bi bi-save me-1"></i>{{ t(request, 'btn.save_profile') }}
         </button>
         <span id="sd_save_msg" class="ms-2 small d-none text-success">{{ t(request, 'portal.saved') }}</span>
@@ -1136,7 +1136,7 @@ async function toggleMoeAutoSubPerm(uid, resourceId, isGranted, permId, name) {
   openUserDetail(uid, name, 'tab-perms');
 }
 
-async function saveStammdaten(uid) {
+async function saveProfileData(uid) {
   const required = ['sd_first_name','sd_last_name','sd_email','sd_street','sd_postal','sd_city'];
   for (const id of required) {
     if (!document.getElementById(id)?.value.trim()) {
@@ -1291,7 +1291,7 @@ async function createKey(uid) {
     const userName = document.getElementById('detailModalTitle').textContent.trim();
     const alertEl = document.getElementById('global-key-alert');
     alertEl.innerHTML = `<button type="button" class="btn-close" onclick="this.closest('#global-key-alert').classList.add('d-none')"></button>
-      <strong><i class="bi bi-key me-1"></i>Neuer API Key — jetzt kopieren! (nur einmalig sichtbar)</strong><br>
+      <strong><i class="bi bi-key me-1"></i>New API Key — copy now! (only visible once)</strong><br>
       <code class="fs-6 d-block mt-1 p-2 bg-light rounded">${data.raw_key}</code>
       <small class="text-muted">User: ${userName}</small>`;
     alertEl.classList.remove('d-none');
@@ -1301,7 +1301,7 @@ async function createKey(uid) {
 }
 
 async function revokeKey(uid, kid) {
-  if (!confirm('API Key sperren?')) return;
+  if (!confirm('Revoke API Key?')) return;
   await fetch(`/api/users/${uid}/keys/${kid}`, {method:'DELETE'});
   openUserDetail(uid, document.getElementById('detailModalTitle').textContent.trim());
 }

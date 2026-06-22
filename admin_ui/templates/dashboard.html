@@ -783,7 +783,7 @@
         <table class="table table-sm table-hover mb-0 d-none" id="srv-tag-table">
           <thead class="table-light sticky-top">
             <tr>
-              <th>Modell-ID</th>
+              <th>Model ID</th>
               <th style="width:320px">Tags</th>
             </tr>
           </thead>
@@ -792,9 +792,9 @@
       </div>
       <div class="modal-footer py-2">
         <span class="text-muted small me-auto" id="srv-tag-status"></span>
-        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-primary btn-sm" onclick="saveSrvModelTags()" id="srv-tag-save-btn">
-          <i class="bi bi-floppy me-1"></i>Tags speichern
+          <i class="bi bi-floppy me-1"></i>Save tags
         </button>
       </div>
     </div>
@@ -950,10 +950,10 @@ async function testAllServers() {
         if (!badge) return;
         if (srv.ok) {
           badge.className   = 'badge bg-success srv-status-badge';
-          badge.textContent = `${srv.latency_ms} ms · ${srv.models_count} Modelle`;
+          badge.textContent = `${srv.latency_ms} ms · ${srv.models_count} models`;
         } else {
           badge.className   = 'badge bg-danger srv-status-badge';
-          badge.textContent = 'Fehler';
+          badge.textContent = 'Error';
         }
       });
     });
@@ -962,7 +962,7 @@ async function testAllServers() {
   }
 }
 
-// ─── Dienste-Status Polling ──────────────────────────────────────────────────
+// ─── Service Status Polling ──────────────────────────────────────────────────
 
 function updateStatus() {
   fetch('/api/status')
@@ -1016,7 +1016,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// ─── Claude Code Reasoning-Row Sichtbarkeit ─────────────────────────────────
+// ─── Claude Code Reasoning-Row Visibility ─────────────────────────────────
 
 (function () {
   var modeSelect    = document.getElementById('CLAUDE_CODE_MODE');
@@ -1129,7 +1129,7 @@ async function openSrvTagModal(srvName) {
     document.getElementById('srv-tag-loading').classList.add('d-none');
     document.getElementById('srv-tag-table').classList.remove('d-none');
     if (!models.length) {
-      document.getElementById('srv-tag-status').textContent = 'Keine Modelle gefunden.';
+      document.getElementById('srv-tag-status').textContent = 'No models found.';
     }
   } catch (e) {
     document.getElementById('srv-tag-loading').classList.add('d-none');
@@ -1161,7 +1161,7 @@ async function saveSrvModelTags() {
   const errBox = document.getElementById('srv-tag-error');
   btn.disabled = true;
   errBox.classList.add('d-none');
-  status.textContent = 'Wird gespeichert…';
+  status.textContent = 'Saving...';
 
   const errors = [];
   let saved = 0;
@@ -1198,9 +1198,9 @@ async function saveSrvModelTags() {
   if (errors.length) {
     errBox.textContent = errors.join('\n');
     errBox.classList.remove('d-none');
-    status.textContent = `${saved} gespeichert, ${errors.length} Fehler`;
+    status.textContent = `${saved} saved, ${errors.length} errors`;
   } else {
-    status.textContent = `${saved} Modell${saved !== 1 ? 'e' : ''} aktualisiert ✓`;
+    status.textContent = `${saved} model${saved !== 1 ? 's' : ''} updated ✓`;
   }
 }
 

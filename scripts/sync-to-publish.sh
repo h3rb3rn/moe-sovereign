@@ -62,6 +62,7 @@ RSYNC_EXCLUDES=(
   --exclude='.ai_context.md'
   --exclude='tmp/'
   --exclude='tmp_install/'
+  --exclude='prometheus/*_targets.yml'
 )
 
 echo ""

@@ -1426,7 +1426,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
-          alert(d.detail || 'Fehler beim Speichern');
+          alert(d.detail || 'Error saving');
           // Revert toggle state
           const cb = document.getElementById(`dyn-routing-${keyId}`);
           if (cb) cb.checked = !enabled;
@@ -1441,7 +1441,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
-          alert(d.detail || 'Fehler beim Speichern');
+          alert(d.detail || 'Error saving');
           const cb = document.getElementById(`local-only-${keyId}`);
           if (cb) cb.checked = !enabled;
         }
@@ -1458,12 +1458,12 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
-          alert(d.detail || 'Fehler beim Speichern');
+          alert(d.detail || 'Error saving');
         }
       }
       </script>
 
-      <!-- Neuen Key erstellen -->
+      <!-- Create new key -->
       <div class="card">
         <div class="card-header bg-dark text-white"><i class="bi bi-plus-circle me-2"></i>{{ t(request, 'portal.create_key_title') }}</div>
         <div class="card-body">
@@ -2050,16 +2050,16 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           const res = await fetch('/user/api/templates');
           const data = await res.json();
           const tmpl = data.templates.find(t => t.id === tmplId);
-          if (!tmpl) { alert('Template nicht gefunden'); return; }
+          if (!tmpl) { alert('Template not found'); return; }
           const cfg = typeof tmpl.config_json === 'string' ? JSON.parse(tmpl.config_json) : tmpl.config_json || {};
           const copyRes = await fetch('/user/api/templates', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ name: 'Kopie von ' + tmpl.name, description: tmpl.description || '', config: cfg }),
+            body: JSON.stringify({ name: 'Copy of ' + tmpl.name, description: tmpl.description || '', config: cfg }),
           });
           if (copyRes.ok) window.location.reload();
-          else { const e = await copyRes.json().catch(() => ({})); alert('Fehler: ' + (e.detail || copyRes.statusText)); }
-        } catch(e) { alert('Fehler beim Kopieren: ' + e.message); }
+          else { const e = await copyRes.json().catch(() => ({})); alert('Error: ' + (e.detail || copyRes.statusText)); }
+        } catch(e) { alert('Error copying: ' + e.message); }
       }
 
       async function deleteTemplate(tmplId, name) {
@@ -2341,18 +2341,18 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   </button>
                   {% endif %}
                   <button class="btn btn-xs btn-outline-secondary btn-sm"
-                          title="Als Vorlage kopieren"
+                          title="Copy as template"
                           onclick="copyCcProfile('{{ prof.id|replace('\'','\\\'') }}')">
                     <i class="bi bi-copy"></i>
                   </button>
                   {% if prof.editable %}
                   <button class="btn btn-xs btn-outline-secondary btn-sm"
-                          title="Als JSON-Datei exportieren"
+                          title="Export as JSON file"
                           onclick="exportCcProfileAsFile('{{ prof.id|replace('\'','\\\'') }}')">
                     <i class="bi bi-download"></i>
                   </button>
                   <button class="btn btn-xs btn-outline-secondary btn-sm"
-                          title="JSON-Quellcode anzeigen"
+                          title="Show JSON source code"
                           onclick="showCcProfileJson('{{ prof.id|replace('\'','\\\'') }}')">
                     <i class="bi bi-code-slash"></i>
                   </button>
@@ -2487,7 +2487,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         <div class="modal-dialog modal-lg">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>CC Profile – JSON Quellcode</h5>
+              <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>CC Profile – JSON Source Code</h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -2495,10 +2495,10 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </div>
             <div class="modal-footer">
               <button class="btn btn-sm btn-outline-secondary"
-                      onclick="navigator.clipboard.writeText(document.getElementById('cc-json-source').textContent).then(()=>this.textContent='Kopiert!').catch(()=>{})">
-                <i class="bi bi-clipboard me-1"></i>In Zwischenablage kopieren
+                      onclick="navigator.clipboard.writeText(document.getElementById('cc-json-source').textContent).then(()=>this.textContent='Copied!').catch(()=>{})">
+                <i class="bi bi-clipboard me-1"></i>Copy to clipboard
               </button>
-              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
+              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
           </div>
         </div>

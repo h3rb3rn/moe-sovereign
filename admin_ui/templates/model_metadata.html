@@ -263,7 +263,7 @@ async function saveEntry() {
     renderTable();
   } else {
     const err = await res.json().catch(() => ({}));
-    showErr(err.detail || 'Fehler beim Speichern');
+    showErr(err.detail || 'Error saving');
   }
 }
 
@@ -282,14 +282,14 @@ async function syncConnTags(btn) {
   btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Syncing…';
   const res  = await fetch('/api/admin/sync-connection-tags', { method: 'POST' });
   const data = await res.json().catch(() => ({}));
-  const msg  = data.message || (res.ok ? 'Sync abgeschlossen' : 'Fehler');
+  const msg  = data.message || (res.ok ? 'Sync complete' : 'Error');
   btn.innerHTML = `<i class="bi bi-check-circle me-1"></i>${msg}`;
   if (res.ok && (data.updated || data.created)) {
     setTimeout(() => window.location.reload(), 1500);
   } else {
     setTimeout(() => {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-plug me-1"></i>Tags aus Verbindungen sync';
+      btn.innerHTML = '<i class="bi bi-plug me-1"></i>Sync tags from connections';
     }, 4000);
   }
 }

@@ -1146,7 +1146,7 @@ async function loadServiceAccount() {
   const msgEl = document.getElementById('sa-msg');
   const r = await fetch('/api/service-accounts/benchmarks');
   if (!r.ok) {
-    if (msgEl) msgEl.textContent = 'Service Account nicht gefunden.';
+    if (msgEl) msgEl.textContent = 'Service Account not found.';
     return;
   }
   _saData = await r.json();
@@ -1157,7 +1157,7 @@ async function loadServiceAccount() {
   if (list) {
     list.innerHTML = _saData.granted_templates.length
       ? ''
-      : '<span class="text-muted small">Keine Templates zugewiesen.</span>';
+      : '<span class="text-muted small">No templates assigned.</span>';
     for (const tmplId of _saData.granted_templates) {
       const name = _saData.all_templates.find(t => t.id === tmplId)?.name || tmplId;
       list.insertAdjacentHTML('beforeend', `
@@ -1165,7 +1165,7 @@ async function loadServiceAccount() {
           <span class="badge bg-secondary d-flex align-items-center gap-1" style="font-size:.8rem">
             ${name}
             <button class="btn-close btn-close-white btn-sm ms-1" style="font-size:.6rem"
-              onclick="saRevokeTemplate('${tmplId}')" title="Entfernen"></button>
+              onclick="saRevokeTemplate('${tmplId}')" title="Remove"></button>
           </span>
         </div>`);
     }
