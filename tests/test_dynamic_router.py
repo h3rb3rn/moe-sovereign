@@ -199,7 +199,56 @@ async def test_get_dynamic_template_connection_combining():
         assert "llama-global@G01" not in str(tmpl_user)
 
 
+@pytest.mark.asyncio
+async def test_generate_fallback_structured_prompts():
+    from services.dynamic_router import _generate_fallback_structured_prompts
+    
+    # Test English and step hint
+    res = _generate_fallback_structured_prompts("Explain in English step by step", ["math"])
+    assert "Prefer generating responses and plans in English." in res["planner_prompt"]
+    assert "Break down the reasoning into clear, numbered steps." in res["planner_prompt"]
+    assert "math" in res["experts"]
+    assert "Prefer generating responses and plans in English." in res["experts"]["math"]["system_prompt"]
+    
+    # Test German hint
+    res_de = _generate_fallback_structured_prompts("Bitte auf Deutsch", ["code_reviewer"])
+    assert "Prefer generating responses and plans in German." in res_de["planner_prompt"]
+    assert "code_reviewer" in res_de["experts"]
+    assert "Prefer generating responses and plans in German." in res_de["experts"]["code_reviewer"]["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_prompt_specific_prompts_llm():
+    from services.dynamic_router import _generate_prompt_specific_prompts
+    import os
+    
+    mock_res = MagicMock()
+    mock_res.content = json.dumps({
+        "planner_prompt": "LLM custom planner prompt",
+        "judge_prompt": "LLM custom judge prompt",
+        "experts": {
+            "math": {
+                "system_prompt": "LLM custom math expert prompt"
+            }
+        }
+    })
+    
+    # Mock LLM instance and env variable
+    mock_llm = AsyncMock()
+    mock_llm.ainvoke.return_value = mock_res
+    
+    with patch.dict(os.environ, {"DYNAMIC_SYSTEM_PROMPTS_LLM_ENABLED": "true"}), \
+         patch("services.llm_instances.planner_llm", mock_llm):
+        res = await _generate_prompt_specific_prompts("custom query", ["math"])
+        
+        assert res["planner_prompt"] == "LLM custom planner prompt"
+        assert res["judge_prompt"] == "LLM custom judge prompt"
+        assert res["experts"]["math"]["system_prompt"] == "LLM custom math expert prompt"
+        mock_llm.ainvoke.assert_called_once()
+
+
 def tmer_or_not_none(val):
     assert val is not None
     return True
+
 
