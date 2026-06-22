@@ -212,11 +212,27 @@ async def process_merger_output(
     final_response: str,
     plan: list[dict],
     redis_client=None,
+    state_data: Optional[dict] = None,
 ) -> None:
     """Analyzes merger output for discrepancies and stores few-shot examples.
 
     This function is called as a background task (asyncio.create_task) — non-blocking.
     """
+    # ── Pearl's Causal Calculus Diagnostics ─────────────────────────────────
+    if state_data:
+        has_failure = False
+        for res in expert_results:
+            if "ERROR" in str(res) or "fail" in str(res).lower() or "timeout" in str(res).lower():
+                has_failure = True
+                break
+        if has_failure or state_data.get("tool_failures"):
+            try:
+                from services.causal_healer import diagnose_and_map_errors
+                causal_map = await diagnose_and_map_errors(state_data)
+                state_data["causal_graph_map"] = causal_map
+            except Exception as ce:
+                logger.warning(f"Causal diagnostics failed: {ce}")
+
     if not expert_results:
         return
 

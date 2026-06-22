@@ -168,6 +168,7 @@ async def record_routing_decision(
             "judge_reason":     state.get("judge_reason"),
             "cost_tier":        state.get("cost_tier"),
             "correction_applied": bool(state.get("correction_applied")),
+            "causal_graph_map":  state.get("causal_graph_map"),
         }
 
         graphrag_entities  = state.get("graphrag_entities")   # list of entity dicts

@@ -983,6 +983,7 @@ async def merger_node(state_: AgentState):
             final_response=res_content_clean,
             plan=state_.get("plan") or [],
             redis_client=state.redis_client,
+            state_data=dict(state_),
         ))
 
     # ── Agentic gap detection: assess if another iteration is needed ─────────
