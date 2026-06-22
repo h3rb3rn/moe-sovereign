@@ -14,6 +14,9 @@
     </div>
     <div class="d-flex gap-2">
       <span class="badge bg-secondary align-self-center">{{ templates|length }} Templates</span>
+      <button class="btn btn-outline-warning btn-sm" onclick="runEuriskoOptimize()" id="eurisko-btn">
+        <i class="bi bi-cpu me-1"></i>Eurisko Mutation
+      </button>
       <button class="btn btn-outline-danger btn-sm" onclick="deleteAll()">
         <i class="bi bi-trash me-1"></i>Alle löschen
       </button>
@@ -229,6 +232,28 @@ async function deleteAll() {
   if (!confirm('Alle ' + document.querySelectorAll('.dt-item').length + ' Dynamic Templates löschen?')) return;
   const res = await fetch('/api/dynamic-templates', { method: 'DELETE' });
   if (res.ok) window.location.reload();
+}
+
+async function runEuriskoOptimize() {
+  const btn = document.getElementById('eurisko-btn');
+  const oldText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Optimierung läuft...';
+  try {
+    const res = await fetch('/api/eurisko/optimize', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      alert(data.message || 'Eurisko optimization completed successfully');
+      window.location.reload();
+    } else {
+      alert('Error running Eurisko optimization');
+    }
+  } catch (e) {
+    alert('Failed to connect: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = oldText;
+  }
 }
 </script>
 {% endblock %}

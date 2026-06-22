@@ -370,7 +370,7 @@ async def _get_thompson_score(model: str, category: str) -> float:
         return 0.5
 
 
-async def _score_and_allocate_model(category: str, models: list[dict], model_metadata: dict, local_only: bool, complexity: str = "moderate") -> list[dict]:
+async def _score_and_allocate_model(category: str, models: list[dict], model_metadata: dict, local_only: bool, complexity: str = "moderate", interventions: list = None) -> list[dict]:
     """Scores models based on parameter size, context window, warmed status, strengths, and Thompson Sampling."""
     scored_models = []
     
@@ -448,6 +448,25 @@ async def _score_and_allocate_model(category: str, models: list[dict], model_met
         
     # Sort models by score descending
     scored_models.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Causal Intervention Roll (5% rate)
+    if len(scored_models) > 1 and random.random() < 0.05:
+        default_model = scored_models[0]["model_id"]
+        # pick a random runner-up model
+        runner_up_idx = random.randint(1, len(scored_models) - 1)
+        intervened_model = scored_models[runner_up_idx]["model_id"]
+        
+        # swap them
+        scored_models[0], scored_models[runner_up_idx] = scored_models[runner_up_idx], scored_models[0]
+        
+        if interventions is not None:
+            interventions.append({
+                "is_intervention": True,
+                "expert": category,
+                "intervened": intervened_model,
+                "default": default_model
+            })
+            
     return scored_models
 
 
@@ -573,6 +592,141 @@ def _is_local_url(url: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def _generate_fallback_structured_prompts(prompt: str, active_experts: list) -> dict:
+    """Generate structured/persona-based fallback system prompts with zero latency."""
+    # 1. Base default prompts
+    planner_prompt = f"You are a specialized planner model in a Mixture of Experts (MoE) system. Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}."
+    judge_prompt = f"You are a specialized synthesis judge. Consolidate and merge responses from the following expert models: {', '.join(active_experts)}. Resolve contradictions using paraconsistent logic rules and output a unified, high-quality answer."
+    
+    # Add prompt-specific guidance to planner/judge based on query content
+    hints = []
+    if any(k in prompt.lower() for k in ("deutsch", "german", "auf deutsch", "in german")):
+        hints.append("Prefer generating responses and plans in German.")
+    elif any(k in prompt.lower() for k in ("english", "auf englisch", "in english")):
+        hints.append("Prefer generating responses and plans in English.")
+        
+    if "step" in prompt.lower() or "schritt" in prompt.lower():
+        hints.append("Break down the reasoning into clear, numbered steps.")
+        
+    if hints:
+        hint_text = " " + " ".join(hints)
+        planner_prompt += hint_text
+        judge_prompt += hint_text
+
+    experts_prompts = {}
+    for exp in active_experts:
+        sys_prompt = f"You are a specialized expert in {exp}."
+        if exp == "code_reviewer":
+            sys_prompt = "You are an expert software engineer and code reviewer. Analyze the code, find bugs, and suggest clean improvements."
+        elif exp == "technical_support":
+            sys_prompt = "You are a technical support expert. Provide clear, precise, and actionable answers to technical questions."
+        elif exp == "math":
+            sys_prompt = "You are a mathematics expert. Provide rigorous step-by-step mathematical reasoning and calculations."
+        elif exp == "legal_advisor":
+            sys_prompt = "You are a legal advisor expert. Analyze the legal context, reference relevant laws or paragraphs precisely, and provide expert legal summaries."
+        elif exp == "research":
+            sys_prompt = "You are a research expert. Analyze scientific literature, academic papers, and reference reliable sources clearly."
+        elif exp in ("creative_writer", "creative_writing"):
+            sys_prompt = "You are a creative writer. Craft engaging, expressive, and high-quality creative text matching the requested style."
+        elif exp == "data_analysis":
+            sys_prompt = "You are a data analyst. Interpret data tables, statistics, and trends, and explain findings with clear quantitative insights."
+        elif exp == "reasoning":
+            sys_prompt = "You are a logical reasoning expert. Break down complex arguments, evaluate premises, and explain logical transitions step-by-step."
+        elif exp == "science":
+            sys_prompt = "You are a scientific expert. Apply physics, chemistry, biology, or engineering principles to explain concepts rigorously."
+        elif exp == "tool_agent":
+            sys_prompt = "You are an agent expert in calling tools and APIs. Coordinate tool outputs to solve the user's request."
+        elif exp == "precision_tools":
+            sys_prompt = "You are a calculations expert. Perform precise formatting, unit conversion, date difference calculation, and exact arithmetic."
+        elif exp == "mail_classify":
+            sys_prompt = "You are an email classification expert. Categorize incoming emails, extract key metadata, and draft professional responses."
+            
+        if hints:
+            sys_prompt += " " + " ".join(hints)
+        experts_prompts[exp] = sys_prompt
+
+    return {
+        "planner_prompt": planner_prompt,
+        "judge_prompt": judge_prompt,
+        "experts": {exp: {"system_prompt": prompt_text} for exp, prompt_text in experts_prompts.items()}
+    }
+
+
+async def _generate_prompt_specific_prompts(prompt: str, active_experts: list) -> dict:
+    """Generate prompt-adapted system prompts for planner, judge, and active experts.
+    
+    If DYNAMIC_SYSTEM_PROMPTS_LLM_ENABLED is True, queries the LLM to construct
+    highly tailored system prompts. Otherwise, falls back to structured/persona-based
+    templates with zero latency.
+    """
+    enabled = os.environ.get("DYNAMIC_SYSTEM_PROMPTS_LLM_ENABLED", "false").lower() in ("true", "1", "yes")
+    
+    if enabled:
+        try:
+            from services.llm_instances import planner_llm
+            
+            system_instruction = (
+                "You are an expert meta-prompter. Your task is to generate highly optimized, context-specific system prompts "
+                "for different models in a Mixture of Experts (MoE) system, tailored specifically to a given user query.\n\n"
+                "The MoE system has a Planner model, a Judge model, and a set of specialized Expert models.\n"
+                "You must generate custom, prompt-specific system prompts for:\n"
+                "1. The Planner (who breaks down the user query and delegates subtasks to experts).\n"
+                "2. The Judge (who synthesizes and merges the expert responses using paraconsistent logic rules).\n"
+                "3. Each of the requested active expert models.\n\n"
+                "Output ONLY a valid JSON object matching this schema:\n"
+                "{\n"
+                '  "planner_prompt": "string",\n'
+                '  "judge_prompt": "string",\n'
+                '  "experts": {\n'
+                '    "<expert_category_1>": {\n'
+                '      "system_prompt": "string"\n'
+                '    },\n'
+                '    ...\n'
+                '  }\n'
+                "}\n"
+                "Do not include any extra keys, markdown formatting, or explanations."
+            )
+            
+            user_content = (
+                f"User Query: {prompt}\n"
+                f"Active Expert Categories: {', '.join(active_experts)}\n\n"
+                "Generate the custom system prompts."
+            )
+            
+            logger.info("Generating prompt-specific system prompts using LLM...")
+            res = await planner_llm.ainvoke([
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": user_content}
+            ])
+            
+            content = res.content.strip()
+            if content.startswith("```"):
+                if "\n" in content:
+                    content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+                else:
+                    content = content.replace("```", "").strip()
+            
+            parsed = json.loads(content)
+            if (
+                isinstance(parsed, dict)
+                and "planner_prompt" in parsed
+                and "judge_prompt" in parsed
+                and "experts" in parsed
+                and isinstance(parsed["experts"], dict)
+            ):
+                fallback_data = _generate_fallback_structured_prompts(prompt, active_experts)
+                for exp in active_experts:
+                    if exp not in parsed["experts"] or not isinstance(parsed["experts"][exp], dict) or "system_prompt" not in parsed["experts"][exp]:
+                        parsed["experts"][exp] = {"system_prompt": fallback_data["experts"][exp]["system_prompt"]}
+                return parsed
+            else:
+                logger.warning("LLM response did not match expected schema, falling back to structured prompts.")
+        except Exception as e:
+            logger.error(f"Failed to generate prompts via LLM: {e}. Falling back to structured prompts.", exc_info=True)
+            
+    return _generate_fallback_structured_prompts(prompt, active_experts)
 
 
 async def get_dynamic_template(
@@ -720,12 +874,16 @@ async def get_dynamic_template(
         experts_config = {}
         justification_trace = f"Complexity={complexity}, WebSearch={enable_web_research}, GraphRAG={enable_graphrag}. "
 
+        # Resolve prompt-specific system prompts dynamically
+        resolved_prompts = await _generate_prompt_specific_prompts(prompt, active_experts)
+
+        interventions = []
         for exp in active_experts:
             # Allocate models for this expert category
-            allocated = await _score_and_allocate_model(exp, models, model_metadata, local_only, complexity)
+            allocated = await _score_and_allocate_model(exp, models, model_metadata, local_only, complexity, interventions)
             if not allocated:
                 # If local_only is active but no local model is available, fall back to whatever is available
-                allocated = await _score_and_allocate_model(exp, models, model_metadata, False, complexity)
+                allocated = await _score_and_allocate_model(exp, models, model_metadata, False, complexity, interventions)
                 
             if allocated:
                 models_cfg = []
@@ -750,32 +908,10 @@ async def get_dynamic_template(
                 # Context window mapping
                 ctx = primary["context_window"]
                 
-                # Custom system prompts for experts
-                sys_prompt = f"You are a specialized expert in {exp}."
-                if exp == "code_reviewer":
-                    sys_prompt = "You are an expert software engineer and code reviewer. Analyze the code, find bugs, and suggest clean improvements."
-                elif exp == "technical_support":
-                    sys_prompt = "You are a technical support expert. Provide clear, precise, and actionable answers to technical questions."
-                elif exp == "math":
-                    sys_prompt = "You are a mathematics expert. Provide rigorous step-by-step mathematical reasoning and calculations."
-                elif exp == "legal_advisor":
-                    sys_prompt = "You are a legal advisor expert. Analyze the legal context, reference relevant laws or paragraphs precisely, and provide expert legal summaries."
-                elif exp == "research":
-                    sys_prompt = "You are a research expert. Analyze scientific literature, academic papers, and reference reliable sources clearly."
-                elif exp in ("creative_writer", "creative_writing"):
-                    sys_prompt = "You are a creative writer. Craft engaging, expressive, and high-quality creative text matching the requested style."
-                elif exp == "data_analysis":
-                    sys_prompt = "You are a data analyst. Interpret data tables, statistics, and trends, and explain findings with clear quantitative insights."
-                elif exp == "reasoning":
-                    sys_prompt = "You are a logical reasoning expert. Break down complex arguments, evaluate premises, and explain logical transitions step-by-step."
-                elif exp == "science":
-                    sys_prompt = "You are a scientific expert. Apply physics, chemistry, biology, or engineering principles to explain concepts rigorously."
-                elif exp == "tool_agent":
-                    sys_prompt = "You are an agent expert in calling tools and APIs. Coordinate tool outputs to solve the user's request."
-                elif exp == "precision_tools":
-                    sys_prompt = "You are a calculations expert. Perform precise formatting, unit conversion, date difference calculation, and exact arithmetic."
-                elif exp == "mail_classify":
-                    sys_prompt = "You are an email classification expert. Categorize incoming emails, extract key metadata, and draft professional responses."
+                # Custom system prompts for experts resolved dynamically
+                sys_prompt = resolved_prompts.get("experts", {}).get(exp, {}).get("system_prompt")
+                if not sys_prompt:
+                    sys_prompt = f"You are a specialized expert in {exp}."
 
                 experts_config[exp] = {
                     "system_prompt": sys_prompt,
@@ -787,9 +923,14 @@ async def get_dynamic_template(
         planner_ctx = model_metadata.get(planner_model, {}).get("context_window", 0) or 0
         judge_ctx = model_metadata.get(judge_model, {}).get("context_window", 0) or 0
         
-        # Context-aware system prompts for planner and judge
-        planner_prompt = f"You are a specialized planner model in a Mixture of Experts (MoE) system. Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}."
-        judge_prompt = f"You are a specialized synthesis judge. Consolidate and merge responses from the following expert models: {', '.join(active_experts)}. Resolve contradictions using paraconsistent logic rules and output a unified, high-quality answer."
+        # Context-aware system prompts for planner and judge resolved dynamically
+        planner_prompt = resolved_prompts.get("planner_prompt")
+        if not planner_prompt:
+            planner_prompt = f"You are a specialized planner model in a Mixture of Experts (MoE) system. Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}."
+            
+        judge_prompt = resolved_prompts.get("judge_prompt")
+        if not judge_prompt:
+            judge_prompt = f"You are a specialized synthesis judge. Consolidate and merge responses from the following expert models: {', '.join(active_experts)}. Resolve contradictions using paraconsistent logic rules and output a unified, high-quality answer."
         
         template_config = {
             "planner_model": planner_model,
@@ -801,7 +942,8 @@ async def get_dynamic_template(
             "enable_cache": True,
             "enable_graphrag": enable_graphrag,
             "enable_web_research": enable_web_research,
-            "experts": experts_config
+            "experts": experts_config,
+            "causal_intervention": interventions[0] if interventions else None
         }
         
         # Save to Postgres and cache in ChromaDB

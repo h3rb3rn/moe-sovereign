@@ -96,7 +96,7 @@
     {% set _p = request.url.path %}
     {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log'] %}
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
-    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates'] or _p.startswith('/templates') %}
+    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates', '/advice'] or _p.startswith('/templates') or _p.startswith('/advice') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
     {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance', '/workshop', '/timeseries', '/notes', '/geo', '/dossier'] %}
 
@@ -193,6 +193,9 @@
           </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/templates') %}active{% endif %}" href="/templates">
             <i class="bi bi-collection me-2 text-warning"></i>{{ t(request, 'nav.templates') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/advice') %}active{% endif %}" href="/advice">
+            <i class="bi bi-chat-text me-2 text-warning"></i>Advice Rules
           </a></li>
         </ul>
       </div>
@@ -407,6 +410,11 @@
           <li class="nav-item">
             <a href="/templates" class="nav-link text-white {% if request.url.path.startswith('/templates') %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-collection me-2 text-warning"></i>{{ t(request, 'nav.templates') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/advice" class="nav-link text-white {% if request.url.path.startswith('/advice') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-chat-text me-2 text-warning"></i>Advice Rules
             </a>
           </li>
           <li><hr class="border-secondary my-1"></li>

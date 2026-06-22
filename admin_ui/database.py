@@ -350,6 +350,9 @@ ALTER TABLE user_api_connections ADD COLUMN IF NOT EXISTS rate_limit_config TEXT
 
 -- Global auto-detected tags on model metadata (free, vision, agentic, reasoning, code)
 ALTER TABLE model_metadata ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+
+-- Dynamic template ID resolved for moe-auto requests (references admin_expert_templates.id)
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS dynamic_tmpl_id TEXT;
 """
 
 

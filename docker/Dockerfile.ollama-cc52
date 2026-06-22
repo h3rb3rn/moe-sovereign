@@ -1,0 +1,101 @@
+# Dockerfile.ollama-cc52
+# Baut Ollama von Source mit CUDA 12 + Compute Capability 5.2 (Tesla M10/M60 Maxwell).
+#
+# Warum nötig: Offizielle Prebuild-Images compilieren CUDA-Runner ohne CC 5.x.
+# CMakePresets.json enthält CC 5.0/5.2 standardmäßig, aber das Docker-Build-
+# Skript (scripts/build_docker.sh) nutzt einen anderen Pfad der sie weglässt.
+# Quelle: https://github.com/ollama/ollama/issues/8653
+#
+# Maxwell-spezifisch: Flash Attention erfordert CC ≥ 8.0 → GGML_CUDA_FA=OFF
+#
+# Build (auf diesem Host, Image dann zu N04-RTX übertragen):
+#   docker build \
+#     -f moe-infra/docker/Dockerfile.ollama-cc52 \
+#     --build-arg OLLAMA_VERSION=v0.9.0 \
+#     -t ollama-cc52:v0.9.0 \
+#     moe-infra/
+#
+# Auf N04-RTX deployen:
+#   docker save ollama-cc52:v0.9.0 | gzip | \
+#     ssh ki-rtx "docker load"
+#
+# In docker-compose auf N04-RTX: image: ollama-cc52:v0.9.0
+
+# ── Stage 1: Build-Toolchain ──────────────────────────────────────────────────
+FROM nvidia/cuda:12.5.1-devel-ubuntu22.04 AS builder
+
+ARG OLLAMA_VERSION=v0.9.0
+# Nur die Architekturen bauen die auf N04-RTX relevant sind (CC 5.2 + gängige moderne).
+# Weglassen von CC 7.0+ verkürzt die Build-Zeit erheblich — anpassen wenn nötig.
+ARG CUDA_ARCHITECTURES="50;52;60;61;70;75;80;86"
+ARG GO_VERSION=1.24.3
+ARG JOBS=8
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/usr/local/go/bin:/usr/local/cuda/bin:$PATH"
+ENV GOPATH="/go"
+ENV CCACHE_DIR="/ccache"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    curl \
+    ca-certificates \
+    ccache \
+    && rm -rf /var/lib/apt/lists/*
+
+# Go installieren
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -C /usr/local -xz
+
+# Ollama Source clonen
+WORKDIR /src
+RUN git clone --depth=1 --branch "${OLLAMA_VERSION}" \
+    https://github.com/ollama/ollama.git .
+
+# CUDA-Runner bauen via CMake-Preset.
+# -DCMAKE_CUDA_ARCHITECTURES überschreibt den Preset-Wert auf unsere Zielliste.
+# -DGGML_CUDA_FA=OFF: Flash Attention deaktivieren (Maxwell unterstützt CC<8.0 nicht).
+RUN cmake --preset cuda_v12 \
+    -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+    -DGGML_CUDA_FA=OFF \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+
+RUN cmake --build --preset cuda_v12 -j"${JOBS}"
+
+# Go-Binary bauen (embedded runners via go:embed)
+RUN go generate ./... && \
+    go build -o /usr/local/bin/ollama .
+
+# ── Stage 2: Runtime-Image ────────────────────────────────────────────────────
+FROM nvidia/cuda:12.5.1-base-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcublas-12-5 \
+    libcudart-12-5 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ollama-Binary
+COPY --from=builder /usr/local/bin/ollama /usr/local/bin/ollama
+
+# Runner-Bibliotheken (CUDA-Backend, landet in /usr/local/lib/ollama)
+# Pfad kann je nach Ollama-Version variieren — bei Build-Fehler prüfen mit:
+# docker run --rm builder find /src -name "*.so" -o -name "ollama_llama_server"
+COPY --from=builder /src/build /usr/local/lib/ollama/runners
+
+ENV OLLAMA_HOST=0.0.0.0
+ENV OLLAMA_RUNNERS_DIR=/usr/local/lib/ollama/runners
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/lib/ollama/runners:${LD_LIBRARY_PATH}"
+
+EXPOSE 11434
+VOLUME ["/root/.ollama"]
+
+HEALTHCHECK --interval=30s --timeout=15s --retries=5 --start-period=90s \
+    CMD curl -sf http://localhost:11434/api/tags || exit 1
+
+ENTRYPOINT ["/usr/local/bin/ollama"]
+CMD ["serve"]

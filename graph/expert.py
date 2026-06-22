@@ -140,6 +140,7 @@ async def expert_worker(state_: AgentState):
     from parsing import _extract_usage, _parse_expert_confidence
     from config import LITELLM_URL, INFERENCE_SERVERS_LIST, URL_MAP
     from services.inference import _endpoint_semaphores
+    from cache_aligner import is_anthropic_native, call_anthropic_cached
 
     async def run_single(model_cfg: dict, task_item: dict, t_idx: int, e_idx: int) -> dict:
         model_name = model_cfg["model"]
@@ -183,15 +184,24 @@ async def expert_worker(state_: AgentState):
 
             mode        = state_.get("mode", "default")
             mode_cfg    = MODES.get(mode, MODES["default"])
-            sys_prompt = (
+            # _base_static_sys: identical for every call with the same category + mode.
+            # Used as the cacheable block when the endpoint is Anthropic-native.
+            _base_static_sys = (
                 _get_expert_prompt(cat, state_.get("user_experts"))
                 + mode_cfg["expert_suffix"]
                 + _conf_format_for_mode(mode)
             )
-            # CC profile behavioral directives are prepended as highest-priority instructions
+            sys_prompt = _base_static_sys
+            # _dynamic_sys_parts: per-session or per-query additions — not cached.
+            _dynamic_sys_parts: list = []
+
+            # CC profile behavioral directives: session-constant but user-specific → dynamic.
             _behavioral = (state_.get("behavioral_directives") or "").strip()
             if _behavioral:
-                sys_prompt = f"MANDATORY RESPONSE DIRECTIVES (override all other instructions):\n{_behavioral}\n\n" + sys_prompt
+                _behav_block = f"MANDATORY RESPONSE DIRECTIVES (override all other instructions):\n{_behavioral}"
+                sys_prompt = f"{_behav_block}\n\n" + sys_prompt
+                _dynamic_sys_parts.append(_behav_block)
+
             # Agent mode: embed file/code context from the client's system message.
             # When the session has a Tier-3 context index (large system_prompt chunked into
             # ChromaDB), retrieve only the semantically relevant slice for this task instead
@@ -219,7 +229,10 @@ async def expert_worker(state_: AgentState):
                     from services.context_index import FALLBACK_CONTEXT_CHARS as _FALLBACK_CHARS
                     _ctx_snippet = agent_ctx[:_FALLBACK_CHARS]
                 if _ctx_snippet:
-                    sys_prompt += f"\n\n--- USER CODE CONTEXT ---\n{_ctx_snippet}"
+                    _ctx_block = f"--- USER CODE CONTEXT ---\n{_ctx_snippet}"
+                    sys_prompt += f"\n\n{_ctx_block}"
+                    _dynamic_sys_parts.append(_ctx_block)
+
             # Inject correction memory for this category (avoids repeat mistakes)
             if CORRECTION_MEMORY_ENABLED and state.graph_manager is not None:
                 try:
@@ -230,6 +243,7 @@ async def expert_worker(state_: AgentState):
                     if _corr_ctx:
                         PROM_CORRECTIONS_INJECTED.labels(category=cat).inc(len(_corr))
                         sys_prompt += f"\n\n{_corr_ctx}"
+                        _dynamic_sys_parts.append(_corr_ctx)
                 except Exception:
                     pass
             # Resolve per-expert context window: template override → Ollama API (cached) → static table
@@ -453,6 +467,37 @@ async def expert_worker(state_: AgentState):
                         usage_metadata={
                             "input_tokens":  _rdata.get("prompt_eval_count", 0),
                             "output_tokens": _rdata.get("eval_count", 0),
+                        },
+                    )
+                    _used_fallback = False
+                elif is_anthropic_native(api_type):
+                    # Anthropic Messages API with prompt caching on the static system block.
+                    _dynamic_sys = "\n\n".join(_dynamic_sys_parts)
+                    _anthr_msgs  = [m for m in messages if (
+                        m.get("role") != "system"
+                        if isinstance(m, dict)
+                        else getattr(m, "type", "") not in ("system",)
+                    )]
+                    _anthr_text, _anthr_usage = await call_anthropic_cached(
+                        url=url,
+                        token=token,
+                        model=model_name,
+                        messages_oai=_anthr_msgs,
+                        static_system=_base_static_sys,
+                        dynamic_system=_dynamic_sys,
+                        max_tokens=_expert_max_tokens,
+                        timeout=_expert_node_timeout,
+                    )
+                    from types import SimpleNamespace as _NS
+                    res = _NS(
+                        content=_anthr_text,
+                        usage_metadata={
+                            "input_tokens":  (
+                                _anthr_usage["prompt_tokens"]
+                                + _anthr_usage.get("cache_creation_input_tokens", 0)
+                                + _anthr_usage.get("cache_read_input_tokens", 0)
+                            ),
+                            "output_tokens": _anthr_usage["completion_tokens"],
                         },
                     )
                     _used_fallback = False

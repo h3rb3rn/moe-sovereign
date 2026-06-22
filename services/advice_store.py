@@ -1,12 +1,13 @@
 """
-services/advice_store.py — Persistence and retrieval for John McCarthy's Advice Taker rules.
+services/advice_store.py — Persistence, retrieval, and enforcement for John McCarthy's Advice Taker rules.
 """
 
 import json
 import os
+import re
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MOE-SOVEREIGN")
 
 # Resolve file path dynamically
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -34,14 +35,26 @@ def save_advice_rules(rules: list[dict]) -> None:
     except Exception as e:
         logger.error(f"AdviceTaker: Failed to save advice rules to {ADVICE_FILE}: {e}")
 
-def add_advice_rule(rule_text: str, category_scope: str = "all", enabled: bool = True) -> dict:
-    """Adds a new advice rule."""
+def add_advice_rule(
+    rule_text: str,
+    category_scope: str = "all",
+    pattern: str = "",
+    category: str = "",
+    mcp_tool: str = "",
+    default_task_description: str = "",
+    enabled: bool = True
+) -> dict:
+    """Adds a new advice rule with rich constraints."""
     import secrets
     rules = load_advice_rules()
     new_rule = {
         "id": f"advice-{secrets.token_hex(4)}",
         "rule": rule_text.strip(),
         "category_scope": category_scope.strip().lower(),
+        "pattern": pattern.strip(),
+        "category": category.strip(),
+        "mcp_tool": mcp_tool.strip(),
+        "default_task_description": default_task_description.strip(),
         "enabled": enabled
     }
     rules.append(new_rule)
@@ -58,18 +71,95 @@ def delete_advice_rule(rule_id: str) -> bool:
     return False
 
 def get_active_advice(query: str = None) -> list[str]:
-    """Returns all active advice rules as a list of strings."""
+    """Returns all active advice rules matching the query as a list of strings."""
     rules = load_advice_rules()
     active = []
     for r in rules:
         if not r.get("enabled", True):
             continue
             
-        # Match scopes
-        scope = r.get("category_scope", "all")
-        if scope == "all":
-            active.append(r["rule"])
-        elif query and scope in query.lower():
+        # Match using pattern or scope
+        matched = False
+        pattern = r.get("pattern", "")
+        if pattern and query:
+            try:
+                if re.search(pattern, query, re.I):
+                    matched = True
+            except Exception as e:
+                logger.error(f"AdviceTaker: Regex error on pattern '{pattern}': {e}")
+        else:
+            scope = r.get("category_scope", "all")
+            if scope == "all":
+                matched = True
+            elif query and scope in query.lower():
+                matched = True
+                
+        if matched:
             active.append(r["rule"])
             
     return active
+
+def enforce_advice_rules(query: str, plan: list) -> list:
+    """Enforces symbolic constraints on the generated plan based on declarative advice rules."""
+    rules = load_advice_rules()
+    modified_plan = list(plan)
+    
+    for r in rules:
+        if not r.get("enabled", True):
+            continue
+            
+        pattern = r.get("pattern", "")
+        mcp_tool = r.get("mcp_tool", "")
+        category = r.get("category", "")
+        
+        # Match using regex or substring
+        matched = False
+        if pattern:
+            try:
+                if re.search(pattern, query, re.I):
+                    matched = True
+            except Exception:
+                pass
+        else:
+            scope = r.get("category_scope", "all")
+            if scope == "all" or (query and scope in query.lower()):
+                matched = True
+                
+        if matched:
+            # Enforce rule: check if any task in plan matches category and/or mcp_tool
+            # If not, inject the required task!
+            has_match = False
+            for t in modified_plan:
+                if category and t.get("category") != category:
+                    continue
+                if mcp_tool and t.get("mcp_tool") != mcp_tool:
+                    continue
+                has_match = True
+                break
+                
+            if not has_match:
+                logger.info(f"🎯 AdviceTaker: Rule {r.get('id')} ('{r['rule']}') matched query. Enforcing task constraint...")
+                new_task = {
+                    "task": r.get("default_task_description") or f"Enforced task based on advice: {r['rule']}",
+                    "category": category or "general"
+                }
+                if mcp_tool:
+                    new_task["mcp_tool"] = mcp_tool
+                    # Extract parameter values based on mcp_tool type
+                    if mcp_tool == "legal_get_paragraph":
+                        law_match = re.search(r'§\s*(\d+\w*)\s*(bgb|stgb|gg|hgb)', query, re.I)
+                        if law_match:
+                            new_task["mcp_args"] = {"law": law_match.group(2).upper(), "paragraph": law_match.group(1)}
+                        else:
+                            new_task["mcp_args"] = {"law": "BGB", "paragraph": "242"}
+                    elif mcp_tool == "subnet_calc":
+                        cidr_match = re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}\b', query)
+                        if cidr_match:
+                            new_task["mcp_args"] = {"cidr": cidr_match.group(0)}
+                    else:
+                        new_task["mcp_args"] = {}
+                            
+                # Inject at the beginning of the plan so it runs before general experts
+                modified_plan.insert(0, new_task)
+                
+    return modified_plan

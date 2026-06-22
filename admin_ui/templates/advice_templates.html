@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+
+{% block title %}Advice Rules – MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type }} flash-bar mb-0 text-center py-2">{{ flash }}</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-chat-text-fill me-2 text-warning"></i>Advice Rules (Declarative Constraints)</h5>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#createRuleModal">
+    <i class="bi bi-plus-circle me-1"></i>New Advice Rule
+  </button>
+</div>
+
+<div class="alert alert-info py-2 small mb-3">
+  <i class="bi bi-info-circle-fill me-1"></i>
+  <strong>John McCarthy's Advice Taker (1958)</strong>: These declarative constraints module the planner execution. 
+  When a user's prompt matches the defined pattern or category scope, the rule engine automatically injects the specified task or precision tool into the execution plan, enforcing logical constraints.
+</div>
+
+<div class="card bg-dark text-white border-secondary">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-dark table-hover mb-0 align-middle">
+        <thead>
+          <tr class="text-secondary" style="font-size: 0.85rem;">
+            <th class="ps-3" style="width: 25%;">Rule (Description)</th>
+            <th style="width: 20%;">Match Pattern (Regex)</th>
+            <th style="width: 15%;">Enforce Category</th>
+            <th style="width: 15%;">Enforce Tool</th>
+            <th style="width: 15%;" class="text-center">Status</th>
+            <th style="width: 10%;" class="pe-3 text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if rules %}
+            {% for rule in rules %}
+            <tr id="rule-row-{{ rule.id }}">
+              <td class="ps-3 fw-bold">{{ rule.rule }}</td>
+              <td><code>{{ rule.pattern or rule.category_scope }}</code></td>
+              <td>
+                {% if rule.category %}
+                  <span class="badge bg-info text-dark">{{ rule.category }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if rule.mcp_tool %}
+                  <span class="badge bg-secondary">{{ rule.mcp_tool }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                <div class="form-check form-switch d-inline-block">
+                  <input class="form-check-input" type="checkbox" role="switch" 
+                         id="switch-{{ rule.id }}" {% if rule.enabled %}checked{% endif %}
+                         onchange="toggleRule('{{ rule.id }}')">
+                </div>
+              </td>
+              <td class="pe-3 text-end">
+                <button class="btn btn-outline-danger btn-xs" onclick="deleteRule('{{ rule.id }}')" title="Delete Rule">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="6" class="text-center py-4 text-muted">
+                <i class="bi bi-folder-x display-6 mb-2 d-block"></i>
+                No advice rules registered yet. Click "New Advice Rule" to create one.
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Create Rule Modal -->
+<div class="modal fade" id="createRuleModal" tabindex="-1" aria-labelledby="createRuleModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark text-white border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="createRuleModalLabel"><i class="bi bi-plus-circle me-2 text-primary"></i>Add New Advice Rule</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="createRuleForm" onsubmit="submitRule(event)">
+          <div class="mb-3">
+            <label for="ruleText" class="form-label small text-secondary">Rule Explanation (injects into prompt)</label>
+            <textarea class="form-control bg-secondary text-white border-secondary" id="ruleText" rows="2" required placeholder="e.g. Any math queries with complex arithmetic must use python sandbox."></textarea>
+          </div>
+          <div class="mb-3">
+            <label for="rulePattern" class="form-label small text-secondary">Match Regex Pattern (matches query)</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="rulePattern" placeholder="e.g. (berechne|solve|calculate)">
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label for="ruleCategory" class="form-label small text-secondary">Enforce Category</label>
+              <select class="form-select bg-secondary text-white border-secondary" id="ruleCategory">
+                <option value="">— None —</option>
+                <option value="precision_tools">precision_tools</option>
+                <option value="research">research</option>
+                <option value="general">general</option>
+                <option value="code_reviewer">code_reviewer</option>
+                <option value="legal_advisor">legal_advisor</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label for="ruleMcpTool" class="form-label small text-secondary">Enforce MCP Tool</label>
+              <input type="text" class="form-control bg-secondary text-white border-secondary" id="ruleMcpTool" placeholder="e.g. subnet_calc">
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="ruleDefaultTask" class="form-label small text-secondary">Default Task Description (if injected)</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="ruleDefaultTask" placeholder="e.g. Calculate network subnet info">
+          </div>
+          <div class="modal-footer border-secondary px-0 pb-0">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary btn-sm">Create Rule</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async fn_api(url, method, data = null) {
+  const headers = {
+    "Content-Type": "application/json",
+    "X-CSRF-Token": "{{ csrf_token }}"
+  };
+  const config = { method, headers };
+  if (data) {
+    config.body = JSON.stringify(data);
+  }
+  const r = await fetch(url, config);
+  if (!r.ok) {
+    const err = await r.json();
+    throw new Error(err.detail || "API request failed");
+  }
+  return await r.json();
+}
+
+async function submitRule(e) {
+  e.preventDefault();
+  const rule = document.getElementById("ruleText").value;
+  const pattern = document.getElementById("rulePattern").value;
+  const category = document.getElementById("ruleCategory").value;
+  const mcp_tool = document.getElementById("ruleMcpTool").value;
+  const default_task_description = document.getElementById("ruleDefaultTask").value;
+  
+  try {
+    await fn_api("/api/advice", "POST", {
+      rule, pattern, category, mcp_tool, default_task_description,
+      category_scope: pattern ? "" : "all",
+      enabled: true
+    });
+    window.location.reload();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+async function toggleRule(ruleId) {
+  try {
+    await fn_api(`/api/advice/${ruleId}/toggle`, "PATCH");
+  } catch (err) {
+    alert("Error toggling rule: " + err.message);
+    window.location.reload();
+  }
+}
+
+async function deleteRule(ruleId) {
+  if (!confirm("Are you sure you want to delete this rule?")) return;
+  try {
+    await fn_api(`/api/advice/${ruleId}`, "DELETE");
+    const row = document.getElementById(`rule-row-${ruleId}`);
+    if (row) row.remove();
+  } catch (err) {
+    alert("Error deleting rule: " + err.message);
+  }
+}
+</script>
+{% endblock %}

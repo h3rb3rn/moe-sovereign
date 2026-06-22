@@ -145,6 +145,7 @@ def _resolve_template_prompts(
         "enable_cross_session_memory": False,
         "cross_session_scopes": ["private"], "cross_session_ttl_days": 0,
         "complexity_level": "",
+        "causal_intervention": None,
     }
     try:
         perms     = json.loads(permissions_json or "{}")
@@ -225,6 +226,7 @@ def _resolve_template_prompts(
             "cross_session_scopes":    list(tmpl.get("cross_session_scopes", ["private"])),
             "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days", 0)),
             "complexity_level":        tmpl.get("complexity_level", ""),
+            "causal_intervention":     tmpl.get("causal_intervention"),
         }
     except Exception:
         return empty
@@ -236,11 +238,23 @@ def _server_info(endpoint_name: str) -> dict:
 
 
 def _is_endpoint_error(exc: Exception) -> bool:
-    """Return True when the exception signals an external endpoint is unavailable (auth/quota)."""
+    """Return True when the exception signals an endpoint is unavailable or the model can't be served.
+
+    Covers auth/quota failures (4xx) and model-loading failures (5xx).
+    Model-loading errors ("unable to load model", missing blobs) are treated as
+    transient availability errors so the fallback chain can activate rather than
+    returning a raw 500 to the client.
+    """
     s = str(exc).lower()
     return any(k in s for k in (
         "401", "unauthorized", "403", "forbidden",
         "429", "rate limit", "quota exceeded",
         "authentication", "x-api-key",
         "402", "insufficient", "payment required",
+        # Model-loading failures from Ollama (corrupt/missing blob, GGUF read error)
+        "unable to load model",
+        "error loading model",
+        "failed to load model",
+        "no such file or directory",
+        "blob",
     ))

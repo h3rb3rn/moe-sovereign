@@ -22,7 +22,7 @@ Field groups (in declaration order):
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Dict, List, TypedDict
+from typing import Annotated, Dict, List, TypedDict, Optional
 
 from pipeline.logic_types import ConflictEntry, ConstructiveProof  # noqa: F401
 
@@ -116,6 +116,7 @@ class AgentState(TypedDict):
     judge_reason: str                   # Human-readable explanation of why the judge intervened
     judge_before_after: Dict            # {before_score, after_score, delta} from judge refinement loop
     expert_inputs: Dict                 # {expert_name: {tokens_out, latency_ms}} per-expert call stats
+    causal_intervention: Optional[Dict] # Causal intervention metadata if triggered
 
     # ── 11. Agentic re-planning loop ──────────────────────────────────────────
     # When max_agentic_rounds > 0, the merger can trigger a second planning pass

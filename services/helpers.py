@@ -284,6 +284,7 @@ async def _store_response_metadata(
     plan: Optional[List[Dict]] = None,
     cost_tier: str = "",
     template_id: str = "",
+    causal_intervention: Optional[dict] = None,
 ) -> None:
     """Stores response metadata for later feedback in Valkey (TTL 7 days)."""
     if state.redis_client is None:
@@ -298,6 +299,8 @@ async def _store_response_metadata(
             "cost_tier":           cost_tier,
             "template_id":         template_id,
         }
+        if causal_intervention:
+            meta["causal_intervention"] = json.dumps(causal_intervention)
         key = f"moe:response:{response_id}"
         await state.redis_client.hset(key, mapping=meta)
         await state.redis_client.expire(key, 60 * 60 * 24 * 7)  # 7 Tage

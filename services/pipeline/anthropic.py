@@ -2003,7 +2003,7 @@ async def _anthropic_moe_handler(
                     finally:
                         await progress_q.put(None)
 
-                asyncio.create_task(_run())
+                _pipeline_task = asyncio.create_task(_run())
 
                 # Immediately send message_start + content_block_start
                 # → client sees response start, keeps connection open
@@ -2095,6 +2095,12 @@ async def _anthropic_moe_handler(
                 asyncio.create_task(_deregister_active_request(chat_id))
                 _did_deregister = True
             finally:
+                # Cancel the pipeline task if the client disconnected before it finished.
+                # Without this, LangGraph keeps running expert/judge calls on the GPU
+                # even after Open-WebUI (or any SSE client) closes the connection.
+                if not _pipeline_task.done():
+                    _pipeline_task.cancel()
+                    logger.info("moe_stream: pipeline task cancelled (client disconnected, chat_id=%s)", chat_id)
                 if not _did_deregister:
                     asyncio.create_task(_deregister_active_request(chat_id))
 

@@ -588,8 +588,8 @@ stable for a while.
 
 ### TASK-7: Implement Dynamic System Prompts in Dataset Generation & Gating Templates
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-06-22)
+- **Owner:** Antigravity (Google Antigravity CLI)
 - **Depends on:** none
 - **Context:** The upcoming Sovereign-14B SFT model training on LUMI-G requires training pairs `(Prompt, Optimal_Template_JSON)` where the template contains custom, prompt-specific system prompts for the planner, the judge, and every selected expert (e.g. `experts[exp]["system_prompt"]`, `planner_prompt`, `judge_prompt`).
 - **Instructions:**
@@ -600,6 +600,11 @@ stable for a while.
   - `dataset_generator.py` prompts the model to generate full `Optimal_Template_JSON` entries containing custom prompts for planner, judge, and experts.
   - Dynamically compiled templates include customized system prompts for experts, planner, and judge.
   - Verification test queries show these custom prompts propagated correctly to `AgentState`.
+- **Resolution notes:**
+  - **Dynamic System Prompts Helper:** Implemented `_generate_fallback_structured_prompts` (0 ms latency path) and `_generate_prompt_specific_prompts` (LLM-driven path controlled by `DYNAMIC_SYSTEM_PROMPTS_LLM_ENABLED` environment variable).
+  - **Dynamic Template Integration:** Integrated the custom prompt generation into `get_dynamic_template()` in `services/dynamic_router.py` for planner, judge, and active expert models.
+  - **Dataset Generation Integration:** Updated `scripts/dataset_generator.py` to generate complete optimal template configurations including customized prompt-specific system prompts for planner, judge, and active experts, both for newly generated prompts and seed prompts (via fallback generation).
+  - **Unit Tests:** Added unit tests verifying language and step hints in `_generate_fallback_structured_prompts` and LLM mock validation in `_generate_prompt_specific_prompts` inside `tests/test_dynamic_router.py`. All tests pass.
 
 ---
 
