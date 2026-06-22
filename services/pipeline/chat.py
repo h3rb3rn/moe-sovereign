@@ -1504,6 +1504,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             model=MODES.get(mode, MODES["default"])["model_id"],
             moe_mode=mode, prompt_tokens=p_tok, completion_tokens=c_tok,
             session_id=session_id,
+            dynamic_tmpl_id=_resolved_tmpl_id if _resolved_tmpl_id.startswith("moe-dyn-") else "",
         ))
         _uc_p = result.get("user_conn_prompt_tokens", 0)
         _uc_c = result.get("user_conn_completion_tokens", 0)

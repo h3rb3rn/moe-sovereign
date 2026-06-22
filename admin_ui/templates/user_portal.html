@@ -2697,7 +2697,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 <div>
                   <strong>{{ conn.display_name or conn.name }}</strong>
                   <span class="badge bg-secondary ms-2 font-monospace">{{ conn.name }}</span>
-                  <span class="badge {% if conn.api_type == 'ollama' %}bg-info{% else %}bg-success{% endif %} ms-1">{{ conn.api_type }}</span>
+                  <span class="badge {% if conn.api_type == 'ollama' %}bg-info{% elif conn.api_type == 'anthropic' %}bg-warning text-dark{% else %}bg-success{% endif %} ms-1">{{ conn.api_type }}</span>
                 </div>
                 <div class="btn-group btn-group-sm">
                   <button class="btn btn-outline-secondary"
@@ -2896,6 +2896,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 <select id="conn-api-type" class="form-select">
                   <option value="openai">{{ t(request, 'portal.conn_type_openai') }}</option>
                   <option value="ollama">{{ t(request, 'portal.conn_type_ollama') }}</option>
+                  <option value="anthropic">Anthropic Messages API</option>
                 </select>
               </div>
               <div class="mb-3">

@@ -190,9 +190,12 @@ async def pipeline_log(
                                ul.model, ul.moe_mode, ul.session_id,
                                ul.prompt_tokens, ul.completion_tokens, ul.total_tokens,
                                ul.latency_ms, ul.complexity_level, ul.expert_domains,
-                               ul.cache_hit, ul.agentic_rounds, ul.status, ul.requested_at
+                               ul.cache_hit, ul.agentic_rounds, ul.status, ul.requested_at,
+                               ul.dynamic_tmpl_id,
+                               at.name AS dynamic_tmpl_name
                         FROM usage_log ul
                         LEFT JOIN users u ON ul.user_id = u.id
+                        LEFT JOIN admin_expert_templates at ON at.id = ul.dynamic_tmpl_id
                         {where} ORDER BY {_sort_col} {_sort_ord} LIMIT %s OFFSET %s""",
                     params,
                 )

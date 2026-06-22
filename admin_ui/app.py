@@ -6410,8 +6410,8 @@ async def user_api_create_connection(request: Request, user_id: str = Depends(re
         raise HTTPException(status_code=400, detail="name and url are required")
     if not _re.fullmatch(r"[a-zA-Z0-9_-]{1,32}", name):
         raise HTTPException(status_code=400, detail="name must be 1-32 chars: letters, digits, _ or -")
-    if api_type not in ("openai", "ollama"):
-        raise HTTPException(status_code=400, detail="api_type must be 'openai' or 'ollama'")
+    if api_type not in ("openai", "ollama", "anthropic"):
+        raise HTTPException(status_code=400, detail="api_type must be 'openai', 'ollama' or 'anthropic'")
 
     try:
         conn = await db.create_user_connection(user_id, name, display_name, url, api_type, api_key)
@@ -6436,8 +6436,8 @@ async def user_api_update_connection(
 
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
-    if api_type not in ("openai", "ollama"):
-        raise HTTPException(status_code=400, detail="api_type must be 'openai' or 'ollama'")
+    if api_type not in ("openai", "ollama", "anthropic"):
+        raise HTTPException(status_code=400, detail="api_type must be 'openai', 'ollama' or 'anthropic'")
 
     conn = await db.update_user_connection(conn_id, user_id, display_name, url, api_type,
                                            api_key_plain=api_key_plain)
@@ -6591,6 +6591,29 @@ async def _probe_connection(conn: dict) -> dict:
                         "param_size":     details.get("parameter_size"),
                         "families":       details.get("families") or [],
                         "size_gb":        round(size_bytes / 1_073_741_824, 1) if size_bytes else None,
+                        "tags":           [],
+                    })
+            elif api_type == "anthropic":
+                # Anthropic /v1/models — returns model list in Anthropic format
+                ant_headers = {
+                    "x-api-key":         api_key,
+                    "anthropic-version": "2023-06-01",
+                }
+                if api_key and not api_key.startswith("sk-ant-"):
+                    ant_headers["Authorization"] = f"Bearer {api_key}"
+                r = await client.get(f"{base_url}/v1/models", headers=ant_headers)
+                raw = r.json()
+                # Anthropic returns {"data": [...]} or just a list
+                raw_models = raw.get("data", raw) if isinstance(raw, dict) else raw
+                models = []
+                for m in raw_models if isinstance(raw_models, list) else []:
+                    ctx = m.get("context_window") or m.get("max_context_length")
+                    models.append({
+                        "id":             m.get("id", ""),
+                        "context_window": int(ctx) if ctx else None,
+                        "param_size":     None,
+                        "families":       [],
+                        "size_gb":        None,
                         "tags":           [],
                     })
             else:

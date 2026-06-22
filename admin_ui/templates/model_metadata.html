@@ -53,6 +53,7 @@
           <th class="text-end">{{ t(request, 'model_meta.col_ctx') }}</th>
           <th>{{ t(request, 'model_meta.col_strengths') }}</th>
           <th>{{ t(request, 'model_meta.col_tags') }}</th>
+          <th title="Benchmark-Scores: MMLU / GSM8K / HumanEval / GPQA — verwendet vom moe-auto Dynamic Router">Scores</th>
           <th>{{ t(request, 'model_meta.col_updated') }}</th>
           <th></th>
         </tr>
@@ -158,13 +159,22 @@ function renderTable() {
     const tags      = (r.tags || []).map(_tagBadge).join('');
     const strengths = (r.strengths || []).map(s => `<span class="badge bg-dark-subtle text-dark me-1">${_esc(s)}</span>`).join('');
     const size      = r.parameter_size_b ? `${r.parameter_size_b}B` : '—';
+    const bs        = r.benchmark_scores || {};
+    const scoreHtml = Object.keys(bs).length
+      ? `<div style="font-size:.72rem;line-height:1.4">
+           ${Object.entries(bs).map(([k,v]) =>
+             `<span class="text-muted">${k}:</span> <strong>${v}</strong>`
+           ).join('<br>')}
+         </div>`
+      : '<span class="text-muted">—</span>';
     return `<tr>
-      <td class="font-monospace text-break" style="max-width:300px">${_esc(r.model_id)}</td>
+      <td class="font-monospace text-break" style="max-width:260px">${_esc(r.model_id)}</td>
       <td>${_esc(r.family||'—')}</td>
       <td class="text-end text-muted">${size}</td>
       <td class="text-end text-muted">${_fmtCtx(r.context_window)}</td>
       <td>${strengths||'—'}</td>
       <td>${tags||'—'}</td>
+      <td>${scoreHtml}</td>
       <td class="text-muted">${_fmtDate(r.updated_at)}</td>
       <td class="text-end">
         <button class="btn btn-outline-secondary btn-sm me-1" onclick='openModal(${JSON.stringify(r)})'>
