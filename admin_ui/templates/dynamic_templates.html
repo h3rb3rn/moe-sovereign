@@ -104,6 +104,15 @@
                   <div class="col-6"><strong>Status:</strong> {{ t.status or '—' }}</div>
                 </div>
 
+                <!-- Reasoning Trace -->
+                {% if cfg.get('reasoning_trace') %}
+                <hr class="my-2">
+                <div class="small">
+                  <strong>Reasoning Trace:</strong>
+                  <div class="font-monospace p-2 rounded bg-dark text-light mt-1" style="font-size:.72rem; white-space: pre-wrap; word-break: break-all;">{{ cfg.reasoning_trace }}</div>
+                </div>
+                {% endif %}
+
                 <!-- Planner Systemprompt -->
                 {% if cfg.get('planner_prompt') %}
                 <div class="mb-1">
