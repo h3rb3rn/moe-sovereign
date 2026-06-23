@@ -316,6 +316,41 @@ async def fetch_ollama_library_metadata(client: httpx.AsyncClient, model_name: s
     return {}
 
 
+async def fetch_openrouter_models(client: httpx.AsyncClient) -> dict[str, dict]:
+    """Fetch OpenRouter models metadata (context window, tags) from their public API.
+
+    Returns: {model_id: {context_window, tags}}
+    """
+    result: dict[str, dict] = {}
+    try:
+        r = await client.get("https://openrouter.ai/api/v1/models", timeout=10.0)
+        if r.status_code == 200:
+            data = r.json()
+            models = data.get("data", [])
+            for m in models:
+                m_id = m.get("id")
+                if not m_id:
+                    continue
+                context = m.get("context_length", 4096)
+                desc = (m.get("description") or "").lower()
+                tags: list[str] = []
+                if any(w in desc for w in ["code", "coder", "programming", "developer"]):
+                    tags.append("code")
+                if any(w in desc for w in ["vision", "image", "multimodal", "vlm", "visual"]):
+                    tags.append("vision")
+                if any(w in desc for w in ["agent", "tool call", "function call", "agentic"]):
+                    tags.append("agentic")
+                if any(w in desc for w in ["reasoning", "thinking", "chain-of-thought", "r1"]):
+                    tags.append("reasoning")
+                result[m_id] = {
+                    "context_window": context,
+                    "tags": tags,
+                }
+    except Exception as e:
+        print(f"Error fetching OpenRouter models: {e}")
+    return result
+
+
 async def research_model_metadata_online(client: httpx.AsyncClient, model_name: str) -> dict:
     """Query Ollama Library first, then HuggingFace Hub as fallback.
 

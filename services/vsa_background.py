@@ -154,3 +154,72 @@ class HolographicBackgroundEngine:
             if name.startswith("obj:")
         ]
         return filtered_matches
+
+    def compile_hierarchical_graph_to_vsa(self, tree_data: dict) -> np.ndarray:
+        """
+        HABE 2.0: Compresses a nested tree structure (hierarchical knowledge graph) into a single HAV.
+        tree_data format: {
+            "node": "parent_node_name",
+            "relation": "has_child",
+            "children": [
+                {
+                    "node": "child_node_name",
+                    "relation": "has_subchild",
+                    "children": [...]
+                }
+            ]
+        }
+        """
+        def _compile_node(node_dict: dict) -> np.ndarray:
+            node_name = node_dict.get("node", "anonymous")
+            v_node = self.get_or_create_vector(f"node:{node_name}")
+            
+            child_vectors = [v_node]
+            for child in node_dict.get("children", []):
+                v_child_sub = _compile_node(child)
+                rel = child.get("relation", "has_child")
+                v_rel = self.get_or_create_vector(f"relation:{rel}")
+                
+                # Bind child subgraph with relation and role parent
+                bound_child = self.bind(self.bind(v_child_sub, v_rel), v_node)
+                child_vectors.append(bound_child)
+                
+            return self.bundle(child_vectors)
+
+        logger.info("VSA HABE 2.0: Compiling hierarchical graph into vector space.")
+        return _compile_node(tree_data)
+
+    def query_vsa_hierarchy(self, hav: np.ndarray, parent: str, relation: str = "has_child") -> list[tuple[str, float]]:
+        """
+        HABE 2.0: Queries the HAV to retrieve children associated with a parent and relation.
+        """
+        v_p = self.vocab.get(f"node:{parent}")
+        v_r = self.vocab.get(f"relation:{relation}")
+        
+        if v_p is None or v_r is None:
+            return []
+            
+        # Unbind parent and relation: children_superposition = HAV * Inv(parent * relation)
+        query_key = self.bind(v_p, v_r)
+        retrieved_noisy_children = self.unbind(hav, query_key)
+        
+        # Cleanup matches
+        matches = self.cleanup(retrieved_noisy_children)
+        
+        # Filter for node namespace tags
+        filtered = []
+        for name, sim in matches:
+            if name.startswith("node:"):
+                node_val = name.split("node:", 1)[1]
+                if node_val != parent:
+                    filtered.append((node_val, sim))
+        return filtered
+
+    def export_virtual_prefix_embeddings(self, hav: np.ndarray) -> list[float]:
+        """
+        Converts the 2048-dimensional HAV vector into a list of floats
+        suitable for virtual prefix attention modulation in local inference models.
+        """
+        if hav is None or np.linalg.norm(hav) == 0:
+            return [0.0] * self.dimension
+        return (hav / np.linalg.norm(hav)).tolist()

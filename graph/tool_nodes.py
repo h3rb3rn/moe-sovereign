@@ -437,6 +437,23 @@ async def graph_rag_node(state_: AgentState):
                                 matches = engine.query_vsa_relation(hav, s, p)
                                 for obj, sim in matches:
                                     habe_facts.append(f"- (VSA Unconscious Background): {s} --[{p}]--> {obj} (similarity: {sim:.2f})")
+                                    
+                        # HABE 2.0 Hierarchy query
+                        found_parents = []
+                        for word in query_words:
+                            for vocab_key in engine.vocab.keys():
+                                if vocab_key.startswith("node:") and word in vocab_key.lower():
+                                    found_parents.append(vocab_key.split("node:", 1)[1])
+                        found_parents = list(set(found_parents))
+                        
+                        hierarchical_relations = ["has_child", "part_of", "contains", "member_of"]
+                        for parent in found_parents:
+                            for rel in hierarchical_relations:
+                                h_matches = engine.query_vsa_hierarchy(hav, parent, rel)
+                                for child, sim in h_matches:
+                                    habe_facts.append(
+                                        f"- (VSA Hierarchical Background): {parent} --[{rel}]--> {child} (similarity: {sim:.2f})"
+                                    )
                         
                         if habe_facts:
                             habe_section = "\n\nHOLOGRAPHIC AMBIENT BACKGROUND KNOWLEDGE (HABE):\n" + "\n".join(habe_facts)

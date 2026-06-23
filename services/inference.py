@@ -732,7 +732,34 @@ async def _invoke_planner_with_retry(
     return await _invoke_llm_with_fallback(llm, _p_url_base, prompt, timeout=PLANNER_TIMEOUT, label="Planner")
 
 
-def _judge_model_kw(model: str, state_num_ctx: int = 0) -> dict:
+def _inject_habe_prefix_embeddings(opts: dict, state_: Optional[dict] = None) -> None:
+    """Injects HABE prefix embeddings if HABE is enabled and vector file exists."""
+    if not state_ or not state_.get("enable_habe"):
+        return
+        
+    try:
+        import os
+        import numpy as np
+        from services.vsa_background import HolographicBackgroundEngine
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        repo_root = os.path.dirname(script_dir)
+        models_dir = os.path.join(repo_root, "models")
+        vector_path = os.path.join(models_dir, "habe_vector.npy")
+        vocab_path = os.path.join(models_dir, "habe_vocab.json")
+        
+        if os.path.exists(vector_path) and os.path.exists(vocab_path):
+            engine = HolographicBackgroundEngine(dimension=2048)
+            if engine.load_vocab(vocab_path):
+                hav = np.load(vector_path)
+                embeddings = engine.export_virtual_prefix_embeddings(hav)
+                opts["habe_prefix_embedding"] = embeddings
+                logger.info("🧠 HABE: Injected virtual prefix attention modulation vector (%d dims) into LLM options", len(embeddings))
+    except Exception as e:
+        logger.warning("Failed to inject HABE prefix embeddings: %s", e)
+
+
+def _judge_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict] = None) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a judge call.
 
     Contains model_kwargs (max_tokens) and, when ctx is known, extra_body as a
@@ -746,12 +773,17 @@ def _judge_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     """
     out: dict = {"max_tokens": MAX_JUDGE_TOKENS}
     ctx = resolve_requested_ctx(model, state_num_ctx, JUDGE_NUM_CTX, label="judge")
+    opts = {}
     if ctx > 0:
-        out["extra_body"] = {"options": {"num_ctx": ctx}}
+        opts["num_ctx"] = ctx
+    if state_ and state_.get("enable_habe"):
+        _inject_habe_prefix_embeddings(opts, state_)
+    if opts:
+        out["extra_body"] = {"options": opts}
     return out
 
 
-def _planner_model_kw(model: str, state_num_ctx: int = 0) -> dict:
+def _planner_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict] = None) -> dict:
     """Return kwargs to spread (**) directly into ChatOpenAI for a planner call.
 
     Same contract as _judge_model_kw: extra_body is a top-level key, not nested
@@ -766,6 +798,8 @@ def _planner_model_kw(model: str, state_num_ctx: int = 0) -> dict:
     opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
         opts["num_ctx"] = ctx
+    if state_ and state_.get("enable_habe"):
+        _inject_habe_prefix_embeddings(opts, state_)
     out["extra_body"] = {"options": opts}
     return out
 
@@ -784,7 +818,7 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Judge endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(JUDGE_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=JUDGE_TIMEOUT,
-                          **_judge_model_kw(m, _state_num_ctx))
+                          **_judge_model_kw(m, _state_num_ctx, state))
     if m and not u:
         # Floating judge: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -793,14 +827,14 @@ async def _get_judge_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating judge: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=JUDGE_TIMEOUT,
-                          **_judge_model_kw(m, _state_num_ctx))
+                          **_judge_model_kw(m, _state_num_ctx, state))
     # No model override — if num_ctx differs from global, create a fresh instance
     if _state_num_ctx > 0:
         from services.llm_instances import _judge_num_ctx as _global_judge_ctx
         if _state_num_ctx != _global_judge_ctx:
             return ChatOpenAI(model=JUDGE_MODEL, base_url=JUDGE_URL, api_key=JUDGE_TOKEN,
                               timeout=JUDGE_TIMEOUT,
-                              **_judge_model_kw(JUDGE_MODEL, _state_num_ctx))
+                              **_judge_model_kw(JUDGE_MODEL, _state_num_ctx, state))
     return judge_llm
 
 
@@ -818,7 +852,7 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
             logger.info("⚡ Planner endpoint degraded — returning fallback LLM directly")
             return await _get_fallback_llm(PLANNER_TIMEOUT)
         return ChatOpenAI(model=m, base_url=u, api_key=t, timeout=PLANNER_TIMEOUT,
-                          **_planner_model_kw(m, _state_num_ctx))
+                          **_planner_model_kw(m, _state_num_ctx, state))
     if m and not u:
         # Floating planner: discover the best node for this model
         all_eps = [s["name"] for s in INFERENCE_SERVERS_LIST]
@@ -827,14 +861,14 @@ async def _get_planner_llm(state: "AgentState") -> "ChatOpenAI":
         _tok = node.get("token", "ollama")
         logger.info(f"🌐 Floating planner: {m} → {node['name']}")
         return ChatOpenAI(model=m, base_url=_url, api_key=_tok, timeout=PLANNER_TIMEOUT,
-                          **_planner_model_kw(m, _state_num_ctx))
+                          **_planner_model_kw(m, _state_num_ctx, state))
     # No model override — if num_ctx differs from global, create a fresh instance
     if _state_num_ctx > 0:
         from services.llm_instances import _planner_num_ctx as _global_planner_ctx
         if _state_num_ctx != _global_planner_ctx:
             return ChatOpenAI(model=PLANNER_MODEL, base_url=PLANNER_URL, api_key=PLANNER_TOKEN,
                               timeout=PLANNER_TIMEOUT,
-                              **_planner_model_kw(PLANNER_MODEL, _state_num_ctx))
+                              **_planner_model_kw(PLANNER_MODEL, _state_num_ctx, state))
     return planner_llm
 
 

@@ -12,6 +12,10 @@ This section contains the technical system documentation for **Sovereign MoE** â
 | [Architecture](architecture.md) | LangGraph pipeline, service topology, caching architecture, expert routing |
 | [Kafka Event Streaming](kafka.md) | Kafka architecture, topics, message schemas, HowTo admin & dev |
 | [Docker Services](services.md) | Service overview, ports, volumes, operational commands |
+| [HABE 2.0 Operations Manual](habe_operations_manual.md) | Vector Symbolic Architecture (VSA), hierarchical graph compilation, virtual prefix attention modulation |
+| [Advice-Taker Rule-Engine](advice_taker_operations_manual.md) | John McCarthy's rule-engine, Jaccard 3-gram semantic matching, regex parameter extraction |
+| [Eurisko Heuristic Breeder](eurisko_operations_manual.md) | Self-referential template optimizer, roulette-wheel selection, feedback loops, crossover |
+| [Dynamic System Prompts](dynamic_prompts_operations_manual.md) | Meta-prompter architecture, zero-latency structured fallback pathways |
 
 ---
 

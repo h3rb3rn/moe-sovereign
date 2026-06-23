@@ -106,7 +106,15 @@ User ratings (`POST /v1/feedback`) now propagate through all four layers: Chroma
 
 A new `resolve_requested_ctx()` helper in `context_budget.py` acts as a single source of truth for context window limits. It cross-references `model_metadata` DB overrides (e.g. `llama3.3-70b-ctx4k → 4096`) before any LLM call, preventing OOM reload cascades on the 60 GB N04-RTX node.
 
-→ [Full technical documentation](system/overview.md)
+### Scientific Integrations: McCarthy, Smolensky, and Lenat
+
+The middleware has been expanded to incorporate three classical and modern AI theories, fully verified and unit-tested:
+
+- **Smolensky's TPR / HABE 2.0:** Support for **hierarchical graph structures** mapped to a 2048-dimensional Vector Symbolic Architecture (VSA). Features **recursive unbinding** of parent/relation keys to query sub-subsystems and **Virtual Prefix Attention Modulation** which injects normalized VSA background vectors directly into local LLM endpoints.
+- **Lenat's Eurisko Heuristic Breeder:** An evolutionary template optimizer (`HeuristicBreeder`) that dynamically breeds and mutates configurations using **Roulette-Wheel selection** and adjusts mutator weights based on PostgreSQL user ratings.
+- **McCarthy's Advice-Taker:** A declarative rule-engine that intercepts queries before planning to enforce strict boundaries. Features offline **3-gram character Jaccard similarity matching** (similarity threshold $\ge 0.3$) and **declarative regex parameter extraction** for dynamic MCP tool argument binding.
+
+→ [Full technical documentation](system/overview.md) | [HABE 2.0 Manual](system/habe_operations_manual.md) | [Advice-Taker Engine](system/advice_taker_operations_manual.md) | [Eurisko Breeder](system/eurisko_operations_manual.md)
 
 ---
 
