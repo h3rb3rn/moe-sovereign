@@ -218,6 +218,9 @@ CACHE_MIN_RESPONSE_LEN    = int(os.getenv("CACHE_MIN_RESPONSE_LEN",     "150"))
 # floor and TTL must hold. This is the lever for "less LLM over time": accumulated
 # high-trust knowledge answers progressively more queries without inference.
 KNOWLEDGE_BYPASS_ENABLED   = os.getenv("KNOWLEDGE_BYPASS_ENABLED", "true").lower() in ("1", "true", "yes")
+
+# ── Judicial Mixture of Experts (J-MoE) ───────────────────────────────────────
+JMOE_DEBATE_ENABLED = os.getenv("JMOE_DEBATE_ENABLED", "true").lower() in ("1", "true", "yes")
 KNOWLEDGE_BYPASS_THRESHOLD = float(os.getenv("KNOWLEDGE_BYPASS_THRESHOLD", "0.25"))
 KNOWLEDGE_BYPASS_MIN_CONF  = float(os.getenv("KNOWLEDGE_BYPASS_MIN_CONF",  "0.85"))
 KNOWLEDGE_BYPASS_TTL_DAYS  = int(os.getenv("KNOWLEDGE_BYPASS_TTL_DAYS",    "14"))

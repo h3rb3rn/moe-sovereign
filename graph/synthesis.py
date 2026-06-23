@@ -1294,21 +1294,51 @@ async def resolve_conflicts_node(state_: AgentState):
             logger.info(f"⚖️  [{category}] conflict dismissed (score={score:.2f} < {_DIVERGENCE_AUTO_DISMISS})")
             continue
 
-        # Strategy B — safety-critical with significant divergence: ask judge to arbitrate
+        # Strategy B — safety-critical with significant divergence: ask judge to arbitrate using Belnap-Dunn paraconsistent logic
         if category in _SAFETY_CRITICAL_CATS:
             arbitration_prompt = (
-                f"Two experts in '{category}' produced conflicting answers. "
-                f"Evaluate both and determine which is more accurate, or synthesise if both are partially correct.\n\n"
-                f"EXPERT A:\n{c['proposition_a']}\n\n"
-                f"EXPERT B:\n{c['proposition_b']}\n\n"
-                f"Respond with: VERDICT: <A|B|SYNTHESIS> — <one-sentence rationale>"
+                f"Two experts in '{category}' produced conflicting claims.\n"
+                f"Perform a paraconsistent bilattice evaluation (Belnap-Dunn logic: T, F, I, U) to arbitrate the dispute.\n\n"
+                f"CLAIM A:\n{c['proposition_a']}\n\n"
+                f"CLAIM B:\n{c['proposition_b']}\n\n"
+                f"Format your response with a JSON conflict map inside XML tags and a final synthesis verdict:\n"
+                f"<conflict_map>\n"
+                f"{{\n"
+                f"  \"points_of_dispute\": [\n"
+                f"    {{\"point\": \"<claim description>\", \"evidence_a\": \"...\", \"evidence_b\": \"...\", \"bilattice_value\": \"<T|F|I|U>\"}}\n"
+                f"  ]\n"
+                f"}}\n"
+                f"</conflict_map>\n"
+                f"VERDICT: <A|B|SYNTHESIS> — <rationale>"
             )
             try:
                 arb_res = await _invoke_judge_with_retry(state_, arbitration_prompt)
-                verdict = arb_res.content.strip()[:300]
-                resolved.append({**c, "resolution": "resolved", "resolved_by": f"judge_arbitration: {verdict}"})
-                logger.info(f"⚖️  [{category}] conflict resolved by judge: {verdict[:80]}")
-                await _report(f"⚖️ [{category}] Judge verdict: {verdict[:120]}")
+                verdict = arb_res.content.strip()
+                
+                # Parse conflict map JSON if present
+                conflict_map = {}
+                map_match = re.search(r"<conflict_map>(.*?)</conflict_map>", verdict, re.DOTALL)
+                if map_match:
+                    try:
+                        conflict_map = json.loads(map_match.group(1).strip())
+                        logger.info(f"⚖️ Parsed Belnap-Dunn Conflict Map: {json.dumps(conflict_map)}")
+                    except Exception as json_err:
+                        logger.warning(f"⚖️ Failed to parse conflict map JSON: {json_err}")
+                
+                # Extract clean verdict
+                clean_verdict = verdict
+                verdict_match = re.search(r"VERDICT:.*", verdict)
+                if verdict_match:
+                    clean_verdict = verdict_match.group(0)
+                    
+                resolved.append({
+                    **c, 
+                    "resolution": "resolved", 
+                    "resolved_by": f"judge_arbitration: {clean_verdict[:200]}",
+                    "conflict_map": conflict_map
+                })
+                logger.info(f"⚖️  [{category}] conflict resolved by paraconsistent judge: {clean_verdict[:80]}")
+                await _report(f"⚖️ [{category}] Judge verdict: {clean_verdict[:120]}")
             except Exception as _arb_err:
                 logger.warning(f"⚖️  [{category}] judge arbitration failed: {_arb_err}")
                 resolved.append({**c, "resolution": "dismissed", "resolved_by": "judge_unavailable"})
