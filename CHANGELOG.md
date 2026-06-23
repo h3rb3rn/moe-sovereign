@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.8.0] - 2026-06-23
+
+### Added
+
+- **HABE 2.0 (Tensor Product Representations)** (`services/vsa_background.py`): support for **hierarchical graph structures** recursively bundled in 2048-dimensional Vector Symbolic Architecture (VSA). Enables **recursive unbinding** of parent/relation keys to query sub-subsystems and **Virtual Prefix Attention Modulation** via `habe_prefix_embedding` options in OpenAI-compatible and native Ollama endpoints.
+- **Eurisko Heuristic Breeder** (`scripts/eurisko_template_optimizer.py`): self-referential evolutionary template optimizer. Features **Roulette-Wheel selection** for mutators, **crossover breeding** of top-performing heuristics (weights > 1.5), and automatic **weight adaptation** (+15% reward / -15% penalty) based on PostgreSQL ratings.
+- **Advice-Taker Rule-Engine** (`services/advice_store.py`): John McCarthy-inspired rule-engine. Intercepts planning to inject priority tasks. Features **3-gram character Jaccard similarity semantic matching** (threshold &ge; 0.3) and **declarative regex parameter extraction** for dynamic MCP tool argument binding.
+- **Dynamic System Prompts** (`services/dynamic_router.py`, `scripts/dataset_generator.py`): Meta-prompter LLM pathway and zero-latency keyword interpolation to dynamically generate prompt-specific system prompts for the planner, judge, and active experts.
+
+### Fixed
+
+- **ChromaDB Semantic Cache Query Mismatch** (`services/dynamic_router.py`): query and document formats aligned to raw prompts to enable ChromaDB L2 cache hits.
+- **PostgreSQL Feedback Log Wiring** (`services/dynamic_router.py`): wired `log_dynamic_template_feedback` into the compile pathway, enabling user ratings to update logs (rowcount > 0).
+- **Context Window Budget Priority** (`context_budget.py`, `services/inference.py`): resolved priority mismatch by introducing `resolve_requested_ctx()` helper as single source of truth for context clamping.
+
 ## [2.7.1] - 2026-06-13
 
 ### Research & Funding

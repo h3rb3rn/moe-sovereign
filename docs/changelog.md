@@ -8,6 +8,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-06-23 — v2.8.0: Scientific Theories Integration (McCarthy, Smolensky, Lenat)
+
+> `impact: minor` · `breaking: no` · `domain: orchestrator, vsa, breeder, rule-engine`
+
+### Added
+
+- **Smolensky's TPR / HABE 2.0:** Support for **hierarchical graph structures** mapped to a 2048-dimensional Vector Symbolic Architecture (VSA). Features **recursive unbinding** of parent/relation keys to query sub-subsystems and **Virtual Prefix Attention Modulation** which injects normalized VSA background vectors directly into local LLM endpoints.
+- **Lenat's Eurisko Heuristic Breeder:** An evolutionary template optimizer (`HeuristicBreeder`) that dynamically breeds and mutates configurations using **Roulette-Wheel selection** and adjusts mutator weights based on PostgreSQL user ratings.
+- **McCarthy's Advice-Taker:** A declarative rule-engine that intercepts queries before planning to enforce strict boundaries. Features offline **3-gram character Jaccard similarity matching** (similarity threshold $\ge 0.3$) and **declarative regex parameter extraction** for dynamic MCP tool argument binding.
+- **Dynamic System Prompts:** Meta-prompter LLM pathway and zero-latency keyword interpolation to dynamically generate prompt-specific system prompts for the planner, judge, and active experts.
+
+### Fixed
+
+- **ChromaDB Semantic Cache Query Mismatch:** Query and document formats aligned to raw prompts to enable ChromaDB L2 cache hits.
+- **PostgreSQL Feedback Log Wiring:** Wired `log_dynamic_template_feedback` into the compile pathway, enabling user ratings to update logs (rowcount > 0).
+- **Context Window Budget Priority:** Resolved priority mismatch by introducing `resolve_requested_ctx()` helper as single source of truth for context clamping.
+
+---
+
 ## 2026-05-21 — v2.5.3: Query Reformulation (Agentic RAG)
 
 > `impact: minor` · `breaking: no` · `domain: graph_rag`
