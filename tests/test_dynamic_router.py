@@ -283,3 +283,83 @@ def tmer_or_not_none(val):
     return True
 
 
+@pytest.mark.asyncio
+async def test_score_and_allocate_model_force_weak():
+    models = [
+        {"model_id": "model_large:70b@node", "model_name": "model_large:70b", "endpoint": "node", "is_warmed": True, "is_local": True},
+        {"model_id": "model_small:8b@node", "model_name": "model_small:8b", "endpoint": "node", "is_warmed": True, "is_local": True}
+    ]
+    
+    metadata = {
+        "model_large:70b@node": {"context_window": 4096, "benchmark_scores": {"mmlu": 90.0}, "parameter_size_b": 70.0},
+        "model_small:8b@node": {"context_window": 4096, "benchmark_scores": {"mmlu": 70.0}, "parameter_size_b": 8.0}
+    }
+    
+    # 1. Without force_weak -> large model has higher score and is allocated first
+    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)), \
+         patch("random.random", return_value=1.0):
+        allocated = await _score_and_allocate_model("general", models, metadata, local_only=False, force_weak=False)
+        assert allocated[0]["model_id"] == "model_large:70b@node"
+
+    # 2. With force_weak -> large model is filtered out (since 70B > EXPERT_TIER_BOUNDARY_B=20)
+    with patch("services.dynamic_router._get_thompson_score", AsyncMock(return_value=0.5)), \
+         patch("random.random", return_value=1.0):
+        allocated_weak = await _score_and_allocate_model("general", models, metadata, local_only=False, force_weak=True)
+        assert len(allocated_weak) == 1
+        assert allocated_weak[0]["model_id"] == "model_small:8b@node"
+
+
+@pytest.mark.asyncio
+async def test_routellm_template_routing_integration():
+    mock_session = MagicMock()
+    # Mock ONNX outputs (complexity='moderate', gates off)
+    mock_experts = np.zeros((1, 14), dtype=np.float32)
+    mock_experts[0, 4] = 2.0  # general
+    mock_complexity = np.zeros((1, 4), dtype=np.float32)
+    mock_complexity[0, 1] = 5.0
+    mock_gates = np.zeros((1, 2), dtype=np.float32)
+    mock_session.run.return_value = [mock_experts, mock_complexity, mock_gates]
+
+    models = [
+        {"model_id": "model_large:70b@node", "model_name": "model_large:70b", "endpoint": "node", "is_warmed": True, "is_local": True},
+        {"model_id": "model_small:8b@node", "model_name": "model_small:8b", "endpoint": "node", "is_warmed": True, "is_local": True}
+    ]
+
+    # Mock RouteLLM weights (w is 1024-dim vector, b is scalar)
+    w_mock = np.ones((1024,), dtype=np.float32) * -0.5
+    b_mock = -1.0
+    
+    # We query with mock embedding
+    mock_embed = np.ones((1024,), dtype=np.float32) * 0.1 # np.dot(0.1, -0.5*1024) + b = -51.2 - 1 = -52.2 -> sigmoid is 0.0 -> weak model path
+    
+    with patch("services.dynamic_router._onnx_session", mock_session), \
+         patch("services.dynamic_router._embedding_function", MagicMock(return_value=[[0.0]*384])), \
+         patch("services.dynamic_router._match_existing_template", AsyncMock(return_value=(None, None))), \
+         patch("services.dynamic_router._get_cluster_state", AsyncMock(return_value=models)), \
+         patch("services.dynamic_router._save_template_to_db_and_cache", AsyncMock(return_value="moe-dyn-test")), \
+         patch("services.dynamic_router._get_pool", MagicMock()) as mock_db_pool, \
+         patch("services.dynamic_router._routellm_w", w_mock), \
+         patch("services.dynamic_router._routellm_b", b_mock), \
+         patch("services.dynamic_router.ROUTELLM_ENABLED", True), \
+         patch("services.dynamic_router.get_bge_embedding", AsyncMock(return_value=mock_embed)):
+         
+        # Mock database connection cursor
+        mock_conn = AsyncMock()
+        mock_conn.cursor = MagicMock()
+        mock_cur = AsyncMock()
+        mock_cur.fetchall.return_value = [
+            ("model_large:70b@node", 4096, '{"mmlu": 90.0}', 70.0, 'other', '[]'),
+            ("model_small:8b@node", 4096, '{"mmlu": 70.0}', 8.0, 'other', '[]')
+        ]
+        mock_conn.cursor.return_value.__aenter__.return_value = mock_cur
+        mock_db_pool.return_value.connection.return_value.__aenter__.return_value = mock_conn
+
+        tmpl = await get_dynamic_template("Test RouteLLM query")
+        
+        # RouteLLM probability should be very low, so force_weak=True, meaning it should select model_small
+        assert tmpl is not None
+        assert "RouteLLM_Score" in tmpl["reasoning_trace"]
+        assert "path=weak" in tmpl["reasoning_trace"]
+        assert tmpl["experts"]["general"]["models"][0]["model"] == "model_small:8b"
+
+

@@ -1923,6 +1923,12 @@ async def list_dynamic_templates() -> list[dict]:
             r["config"] = json.loads(r.pop("config_json"))
         except Exception:
             r["config"] = {}
+            
+        # Fallback: extract reasoning trace from description if not in config
+        if "reasoning_trace" not in r["config"] and r.get("description") and " | Reasoning: " in r["description"]:
+            parts = r["description"].split(" | Reasoning: ", 1)
+            r["config"]["reasoning_trace"] = parts[1]
+            
         result.append(r)
     return result
 
