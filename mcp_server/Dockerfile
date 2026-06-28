@@ -13,6 +13,7 @@ COPY mcp_server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY mcp_server/server.py .
+COPY mcp_server/pm_connector.py .
 COPY graph_rag/ ./graph_rag/
 
 EXPOSE 8003

@@ -3555,6 +3555,79 @@ async def search_context(query: str, session_id: str, n_results: int = 8) -> str
         return f"[search_context: retrieval error — {exc}]"
 
 
+# ─── PM Connector Tools ──────────────────────────────────────────────────────
+
+import pm_connector as _pm
+
+
+@mcp.tool()
+async def pm_create_task(
+    title: str,
+    description: str = "",
+    labels: str = "",
+    priority: str = "medium",
+    assignee: str = "",
+) -> str:
+    """
+    Creates a task/issue in the configured PM system (Linear, GitHub Issues, or webhook).
+    Returns JSON with id, title, url, and state of the created task.
+
+    title:       Task title (required)
+    description: Markdown description / acceptance criteria
+    labels:      Comma-separated labels (e.g. "bug,backend") — 'moe-ai' is always added
+    priority:    urgent | high | medium | low | none  (default: medium; GitHub ignores this)
+    assignee:    Username to assign (GitHub login or Linear user name)
+
+    Requires PM_BACKEND, PM_API_KEY, PM_PROJECT_ID in .env.
+    """
+    label_list = [l.strip() for l in labels.split(",") if l.strip()] if labels else []
+    return await _pm.create_task(title, description, label_list, priority, assignee)
+
+
+@mcp.tool()
+async def pm_list_tasks(
+    status: str = "",
+    assignee: str = "",
+    label: str = "",
+    limit: int = 20,
+) -> str:
+    """
+    Lists tasks from the configured PM system. Returns JSON array of tasks.
+
+    status:   Filter by state — Linear: 'Todo' | 'In Progress' | 'Done' | 'Backlog'
+                                GitHub:  'open' | 'closed' | 'all'
+    assignee: Filter by assignee username
+    label:    Filter by label name
+    limit:    Max results (default: 20)
+    """
+    return await _pm.list_tasks(status, assignee, label, limit)
+
+
+@mcp.tool()
+async def pm_update_task(task_id: str, status: str = "", comment: str = "") -> str:
+    """
+    Updates a task's status and/or adds a comment in the configured PM system.
+
+    task_id: Issue number (GitHub) or Linear ID/UUID (e.g. 'ENG-42' or UUID)
+    status:  New state — Linear: 'Todo' | 'In Progress' | 'Done' | 'Cancelled'
+                         GitHub: 'open' | 'closed' | 'done' (maps → closed)
+    comment: Comment text to append to the issue/task
+    """
+    return await _pm.update_task(task_id, status, comment)
+
+
+@mcp.tool()
+async def pm_search_tasks(query: str, limit: int = 10) -> str:
+    """
+    Full-text search across tasks/issues in the configured PM system.
+    Returns JSON array of matching tasks with id, title, state, and url.
+
+    query: Search terms (title, description, labels)
+    limit: Max results (default: 10)
+    """
+    return await _pm.search_tasks(query, limit)
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
@@ -3620,6 +3693,11 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "mission_context_get":  mission_context_get,
     "watchdog_alerts":      watchdog_alerts,
     "search_context":       search_context,
+    # PM Connector
+    "pm_create_task":  pm_create_task,
+    "pm_list_tasks":   pm_list_tasks,
+    "pm_update_task":  pm_update_task,
+    "pm_search_tasks": pm_search_tasks,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -3679,6 +3757,11 @@ _TOOL_DESCRIPTIONS = {
     "crossref_lookup":         "Search CrossRef for 150M+ scholarly publications — title, author, DOI, keyword. Returns DOI, authors, year, journal, citation count. Use to count articles by venue/year or verify publication metadata. No API key, deterministic.",
     "openalex_search":         "Search OpenAlex academic database (250M+ works, all disciplines). Broader than PubMed/SemanticScholar. Use for cross-disciplinary paper counts, author publication histories, funding data. Supports year_min filter and open_access_only. No API key.",
     "search_context":          "Retrieve semantically relevant chunks from the session's indexed context (codebase, documents, large system prompt). Use when you need to find specific information in a large context that was provided at session start. Returns the top-k most relevant sections.",
+    # PM Connector
+    "pm_create_task":  "Create a task/issue in the configured PM system (Linear | GitHub Issues | webhook). Returns JSON with id, title, url. Requires PM_BACKEND, PM_API_KEY, PM_PROJECT_ID.",
+    "pm_list_tasks":   "List open tasks from the configured PM system. Filter by status, assignee, label. Returns JSON array.",
+    "pm_update_task":  "Update a task's status and/or add a comment in the configured PM system. task_id = issue number (GitHub) or Linear identifier.",
+    "pm_search_tasks": "Full-text search across tasks/issues in the configured PM system. Returns JSON array with id, title, state, url.",
 }
 
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────
