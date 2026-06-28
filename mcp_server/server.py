@@ -1332,7 +1332,8 @@ def file_download_url(object_name: str, bucket: str = "", expires_hours: int = 2
 def generate_file(content: str, filename: str = "output", format: str = "html") -> str:
     """
     Generates a file from content and returns a download path.
-    Supported formats: html, md, docx, txt.
+    Supported formats: html, md, docx, txt, pptx, pdf.
+    Use format='pdf' to create a proper PDF document (rendered via WeasyPrint).
     The file is stored server-side with a UUID prefix and can be downloaded
     via the /downloads/ endpoint. Files are auto-cleaned after 24 hours.
     """
@@ -1417,8 +1418,41 @@ def generate_file(content: str, filename: str = "output", format: str = "html") 
         except ImportError:
             return "Error: python-pptx not available."
 
+    elif fmt in ("pdf",):
+        try:
+            import markdown as _md
+            from weasyprint import HTML as _WH, CSS as _WCSS
+        except ImportError as _ie:
+            return f"Error: PDF generation requires weasyprint ({_ie}). Use format='html' as fallback."
+        # Convert markdown → HTML → PDF
+        try:
+            html_body = _md.markdown(content, extensions=["tables", "fenced_code", "nl2br"])
+        except Exception:
+            html_body = f"<pre>{content}</pre>"
+        full_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  @page {{ margin: 2cm; }}
+  body {{ font-family: "Liberation Sans", Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #1a1a1a; }}
+  h1 {{ font-size: 22pt; color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 4pt; margin-top: 0; }}
+  h2 {{ font-size: 16pt; color: #34495e; margin-top: 18pt; }}
+  h3 {{ font-size: 13pt; color: #555; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 12pt 0; }}
+  th, td {{ border: 1px solid #ccc; padding: 6pt 8pt; }}
+  th {{ background: #f0f4f8; font-weight: bold; }}
+  pre {{ background: #f7f7f7; border: 1px solid #ddd; padding: 8pt; border-radius: 3pt; font-size: 9pt; }}
+  code {{ background: #f0f0f0; padding: 1pt 3pt; border-radius: 2pt; font-size: 9pt; }}
+  a {{ color: #2980b9; }}
+  ul, ol {{ margin-left: 20pt; }}
+  li {{ margin-bottom: 3pt; }}
+  blockquote {{ border-left: 3pt solid #ccc; margin: 0; padding-left: 12pt; color: #555; }}
+</style>
+</head><body>{html_body}</body></html>"""
+        out_path = _GENERATED_DIR / f"{_id}_{_safe_name}.pdf"
+        _WH(string=full_html).write_pdf(str(out_path))
+
     else:
-        return f"Unsupported format: '{fmt}'. Use: html, docx, md, txt, pptx."
+        return f"Unsupported format: '{fmt}'. Use: html, docx, md, txt, pptx, pdf."
 
     size_kb = out_path.stat().st_size / 1024
     content_types = {
@@ -3616,7 +3650,7 @@ _TOOL_DESCRIPTIONS = {
     "repo_map":          "AST/regex skeleton of a repo (file paths + classes/functions, no code)",
     "read_file_chunked": "Paginated file reading (start_line/end_line) — prevents context overflow",
     "lsp_query":         "Python LSP features: signature, find_references, completions (.py only)",
-    "generate_file":     "Generate downloadable files (HTML, DOCX, PPTX, Markdown, TXT) from content — returns MinIO pre-signed URL",
+    "generate_file":     "Generate downloadable files (HTML, DOCX, PPTX, Markdown, TXT, PDF) from content — returns MinIO pre-signed URL. Use format='pdf' for proper PDF output.",
     "parse_attachment":  "Download and parse file attachments (XLSX→CSV, DOCX→text, PDF→text, CSV→text) — max 20 MB",
     "graph_analyze":     "Analyze a graph (Eulerian path/circuit, connected components, degree map, density) from text description",
     "file_upload":       "Upload a file (base64-encoded) to MinIO object storage and get a 24h pre-signed download URL",

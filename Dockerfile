@@ -13,6 +13,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-dev \
+    libffi-dev libglib2.0-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -39,6 +41,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MOE_SKILLS_DIR=/app/skills \
     MOE_CACHE_DIR=/app/cache \
     MOE_EXPERTS_DIR=/app/configs/experts
+
+# Runtime system libs for WeasyPrint (HTML→PDF) — no dev headers needed at runtime.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-xlib-2.0-0 \
+    libffi8 libglib2.0-0 fonts-liberation \
+ && rm -rf /var/lib/apt/lists/*
 
 # Non-root user. UID/GID 1001 is a fixed fallback; OpenShift will inject its
 # own namespace-range UID and still work because we do not rely on $HOME.
