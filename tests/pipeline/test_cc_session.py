@@ -237,6 +237,29 @@ def test_profile_not_found_sentinel(mock_profiles):
     assert session.profile_not_found is True
 
 
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts",
+       return_value={"judge_num_ctx": 110000, "planner_num_ctx": 110000})
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value=_FAKE_EXPERTS)
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_native_mode_skips_template_context_capping(mock_profiles, mock_experts, mock_prompts, mock_srv):
+    """In native mode, judge_num_ctx from a linked template must not cap tool_max_tokens."""
+    profile = {
+        **_FAKE_PROFILE,
+        "id": "prof-native",
+        "moe_mode": "native",
+        "tool_max_tokens": 262144,
+        "reasoning_max_tokens": 262144,
+        "expert_template_id": "tmpl-m10",  # leftover from MoE-origin copy
+    }
+    ctx = _make_ctx(user_cc_profiles_json=json.dumps({"prof-native": profile}))
+    session = _resolve_cc_session(ctx, profile_ids=["prof-native"])
+
+    assert session.mode == "native"
+    assert session.tool_max_tokens == 262144,      "native mode must not cap tool_max_tokens via template"
+    assert session.reasoning_max_tokens == 262144, "native mode must not cap reasoning_max_tokens via template"
+
+
 def test_bad_json_in_user_cc_profiles_json_is_safe():
     ctx = _make_ctx(user_cc_profiles_json="not-valid-json{{{")
     with patch("services.pipeline.cc_session._read_cc_profiles", return_value=[]), \
