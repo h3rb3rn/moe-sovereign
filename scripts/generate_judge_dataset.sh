@@ -4,7 +4,7 @@
 #SBATCH --partition=small-g
 #SBATCH --nodes=1
 #SBATCH --gpus=8                     # 8 GCDs for vLLM inference (Qwen-32B needs ~70GB in FP16)
-#SBATCH --time=08:00:00              # 8h — generates ~3000-5000 samples at ~5s/sample
+#SBATCH --time=04:00:00              # 4h — async generation with concurrency 48
 #SBATCH --output=/scratch/project_465003058/hornphil/logs/datagen_%j.log
 #SBATCH --mem=200G
 
@@ -108,13 +108,14 @@ echo "── Starting dataset generation (Shard=${SHARD_ID}, Offset=${OFFSET}, T
 singularity exec \
     --bind /pfs,/scratch,/projappl,/project \
     "${SIF}" \
-    python3 "${SCRIPTS_DIR}/generate_judge_dataset.py" \
+    python3 "${SCRIPTS_DIR}/generate_judge_dataset_async.py" \
         --seed_file "${SEED_FILE}" \
         --output_file "${OUTPUT_FILE}" \
         --api_url "${VLLM_URL}" \
         --model qwen \
         --target "${TARGET}" \
         --offset "${OFFSET}" \
+        --concurrency 48 \
         --use_existing_answers \
         --seed 42
 

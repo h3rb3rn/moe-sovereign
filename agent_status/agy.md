@@ -83,3 +83,24 @@ Notes:
   7B nicht. Batch size=1 für 32B QLoRA.
 - Nach Job-Abschluss: sovereign_router.onnx.data Analogie — merged Model nach
   /opt/deployment/moe-sovereign/moe-infra/models/sovereign-judge-32b/ kopieren.
+
+---
+
+## 2026-06-28T20:45:00Z — TASK-9 — in_progress
+
+Plan / progress:
+- Merge v1 completed successfully on CPU (22 mins, Job 19540774), yielding the full 62 GB merged FP16 Qwen2.5-32B model on scratch.
+- The initial 3-node datagen run (`19540836-38`) timed out after 8h, but generated 5,080 paraconsistent logic samples.
+- Rewrote the generator to run concurrently using `asyncio` and `httpx.AsyncClient` with a concurrency limit of 48 (`generate_judge_dataset_async.py`).
+- Fixed a critical deduplication key truncation bug in `merge_shards_and_train.sh` that would have otherwise caused massive data loss (retaining only 9 unique lines due to 120-char instruction slicing).
+- Resubmitted the three shards (`19588284-86`) under `small-g` using the new async script.
+- Chained `merge_shards_and_train.sh` as a dependent CPU SLURM batch job (`19588422` with `--dependency=afterok:19588284:19588285:19588286`) to automatically merge, deduplicate, and kick off 8-GPU DDP training (`train_judge_lora_large.sh`) once datagen finishes.
+- Verified that all scripts are properly synchronized to LUMI-G.
+
+Pre-conditions verified:
+- LUMI-G connectivity is healthy.
+- Deterministic random seed 42 in place to ensure sharding consistency.
+- No other agent is editing `merge_shards_and_train.sh` or the training scripts.
+
+Notes:
+- Post-training action: The resulting 62 GB merged model will be quantized to 4-bit (AWQ/GGUF) to fit within a ~20 GB VRAM envelope for deployment on N04-RTX.
