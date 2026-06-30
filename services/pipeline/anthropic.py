@@ -666,11 +666,20 @@ async def _anthropic_tool_handler(
     _tool_ctx = await _get_tool_ctx_async(
         effective_model, effective_url, _info_token, state.redis_client
     )
-    # P0 fix: when context-window resolution returns 0 (API timeout, model
-    # not loaded, Redis miss), fall back to the profile's context_window
-    # (usually 32768) so the budget system does not collapse to 0 → 256
-    # output tokens → 1–3 character responses.
-    _ctx_profile = session.context_window if session.context_window else 0
+    # P0 fix: when context-window resolution returns 0 (API timeout, 401 from
+    # cloud endpoint, Redis miss), fall back through three escalating sources so
+    # the budget system never collapses to a stale TOOL_MAX_TOKENS*4 heuristic:
+    #   1. profile.context_window  (explicit per-profile override)
+    #   2. session.template_num_ctx (template's judge_num_ctx / expert context_window)
+    #   3. static heuristic        (get_model_context_window — param-count based)
+    #   4. TOOL_MAX_TOKENS*4       (last resort — typically 32768)
+    # Without level 2, cloud models like claude-sonnet-4-6 routed via AIHUB
+    # (which returns 401 on GET /v1/models/{id}) collapse to 32768 even though the
+    # template correctly declares 204800 — causing spurious PRE-FLIGHT overflow and
+    # full history trim that resets the conversation.
+    _ctx_profile   = session.context_window if session.context_window else 0
+    _ctx_template  = session.template_num_ctx if session.template_num_ctx else 0
+    _ctx_static    = _get_static_ctx_window(effective_model)
     if _tool_ctx == 0:
         if _ctx_profile > 0:
             logger.warning(
@@ -679,9 +688,23 @@ async def _anthropic_tool_handler(
                 "(model=%s url=%s)", _ctx_profile, effective_model, effective_url,
             )
             _tool_ctx = _ctx_profile
+        elif _ctx_template > 0:
+            logger.warning(
+                "cc_tool: context_window lookup returned 0 and no profile context_window "
+                "— falling back to template context_window=%d (model=%s)",
+                _ctx_template, effective_model,
+            )
+            _tool_ctx = _ctx_template
+        elif _ctx_static > 0:
+            logger.warning(
+                "cc_tool: context_window lookup returned 0 — "
+                "falling back to static model context_window=%d (model=%s)",
+                _ctx_static, effective_model,
+            )
+            _tool_ctx = _ctx_static
         else:
             logger.warning(
-                "cc_tool: context_window lookup returned 0 and no profile "
+                "cc_tool: context_window lookup returned 0 and no profile/template/static "
                 "context_window — falling back to TOOL_MAX_TOKENS*4 = %d "
                 "(model=%s)", TOOL_MAX_TOKENS * 4, effective_model,
             )

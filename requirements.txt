@@ -36,5 +36,8 @@ prometheus_client>=0.21.0
 PyJWT>=2.13.0
 cryptography>=48.0.1
 
+# --- PDF generation (HTML→PDF via WeasyPrint) ---
+weasyprint>=62.0
+
 # --- Pinned transitive deps (guard against unwanted bumps) ---
 urllib3==2.7.0

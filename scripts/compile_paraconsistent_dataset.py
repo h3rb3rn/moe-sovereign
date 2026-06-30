@@ -15,7 +15,7 @@ SEEDS_FILE = os.getenv("SEEDS_FILE", os.path.join(PROJECT_ROOT, "router_dataset_
 OUTPUT_FILE = os.getenv("DATASET_OUTPUT_FILE", os.path.join(PROJECT_ROOT, "data/paraconsistent_training_data.jsonl"))
 API_URL = os.getenv("MOE_API_URL", "http://localhost:8002/v1/chat/completions")
 API_TOKEN = os.getenv("SYSTEM_API_KEY", "")
-MODEL_NAME = os.getenv("DATASET_GENERATOR_MODEL", "qwen-3.6-35b-sovereign@AIHUB")
+MODEL_NAME = os.getenv("DATASET_GENERATOR_MODEL", "moe-auto")
 
 async def call_llm(client, system_prompt, user_prompt, model=MODEL_NAME):
     payload = {
@@ -35,7 +35,11 @@ async def call_llm(client, system_prompt, user_prompt, model=MODEL_NAME):
             response = await client.post(API_URL, json=payload, headers=headers, timeout=120.0)
             if response.status_code == 200:
                 data = response.json()
-                return data["choices"][0]["message"]["content"].strip()
+                msg = data["choices"][0]["message"]
+                # Thinking models (e.g. Qwen3) may return content=None with
+                # reasoning in reasoning_content — fall back gracefully.
+                content = msg.get("content") or msg.get("reasoning_content") or ""
+                return content.strip()
             else:
                 print(f"LLM Call failed: {response.status_code} - {response.text}")
         except Exception as e:
@@ -125,14 +129,12 @@ async def main():
     with open(SEEDS_FILE, "r", encoding="utf-8") as f:
         seeds = json.load(f)
         
-    # Filter for interesting/complex domains
-    interesting_domains = {"medical_consult", "legal_advisor", "science", "coding", "math", "reasoning"}
-    filtered_seeds = [
-        item for item in seeds
-        if any(d in interesting_domains for d in item.get("expert_domains", []))
-    ]
+    # Use all seeds — domain is captured per-prompt for the Judge persona,
+    # but no seeds are excluded upfront. With only 140 seeds in the file,
+    # filtering would leave too few samples for meaningful LoRA training.
+    filtered_seeds = seeds
     
-    print(f"Found {len(filtered_seeds)} eligible seed prompts from interesting domains.")
+    print(f"Found {len(filtered_seeds)} eligible seed prompts (all domains).")
     target_seeds = filtered_seeds[:args.limit]
     print(f"Processing top {len(target_seeds)} prompts (limit={args.limit})...")
     

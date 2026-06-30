@@ -94,6 +94,11 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 class Message(BaseModel):
     role: str
     content: Optional[Any] = None
+    # Tool-calling fields (OpenAI spec)
+    tool_call_id: Optional[str] = None   # required for role="tool"
+    tool_calls: Optional[Any] = None     # list of tool calls for role="assistant"
+    name: Optional[str] = None           # participant name (all roles)
+    refusal: Optional[str] = None        # refusal text (assistant only)
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -103,10 +108,28 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Optional[Any] = None
     temperature: Optional[Any] = None
     max_tokens: Optional[Any] = None
+    max_completion_tokens: Optional[Any] = None  # OpenAI alias for max_tokens
     stream_options: Optional[Any] = None
     files: Optional[Any] = None
     no_cache: bool = False
     max_agentic_rounds: Optional[Any] = None
+    # Standard OpenAI parameters (passed through to backends)
+    top_p: Optional[float] = None
+    n: Optional[int] = None
+    stop: Optional[Any] = None               # str | list[str]
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    seed: Optional[int] = None
+    user: Optional[str] = None
+    response_format: Optional[Any] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
+    logit_bias: Optional[Any] = None
+    parallel_tool_calls: Optional[bool] = None
+    service_tier: Optional[str] = None
+    store: Optional[bool] = None
+    metadata: Optional[Any] = None
+    reasoning_effort: Optional[str] = None
 
 
 def _build_tool_messages(request: "ChatCompletionRequest") -> list:
@@ -116,16 +139,20 @@ def _build_tool_messages(request: "ChatCompletionRequest") -> list:
         msg: dict = {"role": m.role}
         if m.role == "tool":
             msg["content"] = _oai_content_to_str(m.content) if m.content else ""
-            if hasattr(m, "tool_call_id") and m.tool_call_id:
+            if m.tool_call_id:
                 msg["tool_call_id"] = m.tool_call_id
-            if hasattr(m, "name") and m.name:
+            if m.name:
                 msg["name"] = m.name
-        elif m.role == "assistant" and hasattr(m, "tool_calls") and m.tool_calls:
+        elif m.role == "assistant" and m.tool_calls:
             msg["tool_calls"] = m.tool_calls
             if m.content:
                 msg["content"] = _oai_content_to_str(m.content)
+            else:
+                msg["content"] = ""
         else:
             msg["content"] = _oai_content_to_str(m.content) if m.content else ""
+            if m.name:
+                msg["name"] = m.name
         messages.append(msg)
     return messages
 
@@ -1281,24 +1308,211 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             )
         # Non-streaming native: blockierender httpx-Call
         _ep_api_type = _native_endpoint.get("api_type", "ollama")
-        _non_stream_extra = (
-            {"options": {"num_ctx": _native_num_ctx}}
-            if _native_num_ctx > 0 and _ep_api_type == "ollama"
-            else {}
+        _ns_msgs = []
+        for _nsm in request.messages:
+            if _nsm.role == "tool":
+                _nd = {"role": "tool", "content": _oai_content_to_str(_nsm.content) if _nsm.content else ""}
+                if _nsm.tool_call_id:
+                    _nd["tool_call_id"] = _nsm.tool_call_id
+                if _nsm.name:
+                    _nd["name"] = _nsm.name
+            elif _nsm.role == "assistant" and _nsm.tool_calls:
+                def _norm_tc_ns(tc):
+                    if not isinstance(tc, dict):
+                        return tc
+                    fn = tc.get("function", {})
+                    args = fn.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            import json as _j; args = _j.loads(args)
+                        except Exception:
+                            pass
+                    return {**tc, "function": {**fn, "arguments": args}}
+                _nd = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [_norm_tc_ns(tc) for tc in (_nsm.tool_calls or [])],
+                }
+                if _nsm.content:
+                    _nd["content"] = _oai_content_to_str(_nsm.content)
+            else:
+                _nd = {"role": _nsm.role, "content": _nsm.content if _nsm.content is not None else ""}
+                if _nsm.name:
+                    _nd["name"] = _nsm.name
+            _ns_msgs.append(_nd)
+        _NS_THINKING_PREFIXES = ("qwen3", "gemma4", "qwq")
+        _ns_model = _native_endpoint["model"].lower()
+        _ns_use_native = (
+            _ep_api_type == "ollama"
+            and any(t in _ns_model for t in _NS_THINKING_PREFIXES)
         )
-        async with httpx.AsyncClient(timeout=300) as _hc:
-            _nr = await _hc.post(
-                _native_endpoint["url"].rstrip("/") + "/chat/completions",
-                headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
-                json={"model": _native_endpoint["model"],
-                      "messages": [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
-                      "stream": False,
-                      **({"max_tokens": request.max_tokens} if request.max_tokens else {}),
-                      **({"temperature": request.temperature} if request.temperature is not None else {}),
-                      **_non_stream_extra},
-            )
-        _nr.raise_for_status()
-        _nj = _nr.json()
+        if _ns_use_native:
+            # Native Ollama /api/chat with think:false — mirrors the streaming path.
+            # Ollama ≤ 0.30.x ignores think:false on the OpenAI-compat /v1 path.
+            _ns_base = _native_endpoint["url"].rstrip("/")
+            if _ns_base.endswith("/v1"):
+                _ns_base = _ns_base[:-3]
+            # Inject tool-use directive (mirrors streaming path logic).
+            _ns_has_tools = bool(getattr(request, "tools", None))
+            _ns_has_tool_results = any(m.role == "tool" for m in request.messages)
+            if _ns_has_tools:
+                _ns_avail_names = ", ".join(
+                    t.get("function", {}).get("name") or t.get("name", "")
+                    for t in (request.tools or [])
+                    if isinstance(t, dict)
+                ) or "the tools listed above"
+                _ns_directive = (
+                    "CRITICAL TOOL-USE RULES:\n"
+                    f"1. ONLY these tools exist: {_ns_avail_names}. "
+                    "Services like PDFSpark, ConvertAPI, pdftemp.vip, pdf.co or ANY external PDF/file API "
+                    "DO NOT EXIST in this environment.\n"
+                    "2. For PDF creation: use `generate_file` with format='pdf'. "
+                    "For HTML pages: format='html'. For Word: format='docx'. "
+                    "The returned URL starts with https://files.moe-sovereign.org — the ONLY valid download domain.\n"
+                    "3. NEVER invent a download URL. Any URL not returned by a real tool call is fabricated.\n"
+                    "4. Make tool calls IMMEDIATELY — no preamble, no 'I will now...'.\n"
+                    "5. If a needed capability is not in the tool list, state this clearly."
+                )
+                if not _ns_has_tool_results:
+                    if _ns_msgs and _ns_msgs[0].get("role") == "system":
+                        _ns_msgs[0] = {**_ns_msgs[0], "content": _ns_directive + "\n\n" + _ns_msgs[0]["content"]}
+                    else:
+                        _ns_msgs.insert(0, {"role": "system", "content": _ns_directive})
+                _ns_prev_text = sum(
+                    1 for _m in _ns_msgs
+                    if _m.get("role") == "assistant" and not _m.get("tool_calls")
+                    and len((_m.get("content") or "")) > 200
+                )
+                for _ns_di in range(len(_ns_msgs) - 1, -1, -1):
+                    if _ns_msgs[_ns_di].get("role") == "user":
+                        _ns_user_txt = (_ns_msgs[_ns_di].get("content") or "").strip()
+                        _ns_short_fu = _ns_prev_text >= 1 and len(_ns_user_txt) < 50
+                        if _ns_short_fu:
+                            _ns_rule = (
+                                "[AGENT RULE: The previous turn already contained a complete answer. "
+                                "Respond DIRECTLY and briefly — no tools needed.]"
+                            )
+                        else:
+                            _ns_rule = (
+                                "[AGENT RULE: Choose ONE of these two options right now:\n"
+                                "A) Call a tool immediately (no announcement, just the call).\n"
+                                "B) Write the complete final answer right now.\n"
+                                "FORBIDDEN: Writing 'I will...', 'Let me...', 'I'm going to...' without an actual tool call. "
+                                "Only use tools from the approved list — never invent tool or API names.]"
+                            )
+                        _ns_msgs[_ns_di] = {
+                            **_ns_msgs[_ns_di],
+                            "content": _ns_user_txt + "\n\n" + _ns_rule,
+                        }
+                        break
+            _ns_payload: dict = {
+                "model":      _native_endpoint["model"],
+                "messages":   _ns_msgs,
+                "stream":     False,
+                "think":      False,
+                "keep_alive": "4h",
+            }
+            _ns_opts: dict = {}
+            if _native_num_ctx > 0:
+                _ns_opts["num_ctx"] = _native_num_ctx
+            _ns_eff_max = request.max_tokens or request.max_completion_tokens
+            if _ns_eff_max:
+                _ns_opts["num_predict"] = _ns_eff_max
+            if request.temperature is not None:
+                _ns_opts["temperature"] = request.temperature
+            if request.top_p is not None:
+                _ns_opts["top_p"] = request.top_p
+            if request.seed is not None:
+                _ns_opts["seed"] = request.seed
+            if request.stop is not None:
+                _ns_opts["stop"] = request.stop if isinstance(request.stop, list) else [request.stop]
+            if request.frequency_penalty is not None:
+                _ns_opts["repeat_penalty"] = 1.0 + request.frequency_penalty
+            if request.presence_penalty is not None:
+                _ns_opts["presence_penalty"] = request.presence_penalty
+            if _ns_opts:
+                _ns_payload["options"] = _ns_opts
+            if _ns_has_tools:
+                _ns_payload["tools"] = request.tools
+            async with httpx.AsyncClient(timeout=300) as _hc:
+                _nr = await _hc.post(
+                    _ns_base + "/api/chat",
+                    headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
+                    json=_ns_payload,
+                )
+            _nr.raise_for_status()
+            _rdata = _nr.json()
+            # Convert native Ollama response to OpenAI format
+            _rmsg = _rdata.get("message", {})
+            _tool_calls_native = _rmsg.get("tool_calls") or []
+            _oai_tool_calls = None
+            if _tool_calls_native:
+                import uuid as _uuid_mod
+                _oai_tool_calls = []
+                for _tci, _tc in enumerate(_tool_calls_native):
+                    _fn = _tc.get("function", {})
+                    _args = _fn.get("arguments", {})
+                    _oai_tool_calls.append({
+                        "id": f"call_{_uuid_mod.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": _fn.get("name", ""),
+                            "arguments": json.dumps(_args) if isinstance(_args, dict) else str(_args),
+                        },
+                    })
+            _nj = {
+                "id":      chat_id,
+                "object":  "chat.completion",
+                "created": int(time.time()),
+                "model":   _native_endpoint["model"],
+                "choices": [{
+                    "index":         0,
+                    "message":       {
+                        "role":    "assistant",
+                        "content": _rmsg.get("content") or None,
+                        **({"tool_calls": _oai_tool_calls} if _oai_tool_calls else {}),
+                    },
+                    "finish_reason": "tool_calls" if _oai_tool_calls else _rdata.get("done_reason", "stop"),
+                }],
+                "usage": {
+                    "prompt_tokens":     _rdata.get("prompt_eval_count", 0),
+                    "completion_tokens": _rdata.get("eval_count", 0),
+                    "total_tokens":      (_rdata.get("prompt_eval_count", 0) + _rdata.get("eval_count", 0)),
+                },
+            }
+        else:
+            _non_stream_extra: dict = {}
+            if _native_num_ctx > 0 and _ep_api_type == "ollama":
+                _non_stream_extra["options"] = {"num_ctx": _native_num_ctx}
+            if request.tools:
+                _non_stream_extra["tools"] = request.tools
+                if request.tool_choice:
+                    _non_stream_extra["tool_choice"] = request.tool_choice
+            # Forward all standard OpenAI parameters to the backend
+            _ns_oai_params: dict = {}
+            _ns_max_tok = request.max_tokens or request.max_completion_tokens
+            if _ns_max_tok:
+                _ns_oai_params["max_tokens"] = _ns_max_tok
+            if request.temperature is not None:
+                _ns_oai_params["temperature"] = request.temperature
+            for _pname in ("top_p", "n", "stop", "presence_penalty", "frequency_penalty",
+                           "seed", "user", "response_format", "logprobs", "top_logprobs",
+                           "logit_bias", "parallel_tool_calls"):
+                _pval = getattr(request, _pname, None)
+                if _pval is not None:
+                    _ns_oai_params[_pname] = _pval
+            async with httpx.AsyncClient(timeout=300) as _hc:
+                _nr = await _hc.post(
+                    _native_endpoint["url"].rstrip("/") + "/chat/completions",
+                    headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
+                    json={"model": _native_endpoint["model"],
+                          "messages": _ns_msgs,
+                          "stream": False,
+                          **_ns_oai_params,
+                          **_non_stream_extra},
+                )
+            _nr.raise_for_status()
+            _nj = _nr.json()
         _nu = _nj.get("usage", {})
         if user_id != "anon":
             asyncio.create_task(_log_usage_to_db(user_id=user_id, api_key_id=api_key_id, request_id=chat_id,

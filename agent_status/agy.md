@@ -59,3 +59,27 @@ Notes:
 - Nächster sinnvoller Schritt: Nutzer entscheidet ob die 3 Script-Dateien ebenfalls bereinigt werden
   sollen (analog TASK-6), oder ob das als low-priority Follow-up bleibt.
 
+
+## 2026-06-25T07:38Z — TASK-LUMI-JUDGE — in_progress
+
+Plan / progress:
+- LUMI-G LoRA judge training für paraconsistenten Sovereign-Judge (32B QLoRA).
+- Implementiert: J-MoE Debate Flow (graph/expert.py), Belnap-Dunn Arbitration (graph/synthesis.py),
+  Dataset Compiler (scripts/compile_paraconsistent_dataset.py).
+- Erstellt: scripts/train_judge_lora.py (TRL SFTTrainer + LoRA, QLoRA 4-bit), 
+  scripts/train_judge_lora.sh (SLURM, 8 GCDs, 4h, small-g partition).
+- Dataset (3 dry-run samples) + alle Scripts nach LUMI-G hochgeladen.
+- SLURM Job **19517008** submitted, Status: PD (pending) → small-g partition.
+Pre-conditions verified:
+- SSH zu lumi-g: OK (Cert erneuert durch User, 2026-06-25).
+- lumi-multitorch-latest.sif: vorhanden unter /appl/local/laifs/containers/.
+- Qwen2.5-32B-Instruct: vollständig gecacht (17 Safetensor-Shards, 62 GB HF cache).
+- Dataset paraconsistent_training_data.jsonl: 3 Samples auf LUMI hochgeladen.
+Notes:
+- Dataset ist ein Dry-Run-Placeholder (3 Mock-Samples). Ein echter Datensatz
+  sollte über scripts/compile_paraconsistent_dataset.py (MoE API, live LLM calls)
+  generiert und erneut hochgeladen werden.
+- Job läuft mit Qwen2.5-32B-Instruct (statt geplanter 7B) — weil 32B bereits gecacht,
+  7B nicht. Batch size=1 für 32B QLoRA.
+- Nach Job-Abschluss: sovereign_router.onnx.data Analogie — merged Model nach
+  /opt/deployment/moe-sovereign/moe-infra/models/sovereign-judge-32b/ kopieren.

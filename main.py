@@ -431,6 +431,10 @@ from config import MODES, _MODEL_ID_TO_MODE
 class Message(BaseModel):
     role: str
     content: Optional[Union[str, List[Any]]] = None  # str or multimodal list (image_url etc.)
+    tool_call_id: Optional[str] = None   # required for role="tool"
+    tool_calls: Optional[Any] = None     # list of tool calls for role="assistant"
+    name: Optional[str] = None           # participant name (all roles)
+    refusal: Optional[str] = None        # refusal text (assistant only)
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -440,10 +444,28 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Optional[Any] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    max_completion_tokens: Optional[int] = None  # OpenAI alias for max_tokens
     stream_options: Optional[Dict] = None
     files: Optional[List[Any]] = None           # OpenWebUI file attachments [{type, id, name, ...}]
     no_cache: bool = False                      # If True, skip L0 (Redis) and L1 (ChromaDB) cache reads and writes
     max_agentic_rounds: Optional[int] = None   # Override template's max_agentic_rounds for this request
+    # Standard OpenAI parameters (passed through to backends)
+    top_p: Optional[float] = None
+    n: Optional[int] = None
+    stop: Optional[Any] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    seed: Optional[int] = None
+    user: Optional[str] = None
+    response_format: Optional[Any] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
+    logit_bias: Optional[Any] = None
+    parallel_tool_calls: Optional[bool] = None
+    service_tier: Optional[str] = None
+    store: Optional[bool] = None
+    metadata: Optional[Any] = None
+    reasoning_effort: Optional[str] = None
 
 class FeedbackRequest(BaseModel):
     response_id: str           # chat_id from the response ("chatcmpl-...")
@@ -1153,6 +1175,7 @@ from routes.models           import router as _models_router
 from routes.anthropic_compat import router as _anthropic_router
 from routes.codex_proxy      import router as _codex_proxy_router
 from routes.context_search   import router as _context_search_router
+from routes.embeddings       import router as _embeddings_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1166,6 +1189,7 @@ app.include_router(_models_router)
 app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
 app.include_router(_context_search_router)
+app.include_router(_embeddings_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
 # Added in the original order; Starlette executes add_middleware in reverse.
@@ -1244,19 +1268,197 @@ async def _stream_native_llm(
             headers["Authorization"] = f"Bearer {token}"
         payload = _ant_payload
     else:
-        # ── OpenAI / Ollama path (existing behaviour) ──────────────────────────
-        url     = endpoint["url"].rstrip("/") + "/chat/completions"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        payload = {
-            "model":          endpoint["model"],
-            "messages":       [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
-            "stream":         True,
-            "stream_options": {"include_usage": True},
-        }
-        if request.max_tokens:              payload["max_tokens"]  = request.max_tokens
-        if request.temperature is not None: payload["temperature"] = request.temperature
-        if num_ctx > 0 and _ep_api_type == "ollama":
-            payload["options"] = {"num_ctx": num_ctx}
+        # ── Thinking-model detection ────────────────────────────────────────────
+        # Ollama ≤ 0.30.x does not honour think:false on the OpenAI-compat /v1
+        # path. For qwen3/gemma4/qwq we therefore fall back to the native
+        # /api/chat endpoint which has supported think:false since these models
+        # shipped. This also lets us forward tool definitions properly — the
+        # OpenAI-compat passthrough strips them and the agent gets a plain-text
+        # answer with no tool calls.
+        _THINKING_MODEL_PREFIXES = ("qwen3", "gemma4", "qwq")
+        _use_ollama_native = (
+            _ep_api_type == "ollama"
+            and any(t in endpoint["model"].lower() for t in _THINKING_MODEL_PREFIXES)
+        )
+
+        if _use_ollama_native:
+            # ── Native Ollama /api/chat path ────────────────────────────────────
+            _ollama_base = endpoint["url"].rstrip("/")
+            if _ollama_base.endswith("/v1"):
+                _ollama_base = _ollama_base[:-3]
+            url = _ollama_base + "/api/chat"
+            _native_opts: dict = {}
+            if num_ctx > 0:
+                _native_opts["num_ctx"] = num_ctx
+            _eff_max_tok = request.max_tokens or getattr(request, "max_completion_tokens", None)
+            if _eff_max_tok:
+                _native_opts["num_predict"] = _eff_max_tok
+            if request.temperature is not None:
+                _native_opts["temperature"] = request.temperature
+            if getattr(request, "top_p", None) is not None:
+                _native_opts["top_p"] = request.top_p
+            if getattr(request, "seed", None) is not None:
+                _native_opts["seed"] = request.seed
+            if getattr(request, "stop", None) is not None:
+                _s = request.stop
+                _native_opts["stop"] = _s if isinstance(_s, list) else [_s]
+            if getattr(request, "frequency_penalty", None) is not None:
+                _native_opts["repeat_penalty"] = 1.0 + request.frequency_penalty
+            if getattr(request, "presence_penalty", None) is not None:
+                _native_opts["presence_penalty"] = request.presence_penalty
+            _native_msgs = []
+            for _nm_m in request.messages:
+                if _nm_m.role == "tool":
+                    _nm_d = {"role": "tool", "content": _nm_m.content if _nm_m.content is not None else ""}
+                    if _nm_m.tool_call_id:
+                        _nm_d["tool_call_id"] = _nm_m.tool_call_id
+                elif _nm_m.role == "assistant" and _nm_m.tool_calls:
+                    # Normalize tool_calls: Ollama expects function.arguments as a JSON
+                    # object, but OpenAI clients send it as a JSON string. Parse it here.
+                    def _norm_tc(tc):
+                        if not isinstance(tc, dict):
+                            return tc
+                        fn = tc.get("function", {})
+                        args = fn.get("arguments")
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except Exception:
+                                pass
+                        return {**tc, "function": {**fn, "arguments": args}}
+                    _nm_d = {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [_norm_tc(tc) for tc in (_nm_m.tool_calls or [])],
+                    }
+                    if _nm_m.content:
+                        _nm_d["content"] = _nm_m.content if isinstance(_nm_m.content, str) else str(_nm_m.content)
+                else:
+                    _nm_d = {"role": _nm_m.role, "content": _nm_m.content if _nm_m.content is not None else ""}
+                _native_msgs.append(_nm_d)
+            # When tools are present, prepend a system directive that nudges qwen3
+            # to call tools immediately instead of announcing plans in plain text.
+            # In non-thinking mode qwen3 tends to produce a "I will research…"
+            # response first (no tool call), which causes agent loops to terminate
+            # immediately. The directive is injected only when tools are present
+            # and no tool-result messages exist yet (first agent round).
+            _has_tools_req = bool(getattr(request, "tools", None))
+            _has_tool_results = any(m.role == "tool" for m in request.messages)
+            if _has_tools_req:
+                # Build the list of available tool names for the directive
+                _avail_tool_names = ", ".join(
+                    t.get("function", {}).get("name") or t.get("name", "")
+                    for t in (request.tools or [])
+                    if isinstance(t, dict)
+                ) or "the tools listed above"
+                _tool_directive = (
+                    "CRITICAL TOOL-USE RULES:\n"
+                    f"1. ONLY these tools exist: {_avail_tool_names}. "
+                    "Services like PDFSpark, ConvertAPI, pdftemp.vip, pdf.co or ANY external PDF/file API "
+                    "DO NOT EXIST in this environment — calling or simulating them is forbidden.\n"
+                    "2. For PDF creation: use the `generate_file` tool with format='pdf'. "
+                    "For HTML pages: use format='html'. For Word: format='docx'. "
+                    "All formats create real downloadable files. The returned URL starts with "
+                    "https://files.moe-sovereign.org — that is the ONLY valid download domain.\n"
+                    "3. NEVER invent a download URL. Any URL you provide that was not returned by a "
+                    "real tool call is fabricated and will be flagged as an error.\n"
+                    "4. Make tool calls IMMEDIATELY — no preamble, no 'I will now...', no 'Let me...'.\n"
+                    "5. If a needed capability is not in the tool list, state this clearly and "
+                    "suggest the best available alternative."
+                )
+                # Inject into system message only on first round (no tool results yet)
+                if not _has_tool_results:
+                    if _native_msgs and _native_msgs[0].get("role") == "system":
+                        _native_msgs[0] = {**_native_msgs[0], "content": _tool_directive + "\n\n" + _native_msgs[0]["content"]}
+                    else:
+                        _native_msgs.insert(0, {"role": "system", "content": _tool_directive})
+                # Count previous assistant text responses (non-tool-call turns)
+                _prev_text_turns = sum(
+                    1 for _m in _native_msgs
+                    if _m.get("role") == "assistant" and not _m.get("tool_calls")
+                    and len((_m.get("content") or "")) > 200
+                )
+                for _di in range(len(_native_msgs) - 1, -1, -1):
+                    if _native_msgs[_di].get("role") == "user":
+                        _user_text = (_native_msgs[_di].get("content") or "").strip()
+                        _is_short_followup = _prev_text_turns >= 1 and len(_user_text) < 50
+                        if _is_short_followup:
+                            _agent_rule = (
+                                "[AGENT RULE: The previous turn already contained a complete answer. "
+                                "Respond DIRECTLY and briefly — no tools needed.]"
+                            )
+                        else:
+                            _agent_rule = (
+                                "[AGENT RULE: Choose ONE of these two options right now:\n"
+                                "A) Call a tool immediately (no announcement, just the call).\n"
+                                "B) Write the complete final answer right now.\n"
+                                "FORBIDDEN: Writing 'I will...', 'Let me...', 'I'm going to...' or any plan/announcement "
+                                "without an actual tool call in the same response. "
+                                "Only use tools from the approved list — never invent tool or API names.]"
+                            )
+                        _native_msgs[_di] = {
+                            **_native_msgs[_di],
+                            "content": _user_text + "\n\n" + _agent_rule,
+                        }
+                        break
+            payload = {
+                "model":      endpoint["model"],
+                "messages":   _native_msgs,
+                "stream":     True,
+                "think":      False,
+                "keep_alive": "4h",
+            }
+            if _native_opts:
+                payload["options"] = _native_opts
+            if _has_tools_req:
+                payload["tools"] = request.tools
+        else:
+            # ── OpenAI / Ollama-compat path ─────────────────────────────────────
+            url = endpoint["url"].rstrip("/") + "/chat/completions"
+            # Build messages with proper tool-call fields
+            _oa_msgs = []
+            for _oam in request.messages:
+                if _oam.role == "tool":
+                    _oad = {"role": "tool", "content": _oam.content if _oam.content is not None else ""}
+                    if _oam.tool_call_id:
+                        _oad["tool_call_id"] = _oam.tool_call_id
+                    if _oam.name:
+                        _oad["name"] = _oam.name
+                elif _oam.role == "assistant" and _oam.tool_calls:
+                    _oad = {"role": "assistant", "content": "", "tool_calls": _oam.tool_calls}
+                    if _oam.content:
+                        _oad["content"] = _oam.content if isinstance(_oam.content, str) else str(_oam.content)
+                else:
+                    _oad = {"role": _oam.role, "content": _oam.content if _oam.content is not None else ""}
+                    if _oam.name:
+                        _oad["name"] = _oam.name
+                _oa_msgs.append(_oad)
+            payload = {
+                "model":          endpoint["model"],
+                "messages":       _oa_msgs,
+                "stream":         True,
+                "stream_options": {"include_usage": True},
+            }
+            _oa_max_tok = request.max_tokens or getattr(request, "max_completion_tokens", None)
+            if _oa_max_tok:
+                payload["max_tokens"] = _oa_max_tok
+            if request.temperature is not None:
+                payload["temperature"] = request.temperature
+            if num_ctx > 0 and _ep_api_type == "ollama":
+                payload["options"] = {"num_ctx": num_ctx}
+            # Forward all standard OpenAI parameters
+            for _pname in ("top_p", "n", "stop", "presence_penalty", "frequency_penalty",
+                           "seed", "user", "response_format", "logprobs", "top_logprobs",
+                           "logit_bias", "parallel_tool_calls"):
+                _pval = getattr(request, _pname, None)
+                if _pval is not None:
+                    payload[_pname] = _pval
+            # Forward tool definitions so the backend can execute tool calls.
+            if request.tools:
+                payload["tools"] = request.tools
+                if request.tool_choice:
+                    payload["tool_choice"] = request.tool_choice
 
     _t_start = time.monotonic()
     _t_first: Optional[float] = None
@@ -1314,6 +1516,64 @@ async def _stream_native_llm(
                                 yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}})}\n\n"
                             elif evt_type == "message_stop":
                                 break
+                    elif _use_ollama_native:
+                        # ── Native Ollama NDJSON → OpenAI SSE conversion ───────
+                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                        _has_tool_calls = False
+                        _global_tc_idx = 0
+                        _native_full_text = []  # accumulate for URL guard
+                        async for _nline in resp.aiter_lines():
+                            _nline = _nline.strip()
+                            if not _nline:
+                                continue
+                            try:
+                                _nc = json.loads(_nline)
+                            except Exception:
+                                continue
+                            _nmsg     = _nc.get("message", {})
+                            _ncontent = _nmsg.get("content", "")
+                            _ntcs     = _nmsg.get("tool_calls") or []
+                            _ndone    = _nc.get("done", False)
+                            if _ncontent:
+                                if _t_first is None:
+                                    _t_first = time.monotonic()
+                                _native_full_text.append(_ncontent)
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': _ncontent}, 'finish_reason': None}]})}\n\n"
+                            for _tci, _tc in enumerate(_ntcs):
+                                _abs_tci = _global_tc_idx + _tci
+                                _has_tool_calls = True
+                                _fn      = _tc.get("function", {})
+                                _tc_args = _fn.get("arguments", {})
+                                _tc_args_str = json.dumps(_tc_args) if isinstance(_tc_args, dict) else str(_tc_args)
+                                _call_id = f"call_{uuid.uuid4().hex[:8]}"
+                                if _t_first is None:
+                                    _t_first = time.monotonic()
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': _abs_tci, 'id': _call_id, 'type': 'function', 'function': {'name': _fn.get('name', ''), 'arguments': ''}}]}, 'finish_reason': None}]})}\n\n"
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': _abs_tci, 'function': {'arguments': _tc_args_str}}]}, 'finish_reason': None}]})}\n\n"
+                            _global_tc_idx += len(_ntcs)
+                            if _ndone:
+                                p_tok = _nc.get("prompt_eval_count", 0)
+                                c_tok = _nc.get("eval_count", 0)
+                                _fin  = "tool_calls" if _has_tool_calls else _nc.get("done_reason", "stop")
+                                # URL hallucination guard — check accumulated text
+                                if not _has_tool_calls and _native_full_text and request.tools:
+                                    import re as _re2
+                                    _full_resp = "".join(_native_full_text)
+                                    _ext_urls  = _re2.findall(r'https?://[^\s\)\]"\'<>]+', _full_resp)
+                                    _SAFE = ("files.moe-sovereign.org", "localhost", "127.0.0.1",
+                                             "192.168.", "10.", "172.", ".hc-hosting.de",
+                                             "4noobs.de", "adesso-ai-hub")
+                                    _bad = [u for u in _ext_urls if not any(d in u for d in _SAFE)]
+                                    if _bad:
+                                        logger.warning("URL hallucination in native stream: %s", _bad)
+                                        _warn = (
+                                            "\n\n---\n"
+                                            "⚠️ **Fehler:** Die obige URL wurde von keinem echten Tool zurückgegeben und ist **ungültig**. "
+                                            "Externe Dienste wie PDFSpark oder pdftemp.vip existieren in dieser Umgebung nicht. "
+                                            "Bitte nutze `generate_file` mit `format='pdf'` für PDFs oder `format='html'` für HTML-Seiten — die echte Download-URL beginnt mit `https://files.moe-sovereign.org`."
+                                        )
+                                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': _warn}, 'finish_reason': None}]})}\n\n"
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': _fin}], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}})}\n\n"
                     else:
                         # ── OpenAI SSE passthrough ─────────────────────────────
                         async for line in resp.aiter_lines():
@@ -1591,6 +1851,30 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             ))
         if not _deregistered:
             asyncio.create_task(_deregister_active_request(chat_id))
+        # URL hallucination guard: if the response contains external URLs that were
+        # not returned by a real tool call, append a visible warning to the stream.
+        _resp_text = content if isinstance(content, str) else ""
+        if _resp_text and request.tools:
+            import re as _re
+            _url_pattern = _re.compile(r'https?://[^\s\)\]"\'<>]+', _re.IGNORECASE)
+            _found_urls = _url_pattern.findall(_resp_text)
+            _SAFE_DOMAINS = ("files.moe-sovereign.org", "localhost", "127.0.0.1",
+                             "192.168.", "10.", "172.", "moe-", ".hc-hosting.de",
+                             "adesso-ai-hub", ".4noobs.de")
+            _fake_urls = [
+                u for u in _found_urls
+                if not any(d in u for d in _SAFE_DOMAINS)
+                and not u.startswith("http://moe")
+            ]
+            if _fake_urls:
+                _warn = (
+                    "\n\n---\n⚠️ **Hinweis:** Die oben genannte(n) URL(s) wurden von keinem echten Tool zurückgegeben "
+                    "und sind möglicherweise nicht erreichbar. "
+                    "Bitte verwende `generate_file` um echte Dateien zu erstellen — "
+                    "die Download-URL kommt dann von `https://files.moe-sovereign.org`."
+                )
+                logger.warning("URL hallucination detected in response: %s", _fake_urls)
+                yield _chunk({"content": _warn})
         # Stop chunk WITHOUT usage (OpenAI spec: usage comes in its own chunk after)
         yield _chunk({}, finish_reason="stop")
         # Separate usage chunk with choices=[] — recognized by Open-WebUI as statistics
