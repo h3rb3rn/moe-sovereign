@@ -125,6 +125,7 @@ async def expert_worker(state_: AgentState):
         return {"expert_results": []}
 
     NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
+    local_conflicts = []
     plan         = state_.get("plan", [])
     chat_history = state_.get("chat_history") or []
     expert_tasks = [
@@ -618,6 +619,75 @@ async def expert_worker(state_: AgentState):
             scored.append((score, e))
         scored.sort(key=lambda x: -x[0])
 
+        # Check if J-MoE debate should run (Theory C: Game-Theoretic Debate)
+        from config import JMOE_DEBATE_ENABLED
+        if JMOE_DEBATE_ENABLED and len(scored) >= 2:
+            proponent = scored[0][1]
+            skeptic = scored[1][1]
+            logger.info(f"⚖️ Starting J-MoE Debate in category '{cat}' between Proponent ({proponent['model']}) and Skeptic ({skeptic['model']})")
+            await _report(f"⚖️ Debate [{cat}]: Proponent ({proponent['model']}) vs Skeptic ({skeptic['model']})")
+            
+            # 1. Proponent Initial Answer
+            prop_res = await run_single(proponent, task, i + 1, 1)
+            prop_ans = prop_res.get("res", "")
+            
+            # 2. Skeptic Critique
+            skeptic_task = task.copy()
+            skeptic_task["input"] = (
+                f"[User Query]\n{task.get('input', '')}\n\n"
+                f"[Proponent Initial Answer]\n{prop_ans}\n\n"
+                f"[Task]\n"
+                f"You are an adversarial Skeptic/Opponent in a formal debate. Critique the Proponent's answer above. "
+                f"Identify logical fallacies, errors, omissions, or assumptions. Be critical, objective, and precise."
+            )
+            sk_res = await run_single(skeptic, skeptic_task, i + 1, 2)
+            sk_critique = sk_res.get("res", "")
+            
+            # 3. Proponent Rebuttal & Refined Answer
+            rebuttal_task = task.copy()
+            rebuttal_task["input"] = (
+                f"[User Query]\n{task.get('input', '')}\n\n"
+                f"[Your Initial Answer]\n{prop_ans}\n\n"
+                f"[Skeptic Critique]\n{sk_critique}\n\n"
+                f"[Task]\n"
+                f"You are the Proponent. Review the Skeptic's critique. Defend your correct claims, accept "
+                f"valid corrections, and output a refined, high-quality final response."
+            )
+            rebuttal_res = await run_single(proponent, rebuttal_task, i + 1, 3)
+            rebutted_ans = rebuttal_res.get("res", "")
+            
+            debate_transcript = (
+                f"[DEBATE] Proponent: {proponent['model']} | Skeptic: {skeptic['model']}\n"
+                f"### Proponent Initial Answer:\n{prop_ans}\n\n"
+                f"### Skeptic Critique:\n{sk_critique}\n\n"
+                f"### Proponent Final Rebutted Answer:\n{rebutted_ans}"
+            )
+            
+            # Record paraconsistent conflicts
+            from parsing import _improvement_ratio
+            div_score = _improvement_ratio(prop_ans, sk_critique)
+            if div_score >= 0.35:
+                conflict_entry = {
+                    "category": cat,
+                    "proposition_a": prop_ans[:600],
+                    "proposition_b": sk_critique[:600],
+                    "divergence_score": round(div_score, 3),
+                    "resolution": "pending",
+                    "resolved_by": ""
+                }
+                local_conflicts.append(conflict_entry)
+                logger.info(f"⚖️ Registered paraconsistent conflict in J-MoE debate: div_score={div_score:.2f}")
+            
+            final_res = {
+                "res": f"[{cat}]: {debate_transcript}",
+                "model_cat": f"{proponent['model']}::Debate::{cat}",
+                "prompt_tokens": prop_res.get("prompt_tokens", 0) + sk_res.get("prompt_tokens", 0) + rebuttal_res.get("prompt_tokens", 0),
+                "completion_tokens": prop_res.get("completion_tokens", 0) + sk_res.get("completion_tokens", 0) + rebuttal_res.get("completion_tokens", 0),
+                "user_conn_prompt_tokens": prop_res.get("user_conn_prompt_tokens", 0) + sk_res.get("user_conn_prompt_tokens", 0) + rebuttal_res.get("user_conn_prompt_tokens", 0),
+                "user_conn_completion_tokens": prop_res.get("user_conn_completion_tokens", 0) + sk_res.get("user_conn_completion_tokens", 0) + rebuttal_res.get("user_conn_completion_tokens", 0),
+            }
+            return [final_res]
+
         tier1 = [(s, e) for s, e in scored if e.get("_tier", 1) == 1 and s >= EXPERT_MIN_SCORE]
         tier2 = [(s, e) for s, e in scored if e.get("_tier", 2) == 2 and s >= EXPERT_MIN_SCORE]
 
@@ -733,4 +803,5 @@ async def expert_worker(state_: AgentState):
         "completion_tokens":           sum(r.get("completion_tokens",           0) for r in all_results),
         "user_conn_prompt_tokens":     sum(r.get("user_conn_prompt_tokens",     0) for r in all_results),
         "user_conn_completion_tokens": sum(r.get("user_conn_completion_tokens", 0) for r in all_results),
+        "conflict_registry":           local_conflicts,
     }

@@ -11,11 +11,14 @@ APIRouter registration eliminates the silent duplicate.
 import asyncio
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+logger = logging.getLogger("MOE-SOVEREIGN")
 
 from services.templates import _read_expert_templates
 from services.auth import _extract_api_key, _validate_api_key
@@ -370,12 +373,101 @@ async def ollama_delete():
     })
 
 
-@router.post("/api/copy")
-@router.post("/api/push")
 @router.post("/api/embed")
 @router.post("/api/embeddings")
+async def ollama_embed(raw_request: Request):
+    """Ollama /api/embed — proxies embedding requests to Ollama backend."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+
+    from routes.embeddings import _find_embedding_server, _resolve_ollama_base
+    from config import URL_MAP, TOKEN_MAP
+
+    model_raw  = body.get("model", "nomic-embed-text")
+    model_base, _, _node = model_raw.partition("@")
+    model_base = model_base.strip()
+    input_data = body.get("input", body.get("prompt", []))
+
+    if _node and _node in URL_MAP:
+        base  = _resolve_ollama_base(_node)
+        token = TOKEN_MAP.get(_node, "ollama")
+    else:
+        srv = await _find_embedding_server(model_base)
+        if not srv:
+            return JSONResponse(status_code=503, content={"error": "No embedding server available"})
+        base, token = srv
+
+    payload: dict = {
+        "model":    model_base,
+        "input":    input_data if isinstance(input_data, list) else [input_data],
+        "truncate": body.get("truncate", True),
+    }
+    if body.get("options"):
+        payload["options"] = body["options"]
+    if body.get("keep_alive"):
+        payload["keep_alive"] = body["keep_alive"]
+
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=60.0) as c:
+            r = await c.post(
+                f"{base}/api/embed",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.warning("Ollama embed proxy error: %s", exc)
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+
+
+@router.post("/api/copy")
+@router.post("/api/push")
 async def ollama_not_supported():
     """Stub for Ollama endpoints not supported by MoE Sovereign."""
     return JSONResponse(status_code=400, content={
         "error": "Not supported by MoE Sovereign"
+    })
+
+
+@router.post("/api/create")
+async def ollama_create(raw_request: Request):
+    """Modelfile-based model creation stub — MoE manages models via Admin UI."""
+    try:
+        body = await raw_request.json()
+    except Exception:
+        body = {}
+
+    async def _create_progress():
+        for status in ["reading model metadata", "creating system layer",
+                        "using existing layer", "writing manifest", "success"]:
+            yield json.dumps({"status": status}) + "\n"
+            await asyncio.sleep(0.05)
+
+    if not body.get("stream", True):
+        return {"status": "success"}
+    return StreamingResponse(_create_progress(), media_type="application/x-ndjson")
+
+
+@router.head("/api/blobs/{digest:path}")
+async def ollama_blob_check(digest: str):
+    """Blob existence check stub — MoE does not store raw model blobs."""
+    return JSONResponse(status_code=404, content={"error": "blob not found"})
+
+
+@router.post("/api/blobs/{digest:path}")
+async def ollama_blob_push(digest: str):
+    """Blob push stub — MoE does not accept raw model uploads."""
+    return JSONResponse(status_code=400, content={
+        "error": "Model blob upload is not supported by MoE Sovereign"
     })

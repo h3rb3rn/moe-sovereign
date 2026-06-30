@@ -215,6 +215,8 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
     # Enforce template context_window as the source of truth for token limits.
     # Profile values must not exceed the template constraint — if they do, the session
     # would silently deliver less output than advertised, with no operator feedback.
+    # Exception: "native" mode has no judge/planner — judge_num_ctx from the template
+    # is irrelevant and must not constrain the CC tool model's own context window.
     _tmpl_ctx = planner_cfg.get("judge_num_ctx", 0) if planner_cfg else 0
     if _tmpl_ctx <= 0:
         _tmpl_ctx = max(
@@ -222,7 +224,7 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
              for m in v if isinstance(m, dict) and m.get("context_window")),
             default=0,
         )
-    if _tmpl_ctx > 0:
+    if _tmpl_ctx > 0 and mode != "native":
         _profile_name = profile.get("name", "?") if profile else "?"
         if tool_max_tokens and tool_max_tokens > _tmpl_ctx:
             logger.warning(
