@@ -19,6 +19,7 @@ from config import (
     _CLAUDE_CODE_TOOL_TOKEN,
     URL_MAP,
     TOKEN_MAP,
+    API_TYPE_MAP,
     JUDGE_TIMEOUT,
 )
 from services.templates import _read_cc_profiles
@@ -43,6 +44,7 @@ class CCSession:
     tool_endpoint: str = ""
     tool_url: str = ""
     tool_token: str = ""
+    tool_api_type: str = "openai"   # "ollama" | "openai" | "anthropic"
     tool_timeout: int = 120
     tool_max_tokens: int = 0
     context_window: int = 0
@@ -61,6 +63,9 @@ class CCSession:
     user_perms: dict = dataclasses.field(default_factory=dict)
     experts: dict = dataclasses.field(default_factory=dict)
     planner_cfg: dict = dataclasses.field(default_factory=dict)
+
+    # ── Long-term memory tiers (Tier 2-4): can be disabled per CC profile ──────
+    long_memory: bool = True   # False disables Tier-2 ChromaDB warm, Tier-3 context-index, Tier-4 Neo4j
 
     # ── Sentinel: set True when profile_ids were given but no profile resolved ─
     profile_not_found: bool = False
@@ -128,6 +133,7 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
                       if profile else CLAUDE_CODE_TOOL_ENDPOINT)
     tool_url       = URL_MAP.get(tool_endpoint) if tool_endpoint else None
     tool_token     = TOKEN_MAP.get(tool_endpoint, "ollama")
+    tool_api_type  = API_TYPE_MAP.get(tool_endpoint, "ollama") if tool_endpoint else "openai"
     is_user_conn   = False
 
     if not tool_url:
@@ -139,12 +145,14 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
             pass
         uc = user_conns.get(tool_endpoint)
         if uc:
-            tool_url     = uc["url"]
-            tool_token   = uc.get("api_key") or "ollama"
-            is_user_conn = True
+            tool_url      = uc["url"]
+            tool_token    = uc.get("api_key") or "ollama"
+            tool_api_type = uc.get("api_type", "openai")  # preserve user-conn api_type
+            is_user_conn  = True
         else:
-            tool_url   = _CLAUDE_CODE_TOOL_URL
-            tool_token = _CLAUDE_CODE_TOOL_TOKEN
+            tool_url      = _CLAUDE_CODE_TOOL_URL
+            tool_token    = _CLAUDE_CODE_TOOL_TOKEN
+            tool_api_type = "openai"
 
     # ── Phase 4: Timeout (node config, then profile override) ─────────────────
     node_cfg     = _server_info(tool_endpoint) if tool_endpoint else {}
@@ -205,6 +213,7 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
         )
 
     # ── Phase 6: Profile scalar overrides ────────────────────────────────────
+    long_memory          = bool(profile.get("long_memory", True))              if profile else True
     system_prefix        = (profile.get("system_prompt_prefix") or "").strip() if profile else ""
     tool_max_tokens      = int(profile.get("tool_max_tokens") or 0)             if profile else 0
     reasoning_max_tokens = int(profile.get("reasoning_max_tokens") or 0)        if profile else 0
@@ -213,18 +222,20 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
     context_window       = int(profile.get("context_window") or 0)              if profile else 0
 
     # Enforce template context_window as the source of truth for token limits.
-    # Profile values must not exceed the template constraint — if they do, the session
-    # would silently deliver less output than advertised, with no operator feedback.
-    # Exception: "native" mode has no judge/planner — judge_num_ctx from the template
-    # is irrelevant and must not constrain the CC tool model's own context window.
-    _tmpl_ctx = planner_cfg.get("judge_num_ctx", 0) if planner_cfg else 0
-    if _tmpl_ctx <= 0:
-        _tmpl_ctx = max(
-            (m["context_window"] for v in experts.values() if isinstance(v, list)
-             for m in v if isinstance(m, dict) and m.get("context_window")),
-            default=0,
-        )
-    if _tmpl_ctx > 0 and mode != "native":
+    # Only applies when the CC profile explicitly sets expert_template_id (i.e. mode is
+    # moe_orchestrated AND a template is configured on the profile itself). User-default
+    # templates must not silently cap a profile's values when no explicit override exists.
+    _tmpl_ctx = 0
+    _has_explicit_tmpl = bool(profile and cc_tmpl_id)
+    if _has_explicit_tmpl:
+        _tmpl_ctx = planner_cfg.get("judge_num_ctx", 0) if planner_cfg else 0
+        if _tmpl_ctx <= 0:
+            _tmpl_ctx = max(
+                (m["context_window"] for v in experts.values() if isinstance(v, list)
+                 for m in v if isinstance(m, dict) and m.get("context_window")),
+                default=0,
+            )
+    if _has_explicit_tmpl and mode == "moe_orchestrated":
         _profile_name = profile.get("name", "?") if profile else "?"
         if tool_max_tokens and tool_max_tokens > _tmpl_ctx:
             logger.warning(
@@ -254,12 +265,14 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
         tool_endpoint=tool_endpoint,
         tool_url=tool_url,
         tool_token=tool_token,
+        tool_api_type=tool_api_type,
         tool_timeout=tool_timeout,
         tool_max_tokens=tool_max_tokens,
         context_window=context_window,
         template_num_ctx=_tmpl_ctx,
         tool_choice=tool_choice,
         is_user_conn=is_user_conn,
+        long_memory=long_memory,
         reasoning_max_tokens=reasoning_max_tokens,
         system_prefix=system_prefix,
         stream_think=stream_think,
