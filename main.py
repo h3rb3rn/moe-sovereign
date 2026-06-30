@@ -1471,6 +1471,17 @@ async def _stream_native_llm(
     _t_first: Optional[float] = None
     p_tok = c_tok = 0
     _did_deregister = False
+    # Estimate total prompt size from request messages. Ollama's prompt_eval_count
+    # only covers newly-evaluated tokens (KV-cache misses), not the full context.
+    # We use this as a lower bound so clients see the actual context fill level.
+    def _msg_chars(m: dict) -> int:
+        c = m.get("content") or ""
+        if isinstance(c, str):
+            return len(c)
+        if isinstance(c, list):
+            return sum(len(str(p.get("text") or p.get("content") or "")) for p in c if isinstance(p, dict))
+        return len(str(c))
+    _req_prompt_tokens: int = sum(4 + _msg_chars(m) // 4 for m in _native_msgs)
 
     # Use the per-server timeout from INFERENCE_SERVERS config (fallback: 300s).
     # A 10s connect timeout prevents silent hangs when the server URL is wrong.
@@ -1581,7 +1592,8 @@ async def _stream_native_llm(
                                             "Bitte nutze `generate_file` mit `format='pdf'` für PDFs oder `format='html'` für HTML-Seiten — die echte Download-URL beginnt mit `https://files.moe-sovereign.org`."
                                         )
                                         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': _warn}, 'finish_reason': None}]})}\n\n"
-                                _done_usage: dict = {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}
+                                _rpt_p = max(p_tok, _req_prompt_tokens)
+                                _done_usage: dict = {'prompt_tokens': _rpt_p, 'completion_tokens': c_tok, 'total_tokens': _rpt_p + c_tok}
                                 if _num_ctx_used:
                                     _done_usage['num_ctx_limit'] = _num_ctx_used
                                 yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': _fin}], 'usage': _done_usage})}\n\n"
@@ -1632,8 +1644,9 @@ async def _stream_native_llm(
                 asyncio.create_task(_increment_user_budget(user_id, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
         asyncio.create_task(_deregister_active_request(chat_id))
         _did_deregister = True
+        _rpt_p = max(p_tok, _req_prompt_tokens)
         _ext_usage: dict = {
-            'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok,
+            'prompt_tokens': _rpt_p, 'completion_tokens': c_tok, 'total_tokens': _rpt_p + c_tok,
             'tokens_per_second': tps, 'response_token_per_s': tps, 'prompt_token_per_s': prompt_tps,
             'total_duration': total_dur_ns, 'load_duration': load_dur_ns,
             'prompt_eval_count': p_tok, 'prompt_eval_duration': p_eval_dur_ns,
