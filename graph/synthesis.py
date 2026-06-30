@@ -1102,13 +1102,30 @@ async def merger_node(state_: AgentState):
                 logger.info(f"⚠️ Agentic gap skipped: token budget {_used_tokens} > 80k")
                 _agentic_gap = "COMPLETE"
 
+        # ── Typed Cascade Classification ──────────────────────────────────────
+        # Convert binary gap text to a typed CascadeEvent so the planner
+        # knows *why* it is re-planning, not just *that* it should.
+        _cascade_event = None
+        try:
+            from services.cascade import classify_gap as _classify_gap
+            _cascade_event = _classify_gap(_agentic_gap, _strategy_hint)
+            if _cascade_event.replan_strategy and not _strategy_hint:
+                _strategy_hint = _cascade_event.replan_strategy
+            logger.info(
+                "🌊 Cascade: type=%s gap=%s",
+                _cascade_event.cascade_type, _agentic_gap[:60],
+            )
+        except Exception as _ce:
+            logger.debug("Cascade classification skipped: %s", _ce)
+
         # Record only gap + strategy for the re-planner — not full findings text.
         # Full findings bloat the re-planner prompt (~1200 chars × rounds) without
         # adding information the planner can act on. Gap and strategy are sufficient.
         _agentic_history.append({
-            "iteration": _agentic_iter,
-            "gap":      _agentic_gap[:300],
-            "strategy": _strategy_hint[:200],
+            "iteration":    _agentic_iter,
+            "gap":          _agentic_gap[:300],
+            "strategy":     _strategy_hint[:200],
+            "cascade_type": _cascade_event.cascade_type if _cascade_event else "CONTEXT_GAP",
         })
 
         # Working Memory: LLM-based fact extraction only when:
@@ -1144,6 +1161,25 @@ async def merger_node(state_: AgentState):
             except Exception as _fe:
                 logger.debug(f"Merger fact extraction failed: {_fe}")
 
+        # ── Retry Budget + STUCK detection ────────────────────────────────────
+        _next_iter = _agentic_iter + 1 if _agentic_gap != "COMPLETE" else _agentic_iter
+        _is_stuck = False
+        _max_rounds = state_.get("max_agentic_rounds", 2)
+        if _agentic_gap != "COMPLETE" and _next_iter >= _max_rounds:
+            try:
+                from services.retry_budget import check_and_emit_stuck as _check_stuck
+                _is_stuck = await _check_stuck(
+                    response_id=state_.get("response_id", ""),
+                    iteration=_next_iter,
+                    max_rounds=_max_rounds,
+                    state_={**dict(state_), "cascade_type": (
+                        _cascade_event.cascade_type if _cascade_event else "CONTEXT_GAP"
+                    )},
+                    redis_client=getattr(state, "redis_client", None),
+                )
+            except Exception as _se:
+                logger.debug("Retry budget check skipped: %s", _se)
+
         # Increment agentic_iteration here via state return — not via direct mutation
         # in the router function (_should_replan), which is an anti-pattern in LangGraph.
         _agentic_extra = {
@@ -1151,15 +1187,37 @@ async def merger_node(state_: AgentState):
             "agentic_history":      _agentic_history,
             "working_memory":       _wm_merged,
             "search_strategy_hint": _strategy_hint,
-            "agentic_iteration":    _agentic_iter + 1 if _agentic_gap != "COMPLETE" else _agentic_iter,
+            "agentic_iteration":    _next_iter,
+            "cascade_type":         _cascade_event.cascade_type if _cascade_event else "CONTEXT_GAP",
+            "stuck":                _is_stuck,
         }
+
+    # ── System Constitution enforcement ───────────────────────────────────────
+    # Deterministic check against sovereign-constitution.yaml before the
+    # response leaves the orchestrator. Blocking violations replace the
+    # response; warn violations are audited to Kafka only.
+    _constitution_violations = []
+    try:
+        from services.constitution import enforce as _constitution_enforce
+        res_content_clean, _constitution_violations = _constitution_enforce(
+            res_content_clean, dict(state_),
+        )
+        if _constitution_violations:
+            _viol_ids = [v.rule_id for v in _constitution_violations]
+            await _report(f"⚖️ Constitution: {len(_constitution_violations)} violation(s): {_viol_ids}")
+    except Exception as _coe:
+        logger.debug("Constitution enforcement skipped: %s", _coe)
 
     await _ol_complete(_ol_merger_run, job_name="merger_node",
                        outputs=[dataset_response(state_.get("response_id", "synthesis"))])
     return {
-        "final_response":    res_content_clean,
-        "provenance_sources": _provenance_sources,
-        "conflict_registry": _new_conflicts,
+        "final_response":         res_content_clean,
+        "provenance_sources":     _provenance_sources,
+        "conflict_registry":      _new_conflicts,
+        "constitution_violations": [
+            {"rule_id": v.rule_id, "on_violation": v.on_violation, "detail": v.detail}
+            for v in _constitution_violations
+        ],
         **merger_usage,
         **_agentic_extra,
     }

@@ -714,6 +714,18 @@ JSON array:"""
             )
         else:
             asyncio.create_task(_ollama_unload(_actual_planner_model, _actual_planner_base))
+    # ── Deterministic DoR checks ───────────────────────────────────────────────
+    # Validate each task before it is dispatched to an expert. Violations are
+    # logged as warnings; no task is blocked (fail-open) to preserve existing
+    # pipeline behaviour. Blocking can be enabled by filtering `plan` here.
+    try:
+        from services.dor_check import check_dor as _check_dor, log_dor_result as _log_dor
+        for _dor_idx, _dor_task in enumerate(plan or []):
+            _violations = _check_dor(_dor_task, dict(state_), task_index=_dor_idx)
+            _log_dor(_dor_task, _violations, task_index=_dor_idx)
+    except Exception as _dor_e:
+        logger.debug("DoR check skipped: %s", _dor_e)
+
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
         asyncio.create_task(state.redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))

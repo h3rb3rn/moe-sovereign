@@ -1,0 +1,57 @@
+# sovereign-constitution.yaml — Machine-checkable System Constitution for MoE Sovereign.
+#
+# Rules are evaluated deterministically against the final response and request
+# metadata before the response is returned to the client. No LLM is involved.
+# Violations emit to Kafka (moe.audit) and optionally block the response.
+#
+# on_violation:
+#   block      — response is replaced with a policy-block message
+#   warn       — violation is logged and audited; response is returned unchanged
+#   audit_only — violation is written to Kafka only; no log output
+#
+# To disable a rule without removing it: set enabled: false.
+
+version: "1.0"
+constitution:
+
+  - id: no_external_egress
+    description: >
+      No request data must leave the local network unless federation.outbound_policy
+      explicitly permits it. Basis: DSGVO Art. 25 (Privacy by Design), Art. 32
+      (Security of Processing).
+    check: endpoints_not_external
+    on_violation: block
+    enabled: true
+
+  - id: local_only_model_calls
+    description: >
+      All LLM inference must use local endpoints (Ollama / LiteLLM on-prem).
+      Calls to OpenAI, Anthropic, or Google cloud APIs are only permitted when
+      user_permissions.allow_external_llm is explicitly set for the user.
+    check: llm_endpoints_local
+    on_violation: block
+    enabled: true
+
+  - id: no_raw_credentials_in_response
+    description: >
+      Responses must not contain API keys, passwords, tokens, or private keys
+      that may have leaked from system context or tool results.
+    check: response_no_credentials
+    on_violation: block
+    enabled: true
+
+  - id: audit_trail_required
+    description: >
+      Every processed request must carry a response_id so the Kafka audit trail
+      can be linked end-to-end. Requests without a response_id cannot be audited.
+    check: kafka_audit_emitted
+    on_violation: warn
+    enabled: true
+
+  - id: safety_critical_disclaimer
+    description: >
+      Responses in medical_consult and legal_advisor domains must contain a
+      professional-advice disclaimer to prevent harm from unqualified reliance.
+    check: safety_critical_has_disclaimer
+    on_violation: warn
+    enabled: true

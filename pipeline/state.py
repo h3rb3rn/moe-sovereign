@@ -153,3 +153,8 @@ class AgentState(TypedDict):
     working_memory: dict                # {key: {value, source, confidence, ts}}
     tool_calls_log: list                # [{tool, args, result, status, ts}] — full tool invocation trace
     tool_failures: list                 # Subset of tool_calls_log: only failed calls; injected into planner prompt
+
+    # ── 14. Cascade & constitution ────────────────────────────────────────────
+    cascade_type: str                   # Typed cascade event: CONTEXT_GAP|EXPERT_FAILURE|CONTRADICTION|SCOPE_DRIFT|TOOL_FAILURE|COMPLETE
+    stuck: bool                         # True when agentic loop exhausted budget without resolving the gap
+    constitution_violations: list       # [{rule_id, on_violation, detail}] from constitution enforcement
