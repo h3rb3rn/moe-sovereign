@@ -1481,7 +1481,7 @@ async def _stream_native_llm(
         if isinstance(c, list):
             return sum(len(str(p.get("text") or p.get("content") or "")) for p in c if isinstance(p, dict))
         return len(str(c))
-    _req_prompt_tokens: int = sum(4 + _msg_chars(m) // 4 for m in _native_msgs)
+    _req_prompt_tokens: int = sum(4 + _msg_chars(m) // 4 for m in payload.get("messages", []))
 
     # Use the per-server timeout from INFERENCE_SERVERS config (fallback: 300s).
     # A 10s connect timeout prevents silent hangs when the server URL is wrong.
