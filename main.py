@@ -1402,11 +1402,18 @@ async def _stream_native_llm(
                             "content": _user_text + "\n\n" + _agent_rule,
                         }
                         break
+            # Enable thinking when the system prompt is complex (>2000 chars),
+            # e.g. when a third-party agent like Odysseus sends its own full
+            # agent-rule system prompt alongside 20+ tool definitions.
+            # Without thinking, Qwen3 "meta-reasons" in text instead of calling
+            # tools when it sees conflicting multi-system instructions.
+            _sys_len = len((_native_msgs[0].get("content") or "")) if _native_msgs and _native_msgs[0].get("role") == "system" else 0
+            _think = _sys_len > 2000
             payload = {
                 "model":      endpoint["model"],
                 "messages":   _native_msgs,
                 "stream":     True,
-                "think":      False,
+                "think":      _think,
                 "keep_alive": "4h",
             }
             if _native_opts:
@@ -1555,6 +1562,7 @@ async def _stream_native_llm(
                                 p_tok = _nc.get("prompt_eval_count", 0)
                                 c_tok = _nc.get("eval_count", 0)
                                 _fin  = "tool_calls" if _has_tool_calls else _nc.get("done_reason", "stop")
+                                _num_ctx_used = _nc.get("num_ctx") or num_ctx
                                 # URL hallucination guard — check accumulated text
                                 if not _has_tool_calls and _native_full_text and request.tools:
                                     import re as _re2
@@ -1573,7 +1581,10 @@ async def _stream_native_llm(
                                             "Bitte nutze `generate_file` mit `format='pdf'` für PDFs oder `format='html'` für HTML-Seiten — die echte Download-URL beginnt mit `https://files.moe-sovereign.org`."
                                         )
                                         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': _warn}, 'finish_reason': None}]})}\n\n"
-                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': _fin}], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}})}\n\n"
+                                _done_usage: dict = {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}
+                                if _num_ctx_used:
+                                    _done_usage['num_ctx_limit'] = _num_ctx_used
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': _fin}], 'usage': _done_usage})}\n\n"
                     else:
                         # ── OpenAI SSE passthrough ─────────────────────────────
                         async for line in resp.aiter_lines():
@@ -1621,7 +1632,16 @@ async def _stream_native_llm(
                 asyncio.create_task(_increment_user_budget(user_id, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
         asyncio.create_task(_deregister_active_request(chat_id))
         _did_deregister = True
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok, 'tokens_per_second': tps, 'response_token_per_s': tps, 'prompt_token_per_s': prompt_tps, 'total_duration': total_dur_ns, 'load_duration': load_dur_ns, 'prompt_eval_count': p_tok, 'prompt_eval_duration': p_eval_dur_ns, 'eval_count': c_tok, 'eval_duration': eval_dur_ns, 'approximate_total': approx_total}})}\n\n"
+        _ext_usage: dict = {
+            'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok,
+            'tokens_per_second': tps, 'response_token_per_s': tps, 'prompt_token_per_s': prompt_tps,
+            'total_duration': total_dur_ns, 'load_duration': load_dur_ns,
+            'prompt_eval_count': p_tok, 'prompt_eval_duration': p_eval_dur_ns,
+            'eval_count': c_tok, 'eval_duration': eval_dur_ns, 'approximate_total': approx_total,
+        }
+        if num_ctx > 0:
+            _ext_usage['num_ctx_limit'] = num_ctx
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [], 'usage': _ext_usage})}\n\n"
         yield "data: [DONE]\n\n"
     finally:
         if not _did_deregister:

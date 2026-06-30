@@ -162,12 +162,21 @@ async def ollama_ps(raw_request: Request):
 
 @router.post("/api/show")
 async def ollama_show(raw_request: Request):
-    """Return template details in Ollama modelinfo format (no auth required)."""
+    """Return template details in Ollama modelinfo format (auth optional)."""
     try:
         body = await raw_request.json()
     except Exception:
         return JSONResponse(status_code=400, content={"error": "invalid JSON"})
     model_name = body.get("model", body.get("name", ""))
+
+    # Optional auth — used to read native_num_ctx so clients learn the active context window.
+    _num_ctx = 0
+    raw_key = _extract_api_key(raw_request)
+    if raw_key:
+        _show_ctx = await _validate_api_key(raw_key)
+        if "error" not in _show_ctx:
+            _num_ctx = int(_show_ctx.get("native_num_ctx") or 0)
+
     templates  = _read_expert_templates()
     tmpl = next(
         (t for t in templates if t.get("name") == model_name or t.get("id") == model_name),
@@ -175,19 +184,26 @@ async def ollama_show(raw_request: Request):
     )
     if not tmpl:
         return JSONResponse(status_code=404, content={"error": f"model '{model_name}' not found"})
+
+    _params = f"num_ctx {_num_ctx}\n" if _num_ctx else ""
+    _model_info: dict = {
+        "general.name":        tmpl.get("name", ""),
+        "general.description": tmpl.get("description", ""),
+    }
+    if _num_ctx:
+        _model_info["llm.context_length"] = _num_ctx
+        _model_info["ollama.num_ctx"]     = _num_ctx
+
     return {
         "modelfile":  f"# MoE Sovereign Template: {tmpl.get('name', '')}",
-        "parameters": "",
+        "parameters": _params,
         "template":   "{{ .Prompt }}",
         "details": {
             "family":             "moe",
             "parameter_size":     tmpl.get("description", ""),
             "quantization_level": "MoE",
         },
-        "model_info": {
-            "general.name":        tmpl.get("name", ""),
-            "general.description": tmpl.get("description", ""),
-        },
+        "model_info": _model_info,
     }
 
 
@@ -211,8 +227,11 @@ async def ollama_chat(raw_request: Request):
     options  = body.get("options", {})
     oai_msgs = _ollama_messages_to_oai(body.get("messages", []))
 
+    _chat_num_ctx = int(options.get("num_ctx") or user_ctx.get("native_num_ctx") or 0)
+
     async def _ndjson_stream():
         total_tokens = 0
+        _prompt_tokens = 0
         async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
             sse_line = sse_line.strip()
             if not sse_line or sse_line.startswith(":"):
@@ -225,6 +244,11 @@ async def ollama_chat(raw_request: Request):
                     chunk = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
+                # Capture token counts from usage chunks (choices=[])
+                if chunk.get("usage") and not chunk.get("choices"):
+                    _u = chunk["usage"]
+                    _prompt_tokens  = _u.get("prompt_tokens", _prompt_tokens)
+                    total_tokens    = _u.get("completion_tokens", total_tokens)
                 delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
                 content = delta.get("content", "")
                 if content:
@@ -235,12 +259,17 @@ async def ollama_chat(raw_request: Request):
                     "message":    {"role": "assistant", "content": content},
                     "done":       False,
                 }) + "\n"
-        yield json.dumps({
+        _done_chunk: dict = {
             "model": model, "created_at": _ollama_now(),
             "message": {"role": "assistant", "content": ""},
             "done": True, "done_reason": "stop",
-            "total_duration": 0, "eval_count": total_tokens,
-        }) + "\n"
+            "total_duration": 0,
+            "prompt_eval_count": _prompt_tokens,
+            "eval_count": total_tokens,
+        }
+        if _chat_num_ctx:
+            _done_chunk["num_ctx_limit"] = _chat_num_ctx
+        yield json.dumps(_done_chunk) + "\n"
 
     if stream:
         return StreamingResponse(_ndjson_stream(), media_type="application/x-ndjson")
@@ -260,11 +289,14 @@ async def ollama_chat(raw_request: Request):
                 continue
             delta = (chunk.get("choices") or [{}])[0].get("delta", {})
             content_parts.append(delta.get("content", ""))
-    return {
+    _chat_sync_resp: dict = {
         "model": model, "created_at": _ollama_now(),
         "message": {"role": "assistant", "content": "".join(content_parts)},
         "done": True, "done_reason": "stop",
     }
+    if _chat_num_ctx:
+        _chat_sync_resp["num_ctx_limit"] = _chat_num_ctx
+    return _chat_sync_resp
 
 
 @router.post("/api/generate")
@@ -293,8 +325,11 @@ async def ollama_generate(raw_request: Request):
         oai_msgs.append({"role": "system", "content": system})
     oai_msgs.append({"role": "user", "content": prompt})
 
+    _gen_num_ctx = int(options.get("num_ctx") or user_ctx.get("native_num_ctx") or 0)
+
     async def _gen_stream():
         total_tokens = 0
+        _prompt_tokens = 0
         async for sse_line in _ollama_internal_stream(user_ctx, model, oai_msgs, options):
             sse_line = sse_line.strip()
             if not sse_line or sse_line.startswith(":"):
@@ -307,6 +342,10 @@ async def ollama_generate(raw_request: Request):
                     chunk = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("usage") and not chunk.get("choices"):
+                    _u = chunk["usage"]
+                    _prompt_tokens = _u.get("prompt_tokens", _prompt_tokens)
+                    total_tokens   = _u.get("completion_tokens", total_tokens)
                 delta   = (chunk.get("choices") or [{}])[0].get("delta", {})
                 content = delta.get("content", "")
                 if content:
@@ -315,11 +354,16 @@ async def ollama_generate(raw_request: Request):
                     "model": model, "created_at": _ollama_now(),
                     "response": content, "done": False,
                 }) + "\n"
-        yield json.dumps({
+        _gen_done: dict = {
             "model": model, "created_at": _ollama_now(),
             "response": "", "done": True, "done_reason": "stop",
-            "total_duration": 0, "eval_count": total_tokens,
-        }) + "\n"
+            "total_duration": 0,
+            "prompt_eval_count": _prompt_tokens,
+            "eval_count": total_tokens,
+        }
+        if _gen_num_ctx:
+            _gen_done["num_ctx_limit"] = _gen_num_ctx
+        yield json.dumps(_gen_done) + "\n"
 
     if stream:
         return StreamingResponse(_gen_stream(), media_type="application/x-ndjson")
@@ -339,11 +383,14 @@ async def ollama_generate(raw_request: Request):
                 continue
             delta = (chunk.get("choices") or [{}])[0].get("delta", {})
             content_parts.append(delta.get("content", ""))
-    return {
+    _gen_sync_resp: dict = {
         "model": model, "created_at": _ollama_now(),
         "response": "".join(content_parts),
         "done": True, "done_reason": "stop",
     }
+    if _gen_num_ctx:
+        _gen_sync_resp["num_ctx_limit"] = _gen_num_ctx
+    return _gen_sync_resp
 
 
 @router.post("/api/pull")
