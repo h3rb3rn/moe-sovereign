@@ -38,3 +38,4 @@ Read this file first, then:
 ## Current Initiatives
 
 - [I-1 Sovereign-14B SFT Pipeline](current/I-1-sovereign-sft/initiative.md)
+- [I-2 Pipeline Quality Gate Stack](current/I-2-pipeline-quality-gate/initiative.md)
