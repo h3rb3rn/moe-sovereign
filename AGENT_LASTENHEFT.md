@@ -629,6 +629,31 @@ stable for a while.
 
 ---
 
+### TASK-9: Large-Scale Dataset Generation & Judge Model Training (v2)
+
+- **Status:** in_progress
+- **Owner:** Antigravity (Google Antigravity CLI)
+- **Depends on:** TASK-2, TASK-7
+- **Context:** Training a high-quality paraconsistent Judge model requires transitioning from the 140-sample pilot dataset to a large-scale dataset (90k samples based on RouteLLM seeds). This requires high-throughput inference on LUMI-G and robust DDP-based training.
+- **Instructions:**
+  1. **Async Datagen:** Implement `scripts/generate_judge_dataset_async.py` using `asyncio` and `httpx.AsyncClient` with `concurrency=48` to utilize vLLM's batching capabilities.
+  2. **Sharded Runs:** Run 3 parallel generator jobs (Offset 0, 30000, 60000) on 8-GPU nodes via SLURM, writing to individual shards.
+  3. **Resume Logic:** Implement prefix-based duplicate checking on startup to skip already generated samples.
+  4. **Deduplication & Merge:** Combine shards and deduplicate based on the full instruction string (do NOT truncate to 120 chars, which collapses the dataset).
+  5. **DDP Training:** Launch 8-GPU DDP training using `train_judge_lora_large.sh` (each GPU loading a local 4-bit QLoRA copy to avoid pipeline parallel OOMs).
+  6. **Automated Chaining:** Use SLURM dependencies (`--dependency=afterok:JOB_IDS`) to trigger the merge-and-train workflow automatically.
+- **Acceptance criteria:**
+  - Full 90k seed prompts generated and merged into `paraconsistent_large.jsonl`.
+  - 8-GPU DDP training executes successfully and outputs the `sovereign-judge-32b-lora-v2` LoRA adapter.
+  - Merging LoRA into the base model produces a 62 GB FP16 model checkpoint without OOM.
+- **Resolution notes (Antigravity, 2026-06-28):**
+  - **Merge v1:** Successfully merged the pilot model (Job 19540774, COMPLETED, 22 mins).
+  - **Datagen v1:** Shards reached 8h timeout, producing 5,080 unique samples. Rewrote generator to `generate_judge_dataset_async.py` (Concurrency=48).
+  - **Deduplication Fix:** Fixed a major bug in `merge_shards_and_train.sh` where keys were truncated to 120 chars, causing massive data loss.
+  - **Resubmission:** Re-submitted the 3 shards (Jobs 19588284-86) and chained them to the trigger job (Job 19588422) for automated SFT execution.
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on

@@ -4814,6 +4814,23 @@ async def api_revoke_key(user_id: str, key_id: str):
     return {"ok": True}
 
 
+@app.post("/api/users/{user_id}/keys/{key_id}/reactivate", dependencies=[Depends(require_login)])
+async def api_reactivate_key(user_id: str, key_id: str):
+    key_hash = await db.reactivate_api_key(key_id, user_id)
+    if not key_hash:
+        raise HTTPException(status_code=404, detail="Key not found or archived")
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True}
+
+
+@app.post("/api/users/{user_id}/keys/{key_id}/archive", dependencies=[Depends(require_login)])
+async def api_archive_key(user_id: str, key_id: str):
+    ok = await db.archive_api_key(key_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found or already active")
+    return {"ok": True}
+
+
 @app.patch("/api/users/{user_id}/keys/{key_id}", dependencies=[Depends(require_login)])
 async def api_update_key_label(user_id: str, key_id: str, request: Request):
     body = await request.json()
@@ -5681,7 +5698,6 @@ async def user_revoke_key(
     csrf_token: str = Form(...),
 ):
     validate_csrf(request, csrf_token)
-    # Ensure the key belongs to the user
     keys = await db.list_api_keys(user_id)
     if not any(k["id"] == key_id for k in keys):
         raise HTTPException(status_code=403, detail="Key does not belong to this user")
@@ -5689,6 +5705,35 @@ async def user_revoke_key(
     if key_hash:
         await db.invalidate_api_key_redis(key_hash)
     return RedirectResponse("/user/keys?flash=Key+gesperrt&flash_type=warning", status_code=303)
+
+
+@app.post("/user/keys/{key_id}/reactivate")
+async def user_reactivate_key(
+    request: Request,
+    key_id:     str = ...,
+    user_id:    str = Depends(require_user_login),
+    csrf_token: str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    key_hash = await db.reactivate_api_key(key_id, user_id)
+    if not key_hash:
+        raise HTTPException(status_code=404, detail="Key not found or archived")
+    await db.sync_user_to_redis(user_id)
+    return RedirectResponse("/user/keys?flash=Key+reaktiviert&flash_type=success", status_code=303)
+
+
+@app.post("/user/keys/{key_id}/archive")
+async def user_archive_key(
+    request: Request,
+    key_id:     str = ...,
+    user_id:    str = Depends(require_user_login),
+    csrf_token: str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    ok = await db.archive_api_key(key_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found or still active")
+    return RedirectResponse("/user/keys?flash=Key+archiviert&flash_type=secondary", status_code=303)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1279,7 +1279,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </thead>
             <tbody>
               {% for k in keys %}
-              <tr id="key-row-{{ k.id }}">
+              <tr id="key-row-{{ k.id }}"{% if not k.is_active %} class="table-secondary text-muted"{% endif %}>
                 <td><code>{{ k.key_prefix }}...</code></td>
                 <td>
                   <span id="key-label-text-{{ k.id }}" class="text-truncate" style="max-width:160px;display:inline-block">{{ k.label or '—' }}</span>
@@ -1340,13 +1340,28 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <span class="badge bg-danger" style="font-size:.65rem">{{ t(request, 'status.locked') }}</span>
                   {% endif %}
                 </td>
-                <td>
+                <td class="text-nowrap">
                   {% if k.is_active %}
                   <form method="post" action="/user/keys/{{ k.id }}/revoke" style="display:inline"
                         onsubmit="return confirm('{{ t(request, 'portal.revoke_confirm') }}')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="btn btn-xs btn-outline-danger" style="font-size:.7rem;padding:.15rem .4rem">
                       <i class="bi bi-lock"></i> {{ t(request, 'portal.revoke_key') }}
+                    </button>
+                  </form>
+                  {% else %}
+                  <form method="post" action="/user/keys/{{ k.id }}/reactivate" style="display:inline"
+                        onsubmit="return confirm('Key reaktivieren?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-xs btn-outline-success" style="font-size:.7rem;padding:.15rem .4rem">
+                      <i class="bi bi-unlock"></i> Reaktivieren
+                    </button>
+                  </form>
+                  <form method="post" action="/user/keys/{{ k.id }}/archive" style="display:inline"
+                        onsubmit="return confirm('Key archivieren? Er wird aus der Liste entfernt und kann nicht mehr reaktiviert werden.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-xs btn-outline-secondary ms-1" style="font-size:.7rem;padding:.15rem .4rem">
+                      <i class="bi bi-archive"></i> Archivieren
                     </button>
                   </form>
                   {% endif %}

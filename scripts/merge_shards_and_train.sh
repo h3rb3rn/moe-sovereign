@@ -1,10 +1,19 @@
 #!/bin/bash
+#SBATCH --job-name=merge-and-trigger-train
+#SBATCH --account=project_465003058
+#SBATCH --partition=small-g
+#SBATCH --nodes=1
+#SBATCH --gpus=0
+#SBATCH --time=00:30:00
+#SBATCH --output=/scratch/project_465003058/hornphil/logs/merge_trigger_%j.log
+#SBATCH --mem=64G
+
 # merge_shards_and_train.sh
 # Run after all datagen jobs finish to:
 # 1. Merge all paraconsistent shards into one dataset
 # 2. Submit the large DDP training job
 #
-# Usage: bash merge_shards_and_train.sh
+# Usage: sbatch --dependency=afterok:JOB1:JOB2:JOB3 merge_shards_and_train.sh
 
 SCRATCH=/scratch/project_465003058/hornphil
 DATA_DIR="${SCRATCH}/data"
@@ -57,7 +66,7 @@ with open('${MERGED_FILE}') as f:
             continue
         try:
             d = json.loads(line)
-            key = d.get('instruction','')[:120]
+            key = d.get('instruction','')
             if key not in seen:
                 seen.add(key)
                 deduped.append(line)

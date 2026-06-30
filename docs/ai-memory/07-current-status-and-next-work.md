@@ -2,9 +2,9 @@
 
 Purpose: compact current-state file for context restore.
 
-## Current Status (2026-06-17)
+## Current Status (2026-06-28)
 
-All tasks from the 2026-06-12 debugging session are resolved:
+All active tasks are tracked as follows:
 
 | Task | Summary | Status |
 |---|---|---|
@@ -14,51 +14,49 @@ All tasks from the 2026-06-12 debugging session are resolved:
 | TASK-4 | ChromaDB semantic template cache never hitting (Bug C) | ✅ done |
 | TASK-5 | `dynamic_template_feedback_log` insert path dead (Bug D) | ✅ done |
 | TASK-6 | Hardcoded infra/secrets in `dynamic_router.py` | ✅ done |
-| TASK-7 | Dynamic system prompts / Sovereign-14B SFT pipeline | ⏸ pending |
+| TASK-7 | Dynamic system prompts / Sovereign-14B SFT pipeline | ✅ done |
 | TASK-8 | HABE (Holographic Ambient Background Engine) + GUI | ✅ done |
+| TASK-9 | Large-Scale Dataset Gen & Judge QLoRA v2 (8-GPU DDP) | 🔄 in_progress |
 
 Authoritative task details and resolution notes:
 `../../AGENT_LASTENHEFT.md` Section 3.
 
 ## Next Work
 
-1. **TASK-7: Dynamic System Prompts** (highest priority open item)
-   - Modify `scripts/dataset_generator.py` to produce full template JSON
-     with custom system prompts for planner, judge, and each expert.
-   - Extend `services/dynamic_router.py:get_dynamic_template()` to generate
-     prompt-specific system prompts dynamically.
-   - Depends on: none (independent of all resolved tasks).
-   - See: `docs/backlog/current/current.md` for structured decomposition.
+1. **TASK-9: Large-Scale Dataset Generation & Judge Model Training (v2)** (highest priority active item)
+   - Complete 90k samples generation using the async generator `generate_judge_dataset_async.py` (concurrency 48) on LUMI-G.
+   - Run the chained trigger job `merge_shards_and_train.sh` (Job `19588422`) to merge/deduplicate/trigger DDP training.
+   - Run the 8-GPU QLoRA DDP training on Qwen2.5-32B-Instruct.
+   - Merge the final adapter and quantize the model to 4-bit (AWQ/GGUF) for deployment on `N04-RTX`.
 
-2. **Follow-ups from TASK-6** (not formalized as tasks):
-   - Make personal API key prefix configurable via env vars in
-     `scripts/dataset_generator.py`, `scripts/send_request.py`,
-     `scripts/index_models_metadata.py`.
-   - Cloud-model discovery must not assume a hardcoded AIHUB account —
-     configure fully via Admin UI (Inference Servers / User Connections).
+2. **Phase 3: Planner Model Distillation (1.5B/3B CPU-focused SLM)**
+   - Synthesize 200k planner pairs using teacher models.
+   - Train a fast local JSON planner model (Qwen2.5-1.5B or SmolLM2-1.7B) to run on MoE-Sovereign VM CPU.
 
-3. **Model cleanup**: `models/backup_20260612/` (552 KB old ONNX) is safe
-   to delete once `sovereign_router.onnx` has been stable for a while.
+3. **Follow-ups from TASK-6**:
+   - Make personal API key prefix configurable via env vars in `scripts/dataset_generator.py`, `scripts/send_request.py`, `scripts/index_models_metadata.py`.
+   - Cloud-model discovery must not assume a hardcoded AIHUB account — configure fully via Admin UI.
+
+4. **Model cleanup**: `models/backup_20260612/` (552 KB old ONNX) is safe to delete.
 
 ## Recent Decisions
 
-- **2026-06-12**: `resolve_requested_ctx()` added to `context_budget.py` as
-  single source of truth for context window resolution (TASK-1). `/api/ps`
-  no longer used as PRE-FLIGHT budget input.
-- **2026-06-12**: ChromaDB document text aligned with query text in
-  `dynamic_router.py` (TASK-4). Cache now hits on identical prompts.
-- **2026-06-12**: `CLOUD_ENDPOINT`/`CLOUD_TOKEN` moved to env vars
-  `DYNAMIC_ROUTER_CLOUD_ENDPOINT`/`DYNAMIC_ROUTER_CLOUD_TOKEN` (TASK-6).
-- **2026-06-16**: HABE VSA module (`services/vsa_background.py`) deployed,
-  `enable_habe` toggle in Admin UI and routing pipeline (TASK-8).
+- **2026-06-12**: `resolve_requested_ctx()` added to `context_budget.py` (TASK-1).
+- **2026-06-12**: ChromaDB document text aligned with query text in `dynamic_router.py` (TASK-4).
+- **2026-06-12**: `CLOUD_ENDPOINT`/`CLOUD_TOKEN` moved to env vars (TASK-6).
+- **2026-06-16**: HABE VSA module (`services/vsa_background.py`) deployed (TASK-8).
+- **2026-06-22**: Dynamic system prompts generated dynamically in `dynamic_router.py` and dataset (TASK-7).
+- **2026-06-26**: Merged Judge v1 model (FP16 Qwen2.5-32B) successfully merged on CPU (Job 19540774).
+- **2026-06-28**: Concurrency increased to 48 in `generate_judge_dataset_async.py` using `asyncio` and `httpx` to maximize vLLM throughput (10x-20x speedup).
+- **2026-06-28**: Fixed deduplication key truncation bug in `merge_shards_and_train.sh` to prevent loss of unique samples.
+- **2026-06-28**: Set up automated SLURM job chaining (`--dependency=afterok:JOB_IDS`) for seamless pipeline execution.
 
 ## Do Not Forget
 
 - VRAM rule: llama3:70b-class models ≤60 GB context budget.
-- `local_only=True` must exclude all `CLOUD_ENDPOINT` models — verify in
-  `_get_cluster_state()` on any routing change.
+- `local_only=True` must exclude all `CLOUD_ENDPOINT` models — verify in `_get_cluster_state()`.
 - No hardcoded server names, IPs, or model names in source.
 - All code, comments, and docstrings must be in English.
 - UI strings go through the translation system (`t(request, 'key')`).
-- After Python changes: rebuild + restart affected service (not plain restart).
+- After Python changes: rebuild + restart affected service.
 - GitOps: always use a feature branch and PR — never push directly to main.
