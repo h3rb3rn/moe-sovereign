@@ -225,6 +225,7 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
     # Only applies when the CC profile explicitly sets expert_template_id (i.e. mode is
     # moe_orchestrated AND a template is configured on the profile itself). User-default
     # templates must not silently cap a profile's values when no explicit override exists.
+    _tmpl_ctx = 0
     _has_explicit_tmpl = bool(profile and cc_tmpl_id)
     if _has_explicit_tmpl:
         _tmpl_ctx = planner_cfg.get("judge_num_ctx", 0) if planner_cfg else 0
