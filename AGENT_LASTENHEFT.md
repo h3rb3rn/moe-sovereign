@@ -884,6 +884,98 @@ stable for a while.
 
 ---
 
+### TASK-19: Wikipedia / YAGO 4 Knowledge Import in Neo4j GraphRAG
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** Der bestehende `graphrag_pipeline_worker.py` ingested nur interne Markdown-Dokumentation (SYSTEM.md, CHANGELOG.md, docs/**/*.md). Faktisches Weltwissen (Software-Frameworks, Algorithmen, Konzepte) ist nicht vorhanden — bei allgemeinen Wissensanfragen liefert GraphRAG deshalb 0 Neo4j-Knoten, was TASK-10 (Trust-Score) hart blockt. YAGO 4 enthält ~1 Mrd. RDF-Triples aus Wikipedia + WordNet + GeoNames, davon gefiltert ~5–10M für die Software/AI/Tech-Domäne.
+- **Instructions:**
+  1. **Datenquelle:** YAGO 4 Partial Dump für relevante Schemata herunterladen:
+     - `schema:SoftwareApplication`, `schema:SoftwareSourceCode`, `wdt:Q7397` (Software)
+     - `schema:Algorithm` (aus WordNet-Mapping)
+     - `wikidata:Q9143` (Programming Language), `wikidata:Q28640` (Profession/Role)
+     - Download-Pfad: `yago-knowledge.org/data/yago4/` — Turtle-Dumps, domänenspezifische Teilmengen bevorzugen
+  2. **ETL-Script** `scripts/import_yago_to_neo4j.py`:
+     - Input: `.ttl`/`.nt`-Dateien (RDF/Turtle)
+     - Parse via `rdflib` (bereits in Pypi, kein neues Dep falls verfügbar)
+     - Mapping: YAGO-Entitätstypen → bestehende Ontologie-Typen aus `graph_rag/ontology.py` (`Tech_Concept`, `Algorithm`, `Framework`, `Tool`)
+     - Output: Neo4j `MERGE`-Queries analog zu `graph_rag/manager.py:_upsert_entity()`
+     - Batch-Inserts à 500 Triples, Progress-Logging alle 10k Triples
+     - `--dry-run` und `--limit N` Flags für Test-Imports
+  3. **Konflikt-Behandlung:** `source_weight = 0.8` (höher als "extracted" 0.6, niedriger als Ontologie 1.0) für YAGO-Daten. Bestehende Ontologie-Knoten werden NICHT überschrieben (`MERGE` on name + type ohne `SET` falls bereits vorhanden).
+  4. **Integration in `graphrag_pipeline_worker.py`:** optionaler `--yago-import` Flag der das ETL-Script als Vorschritt ausführt.
+  5. Testen: Import von 1k Test-Triples (Python + JavaScript Entities aus YAGO), anschließend `manager.query_context("Was ist FastAPI?")` → sollte Neo4j-Knoten zurückgeben.
+  6. Rebuild/restart `langgraph-app` (nur falls `graph_rag/` geändert).
+- **Acceptance criteria:**
+  - Nach Import: `MATCH (n:Tech_Concept) RETURN count(n)` in Neo4j zeigt >0 YAGO-importierte Knoten.
+  - `manager.query_context("Erkläre GraphQL")` gibt mind. 1 Neo4j-Knoten aus (vorher 0).
+  - `--dry-run` erzeugt kein Schreiben in Neo4j.
+  - Import von 100k Triples läuft in <10 Minuten durch.
+
+---
+
+### TASK-20: Wikipedia-Abstracts Chunking + Embedding Pipeline
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-19 (YAGO-Import liefert Entitätsliste für Abstracts)
+- **Context:** Der bestehende GraphRAG-Stack nutzt Neo4j für strukturiertes Wissen (Entitäten + Relationen) und ChromaDB für semantische Vektoren. Wikipedia-Abstracts — der Fließtext zu jedem Entitäts-Knoten — werden nirgends eingebettet. Ohne Chunking + Embedding ist GraphRAG kein echtes Hybrid-Retrieval, sondern nur Cypher-Lookup. Das war der kritischste Mangel im ursprünglichen PoC-Prompt: "process later" für Phase 3.
+- **Instructions:**
+  1. **Datenquelle:** Wikipedia-Abstracts via `wikimedia.org/api/rest_v1/page/summary/{title}` (REST, kein SPARQL) oder DBpedia Spotlight Abstracts (`downloads.dbpedia.org/repo/dbpedia/text/abstracts/`).
+  2. **Script** `scripts/embed_wikipedia_abstracts.py`:
+     - Liest alle Neo4j-Entitäten mit `source = "yago"` (nach TASK-19)
+     - Fetched Wikipedia-Summary per Entitätsname (async httpx, max 10 concurrent)
+     - Chunked Abstracts in 200-Token-Segmente (Overlap 40 Token), Chunker via `tiktoken`
+     - Embeddet mit `all-MiniLM-L6-v2` (bereits vorhanden im Stack für IMoE-Router)
+     - Speichert in ChromaDB Collection `moe_wikipedia_abstracts` mit Metadata `entity_name`, `neo4j_id`, `chunk_index`
+  3. **Integration in `graph_rag/manager.py:query_context()`:**
+     - Hybrid-Query: Neo4j Cypher (strukturiert) + ChromaDB `moe_wikipedia_abstracts` (semantisch)
+     - Merge-Strategie: Neo4j-Knoten-Score * 0.6 + ChromaDB-Vector-Score * 0.4 (konfigurierbar via env)
+     - Bestehende ChromaDB-Collection `moe_semantic_cache` bleibt unberührt
+  4. **Rate-Limiting:** Wikimedia API erlaubt 200 Requests/s ohne Key, mit `User-Agent`-Header. Script setzt `RATE_LIMIT=5` Default (konservativ), konfigurierbar.
+  5. Unit-Tests: Mock-Wikipedia-API, Chunking-Logik (leere/lange Abstracts), ChromaDB-Collection-Isolation.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - ChromaDB Collection `moe_wikipedia_abstracts` existiert mit >0 Chunks.
+  - `query_context("GraphQL Schema Definition Language")` gibt sowohl Neo4j-Knoten als auch ChromaDB-Chunks zurück.
+  - Score-Merge produziert sortierten, deduplizierten Kontext (kein Duplikat für denselben Entitätsnamen).
+  - Embed-Script ist idempotent (zweiter Lauf macht nichts doppelt).
+
+---
+
+### TASK-21: GraphRAG Benchmark Harness (CypherBench + GraphRAG-Bench)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-19, TASK-20 (GraphRAG-Stack muss Faktenwissen enthalten um sinnvoll zu benchmarken)
+- **Context:** Ein Evaluierungs-Harness für MoE-Sovereigns GraphRAG-Qualität fehlt komplett. Der ursprüngliche PoC-Prompt (Wikidata SPARQL + manueller Markdown-Vergleich) hatte 4 kritische Mängel: SPARQL rate-limited, `neo4j:latest` nicht reproduzierbar, kein Ground-Truth, kein Chunking. Ersatz: CypherBench (11 fertige Property-Graphs, 10k+ Cypher-Fragen) + GraphRAG-Bench (ICLR'26, zitierfähige Ground-Truth Q&A).
+- **Instructions:**
+  1. **Daten-Setup** in `moe-benchmark/`:
+     - CypherBench: `git lfs clone https://huggingface.co/datasets/megagonlabs/cypherbench` → einen der 11 Graphs via `neo4j-admin load` importieren (pinne `neo4j:5.18.0` in `Dockerfile.bench`, niemals `:latest`)
+     - GraphRAG-Bench: `huggingface_hub.snapshot_download("GraphRAG-Bench/GraphRAG-Bench")` → Q&A-Pairs als lokale JSONL-Datei
+  2. **Benchmark-Script** `moe-benchmark/benchmark_graphrag.py`:
+     - Liest Q&A-Pairs aus GraphRAG-Bench (Schwierigkeitsstufen: `fact_retrieval`, `complex_reasoning`, `summarization`)
+     - Sendet jede Frage an MoE-Sovereign API: einmal `enable_graphrag=false` (Zero-Shot), einmal `enable_graphrag=true`
+     - Misst: Latenz, Token-Count, LLM-as-Judge-Score (separater Judge-Call der Ground-Truth vs. Antwort bewertet, Skala 0–5)
+     - Output: `results/graphrag_bench_YYYYMMDD.json` + aggregierte Tabelle (Precision, Recall, Latenz-Delta, Token-Overhead)
+  3. **LLM-as-Judge statt manueller Sichtprüfung:**
+     - Judge-Prompt: "Bewerte die Antwort auf einer Skala 0–5 gemessen an der Ground-Truth. Antworte nur mit der Zahl."
+     - Judge-Model: `moe-auto` (selbst), oder dedizierter Judge via `BENCHMARK_JUDGE_MODEL` env var
+  4. **Reproduzierbarkeit:**
+     - `docker-compose.yml` in `moe-benchmark/` pinnt `neo4j:5.18.0` (nicht latest)
+     - `requirements.txt` mit festen Versionen
+     - Fixture-Dataset (`data/fixtures/sample_100.jsonl`) für schnelle Smoke-Tests ohne volle Download
+  5. Ausführung via `make benchmark` in `moe-benchmark/`.
+- **Acceptance criteria:**
+  - `make benchmark` läuft durch ohne manuelle Eingriffe.
+  - Output-JSON enthält `zero_shot_score`, `graphrag_score`, `latency_ms`, `token_count` pro Q&A-Pair.
+  - GraphRAG-Score ist im Mittel höher als Zero-Shot-Score (Validierung dass GraphRAG hilft).
+  - Ergebnis ist mit einem `git log`-Hash verknüpft (reproduzierbar, zitierbar).
+  - `neo4j:latest` kommt in keiner Benchmark-Konfigurationsdatei vor.
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on
@@ -913,18 +1005,24 @@ These are suggestions, not constraints — any agent may pick up any
 updates `Owner:`/`Status:` accordingly. If two agents target the same files,
 check each other's status logs first and note the overlap in Section 3.
 
-**New tasks dependency graph (TASK-10 through TASK-18):**
+**New tasks dependency graph (TASK-10 through TASK-21):**
 ```
+Quality Enhancements:
 TASK-10 (Trust-Score)
     └── TASK-11 (Self-Critique)
     └── TASK-14 (HITL Gate)
             └── TASK-15 (Cynefin) [informs Gate trigger]
 
-TASK-12 (Decision Log)   ← independent, high priority
+TASK-12 (Decision Log)        ← independent, high priority
 TASK-13 (Boundary Contracts)  ← independent
 TASK-16 (Cascade Resolution)  ← extends cascade.py (feat 886944f7)
-TASK-17 (Scope Guard)    ← independent
-TASK-18 (Handover)       ← independent
+TASK-17 (Scope Guard)         ← independent
+TASK-18 (Handover)            ← independent
+
+GraphRAG / Wikipedia Knowledge:
+TASK-19 (YAGO 4 Import)
+    └── TASK-20 (Wikipedia Abstracts Chunking + Embedding)
+            └── TASK-21 (GraphRAG Benchmark Harness)
 ```
 
 ---
