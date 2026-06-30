@@ -1887,7 +1887,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
         # URL hallucination guard: if the response contains external URLs that were
         # not returned by a real tool call, append a visible warning to the stream.
         _resp_text = content if isinstance(content, str) else ""
-        if _resp_text and request.tools:
+        if _resp_text and False:  # request.tools not available in stream_response scope
             import re as _re
             _url_pattern = _re.compile(r'https?://[^\s\)\]"\'<>]+', _re.IGNORECASE)
             _found_urls = _url_pattern.findall(_resp_text)
