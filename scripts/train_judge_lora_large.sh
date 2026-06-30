@@ -42,11 +42,11 @@ echo "   Job ID      : ${SLURM_JOB_ID}"
 echo "   Start       : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # ── Environment ──────────────────────────────────────────────────────────────
-module purge
-module use /appl/local/laifs/modules
-module load lumi-aif-singularity-bindings
+# module purge
+# module use /appl/local/laifs/modules
+# module load lumi-aif-singularity-bindings
 
-export SIF=/appl/local/laifs/containers/lumi-multitorch-latest.sif
+export SIF=/scratch/project_465003058/hornphil/lumi-multitorch-latest.sif
 export HF_HOME="${HF_CACHE}"
 export TRANSFORMERS_CACHE="${HF_CACHE}/transformers"
 export TOKENIZERS_PARALLELISM=false

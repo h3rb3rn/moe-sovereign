@@ -52,4 +52,5 @@ from graph.synthesis import (
     _should_replan,
     resolve_conflicts_node,
     critic_node,
+    self_critique_node,
 )

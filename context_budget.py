@@ -131,6 +131,20 @@ async def get_model_max_output_async(
     return result
 
 
+_CLAUDE_CTX_TABLE: dict[str, int] = {
+    # Claude 4.x family — 200k context window
+    "claude-opus-4":    200_000,
+    "claude-sonnet-4":  200_000,
+    "claude-haiku-4":   200_000,
+    # Claude 3.x family — 200k context window
+    "claude-3-7":       200_000,
+    "claude-3-5":       200_000,
+    "claude-3-opus":    200_000,
+    "claude-3-sonnet":  200_000,
+    "claude-3-haiku":   200_000,
+}
+
+
 def get_model_context_window(model: str) -> int:
     """Estimate context window (tokens) for *model* using a parameter-count heuristic.
 
@@ -141,15 +155,21 @@ def get_model_context_window(model: str) -> int:
     This replaces the old name-based lookup table, which required manual maintenance
     and silently returned wrong values for renamed or future models.
     """
-    # First check for explicit ctx suffixes (e.g. ctx4k, ctx8k, 32k, 128k) in name
     name_lower = (model or "").lower()
+
+    # Claude models carry no parameter-count suffix — look up by name prefix.
+    for prefix, ctx in _CLAUDE_CTX_TABLE.items():
+        if name_lower.startswith(prefix):
+            return ctx
+
+    # First check for explicit ctx suffixes (e.g. ctx4k, ctx8k, 32k, 128k) in name
     ctx_match = re.search(r'ctx(\d+)k', name_lower)
     if not ctx_match:
         ctx_match = re.search(r'-(\d+)k\b', name_lower)
     if not ctx_match:
         # Avoid matching parameter sizes like "32b" by matching "32k"
         ctx_match = re.search(r'\b(\d+)k\b', name_lower)
-        
+
     if ctx_match:
         return int(ctx_match.group(1)) * 1024
     if "128k" in name_lower or "ctx128k" in name_lower:

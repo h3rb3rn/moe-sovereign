@@ -88,11 +88,28 @@ def check_dor(task: dict, state_: dict, task_index: int = 0) -> List[DoRViolatio
     return violations
 
 
-def log_dor_result(task: dict, violations: List[DoRViolation], task_index: int = 0) -> None:
-    """Write DoR check results to the application log."""
+def log_dor_result(
+    task: dict,
+    violations: List[DoRViolation],
+    task_index: int = 0,
+    request_id: str = "",
+) -> None:
+    """Write DoR check results to the application log and decision log."""
     tid = f"{task.get('category', '?')}[{task_index}]"
     if not violations:
         logger.debug("✅ DoR[%s]: all checks passed", tid)
         return
     for v in violations:
         logger.warning("⚠️ DoR[%s] %s: %s", v.task_id, v.rule, v.message)
+    if violations and request_id:
+        try:
+            from services.decision_log import log_decision, DecisionType
+            summary = "; ".join(f"{v.rule}: {v.message}" for v in violations)
+            log_decision(
+                DecisionType.DOR_FAIL,
+                request_id,
+                rationale=f"DoR pre-dispatch check failed for task {tid}: {summary}",
+                metadata={"task_id": tid, "violations": [{"rule": v.rule, "message": v.message} for v in violations]},
+            )
+        except Exception as e:
+            logger.debug("dor_check: decision_log emit failed: %s", e)

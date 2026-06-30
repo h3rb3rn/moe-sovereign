@@ -675,7 +675,7 @@ from graph import (
     research_node,
     _extract_authoritative_domains, _rerank_graph_context, _compress_graph_context_llm,
     merger_node, research_fallback_node, thinking_node,
-    _should_replan, resolve_conflicts_node, critic_node, _route_cache,
+    _should_replan, resolve_conflicts_node, critic_node, self_critique_node, _route_cache,
 )
 
 async def _init_graph_rag() -> None:
@@ -995,6 +995,7 @@ builder.add_node("research_fallback",  research_fallback_node)
 builder.add_node("thinking",           thinking_node)
 builder.add_node("merger",             merger_node)
 builder.add_node("resolve_conflicts",  resolve_conflicts_node)
+builder.add_node("self_critique",      self_critique_node)
 builder.add_node("critic",             critic_node)
 
 builder.set_entry_point("cache")
@@ -1017,8 +1018,10 @@ builder.add_edge("research_fallback", "thinking")
 builder.add_edge("thinking", "merger")
 builder.add_conditional_edges(
     "merger", _should_replan,
-    {"planner": "planner", "critic": "resolve_conflicts"},
+    {"planner": "planner", "critic": "resolve_conflicts", "self_critique": "self_critique"},
 )
+# Self-critique loops back to merger for re-evaluation (TASK-11)
+builder.add_edge("self_critique", "merger")
 builder.add_edge("resolve_conflicts", "critic")
 builder.add_edge("critic", END)
 
@@ -1176,6 +1179,7 @@ from routes.anthropic_compat import router as _anthropic_router
 from routes.codex_proxy      import router as _codex_proxy_router
 from routes.context_search   import router as _context_search_router
 from routes.embeddings       import router as _embeddings_router
+from routes.gates            import router as _gates_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1189,6 +1193,7 @@ app.include_router(_models_router)
 app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
 app.include_router(_context_search_router)
+app.include_router(_gates_router)
 app.include_router(_embeddings_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
@@ -1746,7 +1751,12 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "vector_confidence": 0.5,
                  "graph_confidence": 0.5,
                  "fuzzy_routing_scores": {},
-                 "no_cache": no_cache},
+                 "no_cache": no_cache,
+                 "trust_score": 0.0,
+                 "trust_verdict": "",
+                 "self_critique_round": 0,
+                 "self_critique_max": int(__import__("os").getenv("SELF_CRITIQUE_MAX_ROUNDS", "2")),
+                 "constitution_violations": []},
                 config,
             )
         except Exception as e:

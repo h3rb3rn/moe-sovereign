@@ -2,7 +2,7 @@
 
 Purpose: compact current-state file for context restore.
 
-## Current Status (2026-06-28)
+## Current Status (2026-06-29)
 
 All active tasks are tracked as follows:
 
@@ -25,7 +25,7 @@ Authoritative task details and resolution notes:
 
 1. **TASK-9: Large-Scale Dataset Generation & Judge Model Training (v2)** (highest priority active item)
    - Complete 90k samples generation using the async generator `generate_judge_dataset_async.py` (concurrency 48) on LUMI-G.
-   - Run the chained trigger job `merge_shards_and_train.sh` (Job `19588422`) to merge/deduplicate/trigger DDP training.
+   - Run the chained trigger job `merge_shards_and_train.sh` (Job `19598025`) to merge/deduplicate/trigger DDP training.
    - Run the 8-GPU QLoRA DDP training on Qwen2.5-32B-Instruct.
    - Merge the final adapter and quantize the model to 4-bit (AWQ/GGUF) for deployment on `N04-RTX`.
 
@@ -50,6 +50,8 @@ Authoritative task details and resolution notes:
 - **2026-06-28**: Concurrency increased to 48 in `generate_judge_dataset_async.py` using `asyncio` and `httpx` to maximize vLLM throughput (10x-20x speedup).
 - **2026-06-28**: Fixed deduplication key truncation bug in `merge_shards_and_train.sh` to prevent loss of unique samples.
 - **2026-06-28**: Set up automated SLURM job chaining (`--dependency=afterok:JOB_IDS`) for seamless pipeline execution.
+- **2026-06-29**: Copied singularity container image to local project scratch (14 GB) and updated scripts to use this copy, resolving compute node mount issues (`/pfs/lustref1` unavailable on nodes).
+- **2026-06-29**: Resubmitted async datagen shards (Jobs 19598021-23) and merge-and-trigger job (Job 19598025) with automatic dependencies.
 
 ## Do Not Forget
 

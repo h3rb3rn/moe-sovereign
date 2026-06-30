@@ -2525,6 +2525,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       function onCcMoeModeChange() {
         const mode = document.getElementById('cc-moe-mode').value;
         document.getElementById('cc-template-row').style.display = mode === 'moe_orchestrated' ? '' : 'none';
+        // Clear expert_template_id when switching away from moe_orchestrated — it is
+        // irrelevant for native/moe_reasoning and was causing spurious template capping.
+        if (mode !== 'moe_orchestrated') {
+          document.getElementById('cc-expert-template').value = '';
+        }
       }
 
       function _fillCcFormFromConfig(cfg, name, isNew) {
@@ -2651,11 +2656,15 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         const atIdx   = llmhost.indexOf('@');
         const tool_model    = atIdx > -1 ? llmhost.slice(0, atIdx) : llmhost;
         const tool_endpoint = atIdx > -1 ? llmhost.slice(atIdx + 1) : '';
+        const mode = document.getElementById('cc-moe-mode').value;
+        const expert_tmpl = mode === 'moe_orchestrated'
+          ? document.getElementById('cc-expert-template').value
+          : '';  // always clear when not moe_orchestrated
         const body = {
           name,
-          moe_mode:             document.getElementById('cc-moe-mode').value,
+          moe_mode:             mode,
           accepted_models:      document.getElementById('cc-accepted-models').value.split(',').map(s => s.trim()).filter(Boolean),
-          expert_template_id:   document.getElementById('cc-expert-template').value,
+          expert_template_id:   expert_tmpl,
           tool_model,
           tool_endpoint,
           tool_choice:          document.getElementById('cc-tool-choice').value,

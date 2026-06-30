@@ -157,6 +157,9 @@ services:
       - CONVERSATION_LOG_RETENTION_MAX=${CONVERSATION_LOG_RETENTION_MAX}
       - NEO4J_PASS=${NEO4J_PASS}
       - KAFKA_URL=kafka://moe-kafka:9092
+      # Tier 2-4 long-term memory for CC sessions (Tier-2 ChromaDB warm, Tier-3 context-index, Tier-4 Neo4j).
+      # Per-profile opt-out: set long_memory=false in the CC profile JSON.
+      - CC_CONTEXT_INDEX_ENABLED=true
       # Tier-2 semantic memory: dedicated CPU embed sidecar — no inference-GPU load.
       # context_index.py (Tier-3) uses in-process ONNX and ignores these vars.
       - SEMANTIC_MEMORY_EMBED_URL=http://moe-embed:11434

@@ -1793,6 +1793,7 @@ async def api_create_profile(request: Request):
         "tool_choice":          body.get("tool_choice", "auto"),
         "expert_template_id":   body.get("expert_template_id", ""),
         "tool_timeout":         int(_tt) if _tt else None,
+        "long_memory":          bool(body.get("long_memory", True)),
     }
     profiles.append(profile)
     save_profiles(profiles)
@@ -1820,6 +1821,7 @@ async def api_export_profiles(ids: str = ""):
             "tool_choice":          p.get("tool_choice", "auto"),
             "expert_template_id":   p.get("expert_template_id", ""),
             "tool_timeout":         p.get("tool_timeout"),
+            "long_memory":          p.get("long_memory", True),
         }
         for p in profiles
     ]
@@ -1891,6 +1893,7 @@ async def api_import_profiles(request: Request, mode: str = "merge"):
             "tool_choice":          item.get("tool_choice", "auto"),
             "expert_template_id":   item.get("expert_template_id", ""),
             "tool_timeout":         int(_tt_imp) if _tt_imp else None,
+            "long_memory":          bool(item.get("long_memory", True)),
         })
         existing_names.add(name)
         imported += 1
@@ -1922,6 +1925,7 @@ async def api_update_profile(profile_id: str, request: Request):
                 "tool_choice":          body.get("tool_choice", p.get("tool_choice", "auto")),
                 "expert_template_id":   body.get("expert_template_id", p.get("expert_template_id", "")),
                 "tool_timeout":         int(_tt_upd) if _tt_upd else p.get("tool_timeout"),
+                "long_memory":          bool(body.get("long_memory", p.get("long_memory", True))),
             })
             save_profiles(profiles)
             return {"ok": True, "restart_hint": True}
@@ -6117,6 +6121,10 @@ async def user_api_create_cc_profile(request: Request, user_id: str = Depends(re
         raise HTTPException(status_code=403, detail=f"Server '{tool_endpoint}' nicht freigeschaltet")
     accepted_models   = [m.strip() for m in (body.get("accepted_models") or []) if isinstance(m, str) and m.strip()]
     expert_template_id = (body.get("expert_template_id") or "").strip()
+    # expert_template_id is only meaningful for moe_orchestrated — clear it for other modes
+    moe_mode_new = body.get("moe_mode", "native") if "moe_mode" in body else None
+    if moe_mode_new and moe_mode_new != "moe_orchestrated":
+        expert_template_id = ""
     if expert_template_id:
         allowed_tmpl_ids = set(perms.get("expert_template", []))
         own_tmpl_ids = {t["id"] for t in await db.list_user_templates(user_id)}
@@ -6256,6 +6264,10 @@ async def user_api_update_cc_profile(profile_id: str, request: Request, user_id:
     old_cfg = json.loads(existing["config_json"])
     accepted_models   = [m.strip() for m in (body.get("accepted_models") or []) if isinstance(m, str) and m.strip()]
     expert_template_id = (body.get("expert_template_id") or "").strip()
+    # expert_template_id is only meaningful for moe_orchestrated — clear it for other modes
+    moe_mode_new = body.get("moe_mode", "native") if "moe_mode" in body else None
+    if moe_mode_new and moe_mode_new != "moe_orchestrated":
+        expert_template_id = ""
     if expert_template_id:
         allowed_tmpl_ids = set(perms.get("expert_template", []))
         own_tmpl_ids = {t["id"] for t in await db.list_user_templates(user_id)}

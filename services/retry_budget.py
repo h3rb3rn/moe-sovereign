@@ -73,4 +73,20 @@ async def check_and_emit_stuck(
         payload["cascade_type"],
         (state_.get("agentic_gap") or "")[:80],
     )
+
+    try:
+        from services.decision_log import log_decision, DecisionType
+        log_decision(
+            DecisionType.STUCK_LOOP,
+            response_id,
+            rationale=(
+                f"Agentic loop exhausted budget after {iteration}/{max_rounds} rounds "
+                f"without resolving gap (cascade={payload['cascade_type']}): "
+                f"{(state_.get('agentic_gap') or '')[:200]}"
+            ),
+            metadata={"iteration": iteration, "max_rounds": max_rounds, "cascade_type": payload["cascade_type"]},
+        )
+    except Exception as e:
+        logger.debug("retry_budget: decision_log emit failed: %s", e)
+
     return True

@@ -3,15 +3,15 @@
 !!! info "Auto-generated"
     This page is updated every 15 minutes by the `moe-docs-sync` service.
 
-*Last updated: **2026-06-29 07:50***
+*Last updated: **2026-06-30 23:39***
 
 ## Metrics
 
 | Metric | Value |
 |--------|-------|
-| Neo4j Entities | 15053 |
-| Neo4j Relations | 15790 |
-| ChromaDB Documents | 3349 |
+| Neo4j Entities | ? |
+| Neo4j Relations | ? |
+| ChromaDB Documents | ? |
 | Total Requests | ? |
 
 ## Docker Containers
@@ -21,7 +21,7 @@
 | cadvisor | running | 9338→8080/tcp |
 | chromadb-vector | running | — |
 | docker-socket-proxy | running | — |
-| langgraph-orchestrator | running | 8002→8000/tcp |
+| langgraph-orchestrator | restarting | — |
 | mcp-precision | running | 8003→8003/tcp |
 | moe-admin | running | 8088→8088/tcp |
 | moe-docs | running | 8098→8000/tcp |
