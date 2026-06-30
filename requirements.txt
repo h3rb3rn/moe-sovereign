@@ -39,5 +39,8 @@ cryptography>=48.0.1
 # --- PDF generation (HTML→PDF via WeasyPrint) ---
 weasyprint>=62.0
 
+# --- System Constitution enforcement ---
+pyyaml>=6.0
+
 # --- Pinned transitive deps (guard against unwanted bumps) ---
 urllib3==2.7.0
