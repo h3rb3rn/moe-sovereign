@@ -198,12 +198,21 @@ def resolve_requested_ctx(model: str, state_num_ctx: int = 0, num_ctx_env: int =
     per-template override → global env default → static parameter-count heuristic,
     clamped to that heuristic if it is smaller (VRAM-safety clamp).
 
+    Explicit overrides (state_num_ctx, num_ctx_env) are never clamped — the
+    heuristic is a last-resort fallback only and must not silently override an
+    admin-configured value (e.g. a 9B model whose GGUF supports 256k would
+    otherwise be clamped to the conservative 8 192 heuristic).
+
     PRE-FLIGHT budget checks MUST use this instead of querying the model's
     *currently loaded* state via Ollama ``/api/ps`` (``get_model_ctx_async``) —
     that reflects whatever a prior call loaded, which can disagree with what
     THIS call will request and cause spurious overflow warnings.
     """
     requested_ctx = state_num_ctx or num_ctx_env or get_model_context_window(model)
+    # Explicit overrides must be respected as-is — only apply the VRAM-safety
+    # clamp when the context window was determined by the heuristic fallback.
+    if state_num_ctx or num_ctx_env:
+        return requested_ctx
     safe_ctx = get_model_context_window(model)
     if safe_ctx > 0 and safe_ctx < requested_ctx:
         if label:
