@@ -1,6 +1,6 @@
 # Expert Overview
 
-*15 experts — updated: 2026-06-29 07:50*
+*15 experts — updated: 2026-06-30 23:54*
 
 | Expert | Description | Page |
 |--------|-------------|------|

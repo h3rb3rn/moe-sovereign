@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}{{ t(request, 'page.decision_log') }} – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-journal-code section-icon text-info"></i> {{ t(request, 'page.decision_log') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.decision_log_desc') }}</small>
+  </div>
+</div>
+
+{# Filter bar #}
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-auto">
+        <select id="f-type" class="form-select form-select-sm" onchange="loadLog()">
+          <option value="">All types</option>
+          <option>JUDGE_OVERRIDE</option>
+          <option>CONSTITUTION_BLOCK</option>
+          <option>CONSTITUTION_WARN</option>
+          <option>DOR_FAIL</option>
+          <option>TRUST_BLOCK</option>
+          <option>REPLAN</option>
+          <option>STUCK_LOOP</option>
+          <option>SELF_CRITIQUE_TRIGGERED</option>
+          <option>BOUNDARY_VIOLATION</option>
+          <option>SCOPE_VIOLATION</option>
+        </select>
+      </div>
+      <div class="col">
+        <input id="f-request" class="form-control form-control-sm" placeholder="Request ID…" onkeydown="if(event.key==='Enter') loadLog()">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="loadLog()"><i class="bi bi-search me-1"></i>Filter</button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" onclick="clearFilters()">Clear</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Log table #}
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle" id="dl-table">
+        <thead class="table-dark small">
+          <tr>
+            <th>{{ t(request, 'lbl.requested_at') }}</th>
+            <th>{{ t(request, 'lbl.decision_type') }}</th>
+            <th>Request ID</th>
+            <th>{{ t(request, 'lbl.rationale') }}</th>
+            <th>Metadata</th>
+          </tr>
+        </thead>
+        <tbody id="dl-body">
+          <tr><td colspan="5" class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'loading') }}
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-between align-items-center small text-muted py-2">
+    <span id="dl-count">—</span>
+    <div class="d-flex gap-1" id="dl-pagination"></div>
+  </div>
+</div>
+
+<script>
+let _offset = 0;
+let _total  = 0;
+const _limit = 50;
+
+const typeBadgeClass = {
+  JUDGE_OVERRIDE:         'bg-warning text-dark',
+  CONSTITUTION_BLOCK:     'bg-danger',
+  CONSTITUTION_WARN:      'bg-warning text-dark',
+  DOR_FAIL:               'bg-secondary',
+  TRUST_BLOCK:            'bg-danger',
+  REPLAN:                 'bg-primary',
+  STUCK_LOOP:             'bg-dark',
+  SELF_CRITIQUE_TRIGGERED:'bg-info text-dark',
+  BOUNDARY_VIOLATION:     'bg-warning text-dark',
+  SCOPE_VIOLATION:        'bg-warning text-dark',
+};
+
+function clearFilters() {
+  document.getElementById('f-type').value = '';
+  document.getElementById('f-request').value = '';
+  _offset = 0;
+  loadLog();
+}
+
+function buildUrl() {
+  const p = new URLSearchParams();
+  const t = document.getElementById('f-type').value;
+  const r = document.getElementById('f-request').value.trim();
+  if (t) p.set('decision_type', t);
+  if (r) p.set('request_id', r);
+  p.set('limit', _limit);
+  p.set('offset', _offset);
+  return '/api/decision-log?' + p.toString();
+}
+
+async function loadLog() {
+  document.getElementById('dl-body').innerHTML =
+    '<tr><td colspan="5" class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+  try {
+    const r = await fetch(buildUrl());
+    const d = await r.json();
+    _total = d.total || 0;
+    renderTable(d.records || []);
+    renderPagination();
+    document.getElementById('dl-count').textContent =
+      `${_total.toLocaleString()} decisions (showing ${(d.records || []).length})`;
+  } catch (e) {
+    document.getElementById('dl-body').innerHTML =
+      `<tr><td colspan="5" class="text-danger text-center py-3">${e.message}</td></tr>`;
+  }
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderTable(rows) {
+  if (!rows.length) {
+    document.getElementById('dl-body').innerHTML =
+      '<tr><td colspan="5" class="text-center text-muted py-4">No decisions found.</td></tr>';
+    return;
+  }
+  document.getElementById('dl-body').innerHTML = rows.map(r => {
+    const ts    = (r.ts || '').replace('T', ' ').substring(0, 19);
+    const dt    = r.decision_type || '';
+    const badge = `<span class="badge ${typeBadgeClass[dt] || 'bg-secondary'}">${escHtml(dt)}</span>`;
+    const meta  = r.metadata ? Object.keys(r.metadata).length : 0;
+    const metaHtml = meta
+      ? `<button class="btn btn-link btn-sm p-0 text-muted" type="button"
+             data-bs-toggle="collapse" data-bs-target="#meta-${escHtml(r.id || r.ts)}">
+           <i class="bi bi-chevron-down"></i> ${meta} key${meta > 1 ? 's' : ''}
+         </button>
+         <div class="collapse mt-1" id="meta-${escHtml(r.id || r.ts)}">
+           <pre class="small bg-dark text-light p-2 rounded" style="font-size:0.75rem;max-height:120px;overflow-y:auto">${escHtml(JSON.stringify(r.metadata, null, 2))}</pre>
+         </div>`
+      : '<span class="text-muted">—</span>';
+    return `<tr>
+      <td class="text-muted small text-nowrap">${escHtml(ts)}</td>
+      <td>${badge}</td>
+      <td class="font-monospace small">${escHtml((r.request_id || '').substring(0, 16))}…</td>
+      <td class="small">${escHtml(r.rationale || '')}</td>
+      <td>${metaHtml}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination() {
+  const pages = Math.ceil(_total / _limit);
+  const cur   = Math.floor(_offset / _limit);
+  const pg    = document.getElementById('dl-pagination');
+  pg.innerHTML = '';
+  if (pages <= 1) return;
+  const mkBtn = (label, off, disabled) => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-outline-secondary btn-sm';
+    b.innerHTML = label;
+    b.disabled  = disabled;
+    b.onclick   = () => { _offset = off; loadLog(); };
+    return b;
+  };
+  pg.append(mkBtn('«', 0, cur === 0));
+  pg.append(mkBtn('‹', Math.max(0, _offset - _limit), cur === 0));
+  const span = document.createElement('span');
+  span.className = 'btn btn-sm disabled';
+  span.textContent = `${cur + 1} / ${pages}`;
+  pg.append(span);
+  pg.append(mkBtn('›', _offset + _limit, cur >= pages - 1));
+  pg.append(mkBtn('»', (pages - 1) * _limit, cur >= pages - 1));
+}
+
+loadLog();
+</script>
+{% endblock %}

@@ -1144,5 +1144,25 @@
   "model_meta.lbl_strengths": "优势（逗号分隔）",
   "model_meta.lbl_tags": "标签",
   "model_meta.lbl_benchmarks": "基准分数（JSON）",
-  "model_meta.confirm_delete": "确认删除此条目？"
+  "model_meta.confirm_delete": "确认删除此条目？",
+
+  "lbl.trust_verdict": "信任度",
+  "lbl.cynefin_domain": "Cynefin域",
+  "lbl.self_critique_round": "自我批评",
+  "lbl.cascade_type": "级联",
+  "lbl.strategy_feedback": "策略评审",
+  "page.gates": "HITL审批",
+  "info.gates_desc": "人工审批门控 — 审查并批准或拒绝待处理的流水线决策。",
+  "lbl.gate_id": "Gate ID",
+  "lbl.gate_reason": "原因",
+  "lbl.gate_status": "状态",
+  "lbl.gate_expires": "到期时间",
+  "btn.approve": "批准",
+  "btn.reject": "拒绝",
+  "info.no_gates": "无待处理的Gate。",
+  "page.decision_log": "决策日志",
+  "info.decision_log_desc": "所有非平凡流水线决策的仅追加日志，含必填理由。",
+  "lbl.decision_type": "决策类型",
+  "lbl.rationale": "理由",
+  "portal.handover_sessions": "待处理移交会话"
 }

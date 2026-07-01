@@ -839,6 +839,16 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               <p class="text-muted text-center small py-1 mb-0">No recent activity</p>
             </div>
           </div>
+          <!-- Handover sessions -->
+          <hr class="my-0" style="border-color:#e2e8f0">
+          <div class="px-3 pt-2 pb-3" id="handover-section" style="display:none">
+            <div class="d-flex align-items-center gap-1 mb-2">
+              <i class="bi bi-hand-index-thumb text-warning" style="font-size:.85rem"></i>
+              <span class="small fw-semibold text-warning" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">{{ t(request, 'portal.handover_sessions') }}</span>
+              <span class="badge bg-warning text-dark ms-1" id="handover-badge" style="font-size:.6rem">0</span>
+            </div>
+            <div id="handover-list"></div>
+          </div>
         </div>
       </div>
 
@@ -1178,6 +1188,77 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           renderActive(data.active);
           renderCompleted(data.recent);
         } catch (e) { /* network error — silent */ }
+        // Handover sessions (polled every 30s — TTL is 4h, no need for aggressive polling)
+        if (!window._lastHandoverPoll || Date.now() - window._lastHandoverPoll > 30000) {
+          window._lastHandoverPoll = Date.now();
+          pollHandovers();
+        }
+      }
+
+      async function pollHandovers() {
+        try {
+          const res = await fetch('/user/api/my-handovers');
+          if (!res.ok) return;
+          const data = await res.json();
+          renderHandovers(data.handovers || []);
+        } catch (e) { /* silent */ }
+      }
+
+      function renderHandovers(handovers) {
+        const section = document.getElementById('handover-section');
+        const list    = document.getElementById('handover-list');
+        const badge   = document.getElementById('handover-badge');
+        if (!section || !list) return;
+        if (!handovers.length) {
+          section.style.display = 'none';
+          return;
+        }
+        section.style.display = '';
+        if (badge) badge.textContent = handovers.length;
+        const _trustColor = {PROCEED: 'success', PROCEED_WITH_ASSUMPTION: 'warning', BLOCK: 'danger'};
+        list.innerHTML = handovers.map(h => {
+          const ttlMin  = h.ttl_remaining > 0 ? Math.ceil(h.ttl_remaining / 60) : 0;
+          const tvClass = _trustColor[h.trust_verdict] || 'secondary';
+          const tvLabel = h.trust_verdict || '';
+          const inputPreview = h.input ? escHtml(h.input.substring(0, 120)) + (h.input.length > 120 ? '…' : '') : '—';
+          return `<div class="mb-2 p-2 rounded border" style="background:#fffbeb;border-color:#fde68a!important;font-size:.8rem">
+            <div class="d-flex align-items-start gap-2 mb-1">
+              <i class="bi bi-hand-index-thumb text-warning mt-1" style="flex-shrink:0"></i>
+              <div class="flex-grow-1">
+                <div class="text-muted small font-monospace" style="font-size:.7rem">${escHtml(h.handover_id.slice(-12))}</div>
+                <div class="fw-semibold small mt-1 text-truncate" style="max-width:300px" title="${escHtml(h.reason)}">${escHtml(h.reason)}</div>
+                <div class="text-muted mt-1" style="font-size:.75rem">${inputPreview}</div>
+                <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+                  ${h.mode ? `<span class="badge bg-secondary" style="font-size:.58rem">${escHtml(h.mode)}</span>` : ''}
+                  ${tvLabel ? `<span class="badge bg-${tvClass} text-${tvClass==='warning'?'dark':'white'}" style="font-size:.58rem">${escHtml(tvLabel)}</span>` : ''}
+                  ${h.cynefin_domain ? `<span class="badge bg-info text-dark" style="font-size:.58rem">${escHtml(h.cynefin_domain)}</span>` : ''}
+                  ${ttlMin > 0 ? `<span class="text-muted ms-1" style="font-size:.7rem"><i class="bi bi-clock me-1"></i>${ttlMin}min remaining</span>` : '<span class="text-danger" style="font-size:.7rem">expiring soon</span>'}
+                </div>
+              </div>
+              <button class="btn btn-sm btn-warning py-0 px-2" style="font-size:.72rem;white-space:nowrap"
+                      onclick="resumeHandover('${escHtml(h.handover_id)}')">
+                <i class="bi bi-play-circle me-1"></i>Resume
+              </button>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      async function resumeHandover(handoverId) {
+        try {
+          const res = await fetch(`/user/api/proxy-handover/${encodeURIComponent(handoverId)}/resume`, {method: 'POST'});
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert('Resume failed: ' + (err.detail || res.status));
+            return;
+          }
+          const data = await res.json();
+          // Notify user and reload to show updated session state
+          alert('Handover restored. Your session will continue in the next request.');
+          pollHandovers();
+        } catch(e) {
+          alert('Resume error: ' + e.message);
+        }
       }
 
       function startLiveMonitor() {
@@ -1264,22 +1345,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         <div class="card-body p-0">
           <table class="table table-sm mb-0">
             <thead class="table-light">
-              <tr>
-                <th>Key-Prefix</th>
-                <th>Label</th>
-                <th>CC Profile</th>
-                <th title="KI-gestützte dynamische Experten-Auswahl">Dyn. Routing</th>
-                <th title="Nur lokale Inference-Endpoints verwenden (kein Cloud-API-Zugriff)">Local Only</th>
-                <th title="{{ t(request, 'portal.native_num_ctx_hint') }}">{{ t(request, 'portal.native_num_ctx_col') }}</th>
-                <th>{{ t(request, 'portal.col_created') }}</th>
-                <th>{{ t(request, 'lbl.last_used') }}</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
+              <tr><th>Key-Prefix</th><th>Label</th><th>CC Profile</th><th>{{ t(request, 'portal.col_created') }}</th><th>{{ t(request, 'lbl.last_used') }}</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
               {% for k in keys %}
-              <tr id="key-row-{{ k.id }}"{% if not k.is_active %} class="table-secondary text-muted"{% endif %}>
+              <tr id="key-row-{{ k.id }}">
                 <td><code>{{ k.key_prefix }}...</code></td>
                 <td>
                   <span id="key-label-text-{{ k.id }}" class="text-truncate" style="max-width:160px;display:inline-block">{{ k.label or '—' }}</span>
@@ -1302,35 +1372,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <small class="text-muted">—</small>
                   {% endif %}
                 </td>
-                <td>
-                  <div class="form-check form-switch d-flex justify-content-center mb-0"
-                       title="KI-gesteuertes dynamisches Expert-Routing ein-/ausschalten">
-                    <input class="form-check-input" type="checkbox" role="switch"
-                           id="dyn-routing-{{ k.id }}"
-                           {% if k.dynamic_routing %}checked{% endif %}
-                           onchange="saveKeyDynamicRouting('{{ k.id }}', this.checked)">
-                  </div>
-                </td>
-                <td>
-                  <div class="form-check form-switch d-flex justify-content-center mb-0"
-                       title="Nur lokale Endpoints (kein Cloud-API-Zugriff für diesen Key)">
-                    <input class="form-check-input" type="checkbox" role="switch"
-                           id="local-only-{{ k.id }}"
-                           {% if k.local_only_routing %}checked{% endif %}
-                           onchange="saveKeyLocalOnlyRouting('{{ k.id }}', this.checked)">
-                  </div>
-                </td>
-                <td>
-                  <input type="number" class="form-control form-control-sm text-center"
-                         id="native-num-ctx-{{ k.id }}"
-                         style="width:90px;font-size:.75rem"
-                         min="0" step="1024"
-                         value="{{ k.native_num_ctx or 0 }}"
-                         placeholder="0"
-                         title="{{ t(request, 'portal.native_num_ctx_hint') }}"
-                         onchange="saveKeyNativeNumCtx('{{ k.id }}', this.value)"
-                         onblur="saveKeyNativeNumCtx('{{ k.id }}', this.value)">
-                </td>
                 <td><small class="text-muted">{{ k.created_at[:10] }}</small></td>
                 <td><small class="text-muted">{{ k.last_used_at[:16] if k.last_used_at else t(request, 'lbl.never') }}</small></td>
                 <td>
@@ -1340,7 +1381,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <span class="badge bg-danger" style="font-size:.65rem">{{ t(request, 'status.locked') }}</span>
                   {% endif %}
                 </td>
-                <td class="text-nowrap">
+                <td>
                   {% if k.is_active %}
                   <form method="post" action="/user/keys/{{ k.id }}/revoke" style="display:inline"
                         onsubmit="return confirm('{{ t(request, 'portal.revoke_confirm') }}')">
@@ -1349,26 +1390,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                       <i class="bi bi-lock"></i> {{ t(request, 'portal.revoke_key') }}
                     </button>
                   </form>
-                  {% else %}
-                  <form method="post" action="/user/keys/{{ k.id }}/reactivate" style="display:inline"
-                        onsubmit="return confirm('Key reaktivieren?')">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-xs btn-outline-success" style="font-size:.7rem;padding:.15rem .4rem">
-                      <i class="bi bi-unlock"></i> Reaktivieren
-                    </button>
-                  </form>
-                  <form method="post" action="/user/keys/{{ k.id }}/archive" style="display:inline"
-                        onsubmit="return confirm('Key archivieren? Er wird aus der Liste entfernt und kann nicht mehr reaktiviert werden.')">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="btn btn-xs btn-outline-secondary ms-1" style="font-size:.7rem;padding:.15rem .4rem">
-                      <i class="bi bi-archive"></i> Archivieren
-                    </button>
-                  </form>
                   {% endif %}
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="9" class="text-muted text-center py-3">{{ t(request, 'portal.no_api_keys') }}</td></tr>
+              <tr><td colspan="7" class="text-muted text-center py-3">{{ t(request, 'portal.no_api_keys') }}</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -1432,53 +1458,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           window.location.reload();
         }
       }
-
-      async function saveKeyDynamicRouting(keyId, enabled) {
-        const r = await fetch(`/user/api/keys/${keyId}/dynamic-routing`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({enabled})
-        });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          alert(d.detail || 'Error saving');
-          // Revert toggle state
-          const cb = document.getElementById(`dyn-routing-${keyId}`);
-          if (cb) cb.checked = !enabled;
-        }
-      }
-
-      async function saveKeyLocalOnlyRouting(keyId, enabled) {
-        const r = await fetch(`/user/api/keys/${keyId}/local-only-routing`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({enabled})
-        });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          alert(d.detail || 'Error saving');
-          const cb = document.getElementById(`local-only-${keyId}`);
-          if (cb) cb.checked = !enabled;
-        }
-      }
-
-      async function saveKeyNativeNumCtx(keyId, value) {
-        const num_ctx = Math.max(0, parseInt(value) || 0);
-        const inp = document.getElementById(`native-num-ctx-${keyId}`);
-        if (inp) inp.value = num_ctx;
-        const r = await fetch(`/user/api/keys/${keyId}/native-num-ctx`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({num_ctx})
-        });
-        if (!r.ok) {
-          const d = await r.json().catch(() => ({}));
-          alert(d.detail || 'Error saving');
-        }
-      }
       </script>
 
-      <!-- Create new key -->
+      <!-- Neuen Key erstellen -->
       <div class="card">
         <div class="card-header bg-dark text-white"><i class="bi bi-plus-circle me-2"></i>{{ t(request, 'portal.create_key_title') }}</div>
         <div class="card-body">
@@ -1802,9 +1784,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               <i class="bi bi-pencil"></i>
             </button>
             {% endif %}
-            <button class="btn btn-sm btn-outline-secondary" title="{{ t(request, 'btn.copy_template') }}" onclick="copyOwnTemplate('{{ tmpl.id|replace('\'','\\\'') }}', '{{ tmpl.name|replace('\'','\\\'') }}')">
-              <i class="bi bi-copy"></i>
-            </button>
             <button class="btn btn-sm btn-outline-danger" onclick="deleteTemplate('{{ tmpl.id|replace('\'','\\\'') }}', '{{ tmpl.name|replace('\'','\\\'') }}')">
               <i class="bi bi-trash"></i>
             </button>
@@ -1850,24 +1829,12 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-judge-model">
                     <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
                   </select>
-                  <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the judge model. 0 = auto-detect from model.">
-                    <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
-                    <input type="number" id="tmpl-judge-num-ctx" class="form-control form-control-sm"
-                           style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
-                    <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
-                  </div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label small">{{ t(request, 'portal.tmpl_planner_model') }} <span class="text-muted">(llm@host, {{ t(request, 'portal.tmpl_empty_default') }})</span></label>
                   <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-planner-model">
                     <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
                   </select>
-                  <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the planner model. 0 = auto-detect from model.">
-                    <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
-                    <input type="number" id="tmpl-planner-num-ctx" class="form-control form-control-sm"
-                           style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
-                    <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
-                  </div>
                 </div>
               </div>
               <div class="mt-2">
@@ -2024,8 +1991,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-desc').value = '';
         document.getElementById('tmpl-judge-model').value = '';
         document.getElementById('tmpl-planner-model').value = '';
-        document.getElementById('tmpl-judge-num-ctx').value = '';
-        document.getElementById('tmpl-planner-num-ctx').value = '';
         document.getElementById('tmpl-judge-prompt').value = '';
         document.getElementById('tmpl-planner-prompt').value = '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
@@ -2047,8 +2012,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-desc').value = tmpl.description || '';
         _setSelectOrKeep('tmpl-judge-model', cfg.judge_model || '');
         _setSelectOrKeep('tmpl-planner-model', cfg.planner_model || '');
-        document.getElementById('tmpl-judge-num-ctx').value = cfg.judge_num_ctx || '';
-        document.getElementById('tmpl-planner-num-ctx').value = cfg.planner_num_ctx || '';
         document.getElementById('tmpl-judge-prompt').value = cfg.judge_prompt || '';
         document.getElementById('tmpl-planner-prompt').value = cfg.planner_prompt || '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
@@ -2058,23 +2021,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-error').classList.add('d-none');
         document.getElementById('tmpl-editor').classList.remove('d-none');
         document.getElementById('tmpl-editor').scrollIntoView({behavior:'smooth'});
-      }
-
-      async function copyOwnTemplate(tmplId, tmplName) {
-        try {
-          const res = await fetch('/user/api/templates');
-          const data = await res.json();
-          const tmpl = data.templates.find(t => t.id === tmplId);
-          if (!tmpl) { alert('Template not found'); return; }
-          const cfg = typeof tmpl.config_json === 'string' ? JSON.parse(tmpl.config_json) : tmpl.config_json || {};
-          const copyRes = await fetch('/user/api/templates', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ name: 'Copy of ' + tmpl.name, description: tmpl.description || '', config: cfg }),
-          });
-          if (copyRes.ok) window.location.reload();
-          else { const e = await copyRes.json().catch(() => ({})); alert('Error: ' + (e.detail || copyRes.statusText)); }
-        } catch(e) { alert('Error copying: ' + e.message); }
       }
 
       async function deleteTemplate(tmplId, name) {
@@ -2235,9 +2181,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         return {
           experts,
           judge_model:         document.getElementById('tmpl-judge-model').value.trim(),
-          judge_num_ctx:       parseInt(document.getElementById('tmpl-judge-num-ctx').value) || 0,
           planner_model:       document.getElementById('tmpl-planner-model').value.trim(),
-          planner_num_ctx:     parseInt(document.getElementById('tmpl-planner-num-ctx').value) || 0,
           judge_prompt:        document.getElementById('tmpl-judge-prompt').value.trim(),
           planner_prompt:      document.getElementById('tmpl-planner-prompt').value.trim(),
           enable_cache:        document.getElementById('tmpl-enable-cache').checked,
@@ -2356,18 +2300,18 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   </button>
                   {% endif %}
                   <button class="btn btn-xs btn-outline-secondary btn-sm"
-                          title="Copy as template"
+                          title="Als Vorlage kopieren"
                           onclick="copyCcProfile('{{ prof.id|replace('\'','\\\'') }}')">
                     <i class="bi bi-copy"></i>
                   </button>
                   {% if prof.editable %}
                   <button class="btn btn-xs btn-outline-secondary btn-sm"
-                          title="Export as JSON file"
+                          title="Als JSON-Datei exportieren"
                           onclick="exportCcProfileAsFile('{{ prof.id|replace('\'','\\\'') }}')">
                     <i class="bi bi-download"></i>
                   </button>
                   <button class="btn btn-xs btn-outline-secondary btn-sm"
-                          title="Show JSON source code"
+                          title="JSON-Quellcode anzeigen"
                           onclick="showCcProfileJson('{{ prof.id|replace('\'','\\\'') }}')">
                     <i class="bi bi-code-slash"></i>
                   </button>
@@ -2461,15 +2405,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </div>
           </div>
           <div class="row g-3 mb-3">
-            <div class="col-md-4">
+            <div class="col-md-6">
               <label class="form-label small fw-semibold">Max Tool-Tokens</label>
               <input type="number" class="form-control form-control-sm" id="cc-tool-max-tokens" value="8192" min="512">
             </div>
-            <div class="col-md-4">
-              <label class="form-label small fw-semibold">Context Window <span class="text-muted">(0 = auto)</span></label>
-              <input type="number" class="form-control form-control-sm" id="cc-context-window" value="0" min="0">
-            </div>
-            <div class="col-md-4">
+            <div class="col-md-6">
               <label class="form-label small fw-semibold">Max Reasoning-Tokens</label>
               <input type="number" class="form-control form-control-sm" id="cc-reasoning-max-tokens" value="16384" min="512">
             </div>
@@ -2502,7 +2442,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         <div class="modal-dialog modal-lg">
           <div class="modal-content">
             <div class="modal-header">
-              <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>CC Profile – JSON Source Code</h5>
+              <h5 class="modal-title"><i class="bi bi-code-slash me-2"></i>CC Profile – JSON Quellcode</h5>
               <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -2510,10 +2450,10 @@ const CSRF_TOKEN = "{{ csrf_token }}";
             </div>
             <div class="modal-footer">
               <button class="btn btn-sm btn-outline-secondary"
-                      onclick="navigator.clipboard.writeText(document.getElementById('cc-json-source').textContent).then(()=>this.textContent='Copied!').catch(()=>{})">
-                <i class="bi bi-clipboard me-1"></i>Copy to clipboard
+                      onclick="navigator.clipboard.writeText(document.getElementById('cc-json-source').textContent).then(()=>this.textContent='Kopiert!').catch(()=>{})">
+                <i class="bi bi-clipboard me-1"></i>In Zwischenablage kopieren
               </button>
-              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
             </div>
           </div>
         </div>
@@ -2545,7 +2485,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         }
         document.getElementById('cc-tool-choice').value = cfg.tool_choice || 'auto';
         document.getElementById('cc-tool-max-tokens').value = cfg.tool_max_tokens || 8192;
-        document.getElementById('cc-context-window').value = cfg.context_window || 0;
         document.getElementById('cc-reasoning-max-tokens').value = cfg.reasoning_max_tokens || 16384;
         document.getElementById('cc-system-prefix').value = cfg.system_prompt_prefix || '';
         document.getElementById('cc-stream-think').checked = !!cfg.stream_think;
@@ -2660,7 +2599,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           tool_endpoint,
           tool_choice:          document.getElementById('cc-tool-choice').value,
           tool_max_tokens:      parseInt(document.getElementById('cc-tool-max-tokens').value) || 8192,
-          context_window:       parseInt(document.getElementById('cc-context-window').value) || 0,
           reasoning_max_tokens: parseInt(document.getElementById('cc-reasoning-max-tokens').value) || 16384,
           system_prompt_prefix: document.getElementById('cc-system-prefix').value.trim(),
           stream_think:         document.getElementById('cc-stream-think').checked,
@@ -2732,7 +2670,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 <div>
                   <strong>{{ conn.display_name or conn.name }}</strong>
                   <span class="badge bg-secondary ms-2 font-monospace">{{ conn.name }}</span>
-                  <span class="badge {% if conn.api_type == 'ollama' %}bg-info{% elif conn.api_type == 'anthropic' %}bg-warning text-dark{% else %}bg-success{% endif %} ms-1">{{ conn.api_type }}</span>
+                  <span class="badge {% if conn.api_type == 'ollama' %}bg-info{% else %}bg-success{% endif %} ms-1">{{ conn.api_type }}</span>
                 </div>
                 <div class="btn-group btn-group-sm">
                   <button class="btn btn-outline-secondary"
@@ -2748,26 +2686,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 </div>
               </div>
               <div class="text-muted small font-monospace text-truncate mb-2">{{ conn.url }}</div>
-              {% set rl = conn.rate_limit_config if conn.rate_limit_config is mapping else {} %}
-              {% if rl and rl.get('max_requests') %}
-              <div class="mb-2">
-                <span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size:.75rem">
-                  <i class="bi bi-speedometer2 me-1"></i>{{ rl.max_requests }} req / {{ rl.window_seconds }}s
-                  {% if rl.get('tagged') %}<span class="text-muted ms-1">({{ rl.tagged | join(', ') }})</span>{% endif %}
-                </span>
-                <button class="btn btn-link btn-sm text-muted p-0 ms-2" style="font-size:.75rem"
-                        onclick="openRateLimitModal('{{ conn.id }}', {{ rl | tojson | forceescape }})">
-                  <i class="bi bi-pencil"></i>
-                </button>
-              </div>
-              {% else %}
-              <div class="mb-2">
-                <button class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.75rem"
-                        onclick="openRateLimitModal('{{ conn.id }}', null)">
-                  <i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'portal.conn_rate_limit_lbl') }}
-                </button>
-              </div>
-              {% endif %}
               <div class="d-flex gap-2 align-items-center flex-wrap">
                 <button class="btn btn-outline-secondary btn-sm" id="conn-models-btn-{{ conn.id }}"
                         onclick="toggleConnModels('{{ conn.id }}')">
@@ -2787,12 +2705,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               </div>
               <div id="conn-models-{{ conn.id }}" style="display:none" class="mt-2">
                 {% if conn.models_cache %}
-                <div class="border rounded" style="max-height:300px;overflow-y:auto;font-size:.8rem">
+                <div class="border rounded" style="max-height:240px;overflow-y:auto;font-size:.8rem">
                   <table class="table table-sm table-hover mb-0">
                     <thead class="table-light sticky-top" style="font-size:.75rem">
                       <tr>
                         <th>{{ t(request, 'portal.conn_col_model') }}</th>
-                        <th>{{ t(request, 'portal.conn_col_tags') }}</th>
                         <th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th>
                         <th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th>
                       </tr>
@@ -2801,30 +2718,13 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                     {% for m in conn.models_cache %}
                       {% if m is mapping %}
                       <tr>
-                        <td class="font-monospace text-truncate" style="max-width:200px">{{ m.id }}</td>
-                        <td>
-                          <div class="d-flex gap-1 flex-wrap" id="tags-{{ conn.id }}-{{ loop.index0 }}"
-                               data-conn-id="{{ conn.id }}" data-model-id="{{ m.id }}">
-                            {% for tag in (m.tags or []) %}
-                            <span class="badge rounded-pill {% if tag == 'free' %}bg-success{% elif tag == 'vision' %}bg-info text-dark{% elif tag == 'agentic' %}bg-warning text-dark{% elif tag == 'reasoning' %}bg-primary{% elif tag == 'code' %}bg-secondary{% else %}bg-dark{% endif %} tag-pill" style="cursor:pointer"
-                                  onclick="toggleTagPill(this)"
-                                  data-tag="{{ tag }}">{{ tag }}</span>
-                            {% endfor %}
-                            <button class="btn btn-outline-secondary btn-sm py-0 px-1 tag-add-btn"
-                                    style="font-size:.7rem;line-height:1.3"
-                                    data-conn-id="{{ conn.id }}"
-                                    data-model-id="{{ m.id | e }}"
-                                    data-tags="{{ (m.tags or []) | tojson | forceescape }}"
-                                    onclick="openTagEditor(this.dataset.connId, this.dataset.modelId, JSON.parse(this.dataset.tags))"
-                                    title="Edit tags">+</button>
-                          </div>
-                        </td>
+                        <td class="font-monospace text-truncate" style="max-width:280px">{{ m.id }}</td>
                         <td class="text-end text-muted">{% if m.context_window %}{{ "{:,}".format(m.context_window) }}{% else %}—{% endif %}</td>
                         <td class="text-end text-muted">{% if m.param_size %}{{ m.param_size }}{% elif m.size_gb %}{{ m.size_gb }} GB{% else %}—{% endif %}</td>
                       </tr>
                       {% else %}
                       <tr>
-                        <td class="font-monospace text-truncate" colspan="4" style="max-width:360px">{{ m }}</td>
+                        <td class="font-monospace text-truncate" colspan="3" style="max-width:360px">{{ m }}</td>
                       </tr>
                       {% endif %}
                     {% endfor %}
@@ -2851,62 +2751,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       </div>
       {% endif %}
 
-      <!-- Tag Editor Modal -->
-      <div class="modal fade" id="tagEditorModal" tabindex="-1">
-        <div class="modal-dialog modal-sm">
-          <div class="modal-content">
-            <div class="modal-header py-2">
-              <h6 class="modal-title"><i class="bi bi-tags me-2"></i>{{ t(request, 'portal.conn_col_tags') }}</h6>
-              <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body py-2">
-              <input type="hidden" id="te-conn-id">
-              <input type="hidden" id="te-model-id">
-              <div class="d-flex flex-wrap gap-2" id="te-tag-pills">
-                <!-- tag pills rendered by openTagEditor() -->
-              </div>
-              <div id="te-error" class="text-danger small mt-2 d-none"></div>
-            </div>
-            <div class="modal-footer py-2">
-              <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
-              <button class="btn btn-primary btn-sm" onclick="saveTagEditorTags()">{{ t(request, 'btn.save') }}</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Rate-Limit Modal -->
-      <div class="modal fade" id="rateLimitModal" tabindex="-1">
-        <div class="modal-dialog modal-sm">
-          <div class="modal-content">
-            <div class="modal-header py-2">
-              <h6 class="modal-title"><i class="bi bi-speedometer2 me-2"></i>{{ t(request, 'portal.conn_rate_limit_lbl') }}</h6>
-              <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body py-2">
-              <input type="hidden" id="rl-conn-id">
-              <div class="mb-2">
-                <label class="form-label small fw-semibold mb-1">{{ t(request, 'portal.conn_rate_limit_window') }}</label>
-                <input type="number" id="rl-window" class="form-control form-control-sm" value="3600" min="1">
-              </div>
-              <div class="mb-2">
-                <label class="form-label small fw-semibold mb-1">{{ t(request, 'portal.conn_rate_limit_max') }}</label>
-                <input type="number" id="rl-max" class="form-control form-control-sm" value="60" min="1">
-              </div>
-              <div class="form-text small">{{ t(request, 'portal.conn_rate_limit_hint') | safe }}</div>
-              <div id="rl-error" class="text-danger small mt-2 d-none"></div>
-            </div>
-            <div class="modal-footer py-2 justify-content-between">
-              <button class="btn btn-outline-danger btn-sm" onclick="clearRateLimit()">{{ t(request, 'portal.conn_rate_limit_clear') }}</button>
-              <div>
-                <button class="btn btn-secondary btn-sm me-1" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
-                <button class="btn btn-primary btn-sm" onclick="saveRateLimit()">{{ t(request, 'btn.save') }}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Connection Modal -->
       <div class="modal fade" id="connModal" tabindex="-1">
         <div class="modal-dialog">
@@ -2931,7 +2775,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 <select id="conn-api-type" class="form-select">
                   <option value="openai">{{ t(request, 'portal.conn_type_openai') }}</option>
                   <option value="ollama">{{ t(request, 'portal.conn_type_ollama') }}</option>
-                  <option value="anthropic">Anthropic Messages API</option>
                 </select>
               </div>
               <div class="mb-3">
@@ -3031,20 +2874,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         if (div) div.style.display = div.style.display === 'none' ? 'block' : 'none';
       }
 
-      function _renderTagPills(connId, modelId, tags) {
-        const _qa = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-        const pills = (tags || []).map(tag => {
-          const clr = _TAG_COLORS[tag] || 'bg-dark';
-          return `<span class="badge rounded-pill ${clr} tag-pill me-1" style="cursor:pointer;user-select:none"
-                        data-tag="${_qa(tag)}" data-active="true" onclick="toggleTagPill(this)">${_connEscHtml(tag)}</span>`;
-        }).join('');
-        const btn = `<button class="btn btn-outline-secondary btn-sm py-0 px-1 tag-add-btn" style="font-size:.7rem;line-height:1.3"
-                 data-conn-id="${_qa(connId)}" data-model-id="${_qa(modelId)}" data-tags="${_qa(JSON.stringify(tags||[]))}"
-                 onclick="openTagEditor(this.dataset.connId, this.dataset.modelId, JSON.parse(this.dataset.tags))"
-                 title="Edit tags">+</button>`;
-        return pills + btn;
-      }
-
       function _updateConnModelList(id, models) {
         const div = document.getElementById(`conn-models-${id}`);
         if (!div) return;
@@ -3056,27 +2885,20 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         }
         const rows = models.map(m => {
           if (typeof m === 'string') {
-            return `<tr><td class="font-monospace text-truncate" colspan="4" style="max-width:360px">${_connEscHtml(m)}</td></tr>`;
+            return `<tr><td class="font-monospace text-truncate" colspan="3" style="max-width:360px">${_connEscHtml(m)}</td></tr>`;
           }
-          const ctx  = m.context_window ? Number(m.context_window).toLocaleString() : '—';
-          const sz   = m.param_size ? _connEscHtml(m.param_size) : (m.size_gb ? `${m.size_gb} GB` : '—');
-          const tags = _renderTagPills(id, m.id || '', m.tags || []);
+          const ctx = m.context_window ? Number(m.context_window).toLocaleString() : '—';
+          const sz  = m.param_size ? _connEscHtml(m.param_size) : (m.size_gb ? `${m.size_gb} GB` : '—');
           return `<tr>
-            <td class="font-monospace text-truncate" style="max-width:200px">${_connEscHtml(m.id || '')}</td>
-            <td><div class="d-flex gap-1 flex-wrap">${tags}</div></td>
+            <td class="font-monospace text-truncate" style="max-width:280px">${_connEscHtml(m.id || '')}</td>
             <td class="text-end text-muted">${ctx}</td>
             <td class="text-end text-muted">${sz}</td>
           </tr>`;
         }).join('');
-        div.innerHTML = `<div class="border rounded" style="max-height:300px;overflow-y:auto;font-size:.8rem">
+        div.innerHTML = `<div class="border rounded" style="max-height:240px;overflow-y:auto;font-size:.8rem">
           <table class="table table-sm table-hover mb-0">
             <thead class="table-light sticky-top" style="font-size:.75rem">
-              <tr>
-                <th>{{ t(request, 'portal.conn_col_model') }}</th>
-                <th>{{ t(request, 'portal.conn_col_tags') }}</th>
-                <th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th>
-                <th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th>
-              </tr>
+              <tr><th>{{ t(request, 'portal.conn_col_model') }}</th><th class="text-end">{{ t(request, 'portal.conn_col_context') }}</th><th class="text-end">{{ t(request, 'portal.conn_col_size') }}</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table></div>`;
@@ -3098,106 +2920,6 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         } catch(e) {
           el.innerHTML = `<span class="badge bg-danger">Error: ${e.message}</span>`;
         }
-      }
-
-      // ─── Tag Editor ────────────────────────────────────────────────────────────
-
-      const _ALL_TAGS = ['free', 'vision', 'agentic', 'reasoning', 'code'];
-      const _TAG_COLORS = {
-        free: 'bg-success', vision: 'bg-info text-dark',
-        agentic: 'bg-warning text-dark', reasoning: 'bg-primary', code: 'bg-secondary',
-      };
-
-      let _tagEditorModal = null;
-      function _getTagEditorModal() {
-        if (!_tagEditorModal) _tagEditorModal = new bootstrap.Modal(document.getElementById('tagEditorModal'));
-        return _tagEditorModal;
-      }
-
-      function openTagEditor(connId, modelId, currentTags) {
-        document.getElementById('te-conn-id').value = connId;
-        document.getElementById('te-model-id').value = modelId;
-        document.getElementById('te-error').classList.add('d-none');
-        const container = document.getElementById('te-tag-pills');
-        container.innerHTML = _ALL_TAGS.map(tag => {
-          const active  = currentTags.includes(tag);
-          const clr     = _TAG_COLORS[tag] || 'bg-dark';
-          const opacity = active ? '' : 'opacity-50';
-          return `<span class="badge rounded-pill ${clr} tag-pill ${opacity}" style="cursor:pointer;user-select:none"
-                        data-tag="${tag}" data-active="${active}" onclick="toggleTagPill(this)">${tag}</span>`;
-        }).join('');
-        _getTagEditorModal().show();
-      }
-
-      function toggleTagPill(el) {
-        const isActive = el.dataset.active === 'true';
-        el.dataset.active = isActive ? 'false' : 'true';
-        el.classList.toggle('opacity-50', isActive);
-      }
-
-      async function saveTagEditorTags() {
-        const connId  = document.getElementById('te-conn-id').value;
-        const modelId = document.getElementById('te-model-id').value;
-        const tags    = Array.from(
-          document.querySelectorAll('#te-tag-pills [data-active="true"]')
-        ).map(el => el.dataset.tag);
-        const res = await fetch(`/user/api/connections/${connId}/model-tags`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({model_id: modelId, tags}),
-        });
-        if (res.ok) {
-          _getTagEditorModal().hide();
-          window.location.reload();
-        } else {
-          const err = await res.json().catch(() => ({}));
-          const el  = document.getElementById('te-error');
-          el.textContent = err.detail || 'Error saving tags';
-          el.classList.remove('d-none');
-        }
-      }
-
-      // ─── Rate-Limit Modal ──────────────────────────────────────────────────────
-
-      let _rlModal = null;
-      function _getRlModal() {
-        if (!_rlModal) _rlModal = new bootstrap.Modal(document.getElementById('rateLimitModal'));
-        return _rlModal;
-      }
-
-      function openRateLimitModal(connId, existing) {
-        document.getElementById('rl-conn-id').value = connId;
-        document.getElementById('rl-window').value  = existing?.window_seconds ?? 3600;
-        document.getElementById('rl-max').value     = existing?.max_requests   ?? 60;
-        document.getElementById('rl-error').classList.add('d-none');
-        _getRlModal().show();
-      }
-
-      async function saveRateLimit() {
-        const connId = document.getElementById('rl-conn-id').value;
-        const body = {
-          window_seconds: parseInt(document.getElementById('rl-window').value) || 3600,
-          max_requests:   parseInt(document.getElementById('rl-max').value)    || 60,
-          tagged:         ['free'],
-        };
-        const res = await fetch(`/user/api/connections/${connId}/rate-limit`, {
-          method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
-        });
-        if (res.ok) { _getRlModal().hide(); window.location.reload(); }
-        else {
-          const err = await res.json().catch(() => ({}));
-          const el  = document.getElementById('rl-error');
-          el.textContent = err.detail || 'Error saving rate limit';
-          el.classList.remove('d-none');
-        }
-      }
-
-      async function clearRateLimit() {
-        const connId = document.getElementById('rl-conn-id').value;
-        const res = await fetch(`/user/api/connections/${connId}/rate-limit`, {
-          method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: '{}',
-        });
-        if (res.ok) { _getRlModal().hide(); window.location.reload(); }
       }
       </script>
 

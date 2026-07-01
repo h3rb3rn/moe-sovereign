@@ -205,6 +205,28 @@ def enforce(response_text: str, state_: dict) -> Tuple[str, List[ConstitutionVio
         except Exception as e:
             logger.debug("⚖️  Kafka audit emit failed: %s", e)
 
+    # Emit blocking and warn decisions to decision log
+    try:
+        from services.decision_log import log_decision, DecisionType
+        request_id = state_.get("response_id", "")
+        for v in violations:
+            if v.on_violation == "block":
+                log_decision(
+                    DecisionType.CONSTITUTION_BLOCK,
+                    request_id,
+                    rationale=f"Constitution rule '{v.rule_id}' triggered block: {v.detail}",
+                    metadata={"rule_id": v.rule_id, "description": v.description},
+                )
+            elif v.on_violation == "warn":
+                log_decision(
+                    DecisionType.CONSTITUTION_WARN,
+                    request_id,
+                    rationale=f"Constitution rule '{v.rule_id}' triggered warn: {v.detail}",
+                    metadata={"rule_id": v.rule_id, "description": v.description},
+                )
+    except Exception as e:
+        logger.debug("⚖️  Decision log emit failed: %s", e)
+
     # Apply blocking rules — replace response with policy message
     blocking = [v for v in violations if v.on_violation == "block"]
     if blocking:

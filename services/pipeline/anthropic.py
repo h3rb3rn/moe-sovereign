@@ -445,11 +445,18 @@ async def _inject_cc_work_context(
                 lines.append(f"  → {f}")
         lines.append("[Do NOT repeat completed steps. Continue from where you left off.]")
 
-        ctx_block = {"role": "system", "content": "\n".join(lines)}
-        # Insert after the first system message (if any), before user messages
+        ctx_text = "\n".join(lines)
+        # Merge into the existing system message (if any) to avoid a second role:system block.
+        # LiteLLM-backed endpoints (e.g. AIHUB/qwen) reject messages with more than one
+        # system entry, returning HTTP 400 "System message must be at the beginning".
         sys_idx = next((i for i, m in enumerate(oai_msgs) if m.get("role") == "system"), -1)
-        insert_at = sys_idx + 1 if sys_idx >= 0 else 0
-        return oai_msgs[:insert_at] + [ctx_block] + oai_msgs[insert_at:]
+        if sys_idx >= 0:
+            existing = oai_msgs[sys_idx].get("content") or ""
+            merged = oai_msgs[:]
+            merged[sys_idx] = {**oai_msgs[sys_idx], "content": existing + "\n\n" + ctx_text}
+            return merged
+        # No existing system message — insert one at the front.
+        return [{"role": "system", "content": ctx_text}] + oai_msgs
     except Exception as _e:
         logger.debug("cc_work: inject failed: %s", _e)
         return oai_msgs
@@ -715,13 +722,13 @@ async def _anthropic_tool_handler(
     # Store the desired num_ctx now so (a) the budget guard uses the correct window and
     # (b) we can inject it into the Ollama payload later.
     _ollama_num_ctx: int = 0
-    if API_TYPE_MAP.get(effective_node, "ollama") == "ollama":
-        # Derive num_ctx with the CC profile's / expert template's context window
-        # taking priority over the global judge defaults. Never fall back to
-        # max_tokens — that is the max OUTPUT tokens, not the context window size.
-        # JUDGE_NUM_CTX is only used when neither the profile nor its template
-        # define a context window — it must not silently override an explicit
-        # per-profile/template setting (those take precedence by design).
+    if session.tool_api_type == "ollama":
+        # Derive num_ctx with the CC profile's context_window taking priority.
+        # Fallback order: context_window → tool_max_tokens → template_num_ctx → JUDGE_NUM_CTX → 32768
+        # tool_max_tokens is used as a proxy for moe_reasoning profiles: the user's
+        # explicit output-token limit signals how large a KV-cache they want Ollama to
+        # allocate. In moe_orchestrated, this value is already capped by judge_num_ctx in
+        # cc_session.py so tool_max_tokens correctly reflects the template constraint.
         _ollama_num_ctx = (
             session.context_window
             or session.tool_max_tokens
@@ -795,93 +802,122 @@ async def _anthropic_tool_handler(
 
     oai_messages = _anthropic_to_openai_messages(messages, system)
 
+    # Extract user query early — used by memory tiers and episodic write-back.
+    _cc_ep_query = next(
+        (m.get("content", "") for m in reversed(oai_messages)
+         if m.get("role") == "user" and isinstance(m.get("content"), str)),
+        "",
+    )
+
     # ── Tier-3 Context Index: chunk large system_prompt into ChromaDB ────────────
     # When the client ships a large system_prompt (codebase, documents, long files),
     # index it once per session so that every expert can later retrieve only the
     # semantically relevant slice — the infrastructure-level 1M+ context window.
-    if CC_CONTEXT_INDEX_ENABLED and session_id and system and state.redis_client:
+    if CC_CONTEXT_INDEX_ENABLED and session.long_memory and session_id and system and state.redis_client:
         try:
             from services.context_index import ensure_indexed as _ensure_ctx
             await _ensure_ctx(session_id, system, state.redis_client)
         except Exception as _cie:
             logger.debug("cc_tool: context indexing skipped: %s", _cie)
 
-    # ── Tier-2 Semantic Memory: store evicted turns + retrieve warm context ─────
-    # Evicted turns from _compress_history_responses are embedded in ChromaDB so
-    # they can be retrieved semantically — giving Claude Code an effective context
-    # that scales beyond the 32k LLM window (the "1M+ infrastructure" layer).
-    if CC_CONTEXT_INDEX_ENABLED and session_id:
+    # ── Tier 2-4 Long-Term Memory Retrieval ──────────────────────────────────
+    # Collect context from all memory tiers and merge into the EXISTING system
+    # message (or insert one if absent) — always producing exactly one system
+    # entry. Multiple separate role:system blocks would cause HTTP 400 on
+    # LiteLLM-backed endpoints (e.g. AIHUB/qwen).
+    #
+    # Tier 2 (Warm)  — ChromaDB: semantically similar past turns of this session
+    # Tier 3 (Cold)  — ChromaDB/context_index: chunked codebase/document slices
+    # Tier 4 (Perm.) — Neo4j: structured knowledge-graph facts + episodic hints
+    # Disable per CC profile via long_memory=false.
+    if CC_CONTEXT_INDEX_ENABLED and session.long_memory and session_id:
+        _lm_query = _cc_ep_query
+        _lm_blocks: list[str] = []
+
+        # ── Tier-2: semantic warm memory (ChromaDB) ──
         try:
             from memory_retrieval import get_memory_store as _get_mem_store
             _mem_store = _get_mem_store()
-            if _mem_store is not None:
-                # Retrieve semantically relevant past turns for the current query
-                _user_query = next(
-                    (m.get("content", "") for m in reversed(oai_messages)
-                     if m.get("role") == "user" and isinstance(m.get("content"), str)),
-                    ""
+            if _mem_store is not None and _lm_query:
+                _warm_turns = await _mem_store.retrieve_relevant(
+                    session_id=session_id,
+                    query=_lm_query[:500],
+                    n_results=5,
                 )
-                if _user_query:
-                    _warm_turns = await _mem_store.retrieve_relevant(
-                        session_id=session_id,
-                        query=_user_query[:500],
-                        n_results=5,
+                if _warm_turns:
+                    _warm_block = _mem_store.build_warm_context_block(_warm_turns)
+                    _lm_blocks.append(
+                        f"[SEMANTIC MEMORY — relevant past context]\n{_warm_block}\n[End of past context.]"
                     )
-                    if _warm_turns:
-                        _warm_block = _mem_store.build_warm_context_block(_warm_turns)
-                        _warm_msg = {
-                            "role": "system",
-                            "content": f"[SEMANTIC MEMORY — relevant past context]\n{_warm_block}\n[End of past context. Continue current task.]"
-                        }
-                        sys_end = next((i for i, m in enumerate(oai_messages) if m.get("role") != "system"), 0)
-                        oai_messages = oai_messages[:sys_end] + [_warm_msg] + oai_messages[sys_end:]
-                        logger.info("cc_tool: injected %d Tier-2 memory turns (session=%s)", len(_warm_turns), session_id[:8])
+                    logger.info("cc_tool: Tier-2 %d warm turns (session=%s)", len(_warm_turns), session_id[:8])
         except Exception as _me:
-            logger.debug("cc_tool: Tier-2 memory retrieval skipped: %s", _me)
+            logger.debug("cc_tool: Tier-2 skipped: %s", _me)
 
-    # ── Tier-3 Context Retrieval: inject relevant chunks into tool-call messages ─
-    # When the session has an indexed context (large system_prompt chunked into
-    # ChromaDB), retrieve the semantically relevant slice for the current query
-    # and inject it as a system message. This gives the CC tool model access to
-    # the full codebase/document context beyond its 32k KV-cache limit.
-    if CC_CONTEXT_INDEX_ENABLED and session_id and state.redis_client:
-        try:
-            from services.context_index import (
-                is_context_indexed as _ctx_indexed_t3,
-                retrieve_context_for_task as _ctx_retrieve_t3,
-            )
-            if await _ctx_indexed_t3(session_id, state.redis_client):
-                _t3_query = next(
-                    (m.get("content", "") for m in reversed(oai_messages)
-                     if m.get("role") == "user" and isinstance(m.get("content"), str)),
-                    ""
+        # ── Tier-3: context-index chunks (ChromaDB) ──
+        if state.redis_client:
+            try:
+                from services.context_index import (
+                    is_context_indexed as _ctx_indexed_t3,
+                    retrieve_context_for_task as _ctx_retrieve_t3,
                 )
-                if _t3_query:
+                if _lm_query and await _ctx_indexed_t3(session_id, state.redis_client):
                     _t3_chunks = await _ctx_retrieve_t3(
                         session_id=session_id,
-                        task_text=_t3_query[:500],
+                        task_text=_lm_query[:500],
                         redis_client=state.redis_client,
                     )
                     if _t3_chunks:
-                        _t3_msg = {
-                            "role": "system",
-                            "content": (
-                                "[RELEVANT CODEBASE CONTEXT — retrieved for current task]\n"
-                                f"{_t3_chunks}\n"
-                                "[End of retrieved context. Use this to inform your next action.]"
-                            ),
-                        }
-                        # Insert after all other system messages, just before conversation
-                        _sys_end = next(
-                            (i for i, m in enumerate(oai_messages) if m.get("role") != "system"), 0
+                        _lm_blocks.append(
+                            f"[RELEVANT CODEBASE CONTEXT — retrieved for current task]\n{_t3_chunks}\n"
+                            "[End of retrieved context. Use this to inform your next action.]"
                         )
-                        oai_messages = oai_messages[:_sys_end] + [_t3_msg] + oai_messages[_sys_end:]
-                        logger.debug(
-                            "cc_tool: injected Tier-3 context chunks (%d chars, session=%s)",
-                            len(_t3_chunks), session_id[:8],
-                        )
-        except Exception as _t3e:
-            logger.debug("cc_tool: Tier-3 context retrieval skipped: %s", _t3e)
+                        logger.debug("cc_tool: Tier-3 %d chars (session=%s)", len(_t3_chunks), session_id[:8])
+            except Exception as _t3e:
+                logger.debug("cc_tool: Tier-3 skipped: %s", _t3e)
+
+        # ── Tier-4: Neo4j knowledge-graph + episodic hints ──
+        if _lm_query and state.graph_manager is not None:
+            try:
+                from episodic_memory import get_episode_hint as _get_ep_hint
+                _graph_cache_key = f"moe:graph:cc:{_hashlib.sha256(_lm_query[:200].encode()).hexdigest()[:16]}"
+                _t4_ctx: str = ""
+                if state.redis_client:
+                    try:
+                        _cached = await state.redis_client.get(_graph_cache_key)
+                        if _cached:
+                            _t4_ctx = _cached if isinstance(_cached, str) else _cached.decode()
+                    except Exception:
+                        pass
+                if not _t4_ctx:
+                    _t4_ctx = await state.graph_manager.query_context(
+                        _lm_query[:500], ["general"], tenant_ids=None,
+                    ) or ""
+                    _ep_hint = await _get_ep_hint(
+                        state.graph_manager.driver, _lm_query[:500], "general"
+                    )
+                    if _ep_hint:
+                        _t4_ctx = (_t4_ctx + "\n\n" + _ep_hint) if _t4_ctx else _ep_hint
+                    if _t4_ctx and state.redis_client:
+                        asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, _t4_ctx))
+                if _t4_ctx:
+                    _lm_blocks.append(
+                        f"[KNOWLEDGE GRAPH — structured facts & past strategies]\n{_t4_ctx}\n"
+                        "[End of knowledge graph context.]"
+                    )
+                    logger.info("cc_tool: Tier-4 %d chars graph context (session=%s)", len(_t4_ctx), session_id[:8])
+            except Exception as _t4e:
+                logger.debug("cc_tool: Tier-4 skipped: %s", _t4e)
+
+        # ── Merge all tiers into single system message ──
+        if _lm_blocks:
+            _lm_combined = "\n\n".join(_lm_blocks)
+            _sys_idx = next((i for i, m in enumerate(oai_messages) if m.get("role") == "system"), -1)
+            if _sys_idx >= 0:
+                _existing_sys = oai_messages[_sys_idx].get("content") or ""
+                oai_messages = list(oai_messages)
+                oai_messages[_sys_idx] = {**oai_messages[_sys_idx], "content": _existing_sys + "\n\n" + _lm_combined}
+            else:
+                oai_messages = [{"role": "system", "content": _lm_combined}] + oai_messages
 
     # ── Expert-Template pre-analysis (first turn only) ────────────────────────
     # On the first user turn (no tool_results yet), fire a background planner call
@@ -1399,6 +1435,234 @@ async def _anthropic_tool_handler(
         _llm_t0 = time.monotonic()
         return StreamingResponse(_live_ollama_sse(), media_type="text/event-stream")
 
+    # ── Live-streaming path for OpenAI-compatible external endpoints ──────────
+    # When the endpoint is not Ollama (e.g. AIHUB) but CC requests streaming,
+    # pipe tokens back to CC as they arrive instead of blocking on a non-streaming
+    # call. Without this, CC waits for the first SSE byte for 30–120 s and times out
+    # even though the backend is healthy.
+    if not _use_ollama_native and body.get("stream") is not False:
+        _model_id_out = body.get("model", effective_model)
+        logger.info(
+            "cc_tool: entering OpenAI live-streaming path (model=%s node=%s stream=%s)",
+            effective_model, effective_node, body.get("stream"),
+        )
+
+        async def _live_openai_sse():
+            _text_acc: str = ""
+            _tool_calls_acc: dict = {}   # {oai_index: {id, name, arguments}}
+            _sent_text_block: bool = False
+            _block_idx: int = 0
+            _in_tok: int = 0
+            _out_tok: int = 0
+            _stream_error: str = ""
+
+            yield _sse_event("message_start", {
+                "type": "message_start",
+                "message": {
+                    "id": chat_id, "type": "message", "role": "assistant",
+                    "content": [], "model": _model_id_out,
+                    "stop_reason": None,
+                    "usage": {"input_tokens": 0, "output_tokens": 1},
+                },
+            })
+            yield _sse_event("ping", {"type": "ping"})
+
+            _q: asyncio.Queue = asyncio.Queue()
+            _streaming_payload = {**_call_payload, "stream": True, "stream_options": {"include_usage": True}}
+
+            async def _openai_fetch() -> None:
+                try:
+                    async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
+                        async with _scl.stream(
+                            "POST", _call_url, json=_streaming_payload,
+                            headers={"Authorization": f"Bearer {effective_token}"},
+                        ) as _sr:
+                            if _sr.status_code >= 400:
+                                _body_err = await _sr.aread()
+                                await _q.put(("error", f"HTTP {_sr.status_code}: {_body_err.decode()[:200]}"))
+                            else:
+                                async for _ln in _sr.aiter_lines():
+                                    await _q.put(("line", _ln))
+                except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError):
+                    await _q.put(("error", f"timeout after {_node_timeout}s"))
+                except Exception as _se:
+                    await _q.put(("error", str(_se)))
+                finally:
+                    await _q.put(("done", None))
+
+            if session_id:
+                _old_task = _cc_active_ollama_tasks.get(session_id)
+                if _old_task and not _old_task.done():
+                    _old_task.cancel()
+                    logger.info("cc_tool: cancelled zombie OpenAI task (session=%s)", session_id[:8])
+            _fetch_task = asyncio.create_task(_openai_fetch())
+            if session_id:
+                _cc_active_ollama_tasks[session_id] = _fetch_task
+                if len(_cc_active_ollama_tasks) > 50:
+                    _done_keys = [k for k, t in _cc_active_ollama_tasks.items() if t.done()]
+                    for _dk in _done_keys:
+                        _cc_active_ollama_tasks.pop(_dk, None)
+
+            try:
+                while True:
+                    try:
+                        _kind, _val = await asyncio.wait_for(_q.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+                        continue
+                    if _kind == "done":
+                        break
+                    if _kind == "error":
+                        _stream_error = _val
+                        break
+                    _line = _val
+                    if not _line.strip() or not _line.startswith("data:"):
+                        continue
+                    _data_str = _line[5:].strip()
+                    if _data_str == "[DONE]":
+                        break
+                    try:
+                        _chunk = json.loads(_data_str)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+
+                    if _chunk.get("usage"):
+                        _in_tok = _chunk["usage"].get("prompt_tokens", 0)
+                        _out_tok = _chunk["usage"].get("completion_tokens", 0)
+
+                    for _ch in _chunk.get("choices", []):
+                        _d = _ch.get("delta", {})
+                        _text = _d.get("content") or ""
+                        if _text:
+                            if not _sent_text_block:
+                                yield _sse_event("content_block_start", {
+                                    "type": "content_block_start", "index": 0,
+                                    "content_block": {"type": "text", "text": ""},
+                                })
+                                _sent_text_block = True
+                            yield _sse_event("content_block_delta", {
+                                "type": "content_block_delta", "index": 0,
+                                "delta": {"type": "text_delta", "text": _text},
+                            })
+                            _text_acc += _text
+
+                        for _tc in (_d.get("tool_calls") or []):
+                            _i = _tc.get("index", 0)
+                            if _i not in _tool_calls_acc:
+                                _tool_calls_acc[_i] = {"id": "", "name": "", "arguments": ""}
+                            _e = _tool_calls_acc[_i]
+                            if _tc.get("id"):
+                                _e["id"] = _tc["id"]
+                            _fn = _tc.get("function", {})
+                            if _fn.get("name"):
+                                _e["name"] = _fn["name"]
+                            if _fn.get("arguments"):
+                                _e["arguments"] += _fn["arguments"]
+            except Exception as _le:
+                _stream_error = str(_le)
+                logger.warning("cc_tool OpenAI stream loop error: %s", _le)
+            finally:
+                if session_id and _cc_active_ollama_tasks.get(session_id) is _fetch_task:
+                    _cc_active_ollama_tasks.pop(session_id, None)
+                if not _fetch_task.done():
+                    _fetch_task.cancel()
+
+            if _stream_error and "timeout" in _stream_error.lower():
+                PROM_TOOL_TIMEOUTS.labels(node=effective_node, model=effective_model).inc()
+
+            if _stream_error:
+                _err_txt = f"⚠️ Inference server '{effective_node}' error: {_stream_error}"
+                if not _sent_text_block:
+                    yield _sse_event("content_block_start", {
+                        "type": "content_block_start", "index": 0,
+                        "content_block": {"type": "text", "text": ""},
+                    })
+                    _sent_text_block = True
+                yield _sse_event("content_block_delta", {
+                    "type": "content_block_delta", "index": 0,
+                    "delta": {"type": "text_delta", "text": _err_txt},
+                })
+
+            if _sent_text_block:
+                yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": 0})
+                _block_idx = 1
+
+            _stop_reason = "end_turn"
+            for _i in sorted(_tool_calls_acc):
+                _e = _tool_calls_acc[_i]
+                _tc_id = _e["id"] or f"call_{uuid.uuid4().hex[:12]}"
+                yield _sse_event("content_block_start", {
+                    "type": "content_block_start", "index": _block_idx,
+                    "content_block": {
+                        "type": "tool_use", "id": _tc_id,
+                        "name": _e["name"], "input": {},
+                    },
+                })
+                yield _sse_event("content_block_delta", {
+                    "type": "content_block_delta", "index": _block_idx,
+                    "delta": {"type": "input_json_delta", "partial_json": _e["arguments"]},
+                })
+                yield _sse_event("content_block_stop", {
+                    "type": "content_block_stop", "index": _block_idx,
+                })
+                _block_idx += 1
+                _stop_reason = "tool_use"
+
+            if not _sent_text_block and not _tool_calls_acc:
+                yield _sse_event("content_block_start", {
+                    "type": "content_block_start", "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                })
+                yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": 0})
+
+            yield _sse_event("message_delta", {
+                "type": "message_delta",
+                "delta": {"stop_reason": _stop_reason, "stop_sequence": None},
+                "usage": {"output_tokens": _out_tok},
+            })
+            yield _sse_event("message_stop", {"type": "message_stop"})
+
+            PROM_TOOL_CALL_DURATION.labels(
+                node=effective_node, model=effective_model, phase="llm_call"
+            ).observe(time.monotonic() - _llm_t0)
+            if _tool_calls_acc:
+                PROM_TOOL_CALL_SUCCESS.labels(node=effective_node, model=effective_model).inc()
+            if user_id != "anon":
+                asyncio.create_task(_log_usage_to_db(
+                    user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+                    model=effective_model, moe_mode="cc_tool",
+                    prompt_tokens=_in_tok, completion_tokens=_out_tok,
+                    session_id=session_id,
+                ))
+                if not session.is_user_conn:
+                    asyncio.create_task(_increment_user_budget(
+                        user_id, _in_tok + _out_tok,
+                        prompt_tokens=_in_tok, completion_tokens=_out_tok,
+                    ))
+            asyncio.create_task(_deregister_active_request(chat_id))
+
+            # ── Tier-4 Episodic Write-Back (fire-and-forget) ──────────────────
+            if (CC_CONTEXT_INDEX_ENABLED and session.long_memory
+                    and state.graph_manager is not None and _cc_ep_query
+                    and _stop_reason == "end_turn" and not _stream_error):
+                try:
+                    from episodic_memory import log_episode as _log_ep
+                    _ep_state = {
+                        "input": _cc_ep_query,
+                        "user_id": user_id or "anon",
+                        "expert_models_used": [effective_model],
+                        "prompt_tokens": _in_tok,
+                        "completion_tokens": _out_tok,
+                        "plan": [{"category": "general"}],
+                        "final_response": _text_acc[:600],
+                    }
+                    asyncio.create_task(_log_ep(state.graph_manager.driver, _ep_state))
+                except Exception:
+                    pass
+
+        _llm_t0 = time.monotonic()
+        return StreamingResponse(_live_openai_sse(), media_type="text/event-stream")
+
     # ── Non-streaming fallback (non-Ollama or non-streaming request) ───────────
     _llm_t0 = time.monotonic()
     try:
@@ -1710,6 +1974,28 @@ async def _anthropic_tool_handler(
     })
 
     asyncio.create_task(_deregister_active_request(chat_id))
+
+    # ── Tier-4 Episodic Write-Back (non-streaming path) ───────────────────────
+    if (CC_CONTEXT_INDEX_ENABLED and session.long_memory
+            and state.graph_manager is not None and _cc_ep_query
+            and stop_reason == "end_turn"):
+        try:
+            from episodic_memory import log_episode as _log_ep
+            _ep_text = next(
+                (b.get("text", "") for b in content_blocks if b.get("type") == "text"), ""
+            )
+            asyncio.create_task(_log_ep(state.graph_manager.driver, {
+                "input": _cc_ep_query,
+                "user_id": user_id or "anon",
+                "expert_models_used": [effective_model],
+                "prompt_tokens": in_tok,
+                "completion_tokens": out_tok,
+                "plan": [{"category": "general"}],
+                "final_response": _ep_text[:600],
+            }))
+        except Exception:
+            pass
+
     if not do_stream:
         return {
             "id": chat_id, "type": "message", "role": "assistant",

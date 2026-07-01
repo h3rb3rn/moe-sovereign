@@ -1,0 +1,28 @@
+version: "3.9"
+
+# MoE GraphRAG Benchmark Environment (TASK-21)
+# Pins neo4j:5.18.0 — NEVER use :latest (breaks reproducibility)
+
+services:
+  neo4j-bench:
+    image: neo4j:5.18.0
+    container_name: neo4j-bench
+    environment:
+      NEO4J_AUTH: "neo4j/benchmark_password"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: "512m"
+      NEO4J_dbms_memory_heap_max__size: "2g"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_bench_data:/data
+      - ./data/neo4j_import:/var/lib/neo4j/import
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7474/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  neo4j_bench_data:

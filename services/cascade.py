@@ -4,13 +4,27 @@ services/cascade.py — Typed Cascade Events for MoE-Sovereign agentic re-planni
 Upgrades the binary COMPLETE/NEEDS_MORE_INFO gap detector to typed cascade events
 with specific re-plan strategies per failure mode. Each failure type carries a
 routing hint so the planner knows *why* it is re-planning, not just *that* it should.
+
+TASK-16 adds resolution tracking: each emitted event is stored in Valkey with a
+`resolved` flag and can be queried via list_open_cascades(). STUCK_LOOP emission
+marks all open events as unresolved in the decision_log.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import List, Optional
+
+logger = logging.getLogger("MOE-SOVEREIGN")
+
+_CASCADE_TTL    = int(os.getenv("CASCADE_EVENT_TTL_SECONDS", "86400"))  # 24h
+_CASCADE_PREFIX = "cascade_events:"
 
 
 class CascadeType(str, Enum):
@@ -27,6 +41,11 @@ class CascadeEvent:
     cascade_type: CascadeType
     message: str          # Original gap description (passed through to planner prompt unchanged)
     replan_strategy: str  # Concrete hint injected into re-planner prompt
+    # ── TASK-16: Resolution tracking ──────────────────────────────────────────
+    event_id:    str = field(default_factory=lambda: str(uuid.uuid4()))
+    request_id:  str = ""
+    resolved:    bool = False
+    resolved_at: Optional[str] = None
 
 
 # Regex patterns for classifying gap text into cascade types. Order matters.
@@ -95,3 +114,84 @@ def classify_gap(gap_text: str, strategy_hint: str = "") -> CascadeEvent:
         gap_text,
         strategy_hint or "try a more specific search query or use GraphRAG with different entities",
     )
+
+
+# ── TASK-16: Resolution Tracking ──────────────────────────────────────────────
+
+def _valkey():
+    try:
+        import redis
+        url = os.getenv("VALKEY_URL") or os.getenv("REDIS_URL") or "redis://terra_cache:6379/0"
+        return redis.from_url(url, decode_responses=True, socket_connect_timeout=2)
+    except Exception:
+        return None
+
+
+def emit_cascade(event: CascadeEvent, request_id: str = "") -> CascadeEvent:
+    """Persist a CascadeEvent to Valkey for lifecycle tracking.
+
+    Sets request_id on the event and stores it under CASCADE_PREFIX:request_id.
+    Fail-open: Valkey unavailability does not block the pipeline.
+    """
+    event.request_id = request_id or event.request_id
+    try:
+        client = _valkey()
+        if client is None:
+            return event
+        key  = f"{_CASCADE_PREFIX}{request_id}"
+        raw  = client.get(key)
+        events: List[dict] = json.loads(raw) if raw else []
+        events.append({
+            "event_id":     event.event_id,
+            "cascade_type": event.cascade_type.value,
+            "message":      event.message,
+            "resolved":     event.resolved,
+            "resolved_at":  event.resolved_at,
+        })
+        client.setex(key, _CASCADE_TTL, json.dumps(events))
+    except Exception as _e:
+        logger.debug("cascade.emit_cascade: Valkey write failed: %s", _e)
+    return event
+
+
+def resolve_cascade(event: CascadeEvent) -> CascadeEvent:
+    """Mark a CascadeEvent as resolved (in-place and in Valkey)."""
+    import datetime
+    event.resolved    = True
+    event.resolved_at = datetime.datetime.utcnow().isoformat() + "Z"
+    if not event.request_id:
+        return event
+    try:
+        client = _valkey()
+        if client is None:
+            return event
+        key  = f"{_CASCADE_PREFIX}{event.request_id}"
+        raw  = client.get(key)
+        if not raw:
+            return event
+        events = json.loads(raw)
+        for e in events:
+            if e.get("event_id") == event.event_id:
+                e["resolved"]    = True
+                e["resolved_at"] = event.resolved_at
+        ttl = client.ttl(key)
+        client.setex(key, max(ttl, 1), json.dumps(events))
+    except Exception as _e:
+        logger.debug("cascade.resolve_cascade: Valkey update failed: %s", _e)
+    return event
+
+
+def list_open_cascades(request_id: str) -> List[dict]:
+    """Return all unresolved CascadeEvents for a given request_id."""
+    try:
+        client = _valkey()
+        if client is None:
+            return []
+        raw = client.get(f"{_CASCADE_PREFIX}{request_id}")
+        if not raw:
+            return []
+        events = json.loads(raw)
+        return [e for e in events if not e.get("resolved")]
+    except Exception as _e:
+        logger.debug("cascade.list_open_cascades: Valkey read failed: %s", _e)
+        return []

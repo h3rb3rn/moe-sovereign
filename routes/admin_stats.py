@@ -123,6 +123,51 @@ async def get_tool_eval_log(limit: int = 50):
         return {"records": [], "total_lines": 0}
 
 
+@router.get("/v1/admin/decision-log")
+async def get_decision_log(
+    raw_request: Request,
+    decision_type: Optional[str] = None,
+    request_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Response:
+    """Read decision_log.jsonl and return filtered, paginated records."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+    _sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    if not (raw_key == _sys_key or user_ctx.get("is_admin")):
+        return JSONResponse(status_code=403, content={"error": "Admin access required"})
+
+    log_path = os.getenv("DECISION_LOG_PATH", "/app/logs/decision_log.jsonl")
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        return JSONResponse({"records": [], "total": 0})
+
+    all_records = []
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if decision_type and rec.get("decision_type") != decision_type:
+            continue
+        if request_id and rec.get("request_id") != request_id:
+            continue
+        all_records.append(rec)
+
+    total = len(all_records)
+    return JSONResponse({"records": all_records[offset: offset + limit], "total": total})
+
+
 _PL_SORT_COLS = {
     "requested_at":    "ul.requested_at",
     "model":           "ul.model",
@@ -131,6 +176,7 @@ _PL_SORT_COLS = {
     "total_tokens":    "ul.total_tokens",
     "latency_ms":      "ul.latency_ms",
     "complexity_level": "ul.complexity_level",
+    "trust_score":     "ul.trust_score",
 }
 
 
@@ -192,7 +238,9 @@ async def pipeline_log(
                                ul.latency_ms, ul.complexity_level, ul.expert_domains,
                                ul.cache_hit, ul.agentic_rounds, ul.status, ul.requested_at,
                                ul.dynamic_tmpl_id,
-                               at.name AS dynamic_tmpl_name
+                               at.name AS dynamic_tmpl_name,
+                               ul.trust_score, ul.trust_verdict, ul.cynefin_domain,
+                               ul.self_critique_round, ul.cascade_type
                         FROM usage_log ul
                         LEFT JOIN users u ON ul.user_id = u.id
                         LEFT JOIN admin_expert_templates at ON at.id = ul.dynamic_tmpl_id

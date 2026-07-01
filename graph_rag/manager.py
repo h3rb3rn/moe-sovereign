@@ -1164,7 +1164,11 @@ class GraphRAGManager:
 
                 source_w = _SOURCE_WEIGHTS.get(src, 0.6)
                 days_old = max(0, (now_ts - vf) / (86400 * 1000))
-                decay = max(_DECAY_FLOOR, 1.0 - (days_old / _DECAY_PERIOD_DAYS))
+                # Static (ontology) knowledge is permanent — no temporal decay.
+                if src in ("ontology", "ontology_gap_healer"):
+                    decay = 1.0
+                else:
+                    decay = max(_DECAY_FLOOR, 1.0 - (days_old / _DECAY_PERIOD_DAYS))
                 v_bonus = 1.5 if verified else 1.0
                 trust = min(1.0, conf * source_w * decay * v_bonus)
 
@@ -1351,6 +1355,7 @@ class GraphRAGManager:
                     WHERE r.trust_score < $threshold
                       AND (r.verified IS NULL OR r.verified = false)
                       AND (r.version IS NULL OR r.version = 1)
+                      AND r.source NOT IN ['ontology', 'ontology_gap_healer']
                     RETURN id(r) AS rid, a.name AS subject, type(r) AS rel,
                            b.name AS target, r.trust_score AS score
                     LIMIT 100

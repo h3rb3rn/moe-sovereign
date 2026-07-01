@@ -607,6 +607,17 @@ async def expert_worker(state_: AgentState):
         Intended for ensemble approaches: evaluate different providers/training data in parallel.
         """
         cat              = task.get("category", "general")
+
+        # ── Scope Guard (TASK-17) ──────────────────────────────────────────────
+        try:
+            from services.scope_guard import check_scope
+            _scope_violation = check_scope(task, cat)
+            if _scope_violation:
+                logger.warning("🚫 Scope Guard blocked expert task: %s", _scope_violation.message)
+                return []
+        except Exception as _sg_e:
+            logger.debug("scope_guard: check failed (fail-open): %s", _sg_e)
+
         effective_experts = state_.get("user_experts") or EXPERTS
         all_experts = [e for e in effective_experts.get(cat, effective_experts.get("general", EXPERTS.get(cat, EXPERTS.get("general", [])))) if e.get("enabled", True)]
 

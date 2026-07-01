@@ -26,8 +26,9 @@ KAFKA_TOPIC_INGEST   = "moe.ingest"
 KAFKA_TOPIC_REQUESTS = "moe.requests"
 KAFKA_TOPIC_FEEDBACK = "moe.feedback"
 KAFKA_TOPIC_LINTING  = "moe.linting"
-KAFKA_TOPIC_AUDIT    = "moe.audit"
-KAFKA_TOPIC_STUCK    = "moe.stuck"
+KAFKA_TOPIC_AUDIT      = "moe.audit"
+KAFKA_TOPIC_STUCK      = "moe.stuck"
+KAFKA_TOPIC_DECISIONS  = "moe.decisions"
 
 # =============================================================================
 # Database & cache

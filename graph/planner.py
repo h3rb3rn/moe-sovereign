@@ -305,6 +305,16 @@ async def planner_node(state_: AgentState):
     if _complexity == "memory_recall" and _explicit_temp is None:
         _query_temp = 0.0
     logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
+    # ── Cynefin classification (TASK-15) ─────────────────────────────────────
+    try:
+        from services.cynefin import classify_cynefin
+        _cynefin_domain = classify_cynefin(state_).value
+    except Exception as _ce:
+        logger.debug("Cynefin classification failed: %s", _ce)
+        _cynefin_domain = ""
+    if _cynefin_domain:
+        logger.info("🧩 Cynefin domain: %s", _cynefin_domain)
+
     _complexity_state_update = {
         "complexity_level":   _complexity,
         "skip_research":      _routing["skip_research"],
@@ -312,6 +322,7 @@ async def planner_node(state_: AgentState):
         "cost_tier":          _cost_tier,
         "force_tier1":        _routing.get("force_tier1", False),
         "query_temperature":  _query_temp,
+        "cynefin_domain":     _cynefin_domain,
     }
 
     # Agent mode: force code_reviewer + technical_support directly, no LLM planner
@@ -720,11 +731,19 @@ JSON array:"""
     # pipeline behaviour. Blocking can be enabled by filtering `plan` here.
     try:
         from services.dor_check import check_dor as _check_dor, log_dor_result as _log_dor
+        _req_id = state_.get("response_id", "")
         for _dor_idx, _dor_task in enumerate(plan or []):
             _violations = _check_dor(_dor_task, dict(state_), task_index=_dor_idx)
-            _log_dor(_dor_task, _violations, task_index=_dor_idx)
+            _log_dor(_dor_task, _violations, task_index=_dor_idx, request_id=_req_id)
     except Exception as _dor_e:
         logger.debug("DoR check skipped: %s", _dor_e)
+    # ── Boundary contract check (Planner→Expert stage boundary) ───────────────
+    try:
+        from services.boundary_check import check_boundary as _check_boundary
+        for _bc_task in (plan or []):
+            _check_boundary("planner_to_expert", _bc_task)
+    except Exception as _bc_e:
+        logger.debug("Boundary check skipped: %s", _bc_e)
 
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:

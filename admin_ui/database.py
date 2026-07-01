@@ -355,6 +355,13 @@ ALTER TABLE model_metadata ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT
 
 -- Dynamic template ID resolved for moe-auto requests (references admin_expert_templates.id)
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS dynamic_tmpl_id TEXT;
+
+-- Quality signals from TASK-10 to TASK-22 (Trust Score, Cynefin, Self-Critique)
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_score         DOUBLE PRECISION;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_verdict       TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cynefin_domain      TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS self_critique_round INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cascade_type        TEXT;
 """
 
 
@@ -1134,16 +1141,36 @@ async def set_api_key_native_num_ctx(key_id: str, user_id: str, num_ctx: int) ->
 
 async def log_usage(user_id: str, api_key_id: Optional[str], request_id: str,
                     model: str, moe_mode: str, prompt_tokens: int,
-                    completion_tokens: int, status: str = "ok") -> None:
+                    completion_tokens: int, status: str = "ok",
+                    session_id: Optional[str] = None,
+                    latency_ms: Optional[int] = None,
+                    complexity_level: Optional[str] = None,
+                    expert_domains: Optional[str] = None,
+                    cache_hit: bool = False,
+                    agentic_rounds: int = 0,
+                    dynamic_tmpl_id: Optional[str] = None,
+                    trust_score: Optional[float] = None,
+                    trust_verdict: Optional[str] = None,
+                    cynefin_domain: Optional[str] = None,
+                    self_critique_round: int = 0,
+                    cascade_type: Optional[str] = None) -> None:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "INSERT INTO usage_log (id,user_id,api_key_id,request_id,model,moe_mode,"
-                "prompt_tokens,completion_tokens,total_tokens,status,requested_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "prompt_tokens,completion_tokens,total_tokens,status,requested_at,"
+                "session_id,latency_ms,complexity_level,expert_domains,cache_hit,"
+                "agentic_rounds,dynamic_tmpl_id,"
+                "trust_score,trust_verdict,cynefin_domain,self_critique_round,cascade_type) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (new_id(), user_id, api_key_id, request_id, model, moe_mode,
                  prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
-                 status, now_iso()),
+                 status, now_iso(),
+                 session_id, latency_ms, complexity_level, expert_domains, cache_hit,
+                 agentic_rounds, dynamic_tmpl_id,
+                 trust_score, trust_verdict or None, cynefin_domain or None,
+                 self_critique_round, cascade_type or None),
             )
 
 

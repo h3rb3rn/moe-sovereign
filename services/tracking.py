@@ -32,6 +32,11 @@ async def _log_usage_to_db(
     cache_hit: bool = False,
     agentic_rounds: int = 0,
     dynamic_tmpl_id: str = "",
+    trust_score: Optional[float] = None,
+    trust_verdict: Optional[str] = None,
+    cynefin_domain: Optional[str] = None,
+    self_critique_round: int = 0,
+    cascade_type: Optional[str] = None,
 ) -> None:
     """Fire-and-forget Postgres usage log. Never raises exceptions."""
     try:
@@ -44,13 +49,16 @@ async def _log_usage_to_db(
                     "INSERT INTO usage_log "
                     "(id,user_id,api_key_id,request_id,session_id,model,moe_mode,prompt_tokens,"
                     "completion_tokens,total_tokens,status,requested_at,"
-                    "latency_ms,complexity_level,expert_domains,cache_hit,agentic_rounds,dynamic_tmpl_id) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
+                    "latency_ms,complexity_level,expert_domains,cache_hit,agentic_rounds,dynamic_tmpl_id,"
+                    "trust_score,trust_verdict,cynefin_domain,self_critique_round,cascade_type) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
                     (uuid.uuid4().hex, user_id, api_key_id or None, request_id,
                      session_id or None, model, moe_mode, prompt_tokens, completion_tokens,
                      prompt_tokens + completion_tokens, status, now_iso,
                      latency_ms, complexity_level or None, expert_domains or None,
-                     cache_hit, agentic_rounds, dynamic_tmpl_id or None),
+                     cache_hit, agentic_rounds, dynamic_tmpl_id or None,
+                     trust_score, trust_verdict or None, cynefin_domain or None,
+                     self_critique_round, cascade_type or None),
                 )
                 await cur.execute(
                     "UPDATE api_keys SET last_used_at=%s WHERE user_id=%s AND is_active=TRUE",
@@ -111,8 +119,12 @@ async def _register_active_request(
         logger.debug("Active request registration failed: %s", e)
 
 
-async def _deregister_active_request(chat_id: str) -> None:
-    """Remove a completed request from Redis live monitoring and write to history."""
+async def _deregister_active_request(chat_id: str, extra_meta: dict | None = None) -> None:
+    """Remove a completed request from Redis live monitoring and write to history.
+
+    Args:
+        extra_meta: Optional fields merged into the history entry (e.g. trust signals).
+    """
     if state.redis_client is None:
         return
     try:
@@ -123,6 +135,8 @@ async def _deregister_active_request(chat_id: str) -> None:
                 meta = json.loads(raw)
                 meta["status"]   = "completed"
                 meta["ended_at"] = datetime.now(timezone.utc).isoformat()
+                if extra_meta:
+                    meta.update(extra_meta)
                 score = datetime.now(timezone.utc).timestamp()
                 await state.redis_client.zadd(
                     "moe:admin:completed", {json.dumps(meta, default=str): score}

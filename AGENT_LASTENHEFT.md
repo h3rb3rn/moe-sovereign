@@ -654,28 +654,526 @@ stable for a while.
 
 ---
 
+### TASK-10: Trust-Score / Verification Substrate
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** Der Judge hat kein quantitatives Qualitätsverdikt — er entscheidet ohne messbare Schwellen und winkt Antworten mit 0 validierten Quellen als valide durch. Ein Trust-Score berechnet nach jedem Expert-Durchlauf einen numerischen Wert aus messbaren Faktoren und leitet daraus eine deterministische Entscheidung ab.
+- **Instructions:**
+  1. Erstelle `services/trust_score.py` mit:
+     - `TrustVerdict` Enum: `PROCEED` (≥0.65), `PROCEED_WITH_ASSUMPTION` (0.30–0.65), `BLOCK` (<0.30)
+     - `TrustScore` Dataclass: `score: float`, `verdict: TrustVerdict`, `hard_blocked: bool`, `factors: dict`
+     - `compute_trust_score(state_: AgentState) -> TrustScore` — Faktoren: `source_count` (Anzahl zitierter Neo4j-Knoten), `conflict_count` (Widersprüche zwischen Experts, negativ gewichtet), `cross_references_resolved` (Abdeckung der Teilfragen), `source_hashes_valid` (ChromaDB-Retrieval-Integrität als Hard-Block-Trigger)
+     - Gewichte konfigurierbar via `TRUST_SCORE_WEIGHTS_JSON` env var (JSON-Dict, Default im Code als Fallback)
+     - Hard-Block unabhängig vom Score: wenn `source_hashes_valid == False` → `hard_blocked=True`, Verdict zwingend `BLOCK`
+  2. Integriere `compute_trust_score()` in `graph/synthesis.py` (Judge-Node, nach Expert-Aggregation, vor Merge-Prompt-Assembly).
+  3. Bei `BLOCK` oder `hard_blocked`: Antwort nicht senden, Kafka-Event `moe.quality` emittieren, `x-moe-quality: blocked` Header setzen.
+  4. Bei `PROCEED_WITH_ASSUMPTION`: Verdict und reduzierter Score in `AgentState` speichern (neues Feld `trust_verdict: str`) für TASK-11.
+  5. Unit-Tests in `tests/test_trust_score.py` (min. 5 Cases: kein Source-Count, voller Score, Hard-Block, Grenzwerte).
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Eine Anfrage mit 0 Neo4j-Quellen produziert `TrustVerdict.BLOCK` und wird nicht an den Client geliefert.
+  - Eine Anfrage mit validierten Quellen und konsistenten Expert-Antworten produziert `TrustVerdict.PROCEED`.
+  - Invalide ChromaDB-Hash-Prüfung triggert Hard-Block unabhängig vom numerischen Score.
+  - `tests/test_trust_score.py` grün.
+
+---
+
+### TASK-11: Self-Critique Iteration Loop
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-10 (benötigt `trust_verdict` im AgentState)
+- **Context:** Wenn der Trust-Score nach dem ersten Expert-Durchlauf im Bereich `PROCEED_WITH_ASSUMPTION` liegt (0.30–0.65), wird heute sofort eskaliert. Ein Self-Critique-Loop gibt den Experts einen explizit formulierten Gap-Feedback-Prompt und erlaubt max. N=2 Korrekturiterationen, bevor eskaliert wird. Schätzung: 40–60% weniger manuelle Escalations bei Borderline-Anfragen.
+- **Instructions:**
+  1. Füge `AgentState` in `pipeline/state.py` zwei neue Felder hinzu: `self_critique_round: int` (Default 0), `self_critique_max: int` (Default 2, aus `SELF_CRITIQUE_MAX_ROUNDS` env var).
+  2. Erstelle einen neuen LangGraph-Node `self_critique` in `graph/synthesis.py` (oder eigene Datei `graph/self_critique.py`):
+     - Liest `trust_verdict`, `expert_results`, aktuelle Teilfragen
+     - Kompiliert einen Gap-Feedback-Prompt: "Folgende Aspekte waren unvollständig / widersprüchlich: [gap_summary]. Bitte überarbeite deine Antwort gezielt."
+     - Ruft nur die betroffenen Experts erneut auf (nicht alle), inkrementiert `self_critique_round`
+     - Gibt Kontrolle zurück an Trust-Score-Node (TASK-10)
+  3. Konditionale Kante in `main.py`: nach Judge-Node → wenn `trust_verdict == PROCEED_WITH_ASSUMPTION` und `self_critique_round < self_critique_max` → `self_critique` Node; sonst → `resolve_conflicts` wie bisher.
+  4. Bei erschöpftem Limit (`self_critique_round >= self_critique_max`) und noch `PROCEED_WITH_ASSUMPTION`: Antwort mit `x-moe-quality: assumption` Header senden statt Escalation.
+  5. Unit-Tests: mock `compute_trust_score()` für Loop-Behavior-Tests.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Bei `PROCEED_WITH_ASSUMPTION` startet genau 1 Korrekturiteration (max. 2 gesamt).
+  - Bei `PROCEED` kein Self-Critique-Aufruf.
+  - Bei `BLOCK` kein Self-Critique (Hard-Block bleibt Hard-Block).
+  - `self_critique_round` im `usage_log` protokolliert (Erweiterung der `usage_log`-INSERT in `database.py`).
+
+---
+
+### TASK-12: Decision Log mit Rationale-Pflicht
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** Kafka sagt heute WHAT und WHEN — das WHY fehlt komplett. Für EU-AI-Act-Compliance und Post-Mortems ist ein append-only Decision Log mit Pflichtfeld `rationale` essentiell. Jede nicht-triviale Laufzeit-Entscheidung (Judge-Übersteuerung, Constitution-Block, DoR-Fail, Trust-Score-Block) muss mit Begründung persistiert werden.
+- **Instructions:**
+  1. Erstelle `services/decision_log.py`:
+     - `DecisionType` Enum: `JUDGE_OVERRIDE`, `CONSTITUTION_BLOCK`, `DOR_FAIL`, `TRUST_BLOCK`, `REPLAN`, `STUCK_LOOP`, `SELF_CRITIQUE_TRIGGERED`
+     - `log_decision(decision_type: DecisionType, request_id: str, rationale: str, metadata: dict = None) -> None`
+     - Backend: Kafka-Topic `moe.decisions` (append-only, gleiche Infrastruktur wie `moe.audit`); bei Kafka-Ausfall als Fallback in `decision_log.jsonl` im Log-Verzeichnis schreiben.
+     - Pflichtfeld `rationale` — kein leerer String erlaubt (ValueError bei leerem rationale).
+  2. Integriere `log_decision()` an folgenden Call-Sites:
+     - `graph/synthesis.py`: bei Judge-Übersteuerung und Trust-Score-Block
+     - `services/sovereign_constitution.py` (oder wo Constitution-Checks laufen): bei `on_violation: block`
+     - `services/dor_check.py`: bei DoR-Violations (rationale = Violation-Message)
+     - `services/cascade.py`: bei `STUCK_LOOP`-Emission
+  3. Unit-Tests in `tests/test_decision_log.py`: leeres Rationale → ValueError, alle DecisionTypes schreibbar, Kafka-Fallback auf jsonl.
+  4. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Jeder Constitution-Block erzeugt einen Kafka-Event auf `moe.decisions` mit nicht-leerem `rationale`.
+  - `decision_log.jsonl` als Fallback vorhanden und beschreibbar.
+  - Kein leeres `rationale` kommt durch (ValueError-Test grün).
+  - Kafka-Topic `moe.decisions` unter `docker exec kafka kafka-topics.sh --list` sichtbar.
+
+---
+
+### TASK-13: Boundary Contracts zwischen Pipeline-Stufen
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** An den Stagegrenzen (Planner→Expert, Expert→Judge) wird heute nicht deterministisch geprüft, ob alle Pflichtfelder vorhanden sind. Fehlt `subtasks` oder `constraints` im Planner-Output, werden teure Expert-Calls mit unvollständigem Input gestartet. Ein YAML-deklarativer Contract-Check kostet <10ms und verhindert Silent Garbage-in/out.
+- **Instructions:**
+  1. Erstelle `config/boundary_contracts.yaml`:
+     ```yaml
+     stages:
+       planner_to_expert:
+         required_fields: [category, search_query]
+         optional_fields: [mcp_tool, mcp_args, constraints]
+         on_violation: cascade_spec_gap
+       expert_to_judge:
+         required_fields: [content, category]
+         optional_fields: [citations, confidence]
+         on_violation: cascade_expert_failure
+     ```
+  2. Erstelle `services/boundary_check.py`:
+     - `check_boundary(stage: str, payload: dict) -> List[str]` — lädt das YAML, prüft Pflichtfelder, gibt Verletzungen zurück.
+     - Bei Verletzung: emittiert den in `on_violation` deklarierten `CascadeType` via `services/cascade.py`.
+  3. Integriere `check_boundary("planner_to_expert", task)` in `graph/planner.py` direkt vor dem Expert-Dispatch (nach DoR-Check, TASK-1-Integration-Point bei Zeile ~717).
+  4. Integriere `check_boundary("expert_to_judge", result)` in `graph/synthesis.py` bei Expert-Result-Aggregation.
+  5. Unit-Tests: fehlende Pflichtfelder → Cascade; vollständiger Payload → keine Verletzung.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Ein Planner-Output ohne `category` triggert `SPEC_GAP`-Cascade, kein Expert-Call.
+  - Ein Expert-Result ohne `content` triggert `EXPERT_FAILURE`-Cascade.
+  - Valide Payloads passieren ohne Overhead (<1ms Latenz-Overhead gemessen via Logging).
+  - `boundary_contracts.yaml` versioniert im Repo.
+
+---
+
+### TASK-14: Human-in-the-Loop Gate
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-10 (benötigt Trust-Score-Verdict)
+- **Context:** Bei Trust-Score `PROCEED_WITH_ASSUMPTION` + kritischer Anfrage (z.B. Constitution-`warn`-Level) wird die Antwort heute gesendet, ohne dass ein Mensch eingreifen kann. Ein state-basierter Gate-Freeze in Valkey ermöglicht echte Human-Approval-Flows: die Antwort wird eingefroren und erst nach `POST /gates/{id}/approve` gesendet. Für regulatorisch sensible Kontexte (DSGVO, EU-AI-Act Art. 14).
+- **Instructions:**
+  1. Erstelle `services/hitl_gate.py`:
+     - `create_gate(request_id: str, reason: str, response_draft: str, ttl_seconds: int = 3600) -> str` — speichert Gate-State + Draft in Valkey, gibt `gate_id` zurück.
+     - `get_gate(gate_id: str) -> dict | None` — liest Gate-State.
+     - `approve_gate(gate_id: str) -> bool` — setzt Status auf `approved`, gibt True zurück.
+     - `reject_gate(gate_id: str) -> bool` — setzt Status auf `rejected`.
+     - TTL: nach `ttl_seconds` automatisch `expired`, Antwort wird nicht gesendet.
+  2. Neuer API-Endpoint in `routes/` (neue Datei `routes/gates.py`):
+     - `GET /gates/{gate_id}` — Gate-Status abfragen
+     - `POST /gates/{gate_id}/approve` — Gate approven (nur Admin oder Request-Owner)
+     - `POST /gates/{gate_id}/reject` — Gate ablehnen
+  3. Integriere Gate-Trigger in `graph/synthesis.py`: wenn `trust_verdict == PROCEED_WITH_ASSUMPTION` UND `constitution_level == "warn"` → `create_gate()`, Client bekommt HTTP 202 mit `x-moe-gate-id: {gate_id}` statt finaler Antwort.
+  4. Stream-Polling: Client kann auf `GET /gates/{gate_id}` pollen bis `approved`/`rejected`/`expired`. Bei `approved`: finale Antwort aus Valkey holen und liefern. Bei `rejected`/`expired`: 410 Gone.
+  5. Unit-Tests: Gate-Lifecycle (create→approve→fetch), TTL-Ablauf (mock), Authorization-Check.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Borderline-Anfrage (Trust-Score 0.30–0.65 + Constitution-warn) liefert HTTP 202 + Gate-ID.
+  - `POST /gates/{id}/approve` gibt finale Antwort frei.
+  - Gate-State nach TTL automatisch `expired`, kein Memory-Leak in Valkey.
+  - Nicht-Admin kann nicht fremde Gates approven (403).
+
+---
+
+### TASK-15: Cynefin Complexity Classification
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** MoE-Sovereign kennt heute `trivial/moderate/complex` als Complexity-Level, entschieden vom Planner-LLM. Cynefin erweitert das um eine vierte Dimension: das Autonomie-Level der Antwort. `clear`-Anfragen werden vollautomatisch beantwortet; `complex`/`chaotic`-Anfragen aktivieren HITL-Gate (TASK-14) und erhöhten Trust-Score-Schwellwert. Damit wird das Autonomie-Level der Pipeline deklarativ und nicht implizit.
+- **Instructions:**
+  1. Erstelle `services/cynefin.py`:
+     - `CynefinDomain` Enum: `CLEAR`, `COMPLICATED`, `COMPLEX`, `CHAOTIC`
+     - `classify_cynefin(state_: AgentState) -> CynefinDomain` — deterministisch, kein LLM: basierend auf `complexity_level`, Anzahl Expert-Domains, `enable_graphrag`, Länge des Inputs
+     - Mapping: `trivial` + 1 Domain → `CLEAR`; `moderate` + ≤2 Domains → `COMPLICATED`; `complex` + >2 Domains → `COMPLEX`; Trust-Score `BLOCK` → `CHAOTIC`
+  2. Integriere in `graph/planner.py`: nach Complexity-Routing, neues State-Feld `cynefin_domain: str`.
+  3. Verwende `cynefin_domain` in TASK-14-Gate-Trigger-Entscheidung: Gate nur bei `COMPLEX`/`CHAOTIC`.
+  4. Logge `cynefin_domain` im `usage_log` (neues Spalte in `database.py`).
+  5. Unit-Tests: alle 4 Mappings korrekt.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Triviale Anfragen landen in `CLEAR`, erhalten kein Gate.
+  - Komplexe Multi-Domain-Anfragen landen in `COMPLEX`, aktivieren Gate (wenn TASK-14 vorhanden).
+  - `cynefin_domain` in `usage_log`-Zeilen sichtbar.
+
+---
+
+### TASK-16: Cascade Event Lifecycle (Resolution Tracking)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none (ergänzt bestehende `services/cascade.py` aus feat `886944f7`)
+- **Context:** `services/cascade.py` emittiert Cascade-Events, trackt aber nicht ob sie aufgelöst wurden. Nach einem Replan-Zyklus weiß das System nicht, ob ein `CONTEXT_GAP` geschlossen wurde oder noch offen ist. `list(only_open=True)` ist unmöglich. Für Post-Mortem und SLA-Reporting essentiell.
+- **Instructions:**
+  1. Erweitere `services/cascade.py`:
+     - `CascadeEvent` bekommt neues Feld `resolved: bool = False`, `resolved_at: str | None = None`
+     - Neue Funktion `resolve_cascade(event: CascadeEvent) -> CascadeEvent` — setzt `resolved=True`, `resolved_at=<UTC-ISO>`
+     - Neue Funktion `list_open_cascades(request_id: str) -> List[CascadeEvent]` — filtert aus Valkey alle Events mit `resolved=False`
+     - Storage: Cascade-Events per `request_id` in Valkey mit TTL 24h
+  2. Integriere `resolve_cascade()` in `graph/planner.py` nach erfolgreichem Replan: alle Events der Runde werden resolved.
+  3. Bei `STUCK_LOOP`-Emission (Retry-Budget erschöpft): alle offenen Cascades des Requests als unresolved im `decision_log` (TASK-12) notieren.
+  4. Unit-Tests: resolve + list_open, TTL-Verhalten (mock Valkey).
+  5. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Nach erfolgreichem Replan zeigt `list_open_cascades(request_id)` leere Liste.
+  - Bei STUCK: unresolved Cascades im Decision-Log sichtbar.
+  - Valkey-Keys für Cascade-Events haben 24h TTL.
+
+---
+
+### TASK-17: Deterministischer Scope Guard
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** Heute entscheidet das LLM ob ein Expert auf eine Domain zugreifen darf. Ein deterministischer Scope Guard prüft vor dem Expert-Call, ob die angefragte Domain in der deklarierten `expert_domains`-Liste des Tasks liegt. Block in <10ms statt LLM-Urteil. Verhindert Domain-Drift bei falsch geroutetem Task.
+- **Instructions:**
+  1. Erstelle `services/scope_guard.py`:
+     - `ScopeViolation` Dataclass: `task_id`, `requested_domain`, `allowed_domains`, `message`
+     - `check_scope(task: dict, expert_category: str) -> ScopeViolation | None` — prüft ob `expert_category` in `task.get("allowed_domains", [task["category"]])` enthalten ist
+     - Bei Verletzung: emittiert `CascadeType.SCOPE_DRIFT` via `services/cascade.py`
+  2. Integriere `check_scope()` in `graph/expert.py` direkt vor dem LLM-Call (nach DoR, vor Prompt-Assembly).
+  3. Bei `ScopeViolation`: Expert-Slot überspringen, `SCOPE_DRIFT`-Event emittieren, Task zurück an Planner.
+  4. Unit-Tests: erlaubte Domain → kein Block; fremde Domain → `SCOPE_DRIFT`.
+  5. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Ein Expert-Call für Domain `math` auf einem Task mit `category: code` wird blockiert.
+  - `SCOPE_DRIFT`-Event in Kafka `moe.decisions` sichtbar.
+  - Korrekt geroutete Tasks passieren ohne Overhead.
+
+---
+
+### TASK-18: Handover / Context-Preservation
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** Bei Kontext-Überschreitung oder Session-Timeout geht der aktuelle Orchestrierungs-State verloren. Ein Handover-Mechanismus serialisiert den relevanten `AgentState`-Ausschnitt in Valkey und ermöglicht Fortsetzung in einer neuen Session. Besonders relevant für lange Research-Anfragen (>10 Min. Laufzeit).
+- **Instructions:**
+  1. Erstelle `services/handover.py`:
+     - `create_handover(state_: AgentState, reason: str) -> str` — serialisiert `plan`, `expert_results`, `chat_history`, `trust_verdict`, `self_critique_round`, `agentic_iteration` in Valkey mit TTL 4h, gibt `handover_id` zurück.
+     - `restore_handover(handover_id: str) -> dict | None` — rekonstruiert relevante State-Felder.
+  2. Trigger in `graph/synthesis.py`: bei `STUCK_LOOP` + nicht-kritischer Anfrage → `create_handover()` statt Hard-Fail; Response-Body enthält `x-moe-handover-id`.
+  3. Neuer Endpoint `POST /handover/{id}/resume` in `routes/` — stellt State wieder her und setzt Pipeline fort.
+  4. Unit-Tests: serialize/deserialize round-trip, TTL-Ablauf.
+  5. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Eine STUCK-Anfrage liefert `x-moe-handover-id` im Response-Header.
+  - `POST /handover/{id}/resume` setzt Pipeline mit rekonstruiertem State fort.
+  - Handover-State nach 4h TTL automatisch gelöscht.
+
+---
+
+### TASK-19: Wikipedia / YAGO 4 Knowledge Import in Neo4j GraphRAG
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** none
+- **Context:** Der bestehende `graphrag_pipeline_worker.py` ingested nur interne Markdown-Dokumentation (SYSTEM.md, CHANGELOG.md, docs/**/*.md). Faktisches Weltwissen (Software-Frameworks, Algorithmen, Konzepte) ist nicht vorhanden — bei allgemeinen Wissensanfragen liefert GraphRAG deshalb 0 Neo4j-Knoten, was TASK-10 (Trust-Score) hart blockt. YAGO 4 enthält ~1 Mrd. RDF-Triples aus Wikipedia + WordNet + GeoNames, davon gefiltert ~5–10M für die Software/AI/Tech-Domäne.
+- **Instructions:**
+  1. **Datenquelle:** YAGO 4 Partial Dump für relevante Schemata herunterladen:
+     - `schema:SoftwareApplication`, `schema:SoftwareSourceCode`, `wdt:Q7397` (Software)
+     - `schema:Algorithm` (aus WordNet-Mapping)
+     - `wikidata:Q9143` (Programming Language), `wikidata:Q28640` (Profession/Role)
+     - Download-Pfad: `yago-knowledge.org/data/yago4/` — Turtle-Dumps, domänenspezifische Teilmengen bevorzugen
+  2. **ETL-Script** `scripts/import_yago_to_neo4j.py`:
+     - Input: `.ttl`/`.nt`-Dateien (RDF/Turtle)
+     - Parse via `rdflib` (bereits in Pypi, kein neues Dep falls verfügbar)
+     - Mapping: YAGO-Entitätstypen → bestehende Ontologie-Typen aus `graph_rag/ontology.py` (`Tech_Concept`, `Algorithm`, `Framework`, `Tool`)
+     - Output: Neo4j `MERGE`-Queries analog zu `graph_rag/manager.py:_upsert_entity()`
+     - Batch-Inserts à 500 Triples, Progress-Logging alle 10k Triples
+     - `--dry-run` und `--limit N` Flags für Test-Imports
+  3. **Konflikt-Behandlung:** `source_weight = 0.8` (höher als "extracted" 0.6, niedriger als Ontologie 1.0) für YAGO-Daten. Bestehende Ontologie-Knoten werden NICHT überschrieben (`MERGE` on name + type ohne `SET` falls bereits vorhanden).
+  4. **Integration in `graphrag_pipeline_worker.py`:** optionaler `--yago-import` Flag der das ETL-Script als Vorschritt ausführt.
+  5. Testen: Import von 1k Test-Triples (Python + JavaScript Entities aus YAGO), anschließend `manager.query_context("Was ist FastAPI?")` → sollte Neo4j-Knoten zurückgeben.
+  6. Rebuild/restart `langgraph-app` (nur falls `graph_rag/` geändert).
+- **Acceptance criteria:**
+  - Nach Import: `MATCH (n:Tech_Concept) RETURN count(n)` in Neo4j zeigt >0 YAGO-importierte Knoten.
+  - `manager.query_context("Erkläre GraphQL")` gibt mind. 1 Neo4j-Knoten aus (vorher 0).
+  - `--dry-run` erzeugt kein Schreiben in Neo4j.
+  - Import von 100k Triples läuft in <10 Minuten durch.
+
+---
+
+### TASK-20: Wikipedia-Abstracts Chunking + Embedding Pipeline
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-19 (YAGO-Import liefert Entitätsliste für Abstracts)
+- **Context:** Der bestehende GraphRAG-Stack nutzt Neo4j für strukturiertes Wissen (Entitäten + Relationen) und ChromaDB für semantische Vektoren. Wikipedia-Abstracts — der Fließtext zu jedem Entitäts-Knoten — werden nirgends eingebettet. Ohne Chunking + Embedding ist GraphRAG kein echtes Hybrid-Retrieval, sondern nur Cypher-Lookup. Das war der kritischste Mangel im ursprünglichen PoC-Prompt: "process later" für Phase 3.
+- **Instructions:**
+  1. **Datenquelle:** Wikipedia-Abstracts via `wikimedia.org/api/rest_v1/page/summary/{title}` (REST, kein SPARQL) oder DBpedia Spotlight Abstracts (`downloads.dbpedia.org/repo/dbpedia/text/abstracts/`).
+  2. **Script** `scripts/embed_wikipedia_abstracts.py`:
+     - Liest alle Neo4j-Entitäten mit `source = "yago"` (nach TASK-19)
+     - Fetched Wikipedia-Summary per Entitätsname (async httpx, max 10 concurrent)
+     - Chunked Abstracts in 200-Token-Segmente (Overlap 40 Token), Chunker via `tiktoken`
+     - Embeddet mit `all-MiniLM-L6-v2` (bereits vorhanden im Stack für IMoE-Router)
+     - Speichert in ChromaDB Collection `moe_wikipedia_abstracts` mit Metadata `entity_name`, `neo4j_id`, `chunk_index`
+  3. **Integration in `graph_rag/manager.py:query_context()`:**
+     - Hybrid-Query: Neo4j Cypher (strukturiert) + ChromaDB `moe_wikipedia_abstracts` (semantisch)
+     - Merge-Strategie: Neo4j-Knoten-Score * 0.6 + ChromaDB-Vector-Score * 0.4 (konfigurierbar via env)
+     - Bestehende ChromaDB-Collection `moe_semantic_cache` bleibt unberührt
+  4. **Rate-Limiting:** Wikimedia API erlaubt 200 Requests/s ohne Key, mit `User-Agent`-Header. Script setzt `RATE_LIMIT=5` Default (konservativ), konfigurierbar.
+  5. Unit-Tests: Mock-Wikipedia-API, Chunking-Logik (leere/lange Abstracts), ChromaDB-Collection-Isolation.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - ChromaDB Collection `moe_wikipedia_abstracts` existiert mit >0 Chunks.
+  - `query_context("GraphQL Schema Definition Language")` gibt sowohl Neo4j-Knoten als auch ChromaDB-Chunks zurück.
+  - Score-Merge produziert sortierten, deduplizierten Kontext (kein Duplikat für denselben Entitätsnamen).
+  - Embed-Script ist idempotent (zweiter Lauf macht nichts doppelt).
+
+---
+
+### TASK-21: GraphRAG Benchmark Harness (CypherBench + GraphRAG-Bench)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-19, TASK-20 (GraphRAG-Stack muss Faktenwissen enthalten um sinnvoll zu benchmarken)
+- **Context:** Ein Evaluierungs-Harness für MoE-Sovereigns GraphRAG-Qualität fehlt komplett. Der ursprüngliche PoC-Prompt (Wikidata SPARQL + manueller Markdown-Vergleich) hatte 4 kritische Mängel: SPARQL rate-limited, `neo4j:latest` nicht reproduzierbar, kein Ground-Truth, kein Chunking. Ersatz: CypherBench (11 fertige Property-Graphs, 10k+ Cypher-Fragen) + GraphRAG-Bench (ICLR'26, zitierfähige Ground-Truth Q&A).
+- **Instructions:**
+  1. **Daten-Setup** in `moe-benchmark/`:
+     - CypherBench: `git lfs clone https://huggingface.co/datasets/megagonlabs/cypherbench` → einen der 11 Graphs via `neo4j-admin load` importieren (pinne `neo4j:5.18.0` in `Dockerfile.bench`, niemals `:latest`)
+     - GraphRAG-Bench: `huggingface_hub.snapshot_download("GraphRAG-Bench/GraphRAG-Bench")` → Q&A-Pairs als lokale JSONL-Datei
+  2. **Benchmark-Script** `moe-benchmark/benchmark_graphrag.py`:
+     - Liest Q&A-Pairs aus GraphRAG-Bench (Schwierigkeitsstufen: `fact_retrieval`, `complex_reasoning`, `summarization`)
+     - Sendet jede Frage an MoE-Sovereign API: einmal `enable_graphrag=false` (Zero-Shot), einmal `enable_graphrag=true`
+     - Misst: Latenz, Token-Count, LLM-as-Judge-Score (separater Judge-Call der Ground-Truth vs. Antwort bewertet, Skala 0–5)
+     - Output: `results/graphrag_bench_YYYYMMDD.json` + aggregierte Tabelle (Precision, Recall, Latenz-Delta, Token-Overhead)
+  3. **LLM-as-Judge statt manueller Sichtprüfung:**
+     - Judge-Prompt: "Bewerte die Antwort auf einer Skala 0–5 gemessen an der Ground-Truth. Antworte nur mit der Zahl."
+     - Judge-Model: `moe-auto` (selbst), oder dedizierter Judge via `BENCHMARK_JUDGE_MODEL` env var
+  4. **Reproduzierbarkeit:**
+     - `docker-compose.yml` in `moe-benchmark/` pinnt `neo4j:5.18.0` (nicht latest)
+     - `requirements.txt` mit festen Versionen
+     - Fixture-Dataset (`data/fixtures/sample_100.jsonl`) für schnelle Smoke-Tests ohne volle Download
+  5. Ausführung via `make benchmark` in `moe-benchmark/`.
+- **Acceptance criteria:**
+  - `make benchmark` läuft durch ohne manuelle Eingriffe.
+  - Output-JSON enthält `zero_shot_score`, `graphrag_score`, `latency_ms`, `token_count` pro Q&A-Pair.
+  - GraphRAG-Score ist im Mittel höher als Zero-Shot-Score (Validierung dass GraphRAG hilft).
+  - Ergebnis ist mit einem `git log`-Hash verknüpft (reproduzierbar, zitierbar).
+  - `neo4j:latest` kommt in keiner Benchmark-Konfigurationsdatei vor.
+
+---
+
+### TASK-22: Strategy Review Node (Abstraction-First Quality Layer)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-10 (Trust-Score-Verdict steuert Aktivierung)
+- **Context:** Inspiriert durch einen privaten Mixed-Reality-Anwendungsfall (Spatial Audio via Emulator-Ring-Buffer statt räumlichem Objekt): Ein kleines lokales Modell erstellt für die Expertenergebnisse eine *inhaltsfreie* Strategieabstraktion (Problemklasse, Lösungsansatz, Annahmen, Unsicherheiten). Ein konfigurierbares potentes Reviewer-Modell (Standard: lokaler Judge; optional: Frontier-Endpunkt) bewertet *nur die Abstraktion*, nie den Inhalt. Das strukturelle Feedback fließt zurück in den Merger. Kern-Invariante: kein Domain-Inhalt verlässt den lokalen Stack, es sei denn der Admin hat explizit einen Frontier-URL konfiguriert.
+- **Instructions:**
+  1. Erstelle `services/strategy_review.py`:
+     - Dataclass `StrategyAbstract`: `problem_class: str`, `solution_approach: str`, `assumptions: list[str]`, `uncertainties: list[str]`
+     - Dataclass `StrategyFeedback`: `structural_gaps: list[str]`, `alternative_approaches: list[str]`, `confidence_adjustment: float` (−0.2 … +0.2)
+     - `abstract_solution(expert_results, plan, input_query, abstractor_llm) -> StrategyAbstract` — Abstractor-LLM sieht Inhalt, produziert nur Abstraktion
+     - `review_strategy(abstract: StrategyAbstract, reviewer_llm) -> StrategyFeedback` — Reviewer sieht *nur* die Abstraktion, kein Inhalt
+  2. Erstelle `graph/strategy_review_node.py`:
+     - `strategy_review_node(state_)` — orchestriert Abstractor + Reviewer
+     - Abstractor: `STRATEGY_ABSTRACTOR_MODEL` env (leer → `planner_llm`; Standard: kleinstes verfügbares Modell)
+     - Reviewer: `STRATEGY_REVIEWER_MODEL` + `STRATEGY_REVIEWER_URL` + `STRATEGY_REVIEWER_TOKEN` env (leer → `judge_llm` lokal; gesetzt → Frontier-Endpunkt)
+     - Gibt zurück: `strategy_feedback: str` (kompaktes strukturiertes Feedback für den Merger), `trust_score` Anpassung per `confidence_adjustment`
+  3. Konditionale Aktivierung: nur wenn `STRATEGY_REVIEW_ENABLED=true` (env) AND (`trust_verdict == PROCEED_WITH_ASSUMPTION` OR `cynefin_domain in (COMPLEX, CHAOTIC)`)
+  4. Integration in `graph/synthesis.py` / `main.py`:
+     - Neuer LangGraph-Node `strategy_review` zwischen Expert-Runde und Merger
+     - `strategy_feedback` als zusätzlicher Kontext in den Merger-Prompt injiziert (neues State-Feld)
+  5. `pipeline/state.py`: neues Feld `strategy_feedback: str`
+  6. Unit-Tests in `tests/test_strategy_review.py`:
+     - Abstractor produziert keine rohen Inhalte (assert kein Expert-Zitat im Abstract)
+     - Reviewer-Prompt enthält keinen Original-Inhalt (Invariante)
+     - Deaktiviert wenn `STRATEGY_REVIEW_ENABLED` nicht gesetzt
+     - `confidence_adjustment` liegt in [−0.2, +0.2]
+  7. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - `STRATEGY_REVIEWER_URL` leer → lokaler Judge als Reviewer, kein Netzwerk-Call nach außen.
+  - `STRATEGY_REVIEWER_URL` gesetzt → Frontier-Endpunkt verwendet (konfigurierbar, kein Hardcode).
+  - Reviewer-Prompt enthält nachweislich keinen Original-Expert-Output (Inhaltstrennung verifiziert).
+  - `strategy_feedback` im Merger-Log sichtbar wenn aktiviert.
+  - `STRATEGY_REVIEW_ENABLED` nicht gesetzt → Node wird übersprungen, kein Overhead.
+
+---
+
+### TASK-23: Pipeline Log UI-Erweiterung (Trust Score, Cynefin, Self-Critique)
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-10 – TASK-15 (alle done)
+- **Context:** Die `usage_log`-Tabelle speichert bisher keine Trust-Score-, Cynefin- oder Self-Critique-Felder. Das Pipeline-Log-Template zeigt sie folglich nicht. Für operative Sichtbarkeit der neuen Qualitätssignale müssen DB-Schema, Backend-INSERT, API-Query und Template synchron erweitert werden.
+- **Instructions:**
+  1. `admin_ui/database.py` — `ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS` für: `trust_score DOUBLE PRECISION`, `trust_verdict TEXT`, `cynefin_domain TEXT`, `self_critique_round INTEGER NOT NULL DEFAULT 0`, `cascade_type TEXT`. Funktion `log_usage()` um diese Parameter erweitern.
+  2. `main.py` — in `_log_usage_to_db`-Aufruf (Zeile ~1867) die Felder `trust_score`, `trust_verdict`, `cynefin_domain`, `self_critique_round`, `cascade_type` aus `data` extrahieren und übergeben.
+  3. `routes/admin_stats.py` — SELECT in `pipeline_log()` um neue Felder erweitern.
+  4. `admin_ui/templates/pipeline_log.html` — neue Spalten: `trust_verdict`-Badge (grün/gelb/rot), `cynefin_domain`-Badge, `self_critique_round`-Spalte; alle Labels via `{{ t(request, 'key') }}`.
+  5. Alle vier Lang-Dateien (`de_DE`, `en_EN`, `fr_FR`, `zh_CN`) mit neuen Schlüsseln befüllen.
+  6. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - Pipeline-Log-Seite zeigt `trust_verdict` farbig (PROCEED=grün, PROCEED_WITH_ASSUMPTION=gelb, BLOCK=rot).
+  - `cynefin_domain` als Badge sichtbar.
+  - Neue `usage_log`-Spalten über `ALTER TABLE IF NOT EXISTS` (idempotent, keine Migration nötig).
+
+---
+
+### TASK-24: HITL Gate Approval UI
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-14 (done)
+- **Context:** Gates werden via `POST /gates/{id}/approve|reject` approved (langgraph-app), aber es gibt keine Admin-UI-Seite dafür. Ohne UI müssen Gates manuell mit curl bedient werden — operativ nicht nutzbar.
+- **Instructions:**
+  1. Neue Admin-UI-Seite `/gates` (Template `gates.html`, Route in `admin_ui/app.py`).
+  2. API-Proxy-Endpoints in `admin_ui/app.py`: `GET /api/gates/{gate_id}` und `POST /api/gates/{gate_id}/approve|reject` → Weiterleitung an `ORCHESTRATOR_URL/gates/...`.
+  3. Template: Liste offener Gates (polling `GET /api/gates?status=pending`), pro Gate: Request-ID, Reason, Erstellt-Zeit, Ablaufzeit, Approve/Reject-Buttons.
+  4. JavaScript-Polling alle 10s für automatische Aktualisierung.
+  5. Lang-Dateien: alle vier Sprachdateien mit neuen Keys.
+  6. Nav-Eintrag in bestehende Admin-Navigation einfügen.
+  7. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - `/gates`-Seite zeigt offene Gates.
+  - Approve-Button sendet `POST /gates/{id}/approve` und refresht die Liste.
+  - Keine Gates vorhanden → leere State-Meldung statt Fehler.
+
+---
+
+### TASK-25: Response Detail Modal — Strategy Feedback & Pipeline Signals
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-23 (neue DB-Felder müssen vorhanden sein)
+- **Context:** Das bestehende Detail-Modal im Pipeline-Log zeigt `request_id`, `cache_hit`, `agentic_rounds`. Mit den neuen Felder aus TASK-23 können `strategy_feedback`, `self_critique_round/max`, `cascade_type` und `cynefin_domain` ebenfalls angezeigt werden.
+- **Instructions:**
+  1. `routes/admin_stats.py` — separaten `GET /v1/admin/pipeline-log/{request_id}` Endpunkt hinzufügen, der `strategy_feedback` aus Valkey (via `handover`-Key-Namespace oder separatem Valkey-Key) und alle DB-Felder zurückgibt.
+  2. `pipeline_log.html` — Detail-Modal erweitern: aufklappbarer Block „Strategy Review Feedback" wenn `strategy_feedback` nicht leer, `self_critique_round/max`-Anzeige, `cascade_type`-Badge.
+  3. Lang-Dateien für neue Labels.
+  4. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - Klick auf Pipeline-Log-Zeile öffnet Modal mit Strategy-Feedback-Block (wenn vorhanden).
+  - `self_critique_round` wird als „N / max" angezeigt.
+
+---
+
+### TASK-26: Live Monitoring — Trust Verdict Badge
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-23
+- **Context:** Das Live-Monitoring zeigt aktive Requests ohne Qualitätssignal. Ein `trust_verdict`-Badge in der laufenden Request-Liste würde zeigen, ob ein Request gerade blockiert ist oder mit Annahmen läuft.
+- **Instructions:**
+  1. `main.py` — `_register_active_request()` / Active-Request-Valkey-State um `trust_verdict` und `cynefin_domain` erweitern.
+  2. `live_monitoring.html` — Badge-Spalte in der aktiven Request-Liste.
+  3. Lang-Dateien für neue Labels.
+  4. Rebuild/restart `moe-admin` + `langgraph-app`.
+- **Acceptance criteria:**
+  - Laufende Requests zeigen `trust_verdict`-Badge (leer wenn noch nicht berechnet, Badge wenn vorhanden).
+
+---
+
+### TASK-27: Handover / Resume UI
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-18 (done)
+- **Context:** Handover-IDs kommen im Response-Header `x-moe-handover-id` an, aber es gibt keine UI zum Weiterführen einer unterbrochenen Session. Power-User müssen `POST /handover/{id}/restore` manuell aufrufen.
+- **Instructions:**
+  1. User-Portal (`user_portal.html`) — Button „Session fortsetzen" im Audit-Log-Modal wenn `handover_id` vorhanden.
+  2. Admin-UI (`app.py`) — Proxy `POST /api/handover/{id}/restore` → `ORCHESTRATOR_URL/handover/{id}/restore`.
+  3. Modal zum Wiederherstellen: zeigt Handover-Grund und Timestamp, Confirm-Button sendet Resume-Request und öffnet Chat mit dem wiederhergestellten Input.
+  4. Lang-Dateien.
+  5. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - User sieht im Audit-Log-Modal „Handover vorhanden" mit Fortführen-Button.
+  - Klick auf Fortführen schickt Resume-Request und zeigt Antwort.
+
+---
+
+### TASK-28: Decision Log Explorer
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-12 (done)
+- **Context:** Decision-Log-Einträge landen in Kafka `moe.decisions` + `decision_log.jsonl`. Es gibt keine UI zum Browsing. Für Post-Mortems und EU-AI-Act-Compliance-Audits wird eine filterbare Admin-Seite benötigt.
+- **Instructions:**
+  1. Backend: `GET /v1/admin/decision-log?decision_type=&request_id=&limit=&offset=` in `routes/admin_stats.py` — liest aus `decision_log.jsonl` (Kafka-Consumer wäre aufwendiger, JSONL reicht für den Anfang).
+  2. Admin-UI: neue Seite `/decision-log` (Template `decision_log_explorer.html`).
+  3. Filter: `decision_type` (Dropdown), `request_id` (Freitext), Zeitraum.
+  4. Pro Eintrag: `ts`, `decision_type`-Badge, `request_id`, `rationale`, `metadata`-Collapsible.
+  5. Lang-Dateien.
+  6. Nav-Eintrag.
+  7. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - `/decision-log` zeigt paginierte Einträge aus `decision_log.jsonl`.
+  - Filter nach `decision_type` funktioniert.
+  - `rationale`-Feld immer sichtbar (nie leer, wegen Pflichtfeld-Constraint).
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on
   `ki-vm-node05`): best suited for TASK-1 (code refactor + rebuild) and the
-  Docker/manual-test portions of TASK-3.
+  Docker/manual-test portions of TASK-3. For the new quality tasks: TASK-12
+  (Decision Log — pure Python service, no LangGraph structural changes) and
+  TASK-13 (Boundary Contracts — YAML config + lightweight check module).
 - **agy / Google Antigravity CLI** (has full IMoE implementation context and
   the original `task.md`/`walkthrough.md`): best suited for TASK-2 (it
   authored the training scripts) and writing the TASK-3 walkthrough report.
+  For the new tasks: TASK-10 (Trust-Score) and TASK-11 (Self-Critique), which
+  require deep LangGraph-node wiring in `graph/synthesis.py`.
 - **OpenCode**: available for TASK-4 (new work) or as a second implementer
-  for TASK-1 if Claude Code is blocked — coordinate via the Status Protocol
-  to avoid concurrent edits to `context_budget.py`/`services/inference.py`.
-- **Codex CLI**: well suited for focused, isolated refactors — e.g. the
-  `resolve_requested_ctx()` extraction in TASK-1, or reviewing TASK-1's diff
-  for correctness against `_judge_model_kw()`/`_planner_model_kw()`.
-- **Cursor**: useful for interactive review of TASK-1's changes across
-  `graph/synthesis.py` / `graph/expert.py` / `services/inference.py`
-  (multi-file consistency), and for smaller TASK-4 items as they're defined.
+  for TASK-1 if Claude Code is blocked. For new tasks: TASK-16
+  (Cascade Resolution Tracking — isolated extension of existing `cascade.py`)
+  and TASK-17 (Scope Guard — small standalone service).
+- **Codex CLI**: well suited for focused, isolated refactors. For new tasks:
+  TASK-15 (Cynefin Classification — deterministic, no LLM, pure logic module)
+  and TASK-18 (Handover / Context-Preservation — Valkey serialization pattern
+  analogous to existing session handling).
+- **Cursor**: useful for multi-file consistency reviews. For new tasks:
+  TASK-14 (Human-in-the-Loop Gate — touches `graph/synthesis.py`, new
+  `routes/gates.py`, and Valkey integration simultaneously).
 
 These are suggestions, not constraints — any agent may pick up any
 `pending` task, as long as it follows the Status Protocol (Section 0) and
 updates `Owner:`/`Status:` accordingly. If two agents target the same files,
 check each other's status logs first and note the overlap in Section 3.
+
+**New tasks dependency graph (TASK-10 through TASK-21):**
+```
+Quality Enhancements:
+TASK-10 (Trust-Score)
+    └── TASK-11 (Self-Critique)
+    └── TASK-14 (HITL Gate)
+            └── TASK-15 (Cynefin) [informs Gate trigger]
+
+TASK-12 (Decision Log)        ← independent, high priority
+TASK-13 (Boundary Contracts)  ← independent
+TASK-16 (Cascade Resolution)  ← extends cascade.py (feat 886944f7)
+TASK-17 (Scope Guard)         ← independent
+TASK-18 (Handover)            ← independent
+
+GraphRAG / Wikipedia Knowledge:
+TASK-19 (YAGO 4 Import)
+    └── TASK-20 (Wikipedia Abstracts Chunking + Embedding)
+            └── TASK-21 (GraphRAG Benchmark Harness)
+```
 
 ---
 

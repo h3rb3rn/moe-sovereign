@@ -1144,5 +1144,25 @@
   "model_meta.lbl_strengths": "Points forts (virgule)",
   "model_meta.lbl_tags": "Tags",
   "model_meta.lbl_benchmarks": "Scores benchmark (JSON)",
-  "model_meta.confirm_delete": "Supprimer cet enregistrement ?"
+  "model_meta.confirm_delete": "Supprimer cet enregistrement ?",
+
+  "lbl.trust_verdict": "Confiance",
+  "lbl.cynefin_domain": "Cynefin",
+  "lbl.self_critique_round": "Auto-critique",
+  "lbl.cascade_type": "Cascade",
+  "lbl.strategy_feedback": "Revue stratégique",
+  "page.gates": "Gates HITL",
+  "info.gates_desc": "Gates d'approbation humaine — examiner et approuver ou rejeter les décisions de pipeline en attente.",
+  "lbl.gate_id": "ID de gate",
+  "lbl.gate_reason": "Raison",
+  "lbl.gate_status": "Statut",
+  "lbl.gate_expires": "Expiration",
+  "btn.approve": "Approuver",
+  "btn.reject": "Rejeter",
+  "info.no_gates": "Aucun gate en attente.",
+  "page.decision_log": "Journal des décisions",
+  "info.decision_log_desc": "Journal append-only de toutes les décisions non triviales du pipeline avec justification obligatoire.",
+  "lbl.decision_type": "Type de décision",
+  "lbl.rationale": "Justification",
+  "portal.handover_sessions": "Sessions de transfert en attente"
 }

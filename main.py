@@ -675,7 +675,8 @@ from graph import (
     research_node,
     _extract_authoritative_domains, _rerank_graph_context, _compress_graph_context_llm,
     merger_node, research_fallback_node, thinking_node,
-    _should_replan, resolve_conflicts_node, critic_node, _route_cache,
+    _should_replan, resolve_conflicts_node, critic_node, self_critique_node, _route_cache,
+    strategy_review_node,
 )
 
 async def _init_graph_rag() -> None:
@@ -995,6 +996,8 @@ builder.add_node("research_fallback",  research_fallback_node)
 builder.add_node("thinking",           thinking_node)
 builder.add_node("merger",             merger_node)
 builder.add_node("resolve_conflicts",  resolve_conflicts_node)
+builder.add_node("self_critique",      self_critique_node)
+builder.add_node("strategy_review",    strategy_review_node)
 builder.add_node("critic",             critic_node)
 
 builder.set_entry_point("cache")
@@ -1014,11 +1017,15 @@ builder.add_edge(
     "research_fallback",
 )
 builder.add_edge("research_fallback", "thinking")
-builder.add_edge("thinking", "merger")
+builder.add_edge("thinking", "strategy_review")
+# strategy_review is a pass-through when STRATEGY_REVIEW_ENABLED is not set
+builder.add_edge("strategy_review", "merger")
 builder.add_conditional_edges(
     "merger", _should_replan,
-    {"planner": "planner", "critic": "resolve_conflicts"},
+    {"planner": "planner", "critic": "resolve_conflicts", "self_critique": "self_critique"},
 )
+# Self-critique loops back to merger for re-evaluation (TASK-11)
+builder.add_edge("self_critique", "merger")
 builder.add_edge("resolve_conflicts", "critic")
 builder.add_edge("critic", END)
 
@@ -1176,6 +1183,8 @@ from routes.anthropic_compat import router as _anthropic_router
 from routes.codex_proxy      import router as _codex_proxy_router
 from routes.context_search   import router as _context_search_router
 from routes.embeddings       import router as _embeddings_router
+from routes.gates            import router as _gates_router
+from routes.handover         import router as _handover_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1189,6 +1198,8 @@ app.include_router(_models_router)
 app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
 app.include_router(_context_search_router)
+app.include_router(_gates_router)
+app.include_router(_handover_router)
 app.include_router(_embeddings_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
@@ -1746,7 +1757,15 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "vector_confidence": 0.5,
                  "graph_confidence": 0.5,
                  "fuzzy_routing_scores": {},
-                 "no_cache": no_cache},
+                 "no_cache": no_cache,
+                 "trust_score": 0.0,
+                 "trust_verdict": "",
+                 "self_critique_round": 0,
+                 "self_critique_max": int(__import__("os").getenv("SELF_CRITIQUE_MAX_ROUNDS", "2")),
+                 "constitution_violations": [],
+                 "cynefin_domain": "",
+                 "hitl_gate_id": "",
+                 "strategy_feedback": ""},
                 config,
             )
         except Exception as e:
@@ -1784,7 +1803,12 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
     # Pipeline complete — deregister now, before streaming content.
     # This prevents the request from remaining "active" if the client closes the connection
     # after the last content chunk (normal OpenWebUI behavior).
-    asyncio.create_task(_deregister_active_request(chat_id))
+    _pipeline_data = result_box.get("data") or {}
+    asyncio.create_task(_deregister_active_request(chat_id, extra_meta={
+        "trust_verdict":  _pipeline_data.get("trust_verdict") or "",
+        "trust_score":    _pipeline_data.get("trust_score")  or 0.0,
+        "cynefin_domain": _pipeline_data.get("cynefin_domain") or "",
+    }))
     _deregistered = True
 
     # Plan mode: output execution plan as visible markdown block before the answer
@@ -1844,6 +1868,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             t.get("category", "") for t in _plan if isinstance(t, dict) and t.get("category")
         }))
         _agentic_rounds = int(data.get("agentic_round", 0))
+        _trust_score  = data.get("trust_score") or None
+        _trust_verdict = data.get("trust_verdict") or None
+        _cynefin_domain = data.get("cynefin_domain") or None
+        _self_critique_round = int(data.get("self_critique_round") or 0)
+        _cascade_type = data.get("cascade_type") or None
         if _uid != "anon":
             asyncio.create_task(_log_usage_to_db(
                 user_id=_uid,
@@ -1859,6 +1888,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 expert_domains=_expert_domains,
                 cache_hit=bool(cache_hit_flag),
                 agentic_rounds=_agentic_rounds,
+                trust_score=_trust_score,
+                trust_verdict=_trust_verdict,
+                cynefin_domain=_cynefin_domain,
+                self_critique_round=_self_critique_round,
+                cascade_type=_cascade_type,
             ))
             # Deduct user-conn tokens: those are billed by the user's own provider.
             _uc_p = data.get("user_conn_prompt_tokens", 0)

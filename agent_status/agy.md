@@ -104,3 +104,18 @@ Pre-conditions verified:
 
 Notes:
 - Post-training action: The resulting 62 GB merged model will be quantized to 4-bit (AWQ/GGUF) to fit within a ~20 GB VRAM envelope for deployment on N04-RTX.
+
+---
+
+## 2026-06-29T08:57:00Z — TASK-9 — in_progress
+
+Plan / progress:
+- The initial async run attempts (Jobs 19588284-86) failed immediately.
+- Diagnostics revealed that the compute nodes on LUMI-G do not have `/pfs/lustref1` mounted. Consequently, all references to the shared container `/appl/local/laifs/containers/lumi-multitorch-latest.sif` and the `laifs` modules failed since they are symlinked to `/pfs/lustref1`.
+- Solution: Copied the 14 GB Singularity container image directly to our local project scratch directory (`/scratch/project_465003058/hornphil/lumi-multitorch-latest.sif`) which is hosted on the fully accessible `/pfs/lustrep4` filesystem.
+- Modified `generate_judge_dataset.sh`, `train_judge_lora_large.sh`, and `merge_judge_lora.sh` to use the local scratch-based container path and comment out the broken module load calls.
+- Verified via interactive `srun` that Singularity successfully executes inside the scratch-based container copy on compute nodes and correctly detects PyTorch and AMD GPUs (`torch.cuda.is_available() == True`).
+- Cancelled the old stale dependency job (Job 19588422).
+- Resubmitted the three generator shards (Jobs 19598021, 19598022, 19598023).
+- Resubmitted the merge-and-trigger job (Job 19598025) with `--dependency=afterok:19598021:19598022:19598023` to start DDP training automatically once datagen completes.
+- Updated `PreView/index.html` and `eurohpc_lumi_activity_report.md` with the new job states, quotas, and resubmissions.
