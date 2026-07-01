@@ -1180,6 +1180,7 @@ from routes.codex_proxy      import router as _codex_proxy_router
 from routes.context_search   import router as _context_search_router
 from routes.embeddings       import router as _embeddings_router
 from routes.gates            import router as _gates_router
+from routes.handover         import router as _handover_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1194,6 +1195,7 @@ app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
 app.include_router(_context_search_router)
 app.include_router(_gates_router)
+app.include_router(_handover_router)
 app.include_router(_embeddings_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────

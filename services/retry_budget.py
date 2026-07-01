@@ -89,4 +89,19 @@ async def check_and_emit_stuck(
     except Exception as e:
         logger.debug("retry_budget: decision_log emit failed: %s", e)
 
+    # ── TASK-18: Create handover for non-critical stuck requests ─────────────
+    try:
+        cynefin_domain = (state_.get("cynefin_domain") or "").upper()
+        if cynefin_domain not in ("COMPLEX", "CHAOTIC"):
+            from services.handover import create_handover
+            handover_id = create_handover(
+                state_,
+                reason=f"STUCK_LOOP after {iteration}/{max_rounds} rounds — {payload['cascade_type']}",
+            )
+            if handover_id:
+                payload["handover_id"] = handover_id
+                logger.info("🤝 Handover created for stuck request: %s", handover_id)
+    except Exception as _he:
+        logger.debug("retry_budget: handover creation failed: %s", _he)
+
     return True
