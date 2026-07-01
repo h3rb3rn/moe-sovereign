@@ -1164,5 +1164,20 @@
   "info.decision_log_desc": "所有非平凡流水线决策的仅追加日志，含必填理由。",
   "lbl.decision_type": "决策类型",
   "lbl.rationale": "理由",
-  "portal.handover_sessions": "待处理移交会话"
+  "portal.handover_sessions": "待处理移交会话",
+
+  "page.model_capabilities": "模型能力矩阵",
+  "info.model_capabilities_desc": "来自 model_capabilities.yaml 的模型能力只读视图（JSON Schema、流式传输、提示）。",
+  "page.ai_io_audit": "AI I/O 审计",
+  "info.ai_io_audit_desc": "每次 LLM 调用的结构化审计日志——EU AI 法案第 13 条透明度要求。",
+  "lbl.audit_id": "审计 ID",
+  "lbl.stage": "阶段",
+  "lbl.prompt_tokens": "提示词 Token",
+  "lbl.completion_tokens": "补全 Token",
+  "lbl.started_at": "开始时间",
+  "lbl.audit_status": "状态",
+  "lbl.request_body": "请求体",
+  "lbl.response_body": "响应体",
+  "lbl.structured_failure_round": "SF 轮次",
+  "info.no_audit_entries": "未找到审计条目。"
 }

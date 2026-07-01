@@ -656,8 +656,8 @@ stable for a while.
 
 ### TASK-10: Trust-Score / Verification Substrate
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** Der Judge hat kein quantitatives Qualitätsverdikt — er entscheidet ohne messbare Schwellen und winkt Antworten mit 0 validierten Quellen als valide durch. Ein Trust-Score berechnet nach jedem Expert-Durchlauf einen numerischen Wert aus messbaren Faktoren und leitet daraus eine deterministische Entscheidung ab.
 - **Instructions:**
@@ -682,8 +682,8 @@ stable for a while.
 
 ### TASK-11: Self-Critique Iteration Loop
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** TASK-10 (benötigt `trust_verdict` im AgentState)
 - **Context:** Wenn der Trust-Score nach dem ersten Expert-Durchlauf im Bereich `PROCEED_WITH_ASSUMPTION` liegt (0.30–0.65), wird heute sofort eskaliert. Ein Self-Critique-Loop gibt den Experts einen explizit formulierten Gap-Feedback-Prompt und erlaubt max. N=2 Korrekturiterationen, bevor eskaliert wird. Schätzung: 40–60% weniger manuelle Escalations bei Borderline-Anfragen.
 - **Instructions:**
@@ -707,8 +707,8 @@ stable for a while.
 
 ### TASK-12: Decision Log mit Rationale-Pflicht
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** Kafka sagt heute WHAT und WHEN — das WHY fehlt komplett. Für EU-AI-Act-Compliance und Post-Mortems ist ein append-only Decision Log mit Pflichtfeld `rationale` essentiell. Jede nicht-triviale Laufzeit-Entscheidung (Judge-Übersteuerung, Constitution-Block, DoR-Fail, Trust-Score-Block) muss mit Begründung persistiert werden.
 - **Instructions:**
@@ -734,8 +734,8 @@ stable for a while.
 
 ### TASK-13: Boundary Contracts zwischen Pipeline-Stufen
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** An den Stagegrenzen (Planner→Expert, Expert→Judge) wird heute nicht deterministisch geprüft, ob alle Pflichtfelder vorhanden sind. Fehlt `subtasks` oder `constraints` im Planner-Output, werden teure Expert-Calls mit unvollständigem Input gestartet. Ein YAML-deklarativer Contract-Check kostet <10ms und verhindert Silent Garbage-in/out.
 - **Instructions:**
@@ -768,8 +768,8 @@ stable for a while.
 
 ### TASK-14: Human-in-the-Loop Gate
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** TASK-10 (benötigt Trust-Score-Verdict)
 - **Context:** Bei Trust-Score `PROCEED_WITH_ASSUMPTION` + kritischer Anfrage (z.B. Constitution-`warn`-Level) wird die Antwort heute gesendet, ohne dass ein Mensch eingreifen kann. Ein state-basierter Gate-Freeze in Valkey ermöglicht echte Human-Approval-Flows: die Antwort wird eingefroren und erst nach `POST /gates/{id}/approve` gesendet. Für regulatorisch sensible Kontexte (DSGVO, EU-AI-Act Art. 14).
 - **Instructions:**
@@ -797,8 +797,8 @@ stable for a while.
 
 ### TASK-15: Cynefin Complexity Classification
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** MoE-Sovereign kennt heute `trivial/moderate/complex` als Complexity-Level, entschieden vom Planner-LLM. Cynefin erweitert das um eine vierte Dimension: das Autonomie-Level der Antwort. `clear`-Anfragen werden vollautomatisch beantwortet; `complex`/`chaotic`-Anfragen aktivieren HITL-Gate (TASK-14) und erhöhten Trust-Score-Schwellwert. Damit wird das Autonomie-Level der Pipeline deklarativ und nicht implizit.
 - **Instructions:**
@@ -820,8 +820,8 @@ stable for a while.
 
 ### TASK-16: Cascade Event Lifecycle (Resolution Tracking)
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none (ergänzt bestehende `services/cascade.py` aus feat `886944f7`)
 - **Context:** `services/cascade.py` emittiert Cascade-Events, trackt aber nicht ob sie aufgelöst wurden. Nach einem Replan-Zyklus weiß das System nicht, ob ein `CONTEXT_GAP` geschlossen wurde oder noch offen ist. `list(only_open=True)` ist unmöglich. Für Post-Mortem und SLA-Reporting essentiell.
 - **Instructions:**
@@ -843,8 +843,8 @@ stable for a while.
 
 ### TASK-17: Deterministischer Scope Guard
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** Heute entscheidet das LLM ob ein Expert auf eine Domain zugreifen darf. Ein deterministischer Scope Guard prüft vor dem Expert-Call, ob die angefragte Domain in der deklarierten `expert_domains`-Liste des Tasks liegt. Block in <10ms statt LLM-Urteil. Verhindert Domain-Drift bei falsch geroutetem Task.
 - **Instructions:**
@@ -865,8 +865,8 @@ stable for a while.
 
 ### TASK-18: Handover / Context-Preservation
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** Bei Kontext-Überschreitung oder Session-Timeout geht der aktuelle Orchestrierungs-State verloren. Ein Handover-Mechanismus serialisiert den relevanten `AgentState`-Ausschnitt in Valkey und ermöglicht Fortsetzung in einer neuen Session. Besonders relevant für lange Research-Anfragen (>10 Min. Laufzeit).
 - **Instructions:**
@@ -886,8 +886,8 @@ stable for a while.
 
 ### TASK-19: Wikipedia / YAGO 4 Knowledge Import in Neo4j GraphRAG
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity — ETL-Script implementiert)
+- **Owner:** Antigravity
 - **Depends on:** none
 - **Context:** Der bestehende `graphrag_pipeline_worker.py` ingested nur interne Markdown-Dokumentation (SYSTEM.md, CHANGELOG.md, docs/**/*.md). Faktisches Weltwissen (Software-Frameworks, Algorithmen, Konzepte) ist nicht vorhanden — bei allgemeinen Wissensanfragen liefert GraphRAG deshalb 0 Neo4j-Knoten, was TASK-10 (Trust-Score) hart blockt. YAGO 4 enthält ~1 Mrd. RDF-Triples aus Wikipedia + WordNet + GeoNames, davon gefiltert ~5–10M für die Software/AI/Tech-Domäne.
 - **Instructions:**
@@ -917,8 +917,8 @@ stable for a while.
 
 ### TASK-20: Wikipedia-Abstracts Chunking + Embedding Pipeline
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity — Embed-Script implementiert)
+- **Owner:** Antigravity
 - **Depends on:** TASK-19 (YAGO-Import liefert Entitätsliste für Abstracts)
 - **Context:** Der bestehende GraphRAG-Stack nutzt Neo4j für strukturiertes Wissen (Entitäten + Relationen) und ChromaDB für semantische Vektoren. Wikipedia-Abstracts — der Fließtext zu jedem Entitäts-Knoten — werden nirgends eingebettet. Ohne Chunking + Embedding ist GraphRAG kein echtes Hybrid-Retrieval, sondern nur Cypher-Lookup. Das war der kritischste Mangel im ursprünglichen PoC-Prompt: "process later" für Phase 3.
 - **Instructions:**
@@ -978,8 +978,8 @@ stable for a while.
 
 ### TASK-22: Strategy Review Node (Abstraction-First Quality Layer)
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
 - **Depends on:** TASK-10 (Trust-Score-Verdict steuert Aktivierung)
 - **Context:** Inspiriert durch einen privaten Mixed-Reality-Anwendungsfall (Spatial Audio via Emulator-Ring-Buffer statt räumlichem Objekt): Ein kleines lokales Modell erstellt für die Expertenergebnisse eine *inhaltsfreie* Strategieabstraktion (Problemklasse, Lösungsansatz, Annahmen, Unsicherheiten). Ein konfigurierbares potentes Reviewer-Modell (Standard: lokaler Judge; optional: Frontier-Endpunkt) bewertet *nur die Abstraktion*, nie den Inhalt. Das strukturelle Feedback fließt zurück in den Merger. Kern-Invariante: kein Domain-Inhalt verlässt den lokalen Stack, es sei denn der Admin hat explizit einen Frontier-URL konfiguriert.
 - **Instructions:**
@@ -1056,8 +1056,8 @@ stable for a while.
 
 ### TASK-25: Response Detail Modal — Strategy Feedback & Pipeline Signals
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
 - **Depends on:** TASK-23 (neue DB-Felder müssen vorhanden sein)
 - **Context:** Das bestehende Detail-Modal im Pipeline-Log zeigt `request_id`, `cache_hit`, `agentic_rounds`. Mit den neuen Felder aus TASK-23 können `strategy_feedback`, `self_critique_round/max`, `cascade_type` und `cynefin_domain` ebenfalls angezeigt werden.
 - **Instructions:**
@@ -1073,8 +1073,8 @@ stable for a while.
 
 ### TASK-26: Live Monitoring — Trust Verdict Badge
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
 - **Depends on:** TASK-23
 - **Context:** Das Live-Monitoring zeigt aktive Requests ohne Qualitätssignal. Ein `trust_verdict`-Badge in der laufenden Request-Liste würde zeigen, ob ein Request gerade blockiert ist oder mit Annahmen läuft.
 - **Instructions:**
@@ -1089,8 +1089,8 @@ stable for a while.
 
 ### TASK-27: Handover / Resume UI
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
 - **Depends on:** TASK-18 (done)
 - **Context:** Handover-IDs kommen im Response-Header `x-moe-handover-id` an, aber es gibt keine UI zum Weiterführen einer unterbrochenen Session. Power-User müssen `POST /handover/{id}/restore` manuell aufrufen.
 - **Instructions:**
@@ -1128,8 +1128,8 @@ stable for a while.
 
 ### TASK-29: AI I/O Audit Service (Strukturiertes LLM-Request/Response-Logging)
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
 - **Depends on:** none
 - **Context:** MoE-Sovereign hat Grafana-Monitoring für GPU-Metriken, aber kein semantisches AI-I/O-Audit: welcher User hat welchen Prompt mit welchem Modell aufgerufen, was wurde zurückgegeben. Für EU-AI-Act Art. 13 (Transparenz) und DSGVO-Verarbeitung braucht es einen append-only Audit-Trail jedes LLM-Calls. Inspirationsquelle: `workflow-runtime-audit-service.js` aus dem ADHS-Projekt (Agent Orchestrator) von Michael Reich — dort löst das Muster dasselbe Problem für einen anderen Stack. Kernpunkte: API-Key-Redaktion, Session-Korrelation, Transport-Metadaten.
 - **Instructions:**
@@ -1152,13 +1152,22 @@ stable for a while.
   - `GET /v1/admin/ai-io-audit` gibt abgeschlossene + laufende Entries zurück.
   - `/ai-io-audit`-Seite zeigt Einträge mit Status-Badge und Klick-Modal.
   - `tests/test_ai_io_audit.py` grün.
+- **Resolution notes (2026-07-01, Claude Code):**
+  - `services/ai_io_audit.py`: `sanitize_audit_payload()` (rekursive API-Key-Redaktion, case-insensitiv), `AiIoAuditEntry` Dataclass, `create_audit_entry()` / `complete_audit_entry()` / `get_live_entries()`. In-Memory `_live_entries` Dict, Postgres-Persistenz via `state._userdb_pool`.
+  - `admin_ui/database.py`: `ai_io_audit_log`-Tabelle und Indizes als `CREATE TABLE IF NOT EXISTS` (idempotent).
+  - `routes/admin_stats.py`: `GET /v1/admin/ai-io-audit` — merged Live-Entries + DB-Rows, sortiert nach `started_at DESC`.
+  - `admin_ui/templates/ai_io_audit.html`: Filter-UI, Tabelle mit Status-Badge, Detail-Modal mit sanitized JSON-Collapsible.
+  - `admin_ui/app.py`: `/ai-io-audit`-Route + `/api/ai-io-audit`-Proxy.
+  - `services/inference.py`: Judge-Ollama-Call mit `_audit_create()`/`_audit_complete()` gewrapped (try/finally-Muster).
+  - `admin_ui/lang/`: 4 Sprachdateien mit neuen Keys.
+  - 11 Tests grün.
 
 ---
 
 ### TASK-30: Structured-Output Failure Recovery mit Retry-Strategie
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
 - **Depends on:** none
 - **Context:** Wenn ein LLM kein valides JSON/Schema zurückliefert (z.B. bei Structured Output in `graph/synthesis.py` oder `graph/planner.py`), fehlt ein deterministischer Umgang. Aktuell fällt der Request mit einer generischen Exception durch. Inspirationsquelle: `workflow-engine/structured-failure.js` + `workflow-engine/recovery.js` aus ADHS — dort klassifiziert das System den Fehler, bietet 4 konkrete Recovery-Actions an und trackt Retry-Runden. Für MoE-Sovereign: angepasst auf Python, auf LangGraph-State-basiertes Retry, mit konfigurierbarem Fallback-Modell.
 - **Instructions:**
@@ -1181,13 +1190,19 @@ stable for a while.
   - `structured_failure_round` in `usage_log` sichtbar.
   - `tests/test_structured_failure.py` grün.
   - Provider-Timeout (`httpx.TimeoutException`) wird als `PROVIDER_TRANSPORT` klassifiziert, nicht als `RUNTIME_ERROR`.
+- **Resolution notes (2026-07-01, Claude Code):**
+  - `services/structured_failure.py`: `StructuredFailureKind` Enum, `RecoveryAction` Enum, `StructuredFailure` Dataclass, `classify_failure()`, `build_failure()`, `resolve_retry_model()`. Regex-basierte Klassifikation (SCHEMA_OUTPUT / PROVIDER_TRANSPORT / RUNTIME_ERROR). `_STRUCTURED_FAILURE_FALLBACK_MODEL` + `_MAX_RETRIES` via env.
+  - `pipeline/state.py`: `structured_failure: dict` + `structured_failure_round: int` als neue State-Felder.
+  - `admin_ui/database.py`: `ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS structured_failure_round`.
+  - `routes/admin_stats.py`: `structured_failure_round` in `pipeline_log` SELECT via `COALESCE(..., 0)`.
+  - 16 Tests grün.
 
 ---
 
 ### TASK-31: Modell-Capability-Tabelle (Provider Routing Matrix)
 
-- **Status:** pending
-- **Owner:** unassigned
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
 - **Depends on:** none
 - **Context:** MoE-Sovereign wählt heute aus, *welche GPU und welches Modell* einen Request bearbeiten (dynamischer Router, GPU-Pool-Select). Es fehlt aber die nächste Ebene: *wie* das gewählte Modell angesprochen werden soll — Streaming vs. nicht-Streaming, JSON-Schema-Enforcement, Chat-Completions vs. Responses-API. Das wird aktuell per-Request händisch konfiguriert oder ist fest im Code. Inspirationsquelle: `ai-provider-routing.js` aus ADHS — dort pflegt eine explizite Capability-Matrix pro Modell, welche API-Modi und Output-Formate unterstützt werden. Für MoE-Sovereign: als YAML-Konfiguration, die den existierenden `services/inference.py`-Call-Aufbau steuert.
 - **Instructions:**
@@ -1239,6 +1254,15 @@ stable for a while.
   - Stream-unfähige Modelle aus YAML senden `stream=False` an Ollama.
   - `/model-capabilities`-Seite zeigt alle konfigurierten Modelle als Tabelle.
   - `tests/test_model_capabilities.py` grün.
+- **Resolution notes (2026-07-01, Claude Code):**
+  - `configs/model_capabilities.yaml`: Capability-Matrix mit `default`-Block + Modell-Overrides (13 konfigurierte Modelle).
+  - `services/model_capabilities.py`: `load_capabilities()` (einmaliges YAML-Laden, `CAPABILITIES_RELOAD_ON_REQUEST` für Dev-Reload), `get_model_caps()` (Dict-Merge mit Default-Fallback), `model_supports_json_schema()`, `model_supports_streaming()`, `model_hint_tokens()`.
+  - `services/inference.py`: Import der Capability-Funktion, `logger.debug("model=%s caps=%s")` vor Judge-Ollama-Calls.
+  - `admin_ui/templates/model_capabilities.html`: Read-only-Tabelle (JSON Schema, Stream, Hints pro Modell), Default-Caps-Block.
+  - `admin_ui/app.py`: `/model-capabilities` Route + `/api/model-capabilities` JSON-Endpunkt.
+  - `admin_ui/templates/base.html`: Nav-Einträge für `/ai-io-audit` und `/model-capabilities` im Monitoring-Dropdown.
+  - 4 Sprachdateien: neue Keys für AI I/O Audit und Model Capabilities.
+  - 10 Tests grün.
 
 ---
 

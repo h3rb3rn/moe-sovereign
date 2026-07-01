@@ -9227,6 +9227,59 @@ async def api_gate_reject(gate_id: str):
 
 # ─── Decision Log Explorer (TASK-28) ────────────────────────────────────────
 
+# ─── AI I/O Audit (TASK-29) ──────────────────────────────────────────────────
+
+@app.get("/ai-io-audit", response_class=HTMLResponse)
+async def ai_io_audit_page(request: Request, _=Depends(require_admin)):
+    """AI I/O Audit log — every LLM call with API-key redaction."""
+    return TEMPLATES.TemplateResponse(request, "ai_io_audit.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/ai-io-audit", dependencies=[Depends(require_admin)])
+async def api_ai_io_audit(
+    request_id: Optional[str] = None,
+    model: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+):
+    """Proxy to orchestrator: get AI I/O audit log entries."""
+    try:
+        params: dict = {"limit": limit, "offset": offset}
+        if request_id: params["request_id"] = request_id
+        if model:      params["model"] = model
+        if status:     params["status"] = status
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/v1/admin/ai-io-audit", params=params)
+            if r.status_code == 200:
+                return r.json()
+            return {"records": [], "total": 0}
+    except Exception as e:
+        return {"records": [], "total": 0, "error": str(e)}
+
+
+# ─── Model Capabilities (TASK-31) ────────────────────────────────────────────
+
+@app.get("/model-capabilities", response_class=HTMLResponse)
+async def model_capabilities_page(request: Request, _=Depends(require_admin)):
+    """Read-only view of configs/model_capabilities.yaml capability matrix."""
+    return TEMPLATES.TemplateResponse(request, "model_capabilities.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/model-capabilities", dependencies=[Depends(require_admin)])
+async def api_model_capabilities():
+    """Return parsed model_capabilities.yaml as JSON."""
+    from services.model_capabilities import load_capabilities
+    caps = load_capabilities()
+    return caps or {"default": {}, "models": {}}
+
+
+# ─── Decision Log Explorer (TASK-28) ─────────────────────────────────────────
+
 @app.get("/decision-log", response_class=HTMLResponse)
 async def decision_log_page(request: Request, _=Depends(require_admin)):
     """Decision Log Explorer — browse and filter pipeline decisions."""

@@ -357,11 +357,30 @@ ALTER TABLE model_metadata ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS dynamic_tmpl_id TEXT;
 
 -- Quality signals from TASK-10 to TASK-22 (Trust Score, Cynefin, Self-Critique)
-ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_score         DOUBLE PRECISION;
-ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_verdict       TEXT;
-ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cynefin_domain      TEXT;
-ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS self_critique_round INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cascade_type        TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_score              DOUBLE PRECISION;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_verdict            TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cynefin_domain           TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS self_critique_round      INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cascade_type             TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS structured_failure_round INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS ai_io_audit_log (
+    audit_id          TEXT PRIMARY KEY,
+    session_id        TEXT,
+    request_id        TEXT,
+    model             TEXT,
+    endpoint          TEXT,
+    stage             TEXT,
+    prompt_tokens     INTEGER,
+    completion_tokens INTEGER,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    status            TEXT,
+    request_body      JSONB,
+    response_body     JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_ai_io_audit_request ON ai_io_audit_log(request_id);
+CREATE INDEX IF NOT EXISTS idx_ai_io_audit_started ON ai_io_audit_log(started_at DESC);
 """
 
 
@@ -1153,7 +1172,8 @@ async def log_usage(user_id: str, api_key_id: Optional[str], request_id: str,
                     trust_verdict: Optional[str] = None,
                     cynefin_domain: Optional[str] = None,
                     self_critique_round: int = 0,
-                    cascade_type: Optional[str] = None) -> None:
+                    cascade_type: Optional[str] = None,
+                    structured_failure_round: int = 0) -> None:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -1161,16 +1181,18 @@ async def log_usage(user_id: str, api_key_id: Optional[str], request_id: str,
                 "prompt_tokens,completion_tokens,total_tokens,status,requested_at,"
                 "session_id,latency_ms,complexity_level,expert_domains,cache_hit,"
                 "agentic_rounds,dynamic_tmpl_id,"
-                "trust_score,trust_verdict,cynefin_domain,self_critique_round,cascade_type) "
+                "trust_score,trust_verdict,cynefin_domain,self_critique_round,cascade_type,"
+                "structured_failure_round) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (new_id(), user_id, api_key_id, request_id, model, moe_mode,
                  prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
                  status, now_iso(),
                  session_id, latency_ms, complexity_level, expert_domains, cache_hit,
                  agentic_rounds, dynamic_tmpl_id,
                  trust_score, trust_verdict or None, cynefin_domain or None,
-                 self_critique_round, cascade_type or None),
+                 self_critique_round, cascade_type or None,
+                 structured_failure_round),
             )
 
 

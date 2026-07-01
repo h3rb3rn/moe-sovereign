@@ -1163,5 +1163,20 @@
   "info.decision_log_desc": "Append-only-Protokoll aller nicht-trivialen Pipeline-Entscheidungen mit Pflichtbegründung.",
   "lbl.decision_type": "Entscheidungstyp",
   "lbl.rationale": "Begründung",
-  "portal.handover_sessions": "Offene Handover-Sitzungen"
+  "portal.handover_sessions": "Offene Handover-Sitzungen",
+
+  "page.model_capabilities": "Modell-Fähigkeiten",
+  "info.model_capabilities_desc": "Read-only-Übersicht der konfigurierten Modell-Fähigkeiten (JSON-Schema, Streaming, Hints) aus model_capabilities.yaml.",
+  "page.ai_io_audit": "AI I/O Audit",
+  "info.ai_io_audit_desc": "Strukturiertes Audit-Log jedes LLM-Calls — EU-AI-Act Art. 13 Transparenz.",
+  "lbl.audit_id": "Audit-ID",
+  "lbl.stage": "Stufe",
+  "lbl.prompt_tokens": "Prompt-Token",
+  "lbl.completion_tokens": "Completion-Token",
+  "lbl.started_at": "Gestartet",
+  "lbl.audit_status": "Status",
+  "lbl.request_body": "Request",
+  "lbl.response_body": "Response",
+  "lbl.structured_failure_round": "SF-Runde",
+  "info.no_audit_entries": "Keine Audit-Einträge gefunden."
 }

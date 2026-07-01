@@ -240,7 +240,8 @@ async def pipeline_log(
                                ul.dynamic_tmpl_id,
                                at.name AS dynamic_tmpl_name,
                                ul.trust_score, ul.trust_verdict, ul.cynefin_domain,
-                               ul.self_critique_round, ul.cascade_type
+                               ul.self_critique_round, ul.cascade_type,
+                               COALESCE(ul.structured_failure_round, 0) AS structured_failure_round
                         FROM usage_log ul
                         LEFT JOIN users u ON ul.user_id = u.id
                         LEFT JOIN admin_expert_templates at ON at.id = ul.dynamic_tmpl_id
@@ -383,3 +384,74 @@ async def token_timeline(
         })
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ─── AI I/O Audit Log (TASK-29) ───────────────────────────────────────────────
+
+@router.get("/v1/admin/ai-io-audit")
+async def get_ai_io_audit(
+    raw_request: Request,
+    request_id: Optional[str] = None,
+    model: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Response:
+    """Return ai_io_audit_log rows merged with live (in-flight) entries, newest first."""
+    raw_key = _extract_api_key(raw_request)
+    if not raw_key:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    user_ctx = await _validate_api_key(raw_key)
+    if "error" in user_ctx:
+        return JSONResponse(status_code=401, content={"error": user_ctx["error"]})
+    _sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
+    if not (user_ctx.get("is_admin") or (raw_key == _sys_key and _sys_key)):
+        return JSONResponse(status_code=403, content={"error": "Admin access required"})
+
+    from services.ai_io_audit import get_live_entries
+
+    live_dicts = [e.to_dict() for e in get_live_entries()]
+    if request_id:
+        live_dicts = [d for d in live_dicts if d["request_id"] == request_id]
+    if model:
+        live_dicts = [d for d in live_dicts if model.lower() in (d.get("model") or "").lower()]
+    if status:
+        live_dicts = [d for d in live_dicts if d.get("status") == status]
+
+    try:
+        if state._userdb_pool is None:
+            return JSONResponse({"records": live_dicts, "total": len(live_dicts)})
+
+        conditions: list = []
+        params: list = []
+        if request_id:  conditions.append("request_id = %s"); params.append(request_id)
+        if model:       conditions.append("model ILIKE %s");  params.append(f"%{model}%")
+        if status:      conditions.append("status = %s");     params.append(status)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
+
+        async with state._userdb_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""SELECT audit_id, session_id, request_id, model, endpoint, stage,
+                               prompt_tokens, completion_tokens, started_at, completed_at,
+                               status, request_body, response_body
+                        FROM ai_io_audit_log {where}
+                        ORDER BY started_at DESC LIMIT %s OFFSET %s""",
+                    params,
+                )
+                rows = await cur.fetchall()
+                cols = [d.name for d in cur.description]
+                await cur.execute(f"SELECT COUNT(*) FROM ai_io_audit_log {where}", params[:-2])
+                total_db = (await cur.fetchone())[0]
+
+        db_records = [dict(zip(cols, row)) for row in rows]
+        for rec in db_records:
+            for k in ("started_at", "completed_at"):
+                if rec.get(k) and hasattr(rec[k], "isoformat"):
+                    rec[k] = rec[k].isoformat()
+
+        all_records = live_dicts + db_records
+        return JSONResponse({"records": all_records, "total": len(live_dicts) + total_db})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
