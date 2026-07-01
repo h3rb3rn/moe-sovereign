@@ -1345,7 +1345,17 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         <div class="card-body p-0">
           <table class="table table-sm mb-0">
             <thead class="table-light">
-              <tr><th>Key-Prefix</th><th>Label</th><th>CC Profile</th><th>{{ t(request, 'portal.col_created') }}</th><th>{{ t(request, 'lbl.last_used') }}</th><th>Status</th><th></th></tr>
+              <tr>
+                <th>Key-Prefix</th>
+                <th>Label</th>
+                <th>CC Profile</th>
+                <th title="KI-gestützte dynamische Experten-Auswahl">Dyn. Routing</th>
+                <th title="Nur lokale Inference-Endpoints verwenden (kein Cloud-API-Zugriff)">Local Only</th>
+                <th>{{ t(request, 'portal.col_created') }}</th>
+                <th>{{ t(request, 'lbl.last_used') }}</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
               {% for k in keys %}
@@ -1372,6 +1382,24 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <small class="text-muted">—</small>
                   {% endif %}
                 </td>
+                <td>
+                  <div class="form-check form-switch d-flex justify-content-center mb-0"
+                       title="KI-gesteuertes dynamisches Expert-Routing ein-/ausschalten">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="dyn-routing-{{ k.id }}"
+                           {% if k.dynamic_routing %}checked{% endif %}
+                           onchange="saveKeyDynamicRouting('{{ k.id }}', this.checked)">
+                  </div>
+                </td>
+                <td>
+                  <div class="form-check form-switch d-flex justify-content-center mb-0"
+                       title="Nur lokale Endpoints (kein Cloud-API-Zugriff für diesen Key)">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           id="local-only-{{ k.id }}"
+                           {% if k.local_only_routing %}checked{% endif %}
+                           onchange="saveKeyLocalOnlyRouting('{{ k.id }}', this.checked)">
+                  </div>
+                </td>
                 <td><small class="text-muted">{{ k.created_at[:10] }}</small></td>
                 <td><small class="text-muted">{{ k.last_used_at[:16] if k.last_used_at else t(request, 'lbl.never') }}</small></td>
                 <td>
@@ -1394,7 +1422,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="7" class="text-muted text-center py-3">{{ t(request, 'portal.no_api_keys') }}</td></tr>
+              <tr><td colspan="9" class="text-muted text-center py-3">{{ t(request, 'portal.no_api_keys') }}</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -1454,8 +1482,35 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
           alert(d.detail || 'Error saving');
-          // Reset dropdown to previous value by reloading
           window.location.reload();
+        }
+      }
+
+      async function saveKeyDynamicRouting(keyId, enabled) {
+        const r = await fetch(`/user/api/keys/${keyId}/dynamic-routing`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled})
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          alert(d.detail || 'Fehler beim Speichern');
+          const cb = document.getElementById(`dyn-routing-${keyId}`);
+          if (cb) cb.checked = !enabled;
+        }
+      }
+
+      async function saveKeyLocalOnlyRouting(keyId, enabled) {
+        const r = await fetch(`/user/api/keys/${keyId}/local-only-routing`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled})
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          alert(d.detail || 'Fehler beim Speichern');
+          const cb = document.getElementById(`local-only-${keyId}`);
+          if (cb) cb.checked = !enabled;
         }
       }
       </script>
