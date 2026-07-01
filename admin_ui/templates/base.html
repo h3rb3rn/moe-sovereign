@@ -346,20 +346,35 @@
         </select>
       </form>
       {# PWA Install Button — always visible unless already running standalone #}
-      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary"
-              onclick="pwaInstall()" title="Als App installieren">
-        <i class="bi bi-phone me-1"></i><span class="d-none d-sm-inline">App</span>
-      </button>
-      {# iOS install instructions toast #}
-      <div id="pwaIosToast" class="toast align-items-center text-bg-primary border-0 position-fixed bottom-0 end-0 m-3"
-           role="alert" style="z-index:9999;max-width:300px;display:none">
-        <div class="d-flex">
-          <div class="toast-body small">
-            <i class="bi bi-share me-1"></i> Tippe <strong>Teilen</strong>, dann
-            <strong>„Zum Home-Bildschirm"</strong> um die App zu installieren.
+      <div class="dropdown" id="pwaInstallWrap">
+        <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary"
+                data-bs-toggle="dropdown" aria-expanded="false" title="Als App installieren">
+          <i class="bi bi-phone me-1"></i><span class="d-none d-sm-inline">App</span>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-3" style="min-width:280px;font-size:.85rem" id="pwaDropdown">
+          <div id="pwaPromptSection" style="display:none">
+            <p class="mb-2 text-body"><strong><i class="bi bi-download me-1"></i>App installieren</strong></p>
+            <button class="btn btn-sm btn-primary w-100" onclick="pwaNativeInstall()">
+              Jetzt installieren
+            </button>
           </div>
-          <button type="button" class="btn-close btn-close-white me-2 m-auto"
-                  onclick="document.getElementById('pwaIosToast').style.display='none'"></button>
+          <div id="pwaManualSection">
+            <p class="mb-2 text-body"><strong><i class="bi bi-phone me-1"></i>Als App installieren</strong></p>
+            <div id="pwaInstructChrome" style="display:none">
+              <p class="text-muted mb-1">Chrome / Edge:</p>
+              <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+                <li>Adressleiste → <i class="bi bi-three-dots-vertical"></i> Menü</li>
+                <li>„App installieren" oder „Zum Startbildschirm"</li>
+              </ol>
+            </div>
+            <div id="pwaInstructIos" style="display:none">
+              <p class="text-muted mb-1">Safari / iOS:</p>
+              <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+                <li><i class="bi bi-share"></i> Teilen-Button antippen</li>
+                <li>„Zum Home-Bildschirm" wählen</li>
+              </ol>
+            </div>
+          </div>
         </div>
       </div>
       {# Theme Toggle #}
@@ -824,31 +839,40 @@ const _pwaIsStandalone = window.matchMedia('(display-mode: standalone)').matches
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   pwaDeferredPrompt = e;
+  /* Native prompt available: show install button, hide manual instructions */
+  document.getElementById('pwaPromptSection')?.style.setProperty('display', '');
+  document.getElementById('pwaManualSection')?.style.setProperty('display', 'none');
 });
 window.addEventListener('appinstalled', () => {
   pwaDeferredPrompt = null;
-  document.getElementById('pwaInstallBtn')?.classList.add('d-none');
+  document.getElementById('pwaInstallWrap')?.classList.add('d-none');
 });
 
-function pwaInstall() {
-  if (_pwaIsStandalone) return; /* already running as app */
-  if (pwaDeferredPrompt) {
-    pwaDeferredPrompt.prompt();
-    pwaDeferredPrompt.userChoice.then(() => { pwaDeferredPrompt = null; });
-  } else if (_pwaIsIos) {
-    /* iOS: no prompt API — show share-sheet instructions */
-    const t = document.getElementById('pwaIosToast');
-    if (t) { t.style.display = ''; setTimeout(() => t.style.display = 'none', 7000); }
-  }
-}
-
-/* Hide button if already running as standalone (installed app) */
-if (_pwaIsStandalone) {
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('pwaInstallBtn')?.classList.add('d-none');
-    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+function pwaNativeInstall() {
+  if (!pwaDeferredPrompt) return;
+  pwaDeferredPrompt.prompt();
+  pwaDeferredPrompt.userChoice.then(() => {
+    pwaDeferredPrompt = null;
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
   });
 }
+
+/* On dropdown open: show appropriate instructions when no native prompt */
+document.addEventListener('DOMContentLoaded', () => {
+  if (_pwaIsStandalone) {
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
+    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+    return;
+  }
+  /* Pre-fill manual instructions based on platform */
+  const ios = document.getElementById('pwaInstructIos');
+  const chrome = document.getElementById('pwaInstructChrome');
+  if (_pwaIsIos) {
+    if (ios) ios.style.display = '';
+  } else {
+    if (chrome) chrome.style.display = '';
+  }
+});
 </script>
 </body>
 </html>
