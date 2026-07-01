@@ -371,7 +371,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ─── PWA: manifest + service worker ──────────────────────────────────────────
 
-_PWA_CACHE_VERSION = "moe-admin-v1"
+_PWA_CACHE_VERSION = "moe-admin-v2"
 _STATIC_ASSETS_TO_CACHE = [
     "/static/css/bootstrap.min.css",
     "/static/css/bootstrap-icons.min.css",
