@@ -1143,5 +1143,25 @@
   "model_meta.lbl_strengths": "Stärken (kommagetrennt)",
   "model_meta.lbl_tags": "Tags",
   "model_meta.lbl_benchmarks": "Benchmark-Scores (JSON)",
-  "model_meta.confirm_delete": "Eintrag wirklich löschen?"
+  "model_meta.confirm_delete": "Eintrag wirklich löschen?",
+
+  "lbl.trust_verdict": "Vertrauen",
+  "lbl.cynefin_domain": "Cynefin",
+  "lbl.self_critique_round": "Selbstkritik",
+  "lbl.cascade_type": "Kaskade",
+  "lbl.strategy_feedback": "Strategie-Review",
+  "page.gates": "HITL-Gates",
+  "info.gates_desc": "Human-in-the-Loop-Freigabe-Gates — ausstehende Pipeline-Entscheidungen prüfen und genehmigen oder ablehnen.",
+  "lbl.gate_id": "Gate-ID",
+  "lbl.gate_reason": "Grund",
+  "lbl.gate_status": "Status",
+  "lbl.gate_expires": "Läuft ab",
+  "btn.approve": "Freigeben",
+  "btn.reject": "Ablehnen",
+  "info.no_gates": "Keine ausstehenden Gates.",
+  "page.decision_log": "Entscheidungsprotokoll",
+  "info.decision_log_desc": "Append-only-Protokoll aller nicht-trivialen Pipeline-Entscheidungen mit Pflichtbegründung.",
+  "lbl.decision_type": "Entscheidungstyp",
+  "lbl.rationale": "Begründung",
+  "portal.handover_sessions": "Offene Handover-Sitzungen"
 }

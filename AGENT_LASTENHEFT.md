@@ -976,6 +976,156 @@ stable for a while.
 
 ---
 
+### TASK-22: Strategy Review Node (Abstraction-First Quality Layer)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-10 (Trust-Score-Verdict steuert Aktivierung)
+- **Context:** Inspiriert durch einen privaten Mixed-Reality-Anwendungsfall (Spatial Audio via Emulator-Ring-Buffer statt räumlichem Objekt): Ein kleines lokales Modell erstellt für die Expertenergebnisse eine *inhaltsfreie* Strategieabstraktion (Problemklasse, Lösungsansatz, Annahmen, Unsicherheiten). Ein konfigurierbares potentes Reviewer-Modell (Standard: lokaler Judge; optional: Frontier-Endpunkt) bewertet *nur die Abstraktion*, nie den Inhalt. Das strukturelle Feedback fließt zurück in den Merger. Kern-Invariante: kein Domain-Inhalt verlässt den lokalen Stack, es sei denn der Admin hat explizit einen Frontier-URL konfiguriert.
+- **Instructions:**
+  1. Erstelle `services/strategy_review.py`:
+     - Dataclass `StrategyAbstract`: `problem_class: str`, `solution_approach: str`, `assumptions: list[str]`, `uncertainties: list[str]`
+     - Dataclass `StrategyFeedback`: `structural_gaps: list[str]`, `alternative_approaches: list[str]`, `confidence_adjustment: float` (−0.2 … +0.2)
+     - `abstract_solution(expert_results, plan, input_query, abstractor_llm) -> StrategyAbstract` — Abstractor-LLM sieht Inhalt, produziert nur Abstraktion
+     - `review_strategy(abstract: StrategyAbstract, reviewer_llm) -> StrategyFeedback` — Reviewer sieht *nur* die Abstraktion, kein Inhalt
+  2. Erstelle `graph/strategy_review_node.py`:
+     - `strategy_review_node(state_)` — orchestriert Abstractor + Reviewer
+     - Abstractor: `STRATEGY_ABSTRACTOR_MODEL` env (leer → `planner_llm`; Standard: kleinstes verfügbares Modell)
+     - Reviewer: `STRATEGY_REVIEWER_MODEL` + `STRATEGY_REVIEWER_URL` + `STRATEGY_REVIEWER_TOKEN` env (leer → `judge_llm` lokal; gesetzt → Frontier-Endpunkt)
+     - Gibt zurück: `strategy_feedback: str` (kompaktes strukturiertes Feedback für den Merger), `trust_score` Anpassung per `confidence_adjustment`
+  3. Konditionale Aktivierung: nur wenn `STRATEGY_REVIEW_ENABLED=true` (env) AND (`trust_verdict == PROCEED_WITH_ASSUMPTION` OR `cynefin_domain in (COMPLEX, CHAOTIC)`)
+  4. Integration in `graph/synthesis.py` / `main.py`:
+     - Neuer LangGraph-Node `strategy_review` zwischen Expert-Runde und Merger
+     - `strategy_feedback` als zusätzlicher Kontext in den Merger-Prompt injiziert (neues State-Feld)
+  5. `pipeline/state.py`: neues Feld `strategy_feedback: str`
+  6. Unit-Tests in `tests/test_strategy_review.py`:
+     - Abstractor produziert keine rohen Inhalte (assert kein Expert-Zitat im Abstract)
+     - Reviewer-Prompt enthält keinen Original-Inhalt (Invariante)
+     - Deaktiviert wenn `STRATEGY_REVIEW_ENABLED` nicht gesetzt
+     - `confidence_adjustment` liegt in [−0.2, +0.2]
+  7. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - `STRATEGY_REVIEWER_URL` leer → lokaler Judge als Reviewer, kein Netzwerk-Call nach außen.
+  - `STRATEGY_REVIEWER_URL` gesetzt → Frontier-Endpunkt verwendet (konfigurierbar, kein Hardcode).
+  - Reviewer-Prompt enthält nachweislich keinen Original-Expert-Output (Inhaltstrennung verifiziert).
+  - `strategy_feedback` im Merger-Log sichtbar wenn aktiviert.
+  - `STRATEGY_REVIEW_ENABLED` nicht gesetzt → Node wird übersprungen, kein Overhead.
+
+---
+
+### TASK-23: Pipeline Log UI-Erweiterung (Trust Score, Cynefin, Self-Critique)
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-10 – TASK-15 (alle done)
+- **Context:** Die `usage_log`-Tabelle speichert bisher keine Trust-Score-, Cynefin- oder Self-Critique-Felder. Das Pipeline-Log-Template zeigt sie folglich nicht. Für operative Sichtbarkeit der neuen Qualitätssignale müssen DB-Schema, Backend-INSERT, API-Query und Template synchron erweitert werden.
+- **Instructions:**
+  1. `admin_ui/database.py` — `ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS` für: `trust_score DOUBLE PRECISION`, `trust_verdict TEXT`, `cynefin_domain TEXT`, `self_critique_round INTEGER NOT NULL DEFAULT 0`, `cascade_type TEXT`. Funktion `log_usage()` um diese Parameter erweitern.
+  2. `main.py` — in `_log_usage_to_db`-Aufruf (Zeile ~1867) die Felder `trust_score`, `trust_verdict`, `cynefin_domain`, `self_critique_round`, `cascade_type` aus `data` extrahieren und übergeben.
+  3. `routes/admin_stats.py` — SELECT in `pipeline_log()` um neue Felder erweitern.
+  4. `admin_ui/templates/pipeline_log.html` — neue Spalten: `trust_verdict`-Badge (grün/gelb/rot), `cynefin_domain`-Badge, `self_critique_round`-Spalte; alle Labels via `{{ t(request, 'key') }}`.
+  5. Alle vier Lang-Dateien (`de_DE`, `en_EN`, `fr_FR`, `zh_CN`) mit neuen Schlüsseln befüllen.
+  6. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - Pipeline-Log-Seite zeigt `trust_verdict` farbig (PROCEED=grün, PROCEED_WITH_ASSUMPTION=gelb, BLOCK=rot).
+  - `cynefin_domain` als Badge sichtbar.
+  - Neue `usage_log`-Spalten über `ALTER TABLE IF NOT EXISTS` (idempotent, keine Migration nötig).
+
+---
+
+### TASK-24: HITL Gate Approval UI
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-14 (done)
+- **Context:** Gates werden via `POST /gates/{id}/approve|reject` approved (langgraph-app), aber es gibt keine Admin-UI-Seite dafür. Ohne UI müssen Gates manuell mit curl bedient werden — operativ nicht nutzbar.
+- **Instructions:**
+  1. Neue Admin-UI-Seite `/gates` (Template `gates.html`, Route in `admin_ui/app.py`).
+  2. API-Proxy-Endpoints in `admin_ui/app.py`: `GET /api/gates/{gate_id}` und `POST /api/gates/{gate_id}/approve|reject` → Weiterleitung an `ORCHESTRATOR_URL/gates/...`.
+  3. Template: Liste offener Gates (polling `GET /api/gates?status=pending`), pro Gate: Request-ID, Reason, Erstellt-Zeit, Ablaufzeit, Approve/Reject-Buttons.
+  4. JavaScript-Polling alle 10s für automatische Aktualisierung.
+  5. Lang-Dateien: alle vier Sprachdateien mit neuen Keys.
+  6. Nav-Eintrag in bestehende Admin-Navigation einfügen.
+  7. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - `/gates`-Seite zeigt offene Gates.
+  - Approve-Button sendet `POST /gates/{id}/approve` und refresht die Liste.
+  - Keine Gates vorhanden → leere State-Meldung statt Fehler.
+
+---
+
+### TASK-25: Response Detail Modal — Strategy Feedback & Pipeline Signals
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-23 (neue DB-Felder müssen vorhanden sein)
+- **Context:** Das bestehende Detail-Modal im Pipeline-Log zeigt `request_id`, `cache_hit`, `agentic_rounds`. Mit den neuen Felder aus TASK-23 können `strategy_feedback`, `self_critique_round/max`, `cascade_type` und `cynefin_domain` ebenfalls angezeigt werden.
+- **Instructions:**
+  1. `routes/admin_stats.py` — separaten `GET /v1/admin/pipeline-log/{request_id}` Endpunkt hinzufügen, der `strategy_feedback` aus Valkey (via `handover`-Key-Namespace oder separatem Valkey-Key) und alle DB-Felder zurückgibt.
+  2. `pipeline_log.html` — Detail-Modal erweitern: aufklappbarer Block „Strategy Review Feedback" wenn `strategy_feedback` nicht leer, `self_critique_round/max`-Anzeige, `cascade_type`-Badge.
+  3. Lang-Dateien für neue Labels.
+  4. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - Klick auf Pipeline-Log-Zeile öffnet Modal mit Strategy-Feedback-Block (wenn vorhanden).
+  - `self_critique_round` wird als „N / max" angezeigt.
+
+---
+
+### TASK-26: Live Monitoring — Trust Verdict Badge
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-23
+- **Context:** Das Live-Monitoring zeigt aktive Requests ohne Qualitätssignal. Ein `trust_verdict`-Badge in der laufenden Request-Liste würde zeigen, ob ein Request gerade blockiert ist oder mit Annahmen läuft.
+- **Instructions:**
+  1. `main.py` — `_register_active_request()` / Active-Request-Valkey-State um `trust_verdict` und `cynefin_domain` erweitern.
+  2. `live_monitoring.html` — Badge-Spalte in der aktiven Request-Liste.
+  3. Lang-Dateien für neue Labels.
+  4. Rebuild/restart `moe-admin` + `langgraph-app`.
+- **Acceptance criteria:**
+  - Laufende Requests zeigen `trust_verdict`-Badge (leer wenn noch nicht berechnet, Badge wenn vorhanden).
+
+---
+
+### TASK-27: Handover / Resume UI
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-18 (done)
+- **Context:** Handover-IDs kommen im Response-Header `x-moe-handover-id` an, aber es gibt keine UI zum Weiterführen einer unterbrochenen Session. Power-User müssen `POST /handover/{id}/restore` manuell aufrufen.
+- **Instructions:**
+  1. User-Portal (`user_portal.html`) — Button „Session fortsetzen" im Audit-Log-Modal wenn `handover_id` vorhanden.
+  2. Admin-UI (`app.py`) — Proxy `POST /api/handover/{id}/restore` → `ORCHESTRATOR_URL/handover/{id}/restore`.
+  3. Modal zum Wiederherstellen: zeigt Handover-Grund und Timestamp, Confirm-Button sendet Resume-Request und öffnet Chat mit dem wiederhergestellten Input.
+  4. Lang-Dateien.
+  5. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - User sieht im Audit-Log-Modal „Handover vorhanden" mit Fortführen-Button.
+  - Klick auf Fortführen schickt Resume-Request und zeigt Antwort.
+
+---
+
+### TASK-28: Decision Log Explorer
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-12 (done)
+- **Context:** Decision-Log-Einträge landen in Kafka `moe.decisions` + `decision_log.jsonl`. Es gibt keine UI zum Browsing. Für Post-Mortems und EU-AI-Act-Compliance-Audits wird eine filterbare Admin-Seite benötigt.
+- **Instructions:**
+  1. Backend: `GET /v1/admin/decision-log?decision_type=&request_id=&limit=&offset=` in `routes/admin_stats.py` — liest aus `decision_log.jsonl` (Kafka-Consumer wäre aufwendiger, JSONL reicht für den Anfang).
+  2. Admin-UI: neue Seite `/decision-log` (Template `decision_log_explorer.html`).
+  3. Filter: `decision_type` (Dropdown), `request_id` (Freitext), Zeitraum.
+  4. Pro Eintrag: `ts`, `decision_type`-Badge, `request_id`, `rationale`, `metadata`-Collapsible.
+  5. Lang-Dateien.
+  6. Nav-Eintrag.
+  7. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - `/decision-log` zeigt paginierte Einträge aus `decision_log.jsonl`.
+  - Filter nach `decision_type` funktioniert.
+  - `rationale`-Feld immer sichtbar (nie leer, wegen Pflichtfeld-Constraint).
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on

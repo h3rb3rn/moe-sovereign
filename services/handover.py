@@ -79,6 +79,41 @@ def create_handover(state_: dict, reason: str) -> Optional[str]:
         return None
 
 
+def list_handovers_for_user(user_id: str) -> list:
+    """Return all pending handovers for a specific user; fail-open returns empty list."""
+    try:
+        client = _valkey()
+        if client is None:
+            return []
+        handovers = []
+        for key in client.scan_iter(f"{_HANDOVER_PREFIX}*", count=200):
+            raw = client.get(key)
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            snapshot = payload.get("snapshot", {})
+            if snapshot.get("user_id") != user_id:
+                continue
+            ttl = client.ttl(key)
+            handovers.append({
+                "handover_id":       payload.get("handover_id", ""),
+                "reason":            payload.get("reason", ""),
+                "input":             (snapshot.get("input") or "")[:200],
+                "mode":              snapshot.get("mode", ""),
+                "trust_verdict":     snapshot.get("trust_verdict", ""),
+                "cynefin_domain":    snapshot.get("cynefin_domain", ""),
+                "agentic_iteration": snapshot.get("agentic_iteration", 0),
+                "ttl_remaining":     ttl,
+            })
+        return handovers
+    except Exception as e:
+        logger.warning("Handover: list_handovers_for_user failed: %s", e)
+        return []
+
+
 def restore_handover(handover_id: str) -> Optional[dict]:
     """Retrieve handover snapshot; returns None if not found or expired."""
     try:

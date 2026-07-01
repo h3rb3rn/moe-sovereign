@@ -176,6 +176,7 @@
               <th>{{ t(request, 'table.mode') }}</th>
               <th>{{ t(request, 'table.type') }}</th>
               <th>API-Key</th>
+              <th>{{ t(request, 'lbl.trust_verdict') }}</th>
               <th>{{ t(request, 'table.status') }}</th>
             </tr>
           </thead>
@@ -306,9 +307,7 @@ function applyActiveFilter() {
         <td>${escHtml(r.username || r.user_id || '–')}</td>
         <td><code style="font-size:.8rem">${escHtml(r.model || '–')}${(r.moe_mode === 'native' && r.backend_host) ? `<span class="text-info" style="font-size:.8rem">@${escHtml(r.backend_host)}</span>` : ''}${(r.backend_model && r.backend_model !== (r.model || '')) ? `<span class="text-muted ms-1" style="font-size:.75rem">(${escHtml(r.backend_model)})</span>` : ''}</code></td>
         <td><span class="badge bg-info text-dark">${escHtml(r.moe_mode || '–')}</span></td>
-        <td>${r.resolved_tmpl_id
-              ? `<a href="/templates?highlight=${encodeURIComponent(r.resolved_tmpl_id)}" target="_blank" class="text-decoration-none" title="${escHtml(r.resolved_tmpl_id)}">${escHtml(r.template_name || '–')}<span class="text-muted ms-1" style="font-size:.78em">(${escHtml(r.resolved_tmpl_name || r.resolved_tmpl_id)})</span></a>`
-              : escHtml(r.template_name || '–')}</td>
+        <td>${escHtml(r.template_name || '–')}</td>
         <td><span class="badge ${r.type==='streaming'?'bg-primary':'bg-secondary'}">${escHtml(r.type || '–')}</span></td>
         <td><code style="font-size:.75rem">${escHtml(r.client_ip || '–')}</code></td>
         <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
@@ -608,10 +607,18 @@ async function fetchCompletedRequests() {
     document.getElementById('history-empty').classList.add('d-none');
     document.getElementById('history-table').classList.remove('d-none');
 
+    const _trustBadge = {
+      'PROCEED':                '<span class="badge bg-success" style="font-size:.6rem">PROCEED</span>',
+      'PROCEED_WITH_ASSUMPTION': '<span class="badge bg-warning text-dark" style="font-size:.6rem">ASSUMPTION</span>',
+      'BLOCK':                  '<span class="badge bg-danger" style="font-size:.6rem">BLOCK</span>',
+    };
     const rows = reqs.map(r => {
       const statusBadge = r.status === 'killed'
         ? `<span class="badge bg-danger" style="font-size:.65rem">killed</span>`
         : `<span class="badge bg-success" style="font-size:.65rem">completed</span>`;
+      const tvHtml = r.trust_verdict
+        ? (_trustBadge[r.trust_verdict] || `<span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.trust_verdict)}</span>`)
+        : '<span class="text-muted small">—</span>';
 
       // Dauer berechnen aus started_at und ended_at
       let dur = '–';
@@ -631,6 +638,7 @@ async function fetchCompletedRequests() {
         <td><span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.moe_mode || '–')}</span></td>
         <td><span class="badge ${(r.type||'')===('streaming')?'bg-primary':'bg-secondary'}" style="font-size:.6rem">${escHtml(r.type || '–')}</span></td>
         <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
+        <td>${tvHtml}</td>
         <td>${statusBadge}</td>
       </tr>`;
     }).join('');
@@ -646,7 +654,7 @@ function exportHistory() {
     alert(_tlive.noExportData);
     return;
   }
-  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Status'];
+  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Trust', 'Status'];
   const rows = [headers];
   document.querySelectorAll('#history-tbody tr').forEach(tr => {
     const cells = [...tr.querySelectorAll('td')].map(td => {

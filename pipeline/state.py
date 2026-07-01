@@ -168,3 +168,6 @@ class AgentState(TypedDict):
     # ── 16. Cynefin & HITL Gate ──────────────────────────────────────────────
     cynefin_domain: str                 # CLEAR | COMPLICATED | COMPLEX | CHAOTIC (TASK-15)
     hitl_gate_id: str                   # Gate ID if HITL freeze is active (TASK-14)
+
+    # ── 17. Strategy Review (TASK-22) ────────────────────────────────────────
+    strategy_feedback: str              # Structural feedback from strategy reviewer (content-free)

@@ -5367,6 +5367,35 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
     }
 
 
+@app.get("/user/api/my-handovers")
+async def user_api_my_handovers(user_id: str = Depends(require_user_login)):
+    """Return pending handover sessions for the current user."""
+    try:
+        from services.handover import list_handovers_for_user
+        handovers = list_handovers_for_user(user_id)
+    except Exception as exc:
+        logger.warning("my-handovers failed: %s", exc)
+        handovers = []
+    return {"handovers": handovers}
+
+
+@app.post("/user/api/proxy-handover/{handover_id}/resume")
+async def user_api_proxy_handover_resume(
+    handover_id: str,
+    _user_id: str = Depends(require_user_login),
+):
+    """Proxy POST /handover/{id}/resume to the orchestrator on behalf of the user."""
+    import httpx
+    orch = ORCHESTRATOR_URL.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(f"{orch}/handover/{handover_id}/resume")
+        return resp.json()
+    except Exception as exc:
+        logger.warning("proxy-handover-resume failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Orchestrator unreachable")
+
+
 @app.get("/user/audit-log", response_class=HTMLResponse)
 async def user_audit_log_page(request: Request, user_id: str = Depends(require_user_login)):
     ctx = await _user_portal_ctx(user_id)
@@ -9136,4 +9165,95 @@ async def toggle_starfleet_feature(name: str, request: Request):
         return {"ok": True, "feature": name, "enabled": enabled, "previous": current, "source": "redis"}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─── HITL Gates (TASK-24) ────────────────────────────────────────────────────
+
+@app.get("/gates", response_class=HTMLResponse)
+async def gates_page(request: Request, _=Depends(require_login)):
+    """HITL Gate approval UI — list and manage pending pipeline gates."""
+    return TEMPLATES.TemplateResponse(request, "gates.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/gates", dependencies=[Depends(require_login)])
+async def api_gates_list(status: str = "pending"):
+    """Proxy to orchestrator: list gates by status."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/gates", params={"status": status})
+            return r.json() if r.status_code == 200 else {"gates": []}
+    except Exception as e:
+        return {"gates": [], "error": str(e)}
+
+
+@app.get("/api/gates/{gate_id}", dependencies=[Depends(require_login)])
+async def api_gate_detail(gate_id: str):
+    """Proxy to orchestrator: get gate state."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/gates/{gate_id}")
+            if r.status_code == 404:
+                raise HTTPException(status_code=404, detail="Gate not found")
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/gates/{gate_id}/approve", dependencies=[Depends(require_login)])
+async def api_gate_approve(gate_id: str):
+    """Proxy to orchestrator: approve a gate."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/gates/{gate_id}/approve")
+            return r.json() if r.status_code == 200 else JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/gates/{gate_id}/reject", dependencies=[Depends(require_login)])
+async def api_gate_reject(gate_id: str):
+    """Proxy to orchestrator: reject a gate."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/gates/{gate_id}/reject")
+            return r.json() if r.status_code == 200 else JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ─── Decision Log Explorer (TASK-28) ────────────────────────────────────────
+
+@app.get("/decision-log", response_class=HTMLResponse)
+async def decision_log_page(request: Request, _=Depends(require_admin)):
+    """Decision Log Explorer — browse and filter pipeline decisions."""
+    return TEMPLATES.TemplateResponse(request, "decision_log_explorer.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/decision-log", dependencies=[Depends(require_admin)])
+async def api_decision_log(
+    decision_type: Optional[str] = None,
+    request_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Read decision_log.jsonl via orchestrator and return filtered records."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            params: dict = {"limit": limit, "offset": offset}
+            if decision_type:
+                params["decision_type"] = decision_type
+            if request_id:
+                params["request_id"] = request_id
+            r = await client.get(f"{ORCHESTRATOR_URL}/v1/admin/decision-log", params=params)
+            if r.status_code == 200:
+                return r.json()
+            return {"records": [], "total": 0}
+    except Exception as e:
+        return {"records": [], "total": 0, "error": str(e)}
 

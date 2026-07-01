@@ -2,16 +2,25 @@
 routes/gates.py — Human-in-the-Loop Gate API (TASK-14).
 
 Endpoints:
+  GET  /gates                   — list gates (filtered by status)
   GET  /gates/{gate_id}         — poll gate status
   POST /gates/{gate_id}/approve — approve a pending gate
   POST /gates/{gate_id}/reject  — reject a pending gate
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 
-from services.hitl_gate import approve_gate, get_gate, reject_gate
+from services.hitl_gate import approve_gate, get_gate, list_gates, reject_gate
 
 router = APIRouter(prefix="/gates", tags=["hitl-gate"])
+
+
+@router.get("")
+async def list_gates_endpoint(status: Optional[str] = None):
+    """List all gates, optionally filtered by status (pending/approved/rejected/expired)."""
+    return {"gates": list_gates(status_filter=status)}
 
 
 def _require_gate(gate_id: str) -> dict:

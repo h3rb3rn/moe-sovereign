@@ -96,6 +96,33 @@ def reject_gate(gate_id: str, rejected_by: str = "") -> bool:
     return _set_status(gate_id, "rejected", by=rejected_by)
 
 
+def list_gates(status_filter: Optional[str] = None) -> list:
+    """List all gates (optionally filtered by status); fail-open returns empty list."""
+    try:
+        client = _valkey()
+        if client is None:
+            return []
+        keys = list(client.scan_iter(f"{_KEY_PREFIX}*", count=100))
+        gates = []
+        for key in keys:
+            raw = client.get(key)
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if status_filter and data.get("status") != status_filter:
+                continue
+            ttl = client.ttl(key)
+            data["ttl_remaining"] = ttl
+            gates.append(data)
+        return gates
+    except Exception as e:
+        logger.warning("HITL Gate: list_gates failed: %s", e)
+        return []
+
+
 def _set_status(gate_id: str, status: str, by: str = "") -> bool:
     try:
         client = _valkey()

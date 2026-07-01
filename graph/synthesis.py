@@ -178,12 +178,13 @@ async def merger_node(state_: AgentState):
     except Exception as _bc_e:
         logger.debug("Expert→Judge boundary check skipped: %s", _bc_e)
 
-    web            = state_.get("web_research")    or ""
-    cached         = state_.get("cached_facts")    or ""
-    math_res       = state_.get("math_result")     or ""
-    mcp_res        = state_.get("mcp_result")      or ""
-    graph_ctx      = state_.get("graph_context")   or ""
-    reasoning      = state_.get("reasoning_trace") or ""
+    web              = state_.get("web_research")      or ""
+    cached           = state_.get("cached_facts")      or ""
+    math_res         = state_.get("math_result")       or ""
+    mcp_res          = state_.get("mcp_result")        or ""
+    graph_ctx        = state_.get("graph_context")     or ""
+    reasoning        = state_.get("reasoning_trace")   or ""
+    strategy_feedback = state_.get("strategy_feedback") or ""
 
     _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
 
@@ -469,6 +470,8 @@ async def merger_node(state_: AgentState):
     sections: List[str] = [f"REQUEST: {_query_in}"]
     if reasoning:
         sections.append(f"REASONING ANALYSIS:\n{reasoning}")
+    if strategy_feedback:
+        sections.append(f"STRATEGY REVIEW (structural, content-free):\n{strategy_feedback}")
     if graph_ctx:
         _gctx = graph_ctx
         # Compute per-template GraphRAG char budget: explicit override > auto from

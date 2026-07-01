@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ t(request, 'page.gates') }} – MoE Admin{% endblock %}
+
+{% block flash %}
+<div id="flash-container"></div>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-shield-check section-icon text-warning"></i> {{ t(request, 'page.gates') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.gates_desc') }}</small>
+  </div>
+  <button class="btn btn-sm btn-outline-secondary" onclick="loadGates()">
+    <i class="bi bi-arrow-clockwise"></i> Refresh
+  </button>
+</div>
+
+<div id="gates-container">
+  <div class="text-center text-muted py-5">
+    <div class="spinner-border spinner-border-sm me-2"></div> {{ t(request, 'loading') }}
+  </div>
+</div>
+
+<script>
+const CSRF = "{{ csrf_token }}";
+
+async function loadGates() {
+  const container = document.getElementById('gates-container');
+  container.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>';
+  try {
+    const r = await fetch('/api/gates?status=pending');
+    const d = await r.json();
+    const gates = d.gates || [];
+    if (!gates.length) {
+      container.innerHTML = `<div class="alert alert-secondary text-center py-4">
+        <i class="bi bi-check-circle text-success me-2"></i>
+        {{ t(request, 'info.no_gates') }}
+      </div>`;
+      return;
+    }
+    container.innerHTML = gates.map(g => renderGate(g)).join('');
+  } catch (e) {
+    container.innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
+  }
+}
+
+function renderGate(g) {
+  const expires = g.expires_at ? new Date(g.expires_at).toLocaleString() : '—';
+  const created = g.created_at ? new Date(g.created_at).toLocaleString() : '—';
+  const statusBadge = {
+    pending:  '<span class="badge bg-warning text-dark">pending</span>',
+    approved: '<span class="badge bg-success">approved</span>',
+    rejected: '<span class="badge bg-danger">rejected</span>',
+    expired:  '<span class="badge bg-secondary">expired</span>',
+  }[g.status] || `<span class="badge bg-secondary">${g.status}</span>`;
+  return `<div class="card mb-3 border-warning" id="gate-${g.gate_id}">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span class="font-monospace small text-muted">${g.gate_id}</span>
+      ${statusBadge}
+    </div>
+    <div class="card-body">
+      <p class="mb-1"><strong>{{ t(request, 'lbl.gate_reason') }}:</strong> ${escHtml(g.reason || '—')}</p>
+      <p class="mb-1 small text-muted">Request: <code>${escHtml(g.request_id || '—')}</code></p>
+      <p class="mb-1 small text-muted">{{ t(request, 'lbl.requested_at') }}: ${created}</p>
+      <p class="mb-0 small text-muted">{{ t(request, 'lbl.gate_expires') }}: ${expires}</p>
+    </div>
+    ${g.status === 'pending' ? `
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-sm btn-success" onclick="gateAction('${g.gate_id}','approve')">
+        <i class="bi bi-check-lg me-1"></i>{{ t(request, 'btn.approve') }}
+      </button>
+      <button class="btn btn-sm btn-danger" onclick="gateAction('${g.gate_id}','reject')">
+        <i class="bi bi-x-lg me-1"></i>{{ t(request, 'btn.reject') }}
+      </button>
+    </div>` : ''}
+  </div>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function gateAction(gateId, action) {
+  const btn = event.target.closest('button');
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/gates/${gateId}/${action}`, {
+      method: 'POST',
+      headers: {'X-CSRF-Token': CSRF},
+    });
+    const d = await r.json();
+    if (r.ok) {
+      document.getElementById(`gate-${gateId}`)?.remove();
+      const remaining = document.querySelectorAll('[id^="gate-"]').length;
+      if (!remaining) {
+        document.getElementById('gates-container').innerHTML = `<div class="alert alert-secondary text-center py-4">
+          <i class="bi bi-check-circle text-success me-2"></i>{{ t(request, 'info.no_gates') }}
+        </div>`;
+      }
+    } else {
+      alert(d.detail || d.error || 'Action failed');
+      btn.disabled = false;
+    }
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+// Auto-refresh every 15 seconds
+loadGates();
+setInterval(loadGates, 15000);
+</script>
+{% endblock %}
