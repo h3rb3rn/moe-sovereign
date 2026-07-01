@@ -345,11 +345,23 @@
           <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳</option>
         </select>
       </form>
-      {# PWA Install Button — only shown when browser fires beforeinstallprompt #}
-      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary d-none"
-              onclick="pwaDeferredPrompt?.prompt()" title="Als App installieren">
-        <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">App</span>
+      {# PWA Install Button — always visible unless already running standalone #}
+      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary"
+              onclick="pwaInstall()" title="Als App installieren">
+        <i class="bi bi-phone me-1"></i><span class="d-none d-sm-inline">App</span>
       </button>
+      {# iOS install instructions toast #}
+      <div id="pwaIosToast" class="toast align-items-center text-bg-primary border-0 position-fixed bottom-0 end-0 m-3"
+           role="alert" style="z-index:9999;max-width:300px;display:none">
+        <div class="d-flex">
+          <div class="toast-body small">
+            <i class="bi bi-share me-1"></i> Tippe <strong>Teilen</strong>, dann
+            <strong>„Zum Home-Bildschirm"</strong> um die App zu installieren.
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                  onclick="document.getElementById('pwaIosToast').style.display='none'"></button>
+        </div>
+      </div>
       {# Theme Toggle #}
       <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
               onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
@@ -805,23 +817,35 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 /* ─── PWA Install Prompt ────────────────────────────────────────────────── */
 let pwaDeferredPrompt = null;
+const _pwaIsIos = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+const _pwaIsStandalone = window.matchMedia('(display-mode: standalone)').matches
+                      || window.navigator.standalone === true;
+
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   pwaDeferredPrompt = e;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.classList.remove('d-none');
 });
 window.addEventListener('appinstalled', () => {
   pwaDeferredPrompt = null;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.classList.add('d-none');
+  document.getElementById('pwaInstallBtn')?.classList.add('d-none');
 });
-/* Hide install button when already running as standalone PWA */
-if (window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true) {
+
+function pwaInstall() {
+  if (_pwaIsStandalone) return; /* already running as app */
+  if (pwaDeferredPrompt) {
+    pwaDeferredPrompt.prompt();
+    pwaDeferredPrompt.userChoice.then(() => { pwaDeferredPrompt = null; });
+  } else if (_pwaIsIos) {
+    /* iOS: no prompt API — show share-sheet instructions */
+    const t = document.getElementById('pwaIosToast');
+    if (t) { t.style.display = ''; setTimeout(() => t.style.display = 'none', 7000); }
+  }
+}
+
+/* Hide button if already running as standalone (installed app) */
+if (_pwaIsStandalone) {
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('pwaInstallBtn')?.classList.add('d-none');
-    /* Add safe-area padding for notched phones */
     document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
   });
 }
