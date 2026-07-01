@@ -371,7 +371,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ─── PWA: manifest + service worker ──────────────────────────────────────────
 
-_PWA_CACHE_VERSION = "moe-admin-v1"
+_PWA_CACHE_VERSION = "moe-admin-v2"
 _STATIC_ASSETS_TO_CACHE = [
     "/static/css/bootstrap.min.css",
     "/static/css/bootstrap-icons.min.css",
@@ -393,14 +393,20 @@ async def pwa_manifest():
         "orientation":      "portrait-primary",
         "icons": [
             {
-                "src":     "/static/icons/icon-192.svg",
+                "src":     "/static/icons/icon-192.png",
                 "sizes":   "192x192",
-                "type":    "image/svg+xml",
+                "type":    "image/png",
                 "purpose": "any maskable",
             },
             {
-                "src":     "/static/icons/icon-512.svg",
+                "src":     "/static/icons/icon-512.png",
                 "sizes":   "512x512",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-192.svg",
+                "sizes":   "192x192",
                 "type":    "image/svg+xml",
                 "purpose": "any maskable",
             },

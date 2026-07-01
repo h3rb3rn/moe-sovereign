@@ -10,7 +10,7 @@
   <meta name="theme-color" content="#1a1d21" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#1a1d21">
   <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>{% block title %}MoE Admin{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/bootstrap.min.css">
   <link rel="stylesheet" href="/static/css/bootstrap-icons.min.css">
@@ -345,11 +345,38 @@
           <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳</option>
         </select>
       </form>
-      {# PWA Install Button — only shown when browser fires beforeinstallprompt #}
-      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary d-none"
-              onclick="pwaDeferredPrompt?.prompt()" title="Als App installieren">
-        <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">App</span>
-      </button>
+      {# PWA Install Button — always visible unless already running standalone #}
+      <div class="dropdown" id="pwaInstallWrap">
+        <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary"
+                data-bs-toggle="dropdown" aria-expanded="false" title="Als App installieren">
+          <i class="bi bi-phone me-1"></i><span class="d-none d-sm-inline">App</span>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-3" style="min-width:280px;font-size:.85rem" id="pwaDropdown">
+          <div id="pwaPromptSection" style="display:none">
+            <p class="mb-2 text-body"><strong><i class="bi bi-download me-1"></i>App installieren</strong></p>
+            <button class="btn btn-sm btn-primary w-100" onclick="pwaNativeInstall()">
+              Jetzt installieren
+            </button>
+          </div>
+          <div id="pwaManualSection">
+            <p class="mb-2 text-body"><strong><i class="bi bi-phone me-1"></i>Als App installieren</strong></p>
+            <div id="pwaInstructChrome" style="display:none">
+              <p class="text-muted mb-1">Chrome / Edge:</p>
+              <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+                <li>Adressleiste → <i class="bi bi-three-dots-vertical"></i> Menü</li>
+                <li>„App installieren" oder „Zum Startbildschirm"</li>
+              </ol>
+            </div>
+            <div id="pwaInstructIos" style="display:none">
+              <p class="text-muted mb-1">Safari / iOS:</p>
+              <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+                <li><i class="bi bi-share"></i> Teilen-Button antippen</li>
+                <li>„Zum Home-Bildschirm" wählen</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
       {# Theme Toggle #}
       <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
               onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
@@ -805,26 +832,47 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 /* ─── PWA Install Prompt ────────────────────────────────────────────────── */
 let pwaDeferredPrompt = null;
+const _pwaIsIos = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+const _pwaIsStandalone = window.matchMedia('(display-mode: standalone)').matches
+                      || window.navigator.standalone === true;
+
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   pwaDeferredPrompt = e;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.classList.remove('d-none');
+  /* Native prompt available: show install button, hide manual instructions */
+  document.getElementById('pwaPromptSection')?.style.setProperty('display', '');
+  document.getElementById('pwaManualSection')?.style.setProperty('display', 'none');
 });
 window.addEventListener('appinstalled', () => {
   pwaDeferredPrompt = null;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.classList.add('d-none');
+  document.getElementById('pwaInstallWrap')?.classList.add('d-none');
 });
-/* Hide install button when already running as standalone PWA */
-if (window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true) {
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('pwaInstallBtn')?.classList.add('d-none');
-    /* Add safe-area padding for notched phones */
-    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+
+function pwaNativeInstall() {
+  if (!pwaDeferredPrompt) return;
+  pwaDeferredPrompt.prompt();
+  pwaDeferredPrompt.userChoice.then(() => {
+    pwaDeferredPrompt = null;
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
   });
 }
+
+/* On dropdown open: show appropriate instructions when no native prompt */
+document.addEventListener('DOMContentLoaded', () => {
+  if (_pwaIsStandalone) {
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
+    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+    return;
+  }
+  /* Pre-fill manual instructions based on platform */
+  const ios = document.getElementById('pwaInstructIos');
+  const chrome = document.getElementById('pwaInstructChrome');
+  if (_pwaIsIos) {
+    if (ios) ios.style.display = '';
+  } else {
+    if (chrome) chrome.style.display = '';
+  }
+});
 </script>
 </body>
 </html>
