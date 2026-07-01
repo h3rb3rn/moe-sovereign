@@ -277,6 +277,7 @@ async def _handle_tool_calls(
     content_url: str = "",
     content_token: str = "ollama",
     content_system_prompt: str = "",
+    num_ctx: int = 0,
 ):
     """Direct LLM passthrough that preserves tool_calls in the response.
 
@@ -577,6 +578,8 @@ async def _handle_tool_calls(
         "messages": messages,
         "stream":   _has_tool_results,
     }
+    if num_ctx:
+        payload["options"] = {"num_ctx": num_ctx}
     # Always pass tools so the model can call kanban_complete (or any other tool)
     # after synthesising tool results.
     if request.tools:
@@ -1556,10 +1559,19 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         getattr(m, "role", None) == "tool" for m in request.messages
     )
     if _has_tools:
-        _raw_judge = (_tmpl_prompts.get("judge_model_override") or "").strip()
-        _tc_model, _, _tc_ep = _raw_judge.partition("@")
-        _tc_url   = _tmpl_prompts.get("judge_url_override") or URL_MAP.get(_tc_ep.strip(), "")
-        _tc_token = _tmpl_prompts.get("judge_token_override") or TOKEN_MAP.get(_tc_ep.strip(), "ollama")
+        # Prefer dedicated tool_expert over judge for tool-call passthrough.
+        # tool_expert_model supports the same model@endpoint syntax as judge/planner
+        # and can point to any agentic backend (Ollama, OpenCode, CC CLI endpoint).
+        _raw_tool_expert = (_tmpl_prompts.get("tool_expert_model_override") or "").strip()
+        _raw_judge       = (_tmpl_prompts.get("judge_model_override") or "").strip()
+        _raw_tc          = _raw_tool_expert or _raw_judge
+        _tc_model, _, _tc_ep = _raw_tc.partition("@")
+        if _raw_tool_expert:
+            _tc_url   = _tmpl_prompts.get("tool_expert_url_override") or URL_MAP.get(_tc_ep.strip(), "")
+            _tc_token = _tmpl_prompts.get("tool_expert_token_override") or TOKEN_MAP.get(_tc_ep.strip(), "ollama")
+        else:
+            _tc_url   = _tmpl_prompts.get("judge_url_override") or URL_MAP.get(_tc_ep.strip(), "")
+            _tc_token = _tmpl_prompts.get("judge_token_override") or TOKEN_MAP.get(_tc_ep.strip(), "ollama")
         if _tc_url and _tc_model:
             # Look up content model from template experts (prefer "general" expert).
             # Used by the two-phase kanban handler to synthesise answers via a
@@ -1578,18 +1590,25 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             _content_token = _em.get("token", "ollama")
                             _content_sys   = _em.get("_system_prompt", "")
                             break
+            _tc_slot = "tool_expert" if _raw_tool_expert else "judge"
             logger.info(
-                f"🔧 Tool-calling passthrough: model={_tc_model} stream={request.stream} "
+                f"🔧 Tool-calling passthrough ({_tc_slot}): model={_tc_model} stream={request.stream} "
                 f"tools={len(request.tools or [])} tool_msgs={sum(1 for m in request.messages if getattr(m,'role','')=='tool')} "
                 f"content_model={_content_model or 'none'}"
             )
             _t_tc = time.monotonic()
+            _tc_num_ctx = (
+                _tmpl_prompts.get("tool_expert_num_ctx") or 0
+                if _raw_tool_expert else
+                _tmpl_prompts.get("judge_num_ctx") or 0
+            )
             _tc_resp = await _handle_tool_calls(
                 request, chat_id, _tc_model, _tc_url, _tc_token,
                 content_model=_content_model,
                 content_url=_content_url,
                 content_token=_content_token,
                 content_system_prompt=_content_sys,
+                num_ctx=int(_tc_num_ctx),
             )
             PROM_REQUESTS.labels(mode="tool", cache_hit="false",
                                  user_id=(user_id or "anon")).inc()
@@ -1603,7 +1622,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             if _moe_resp_headers:
                 return JSONResponse(content=_tc_resp, headers=_moe_resp_headers)
             return _tc_resp
-        logger.warning("⚠️ Tool-calling passthrough: no judge URL configured — falling through to pipeline")
+        logger.warning("⚠️ Tool-calling passthrough: no tool_expert or judge URL configured — falling through to pipeline")
 
     if request.stream:
         _inner = stream_response(user_input, chat_id, mode, chat_history=history,

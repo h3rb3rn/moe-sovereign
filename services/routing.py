@@ -133,7 +133,8 @@ def _resolve_template_prompts(
         "planner_prompt": "", "judge_prompt": "",
         "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
         "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
-        "planner_num_ctx": 0, "judge_num_ctx": 0,
+        "tool_expert_model_override": "", "tool_expert_url_override": "", "tool_expert_token_override": "",
+        "planner_num_ctx": 0, "judge_num_ctx": 0, "tool_expert_num_ctx": 0,
         "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
         "enable_habe": False,
         "search_fallback_ddg": _WEB_SEARCH_FALLBACK_DDG,
@@ -186,8 +187,9 @@ def _resolve_template_prompts(
                 return val[:at], val[at + 1:]
             return val or "", ""
 
-        judge_m,   judge_ep   = _split_model_ep(tmpl.get("judge_model", ""))
-        planner_m, planner_ep = _split_model_ep(tmpl.get("planner_model", ""))
+        judge_m,       judge_ep       = _split_model_ep(tmpl.get("judge_model", ""))
+        planner_m,     planner_ep     = _split_model_ep(tmpl.get("planner_model", ""))
+        tool_expert_m, tool_expert_ep = _split_model_ep(tmpl.get("tool_expert_model", ""))
 
         def _resolve_ep_url(ep: str) -> tuple:
             if ep in URL_MAP:
@@ -197,19 +199,24 @@ def _resolve_template_prompts(
                 return _uc[ep]["url"], _uc[ep].get("api_key") or "ollama"
             return "", "ollama"
 
-        judge_url,   judge_tok   = _resolve_ep_url(judge_ep)   if judge_ep   else ("", "ollama")
-        planner_url, planner_tok = _resolve_ep_url(planner_ep) if planner_ep else ("", "ollama")
+        judge_url,       judge_tok       = _resolve_ep_url(judge_ep)       if judge_ep       else ("", "ollama")
+        planner_url,     planner_tok     = _resolve_ep_url(planner_ep)     if planner_ep     else ("", "ollama")
+        tool_expert_url, tool_expert_tok = _resolve_ep_url(tool_expert_ep) if tool_expert_ep else ("", "ollama")
         return {
-            "planner_prompt":          tmpl.get("planner_prompt", ""),
-            "judge_prompt":            tmpl.get("judge_prompt", ""),
-            "judge_model_override":    judge_m,
-            "judge_url_override":      judge_url,
-            "judge_token_override":    judge_tok,
-            "planner_model_override":  planner_m,
-            "planner_url_override":    planner_url,
-            "planner_token_override":  planner_tok,
-            "planner_num_ctx":         int(tmpl.get("planner_num_ctx", 0)),
-            "judge_num_ctx":           int(tmpl.get("judge_num_ctx", 0)),
+            "planner_prompt":              tmpl.get("planner_prompt", ""),
+            "judge_prompt":                tmpl.get("judge_prompt", ""),
+            "judge_model_override":        judge_m,
+            "judge_url_override":          judge_url,
+            "judge_token_override":        judge_tok,
+            "planner_model_override":      planner_m,
+            "planner_url_override":        planner_url,
+            "planner_token_override":      planner_tok,
+            "tool_expert_model_override":  tool_expert_m,
+            "tool_expert_url_override":    tool_expert_url,
+            "tool_expert_token_override":  tool_expert_tok,
+            "planner_num_ctx":             int(tmpl.get("planner_num_ctx", 0)),
+            "judge_num_ctx":               int(tmpl.get("judge_num_ctx", 0)),
+            "tool_expert_num_ctx":         int(tmpl.get("tool_expert_num_ctx", 0)),
             "enable_cache":            tmpl.get("enable_cache", True),
             "enable_graphrag":         tmpl.get("enable_graphrag", True),
             "enable_web_research":     tmpl.get("enable_web_research", True),
