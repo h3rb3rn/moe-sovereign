@@ -1884,12 +1884,24 @@ const CSRF_TOKEN = "{{ csrf_token }}";
                   <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-judge-model">
                     <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
                   </select>
+                  <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx für das Judge-Modell. 0 = Modell-Default.">
+                    <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+                    <input type="number" id="tmpl-judge-num-ctx" class="form-control form-control-sm"
+                           style="font-size:.75rem;width:110px" min="0" step="1024" placeholder="auto (0)">
+                    <small class="text-muted" style="font-size:.68rem">ctx (Tokens)</small>
+                  </div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label small">{{ t(request, 'portal.tmpl_planner_model') }} <span class="text-muted">(llm@host, {{ t(request, 'portal.tmpl_empty_default') }})</span></label>
                   <select class="form-select form-select-sm tmpl-llmhost-select" id="tmpl-planner-model">
                     <option value="">– {{ t(request, 'portal.tmpl_default') }} –</option>
                   </select>
+                  <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx für das Planner-Modell. 0 = Modell-Default.">
+                    <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+                    <input type="number" id="tmpl-planner-num-ctx" class="form-control form-control-sm"
+                           style="font-size:.75rem;width:110px" min="0" step="1024" placeholder="auto (0)">
+                    <small class="text-muted" style="font-size:.68rem">ctx (Tokens)</small>
+                  </div>
                 </div>
               </div>
               <div class="mt-2">
@@ -2046,6 +2058,8 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-desc').value = '';
         document.getElementById('tmpl-judge-model').value = '';
         document.getElementById('tmpl-planner-model').value = '';
+        document.getElementById('tmpl-judge-num-ctx').value = '';
+        document.getElementById('tmpl-planner-num-ctx').value = '';
         document.getElementById('tmpl-judge-prompt').value = '';
         document.getElementById('tmpl-planner-prompt').value = '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
@@ -2067,6 +2081,8 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('tmpl-desc').value = tmpl.description || '';
         _setSelectOrKeep('tmpl-judge-model', cfg.judge_model || '');
         _setSelectOrKeep('tmpl-planner-model', cfg.planner_model || '');
+        document.getElementById('tmpl-judge-num-ctx').value   = cfg.judge_num_ctx   || '';
+        document.getElementById('tmpl-planner-num-ctx').value = cfg.planner_num_ctx || '';
         document.getElementById('tmpl-judge-prompt').value = cfg.judge_prompt || '';
         document.getElementById('tmpl-planner-prompt').value = cfg.planner_prompt || '';
         document.getElementById('tmpl-experts-container').innerHTML = '';
@@ -2236,7 +2252,9 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         return {
           experts,
           judge_model:         document.getElementById('tmpl-judge-model').value.trim(),
+          judge_num_ctx:       parseInt(document.getElementById('tmpl-judge-num-ctx').value) || 0,
           planner_model:       document.getElementById('tmpl-planner-model').value.trim(),
+          planner_num_ctx:     parseInt(document.getElementById('tmpl-planner-num-ctx').value) || 0,
           judge_prompt:        document.getElementById('tmpl-judge-prompt').value.trim(),
           planner_prompt:      document.getElementById('tmpl-planner-prompt').value.trim(),
           enable_cache:        document.getElementById('tmpl-enable-cache').checked,
