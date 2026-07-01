@@ -1164,5 +1164,20 @@
   "info.decision_log_desc": "Append-only log of all non-trivial pipeline decisions with mandatory rationale.",
   "lbl.decision_type": "Decision Type",
   "lbl.rationale": "Rationale",
-  "portal.handover_sessions": "Pending Handover Sessions"
+  "portal.handover_sessions": "Pending Handover Sessions",
+
+  "page.model_capabilities": "Model Capabilities",
+  "info.model_capabilities_desc": "Read-only view of configured model capabilities (JSON Schema, streaming, hints) from model_capabilities.yaml.",
+  "page.ai_io_audit": "AI I/O Audit",
+  "info.ai_io_audit_desc": "Structured audit log of every LLM call — EU AI Act Art. 13 transparency.",
+  "lbl.audit_id": "Audit ID",
+  "lbl.stage": "Stage",
+  "lbl.prompt_tokens": "Prompt Tokens",
+  "lbl.completion_tokens": "Completion Tokens",
+  "lbl.started_at": "Started",
+  "lbl.audit_status": "Status",
+  "lbl.request_body": "Request",
+  "lbl.response_body": "Response",
+  "lbl.structured_failure_round": "SF Round",
+  "info.no_audit_entries": "No audit entries found."
 }

@@ -171,3 +171,7 @@ class AgentState(TypedDict):
 
     # ── 17. Strategy Review (TASK-22) ────────────────────────────────────────
     strategy_feedback: str              # Structural feedback from strategy reviewer (content-free)
+
+    # ── 18. Structured-Output Failure Recovery (TASK-30) ─────────────────────
+    structured_failure: dict            # Serialised StructuredFailure (None = no failure)
+    structured_failure_round: int       # Current retry round (0 = first attempt)

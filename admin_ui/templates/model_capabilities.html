@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Model Capabilities – MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-cpu section-icon text-info"></i>{{ t(request, 'page.model_capabilities') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.model_capabilities_desc') }}</small>
+  </div>
+  <div class="d-flex gap-2">
+    <span class="badge bg-secondary">read-only v1</span>
+    <button class="btn btn-outline-secondary btn-sm" onclick="loadCaps()">
+      <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+    </button>
+  </div>
+</div>
+
+<div id="caps-content">
+  <div class="text-center text-muted py-5">
+    <div class="spinner-border spinner-border-sm" role="status"></div>
+    <span class="ms-2">Loading…</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadCaps() {
+  try {
+    const r = await fetch('/api/model-capabilities');
+    const data = await r.json();
+    renderCaps(data);
+  } catch (e) {
+    document.getElementById('caps-content').innerHTML =
+      `<div class="alert alert-danger">Failed to load: ${escHtml(String(e))}</div>`;
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function boolBadge(val) {
+  return val
+    ? '<span class="badge bg-success"><i class="bi bi-check-lg"></i></span>'
+    : '<span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>';
+}
+
+function renderCaps(data) {
+  const defaultCaps = data.default || {};
+  const models = data.models || {};
+  const allModels = Object.keys(models);
+
+  let html = `
+  <div class="card border-0 bg-body-tertiary mb-3 p-3">
+    <h6 class="mb-2 text-muted">Default Capabilities</h6>
+    <div class="row g-2">
+      <div class="col-auto"><span class="badge bg-info text-dark">json_schema: ${defaultCaps.json_schema}</span></div>
+      <div class="col-auto"><span class="badge bg-info text-dark">json_object: ${defaultCaps.json_object}</span></div>
+      <div class="col-auto"><span class="badge bg-info text-dark">stream: ${defaultCaps.stream}</span></div>
+      <div class="col-auto"><span class="badge bg-info text-dark">responses_api: ${defaultCaps.responses_api}</span></div>
+    </div>
+  </div>
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th>Model</th>
+            <th class="text-center">JSON Schema</th>
+            <th class="text-center">JSON Object</th>
+            <th class="text-center">Streaming</th>
+            <th class="text-center">Responses API</th>
+            <th>Hints</th>
+          </tr>
+        </thead>
+        <tbody>`;
+
+  if (allModels.length === 0) {
+    html += `<tr><td colspan="6" class="text-center text-muted py-3">No model overrides configured</td></tr>`;
+  }
+
+  for (const model of allModels.sort()) {
+    const c = { ...defaultCaps, ...models[model] };
+    const hints = (c.hints || []).map(h => `<span class="badge bg-primary me-1" style="font-size:.65rem">${escHtml(h)}</span>`).join('');
+    html += `<tr>
+      <td class="font-monospace" style="font-size:.82rem">${escHtml(model)}</td>
+      <td class="text-center">${boolBadge(c.json_schema)}</td>
+      <td class="text-center">${boolBadge(c.json_object)}</td>
+      <td class="text-center">${boolBadge(c.stream)}</td>
+      <td class="text-center">${boolBadge(c.responses_api)}</td>
+      <td>${hints || '<span class="text-muted">—</span>'}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table></div></div>`;
+  document.getElementById('caps-content').innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', loadCaps);
+</script>
+{% endblock %}

@@ -537,3 +537,41 @@ behavior-preserving as decided with the user.
 All TASK-1 through TASK-6 from `AGENT_LASTENHEFT.md` are now `done`.
 
 ---
+
+---
+
+## 2026-07-01T12:00:00Z — TASK-29/30/31 — done
+
+Alle drei ADHS-Transfer-Tasks implementiert.
+
+**TASK-31 (Model Capability Table):**
+- `configs/model_capabilities.yaml` (13 Modelle + default-Block)
+- `services/model_capabilities.py` (YAML-Loader, get_model_caps, typed Getters)
+- `tests/test_model_capabilities.py` (10 Tests grün)
+- `admin_ui/templates/model_capabilities.html` (read-only Tabelle)
+- `admin_ui/app.py`: `/model-capabilities` + `/api/model-capabilities`
+- `services/inference.py`: Import + debug-Log vor Judge-Call
+
+**TASK-30 (Structured-Output Failure Recovery):**
+- `services/structured_failure.py` (StructuredFailureKind, RecoveryAction, build_failure, resolve_retry_model)
+- `tests/test_structured_failure.py` (16 Tests grün)
+- `pipeline/state.py`: `structured_failure` + `structured_failure_round` Felder
+- `admin_ui/database.py`: `ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS structured_failure_round`
+- `routes/admin_stats.py`: neues Feld im pipeline_log SELECT
+
+**TASK-29 (AI I/O Audit Service):**
+- `services/ai_io_audit.py` (sanitize_audit_payload, AiIoAuditEntry, create/complete/get_live)
+- `tests/test_ai_io_audit.py` (11 Tests grün)
+- `admin_ui/database.py`: `ai_io_audit_log` Tabelle + Indizes
+- `routes/admin_stats.py`: `GET /v1/admin/ai-io-audit`
+- `admin_ui/templates/ai_io_audit.html` (Filter, Tabelle, Detail-Modal)
+- `admin_ui/app.py`: `/ai-io-audit` + `/api/ai-io-audit`
+- `services/inference.py`: Judge-Ollama-Call mit Audit gewrapped
+- `admin_ui/lang/`: 4 Sprachdateien aktualisiert
+
+**Lastenheft:**
+- TASK-10 bis TASK-22, TASK-25 bis TASK-27 als done markiert (durch andere Agenten bereits implementiert)
+- TASK-29/30/31 als done markiert mit Resolution-Notes
+- TASK-21 (GraphRAG Benchmark) bleibt pending (benchmark_graphrag.py nicht implementiert)
+
+**Gesamt: 89 Tests grün.**

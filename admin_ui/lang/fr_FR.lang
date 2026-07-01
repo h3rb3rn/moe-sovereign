@@ -1164,5 +1164,20 @@
   "info.decision_log_desc": "Journal append-only de toutes les décisions non triviales du pipeline avec justification obligatoire.",
   "lbl.decision_type": "Type de décision",
   "lbl.rationale": "Justification",
-  "portal.handover_sessions": "Sessions de transfert en attente"
+  "portal.handover_sessions": "Sessions de transfert en attente",
+
+  "page.model_capabilities": "Capacités des modèles",
+  "info.model_capabilities_desc": "Vue en lecture seule des capacités de modèles configurées (JSON Schema, streaming, hints) depuis model_capabilities.yaml.",
+  "page.ai_io_audit": "Audit AI I/O",
+  "info.ai_io_audit_desc": "Journal d'audit structuré de chaque appel LLM — transparence IA Act EU Art. 13.",
+  "lbl.audit_id": "ID d'audit",
+  "lbl.stage": "Étape",
+  "lbl.prompt_tokens": "Tokens prompt",
+  "lbl.completion_tokens": "Tokens réponse",
+  "lbl.started_at": "Démarré",
+  "lbl.audit_status": "Statut",
+  "lbl.request_body": "Requête",
+  "lbl.response_body": "Réponse",
+  "lbl.structured_failure_round": "Ronde SF",
+  "info.no_audit_entries": "Aucune entrée d'audit trouvée."
 }

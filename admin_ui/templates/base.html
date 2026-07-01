@@ -94,7 +94,7 @@
     {# ── Desktop Nav: visible ≥992px — grouped dropdowns ── #}
     {# Active-state helpers for dropdown highlight #}
     {% set _p = request.url.path %}
-    {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log', '/gates', '/decision-log'] %}
+    {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log', '/gates', '/decision-log', '/ai-io-audit', '/model-capabilities'] %}
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
     {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates', '/advice'] or _p.startswith('/templates') or _p.startswith('/advice') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
@@ -141,6 +141,12 @@
           </a></li>
           <li><a class="dropdown-item {% if _p == '/decision-log' %}active{% endif %}" href="/decision-log">
             <i class="bi bi-journal-code me-2 text-info"></i>{{ t(request, 'page.decision_log') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/ai-io-audit' %}active{% endif %}" href="/ai-io-audit">
+            <i class="bi bi-eye me-2 text-warning"></i>{{ t(request, 'page.ai_io_audit') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/model-capabilities' %}active{% endif %}" href="/model-capabilities">
+            <i class="bi bi-cpu me-2 text-info"></i>{{ t(request, 'page.model_capabilities') }}
           </a></li>
         </ul>
       </div>

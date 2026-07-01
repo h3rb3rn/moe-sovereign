@@ -33,8 +33,34 @@ if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI  # noqa: F811 — type hints only
 
 from services.llm_instances import judge_llm, planner_llm
+from services.model_capabilities import get_model_caps, model_supports_streaming
 
 logger = logging.getLogger("MOE-SOVEREIGN")
+
+# ── AI I/O Audit helper (TASK-29) ─────────────────────────────────────────────
+# Imported lazily so that init-time failures (e.g. DB not yet up) don't crash
+# the entire inference module.
+
+def _audit_create(session_id: str, request_id: str, model: str, endpoint: str,
+                  stage: str, request_body: dict):
+    """Best-effort: create an AI I/O audit entry. Never raises."""
+    try:
+        from services.ai_io_audit import create_audit_entry
+        return create_audit_entry(session_id, request_id, model, endpoint, stage, request_body)
+    except Exception:
+        return None
+
+
+async def _audit_complete(entry, response_body, prompt_tokens, completion_tokens, status="completed"):
+    """Best-effort: complete an AI I/O audit entry. Never raises."""
+    if entry is None:
+        return
+    try:
+        from services.ai_io_audit import complete_audit_entry
+        await complete_audit_entry(entry.audit_id, response_body, prompt_tokens,
+                                   completion_tokens, status)
+    except Exception:
+        pass
 
 # Module-level threading locks
 # synchronous dict mutation (e.g. _endpoint_gpu_indices[k] = v) is NOT atomic
@@ -525,14 +551,26 @@ async def _invoke_judge_with_retry(
                 }
                 if _opts:
                     _payload["options"] = _opts
-                async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
-                    _r = await _hc.post(
-                        f"{_ollama_base}/api/chat",
-                        json=_payload,
-                        headers={"Authorization": f"Bearer {_jt}"},
-                    )
-                _r.raise_for_status()
-                res = _NS(content=_r.json().get("message", {}).get("content", ""))
+                logger.debug("model=%s caps=%s", _jm, get_model_caps(_jm))
+                _audit_entry = _audit_create(
+                    state.get("session_id", ""), state.get("response_id", ""),
+                    _jm, f"{_ollama_base}/api/chat", "judge", _payload,
+                )
+                _resp_json: dict = {}
+                try:
+                    async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
+                        _r = await _hc.post(
+                            f"{_ollama_base}/api/chat",
+                            json=_payload,
+                            headers={"Authorization": f"Bearer {_jt}"},
+                        )
+                    _r.raise_for_status()
+                    _resp_json = _r.json()
+                    await _audit_complete(_audit_entry, _resp_json, None, None)
+                except Exception as _ae:
+                    await _audit_complete(_audit_entry, {"error": str(_ae)}, None, None, "error")
+                    raise
+                res = _NS(content=_resp_json.get("message", {}).get("content", ""))
             else:
                 # Non-Ollama path (AIHUB, cloud providers): use LangChain ChatOpenAI
                 llm = await _get_judge_llm(state)
