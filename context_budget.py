@@ -341,7 +341,11 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
             except Exception:
                 pass
 
-            # 2. /api/show — explicit num_ctx in parameters OR native context_length in model_info
+            # 2. /api/show — explicit num_ctx in Modelfile parameters only.
+            # We intentionally do NOT fall back to the GGUF model_info.context_length here.
+            # That field is the model's TRAINING context, not its deployment context.
+            # Sending it explicitly would override OLLAMA_CONTEXT_LENGTH on the server,
+            # causing an unnecessary model reload to a smaller context window.
             resp = await client.post(
                 f"{api_base}/api/show",
                 json={"model": model},
@@ -356,13 +360,6 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
                 m = re.match(r"^\s*num_ctx\s+(\d+)", line, re.IGNORECASE)
                 if m:
                     return int(m.group(1))
-            # 3. model_info — native context_length from the GGUF metadata
-            # Covers models without explicit num_ctx in their Modelfile (e.g. qwen3.6:35b).
-            # Field names vary by architecture; scan all keys ending in "context_length".
-            model_info = data.get("model_info") or {}
-            for key, val in model_info.items():
-                if key.endswith("context_length") and isinstance(val, int) and val > 0:
-                    return val
     except Exception:
         pass
     return 0

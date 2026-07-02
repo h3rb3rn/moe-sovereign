@@ -405,7 +405,11 @@ async def expert_worker(state_: AgentState):
             # model_kwargs — LangChain warns and silently drops extra_body from model_kwargs,
             # which causes Ollama to use the Modelfile default (8192) instead of JUDGE_NUM_CTX
             # (32768), triggering a reload of the already-warm model on every expert call.
-            _extra_body = {"options": {"num_ctx": _expert_ctx_window}} if _expert_ctx_window > 0 else {}
+            # Only send num_ctx when the template explicitly sets context_window.
+            # Without an explicit override, rely on OLLAMA_CONTEXT_LENGTH / Modelfile defaults —
+            # sending the GGUF training context would downgrade and reload an already-warm model.
+            _expert_ctx_for_api = _expert_ctx_window if _expert_ctx_override > 0 else 0
+            _extra_body = {"options": {"num_ctx": _expert_ctx_for_api}} if _expert_ctx_for_api > 0 else {}
             if state_.get("enable_habe"):
                 from services.inference import _inject_habe_prefix_embeddings
                 _opts = _extra_body.setdefault("options", {})
@@ -442,7 +446,7 @@ async def expert_worker(state_: AgentState):
                 # in Ollama ≤0.30.6, causing every cold expert call to load qwen3.6:35b at the
                 # Modelfile default (8192) instead of 32768 — evicting the CC tool model and
                 # forcing a 90-second reload on the next CC request.
-                if api_type == "ollama" and _expert_ctx_window > 0:
+                if api_type == "ollama":
                     _native_msgs = []
                     for _m in messages:
                         _role = ("assistant" if (hasattr(_m, "type") and _m.type == "ai") else
@@ -451,11 +455,14 @@ async def expert_worker(state_: AgentState):
                         _native_msgs.append({"role": _role,
                                              "content": _m.content if hasattr(_m, "content") else str(_m)})
                     _ollama_base = url.rstrip("/").removesuffix("/v1")
+                    _native_opts: dict = {"num_predict": _expert_max_tokens}
+                    if _expert_ctx_for_api > 0:
+                        _native_opts["num_ctx"] = _expert_ctx_for_api
                     _native_payload: dict = {
                         "model":      model_name,
                         "messages":   _native_msgs,
                         "stream":     False,
-                        "options":    {"num_ctx": _expert_ctx_window, "num_predict": _expert_max_tokens},
+                        "options":    _native_opts,
                         "keep_alive": "4h",
                     }
                     if state_.get("enable_habe"):
