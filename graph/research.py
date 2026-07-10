@@ -50,7 +50,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -184,6 +184,7 @@ async def research_node(state_: AgentState):
         # In agentic re-plan we need every available search result to resolve the gap.
         logger.info(f"--- [NODE] WEB RESEARCH (MULTI — {len(research_tasks)} queries, agentic={_is_agentic_replan}) ---")
         await _report(f"🌐 {'Agentic re-search' if _is_agentic_replan else 'Deep research'}: {len(research_tasks)} parallel search(es)...")
+        await _record_stage(state_.get("response_id", ""), "research", "started")
 
         raw_results = await asyncio.gather(*[
             _fetch_one(t, i, len(research_tasks)) for i, t in enumerate(research_tasks)
@@ -206,6 +207,7 @@ async def research_node(state_: AgentState):
             f"🌐 Multi-search complete: {len(combined)} chars total ({sum(1 for r, _, _ in raw_results if r)} hits)"
             if combined else "🌐 Multi-search: no results"
         )
+        await _record_stage(state_.get("response_id", ""), "research", "done" if combined else "miss")
         return {
             "web_research": combined,
             "attempted_queries": _prev_queries + new_query_records,
@@ -439,6 +441,7 @@ async def research_fallback_node(state_: AgentState):
 
     logger.info(f"--- [NODE] RESEARCH FALLBACK (strategy: '{strategy_hint[:60]}') ---")
     await _report(f"🔍 Research fallback — new strategy: '{strategy_hint[:60]}'")
+    await _record_stage(state_.get("response_id", ""), "research_fallback", "started")
 
     async def _search_one(item: dict) -> str:
         query = item["query"][:180]

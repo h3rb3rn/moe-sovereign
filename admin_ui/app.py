@@ -5373,6 +5373,47 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
     }
 
 
+@app.get("/user/api/live/request-trace/{chat_id}")
+async def user_api_live_request_trace(chat_id: str, user_id: str = Depends(require_user_login)):
+    """On-demand stage trace for the current user's own request, portal-side.
+
+    Ownership check: chat_id must belong to the requesting user_id (checked
+    against the active-request record, falling back to recent completed
+    history) before the trace is returned — prevents cross-user leakage.
+    """
+    try:
+        r = await db._get_redis()
+        owns = False
+        active_raw = await r.get(f"moe:active:{chat_id}")
+        if active_raw:
+            try:
+                owns = json.loads(active_raw).get("user_id") == user_id
+            except Exception:
+                owns = False
+        if not owns:
+            for raw in await r.zrevrange("moe:admin:completed", 0, 199):
+                try:
+                    meta = json.loads(raw)
+                except Exception:
+                    continue
+                if meta.get("chat_id") == chat_id:
+                    owns = meta.get("user_id") == user_id
+                    break
+        if not owns:
+            return {"chat_id": chat_id, "stage_trace": []}
+
+        stage_trace: list[dict] = []
+        for raw in await r.lrange(f"moe:active:{chat_id}:trace", 0, -1):
+            try:
+                stage_trace.append(json.loads(raw))
+            except Exception:
+                pass
+        return {"chat_id": chat_id, "stage_trace": stage_trace}
+    except Exception as exc:
+        logger.warning("User live request-trace Valkey error: %s", exc)
+        return {"chat_id": chat_id, "stage_trace": []}
+
+
 @app.get("/user/api/my-handovers")
 async def user_api_my_handovers(user_id: str = Depends(require_user_login)):
     """Return pending handover sessions for the current user."""
@@ -6958,6 +6999,28 @@ async def api_live_active_requests():
     }
     _append_log(_active_req_log, snapshot)
     return snapshot
+
+
+@app.get("/api/live/request-trace/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_request_trace(chat_id: str):
+    """On-demand stage trace for the live-pipeline-visualization diagram.
+
+    Not part of the table poll — fetched only while an admin has a specific
+    request's diagram panel open. Reads the bounded Redis list written by
+    services.tracking._record_stage.
+    """
+    stage_trace: list[dict] = []
+    try:
+        r = await db._get_redis()
+        raw_entries = await r.lrange(f"moe:active:{chat_id}:trace", 0, -1)
+        for raw in raw_entries:
+            try:
+                stage_trace.append(json.loads(raw))
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Live request-trace Valkey error: %s", exc)
+    return {"chat_id": chat_id, "stage_trace": stage_trace}
 
 
 @app.post("/api/live/kill-request/{chat_id}", dependencies=[Depends(require_login)])

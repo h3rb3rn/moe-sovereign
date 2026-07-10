@@ -56,7 +56,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -379,6 +379,7 @@ async def expert_worker(state_: AgentState):
                 f"  Task: {task_text}"
                 + (f" | ctx={_expert_ctx_window//1024}K" if _expert_ctx_window else "")
             )
+            await _record_stage(state_.get("response_id", ""), "expert", "started", f"{model_name}/{cat}")
             await _report(
                 f"📤 Expert [{model_name} / {cat}] System-Prompt:\n{sys_prompt}"
             )
@@ -540,6 +541,7 @@ async def expert_worker(state_: AgentState):
                 if len(_raw_content) > _expert_max_output:
                     content += "\n[…truncated]"
                 await _report(f"✅ Expert [{model_name} / {cat}]:\n{content}\n---")
+                await _record_stage(state_.get("response_id", ""), "expert", "done", f"{model_name}/{cat}")
                 # Token metrics
                 _uid = state_.get("user_id", "anon")
                 PROM_TOKENS.labels(model=model_name, token_type="prompt",      node=endpoint, user_id=_uid).inc(usage.get("prompt_tokens", 0))
@@ -601,10 +603,12 @@ async def expert_worker(state_: AgentState):
                     PROM_EXPERT_FAILURES.labels(model=model_name, reason="vram").inc()
                     logger.error(f"❌ VRAM/HTTP error GPU#{gpu} {model_name}: {e}")
                     await _report(f"❌ Expert {model_name}: GPU/HTTP error")
+                    await _record_stage(state_.get("response_id", ""), "expert", "error", model_name)
                     return {"res": f"[{model_name} ERROR]: VRAM/HTTP", "model_cat": None}
                 PROM_EXPERT_FAILURES.labels(model=model_name, reason="error").inc()
                 logger.error(f"❌ Expert {model_name}: {e}")
                 await _report(f"❌ Expert {model_name}: error")
+                await _record_stage(state_.get("response_id", ""), "expert", "error", model_name)
                 return {"res": f"[{model_name} ERROR]: {e}", "model_cat": None}
 
     async def run_task(i: int, task: dict) -> List[dict]:
