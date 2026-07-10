@@ -119,6 +119,32 @@ async def _register_active_request(
         logger.debug("Active request registration failed: %s", e)
 
 
+async def _record_stage(chat_id: str, stage: str, status: str = "started", detail: str = "") -> None:
+    """Append a pipeline-stage trace entry for live visualization. Fire-and-forget, never raises.
+
+    Stored separately from moe:active:{chat_id} (as a bounded Redis list) so the
+    unfiltered live-monitoring table poll stays untouched; only read on-demand
+    when an admin/user opens the per-request diagram panel.
+    """
+    if not chat_id or state.redis_client is None:
+        return
+    try:
+        key = f"moe:active:{chat_id}:trace"
+        entry = json.dumps({
+            "stage":  stage,
+            "status": status,
+            "ts":     datetime.now(timezone.utc).timestamp(),
+            "detail": detail,
+        })
+        pipe = state.redis_client.pipeline()
+        pipe.rpush(key, entry)
+        pipe.ltrim(key, -30, -1)
+        pipe.expire(key, 7200)
+        await pipe.execute()
+    except Exception as e:
+        logger.debug("Stage trace record failed: %s", e)
+
+
 async def _deregister_active_request(chat_id: str, extra_meta: dict | None = None) -> None:
     """Remove a completed request from Redis live monitoring and write to history.
 

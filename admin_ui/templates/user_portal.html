@@ -1141,6 +1141,10 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               ${fmtModel(r.model)}${mode}${keyLbl}
             </div>
             <span class="live-elapsed text-muted fw-semibold" style="font-size:.75rem;white-space:nowrap;font-family:monospace">${escHtml(elapsed)}</span>
+            <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem" title="Live-Pipeline-Diagramm"
+                    onclick="openPipelineDiagram('${escHtml(r.chat_id||'')}', '/user/api/live/request-trace/')">
+              <i class="bi bi-diagram-3"></i>
+            </button>
           </div>`;
         }).join('');
       }
@@ -3469,6 +3473,8 @@ const CSRF_TOKEN = "{{ csrf_token }}";
 </footer>
 
 <script src="/static/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/cytoscape.min.js"></script>
+<script src="/static/js/pipeline_diagram.js"></script>
 
 {% if page == "dashboard" and summary.daily %}
 <script>

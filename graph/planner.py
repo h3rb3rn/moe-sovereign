@@ -54,7 +54,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -233,6 +233,7 @@ async def planner_node(state_: AgentState):
                 _cached_plan = json.loads(_cached_plan_raw)
                 logger.info(f"📋 Planner cache hit (Valkey) — skipping LLM")
                 await _report("📋 Planner: plan loaded from Valkey cache")
+                await _record_stage(state_.get("response_id", ""), "planner", "cache_hit")
                 return {"plan": _cached_plan, "prompt_tokens": 0, "completion_tokens": 0}
         except Exception as _pe:
             logger.debug(f"Planner cache read error: {_pe}")
@@ -265,6 +266,7 @@ async def planner_node(state_: AgentState):
         _ft_cat = TRIVIAL_FAST_PATH_CATEGORY if TRIVIAL_FAST_PATH_CATEGORY in EXPERTS else next(iter(EXPERTS), "general")
         logger.info("⚡ Trivial fast-path: planner LLM skipped → '%s'", _ft_cat)
         await _report(f"⚡ Trivial fast-path → expert '{_ft_cat}' (planner skipped)")
+        await _record_stage(state_.get("response_id", ""), "planner", "fast_path", _ft_cat)
         return {
             "plan": [{"task": state_["input"], "category": _ft_cat}],
             "direct_expert": _ft_cat,
@@ -356,6 +358,7 @@ async def planner_node(state_: AgentState):
 
     logger.debug("--- [NODE] PLANNER ---")
     await _report("📋 Planner analyzing request...")
+    await _record_stage(state_.get("response_id", ""), "planner", "started")
     # When a template defines its own expert set, restrict routing to those categories so
     # the planner cannot accidentally route to a global expert not wired in the template.
     # Fall back to the global EXPERTS list when no template experts are active.
@@ -677,6 +680,7 @@ JSON array:"""
             categories = [t.get("category", "?") for t in plan]
             logger.info(f"📋 Plan ({len(plan)} Tasks): {json.dumps(plan, ensure_ascii=False)}")
             await _report(f"📋 Plan: {len(plan)} Task(s) → {', '.join(categories)}")
+            await _record_stage(state_.get("response_id", ""), "planner", "done", ", ".join(categories))
             for _pt in plan:
                 _desc = (_pt.get("task") or "")[:80]
                 _ptcat = _pt.get("category", "?")

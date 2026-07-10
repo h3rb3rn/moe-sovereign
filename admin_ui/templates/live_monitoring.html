@@ -2,6 +2,8 @@
 {% block title %}{{ t(request, 'page.live') }} – MoE Admin{% endblock %}
 
 {% block content %}
+<script src="/static/js/cytoscape.min.js"></script>
+<script src="/static/js/pipeline_diagram.js"></script>
 <style>
   .live-badge {
     display: inline-block;
@@ -312,10 +314,17 @@ function applyActiveFilter() {
         <td><code style="font-size:.75rem">${escHtml(r.client_ip || '–')}</code></td>
         <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
         <td><code style="font-size:.7rem">${escHtml((r.chat_id||'').slice(-12))}</code></td>
-        <td><button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.72rem"
+        <td class="text-nowrap">
+          <button class="btn btn-xs btn-outline-primary py-0 px-1 me-1" style="font-size:.72rem"
+                    title="Live-Pipeline-Diagramm"
+                    onclick="openPipelineDiagram('${escHtml(r.chat_id||'')}', '/api/live/request-trace/')">
+              <i class="bi bi-diagram-3"></i>
+            </button>
+          <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.72rem"
                     onclick="killRequest('${escHtml(r.chat_id||'')}')">
               <i class="bi bi-x-circle me-1"></i>Kill
-            </button></td>
+            </button>
+        </td>
       </tr>`;
     } catch(_e) {
       return `<tr><td colspan="11" class="text-warning small py-1">Render error for request ${escHtml(r.chat_id||'?')}: ${escHtml(String(_e))}</td></tr>`;
