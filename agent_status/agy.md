@@ -119,3 +119,17 @@ Plan / progress:
 - Resubmitted the three generator shards (Jobs 19598021, 19598022, 19598023).
 - Resubmitted the merge-and-trigger job (Job 19598025) with `--dependency=afterok:19598021:19598022:19598023` to start DDP training automatically once datagen completes.
 - Updated `PreView/index.html` and `eurohpc_lumi_activity_report.md` with the new job states, quotas, and resubmissions.
+
+---
+
+## 2026-07-02T20:40:00Z — TASK-9 — in_progress
+
+Plan / progress:
+- The async generator runs (Jobs 19598021-23) ran successfully on LUMI-G but reached their 4-hour time limit and timed out.
+- Verification showed they generated a total of **50,276 valid paraconsistent samples** (Shard 0: 16,843, Shard 1: 16,792, Shard 2: 16,641) out of the 90,000 target.
+- Measured throughput is ~11,300 samples/hour (~3.1 samples/second across all shards), representing a successful **18x speedup** over the single-threaded implementation.
+- Copied data is completely safe; no data loss occurred.
+- Action: Cancelled the old stale dependency job (Job 19598025).
+- Action: Resubmitted the three shards as resume jobs (Jobs 19682379, 19682380, 19682381) to complete the remaining ~40,000 samples. The generator script automatically detects the already generated files and resumes from their respective offsets.
+- Action: Resubmitted the merge-and-trigger job (Job 19682382) with `--dependency=afterok:19682379:19682380:19682381`.
+- Updated `PreView/index.html` and `eurohpc_lumi_activity_report.md` to reflect the updated metrics, consumption, and pending queue state.

@@ -128,9 +128,33 @@ This Lastenheft turns the remaining work into a coordinated backlog.
 
 **Status as of 2026-06-12T21:06Z:** TASK-1 through TASK-6 are all `done`
 (see Section 3 for full Resolution notes on each). Open follow-ups (not
-formalized as tasks): (1) make the personal API key prefix configurable via environment variables or options in all scripts (`scripts/dataset_generator.py`, `scripts/send_request.py`, `scripts/index_models_metadata.py`); (2) ensure that any cloud-model discovery or dynamic routing configurations do not hardcode AIHUB, but remain fully configurable dynamically via the MoE Admin UI (Inference Servers / User Connections), allowing individual configurations for users without AIHUB access; (3) `models/backup_20260612/` (552 KB old ONNX model from
-TASK-2) is safe to delete once the new `sovereign_router.onnx` has been
-stable for a while.
+formalized as tasks): ~~(1) make the personal API key prefix configurable via
+environment variables or options in all scripts (`scripts/dataset_generator.py`,
+`scripts/send_request.py`, `scripts/index_models_metadata.py`)~~; ~~(2) ensure
+that any cloud-model discovery or dynamic routing configurations do not
+hardcode AIHUB, but remain fully configurable dynamically via the MoE Admin
+UI (Inference Servers / User Connections), allowing individual configurations
+for users without AIHUB access~~; ~~(3) `models/backup_20260612/` (552 KB old
+ONNX model from TASK-2) is safe to delete once the new `sovereign_router.onnx`
+has been stable for a while~~.
+
+**Update (2026-07-05T19:45Z, Claude Code):** All three follow-ups verified
+resolved, no task ever needed:
+1. `scripts/dataset_generator.py`/`send_request.py` read `SYSTEM_API_KEY` from
+   env (no hardcoded personal key); `index_models_metadata.py` reads
+   `INFERENCE_SERVERS` from env entirely. No trace of the old
+   `moe-sk-940e228...` key anywhere in the codebase (verified via grep).
+2. `services/dynamic_router.py:56-64` (`CLOUD_ENDPOINTS`) is now derived
+   generically from `INFERENCE_SERVERS_LIST` (all non-Ollama entries, each
+   with its own URL/token) — superseding TASK-6's original
+   `DYNAMIC_ROUTER_CLOUD_ENDPOINT`/`_TOKEN` single-pair env-var approach
+   (those env vars no longer exist in `.env`). `get_dynamic_template()`
+   (line ~789) additionally layers per-user `user_connections` on top of the
+   global cloud list — users without admin-configured AIHUB access can
+   already supply their own cloud endpoint via a private connection.
+3. `models/backup_20260612/` no longer exists (already deleted).
+
+No further action needed on these three items.
 
 ---
 
@@ -651,6 +675,14 @@ stable for a while.
   - **Datagen v1:** Shards reached 8h timeout, producing 5,080 unique samples. Rewrote generator to `generate_judge_dataset_async.py` (Concurrency=48).
   - **Deduplication Fix:** Fixed a major bug in `merge_shards_and_train.sh` where keys were truncated to 120 chars, causing massive data loss.
   - **Resubmission:** Re-submitted the 3 shards (Jobs 19588284-86) and chained them to the trigger job (Job 19588422) for automated SFT execution.
+  - **Doku-Sync (2026-07-05, Claude Code, Quelle: `agent_status/agy.md`
+    Eintrag 2026-07-02T20:40Z):** Der obige Stand war überholt — die Jobs
+    19598021-23 liefen erfolgreich, erreichten aber das 4h-Zeitlimit bei
+    50.276 von 90.000 Samples (~18x Speedup ggü. Single-Thread). Antigravity
+    hat als Resume-Jobs 19682379-81 + Merge-Trigger 19682382
+    (`--dependency=afterok`) neu eingereicht. Aktueller SLURM-Zustand seither
+    nicht erneut geprüft (Betreiber-Entscheidung vom 2026-07-05, kein
+    SSH-Check) — maßgeblich bleibt der agy-Status-Log.
 
 ---
 
@@ -1264,6 +1296,264 @@ stable for a while.
   - 4 Sprachdateien: neue Keys für AI I/O Audit und Model Capabilities.
   - 10 Tests grün.
 
+### TASK-32: Integration / Evaluation des Claude Design System Prompts (AI-Slop-Prävention & a11y)
+
+- **Status:** partially_done (Phase 1 Evaluation done + korrigiert; Phase 2:
+  2 Skills importiert und auditiert, Admin-Freigabe offen; Phase 3-4
+  ausstehend)
+- **Owner:** Claude Code (Korrektur + Phase 2, 2026-07-05), ursprünglich Antigravity
+- **Depends on:** none
+- **Context:** MoE-Sovereign generiert über Coder-Experten und UI-Skills Web-Interfaces. Zudem besitzt es eigene Web-UIs. Um generischen "AI-Slop" (typische KI-Layoutmuster, unharmonische Farbverläufe, unpassende Fonts) zu vermeiden und Barrierefreiheit (a11y/WCAG) von Anfang an sicherzustellen, soll das Konzept aus dem Projekt [claude-design-system-prompt](https://github.com/Trystan-SA/claude-design-system-prompt) integriert werden. **Lizenz-Konformität:** Da das Quellprojekt unter der MIT-Lizenz steht, müssen bei der Übernahme der Prompts und Skills die ursprünglichen Lizenz- und Copyright-Hinweise (Trystan Sarrade) beibehalten und in den Zieldateien dokumentiert werden.
+- **Instructions:**
+  1. **Phase 1: Analyse & Bewertung (Erledigt):**
+     - Analyse der Designkonzepte und der 14 prozeduralen Skills.
+     - Detaillierter Evaluationsbericht erstellt unter [moe_design_system_evaluation.md](file:///home/philipp/.gemini/antigravity-cli/brain/e37eb3b2-85a4-48ec-b63b-9f83fe8a2e0e/moe_design_system_evaluation.md).
+  2. **Phase 2: Experten-Integration (Ausstehend):**
+     - Registrierung eines neuen Experten `frontend_designer` oder `ui_ux_designer` in [moe-infra/prompts.py](file:///opt/deployment/moe-sovereign/moe-infra/prompts.py) mit dem Kern-System-Prompt zur Slop-Vermeidung.
+  3. **Phase 3: Skill-Import & Lizenzkonformität (Ausstehend):**
+     - Übernahme der wichtigsten Skills (z. B. `ai-slop-check.md`, `accessibility-audit.md`, `make-tweakable.md`) als Markdown-Dateien nach [moe-infra/skills/](file:///opt/deployment/moe-sovereign/moe-infra/skills/).
+     - **Wichtig:** Jede übernommene Datei muss im Frontmatter oder als Header den ursprünglichen MIT-Lizenz- und Urheberrechtshinweis (Copyright (c) 2026 Trystan Sarrade) enthalten.
+     - Durchführung des nach [moe-infra/services/skills.py](file:///opt/deployment/moe-sovereign/moe-infra/services/skills.py) notwendigen LLM-Sicherheitsaudits für den Import.
+  4. **Phase 4: Design-Hygiene in der Entwicklung (Ausstehend):**
+     - Übernahme der Prinzipien in die Entwickler-Richtlinien `AGENTS.md` zur Qualitätssicherung künftiger MoE-UIs.
+- **Acceptance criteria:**
+  - [moe_design_system_evaluation.md](file:///home/philipp/.gemini/antigravity-cli/brain/e37eb3b2-85a4-48ec-b63b-9f83fe8a2e0e/moe_design_system_evaluation.md) ist vollständig ausgearbeitet.
+  - Neuer UI/UX-Experte reagiert zuverlässig auf Design-Anfragen.
+  - Neue Design-Review-Skills (z. B. `/ai-slop-check`) sind im Skill-Verzeichnis registriert, auditiert und vom Admin freigegeben.
+  - **Lizenzprüfung:** Alle importierten System-Prompts und Skill-Dateien weisen die erforderlichen Copyright- und Lizenzangaben der MIT-Lizenz auf.
+- **Resolution notes (2026-07-05, Antigravity):**
+  - Phase 1 (Analyse) erfolgreich abgeschlossen. Das Dokument [moe_design_system_evaluation.md](file:///home/philipp/.gemini/antigravity-cli/brain/e37eb3b2-85a4-48ec-b63b-9f83fe8a2e0e/moe_design_system_evaluation.md) enthält die Analyse der 14 Skills und der 5 Haupt-Design-Konzepte in einer Mehrwert-Matrix.
+  - Phase 2–4 sind für nachfolgende Iterationen unter Wahrung der MIT-Lizenzbedingungen vorbereitet.
+
+- **Korrektur-Resolution (2026-07-05T19:24Z, Claude Code):** Die bestehende
+  Evaluation wurde unabhängig gegen das Live-Repo (öffentliche GitHub-API,
+  nicht nur den Bericht) verifiziert. Zwei Lücken korrigiert, Empfehlung
+  umgewichtet — Details siehe `agent_status/claude-code.md`.
+
+  1. **Zwei Repo-Varianten, nicht eine.** `claude/` (mit Subagent-Delegation,
+     "delegate thorough verification to a verifier subagent") und `codex/`
+     ("verification is in-loop... there is no verifier subagent"). Der
+     bestehende Bericht referenziert ausschließlich `claude/`.
+  2. **Modell-Kalibrierungswarnung im README übersehen:** Der Prompt ist
+     explizit auf aktuelle Anthropic-Frontier-Modelle kalibriert und warnt
+     selbst: *"On older models... or non-Anthropic models, the calmer
+     phrasing may under-trigger."* MoE-Sovereigns Experten sind lokale SLMs
+     (`qwen3.6:35b`, `gemma4:12b`, `ornith:9b`) — exakt die Zielgruppe, vor
+     der gewarnt wird. Ein 1:1-Import ohne Anpassung würde bei Weg 1
+     vermutlich schwächer wirken als vom Bericht angenommen.
+  3. **Struktureller Mismatch bei Weg 1 (`frontend_designer`-MoE-Experte):**
+     Der Claude-Workflow (Kapitel 2–4, 18) setzt Dateisystem-Zugriff
+     ("read the design system's full definition... whatever exists") und
+     Subagent-Verifikation voraus. `graph/expert.py` (reguläre MoE-Pipeline)
+     ist reines Text-rein/Text-raus ohne Tool-/Dateizugriff — bestätigt beim
+     Code-Review. Ein `frontend_designer`-Experte kann daher nur die
+     *Prinzipien* (Kapitel 5–16: Farbsystem, Typografie, Abstände, a11y-Regeln
+     als Text), nicht den *Workflow* (Fragerunden, Subagent-Delegation,
+     Datei-Exploration) sinnvoll übernehmen.
+
+  **Revidierte Instructions für Phase 2–4:**
+  - Weg 2 (Skills für Claude-Code-Sessions) zuerst umsetzen, nicht Weg 1.
+    Grund: Diese Sessions haben echten Datei-/Tool-Zugriff und verwalten
+    bereits `admin_ui/templates/*.html` — die Voraussetzungen des Prompts
+    sind hier tatsächlich erfüllt. Die `codex/`-Variante ("in-loop
+    verification", kein Subagent-Zwang) ist die strukturell passendere
+    Vorlage als `claude/`.
+  - Import-Reihenfolge Weg 2: `ai-slop-check.md`, `accessibility-audit.md`,
+    `hierarchy-rhythm-review.md` (aus `codex/skills/`, nicht `claude/skills/`)
+    — mit YAML-Frontmatter (`description:`-Feld, Format siehe bestehende
+    Skills in `moe-infra/skills/*.md`) ergänzen, MIT-Copyright-Header
+    (Trystan Sarrade, 2026) beibehalten, durch den bestehenden
+    `_run_llm_audit()`-Mechanismus (`admin_ui/app.py:3716`) laufen lassen.
+    **Umsetzungsstand 2026-07-05:** `ai-slop-check` und
+    `hierarchy-rhythm-review` importiert nach `skills/community/` und
+    auditiert (`verdict: safe`, 0 Findings, `qwen3.6:35b`@N04-RTX).
+    `accessibility-audit` bewusst NICHT importiert — der bestehende
+    Community-Skill `a11y-audit` deckt denselben Funktionsumfang bereits ab
+    (WCAG-2.2-Scan/Fix/Verify). Offen: Admin-Freigabe der beiden Skills
+    (`admin_approved`) über die `/skills`-Seite — Selbst-Freigabe per SQL
+    wurde vom Auto-Mode-Classifier zweifach gestoppt und bewusst nicht
+    umgangen (Freigabe externen Codes ist eine Menschen-Entscheidung).
+  - Weg 1 (`frontend_designer`-Experte) nur mit reduziertem Scope: Prompt
+    auf Kapitel 5–16 (reine Stilregeln) beschränken, explizit dokumentieren,
+    dass Fragerunden/Subagent-Verifikation dort strukturell nicht greifen —
+    sonst entsteht eine Workflow-Erwartung, die die Architektur nicht liefern
+    kann.
+
+  **Ergänzte Acceptance-Kriterien:**
+  - Importierte Skills stammen aus `codex/skills/`, nicht `claude/skills/`
+    (Begründung: kein Subagent-Mechanismus in MoE-Sovereigns Skill-System).
+  - `frontend_designer`-Systemprompt (falls Weg 1 umgesetzt wird) enthält
+    einen expliziten Hinweis, dass Fragerunden und Datei-Exploration in
+    diesem Kontext nicht verfügbar sind.
+  - Mindestens ein Skill (empfohlen: `/ai-slop-check`) erfolgreich gegen
+    eine reale Datei aus `admin_ui/templates/` in einer Claude-Code-Session
+    ausgeführt und das Ergebnis dokumentiert (Nachweis der Weg-2-Tauglichkeit).
+
+---
+
+### TASK-33: Vibelate-Governance als CC-Profil-Preset (gestufter Weg: Prompt zuerst, Fine-Tuning später)
+
+- **Status:** partially_done (Phase A umgesetzt 2026-07-05; Phase B wartet
+  auf Messphase — siehe Resolution notes)
+- **Owner:** Claude Code (Phase A)
+- **Depends on:** WP3/Quality-Probe (`services/quality_probe.py`,
+  `MOE_QUALITY_PROBE` Flag, siehe `SESSION_DOKUMENTATION_2026-07-05.md`),
+  `scripts/export_distillation_dataset.py` (beide bereits implementiert)
+- **Context:** `/opt/deployment/Michael_Reich/Vibelate3` (Ursprung:
+  `ADHS/vibelate/`, verfeinert über Vibelate2 → Vibelate3) ist kein
+  Coding-Stil, sondern ein Agenten-Governance-Framework: Autoritätshierarchie,
+  kanonische Backlog-Zerlegung (Initiative → Epic → Story → Implementation
+  Task), "Schema is the process"-Architekturphilosophie, Proof-Integrity- und
+  Verification-Regeln. Analyse (2026-07-05, Claude Code) ergab zwei
+  Kernbefunde:
+  1. Vibelate setzt durchgehend Datei-Exploration, Ownership-Boundary-Prüfung
+     und iterative Testlauf-Verifikation voraus. `graph/expert.py` (reguläre
+     MoE-Pipeline) ist reines Text-rein/Text-raus ohne Tool-/Dateizugriff —
+     ein neuer MoE-Pipeline-Modus (`moe_mode: "vibelate"`) könnte die
+     Disziplin nur behaupten, nicht durchsetzen. Ein CC-Profil-Preset
+     (`system_prompt_prefix`, analog zum bereits implementierten
+     `tool_system_prefix`-Mechanismus aus `cc_session.py`) passt dagegen
+     strukturell: eine echte Claude-Code-Session hat Datei-, Such- und
+     Testlauf-Zugriff, genau wie von Vibelate vorausgesetzt.
+  2. Vibelate ist kein stabiles Zielobjekt — die Methodik hat sich bereits
+     über zwei Iterationen (v2 → v3) sichtbar verändert. Ein Fine-Tuning
+     jetzt würde eine noch in Bewegung befindliche Methodik in Gewichte
+     einfrieren (teuer bei jeder Regel-Änderung, nicht diffbar/auditierbar —
+     dasselbe Problem, das TASK-12/Decision-Log für Laufzeitentscheidungen
+     löst). Zudem ist Fine-Tuning auf externe HPC-Infra angewiesen — TASK-2
+     in diesem selben Lastenheft zeigt konkret, wie ein abgelaufenes
+     LUMI-SSH-Zertifikat einen Trainingslauf tagelang blockierte.
+  - **Entscheidung:** gestufter Weg statt Entweder-Oder. Phase A (jetzt):
+     CC-Profil-Preset mit System-Prompt-Prefix, Wirksamkeit über die bereits
+     laufende Quality-Probe-Infrastruktur messen. Phase B (später, nur wenn
+     Phase A stabile, gute Ergebnisse zeigt): stabile Vibelate-konforme
+     Transkripte über die bereits vorhandene Distillations-Pipeline als
+     LoRA-Trainingsdaten exportieren.
+- **Instructions:**
+  1. **Phase A — CC-Profil-Preset:**
+     - Kondensiere `Vibelate3/AGENTS.md` (Precedence, Core Working Contract,
+       Coding Behavior, Verification Rules — nicht die projektspezifischen
+       Platzhalter-Kapitel wie Backlog/AI-Memory-Pfade) zu einem
+       `system_prompt_prefix`-Text für ein neues CC-Profil "Vibelate-Strict".
+     - Lege das Profil im Admin-UI oder User-Portal an (bestehender
+       CC-Profil-Editor, `moe_mode` frei wählbar je nach Anwendungsfall —
+       `native` oder `moe_orchestrated` mit Experten-Template).
+     - MIT-Lizenzhinweis: Vibelate selbst hat noch keine explizite Lizenz im
+       Projektverzeichnis geprüft — vor Veröffentlichung/Weitergabe des
+       CC-Profil-Textes mit Michael Reich klären, ob/wie Attribution nötig
+       ist (anders als beim MIT-lizenzierten `claude-design-system-prompt`
+       aus TASK-32, wo die Lizenzlage bereits geklärt ist).
+  2. **Phase A — Messung:**
+     - `MOE_QUALITY_PROBE=1` ist bereits aktiv (siehe
+       `SESSION_DOKUMENTATION_2026-07-05.md`). Sofern das Vibelate-Profil
+       hinreichend Traffic bekommt, fließen Vergleichsdaten automatisch in
+       `pipeline_quality_log`.
+     - Nach einigen Wochen Nutzung: Auswertung, ob mit dem Vibelate-Profil
+       geführte Sessions messbar weniger Nacharbeit / Regressions-Bugs /
+       Scope-Abweichungen produzieren als ohne (Proxy-Metriken: Anzahl
+       Folge-Korrekturen pro Task; `structured_failure_round` aus TASK-30;
+       `trust_verdict`-Verteilung aus TASK-10 — sofern anwendbar).
+  3. **Phase B — Distillation (nur nach positiver Phase-A-Auswertung UND
+     wenn das Vibelate-Regelwerk über mind. 2-3 Monate unverändert blieb):**
+     - `scripts/export_distillation_dataset.py` um einen Filter erweitern,
+       der nur Conversation-Log-Einträge mit `template_id`/CC-Profil
+       "Vibelate-Strict" exportiert.
+     - Erst dann: LoRA-Trainingslauf auf einem lokalen Coder-Modell prüfen —
+       mit dem Wissen, dass jede spätere Vibelate-Regeländerung einen neuen
+       Trainingslauf erfordert (bewusste Kosten-Nutzen-Abwägung, siehe
+       Context).
+- **Acceptance criteria:**
+  - CC-Profil "Vibelate-Strict" existiert, ist im Profil-Editor sichtbar und
+    liefert bei einer Testanfrage nachweislich Vibelate-Sprache/-Disziplin
+    (z. B. "Challenge weak or underspecified input", scope-enger Edit-Stil)
+    in der Antwort.
+  - Explizite Dokumentation, dass dies ein CC-Profil-Preset ist, kein neuer
+    MoE-Pipeline-Modus — mit Begründung (Tool-/Dateizugriff-Voraussetzung).
+  - Phase B wird nicht ohne dokumentierte Phase-A-Auswertung begonnen.
+- **Resolution notes (2026-07-05, Claude Code — Phase A):**
+  - `Vibelate3/AGENTS.md` auf die projektunabhängigen Kapitel kondensiert
+    (2638 Zeichen: Core Working Contract, Coding Behavior, Proof Integrity,
+    Architecture stance).
+  - CC-Profil "Vibelate-Strict" (`ucp-96dd63b047aa47deac4a856a`, User
+    horndev, `moe_mode: native`, `tool_model` leer → Template-Auto-Ableitung)
+    per SQL angelegt — nach expliziter Nutzerbestätigung via AskUserQuestion,
+    nachdem der Auto-Mode-Classifier den ersten Versuch gestoppt hatte.
+    Redis-Cache invalidiert; Persistenz per Round-Trip-Read verifiziert.
+  - Bewusst NICHT erledigt: Zuweisung des Profils zu einem API-Key
+    (Nutzerentscheidung) und der Lizenz-Klärungspunkt mit Michael Reich.
+  - Phase B bleibt offen bis zur dokumentierten Phase-A-Auswertung
+    (Messfenster läuft mit `MOE_QUALITY_PROBE=1`).
+
+---
+
+### TASK-34: Integration / Evaluation des Vibe-Coding-Ökosystems (Empfehlungen & Implementierungsszenarien)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** Phase 1/3: none. Phase 2: Koordination mit TASK-32 (Design-
+  Skills) und TASK-33 (Vibelate-CC-Profil-Prefix) — alle drei injizieren
+  Regeln in denselben effektiven System-Prompt; Stacking-Reihenfolge und
+  Konfliktauflösung müssen vor Phase-2-Beginn festgelegt werden (siehe
+  Review-Notiz).
+- **Context:** Das Vibe-Coding-Ökosystem entwickelt sich rasant (z. B. *The Ultimate Vibecoding Directory* und *Awesome-Vibecoding*). Diese Verzeichnisse listen moderne Client-Side Tools, Best Practices und System-Prompts auf. Da `MoE-Sovereign` als private, lokale Multi-Modell-Orchestrierungsschicht konzipiert ist, können wir durch die Integration dieser Standards Entwicklern ermöglichen, ihre bevorzugten Frontend-Coding-Clients (wie Cline, Roo-Code oder lokale Web-App-Generatoren) vollkommen souverän im eigenen Netz mit lokalen Experten (wie `qwen2.5-coder` oder `phi4`) zu betreiben.
+- **Instructions:**
+  1. **Phase 1: API-Kompatibilität für Vibe-Coding-Clients (Sovereign Gateway):**
+     - Analyse der API-Anforderungen führender Vibe-Coding-Tools (z. B. Cline, Roo-Code).
+     - Erweiterung der API-Kompatibilität in `routes/anthropic_compat.py` und `routes/ollama_compat.py`, um reibungslose Schnittstellen zu diesen Client-Editoren zu gewährleisten.
+  2. **Phase 2: Prompt-Standardisierung für lokale Experten:**
+     - Übernahme strukturierter Doktrinen (z. B. TDD-Erzwingung, präzise File-Edit-Spezifikationen, Such- und Ersetzungs-Patterns) aus bekannten `.cursorrules` des *Vibecoding Directories*.
+     - Integration dieser Regeln in die standardmäßigen System-Prompts von `MoE-Sovereign` (`prompts/systemprompt/`), um Syntax-Drift bei lokalen 14B/35B Modellen zu minimieren.
+  3. **Phase 3: MCP-Tool-Registry-Erweiterung:**
+     - Analyse der in *Awesome-Vibecoding* gelisteten, bewährten Community-MCP-Server.
+     - Ergänzung nützlicher Werkzeuge (z. B. für erweiterte Dateiverwaltung, Git-Aktionen) in der AST-geprüften Whitelist des `mcp-precision`-Containers.
+- **Acceptance criteria:**
+  - Kompatibilitäts-Verifikationsbericht liegt vor (welcher Client, welcher
+    API-Modus, welche Lücken tatsächlich gefunden — analog zum
+    Evaluationsbericht aus TASK-32 Phase 1); erst danach werden Compat-Layer
+    geändert. *(Ersetzt am 2026-07-05 das ursprüngliche selbsterfüllende
+    Kriterium „Plan ist eingetragen (Erledigt)" — Widerspruchsauflösung auf
+    Betreiberanweisung.)*
+  - Mindestens ein moderner Vibe-Coding-Client (z. B. Cline oder Roo-Code) kann sich erfolgreich über das Sovereign-Gateway verbinden und Dateiveränderungen mit lokalen Modellen abschließen.
+  - System-Prompts für Programmier-Tasks enthalten Regeln zur präzisen Such- und Ersetzungsstruktur.
+  - Whitelist der MCP-Tools wurde um mindestens ein Tool erweitert, das den
+    für Community-Skills etablierten Audit-Weg (`_run_llm_audit()` +
+    Admin-Freigabe, vgl. `skill_registry`-Muster) durchlaufen hat.
+    *(Präzisiert am 2026-07-05: „Community-geprüft" war ohne definierten
+    Prüfmechanismus nicht abnehmbar.)*
+- **Review-Notiz (2026-07-05, Claude Code — Koordination gem. Section 0,
+  Inhalt bewusst nicht umgeschrieben):**
+  - Referenzierte Pfade gegen den Code verifiziert: `prompts/systemprompt/`
+    (existiert, u.a. `agentic_coder.md`), `routes/anthropic_compat.py` /
+    `routes/ollama_compat.py` (existieren), AST-basierte Prüfung in
+    `mcp_server/server.py` (existiert) — Grundlage der Task ist solide.
+  - **Phase 1 setzt eine Lücke voraus, die vermutlich nicht existiert:**
+    Cline/Roo-Code sprechen OpenAI-/Anthropic-/Ollama-kompatible APIs;
+    alle drei Compat-Layer sind bereits vorhanden. Empfohlener erster
+    Schritt: Verbindungs-Verifikation mit einem echten Client, dann nur
+    tatsächlich festgestellte Lücken schließen — nicht pauschal "erweitern".
+  - **Nicht deklarierte Überlappung:** Phase 2 (Regeln in
+    `prompts/systemprompt/`) überschneidet sich mit TASK-33
+    (Vibelate-Regeln als CC-Profil-Prefix) und TASK-32 (Design-Regeln als
+    Skills). Drei Ebenen injizieren dann Disziplin-Regeln in denselben
+    effektiven System-Prompt — Stacking-Reihenfolge und Konflikte sollten
+    vor Phase 2 geklärt werden. `Depends on: none` ist daher zu schwach.
+  - **Phase 3 fehlt ein Sicherheits-Gate:** Neue Community-MCP-Tools sollten
+    denselben Audit-Weg durchlaufen wie Community-Skills
+    (`_run_llm_audit()` + Admin-Freigabe, vgl. `skill_registry`-Muster).
+    Acceptance-Kriterium 4 („Community-geprüft") ist ohne definierten
+    Prüfmechanismus nicht abnehmbar.
+  - **Formales (aufgelöst 2026-07-05 auf Betreiberanweisung):** Die drei
+    formalen Widersprüche wurden direkt in dieser Task korrigiert —
+    (a) selbsterfüllendes Kriterium 1 durch prüfbares
+    Verifikationsbericht-Kriterium ersetzt, (b) Graph-Eintrag von
+    „Evaluierung done" auf „Plan eingetragen" korrigiert (kein
+    Evaluations-Artefakt existierte), (c) `Depends on` um die
+    Prompt-Stacking-Koordination mit TASK-32/33 ergänzt. Weiterhin offen
+    und NICHT durch mich behebbar: kein Status-Log-Eintrag des Erstellers
+    für die ursprüngliche Eintragung (`agent_status/agy.md` unverändert
+    seit 2026-07-02, vgl. Section 0) — der Ersteller sollte das bei der
+    nächsten Session nachholen.
+
 ---
 
 ## 4. Suggested Tool Assignments
@@ -1295,7 +1585,7 @@ These are suggestions, not constraints — any agent may pick up any
 updates `Owner:`/`Status:` accordingly. If two agents target the same files,
 check each other's status logs first and note the overlap in Section 3.
 
-**New tasks dependency graph (TASK-10 through TASK-31):**
+**New tasks dependency graph (TASK-10 through TASK-34):**
 ```
 Quality Enhancements:
 TASK-10 (Trust-Score)
@@ -1318,6 +1608,15 @@ ADHS-Transfer (aus Agent-Orchestrator-Analyse, 2026-07-01):
 TASK-29 (AI I/O Audit Service)      ← independent, EU-Compliance-Priorität
 TASK-30 (Structured-Output Failure) ← independent, erhöht Robustheit
 TASK-31 (Capability-Tabelle)        ← independent, Basis für TASK-30-Routing
+
+Claude Design System Integration:
+TASK-32 (Claude Design Prompt)       ← Phase 1+2 weitgehend done (2 Skills importiert+auditiert, Admin-Freigabe offen), Phase 3-4 pending
+
+Agent-Governance Transfer:
+TASK-33 (Vibelate CC-Profil-Preset)  ← Phase A live (ucp-96dd63b0...), Phase B nach Messfenster
+
+Vibe-Coding Ökosystem Integration:
+TASK-34 (Vibe-Coding Integration)    ← Plan eingetragen 2026-07-05, Phase 1-3 pending
 ```
 
 ---

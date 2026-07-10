@@ -140,6 +140,16 @@ def estimate_complexity(query: str) -> ComplexityLevel:
     words = query.split()
     n = len(words)
 
+    # CC-internal utility requests (topic detection, title generation) are
+    # long English instructions and were misclassified as "complex" — they
+    # must be trivial so downstream cost tiers stay minimal even when the
+    # fast path is disabled.
+    _q_low = query[:400].lower()
+    if ("analyze if this message indicates a new conversation topic" in _q_low
+            or "write a 5-10 word title" in _q_low
+            or "generate a concise title" in _q_low):
+        return "trivial"
+
     # Memory-recall questions: answered from chat history, no research needed.
     # Check FIRST — even a long "do you remember what I said about the database?" is memory_recall.
     if _MEMORY_RECALL_RE.search(query):

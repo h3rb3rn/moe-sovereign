@@ -2285,7 +2285,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               </div>
               <div class="d-flex flex-wrap gap-2" style="font-size:.8rem">
                 <span class="badge bg-secondary">{{ cfg.moe_mode or 'native' }}</span>
+                {% if cfg.tool_model and cfg.tool_model.startswith('template:') %}
+                <span class="badge bg-primary-subtle text-primary border font-monospace">{{ cfg.tool_model }}</span>
+                {% else %}
                 <span class="badge bg-light text-dark border font-monospace">{{ cfg.tool_model or '—' }}@{{ cfg.tool_endpoint or '—' }}</span>
+                {% endif %}
                 {% if cfg.tool_choice and cfg.tool_choice != 'auto' %}
                 <span class="badge bg-info text-dark">choice: {{ cfg.tool_choice }}</span>
                 {% endif %}
@@ -2342,10 +2346,10 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           <div class="row g-3 mb-3" id="cc-template-row" style="display:none">
             <div class="col-12">
               <label class="form-label small fw-semibold">Expert Template <span class="text-muted">(für moe_orchestrated)</span></label>
-              <select class="form-select form-select-sm" id="cc-expert-template">
+              <select class="form-select form-select-sm" id="cc-expert-template" onchange="onCcExpertTemplateChange()">
                 <option value="">— kein Template (globale Experten) —</option>
                 {% for tmpl in expert_templates %}
-                <option value="{{ tmpl.id }}">{{ tmpl.name }}</option>
+                <option value="{{ tmpl.id }}" data-has-tool-agent="{{ 'true' if tmpl.config_json and 'tool_agent' in tmpl.config_json else 'false' }}">{{ tmpl.name }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -2353,9 +2357,12 @@ const CSRF_TOKEN = "{{ csrf_token }}";
           <div class="row g-3 mb-3">
             <div class="col-md-8">
               <label class="form-label small fw-semibold">Tool-Modell <span class="text-muted">(llm@host)</span></label>
-              <select class="form-select form-select-sm" id="cc-tool-llmhost">
+              <select class="form-select form-select-sm" id="cc-tool-llmhost" onchange="onCcToolModelChange()">
                 <option value="">– Loading models… –</option>
               </select>
+              <div id="cc-tool-model-hint" class="form-text d-none">
+                <span class="text-success"><i class="bi bi-check-circle me-1"></i>Wird automatisch aus dem Experten-Template (tool_agent) übernommen — kein Tool-Modell nötig.</span>
+              </div>
             </div>
             <div class="col-md-4">
               <label class="form-label small fw-semibold">Tool Choice</label>
@@ -2427,9 +2434,32 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       <script>
       const _ccProfiles = {{ my_cc_profiles | tojson }};
 
+      function _ccSelectedTemplateHasToolAgent() {
+        const sel = document.getElementById('cc-expert-template');
+        if (!sel) return false;
+        const opt = sel.options[sel.selectedIndex];
+        return opt && opt.dataset.hasToolAgent === 'true';
+      }
+
+      function _updateCcToolModelHint() {
+        const hint    = document.getElementById('cc-tool-model-hint');
+        const toolVal = document.getElementById('cc-tool-llmhost')?.value || '';
+        const mode    = document.getElementById('cc-moe-mode').value;
+        if (!hint) return;
+        if (!toolVal && mode === 'moe_orchestrated' && _ccSelectedTemplateHasToolAgent()) {
+          hint.classList.remove('d-none');
+        } else {
+          hint.classList.add('d-none');
+        }
+      }
+
+      function onCcToolModelChange() { _updateCcToolModelHint(); }
+      function onCcExpertTemplateChange() { _updateCcToolModelHint(); }
+
       function onCcMoeModeChange() {
         const mode = document.getElementById('cc-moe-mode').value;
         document.getElementById('cc-template-row').style.display = mode === 'moe_orchestrated' ? '' : 'none';
+        _updateCcToolModelHint();
       }
 
       function _fillCcFormFromConfig(cfg, name, isNew) {
@@ -2437,9 +2467,11 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('cc-moe-mode').value = cfg.moe_mode || 'native';
         document.getElementById('cc-accepted-models').value = (cfg.accepted_models || []).join(', ');
         document.getElementById('cc-expert-template').value = cfg.expert_template_id || '';
-        const llmhostVal = (cfg.tool_model && cfg.tool_endpoint)
-          ? `${cfg.tool_model}@${cfg.tool_endpoint}`
-          : (cfg.tool_model || '');
+        const llmhostVal = cfg.tool_model?.startsWith('template:')
+          ? cfg.tool_model
+          : (cfg.tool_model && cfg.tool_endpoint)
+            ? `${cfg.tool_model}@${cfg.tool_endpoint}`
+            : (cfg.tool_model || '');
         const sel = document.getElementById('cc-tool-llmhost');
         sel.value = llmhostVal;
         if (sel.value !== llmhostVal && llmhostVal) {
@@ -2455,6 +2487,7 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         document.getElementById('cc-system-prefix').value = cfg.system_prompt_prefix || '';
         document.getElementById('cc-stream-think').checked = !!cfg.stream_think;
         onCcMoeModeChange();
+        _updateCcToolModelHint();
       }
 
       function openCcProfileModal() {
@@ -2553,9 +2586,15 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         const name = document.getElementById('cc-name').value.trim();
         if (!name) { errEl.textContent = 'Name is required'; errEl.classList.remove('d-none'); return; }
         const llmhost = document.getElementById('cc-tool-llmhost').value;
-        const atIdx   = llmhost.indexOf('@');
-        const tool_model    = atIdx > -1 ? llmhost.slice(0, atIdx) : llmhost;
-        const tool_endpoint = atIdx > -1 ? llmhost.slice(atIdx + 1) : '';
+        let tool_model, tool_endpoint;
+        if (llmhost.startsWith('template:')) {
+          tool_model    = llmhost;
+          tool_endpoint = '';
+        } else {
+          const atIdx   = llmhost.indexOf('@');
+          tool_model    = atIdx > -1 ? llmhost.slice(0, atIdx) : llmhost;
+          tool_endpoint = atIdx > -1 ? llmhost.slice(atIdx + 1) : '';
+        }
         const body = {
           name,
           moe_mode:             document.getElementById('cc-moe-mode').value,
@@ -2578,19 +2617,38 @@ const CSRF_TOKEN = "{{ csrf_token }}";
         window.location.reload();
       }
 
-      // Populate llm@host dropdown from API
+      // Populate llm@host dropdown from API (native LLMs + Expert Templates)
       (async function loadPermittedModels() {
         try {
           const models = await fetch('/user/api/permitted-models').then(r => r.json());
           const sel = document.getElementById('cc-tool-llmhost');
           const prev = sel.value;
-          sel.innerHTML = '<option value="">– Select model –</option>';
-          models.forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m; opt.textContent = m;
-            sel.appendChild(opt);
-          });
+          sel.innerHTML = '<option value="">— automatisch (aus Experten-Template) —</option>';
+          const tmplModels = models.filter(m => m.startsWith('template:'));
+          const nativeModels = models.filter(m => !m.startsWith('template:'));
+          if (tmplModels.length) {
+            const grp = document.createElement('optgroup');
+            grp.label = 'Expert Templates (MoE)';
+            tmplModels.forEach(m => {
+              const opt = document.createElement('option');
+              opt.value = m;
+              opt.textContent = m;
+              grp.appendChild(opt);
+            });
+            sel.appendChild(grp);
+          }
+          if (nativeModels.length) {
+            const grp = document.createElement('optgroup');
+            grp.label = 'Native LLMs';
+            nativeModels.forEach(m => {
+              const opt = document.createElement('option');
+              opt.value = m; opt.textContent = m;
+              grp.appendChild(opt);
+            });
+            sel.appendChild(grp);
+          }
           if (prev) sel.value = prev;
+          _updateCcToolModelHint();
         } catch(e) {
           console.warn('Could not load models:', e);
         }

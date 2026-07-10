@@ -709,6 +709,28 @@ async def expert_worker(state_: AgentState):
         tier1 = [(s, e) for s, e in scored if e.get("_tier", 1) == 1 and s >= EXPERT_MIN_SCORE]
         tier2 = [(s, e) for s, e in scored if e.get("_tier", 2) == 2 and s >= EXPERT_MIN_SCORE]
 
+        # GPU-load-aware tie-break: among candidates with an IDENTICAL score
+        # (true ties only — never reorders by score), prefer the endpoint with
+        # fewer in-flight requests. Flag: MOE_LOAD_AWARE_ROUTING=1.
+        if os.getenv("MOE_LOAD_AWARE_ROUTING", "0") == "1":
+            from services.node_load import inflight as _nl_inflight
+
+            def _tiebreak_by_load(pairs: list) -> list:
+                out, i = [], 0
+                while i < len(pairs):
+                    j = i
+                    while j < len(pairs) and pairs[j][0] == pairs[i][0]:
+                        j += 1
+                    group = pairs[i:j]
+                    if len(group) > 1:
+                        group = sorted(group, key=lambda se: _nl_inflight(se[1].get("endpoint", "")))
+                    out.extend(group)
+                    i = j
+                return out
+
+            tier1 = _tiebreak_by_load(tier1)
+            tier2 = _tiebreak_by_load(tier2)
+
         # If no T1 results available, treat all normal results as T1
         if not tier1:
             tier1, tier2 = tier2, []

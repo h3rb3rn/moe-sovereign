@@ -133,6 +133,41 @@ def test_resolve_user_experts_invalid_json_returns_none():
     assert result is None
 
 
+# ── _resolve_template_prompts: Augmented Tool Path toggles ────────────────────
+
+
+def test_resolve_template_prompts_no_template_uses_global_agent_defaults(fake_perms_no_template):
+    """No template assigned → agent_* keys must mirror the global AGENT_*_ENABLED
+    config defaults (all False out of the box), same as the CC-profile path."""
+    with patch("services.routing._read_expert_templates", return_value=[]):
+        result = _routing._resolve_template_prompts(fake_perms_no_template)
+
+    assert result["agent_cache"] is False
+    assert result["agent_graphrag"] is False
+    assert result["agent_ingest"] is False
+
+
+def test_resolve_template_prompts_template_can_opt_in(fake_template, fake_perms_with_template):
+    tmpl = [{**fake_template[0], "agent_cache": True, "agent_graphrag": True, "agent_ingest": True}]
+    with patch("services.routing._read_expert_templates", return_value=tmpl):
+        result = _routing._resolve_template_prompts(fake_perms_with_template)
+
+    assert result["agent_cache"] is True
+    assert result["agent_graphrag"] is True
+    assert result["agent_ingest"] is True
+
+
+def test_resolve_template_prompts_template_default_off_when_unset(fake_template, fake_perms_with_template):
+    """A template that doesn't mention agent_* at all must still default to off,
+    not silently inherit True from unrelated defaults like enable_cache/enable_graphrag."""
+    with patch("services.routing._read_expert_templates", return_value=fake_template):
+        result = _routing._resolve_template_prompts(fake_perms_with_template)
+
+    assert result["agent_cache"] is False
+    assert result["agent_graphrag"] is False
+    assert result["agent_ingest"] is False
+
+
 # ── _select_node tests ────────────────────────────────────────────────────────
 
 

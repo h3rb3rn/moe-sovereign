@@ -98,7 +98,7 @@ Current logic:  planner.py:490-558 — 500+ lines prompt construction → LLM �
                 Remaining:  moderate + complex → always LLM call
 ```
 
-**Replacement:** Qwen2.5-1.5B or SmolLM2-1.7B fine-tuned as structured JSON planner.
+**Replacement:** granite4.1:3b fine-tuned as structured JSON planner.
 
 - Learned task: `(Query, ExpertCategories, ToolDesc) → [{task, category, mcp_tool?, search_query?}]`
 - GGUF Q4_K_M → **15–25 tok/s** on x86_64 with AVX2 (llama.cpp)
@@ -145,12 +145,12 @@ pattern from templates). GAIA-2023-Validation held out as untouched test set.
 ### Phase 3 — Planner SFT + DPO (Months 2–4, **9,000 GPU-h**)
 
 ```
-Base model:    Qwen2.5-1.5B (best benchmark performance in 1B–2B segment)
+Base model:    granite4.1:3b (best benchmark performance in 3B segment)
 Context:       4096 tokens (planner prompt ~2000–3000 tokens + output ~200 tokens)
 Batch size:    128 (bfloat16, gradient checkpointing)
 
 SFT Phase 1 (teacher forcing on planner outputs):
-  Dataset:     200K (Prompt, JSON-Plan) pairs from Qwen3.6:35b teacher
+  Dataset:     200K (Prompt, JSON-Plan) pairs from Qwen3.6:35b / Ornith:35b teacher
   3 epochs, lr=2e-4, cosine schedule, AdamW
   Budget:      3,000 GPU-h
 
@@ -160,8 +160,8 @@ DPO Phase 2 (Direct Preference Optimization):
   Budget:      2,000 GPU-h
 
 Ablations (model sizes, hyperparameters, data quality):
-  SmolLM2-1.7B as alternative  → 2,000 GPU-h
-  Qwen2.5-3B as upper bound    → 2,000 GPU-h
+  SmolLM2-3B as alternative  → 2,000 GPU-h
+  Qwen3-4B as upper bound    → 2,000 GPU-h
 ```
 
 **Target metric:** GAIA plan quality score ≥90% of 35B teacher at 1/20 inference cost.
@@ -182,7 +182,7 @@ Budget:     2,000 GPU-h (Transformer) + 1,500 GPU-h (ablations, online eval on G
 
 ```
 Reward model from Phase 2 (DeBERTa-v3-large) as reward signal
-PPO on Qwen2.5-1.5B (best model from Phase 3)
+PPO on granite4.1:3b (best model from Phase 3)
   KL-penalty: β=0.05 (conservative, prevents reward hacking)
   1 epoch, 50K queries from GAIA + own benchmark queries
 Budget: 2,200 GPU-h
@@ -208,7 +208,7 @@ inference accelerator.
 
 | Model | Format | Quantization | Compile Flags | CPU Latency | Size |
 |---|---|---|---|---|---|
-| Planner Qwen2.5-1.5B | **GGUF** | **Q4_K_M** (4.3 bit/weight) | `llama.cpp: -DLLAMA_AVX512=ON -DLLAMA_AVX512_BF16=ON` | 15–25 tok/s (Xeon Skylake) | **~1.1 GB** |
+| Planner granite4.1:3b | **GGUF** | **Q4_K_M** (4.3 bit/weight) | `llama.cpp: -DLLAMA_AVX512=ON -DLLAMA_AVX512_BF16=ON` | 15–25 tok/s (Xeon Skylake) | **~2.0 GB** |
 | Planner (alternative) | ONNX | INT8 Dynamic Quant via ORT | `ort.SessionOptions: enable_mem_pattern=True` | 20–40 tok/s (ORT optimized) | ~800 MB |
 | Complexity classifier | **ONNX** | **INT8 Dynamic** (22M params) | ORT 1.18+ CPUExecutionProvider, AVX2 | **3–6 ms** | ~22 MB |
 | Semantic router embedding | **ONNX** | **FP16** | ORT with `graph_optimization_level=ORT_ENABLE_ALL` | **8–12 ms** | ~44 MB |
@@ -453,13 +453,13 @@ with the respective preferred vs. rejected system prompt.
 |---|---|
 | Data synthesis (300K template pairs via frontier LLM) | 800 GPU-h |
 | DPO pair generation (100K pairs, judge-scored) | 600 GPU-h |
-| SFT Qwen2.5-1.5B on template generation | 1,500 GPU-h |
+| SFT granite4.1:3b on template generation | 1,500 GPU-h |
 | DPO fine-tuning | 800 GPU-h |
 | Ablations (category count, prompt length, retrieval vs. generation) | 500 GPU-h |
 | **Total** | **~4,200 GPU-h** |
 
 These 4,200 hours are drawn from the Phase 3 budget — planner SFT and template synthesizer
-share the Qwen2.5-1.5B base checkpoint.
+share the granite4.1:3b base checkpoint.
 
 ### Impact: What Changes Fundamentally
 
@@ -480,7 +480,7 @@ Planner:      "WHAT" and "IN WHAT ORDER" (which subtasks, which tools)
 ```
 
 A distilled planner (Phase 3) and a synthesizer can share the same base checkpoint
-`Qwen2.5-1.5B` — different LoRA adapters for different tasks. This reduces the VRAM
+`granite4.1:3b` — different LoRA adapters for different tasks. This reduces the VRAM
 footprint in production deployment: one model, two adapters, sequentially loaded in
 <50ms via llama.cpp hot-swap.
 

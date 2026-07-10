@@ -778,6 +778,23 @@ async def merger_node(state_: AgentState):
                            outputs=[dataset_response(state_.get("response_id", "fast"))])
         return {"final_response": fast_resp, "prompt_tokens": 0, "completion_tokens": 0}
 
+    # Judge gate: when all expert answers agree (or only one exists) and no
+    # auxiliary context needs merging, the judge call adds tokens without
+    # discriminative power — take the consensus answer directly.
+    # Flag: MOE_JUDGE_GATE=1 (services/judge_gate.py).
+    if not ensemble_results and not web and not mcp_res and not math_res and not graph_ctx:
+        from services.judge_gate import should_skip_judge as _sj_gate
+        _gate_inputs = [re.sub(r'^\[[^\]]+\]:\s*', '', r or '') for r in expert_results]
+        _g_skip, _g_reason, _g_idx = _sj_gate(_gate_inputs)
+        if _g_skip:
+            _g_raw = _gate_inputs[_g_idx]
+            _g_det = re.search(r'DETAILS:\n?(.*)', _g_raw, re.DOTALL)
+            _g_resp = (_g_det.group(1).strip() if _g_det else _g_raw.strip())
+            if _g_resp:
+                logger.info("⚡ judge_gate: skipping merger judge (%s)", _g_reason)
+                await _report(f"⚡ Judge-Gate: {_g_reason} — Merger-Judge übersprungen")
+                return {"final_response": _g_resp, "prompt_tokens": 0, "completion_tokens": 0}
+
     await _report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
     try:
         res = await _invoke_judge_with_retry(state_, prompt, temperature=state_.get("query_temperature"))
@@ -1376,9 +1393,9 @@ async def resolve_conflicts_node(state_: AgentState):
     contradictions — this node does not eliminate them but makes them explicit
     so downstream nodes (critic, agentic re-planner) can act on them.
 
-    Resolution strategy is implemented by the user-facing TODO below.
-    Until resolved, all entries remain 'pending' and are visible in the
-    audit trail (conflict_registry in AgentState).
+    Resolution involves two sequential strategies:
+    - Strategy A: auto-dismiss low-divergence conflicts (< 0.5 Jaccard distance) as formulaic variations.
+    - Strategy B: escalate safety-critical conflicts (medical, legal) to the Judge LLM for Belnap-Dunn arbitration.
     """
     _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
     conflicts = state_.get("conflict_registry") or []

@@ -26,6 +26,11 @@ PROM_CACHE_HITS      = Counter('moe_cache_hits_total',         'Cache hits')
 PROM_CACHE_MISSES    = Counter('moe_cache_misses_total',       'Cache misses')
 PROM_KNOWLEDGE_BYPASS = Counter('moe_knowledge_bypass_total',  'LLM pipeline skipped via high-confidence fresh prior answer')
 PROM_ROUTING_BANDIT  = Counter('moe_routing_bandit_total',     'Routing-gate decisions', ['gate', 'action', 'source'])
+# Augmented Tool Path (agentic clients — Claude Code / OpenCode tool-call fast
+# path). result: hit_l0 | hit_l1 | miss | timeout for cache; written | skipped |
+# error for write-back. path: anthropic | openai.
+PROM_AGENT_CACHE      = Counter('moe_agent_cache_total',       'Agent tool-path cache lookups', ['path', 'result'])
+PROM_AGENT_WRITEBACK  = Counter('moe_agent_writeback_total',   'Agent tool-path write-backs',   ['path', 'result'])
 PROM_RESPONSE_TIME   = Histogram('moe_response_duration_seconds', 'Response duration',        ['mode'],
                                  buckets=[1, 2, 5, 10, 20, 30, 60, 120])
 # Nearest cache-entry cosine distance per lookup — the empirical distance

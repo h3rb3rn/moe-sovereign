@@ -9,7 +9,10 @@ import json
 import logging
 from typing import Optional
 
-from config import URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG, INFERENCE_SERVERS_LIST
+from config import (
+    URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG, INFERENCE_SERVERS_LIST,
+    AGENT_CACHE_ENABLED, AGENT_GRAPHRAG_ENABLED, AGENT_INGEST_ENABLED,
+)
 from services.templates import _read_expert_templates
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -33,6 +36,7 @@ def _resolve_user_experts(
         tmpl_ids  = perms.get("expert_template", [])
         templates = _read_expert_templates()
         user_templates: dict = json.loads(user_templates_json or "{}")
+        user_conns: dict = json.loads(user_connections_json or "{}")
 
         def _find_tmpl(tid: str):
             if tid in user_templates:
@@ -85,17 +89,19 @@ def _resolve_user_experts(
                         forced, model_tier = False, 2
                     else:
                         forced, model_tier = False, 1
-                    ep   = (m.get("endpoint") or "").strip()
-                    url  = URL_MAP.get(ep) if ep else None
-                    if not url:
-                        _uc = json.loads(user_connections_json or "{}")
-                        if ep in _uc:
-                            url = _uc[ep]["url"]
+                    ep    = (m.get("endpoint") or "").strip()
+                    url   = URL_MAP.get(ep) if ep else None
+                    token = TOKEN_MAP.get(ep, "ollama") if ep else "ollama"
+                    if not url and ep in user_conns:
+                        # Private user connection: URL AND api_key come from the
+                        # connection — TOKEN_MAP does not know private endpoints.
+                        url   = user_conns[ep]["url"]
+                        token = user_conns[ep].get("api_key") or "ollama"
                     models_list.append({
                         "model":          m.get("model", ""),
                         "endpoint":       ep,
                         "url":            url,
-                        "token":          TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
+                        "token":          token,
                         "forced":         forced,
                         "_tier":          model_tier,
                         "_system_prompt": _sys_prompt,
@@ -104,13 +110,17 @@ def _resolve_user_experts(
                 result[cat] = models_list
             elif isinstance(cat_cfg, dict):
                 # Legacy format: {model, endpoint}
-                ep  = (cat_cfg.get("endpoint") or "").strip()
-                url = URL_MAP.get(ep) if ep else None
+                ep    = (cat_cfg.get("endpoint") or "").strip()
+                url   = URL_MAP.get(ep) if ep else None
+                token = TOKEN_MAP.get(ep, "ollama") if ep else "ollama"
+                if not url and ep in user_conns:
+                    url   = user_conns[ep]["url"]
+                    token = user_conns[ep].get("api_key") or "ollama"
                 result[cat] = [{
                     "model":          cat_cfg.get("model", ""),
                     "endpoint":       ep,
                     "url":            url,
-                    "token":          TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
+                    "token":          token,
                     "forced":         True,
                     "_tier":          None,
                     "_system_prompt": _sys_prompt,
@@ -118,6 +128,7 @@ def _resolve_user_experts(
                 }]
         return result or None
     except Exception:
+        logger.exception("_resolve_user_experts failed — falling back to global experts")
         return None
 
 
@@ -148,6 +159,11 @@ def _resolve_template_prompts(
         "cross_session_scopes": ["private"], "cross_session_ttl_days": 0,
         "complexity_level": "",
         "causal_intervention": None,
+        # Augmented Tool Path (agentic clients) — mirrors the global AGENT_*_ENABLED
+        # defaults (off), overridable per expert template. See config.py.
+        "agent_cache": AGENT_CACHE_ENABLED,
+        "agent_graphrag": AGENT_GRAPHRAG_ENABLED,
+        "agent_ingest": AGENT_INGEST_ENABLED,
     }
     try:
         perms     = json.loads(permissions_json or "{}")
@@ -236,8 +252,12 @@ def _resolve_template_prompts(
             "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days", 0)),
             "complexity_level":        tmpl.get("complexity_level", ""),
             "causal_intervention":     tmpl.get("causal_intervention"),
+            "agent_cache":             bool(tmpl.get("agent_cache", AGENT_CACHE_ENABLED)),
+            "agent_graphrag":          bool(tmpl.get("agent_graphrag", AGENT_GRAPHRAG_ENABLED)),
+            "agent_ingest":            bool(tmpl.get("agent_ingest", AGENT_INGEST_ENABLED)),
         }
     except Exception:
+        logger.exception("_resolve_template_prompts failed — returning empty prompt config")
         return empty
 
 
@@ -255,15 +275,19 @@ def _is_endpoint_error(exc: Exception) -> bool:
     returning a raw 500 to the client.
     """
     s = str(exc).lower()
+    # Model-loading failures from Ollama (corrupt/missing blob, GGUF read error).
+    # Matched narrowly: bare "blob"/"no such file or directory" also occur in
+    # unrelated error texts (e.g. tool output echoed into an exception message).
+    if ("blob" in s or "no such file or directory" in s) and (
+        "model" in s or "blobs/sha256" in s or "gguf" in s or "ollama" in s
+    ):
+        return True
     return any(k in s for k in (
         "401", "unauthorized", "403", "forbidden",
         "429", "rate limit", "quota exceeded",
         "authentication", "x-api-key",
         "402", "insufficient", "payment required",
-        # Model-loading failures from Ollama (corrupt/missing blob, GGUF read error)
         "unable to load model",
         "error loading model",
         "failed to load model",
-        "no such file or directory",
-        "blob",
     ))

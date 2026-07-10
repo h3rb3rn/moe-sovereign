@@ -248,6 +248,15 @@ graph TD
 | Response metadata | `moe:response:{response_id}` | 7 days | Valkey Hash |
 | Planner patterns | `moe:planner_success` (sorted set) | 180 days | Valkey ZSet |
 | Ontology gaps | `moe:ontology_gaps` (sorted set) | 90 days | Valkey ZSet |
+| Agent cache (L0 exact) | `moe:agent:qcache:{scope}:{sha256(query)[:24]}` | 30 min | Valkey |
+| Agent cache (L1 semantic) | ChromaDB collection `moe_agent_cache` | 14 days (confidence + freshness gated) | ChromaDB |
+| Agent GraphRAG context | `cc:graphctx:{session_id}` | 1 h | Valkey |
+
+The agent cache layers are a **separate namespace** from the interactive
+L1 cache above — see [Augmented Tool Path](#augmented-tool-path-agentic-clients).
+They serve the tool-calling fast path (Claude Code, OpenCode) instead of
+the planner/expert/judge pipeline, are scoped per `sha256(user_id|workspace)`,
+and are opt-in per CC profile / Expert Template (default off).
 
 ---
 
@@ -376,6 +385,27 @@ The LangGraph state object passed through all nodes:
 | `CLAUDE_CODE_MODELS` | (8 claude-* model IDs) | Comma-separated Anthropic model IDs to route through MoE |
 | `TOOL_MAX_TOKENS` | `8192` | Max tokens for tool-use responses |
 | `REASONING_MAX_TOKENS` | `16384` | Max tokens for extended thinking |
+
+### Augmented Tool Path (Agentic Clients)
+
+See [expert-template-guide.md § Augmented Tool Path](reference/expert-template-guide.md#augmented-tool-path-agentic-clients)
+for the full operational writeup. All flags default off and are normally
+set per CC profile / Expert Template via the Admin UI or User Portal, not
+globally — the env defaults below are the fallback when a profile doesn't
+set the field explicitly.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_CACHE_ENABLED` | `false` | Global fallback for the `agent_cache` profile/template field |
+| `AGENT_CACHE_MIN_CONF` | `0.85` | Confidence an agent-cache entry must reach (via async judge promotion) before it can be served |
+| `AGENT_CACHE_TTL_DAYS` | `14` | Max age of an agent-cache entry (L1, ChromaDB) that can still be served |
+| `AGENT_CACHE_L0_TTL` | `1800` | TTL (seconds) of the L0 exact-match Valkey key, written only after judge promotion |
+| `AGENT_CACHE_MAX_LOOKUP_MS` | `300` | Hard timeout for the combined L0+L1 cache lookup; a miss on timeout, never a blocked request |
+| `AGENT_GRAPHRAG_ENABLED` | `false` | Global fallback for the `agent_graphrag` profile/template field |
+| `AGENT_GRAPHRAG_TIMEOUT_S` | `2.0` | Hard timeout for the Neo4j query on the first turn of a session |
+| `AGENT_GRAPHRAG_MAX_CHARS` | `4000` | Max characters of injected graph context (also capped by the model's context budget) |
+| `AGENT_INGEST_ENABLED` | `false` | Global fallback for the `agent_ingest` profile/template field |
+| `AGENT_INGEST_JUDGE` | `true` | Whether a background judge call re-scores a fresh write-back to decide promotion (0.6→0.9) vs. flagging |
 
 ### Infrastructure
 

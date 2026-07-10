@@ -64,6 +64,11 @@ async def _db_fallback_key_lookup(key_hash: str) -> Optional[dict]:
                 return data
         # Redis unavailable or sync failed — build a minimal auth dict from the
         # DB row so startup-window requests and cache-miss keys don't 401.
+        logger.warning(
+            "auth: Valkey unavailable — serving minimal fallback context for user %s "
+            "(permissions, CC profiles, templates and budget checks NOT applied this request)",
+            user_id,
+        )
         return {
             "user_id":          user_id,
             "username":         row.get("username") or row.get("user_id", ""),

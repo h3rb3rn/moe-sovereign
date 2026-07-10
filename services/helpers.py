@@ -10,7 +10,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -119,6 +119,23 @@ def _check_rate_limit_exhausted(endpoint: str) -> bool:
     if not entry or not entry.get("exhausted"):
         return False
     return _time.time() < entry.get("reset_time", 0)
+
+
+def _entry_is_fresh(ts_iso: str, ttl_days: int) -> bool:
+    """True if an ISO-8601 timestamp is within ttl_days of now. Missing/garbage ts → stale.
+
+    Shared by the interactive knowledge-bypass gate (graph/router_nodes.py::
+    cache_lookup_node) and the Augmented Tool Path agent-cache gate
+    (services/agent_enrichment.py::agent_cache_lookup) — moved here so both
+    can import it without graph/router_nodes.py <-> services/agent_enrichment.py
+    creating a dependency in either direction.
+    """
+    if not ts_iso:
+        return False
+    try:
+        return datetime.now() - datetime.fromisoformat(ts_iso) <= timedelta(days=ttl_days)
+    except Exception:
+        return False
 
 
 # ─── EXPERT PROMPT RESOLUTION ────────────────────────────────────────────────

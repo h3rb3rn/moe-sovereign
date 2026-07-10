@@ -27,7 +27,7 @@ from config import (
     PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN, PLANNER_NUM_CTX,
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
     MODES, _MODEL_ID_TO_MODE, _CLAUDE_PRETTY_NAMES, _model_display_name,
-    MAX_GRAPH_CONTEXT_CHARS, MCP_URL, GRAPH_VIA_MCP,
+    MAX_GRAPH_CONTEXT_CHARS, MCP_URL, GRAPH_VIA_MCP, EXPERTS,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     CACHE_MIN_RESPONSE_LEN, ROUTE_THRESHOLD, ROUTE_GAP,
     EXPERT_TIER_BOUNDARY_B, EXPERT_MIN_SCORE, EXPERT_MIN_DATAPOINTS,
@@ -50,6 +50,8 @@ from config import (
     CC_CONTEXT_INDEX_ENABLED,
     CC_HISTORY_COMPRESS_LLM,
     CC_HISTORY_COMPRESS_LLM_TIMEOUT,
+    AGENT_GRAPHRAG_MAX_CHARS,
+    AGENT_GRAPHRAG_TIMEOUT_S,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -88,7 +90,7 @@ from services.helpers import (
     _progress_queue,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
-from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
+from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc, _get_expert_score
 from services.skills import _build_skill_catalog, _resolve_skill_secure
 from parsing import (
     _anthropic_content_to_text,
@@ -104,6 +106,13 @@ from context_budget import (
     resolve_io_budget,
     estimate_overflow,
     MIN_OUTPUT_BUDGET_TOKENS,
+    graphrag_budget_chars,
+)
+from services.agent_enrichment import (
+    classify_turn as _classify_agent_turn,
+    agent_graph_context,
+    agent_writeback,
+    agent_cache_lookup,
 )
 # CC tool conversations contain code, JSON, shell output and tool results —
 # all denser than prose. Use 3 chars/token for input estimation to avoid
@@ -555,8 +564,46 @@ async def _compress_history_responses(
 # ============================================================
 
 
+def _moe_response_headers(model: str, node: str, retry_used: bool = False) -> dict:
+    """Transparency headers: which backend actually answered this request.
+
+    X-MoE-Backend-Model / X-MoE-Node identify the real model+node (not the
+    claude-* alias); X-MoE-Required-Retry marks answers produced by the
+    tool_choice=required enforcement retry. Silent degradation must be
+    observable for sovereignty auditing.
+    """
+    return {
+        "X-Accel-Buffering":    "no",
+        "Cache-Control":        "no-cache",
+        "X-MoE-Backend-Model":  str(model or "unknown"),
+        "X-MoE-Node":           str(node or "unknown"),
+        "X-MoE-Required-Retry": "1" if retry_used else "0",
+    }
+
+
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _wrap_deregister_on_stream_end(body_iterator, chat_id: str):
+    """Safety-net wrapper: passes an SSE chunk stream through unchanged and
+    guarantees `_deregister_active_request(chat_id)` fires once the stream
+    ends — including on early client disconnect (Starlette calls `aclose()`
+    on the body iterator in that case, which runs this generator's `finally`
+    block the same as a normal completion).
+
+    _live_ollama_sse / _live_openai_sse already call _deregister_active_request
+    on each of their known exit paths (success, timeout, tool_choice=required
+    retry failure, HTTP error) — this wrapper is a belt-and-suspenders backstop
+    for any exit path that turns out to skip it (deregistration is idempotent:
+    calling it twice, once explicitly and once here, is a safe no-op the
+    second time). Mirrors services/pipeline/chat.py::_wrap_deregister_on_stream_end.
+    """
+    try:
+        async for chunk in body_iterator:
+            yield chunk
+    finally:
+        asyncio.create_task(_deregister_active_request(chat_id))
 
 
 async def _anthropic_content_blocks_to_sse(
@@ -652,6 +699,11 @@ async def _anthropic_tool_handler(
     else:
         system = _system_raw
     _eff_sys_prefix = session.system_prefix
+    if session.tool_system_prefix:
+        _eff_sys_prefix = (
+            f"{session.tool_system_prefix}\n\n{_eff_sys_prefix}"
+            if _eff_sys_prefix else session.tool_system_prefix
+        )
     if _eff_sys_prefix and system:
         system = f"{_eff_sys_prefix}\n\n{system}"
     elif _eff_sys_prefix:
@@ -663,6 +715,21 @@ async def _anthropic_tool_handler(
     effective_url   = session.tool_url   or JUDGE_URL
     effective_token = session.tool_token or JUDGE_TOKEN
     effective_node  = session.tool_endpoint or "unknown"
+
+    # Synthesis turns (tool_results present) may be handled by a stronger
+    # template expert than the tool_agent — flag-gated, see tool_turn_router.
+    from services.tool_turn_router import pick_synthesis_expert as _pse
+    _syn_exp = _pse(messages, session.experts, effective_model)
+    if _syn_exp:
+        logger.info(
+            "cc_tool: synthesis turn re-routed %s -> %s@%s",
+            effective_model, _syn_exp["model"], _syn_exp.get("endpoint", "?"),
+        )
+        effective_model = _syn_exp["model"]
+        effective_url   = _syn_exp["url"]
+        effective_token = _syn_exp.get("token", "ollama")
+        effective_node  = _syn_exp.get("endpoint", effective_node)
+
     _node_timeout   = float(session.tool_timeout)
 
     # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
@@ -809,6 +876,54 @@ async def _anthropic_tool_handler(
         "",
     )
 
+    # Augmented Tool Path: classify this turn once (initial_task vs mid_loop)
+    # for the GraphRAG injection below (AP4) and the write-back hook (AP5).
+    # Cheap, pure — safe to always compute.
+    _agent_turn = _classify_agent_turn(
+        messages, tools, api="anthropic", user_id=user_id, system_text=system,
+    )
+
+    # ── Augmented Tool Path: cache-read hook (opt-in, off by default) ─────────
+    # Only served on the initial task turn for a genuinely informational query
+    # (TurnInfo.cacheable) — tool_use decisions are never cache-served. Also
+    # excluded whenever the profile forces tool_choice='required': the client
+    # contract there expects a tool_use response, never a plain text answer.
+    if (
+        session.agent_cache and _agent_turn.kind == "initial_task"
+        and _agent_turn.cacheable
+        and (session.tool_choice or CLAUDE_CODE_TOOL_CHOICE) != "required"
+    ):
+        _agent_cached = await agent_cache_lookup(
+            _agent_turn.query, _agent_turn.scope,
+            state.redis_client, state.agent_cache_collection, path="anthropic",
+        )
+        if _agent_cached:
+            logger.info(
+                "cc_tool: Augmented Tool Path cache hit (scope=%s, chars=%d)",
+                _agent_turn.scope, len(_agent_cached),
+            )
+            asyncio.create_task(_deregister_active_request(chat_id))
+            if body.get("stream", False):
+                return StreamingResponse(
+                    _anthropic_content_blocks_to_sse(
+                        [{"type": "text", "text": _agent_cached}],
+                        chat_id, body.get("model", "moe-orchestrator-agent"),
+                        0, len(_agent_cached) // 4, "end_turn",
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        **_moe_response_headers(effective_model, effective_node),
+                        "X-MoE-Agent-Cache": "hit",
+                    },
+                )
+            return {
+                "id": chat_id, "type": "message", "role": "assistant",
+                "content": [{"type": "text", "text": _agent_cached}],
+                "model": body.get("model", "moe-orchestrator-agent"),
+                "stop_reason": "end_turn", "stop_sequence": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+
     # ── Tier-3 Context Index: chunk large system_prompt into ChromaDB ────────────
     # When the client ships a large system_prompt (codebase, documents, long files),
     # index it once per session so that every expert can later retrieve only the
@@ -875,30 +990,42 @@ async def _anthropic_tool_handler(
             except Exception as _t3e:
                 logger.debug("cc_tool: Tier-3 skipped: %s", _t3e)
 
-        # ── Tier-4: Neo4j knowledge-graph + episodic hints ──
-        if _lm_query and state.graph_manager is not None:
+        # ── Tier-4: Neo4j knowledge-graph + episodic hints (Augmented Tool Path) ──
+        # Gated on session.agent_graphrag (opt-in per CC profile, default off) —
+        # a separate flag from the Tier 2-3 CC_CONTEXT_INDEX_ENABLED path above.
+        # Neo4j is only queried on the initial task turn; mid-loop tool_result
+        # turns re-inject the per-session cached result (cc:graphctx:{session_id})
+        # at zero Neo4j/L2 cost instead of re-querying on every tool round-trip.
+        # See services/agent_enrichment.py::agent_graph_context for the tenant
+        # scoping and L2 cache-key fixes relative to the old inline version.
+        if _lm_query and state.graph_manager is not None and session.agent_graphrag:
             try:
-                from episodic_memory import get_episode_hint as _get_ep_hint
-                _graph_cache_key = f"moe:graph:cc:{_hashlib.sha256(_lm_query[:200].encode()).hexdigest()[:16]}"
-                _t4_ctx: str = ""
-                if state.redis_client:
-                    try:
-                        _cached = await state.redis_client.get(_graph_cache_key)
-                        if _cached:
-                            _t4_ctx = _cached if isinstance(_cached, str) else _cached.decode()
-                    except Exception:
-                        pass
-                if not _t4_ctx:
-                    _t4_ctx = await state.graph_manager.query_context(
-                        _lm_query[:500], ["general"], tenant_ids=None,
-                    ) or ""
-                    _ep_hint = await _get_ep_hint(
-                        state.graph_manager.driver, _lm_query[:500], "general"
+                _sess_ctx_key = f"cc:graphctx:{session_id}"
+                if _agent_turn.kind == "initial_task":
+                    _agent_tenant_ids = (
+                        ([f"user:{user_id}"] if user_id and user_id != "anon" else [])
+                        + [t for t in session.user_perms.get("graph_tenant", [])
+                           if t != f"user:{user_id}"]
                     )
-                    if _ep_hint:
-                        _t4_ctx = (_t4_ctx + "\n\n" + _ep_hint) if _t4_ctx else _ep_hint
-                    if _t4_ctx and state.redis_client:
-                        asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, _t4_ctx))
+                    _t4_max_chars = min(
+                        AGENT_GRAPHRAG_MAX_CHARS,
+                        graphrag_budget_chars(effective_model, query_chars=len(_lm_query)),
+                    )
+                    _t4_ctx = await agent_graph_context(
+                        _lm_query, _agent_tenant_ids, session_id,
+                        state.redis_client, state.graph_manager,
+                        max_chars=_t4_max_chars, timeout_s=AGENT_GRAPHRAG_TIMEOUT_S,
+                    )
+                    if state.redis_client:
+                        if _t4_ctx:
+                            asyncio.create_task(state.redis_client.setex(_sess_ctx_key, 3600, _t4_ctx))
+                        else:
+                            asyncio.create_task(state.redis_client.delete(_sess_ctx_key))
+                elif state.redis_client:
+                    _cached = await state.redis_client.get(_sess_ctx_key)
+                    _t4_ctx = (_cached if isinstance(_cached, str) else _cached.decode()) if _cached else ""
+                else:
+                    _t4_ctx = ""
                 if _t4_ctx:
                     _lm_blocks.append(
                         f"[KNOWLEDGE GRAPH — structured facts & past strategies]\n{_t4_ctx}\n"
@@ -1066,7 +1193,8 @@ async def _anthropic_tool_handler(
                     [{"type": "text", "text": _no_model_err}],
                     chat_id, body.get("model", "moe-orchestrator-agent"), 0, 0, "end_turn"
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers=_moe_response_headers(effective_model, effective_node)
             )
         return {
             "id": chat_id, "type": "message", "role": "assistant",
@@ -1096,6 +1224,24 @@ async def _anthropic_tool_handler(
         payload["tool_choice"] = _effective_tool_choice
     else:
         _effective_tool_choice = "auto"
+
+    # tool_choice=required enforcement for the Ollama-native path: Ollama's
+    # /api/chat has no tool_choice parameter, so "required" would otherwise be
+    # silently dropped — the model may answer with an announcement text and no
+    # tool call, CC receives a clean end_turn and closes the turn while the
+    # user expected tool execution. When set, text deltas are buffered and a
+    # missing tool call triggers one retry against the template's tool_agent.
+    # Never enforced on synthesis turns (tool_results in history) — those must
+    # be allowed to produce the final text answer.
+    _require_tools = (
+        bool(oai_tools)
+        and _effective_tool_choice == "required"
+        and not any(
+            isinstance(m.get("content"), list)
+            and any(b.get("type") == "tool_result" for b in m.get("content", []))
+            for m in messages
+        )
+    )
 
     # For Ollama nodes use the native /api/chat endpoint instead of /v1/chat/completions.
     # The OpenAI-compatible endpoint silently discards the "options" dict (including
@@ -1157,8 +1303,22 @@ async def _anthropic_tool_handler(
             "keep_alive": "4h",
             "options":    {"num_ctx": max(_ollama_num_ctx, 32768), "num_predict": max_tokens},
         }
+        # NATIVE OLLAMA TOOL CALLING: pass tools directly to Ollama's /api/chat instead
+        # of injecting a format schema into the system prompt. Native tool calling uses
+        # the model's trained function-calling behavior, which is more reliable for long
+        # contexts (50k+ tokens) where format-schema injection was frequently ignored.
+        # During tool-call generation, Ollama streams empty content chunks → we send pings
+        # to CC to keep the connection alive. Tool calls appear in the done chunk.
+        _text_mode = False
         if oai_tools:
             _call_payload["tools"] = oai_tools
+            _tool_names_log = [
+                ((_ot.get("function") or _ot).get("name", "?")) for _ot in oai_tools
+            ]
+            logger.info(
+                "cc_tool: native tool calling — %d tools (names=%s)",
+                len(oai_tools), _tool_names_log,
+            )
         # Use Ollama's native think:false flag (Ollama ≥0.30) to disable thinking mode.
         # The previous /no_think prefix approach was unreliable — qwen3.6:35b ignored it
         # and consumed the entire num_predict budget on thinking, returning empty content.
@@ -1192,7 +1352,7 @@ async def _anthropic_tool_handler(
         if do_stream:
             async def _rl_err_stream():
                 yield f"data: {json.dumps(_err_body)}\n\n"
-            return StreamingResponse(_rl_err_stream(), media_type="text/event-stream", status_code=529)
+            return StreamingResponse(_rl_err_stream(), media_type="text/event-stream", status_code=529, headers=_moe_response_headers(effective_model, effective_node))
         from fastapi.responses import JSONResponse as _JSONResponse
         return _JSONResponse(content=_err_body, status_code=529)
 
@@ -1219,6 +1379,7 @@ async def _anthropic_tool_handler(
             _in_tok: int = 0
             _out_tok: int = 0
             _stream_error: str = ""
+            _last_yield_time: float = time.monotonic()
 
             # Emit message_start immediately — CC sees the stream open and won't retry
             yield _sse_event("message_start", {
@@ -1279,8 +1440,7 @@ async def _anthropic_tool_handler(
                     try:
                         _kind, _val = await asyncio.wait_for(_q.get(), timeout=15.0)
                     except asyncio.TimeoutError:
-                        # Ollama still loading — send SSE comment to keep the CC connection alive
-                        yield ": keep-alive\n\n"
+                        yield _sse_event("ping", {"type": "ping"})
                         continue
                     if _kind == "done":
                         break
@@ -1301,19 +1461,48 @@ async def _anthropic_tool_handler(
 
                     if _delta:
                         _text_acc += _delta
-                        if not _sent_text_block:
-                            yield _sse_event("content_block_start", {
-                                "type": "content_block_start", "index": 0,
-                                "content_block": {"type": "text", "text": ""},
+                        if _text_mode or _require_tools:
+                            # Buffer internally — text-mode parses tool JSON at stream
+                            # end; required-mode must not stream a possibly non-compliant
+                            # announcement before knowing whether tool calls arrive.
+                            # Queue-timeout pings (15s) never fire when tokens arrive
+                            # continuously, so send pings here to keep the SSE stream live.
+                            if time.monotonic() - _last_yield_time > 10.0:
+                                yield _sse_event("ping", {"type": "ping"})
+                                _last_yield_time = time.monotonic()
+                        else:
+                            if not _sent_text_block:
+                                yield _sse_event("content_block_start", {
+                                    "type": "content_block_start", "index": 0,
+                                    "content_block": {"type": "text", "text": ""},
+                                })
+                                _sent_text_block = True
+                            yield _sse_event("content_block_delta", {
+                                "type": "content_block_delta", "index": 0,
+                                "delta": {"type": "text_delta", "text": _delta},
                             })
-                            _sent_text_block = True
-                        yield _sse_event("content_block_delta", {
-                            "type": "content_block_delta", "index": 0,
-                            "delta": {"type": "text_delta", "text": _delta},
-                        })
+                            _last_yield_time = time.monotonic()
 
                     if _chunk_tcs:
-                        _tool_calls_acc = _chunk_tcs
+                        # Ollama streams tool calls incrementally across chunks —
+                        # accumulate instead of overwriting (overwrite dropped all
+                        # but the last chunk's calls on multi-chunk tool streams).
+                        for _new_tc in _chunk_tcs:
+                            if _new_tc not in _tool_calls_acc:
+                                _tool_calls_acc.append(_new_tc)
+
+                    # When Ollama streams tool-call tokens, intermediate chunks carry
+                    # empty content and partial tool_calls JSON — the queue never
+                    # drains and no content is yielded, so neither the queue-timeout
+                    # nor the text-delta path sends anything to the client. Send a
+                    # real Anthropic ping every 10s so the SDK resets its idle timer.
+                    # NOTE: do NOT gate on `not _chunk_tcs` — that is False exactly
+                    # when tool-call chunks are accumulating, which is the case that
+                    # needs the keep-alive most.
+                    if not _delta and not _done:
+                        if time.monotonic() - _last_yield_time > 10.0:
+                            yield _sse_event("ping", {"type": "ping"})
+                            _last_yield_time = time.monotonic()
 
                     if _done:
                         _in_tok = _chunk.get("prompt_eval_count", 0)
@@ -1356,12 +1545,13 @@ async def _anthropic_tool_handler(
                 })
                 _block_idx += 1
 
-            # JSON-in-text fallback: detect tool call JSON in accumulated text
+            # JSON-in-text fallback: detect tool call JSON in accumulated text.
+            # Used in text-mode (tools injected as system prompt) and as safety net.
             if not _tool_calls_acc and _text_acc and tools and not _stream_error:
                 _known = {t.get("name", "") for t in tools}
                 _probe = re.sub(r"^```(?:json)?\s*|\s*```$", "", _text_acc.strip(), flags=re.DOTALL).strip()
-                try:
-                    _parsed = json.loads(_probe)
+
+                def _apply_tool_candidates(_parsed):
                     _cands = [_parsed] if isinstance(_parsed, dict) else (_parsed if isinstance(_parsed, list) else [])
                     for _c in _cands:
                         if isinstance(_c, dict):
@@ -1369,8 +1559,199 @@ async def _anthropic_tool_handler(
                             _ta = _c.get("arguments") or _c.get("parameters") or _c.get("input") or {}
                             if _tn and _tn in _known:
                                 _tool_calls_acc.append({"function": {"name": _tn, "arguments": _ta}})
+
+                try:
+                    _apply_tool_candidates(json.loads(_probe))
                 except (json.JSONDecodeError, ValueError):
-                    pass
+                    # Secondary: raw_decode finds first complete JSON object even with
+                    # preamble text (e.g. "I'll call the tool now.\n{\"name\": ...}").
+                    _dec = json.JSONDecoder()
+                    _pos = _probe.find("{")
+                    while _pos >= 0 and not _tool_calls_acc:
+                        try:
+                            _found, _ = _dec.raw_decode(_probe, _pos)
+                            _apply_tool_candidates(_found)
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        _pos = _probe.find("{", _pos + 1)
+
+                # Tertiary (text-mode only): model output bare arguments dict without the
+                # {"name":..., "arguments":...} wrapper — detect by matching keys to tool params.
+                if not _tool_calls_acc and _text_mode and len(tools) == 1:
+                    _only = tools[0]
+                    _only_name = _only.get("name", "")
+                    _only_params = set(
+                        (_only.get("input_schema") or {}).get("properties", {}).keys()
+                    )
+                    try:
+                        _bare = json.loads(_probe)
+                        if (isinstance(_bare, dict)
+                                and not any(k in _bare for k in ("name", "tool", "function", "arguments"))
+                                and _only_params
+                                and any(k in _only_params for k in _bare.keys())):
+                            _tool_calls_acc.append({"function": {"name": _only_name, "arguments": _bare}})
+                            logger.info("cc_tool: bare-args fallback matched tool '%s'", _only_name)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
+            # Diagnose text-mode result
+            if _text_mode:
+                logger.info(
+                    "cc_tool: text-mode result — text_chars=%d tool_calls=%d out_tok=%d stream_error=%r",
+                    len(_text_acc), len(_tool_calls_acc), _out_tok, bool(_stream_error),
+                )
+                # Thinking-only guard: model generated tokens but no content or tool calls.
+                # This happens when think=false is ignored in streaming mode (long context).
+                # Retry synchronously without format schema — warm KV cache makes this fast.
+                if not _text_acc and not _tool_calls_acc and _out_tok > 0 and not _stream_error:
+                    logger.warning(
+                        "cc_tool: thinking-only output (%d tokens, no content) — "
+                        "retrying without format schema (non-streaming)",
+                        _out_tok,
+                    )
+                    _retry_payload = {k: v for k, v in _call_payload.items() if k != "format"}
+                    _retry_payload["stream"] = False
+                    try:
+                        async def _do_thinking_retry():
+                            async with httpx.AsyncClient(timeout=300.0) as _rcl:
+                                return await _rcl.post(
+                                    _call_url, json=_retry_payload,
+                                    headers={"Authorization": f"Bearer {effective_token}"},
+                                )
+                        _retry_task = asyncio.create_task(_do_thinking_retry())
+                        while not _retry_task.done():
+                            try:
+                                await asyncio.wait_for(asyncio.shield(_retry_task), timeout=10.0)
+                            except asyncio.TimeoutError:
+                                yield _sse_event("ping", {"type": "ping"})
+                                _last_yield_time = time.monotonic()
+                        _rr = await _retry_task
+                        _rj = _rr.json()
+                        _rmsg = _rj.get("message", {})
+                        _retry_content = _rmsg.get("content", "") or ""
+                        _retry_tcs = _rmsg.get("tool_calls")
+                        _retry_eval = _rj.get("eval_count", 0)
+                        logger.info(
+                            "cc_tool: thinking-retry done — content_chars=%d tool_calls=%s eval_count=%d",
+                            len(_retry_content), bool(_retry_tcs), _retry_eval,
+                        )
+                        if _retry_tcs:
+                            _tool_calls_acc = _retry_tcs
+                            _out_tok += _retry_eval
+                        elif _retry_content:
+                            _text_acc = _retry_content
+                            _out_tok += _retry_eval
+                    except Exception as _re:
+                        logger.warning("cc_tool: thinking-retry failed: %s", _re)
+
+                if _text_acc and not _tool_calls_acc and not _stream_error:
+                    # JSON parsing failed — model ignored the format schema and generated
+                    # plain text. Emit the actual text so CC sees what the model said
+                    # instead of receiving an empty block that triggers "API returned an
+                    # empty or malformed response (HTTP 200)".
+                    _clean_acc = re.sub(r"<think>.*?</think>", "", _text_acc, flags=re.S).strip()
+                    logger.warning(
+                        "cc_tool: text-mode JSON parse failed — emitting raw text (%d chars, preview=%.200r)",
+                        len(_text_acc), _text_acc,
+                    )
+                    yield _sse_event("content_block_start", {
+                        "type": "content_block_start", "index": _block_idx,
+                        "content_block": {"type": "text", "text": ""},
+                    })
+                    yield _sse_event("content_block_delta", {
+                        "type": "content_block_delta", "index": _block_idx,
+                        "delta": {"type": "text_delta", "text": _clean_acc or _text_acc},
+                    })
+                    yield _sse_event("content_block_stop", {
+                        "type": "content_block_stop", "index": _block_idx,
+                    })
+                    _block_idx += 1
+                    _sent_text_block = True
+
+            # ── tool_choice=required enforcement retry ────────────────────────
+            # The profile demands a tool call but the model returned none (Ollama
+            # native cannot enforce tool_choice). Retry ONCE against the expert
+            # template's tool_agent before degrading to a plain text turn. Without
+            # this, CC receives an announcement ("I will now analyze…") with a
+            # clean end_turn and closes the stream while nothing was executed.
+            if _require_tools and not _tool_calls_acc and not _stream_error:
+                _fb_exp = next(
+                    (
+                        _c for _c in ((session.experts or {}).get("tool_agent") or [])
+                        if _c.get("model") and _c.get("url") and _c.get("model") != effective_model
+                    ),
+                    None,
+                )
+                if _fb_exp:
+                    logger.warning(
+                        "cc_tool: tool_choice=required violated by %s (text_chars=%d, no tool call)"
+                        " — retrying with template tool_agent %s@%s",
+                        effective_model, len(_text_acc),
+                        _fb_exp["model"], _fb_exp.get("endpoint", "?"),
+                    )
+                    _fb_base = _fb_exp["url"].rstrip("/").removesuffix("/v1")
+                    _fb_payload = dict(_call_payload)
+                    _fb_payload["model"]  = _fb_exp["model"]
+                    _fb_payload["stream"] = False
+                    _fb_payload["options"] = {
+                        "num_ctx": max(int(_fb_exp.get("context_window") or 0), _ollama_num_ctx, 32768),
+                        "num_predict": max_tokens,
+                    }
+                    try:
+                        async def _do_required_retry():
+                            async with httpx.AsyncClient(timeout=300.0) as _rcl:
+                                return await _rcl.post(
+                                    f"{_fb_base}/api/chat", json=_fb_payload,
+                                    headers={"Authorization": f"Bearer {_fb_exp.get('token', 'ollama')}"},
+                                )
+                        _req_retry_task = asyncio.create_task(_do_required_retry())
+                        while not _req_retry_task.done():
+                            try:
+                                await asyncio.wait_for(asyncio.shield(_req_retry_task), timeout=10.0)
+                            except asyncio.TimeoutError:
+                                yield _sse_event("ping", {"type": "ping"})
+                        _rr_json = (await _req_retry_task).json()
+                        _rr_msg  = _rr_json.get("message", {})
+                        _rr_tcs  = _rr_msg.get("tool_calls")
+                        logger.info(
+                            "cc_tool: required-retry done — model=%s tool_calls=%s content_chars=%d",
+                            _fb_exp["model"], bool(_rr_tcs), len(_rr_msg.get("content", "") or ""),
+                        )
+                        if _rr_tcs:
+                            _tool_calls_acc = list(_rr_tcs)
+                            _out_tok += _rr_json.get("eval_count", 0)
+                            # Replace the non-compliant announcement with the
+                            # compliant model's own accompanying text (may be empty).
+                            _text_acc = _rr_msg.get("content", "") or ""
+                    except Exception as _fre:
+                        logger.warning("cc_tool: required-retry failed: %s", _fre)
+                else:
+                    logger.warning(
+                        "cc_tool: tool_choice=required violated by %s and no template"
+                        " tool_agent fallback available — degrading to text turn",
+                        effective_model,
+                    )
+
+            # Buffered text from required-mode (live streaming was suppressed):
+            # emit it now. After a successful retry this is the retry's own text;
+            # after a failed/absent retry it is the original announcement so CC
+            # at least sees what the model said.
+            if _require_tools and _text_acc and not _sent_text_block and not _stream_error:
+                _clean_req = re.sub(r"<think>.*?</think>", "", _text_acc, flags=re.S).strip()
+                if _clean_req:
+                    yield _sse_event("content_block_start", {
+                        "type": "content_block_start", "index": _block_idx,
+                        "content_block": {"type": "text", "text": ""},
+                    })
+                    yield _sse_event("content_block_delta", {
+                        "type": "content_block_delta", "index": _block_idx,
+                        "delta": {"type": "text_delta", "text": _clean_req},
+                    })
+                    yield _sse_event("content_block_stop", {
+                        "type": "content_block_stop", "index": _block_idx,
+                    })
+                    _block_idx += 1
+                    _sent_text_block = True
 
             # Tool call blocks
             _stop_reason = "end_turn"
@@ -1432,8 +1813,43 @@ async def _anthropic_tool_handler(
                     ))
             asyncio.create_task(_deregister_active_request(chat_id))
 
+            # ── Tier-4 Episodic Write-Back (fire-and-forget) ──────────────────
+            # Parity fix: this path previously lacked the episodic write-back
+            # that _live_openai_sse already has (native-Ollama CC sessions never
+            # logged an episode). Same gate as there.
+            if (CC_CONTEXT_INDEX_ENABLED and session.long_memory
+                    and state.graph_manager is not None and _cc_ep_query
+                    and _stop_reason == "end_turn" and not _stream_error):
+                try:
+                    from episodic_memory import log_episode as _log_ep
+                    _ep_state = {
+                        "input": _cc_ep_query,
+                        "user_id": user_id or "anon",
+                        "expert_models_used": [effective_model],
+                        "prompt_tokens": _in_tok,
+                        "completion_tokens": _out_tok,
+                        "plan": [{"category": "general"}],
+                        "final_response": _text_acc[:600],
+                    }
+                    asyncio.create_task(_log_ep(state.graph_manager.driver, _ep_state))
+                except Exception:
+                    pass
+
+            # ── Augmented Tool Path: write-back (fire-and-forget) ─────────────
+            # Opt-in (session.agent_ingest, default off). Only on a clean turn
+            # end: end_turn stop reason, no tool_use emitted, no stream error.
+            if (session.agent_ingest and _cc_ep_query and _text_acc
+                    and _stop_reason == "end_turn" and not _stream_error):
+                asyncio.create_task(agent_writeback(
+                    _cc_ep_query, _text_acc, _agent_turn.scope,
+                    f"user:{user_id}" if user_id and user_id != "anon" else None,
+                    user_id, effective_model, session_id or "",
+                    state.redis_client, state.agent_cache_collection,
+                    path="anthropic",
+                ))
+
         _llm_t0 = time.monotonic()
-        return StreamingResponse(_live_ollama_sse(), media_type="text/event-stream")
+        return StreamingResponse(_wrap_deregister_on_stream_end(_live_ollama_sse(), chat_id), media_type="text/event-stream", headers=_moe_response_headers(effective_model, effective_node))
 
     # ── Live-streaming path for OpenAI-compatible external endpoints ──────────
     # When the endpoint is not Ollama (e.g. AIHUB) but CC requests streaming,
@@ -1508,7 +1924,7 @@ async def _anthropic_tool_handler(
                     try:
                         _kind, _val = await asyncio.wait_for(_q.get(), timeout=15.0)
                     except asyncio.TimeoutError:
-                        yield ": keep-alive\n\n"
+                        yield _sse_event("ping", {"type": "ping"})
                         continue
                     if _kind == "done":
                         break
@@ -1660,8 +2076,21 @@ async def _anthropic_tool_handler(
                 except Exception:
                     pass
 
+            # ── Augmented Tool Path: write-back (fire-and-forget) ─────────────
+            # Opt-in (session.agent_ingest, default off). Only on a clean turn
+            # end: end_turn stop reason, no tool_use emitted, no stream error.
+            if (session.agent_ingest and _cc_ep_query and _text_acc
+                    and _stop_reason == "end_turn" and not _stream_error):
+                asyncio.create_task(agent_writeback(
+                    _cc_ep_query, _text_acc, _agent_turn.scope,
+                    f"user:{user_id}" if user_id and user_id != "anon" else None,
+                    user_id, effective_model, session_id or "",
+                    state.redis_client, state.agent_cache_collection,
+                    path="anthropic",
+                ))
+
         _llm_t0 = time.monotonic()
-        return StreamingResponse(_live_openai_sse(), media_type="text/event-stream")
+        return StreamingResponse(_wrap_deregister_on_stream_end(_live_openai_sse(), chat_id), media_type="text/event-stream", headers=_moe_response_headers(effective_model, effective_node))
 
     # ── Non-streaming fallback (non-Ollama or non-streaming request) ───────────
     _llm_t0 = time.monotonic()
@@ -1734,7 +2163,8 @@ async def _anthropic_tool_handler(
                     [{"type": "text", "text": _timeout_text}],
                     chat_id, body.get("model", "moe-orchestrator-agent"), 0, 0, "end_turn"
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers=_moe_response_headers(effective_model, effective_node)
             )
         return _timeout_resp
     except httpx.HTTPStatusError as _hex:
@@ -1767,7 +2197,8 @@ async def _anthropic_tool_handler(
                     [{"type": "text", "text": _err_text}],
                     chat_id, body.get("model", "moe-orchestrator-agent"), 0, 0, "end_turn"
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers=_moe_response_headers(effective_model, effective_node)
             )
         return {
             "id": chat_id, "type": "message", "role": "assistant",
@@ -1996,6 +2427,22 @@ async def _anthropic_tool_handler(
         except Exception:
             pass
 
+    # ── Augmented Tool Path: write-back (fire-and-forget, non-streaming path) ──
+    # Opt-in (session.agent_ingest, default off). Only on a clean turn end:
+    # end_turn stop reason, no tool_use emitted.
+    if session.agent_ingest and _cc_ep_query and stop_reason == "end_turn":
+        _agent_answer_text = next(
+            (b.get("text", "") for b in content_blocks if b.get("type") == "text"), ""
+        )
+        if _agent_answer_text:
+            asyncio.create_task(agent_writeback(
+                _cc_ep_query, _agent_answer_text, _agent_turn.scope,
+                f"user:{user_id}" if user_id and user_id != "anon" else None,
+                user_id, effective_model, session_id or "",
+                state.redis_client, state.agent_cache_collection,
+                path="anthropic",
+            ))
+
     if not do_stream:
         return {
             "id": chat_id, "type": "message", "role": "assistant",
@@ -2008,7 +2455,8 @@ async def _anthropic_tool_handler(
         _anthropic_content_blocks_to_sse(
             content_blocks, chat_id, model_id, in_tok, out_tok, stop_reason
         ),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers=_moe_response_headers(effective_model, effective_node)
     )
 
 
@@ -2044,7 +2492,7 @@ async def _anthropic_reasoning_handler(
                     [{"type": "text", "text": ""}], chat_id, model_id, 0, 0, "end_turn"
                 ):
                     yield chunk
-            return StreamingResponse(_empty(), media_type="text/event-stream")
+            return StreamingResponse(_empty(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
         return empty_resp
 
     # Apply system_prompt_prefix from CC profile (same logic as _anthropic_tool_handler)
@@ -2116,7 +2564,8 @@ async def _anthropic_reasoning_handler(
                 _anthropic_content_blocks_to_sse(
                     [{"type": "text", "text": _err_text}], chat_id, model_id, 0, 0, "end_turn"
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers=_moe_response_headers(reasoning_model, _reasoning_node_name)
             )
         return {"id": chat_id, "type": "message", "role": "assistant",
                 "content": [{"type": "text", "text": _err_text}], "model": model_id,
@@ -2129,7 +2578,8 @@ async def _anthropic_reasoning_handler(
                 _anthropic_content_blocks_to_sse(
                     [{"type": "text", "text": _err_text}], chat_id, model_id, 0, 0, "end_turn"
                 ),
-                media_type="text/event-stream"
+                media_type="text/event-stream",
+                headers=_moe_response_headers(reasoning_model, _reasoning_node_name)
             )
         return {"id": chat_id, "type": "message", "role": "assistant",
                 "content": [{"type": "text", "text": _err_text}], "model": model_id,
@@ -2172,7 +2622,8 @@ async def _anthropic_reasoning_handler(
 
     return StreamingResponse(
         _anthropic_content_blocks_to_sse(content_blocks, chat_id, model_id, in_tok, out_tok, "end_turn"),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers=_moe_response_headers(reasoning_model, _reasoning_node_name)
     )
 
 
@@ -2205,7 +2656,7 @@ async def _anthropic_moe_handler(
                     [{"type": "text", "text": ""}], chat_id, model_id, 0, 0, "end_turn"
                 ):
                     yield chunk
-            return StreamingResponse(_empty(), media_type="text/event-stream")
+            return StreamingResponse(_empty(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
         return empty_resp
 
     last_user_content = last_user.get("content", "")
@@ -2347,7 +2798,7 @@ async def _anthropic_moe_handler(
                                     "delta": {"type": "thinking_delta", "thinking": f"{msg}\n"}
                                 })
                         except asyncio.TimeoutError:
-                            yield ": keep-alive\n\n"
+                            yield _sse_event("ping", {"type": "ping"})
 
                     yield _sse_event("content_block_stop", {"type": "content_block_stop", "index": 0})
                 else:
@@ -2358,7 +2809,7 @@ async def _anthropic_moe_handler(
                             if msg is None:
                                 break
                         except asyncio.TimeoutError:
-                            yield ": keep-alive\n\n"
+                            yield _sse_event("ping", {"type": "ping"})
 
                 yield _sse_event("content_block_start", {
                     "type": "content_block_start", "index": _text_block_index,
@@ -2375,6 +2826,18 @@ async def _anthropic_moe_handler(
                           else f"Error: {result_box.get('error', 'Unknown')}"
                 in_tok  = data.get("prompt_tokens", 0)
                 out_tok = data.get("completion_tokens", 0)
+
+                # Online quality probe (sampled): pipeline vs. single best expert.
+                if "data" in result_box:
+                    try:
+                        from services.quality_probe import run_probe as _qp_run
+                        asyncio.create_task(_qp_run(
+                            query=user_input, pipeline_answer=content,
+                            experts=session.experts, planner_cfg=session.planner_cfg,
+                            request_id=chat_id, user_id=user_id,
+                        ))
+                    except Exception:
+                        pass
 
                 if user_id != "anon":
                     asyncio.create_task(_log_usage_to_db(
@@ -2413,7 +2876,7 @@ async def _anthropic_moe_handler(
                 if not _did_deregister:
                     asyncio.create_task(_deregister_active_request(chat_id))
 
-        return StreamingResponse(_moe_stream(), media_type="text/event-stream")
+        return StreamingResponse(_moe_stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
 
     # Non-Streaming
     if state.app_graph is None:
@@ -2422,6 +2885,18 @@ async def _anthropic_moe_handler(
     content = result.get("final_response", "")
     _p_tok = result.get("prompt_tokens", 0)
     _c_tok = result.get("completion_tokens", 0)
+
+    # Online quality probe (sampled): pipeline vs. single best expert.
+    try:
+        from services.quality_probe import run_probe as _qp_run
+        asyncio.create_task(_qp_run(
+            query=user_input, pipeline_answer=content,
+            experts=session.experts, planner_cfg=session.planner_cfg,
+            request_id=chat_id, user_id=user_id,
+        ))
+    except Exception:
+        pass
+
     if user_id != "anon":
         asyncio.create_task(_log_usage_to_db(
             user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
@@ -2487,6 +2962,16 @@ async def anthropic_messages(request: Request):
     _profile_ids = json.loads(user_ctx.get("permissions_json", "") or "{}").get("cc_profile", [])
     session = _resolve_cc_session(user_ctx, _profile_ids)
 
+    # Sovereignty guard: local_only keys must never reach non-local endpoints.
+    from services.sovereignty import assert_egress_allowed, EgressDenied
+    try:
+        if session.tool_url:
+            assert_egress_allowed(session.tool_url, user_ctx)
+    except EgressDenied as _ed:
+        return JSONResponse(status_code=403, content={"error": {
+            "message": str(_ed), "type": "permission_error", "code": "local_only_violation",
+        }})
+
     if session.profile_not_found:
         logger.warning(
             "CC profile not found for key=%s profiles=%s — returning 422 to suppress retries",
@@ -2520,11 +3005,26 @@ async def anthropic_messages(request: Request):
         client_ip=request.client.host if request.client else "",
         backend_model=_cc_backend_model,
         api_key_id=_api_key_id,
+        # Previously omitted entirely — the admin "Laufende API-Anfragen" table's
+        # "Template" column was always blank for CC sessions even when the
+        # profile's expert_template_id was actively driving tool_model
+        # auto-derivation (see cc_session.py Phase 5.5).
+        template_name=session.expert_template_id,
+        resolved_tmpl_id=session.expert_template_id,
     ))
+
+    # Fast-path triage: CC utility calls and trivially short prompts bypass the
+    # MoE pipeline entirely — a 5-line topic-detection request must never run
+    # planner+experts+judge for minutes (observed: 5 min pipeline for one
+    # CC-internal side request). Flag: CC_FASTPATH=1.
+    from services.cc_fastpath import is_fastpath_request as _is_fp
+    _fp_reason = _is_fp(body)
+    if _fp_reason:
+        logger.info("cc_dispatch: fast-path (%s) — bypassing MoE pipeline", _fp_reason)
 
     try:
         # Mode 1: Native or tool/tool_result turns → tool handler (precise function calling)
-        if session.mode == "native" or tools or has_tool_results:
+        if session.mode == "native" or tools or has_tool_results or _fp_reason:
             _result = await _anthropic_tool_handler(
                 body, chat_id, session, _user_id, _api_key_id, session_id,
             )

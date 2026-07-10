@@ -16,5 +16,8 @@
   "context_window": 32768,
   "reasoning_max_tokens": 8192,
   "tool_choice": "required",
+  "agent_cache": false,
+  "agent_graphrag": false,
+  "agent_ingest": false,
   "enabled": true
 }

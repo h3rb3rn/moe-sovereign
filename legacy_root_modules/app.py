@@ -6021,7 +6021,11 @@ async def user_api_clear_default_cc_profile(user_id: str = Depends(require_user_
 
 @app.get("/user/api/permitted-models")
 async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
-    """Returns all llm@host options for the user's permitted servers and private connections."""
+    """Returns llm@host options and template:id entries for the user's CC tool-model picker.
+
+    Expert Templates with a tool_agent expert are included as "template:<id>" entries
+    so users can select a template-backed MoE stack as their CC tool model.
+    """
     perms = await db.get_permissions_map(user_id)
     servers = _get_permitted_servers_for_user(perms)
     results: set[str] = set()
@@ -6061,6 +6065,26 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             if not model_id:
                 continue
             results.add(f"{model_id}@{conn['name']}")
+    # Expert Templates accessible to this user that contain a tool_agent expert.
+    # Returned as "template:<id>" so the CC tool-model picker can show them.
+    _tmpl_ids = set(perms.get("expert_template", []))
+    _own_tmpls = await db.list_user_templates(user_id)
+    _own_tmpl_ids = {t["id"] for t in _own_tmpls}
+    _all_accessible_tmpl_ids = _tmpl_ids | _own_tmpl_ids
+    for _tmpl in load_expert_templates():
+        if _tmpl.get("id") not in _all_accessible_tmpl_ids:
+            continue
+        _experts = _tmpl.get("experts") or {}
+        if "tool_agent" in _experts and _experts["tool_agent"]:
+            results.add(f"template:{_tmpl['id']}")
+    # Also include user-owned templates with tool_agent
+    for _ut in _own_tmpls:
+        try:
+            _ut_cfg = json.loads(_ut.get("config_json") or "{}")
+        except Exception:
+            continue
+        if "tool_agent" in (_ut_cfg.get("experts") or {}) and _ut_cfg["experts"]["tool_agent"]:
+            results.add(f"template:{_ut['id']}")
     return sorted(results)
 
 

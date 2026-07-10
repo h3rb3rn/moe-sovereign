@@ -64,6 +64,7 @@ from services.helpers import (
     _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
     _report,
     _shadow_request, _shadow_lock,
+    _entry_is_fresh,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.skills import _build_skill_catalog
@@ -108,16 +109,6 @@ async def _seed_task_type_prototypes() -> None:
 
 
 # --- NODES ---
-
-def _entry_is_fresh(ts_iso: str, ttl_days: int) -> bool:
-    """True if an ISO-8601 timestamp is within ttl_days of now. Missing/garbage ts → stale."""
-    if not ts_iso:
-        return False
-    try:
-        from datetime import datetime, timedelta
-        return datetime.now() - datetime.fromisoformat(ts_iso) <= timedelta(days=ttl_days)
-    except Exception:
-        return False
 
 
 async def cache_lookup_node(state_: AgentState):
