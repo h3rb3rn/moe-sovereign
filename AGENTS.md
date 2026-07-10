@@ -44,6 +44,14 @@ As an AI assistant, you must maintain and execute the following ongoing tasks:
 
 ## 4. GitOps Publish-Workflow (Sync & Normalization)
 
+> ⚠️ **NEVER push directly to the `main` branch of any GitHub remote — not through the
+> publish-repository workflow below, and not through the `github` remote configured
+> directly in this dev repository (`git@github.com:h3rb3rn/moe-sovereign.git`). This
+> applies to every path that can reach GitHub's `main`, regardless of which repo
+> checkout or remote name is used. Always create a feature branch and open a Pull
+> Request instead. If genuinely unsure whether a given remote/branch counts as "GitHub
+> main", stop and ask the user before pushing.**
+
 All code and documentation edits must be performed in the dev repository first, then synchronized and published using the following pipeline:
 1. **Develop:** Make edits and commit them in the dev repository (`/opt/moe-sovereign`).
 2. **Pull:** Change directory to the publish repository (`/opt/deployment/Github/moe-sovereign`) and pull the latest state: `git checkout main && git pull origin main`.
@@ -51,3 +59,7 @@ All code and documentation edits must be performed in the dev repository first, 
 4. **Branch:** In the publish repository, create a **feature branch**: `git checkout -b <branch-name>`.
 5. **Commit:** Stage and commit: `git add -A && git commit -m 'Sync from dev: <description>'`.
 6. **Push & PR:** Push the branch to GitHub: `git push origin <branch-name>`. Open a Pull Request (PR) on GitHub. **Never push directly to the `main` branch of the public GitHub repository.**
+
+This same "feature branch + PR, never direct `main` push" rule also applies when
+working directly in this dev repository against its own `github` remote (e.g. `git
+push github <branch-name>`), even outside the sync-to-publish pipeline above.

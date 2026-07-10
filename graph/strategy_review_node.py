@@ -34,7 +34,9 @@ async def strategy_review_node(state_):
         return {}
 
     from graph.synthesis import _report
+    from services.tracking import _record_stage
     await _report("🧠 Strategy Review: abstracting solution…")
+    await _record_stage(state_.get("response_id", ""), "strategy_review", "started")
 
     expert_results = state_.get("expert_results") or []
     plan           = state_.get("plan") or []
@@ -76,6 +78,7 @@ async def strategy_review_node(state_):
         strategy_feedback = "\n".join(parts)
 
         await _report(f"📋 Strategy Review: {feedback.summary or 'complete'}")
+        await _record_stage(state_.get("response_id", ""), "strategy_review", "done")
 
         # Adjust trust_score by reviewer's confidence delta (clamped to [0, 1])
         current_score = float(state_.get("trust_score") or 0.0)

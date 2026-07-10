@@ -54,7 +54,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -141,6 +141,7 @@ async def merger_node(state_: AgentState):
     if state_.get("cache_hit"):
         logger.info("--- [NODE] MERGER (cache hit, direct return) ---")
         await _report("💨 Merger: cached response delivered directly")
+        await _record_stage(state_.get("response_id", ""), "merger", "cache_shortcut")
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
             "response_id": state_.get("response_id", ""),
             "input":       state_["input"][:300],
@@ -153,6 +154,7 @@ async def merger_node(state_: AgentState):
 
     logger.info("--- [NODE] MERGER & INGEST ---")
     await _report("🔀 Merger analyzing expert confidence...")
+    await _record_stage(state_.get("response_id", ""), "merger", "started")
 
     _all_expert_raw = state_.get("expert_results") or []
     _ensemble_raw   = [r for r in _all_expert_raw if re.match(r'\[ENSEMBLE:', r)]
@@ -829,6 +831,7 @@ async def merger_node(state_: AgentState):
         await _ol_fail(_ol_merger_run, job_name="merger_node", error="judge_empty_or_error")
         return {"final_response": fallback, **merger_usage}
     await _report(f"✅ Response complete ({len(res.content)} chars)")
+    await _record_stage(state_.get("response_id", ""), "merger", "done")
 
     # Parse and strip any SYNTHESIS_INSIGHT block from the LLM output.
     # The clean content is shown to the user; the insight is persisted to Neo4j separately.
@@ -1324,6 +1327,7 @@ async def thinking_node(state_: AgentState):
 
     logger.info("--- [NODE] THINKING (Chain-of-Thought) ---")
     await _report("🧠 Reasoning: strukturierte Analyse des Problems...")
+    await _record_stage(state_.get("response_id", ""), "thinking", "started")
 
     sections = [f"QUESTION: {state_['input']}"]
     if expert_results:
@@ -1354,6 +1358,7 @@ async def thinking_node(state_: AgentState):
         usage = _extract_usage(res)
         trace = res.content.strip()
         await _report(f"🧠 Reasoning result ({len(trace)} chars):\n{trace}")
+        await _record_stage(state_.get("response_id", ""), "thinking", "done")
         logger.info(f"🧠 Reasoning Trace: {trace[:200]}")
         return {"reasoning_trace": trace, **usage}
     except Exception as e:
@@ -1405,6 +1410,7 @@ async def resolve_conflicts_node(state_: AgentState):
 
     logger.info(f"⚖️  resolve_conflicts_node: {len(pending)} pending conflicts")
     await _report(f"⚖️ Resolving {len(pending)} paraconsistent conflict(s)...")
+    await _record_stage(state_.get("response_id", ""), "resolve_conflicts", "started")
 
     # Strategy A: auto-dismiss low-divergence conflicts (formulaic variation, not real contradiction).
     # Strategy B: escalate safety-critical conflicts to a judge LLM call.
@@ -1496,6 +1502,7 @@ async def self_critique_node(state_: AgentState):
 
     logger.info("--- [NODE] SELF-CRITIQUE (round %d/%d, score=%.3f) ---", round_num, max_rounds, trust_score)
     await _report(f"🔄 Self-Critique round {round_num}/{max_rounds} (trust={trust_score:.2f})…")
+    await _record_stage(request_id, "self_critique", "started", f"round {round_num}/{max_rounds}")
 
     try:
         from services.decision_log import log_decision, DecisionType
@@ -1544,6 +1551,7 @@ async def self_critique_node(state_: AgentState):
         if improved and len(improved) > 30:
             new_expert = f"[SELF_CRITIQUE_R{round_num} / judge]: {improved}"
             await _report(f"✅ Self-Critique produced {len(improved)} chars")
+            await _record_stage(request_id, "self_critique", "done")
             logger.info("✅ Self-Critique round %d: %d chars added", round_num, len(improved))
             return {"expert_results": [new_expert], "self_critique_round": round_num, **usage}
     except Exception as _ex:
@@ -1575,6 +1583,7 @@ async def critic_node(state_: AgentState):
 
     logger.info(f"--- [NODE] CRITIC (fact-check: {active}) ---")
     await _report(f"🔎 Critic: fact-check for {', '.join(sorted(active))}...")
+    await _record_stage(state_.get("response_id", ""), "critic", "started")
 
     critic_prompt = (
         f"You are a critical reviewer for {', '.join(sorted(active))} answers.\n"
@@ -1607,10 +1616,12 @@ async def critic_node(state_: AgentState):
 
         if critic_out.upper().startswith("CONFIRMED"):
             await _report("✅ Critic: answer confirmed correct")
+            await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
             return {"final_response": final_response, **usage}
 
         await _report(f"⚠️ Critic: answer corrected ({len(critic_out)} chars)")
+        await _record_stage(state_.get("response_id", ""), "critic", "corrected")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         return {"final_response": critic_out, **usage}
     except Exception as e:
