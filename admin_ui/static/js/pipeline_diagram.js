@@ -148,8 +148,11 @@
           style: { 'background-color': COLORS.error.bg, 'border-color': COLORS.error.border, 'color': COLORS.error.text },
         },
         {
+          // 0.25 blended against the near-black canvas made even the
+          // lightened idle fill sink back into invisibility — 0.55 keeps the
+          // unused branch legibly "greyed out" instead of gone.
           selector: '.pd-dim',
-          style: { 'opacity': 0.25 },
+          style: { 'opacity': 0.55 },
         },
         {
           selector: 'edge.pd-lit',
