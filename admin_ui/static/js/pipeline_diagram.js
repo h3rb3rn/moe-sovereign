@@ -44,7 +44,10 @@
       ['expert', 'research_fallback'], ['research', 'research_fallback'],
       ['mcp', 'research_fallback'], ['graph_rag', 'research_fallback'],
       ['research_fallback', 'thinking'], ['thinking', 'strategy_review'], ['strategy_review', 'merger'],
-      ['merger', 'resolve_conflicts'], ['merger', 'self_critique'], ['self_critique', 'merger'],
+      // merger's conditional edge (_should_replan) picks exactly one of these
+      // three — not a strict DAG forward-edge, planner is a loop-back.
+      ['merger', 'planner'], ['merger', 'resolve_conflicts'], ['merger', 'self_critique'],
+      ['self_critique', 'merger'],
       ['resolve_conflicts', 'critic'],
       ['tool_entry', 'agent_cache'], ['agent_cache', 'agent_graphrag'],
       ['agent_graphrag', 'tool_model_call'], ['tool_model_call', 'agent_writeback'],
@@ -220,17 +223,48 @@
       userPanningEnabled: true,
       boxSelectionEnabled: false,
     });
+    // The DAG layout's absolute coordinates span wider than the modal —
+    // scale+center everything into view instead of relying on a fixed zoom.
+    cy.fit(cy.elements(), 30);
   }
 
-  // Fixed two-lane layout: interactive branch on top, agent branch below —
-  // avoids a re-layout jitter on every poll tick.
+  // Explicit position map mirroring docs/ARCHITECTURE.md's mermaid flowchart
+  // for the LangGraph pipeline: a genuine DAG shape with a visually grouped
+  // "parallel execution" fan-out block (expert/research/mcp/graph_rag run
+  // concurrently after fuzzy_router, not one after another), and merger's
+  // conditional branch shown as siblings rather than a single line — a
+  // straight row previously made every request look purely sequential even
+  // though most of the pipeline genuinely isn't.
+  const NODE_POSITIONS = {
+    cache:              { x:   40, y: 260 },
+    semantic_router:    { x:  170, y: 260 },
+    planner:            { x:  300, y: 260 },
+    fuzzy_router:       { x:  430, y: 260 },
+    // Parallel Execution block — same x (depth), stacked vertically
+    expert:             { x:  570, y: 100 },
+    research:           { x:  570, y: 190 },
+    mcp:                { x:  570, y: 280 },
+    graph_rag:          { x:  570, y: 370 },
+    research_fallback:  { x:  710, y: 260 },
+    thinking:           { x:  840, y: 260 },
+    strategy_review:    { x:  970, y: 260 },
+    merger:             { x: 1100, y: 260 },
+    // merger's conditional edge picks one of these three siblings
+    resolve_conflicts:  { x: 1240, y: 180 },
+    self_critique:      { x: 1240, y: 340 }, // loops back to merger
+    critic:             { x: 1370, y: 180 },
+
+    // Agentic tool-calling fast path — separate lane, genuinely serial per
+    // the real code flow (each step's output gates the next).
+    tool_entry:         { x:   40, y: 520 },
+    agent_cache:        { x:  190, y: 520 },
+    agent_graphrag:     { x:  340, y: 520 },
+    tool_model_call:    { x:  490, y: 520 },
+    agent_writeback:    { x:  640, y: 520 }, // async, fires after the response
+  };
+
   function presetPositions() {
-    const pos = {};
-    const interactive = TOPOLOGY.nodes.filter(n => n.branch === 'interactive');
-    const agent = TOPOLOGY.nodes.filter(n => n.branch === 'agent');
-    interactive.forEach((n, i) => { pos[n.id] = { x: 60 + i * 90, y: 90 }; });
-    agent.forEach((n, i) => { pos[n.id] = { x: 60 + i * 130, y: 320 }; });
-    return pos;
+    return NODE_POSITIONS;
   }
 
   function classifyStage(entries, isLatestOverall) {
