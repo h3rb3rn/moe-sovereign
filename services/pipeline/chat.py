@@ -77,7 +77,7 @@ from services.routing import (
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
-    _check_ip_rate_limit,
+    _check_ip_rate_limit, _record_stage,
 )
 from services.conversation_log import log_conversation
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
@@ -332,8 +332,19 @@ async def _wrap_deregister_on_stream_end(body_iterator, chat_id: str):
         asyncio.create_task(_deregister_active_request(chat_id))
 
 
+async def _agent_writeback_traced(chat_id: str, *args, **kwargs) -> None:
+    """Wraps agent_writeback() with started/done stage-trace markers for the
+    live-pipeline-visualization diagram. See the anthropic.py counterpart of
+    this helper for the rationale (agent_writeback has no chat_id param)."""
+    await _record_stage(chat_id, "agent_writeback", "started")
+    try:
+        await agent_writeback(*args, **kwargs)
+    finally:
+        await _record_stage(chat_id, "agent_writeback", "done")
+
+
 async def _wrap_agent_writeback_sse(
-    body_iterator, query: str, scope: str, tenant_id, user_id: str,
+    body_iterator, chat_id: str, query: str, scope: str, tenant_id, user_id: str,
     source_model: str, session_id: str,
 ):
     """Passes an SSE chunk stream through byte-for-byte unchanged while
@@ -377,7 +388,8 @@ async def _wrap_agent_writeback_sse(
             pass
 
     if not saw_tool_calls and finish_reason == "stop" and content_parts:
-        asyncio.create_task(agent_writeback(
+        asyncio.create_task(_agent_writeback_traced(
+            chat_id,
             query, "".join(content_parts), scope, tenant_id, user_id, source_model,
             session_id or "", state.redis_client, state.agent_cache_collection,
             path="openai",
@@ -1670,6 +1682,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # default off. Mirrors the Anthropic-path wiring in services/pipeline/anthropic.py.
     _agent_system_augment = ""
     if _has_tools:
+        await _record_stage(chat_id, "tool_entry", "started")
         _agent_sys_text = next(
             (getattr(m, "content", "") for m in request.messages if getattr(m, "role", None) == "system"),
             "",
@@ -1693,6 +1706,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _agent_turn.query, _agent_turn.scope,
                 state.redis_client, state.agent_cache_collection, path="openai",
             )
+            await _record_stage(chat_id, "agent_cache", "hit" if _agent_cache_hit else "miss")
             if _agent_cache_hit:
                 logger.info(
                     "chat_completions: Augmented Tool Path cache hit (scope=%s, chars=%d)",
@@ -1738,6 +1752,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                         state.redis_client, state.graph_manager,
                         max_chars=_agent_max_chars, timeout_s=AGENT_GRAPHRAG_TIMEOUT_S,
                     )
+                    await _record_stage(chat_id, "agent_graphrag", "queried" if _agent_system_augment else "queried_empty")
                     logger.info(
                         "chat_completions: Augmented Tool Path GraphRAG %d chars (session=%s, tenant_ids=%s)",
                         len(_agent_system_augment), (session_id or "")[:8], _agent_tenant_ids,
@@ -1755,6 +1770,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                         (_agent_cached if isinstance(_agent_cached, str) else _agent_cached.decode())
                         if _agent_cached else ""
                     )
+                    await _record_stage(chat_id, "agent_graphrag", "cached" if _agent_system_augment else "cached_empty")
             except Exception as _agent_ge:
                 logger.debug("chat_completions: agent graph context skipped: %s", _agent_ge)
                 _agent_system_augment = ""
@@ -1807,6 +1823,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 if _raw_tool_expert else
                 _tmpl_prompts.get("judge_num_ctx") or 0
             )
+            await _record_stage(chat_id, "tool_model_call", "started", _tc_model)
             _tc_resp = await _handle_tool_calls(
                 request, chat_id, _tc_model, _tc_url, _tc_token,
                 content_model=_content_model,
@@ -1828,7 +1845,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _agent_tenant_id = f"user:{user_id}" if user_id and user_id != "anon" else None
                 if isinstance(_tc_resp, StreamingResponse):
                     _tc_resp.body_iterator = _wrap_agent_writeback_sse(
-                        _tc_resp.body_iterator, _agent_turn.query, _agent_turn.scope,
+                        _tc_resp.body_iterator, chat_id, _agent_turn.query, _agent_turn.scope,
                         _agent_tenant_id, user_id, _tc_model, session_id,
                     )
                 else:
@@ -1836,7 +1853,8 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                     _tc_msg = _tc_choice.get("message", {})
                     if (_tc_choice.get("finish_reason") == "stop"
                             and not _tc_msg.get("tool_calls") and _tc_msg.get("content")):
-                        asyncio.create_task(agent_writeback(
+                        asyncio.create_task(_agent_writeback_traced(
+                            chat_id,
                             _agent_turn.query, _tc_msg["content"], _agent_turn.scope,
                             _agent_tenant_id, user_id, _tc_model, session_id or "",
                             state.redis_client, state.agent_cache_collection, path="openai",

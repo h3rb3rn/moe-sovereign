@@ -75,7 +75,7 @@ from services.routing import (
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
-    _check_ip_rate_limit,
+    _check_ip_rate_limit, _record_stage,
 )
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
@@ -114,6 +114,24 @@ from services.agent_enrichment import (
     agent_writeback,
     agent_cache_lookup,
 )
+
+
+async def _agent_writeback_traced(chat_id: str, *args, **kwargs) -> None:
+    """Wraps agent_writeback() with started/done stage-trace markers.
+
+    agent_writeback() itself has no chat_id (only session_id, which is the CC
+    session ID, not the per-request live-monitoring key) — traced here at the
+    call site instead of threading chat_id through agent_enrichment.py. Runs
+    via asyncio.create_task, so "done" can legitimately appear in the trace
+    after the client already received its response.
+    """
+    await _record_stage(chat_id, "agent_writeback", "started")
+    try:
+        await agent_writeback(*args, **kwargs)
+    finally:
+        await _record_stage(chat_id, "agent_writeback", "done")
+
+
 # CC tool conversations contain code, JSON, shell output and tool results —
 # all denser than prose. Use 3 chars/token for input estimation to avoid
 # running the total context into num_ctx and getting done_reason=length.
@@ -686,6 +704,7 @@ async def _anthropic_tool_handler(
     All routing, credential, and prompt-prefix configuration is read from session.
     Tokens are not charged to the MoE budget when session.is_user_conn is True.
     """
+    await _record_stage(chat_id, "tool_entry", "started")
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
     # Claude Code sends system as a list of Anthropic content blocks (with cache_control).
@@ -897,6 +916,7 @@ async def _anthropic_tool_handler(
             _agent_turn.query, _agent_turn.scope,
             state.redis_client, state.agent_cache_collection, path="anthropic",
         )
+        await _record_stage(chat_id, "agent_cache", "hit" if _agent_cached else "miss")
         if _agent_cached:
             logger.info(
                 "cc_tool: Augmented Tool Path cache hit (scope=%s, chars=%d)",
@@ -1016,6 +1036,7 @@ async def _anthropic_tool_handler(
                         state.redis_client, state.graph_manager,
                         max_chars=_t4_max_chars, timeout_s=AGENT_GRAPHRAG_TIMEOUT_S,
                     )
+                    await _record_stage(chat_id, "agent_graphrag", "queried" if _t4_ctx else "queried_empty")
                     if state.redis_client:
                         if _t4_ctx:
                             asyncio.create_task(state.redis_client.setex(_sess_ctx_key, 3600, _t4_ctx))
@@ -1024,6 +1045,7 @@ async def _anthropic_tool_handler(
                 elif state.redis_client:
                     _cached = await state.redis_client.get(_sess_ctx_key)
                     _t4_ctx = (_cached if isinstance(_cached, str) else _cached.decode()) if _cached else ""
+                    await _record_stage(chat_id, "agent_graphrag", "cached" if _t4_ctx else "cached_empty")
                 else:
                     _t4_ctx = ""
                 if _t4_ctx:
@@ -1361,6 +1383,7 @@ async def _anthropic_tool_handler(
     # native, pipe tokens directly back to CC as they arrive. This prevents CC
     # from timing out while waiting for a complete non-streaming Ollama response
     # (which can take 60–120 s for complex tool-call reasoning at 35B).
+    await _record_stage(chat_id, "tool_model_call", "started", effective_model)
     logger.info(
         "cc_tool: routing — ollama_native=%s stream=%s session=%s",
         _use_ollama_native, body.get("stream"), session_id[:8] if session_id else "?",
@@ -1840,7 +1863,8 @@ async def _anthropic_tool_handler(
             # end: end_turn stop reason, no tool_use emitted, no stream error.
             if (session.agent_ingest and _cc_ep_query and _text_acc
                     and _stop_reason == "end_turn" and not _stream_error):
-                asyncio.create_task(agent_writeback(
+                asyncio.create_task(_agent_writeback_traced(
+                    chat_id,
                     _cc_ep_query, _text_acc, _agent_turn.scope,
                     f"user:{user_id}" if user_id and user_id != "anon" else None,
                     user_id, effective_model, session_id or "",
@@ -2081,7 +2105,8 @@ async def _anthropic_tool_handler(
             # end: end_turn stop reason, no tool_use emitted, no stream error.
             if (session.agent_ingest and _cc_ep_query and _text_acc
                     and _stop_reason == "end_turn" and not _stream_error):
-                asyncio.create_task(agent_writeback(
+                asyncio.create_task(_agent_writeback_traced(
+                    chat_id,
                     _cc_ep_query, _text_acc, _agent_turn.scope,
                     f"user:{user_id}" if user_id and user_id != "anon" else None,
                     user_id, effective_model, session_id or "",
@@ -2435,7 +2460,8 @@ async def _anthropic_tool_handler(
             (b.get("text", "") for b in content_blocks if b.get("type") == "text"), ""
         )
         if _agent_answer_text:
-            asyncio.create_task(agent_writeback(
+            asyncio.create_task(_agent_writeback_traced(
+                chat_id,
                 _cc_ep_query, _agent_answer_text, _agent_turn.scope,
                 f"user:{user_id}" if user_id and user_id != "anon" else None,
                 user_id, effective_model, session_id or "",
