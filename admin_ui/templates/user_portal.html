@@ -996,6 +996,14 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       </div>
 
       <script>
+      // escHtml is only defined in the audit_log page's script block further
+      // down the file (each page's Jinja branch is independent, so helpers
+      // aren't shared across pages) — needed here by renderActive/
+      // renderCompleted/renderHandovers/fmtModel for the Live Monitor widget.
+      function escHtml(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+
       // ─── Timezone offset (from user profile) ────────────────────────────────
       const TZ_OFFSET_HOURS = {{ (user.timezone_offset_hours if user is defined and user.timezone_offset_hours is defined else 0) | float }};
 
