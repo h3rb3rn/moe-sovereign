@@ -1800,6 +1800,9 @@ async def api_create_profile(request: Request):
         "expert_template_id":   body.get("expert_template_id", ""),
         "tool_timeout":         int(_tt) if _tt else None,
         "long_memory":          bool(body.get("long_memory", True)),
+        "agent_cache":          bool(body.get("agent_cache", False)),
+        "agent_graphrag":       bool(body.get("agent_graphrag", False)),
+        "agent_ingest":         bool(body.get("agent_ingest", False)),
     }
     profiles.append(profile)
     save_profiles(profiles)
@@ -1828,6 +1831,9 @@ async def api_export_profiles(ids: str = ""):
             "expert_template_id":   p.get("expert_template_id", ""),
             "tool_timeout":         p.get("tool_timeout"),
             "long_memory":          p.get("long_memory", True),
+            "agent_cache":          p.get("agent_cache", False),
+            "agent_graphrag":       p.get("agent_graphrag", False),
+            "agent_ingest":         p.get("agent_ingest", False),
         }
         for p in profiles
     ]
@@ -1900,6 +1906,9 @@ async def api_import_profiles(request: Request, mode: str = "merge"):
             "expert_template_id":   item.get("expert_template_id", ""),
             "tool_timeout":         int(_tt_imp) if _tt_imp else None,
             "long_memory":          bool(item.get("long_memory", True)),
+            "agent_cache":          bool(item.get("agent_cache", False)),
+            "agent_graphrag":       bool(item.get("agent_graphrag", False)),
+            "agent_ingest":         bool(item.get("agent_ingest", False)),
         })
         existing_names.add(name)
         imported += 1
@@ -1932,6 +1941,9 @@ async def api_update_profile(profile_id: str, request: Request):
                 "expert_template_id":   body.get("expert_template_id", p.get("expert_template_id", "")),
                 "tool_timeout":         int(_tt_upd) if _tt_upd else p.get("tool_timeout"),
                 "long_memory":          bool(body.get("long_memory", p.get("long_memory", True))),
+                "agent_cache":          bool(body.get("agent_cache", p.get("agent_cache", False))),
+                "agent_graphrag":       bool(body.get("agent_graphrag", p.get("agent_graphrag", False))),
+                "agent_ingest":         bool(body.get("agent_ingest", p.get("agent_ingest", False))),
             })
             save_profiles(profiles)
             return {"ok": True, "restart_hint": True}
@@ -2146,6 +2158,9 @@ async def api_create_expert_template(request: Request):
         "graphrag_max_chars":      body.get("graphrag_max_chars", 0),
         "history_max_turns":       body.get("history_max_turns", 0),
         "history_max_chars":       body.get("history_max_chars", 0),
+        "agent_cache":             body.get("agent_cache", False),
+        "agent_graphrag":          body.get("agent_graphrag", False),
+        "agent_ingest":            body.get("agent_ingest", False),
     }
     templates.append(tmpl)
     save_expert_templates(templates)
@@ -2177,6 +2192,9 @@ async def api_export_expert_templates(ids: str = ""):
             "graphrag_max_chars":      t.get("graphrag_max_chars", 0),
             "history_max_turns":       t.get("history_max_turns", 0),
             "history_max_chars":       t.get("history_max_chars", 0),
+            "agent_cache":             t.get("agent_cache", False),
+            "agent_graphrag":          t.get("agent_graphrag", False),
+            "agent_ingest":            t.get("agent_ingest", False),
         }
         for t in templates
     ]
@@ -2250,6 +2268,9 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "graphrag_max_chars":      item.get("graphrag_max_chars", 0),
             "history_max_turns":       item.get("history_max_turns", 0),
             "history_max_chars":       item.get("history_max_chars", 0),
+            "agent_cache":             item.get("agent_cache", False),
+            "agent_graphrag":          item.get("agent_graphrag", False),
+            "agent_ingest":            item.get("agent_ingest", False),
         })
         existing_names.add(name)
         imported += 1
@@ -2283,6 +2304,9 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["graphrag_max_chars"]     = body.get("graphrag_max_chars",    t.get("graphrag_max_chars", 0))
             t["history_max_turns"]      = body.get("history_max_turns",     t.get("history_max_turns", 0))
             t["history_max_chars"]      = body.get("history_max_chars",     t.get("history_max_chars", 0))
+            t["agent_cache"]            = body.get("agent_cache",           t.get("agent_cache", False))
+            t["agent_graphrag"]         = body.get("agent_graphrag",        t.get("agent_graphrag", False))
+            t["agent_ingest"]           = body.get("agent_ingest",          t.get("agent_ingest", False))
             save_expert_templates(templates)
             return {"ok": True}
     raise HTTPException(status_code=404, detail="Template not found")
@@ -5886,9 +5910,12 @@ async def user_api_create_template(request: Request, user_id: str = Depends(requ
 
 
 @app.get("/user/api/templates/export")
-async def user_api_export_templates(user_id: str = Depends(require_user_login)):
+async def user_api_export_templates(ids: str = "", user_id: str = Depends(require_user_login)):
     await _require_template_access(user_id, None)
     templates = await db.list_user_templates(user_id)
+    if ids:
+        id_set = {i.strip() for i in ids.split(",") if i.strip()}
+        templates = [t for t in templates if t.get("id") in id_set]
     items = []
     for t in templates:
         try:
@@ -6080,16 +6107,29 @@ async def user_cc_profiles_page(request: Request, user_id: str = Depends(require
             })
     permitted_servers = _get_permitted_servers_for_user(perms)
     tmpl_ids = set(perms.get("expert_template", []))
-    # Admin-granted templates
-    permitted_expert_templates = [t for t in load_expert_templates() if t["id"] in tmpl_ids]
+    # Admin-granted templates — normalized to {id, name, has_tool_agent} so the
+    # CC editor can offer tool-model auto-derivation for templates with a tool_agent.
+    permitted_expert_templates = [
+        {
+            "id":             t["id"],
+            "name":           t.get("name", t["id"]),
+            "has_tool_agent": bool((t.get("experts") or {}).get("tool_agent")),
+        }
+        for t in load_expert_templates() if t["id"] in tmpl_ids
+    ]
     # User's own templates (stored in user_expert_templates, never in perms)
     own_user_templates = await db.list_user_templates(user_id)
     own_tmpl_ids = {t["id"] for t in permitted_expert_templates}
     for ut in own_user_templates:
         if ut["id"] not in own_tmpl_ids:
+            try:
+                _ut_cfg = json.loads(ut.get("config_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                _ut_cfg = {}
             permitted_expert_templates.append({
-                "id":   ut["id"],
-                "name": ut["name"],
+                "id":             ut["id"],
+                "name":           ut["name"],
+                "has_tool_agent": bool((_ut_cfg.get("experts") or {}).get("tool_agent")),
             })
     return TEMPLATES.TemplateResponse(request, "user_portal.html", {
         "page":                   "cc_profiles",
@@ -6177,6 +6217,9 @@ async def user_api_create_cc_profile(request: Request, user_id: str = Depends(re
         "tool_choice":          body.get("tool_choice", "auto"),
         "accepted_models":      accepted_models,
         "expert_template_id":   expert_template_id,
+        "agent_cache":          bool(body.get("agent_cache", False)),
+        "agent_graphrag":       bool(body.get("agent_graphrag", False)),
+        "agent_ingest":         bool(body.get("agent_ingest", False)),
     }
     profile = await db.create_user_cc_profile(user_id, name, config)
     await db.grant_permission(user_id, "cc_profile", profile["id"])
@@ -6266,6 +6309,9 @@ async def user_api_import_cc_profiles(
             "tool_choice":          cfg.get("tool_choice", "auto"),
             "expert_template_id":   (cfg.get("expert_template_id") or "").strip(),
             "tool_timeout":         int(_tt) if _tt else None,
+            "agent_cache":          bool(cfg.get("agent_cache", False)),
+            "agent_graphrag":       bool(cfg.get("agent_graphrag", False)),
+            "agent_ingest":         bool(cfg.get("agent_ingest", False)),
         }
         profile = await db.create_user_cc_profile(user_id, name, config)
         await db.grant_permission(user_id, "cc_profile", profile["id"])
@@ -6320,6 +6366,9 @@ async def user_api_update_cc_profile(profile_id: str, request: Request, user_id:
         "tool_choice":          body.get("tool_choice", old_cfg.get("tool_choice", "auto")),
         "accepted_models":      accepted_models if "accepted_models" in body else old_cfg.get("accepted_models", []),
         "expert_template_id":   expert_template_id if "expert_template_id" in body else old_cfg.get("expert_template_id", ""),
+        "agent_cache":          bool(body.get("agent_cache", old_cfg.get("agent_cache", False))),
+        "agent_graphrag":       bool(body.get("agent_graphrag", old_cfg.get("agent_graphrag", False))),
+        "agent_ingest":         bool(body.get("agent_ingest", old_cfg.get("agent_ingest", False))),
     }
     profile = await db.update_user_cc_profile(profile_id, user_id, name, config)
     if not profile:
@@ -6367,7 +6416,11 @@ async def user_api_clear_default_cc_profile(user_id: str = Depends(require_user_
 
 @app.get("/user/api/permitted-models")
 async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
-    """Returns all llm@host options for the user's permitted servers and private connections."""
+    """Returns llm@host options and template:id entries for the user's CC tool-model picker.
+
+    Expert Templates with a tool_agent expert are included as "template:<id>" entries
+    so users can select a template-backed MoE stack as their CC tool model.
+    """
     perms = await db.get_permissions_map(user_id)
     servers = _get_permitted_servers_for_user(perms)
     results: set[str] = set()
@@ -6407,6 +6460,25 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             if not model_id:
                 continue
             results.add(f"{model_id}@{conn['name']}")
+    # Expert Templates accessible to this user that contain a tool_agent expert.
+    # Returned as "template:<id>" so the CC tool-model picker can show them.
+    _tmpl_ids = set(perms.get("expert_template", []))
+    _own_tmpls = [t for t in await db.list_user_templates(user_id) if t.get("is_active", True)]
+    _own_tmpl_ids = {t["id"] for t in _own_tmpls}
+    _all_accessible_tmpl_ids = _tmpl_ids | _own_tmpl_ids
+    for _tmpl in load_expert_templates():
+        if _tmpl.get("id") not in _all_accessible_tmpl_ids:
+            continue
+        _experts = _tmpl.get("experts") or {}
+        if "tool_agent" in _experts and _experts["tool_agent"]:
+            results.add(f"template:{_tmpl['id']}")
+    for _ut in _own_tmpls:
+        try:
+            _ut_cfg = json.loads(_ut.get("config_json") or "{}")
+        except Exception:
+            continue
+        if "tool_agent" in (_ut_cfg.get("experts") or {}) and _ut_cfg["experts"]["tool_agent"]:
+            results.add(f"template:{_ut['id']}")
     return sorted(results)
 
 
@@ -6715,6 +6787,20 @@ async def api_available_llms_rich(user_id: str = Depends(require_user_login)):
 
     result = []
     for llm_id in plain:
+        if llm_id.startswith("template:"):
+            # Template-backed tool model entries — resolve display name from template.
+            _tid = llm_id.removeprefix("template:")
+            _tmpl = next(
+                (t for t in load_expert_templates() if t.get("id") == _tid), None
+            )
+            _tmpl_name = _tmpl.get("name", _tid) if _tmpl else _tid
+            result.append({
+                "id":           llm_id,
+                "tags":         ["template", "moe"],
+                "context_window": None,
+                "display_name": f"[Template] {_tmpl_name}",
+            })
+            continue
         entry: dict = {"id": llm_id}
         if llm_id in conn_cache:
             entry["tags"]           = conn_cache[llm_id]["tags"]

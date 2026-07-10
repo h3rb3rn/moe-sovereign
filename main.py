@@ -413,16 +413,23 @@ if _EDGE_MODE:
     default_ef       = None
     cache_collection = chroma_client.get_or_create_collection("moe_fact_cache")
     route_collection = chroma_client.get_or_create_collection("task_type_prototypes")
+    # Augmented Tool Path cache (agentic clients) — own namespace, never mixed
+    # with the interactive cache_collection. See services/agent_enrichment.py.
+    agent_cache_collection = chroma_client.get_or_create_collection("moe_agent_cache")
 else:
     chroma_client    = chromadb.HttpClient(host=os.getenv("CHROMA_HOST", "chromadb-vector"), port=8000)
     default_ef       = embedding_functions.DefaultEmbeddingFunction()
     cache_collection = chroma_client.get_or_create_collection(name="moe_fact_cache", embedding_function=default_ef)
     # Second collection for semantic pre-routing: prototypical task queries per category
     route_collection = chroma_client.get_or_create_collection(name="task_type_prototypes", embedding_function=default_ef)
+    # Augmented Tool Path cache (agentic clients) — own namespace, never mixed
+    # with the interactive cache_collection. See services/agent_enrichment.py.
+    agent_cache_collection = chroma_client.get_or_create_collection(name="moe_agent_cache", embedding_function=default_ef)
 
 import state as _state_ref
 _state_ref.cache_collection = cache_collection
 _state_ref.route_collection = route_collection
+_state_ref.agent_cache_collection = agent_cache_collection
 
 # MODES, _MODEL_ID_TO_MODE imported from config.py
 from config import MODES, _MODEL_ID_TO_MODE
@@ -1185,6 +1192,7 @@ from routes.context_search   import router as _context_search_router
 from routes.embeddings       import router as _embeddings_router
 from routes.gates            import router as _gates_router
 from routes.handover         import router as _handover_router
+from routes.kpi              import router as _kpi_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
@@ -1201,6 +1209,7 @@ app.include_router(_context_search_router)
 app.include_router(_gates_router)
 app.include_router(_handover_router)
 app.include_router(_embeddings_router)
+app.include_router(_kpi_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
 # Added in the original order; Starlette executes add_middleware in reverse.
@@ -1388,11 +1397,20 @@ async def _stream_native_llm(
                 _prev_text_turns = sum(
                     1 for _m in _native_msgs
                     if _m.get("role") == "assistant" and not _m.get("tool_calls")
-                    and len((_m.get("content") or "")) > 200
+                    and len(_m.get("content") or "") > 200
+                    if not isinstance(_m.get("content"), list)
                 )
                 for _di in range(len(_native_msgs) - 1, -1, -1):
                     if _native_msgs[_di].get("role") == "user":
-                        _user_text = (_native_msgs[_di].get("content") or "").strip()
+                        _raw_content = _native_msgs[_di].get("content") or ""
+                        # content can be a list (multi-part: text + images/tool_results)
+                        if isinstance(_raw_content, list):
+                            _user_text = " ".join(
+                                b.get("text", "") for b in _raw_content
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            ).strip()
+                        else:
+                            _user_text = str(_raw_content).strip()
                         _is_short_followup = _prev_text_turns >= 1 and len(_user_text) < 50
                         if _is_short_followup:
                             _agent_rule = (
@@ -1408,10 +1426,18 @@ async def _stream_native_llm(
                                 "without an actual tool call in the same response. "
                                 "Only use tools from the approved list — never invent tool or API names.]"
                             )
-                        _native_msgs[_di] = {
-                            **_native_msgs[_di],
-                            "content": _user_text + "\n\n" + _agent_rule,
-                        }
+                        # Append agent rule while preserving list structure
+                        if isinstance(_raw_content, list):
+                            _new_content = list(_raw_content)
+                            for _bi in range(len(_new_content) - 1, -1, -1):
+                                if isinstance(_new_content[_bi], dict) and _new_content[_bi].get("type") == "text":
+                                    _new_content[_bi] = {**_new_content[_bi], "text": _new_content[_bi].get("text", "") + "\n\n" + _agent_rule}
+                                    break
+                            else:
+                                _new_content.append({"type": "text", "text": _agent_rule})
+                        else:
+                            _new_content = _user_text + "\n\n" + _agent_rule
+                        _native_msgs[_di] = {**_native_msgs[_di], "content": _new_content}
                         break
             # Enable thinking when the system prompt is complex (>2000 chars),
             # e.g. when a third-party agent like Odysseus sends its own full

@@ -175,6 +175,7 @@ services:
       - ${MOE_DATA_ROOT}/chroma-onnx-cache:/app/.cache/chroma
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
+      - ./services:/app/services:ro
       - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
       - ./models:/app/models:ro
     depends_on:
@@ -389,6 +390,9 @@ services:
       - ./.env:/app/.env:rw
       - ./.moe-services.json:/app/.moe-services.json:ro
       - ./services:/app/services:ro
+      - ./admin_ui/app.py:/app/app.py:ro
+      - ./admin_ui/database.py:/app/database.py:ro
+      - ./admin_ui/templates:/app/templates:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw

@@ -47,6 +47,14 @@ from config import (
     _FUZZY_VECTOR_THRESHOLD, _FUZZY_GRAPH_THRESHOLD,
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
     CC_CONTEXT_INDEX_ENABLED,
+    AGENT_GRAPHRAG_MAX_CHARS, AGENT_GRAPHRAG_TIMEOUT_S,
+)
+from context_budget import graphrag_budget_chars
+from services.agent_enrichment import (
+    classify_turn as _classify_agent_turn,
+    agent_graph_context,
+    agent_writeback,
+    agent_cache_lookup,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -267,6 +275,115 @@ def _normalise_tool_calls_response(upstream: dict, chat_id: str, tool_model: str
     return upstream
 
 
+async def _wrap_completion_as_sse(completion: dict, chat_id: str, model: str):
+    """Wrap a single non-streaming chat-completion dict as an SSE chunk stream.
+
+    Factored out of _handle_tool_calls (previously an inline `_sse_wrap`
+    closure) so the Augmented Tool Path cache-hit response (see
+    services/agent_enrichment.py::agent_cache_lookup) can reuse the exact
+    same, already-client-tested chunk sequence instead of hand-rolling a new
+    one. Behaviour is unchanged from the original inline version.
+    """
+    choices = completion.get("choices", [{}])
+    ch = choices[0] if choices else {}
+    msg = ch.get("message", {})
+    finish_reason = ch.get("finish_reason", "stop")
+    created = completion.get("created", int(time.time()))
+    model_id = completion.get("model", model)
+
+    # Opening delta (role)
+    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+
+    # If tool_calls: emit as a single delta chunk
+    tool_calls = msg.get("tool_calls")
+    if tool_calls:
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'tool_calls': tool_calls, 'content': msg.get('content', '')}, 'finish_reason': None}]})}\n\n"
+    elif msg.get("content"):
+        # Plain text response — emit content
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
+
+    # Finish chunk
+    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
+
+    # Usage chunk (separate, choices=[])
+    usage = completion.get("usage", {})
+    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [], 'usage': usage})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+async def _wrap_deregister_on_stream_end(body_iterator, chat_id: str):
+    """Passes an SSE chunk stream through unchanged, deregistering the
+    request from live monitoring (`moe:active:{chat_id}`) once the stream
+    ends — including on early client disconnect, since Starlette calls
+    `aclose()` on the body iterator in that case too, which fires this
+    generator's `finally` block just as it would on a normal completion.
+
+    Pre-existing gap this closes: the tool-calling passthrough branch in
+    chat_completions() registers every request via _register_active_request
+    but previously had no matching deregister call on any of its return
+    paths — entries sat in the "Laufende API-Anfragen" admin table until
+    their 2h Redis TTL expired, even though the response had long since
+    been fully delivered to the client.
+    """
+    try:
+        async for chunk in body_iterator:
+            yield chunk
+    finally:
+        asyncio.create_task(_deregister_active_request(chat_id))
+
+
+async def _wrap_agent_writeback_sse(
+    body_iterator, query: str, scope: str, tenant_id, user_id: str,
+    source_model: str, session_id: str,
+):
+    """Passes an SSE chunk stream through byte-for-byte unchanged while
+    accumulating the assistant's text content, firing agent_writeback() once
+    at [DONE] — only if the turn ended cleanly (finish_reason=='stop', no
+    tool_calls emitted). Works uniformly for both SSE producers used by
+    _handle_tool_calls (_stream_tool_synthesis's raw upstream passthrough and
+    _sse_wrap's single-response wrapper) since both emit the same
+    `data: {...}\\n\\n` / `data: [DONE]\\n\\n` chunk format.
+
+    Parsing failures on individual chunks are swallowed — the passthrough to
+    the client must never be affected by the write-back accumulation.
+    """
+    content_parts: list = []
+    saw_tool_calls = False
+    finish_reason = None
+    async for chunk in body_iterator:
+        yield chunk
+        try:
+            text = chunk.decode() if isinstance(chunk, (bytes, bytearray)) else chunk
+            for line in text.split("\n"):
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[len("data: "):]
+                if payload == "[DONE]":
+                    continue
+                data = json.loads(payload)
+                choices = data.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                if delta.get("tool_calls"):
+                    saw_tool_calls = True
+                if delta.get("content"):
+                    content_parts.append(delta["content"])
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = fr
+        except Exception:
+            pass
+
+    if not saw_tool_calls and finish_reason == "stop" and content_parts:
+        asyncio.create_task(agent_writeback(
+            query, "".join(content_parts), scope, tenant_id, user_id, source_model,
+            session_id or "", state.redis_client, state.agent_cache_collection,
+            path="openai",
+        ))
+
+
 async def _handle_tool_calls(
     request: "ChatCompletionRequest",
     chat_id: str,
@@ -278,6 +395,7 @@ async def _handle_tool_calls(
     content_token: str = "ollama",
     content_system_prompt: str = "",
     num_ctx: int = 0,
+    system_augment: str = "",
 ):
     """Direct LLM passthrough that preserves tool_calls in the response.
 
@@ -291,10 +409,23 @@ async def _handle_tool_calls(
     (no KANBAN_GUIDANCE) to generate the actual answer, then wraps it in
     a synthetic kanban_complete call.
 
+    system_augment (Augmented Tool Path, opt-in): extra text merged into the
+    single existing system message (or inserted as a new one) — used to inject
+    GraphRAG context ahead of the tool model. See services/agent_enrichment.py.
+
     Returns a StreamingResponse (SSE) when request.stream is True, otherwise
     a plain dict. Callers must check the type and wrap accordingly.
     """
     messages = _build_tool_messages(request)
+    if system_augment:
+        _sys_idx = next((i for i, m in enumerate(messages) if m.get("role") == "system"), -1)
+        if _sys_idx >= 0:
+            messages[_sys_idx] = {
+                **messages[_sys_idx],
+                "content": (messages[_sys_idx].get("content") or "") + "\n\n" + system_augment,
+            }
+        else:
+            messages = [{"role": "system", "content": system_augment}] + messages
 
     # When the conversation already contains tool-result turns (role='tool'), the
     # model must synthesise those results into a text response — not call more
@@ -750,34 +881,9 @@ async def _handle_tool_calls(
     # Client requested streaming (SSE) — wrap the single non-streaming
     # response as a minimal SSE stream so clients using stream=True
     # (e.g. Hermes) receive the expected text/event-stream format.
-    async def _sse_wrap():
-        choices = upstream.get("choices", [{}])
-        ch = choices[0] if choices else {}
-        msg = ch.get("message", {})
-        finish_reason = ch.get("finish_reason", "stop")
-        created = upstream.get("created", int(time.time()))
-        model_id = upstream.get("model", tool_model)
-
-        # Opening delta (role)
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
-
-        # If tool_calls: emit as a single delta chunk
-        tool_calls = msg.get("tool_calls")
-        if tool_calls:
-            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'tool_calls': tool_calls, 'content': msg.get('content', '')}, 'finish_reason': None}]})}\n\n"
-        elif msg.get("content"):
-            # Plain text response — emit content
-            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
-
-        # Finish chunk
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]})}\n\n"
-
-        # Usage chunk (separate, choices=[])
-        usage = upstream.get("usage", {})
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model_id, 'choices': [], 'usage': usage})}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(_sse_wrap(), media_type="text/event-stream")
+    return StreamingResponse(
+        _wrap_completion_as_sse(upstream, chat_id, tool_model), media_type="text/event-stream",
+    )
 
 
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
@@ -1558,6 +1664,105 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _has_tools = bool(request.tools) or any(
         getattr(m, "role", None) == "tool" for m in request.messages
     )
+    # Augmented Tool Path: classify the turn once (initial_task vs mid_loop) and,
+    # on the initial turn only, fetch GraphRAG context to inject into the tool
+    # model's system prompt — opt-in per expert template (agent_graphrag),
+    # default off. Mirrors the Anthropic-path wiring in services/pipeline/anthropic.py.
+    _agent_system_augment = ""
+    if _has_tools:
+        _agent_sys_text = next(
+            (getattr(m, "content", "") for m in request.messages if getattr(m, "role", None) == "system"),
+            "",
+        )
+        _agent_turn = _classify_agent_turn(
+            request.messages, request.tools, api="openai",
+            user_id=user_id, system_text=_agent_sys_text if isinstance(_agent_sys_text, str) else "",
+        )
+
+        # ── Augmented Tool Path: cache-read hook (opt-in, off by default) ──
+        # Only served on the initial task turn for a genuinely informational
+        # query (TurnInfo.cacheable) — tool_use decisions are never
+        # cache-served. Excluded whenever the client forces tool use via
+        # tool_choice, since it then expects a tool_use response, not text.
+        if (
+            _tmpl_prompts.get("agent_cache") and _agent_turn.kind == "initial_task"
+            and _agent_turn.cacheable
+            and request.tool_choice in (None, "auto")
+        ):
+            _agent_cache_hit = await agent_cache_lookup(
+                _agent_turn.query, _agent_turn.scope,
+                state.redis_client, state.agent_cache_collection, path="openai",
+            )
+            if _agent_cache_hit:
+                logger.info(
+                    "chat_completions: Augmented Tool Path cache hit (scope=%s, chars=%d)",
+                    _agent_turn.scope, len(_agent_cache_hit),
+                )
+                _agent_hit_completion = {
+                    "id": chat_id, "object": "chat.completion",
+                    "created": int(time.time()), "model": request.model,
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": _agent_cache_hit}}],
+                    "usage": {"prompt_tokens": 0,
+                              "completion_tokens": len(_agent_cache_hit) // 4,
+                              "total_tokens": len(_agent_cache_hit) // 4},
+                }
+                _agent_hit_headers = dict(_moe_resp_headers or {})
+                _agent_hit_headers["X-MoE-Agent-Cache"] = "hit"
+                if request.stream:
+                    return StreamingResponse(
+                        _wrap_completion_as_sse(_agent_hit_completion, chat_id, request.model),
+                        media_type="text/event-stream", headers=_agent_hit_headers,
+                    )
+                return JSONResponse(content=_agent_hit_completion, headers=_agent_hit_headers)
+
+        if _tmpl_prompts.get("agent_graphrag") and state.graph_manager is not None and _agent_turn.query:
+            _agent_sess_ctx_key = f"cc:graphctx:{session_id}" if session_id else ""
+            try:
+                if _agent_turn.kind == "initial_task":
+                    _agent_tenant_ids = (
+                        ([f"user:{user_id}"] if user_id and user_id != "anon" else [])
+                        + [t for t in user_perms.get("graph_tenant", []) if t != f"user:{user_id}"]
+                    )
+                    _agent_tool_model = (
+                        (_tmpl_prompts.get("tool_expert_model_override") or "").strip()
+                        or (_tmpl_prompts.get("judge_model_override") or "").strip()
+                        or JUDGE_MODEL
+                    )
+                    _agent_max_chars = min(
+                        AGENT_GRAPHRAG_MAX_CHARS,
+                        graphrag_budget_chars(_agent_tool_model, query_chars=len(_agent_turn.query)),
+                    )
+                    _agent_system_augment = await agent_graph_context(
+                        _agent_turn.query, _agent_tenant_ids, session_id,
+                        state.redis_client, state.graph_manager,
+                        max_chars=_agent_max_chars, timeout_s=AGENT_GRAPHRAG_TIMEOUT_S,
+                    )
+                    logger.info(
+                        "chat_completions: Augmented Tool Path GraphRAG %d chars (session=%s, tenant_ids=%s)",
+                        len(_agent_system_augment), (session_id or "")[:8], _agent_tenant_ids,
+                    )
+                    if state.redis_client and _agent_sess_ctx_key:
+                        if _agent_system_augment:
+                            asyncio.create_task(
+                                state.redis_client.setex(_agent_sess_ctx_key, 3600, _agent_system_augment)
+                            )
+                        else:
+                            asyncio.create_task(state.redis_client.delete(_agent_sess_ctx_key))
+                elif state.redis_client and _agent_sess_ctx_key:
+                    _agent_cached = await state.redis_client.get(_agent_sess_ctx_key)
+                    _agent_system_augment = (
+                        (_agent_cached if isinstance(_agent_cached, str) else _agent_cached.decode())
+                        if _agent_cached else ""
+                    )
+            except Exception as _agent_ge:
+                logger.debug("chat_completions: agent graph context skipped: %s", _agent_ge)
+                _agent_system_augment = ""
+        if _agent_system_augment:
+            _agent_system_augment = (
+                f"[KNOWLEDGE GRAPH — structured facts & past strategies]\n{_agent_system_augment}\n"
+                "[End of knowledge graph context.]"
+            )
     if _has_tools:
         # Prefer dedicated tool_expert over judge for tool-call passthrough.
         # tool_expert_model supports the same model@endpoint syntax as judge/planner
@@ -1609,10 +1814,45 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 content_token=_content_token,
                 content_system_prompt=_content_sys,
                 num_ctx=int(_tc_num_ctx),
+                system_augment=_agent_system_augment,
             )
             PROM_REQUESTS.labels(mode="tool", cache_hit="false",
                                  user_id=(user_id or "anon")).inc()
             PROM_RESPONSE_TIME.labels(mode="tool").observe(time.monotonic() - _t_tc)
+
+            # ── Augmented Tool Path: write-back (fire-and-forget) ─────────────
+            # Opt-in (template agent_ingest, default off). Only on a clean turn
+            # end: finish_reason=='stop', no tool_calls emitted.
+            _agent_ingest_on = bool(_tmpl_prompts.get("agent_ingest") and _agent_turn.query)
+            if _agent_ingest_on:
+                _agent_tenant_id = f"user:{user_id}" if user_id and user_id != "anon" else None
+                if isinstance(_tc_resp, StreamingResponse):
+                    _tc_resp.body_iterator = _wrap_agent_writeback_sse(
+                        _tc_resp.body_iterator, _agent_turn.query, _agent_turn.scope,
+                        _agent_tenant_id, user_id, _tc_model, session_id,
+                    )
+                else:
+                    _tc_choice = (_tc_resp.get("choices") or [{}])[0]
+                    _tc_msg = _tc_choice.get("message", {})
+                    if (_tc_choice.get("finish_reason") == "stop"
+                            and not _tc_msg.get("tool_calls") and _tc_msg.get("content")):
+                        asyncio.create_task(agent_writeback(
+                            _agent_turn.query, _tc_msg["content"], _agent_turn.scope,
+                            _agent_tenant_id, user_id, _tc_model, session_id or "",
+                            state.redis_client, state.agent_cache_collection, path="openai",
+                        ))
+
+            # ── Live-monitoring deregistration (fixes pre-existing gap) ───────
+            # This branch previously had no _deregister_active_request call on
+            # any return path — entries stayed "active" in the admin monitoring
+            # table until their 2h TTL, even after the response was fully sent.
+            if isinstance(_tc_resp, StreamingResponse):
+                _tc_resp.body_iterator = _wrap_deregister_on_stream_end(
+                    _tc_resp.body_iterator, chat_id,
+                )
+            else:
+                asyncio.create_task(_deregister_active_request(chat_id))
+
             # _handle_tool_calls returns StreamingResponse for stream=True, dict otherwise
             if isinstance(_tc_resp, StreamingResponse):
                 if _moe_resp_headers:

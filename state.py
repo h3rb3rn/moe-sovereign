@@ -43,6 +43,8 @@ app_graph = None  # type: Optional[Any]  # avoids langgraph import at module lev
 # ChromaDB collections — set at module level in main.py (before lifespan)
 cache_collection = None   # "moe_fact_cache" — used by feedback, cache lookup
 route_collection = None   # "task_type_prototypes" — used by semantic routing
+agent_cache_collection = None   # "moe_agent_cache" — Augmented Tool Path cache (agentic clients only,
+                                 # separate namespace from cache_collection — see services/agent_enrichment.py)
 
 # Provider rate-limit state populated from response headers at request time.
 # Format: {endpoint_name: {"remaining_tokens": int, "reset_time": float, ...}}

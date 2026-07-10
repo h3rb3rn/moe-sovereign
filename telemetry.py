@@ -102,6 +102,38 @@ FROM routing_quality_stats
 WHERE template_name = %s AND complexity = %s
 """
 
+_ENSURE_KPI_SNAPSHOT_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS moe_kpi_snapshots (
+    id           SERIAL       PRIMARY KEY,
+    time_window  TEXT         NOT NULL,
+    snapshot     JSONB        NOT NULL,
+    computed_at  TIMESTAMPTZ  DEFAULT now()
+);
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE tablename = 'moe_kpi_snapshots'
+          AND indexname = 'moe_kpi_snapshots_window_time'
+    ) THEN
+        CREATE INDEX moe_kpi_snapshots_window_time
+            ON moe_kpi_snapshots (time_window, computed_at DESC);
+    END IF;
+END$$;
+"""
+
+_INSERT_KPI_SNAPSHOT_SQL = """
+INSERT INTO moe_kpi_snapshots (time_window, snapshot, computed_at)
+VALUES (%s, %s, now())
+"""
+
+_GET_KPI_SNAPSHOT_SQL = """
+SELECT snapshot, computed_at
+FROM moe_kpi_snapshots
+WHERE time_window = %s
+ORDER BY computed_at DESC
+LIMIT 1
+"""
+
 _UPDATE_RATING_SQL = """
 UPDATE routing_telemetry SET user_rating = %s WHERE response_id = %s
 """
@@ -122,7 +154,8 @@ async def ensure_causal_columns(pool) -> None:
             await conn.execute(_ENSURE_CAUSAL_COLUMNS_SQL)
             await conn.execute(_ENSURE_TOOL_CALLS_COLUMN_SQL)
             await conn.execute(_ENSURE_QUALITY_TABLE_SQL)
-        logger.info("✅ Causal-path, tool-calls columns and quality stats table ensured")
+            await conn.execute(_ENSURE_KPI_SNAPSHOT_TABLE_SQL)
+        logger.info("✅ Causal-path, tool-calls columns, quality stats and KPI snapshot table ensured")
     except Exception as exc:
         logger.warning("Causal-path column migration failed: %s", exc)
 
@@ -264,3 +297,29 @@ async def get_quality_hint(pool, template_name: str, complexity: str) -> str:
     except Exception as exc:
         logger.debug("quality hint query failed: %s", exc)
     return ""
+
+
+async def save_kpi_snapshot(pool, window: str, snapshot_dict: dict) -> None:
+    """Persist a KPI snapshot to moe_kpi_snapshots for historical comparison."""
+    if pool is None:
+        return
+    try:
+        async with pool.connection() as conn:
+            await conn.execute(_INSERT_KPI_SNAPSHOT_SQL, (window, json.dumps(snapshot_dict, ensure_ascii=False)))
+    except Exception as exc:
+        logger.debug("kpi snapshot save failed: %s", exc)
+
+
+async def get_last_kpi_snapshot(pool, window: str) -> dict | None:
+    """Retrieve the most recent KPI snapshot for the given window, or None."""
+    if pool is None:
+        return None
+    try:
+        async with pool.connection() as conn:
+            cur = await conn.execute(_GET_KPI_SNAPSHOT_SQL, (window,))
+            row = await cur.fetchone()
+            if row:
+                return {"snapshot": row[0], "computed_at": row[1].isoformat() if row[1] else None}
+    except Exception as exc:
+        logger.debug("kpi snapshot load failed: %s", exc)
+    return None

@@ -1805,6 +1805,7 @@ def _get_user_cost_factor(perms: dict) -> float:
                 max_factor = max(max_factor, server_map[srv])
         return max_factor
     except Exception:
+        logger.exception("_get_user_cost_factor failed — defaulting to 1.0")
         return 1.0
 
 

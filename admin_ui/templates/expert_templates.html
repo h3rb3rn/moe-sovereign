@@ -271,6 +271,12 @@
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_mission_context"><label class="form-check-label small" for="ct_enable_mission_context">Mission Context</label></div></div>
         </div>
         <div class="row g-2 mt-1">
+          <div class="col-12"><small class="text-muted fw-bold">Augmented Tool Path <span class="fw-normal">(opt-in — agentic tool-call fast path enrichment)</span></small></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_cache"><label class="form-check-label small" for="ct_agent_cache">Agent Cache</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_graphrag"><label class="form-check-label small" for="ct_agent_graphrag">Agent GraphRAG</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_ingest"><label class="form-check-label small" for="ct_agent_ingest">Agent Ingestion</label></div></div>
+        </div>
+        <div class="row g-2 mt-1">
           <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
           <div class="col-6">
             <div class="form-check form-switch">
@@ -737,6 +743,9 @@ async function createTemplate() {
         enable_web_research:     document.getElementById('ct_enable_web_research').checked,
         force_think:             document.getElementById('ct_force_think').checked,
         enable_mission_context:  document.getElementById('ct_enable_mission_context').checked,
+        agent_cache:             document.getElementById('ct_agent_cache').checked,
+        agent_graphrag:          document.getElementById('ct_agent_graphrag').checked,
+        agent_ingest:            document.getElementById('ct_agent_ingest').checked,
         graphrag_max_chars:  parseInt(document.getElementById('ct_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('ct_compression_enabled').checked
                                ? (parseInt(document.getElementById('ct_history_max_turns').value) || 0)
@@ -894,6 +903,27 @@ async function openEditModal(tmplId) {
       </div>
     </div>
     <div class="row g-2 mt-1">
+      <div class="col-12"><small class="text-muted fw-bold">Augmented Tool Path <span class="fw-normal">(opt-in — agentic tool-call fast path enrichment)</span></small></div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_agent_cache" ${tmpl.agent_cache ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_agent_cache">Agent Cache</label>
+        </div>
+      </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_agent_graphrag" ${tmpl.agent_graphrag ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_agent_graphrag">Agent GraphRAG</label>
+        </div>
+      </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_agent_ingest" ${tmpl.agent_ingest ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_agent_ingest">Agent Ingestion</label>
+        </div>
+      </div>
+    </div>
+    <div class="row g-2 mt-1">
       <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
       <div class="col-6">
         <div class="form-check form-switch">
@@ -964,6 +994,9 @@ async function saveEditTemplate() {
         enable_web_research:     document.getElementById('et_enable_web_research').checked,
         force_think:             document.getElementById('et_force_think').checked,
         enable_mission_context:  document.getElementById('et_enable_mission_context').checked,
+        agent_cache:             document.getElementById('et_agent_cache').checked,
+        agent_graphrag:          document.getElementById('et_agent_graphrag').checked,
+        agent_ingest:            document.getElementById('et_agent_ingest').checked,
         graphrag_max_chars:  parseInt(document.getElementById('et_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('et_compression_enabled').checked
                                ? (parseInt(document.getElementById('et_history_max_turns').value) || 0)

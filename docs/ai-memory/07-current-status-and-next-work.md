@@ -2,7 +2,7 @@
 
 Purpose: compact current-state file for context restore.
 
-## Current Status (2026-06-29)
+## Current Status (2026-07-02)
 
 All active tasks are tracked as follows:
 
@@ -25,13 +25,13 @@ Authoritative task details and resolution notes:
 
 1. **TASK-9: Large-Scale Dataset Generation & Judge Model Training (v2)** (highest priority active item)
    - Complete 90k samples generation using the async generator `generate_judge_dataset_async.py` (concurrency 48) on LUMI-G.
-   - Run the chained trigger job `merge_shards_and_train.sh` (Job `19598025`) to merge/deduplicate/trigger DDP training.
-   - Run the 8-GPU QLoRA DDP training on Qwen2.5-32B-Instruct.
+   - Run the chained trigger job `merge_shards_and_train.sh` (Job `19682382`) to merge/deduplicate/trigger DDP training.
+   - Run the 8-GPU QLoRA DDP training on the dense **granite4.1:30b** base.
    - Merge the final adapter and quantize the model to 4-bit (AWQ/GGUF) for deployment on `N04-RTX`.
 
-2. **Phase 3: Planner Model Distillation (1.5B/3B CPU-focused SLM)**
+2. **Phase 3: Planner Model Distillation (Granite-3B CPU-focused SLM)**
    - Synthesize 200k planner pairs using teacher models.
-   - Train a fast local JSON planner model (Qwen2.5-1.5B or SmolLM2-1.7B) to run on MoE-Sovereign VM CPU.
+   - Train a fast local JSON planner model (**granite4.1:3b**) to run on MoE-Sovereign VM CPU.
 
 3. **Follow-ups from TASK-6**:
    - Make personal API key prefix configurable via env vars in `scripts/dataset_generator.py`, `scripts/send_request.py`, `scripts/index_models_metadata.py`.
@@ -51,7 +51,8 @@ Authoritative task details and resolution notes:
 - **2026-06-28**: Fixed deduplication key truncation bug in `merge_shards_and_train.sh` to prevent loss of unique samples.
 - **2026-06-28**: Set up automated SLURM job chaining (`--dependency=afterok:JOB_IDS`) for seamless pipeline execution.
 - **2026-06-29**: Copied singularity container image to local project scratch (14 GB) and updated scripts to use this copy, resolving compute node mount issues (`/pfs/lustref1` unavailable on nodes).
-- **2026-06-29**: Resubmitted async datagen shards (Jobs 19598021-23) and merge-and-trigger job (Job 19598025) with automatic dependencies.
+- **2026-06-29**: The async generator jobs (19598021-23) ran successfully but timed out after 4 hours, generating 50,276 samples (exhibiting ~11,300 samples/hour throughput, an 18x speedup over v1).
+- **2026-07-02**: Resubmitted the generator shards as resume runs (Jobs 19682379-81) to complete the remaining ~40k samples, along with the chained merge/train trigger (Job 19682382).
 
 ## Do Not Forget
 
