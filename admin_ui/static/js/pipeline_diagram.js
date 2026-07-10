@@ -51,11 +51,15 @@
     ],
   };
 
+  // Canvas background is #0d1117 (near-black, matches link_analysis.html's
+  // knowledge-graph diagram). idle/skip fills must stay clearly lighter than
+  // that or the not-yet-reached nodes — the majority at any given moment —
+  // become indistinguishable dark blobs on a dark background.
   const COLORS = {
-    idle:   { bg: '#1f2937', border: '#374151', text: '#6b7280' },
+    idle:   { bg: '#374151', border: '#6b7280', text: '#d1d5db' },
     active: { bg: '#f59e0b', border: '#fbbf24', text: '#1f2937' },
     done:   { bg: '#16a34a', border: '#22c55e', text: '#e5e7eb' },
-    skip:   { bg: '#1f2937', border: '#4b5563', text: '#9ca3af' },
+    skip:   { bg: '#374151', border: '#6b7280', text: '#9ca3af' },
     error:  { bg: '#dc2626', border: '#ef4444', text: '#e5e7eb' },
   };
 
@@ -120,11 +124,11 @@
           selector: 'edge',
           style: {
             'width': 1.5,
-            'line-color': '#374151',
-            'target-arrow-color': '#374151',
+            'line-color': '#6b7280',
+            'target-arrow-color': '#6b7280',
             'target-arrow-shape': 'triangle',
             'curve-style': 'bezier',
-            'opacity': 0.35,
+            'opacity': 0.45,
           },
         },
         {
