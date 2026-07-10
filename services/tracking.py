@@ -124,7 +124,10 @@ async def _record_stage(chat_id: str, stage: str, status: str = "started", detai
 
     Stored separately from moe:active:{chat_id} (as a bounded Redis list) so the
     unfiltered live-monitoring table poll stays untouched; only read on-demand
-    when an admin/user opens the per-request diagram panel.
+    when an admin/user opens the per-request diagram panel. Also used by the
+    Augmented Tool Path (services/pipeline/anthropic.py, chat.py,
+    services/agent_enrichment.py) to trace tool_entry/agent_cache/
+    agent_graphrag/tool_model_call/agent_writeback stages.
     """
     if not chat_id or state.redis_client is None:
         return

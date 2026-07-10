@@ -7,6 +7,7 @@ content in the background and firing agent_writeback() exactly once, only
 on a clean finish_reason=='stop' turn with no tool_calls.
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
@@ -41,7 +42,7 @@ class TestWrapAgentWritebackSSE:
         ]
         with patch("services.pipeline.chat.agent_writeback", new=AsyncMock()):
             out = [c async for c in _wrap_agent_writeback_sse(
-                _achunks(chunks), "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
+                _achunks(chunks), "chat123", "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
             )]
         assert out == chunks
 
@@ -55,9 +56,14 @@ class TestWrapAgentWritebackSSE:
         ]
         with patch("services.pipeline.chat.agent_writeback", new=AsyncMock()) as mock_wb:
             async for _ in _wrap_agent_writeback_sse(
-                _achunks(chunks), "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
+                _achunks(chunks), "chat123", "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
             ):
                 pass
+            # The write-back now runs through _agent_writeback_traced (adds
+            # started/done stage-trace markers around agent_writeback) instead
+            # of a bare create_task(agent_writeback(...)) — one real event-loop
+            # tick is needed for the created task to actually run.
+            await asyncio.sleep(0)
         mock_wb.assert_called_once()
         call_args = mock_wb.call_args.args
         assert call_args[0] == "what is X?"
@@ -74,7 +80,7 @@ class TestWrapAgentWritebackSSE:
         ]
         with patch("services.pipeline.chat.agent_writeback", new=AsyncMock()) as mock_wb:
             async for _ in _wrap_agent_writeback_sse(
-                _achunks(chunks), "fix the bug", "scope1", "user:u1", "u1", "model-a", "sess1",
+                _achunks(chunks), "chat123", "fix the bug", "scope1", "user:u1", "u1", "model-a", "sess1",
             ):
                 pass
         mock_wb.assert_not_called()
@@ -87,7 +93,7 @@ class TestWrapAgentWritebackSSE:
         ]
         with patch("services.pipeline.chat.agent_writeback", new=AsyncMock()) as mock_wb:
             async for _ in _wrap_agent_writeback_sse(
-                _achunks(chunks), "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
+                _achunks(chunks), "chat123", "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
             ):
                 pass
         mock_wb.assert_not_called()
@@ -102,8 +108,9 @@ class TestWrapAgentWritebackSSE:
         ]
         with patch("services.pipeline.chat.agent_writeback", new=AsyncMock()) as mock_wb:
             out = [c async for c in _wrap_agent_writeback_sse(
-                _achunks(chunks), "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
+                _achunks(chunks), "chat123", "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
             )]
+            await asyncio.sleep(0)  # let the traced write-back task run — see comment above
         assert out == chunks
         mock_wb.assert_called_once()
 
@@ -121,7 +128,8 @@ class TestWrapAgentWritebackSSE:
         # reject it in practice — this wrapper only handles SSE accumulation).
         with patch("services.pipeline.chat.agent_writeback", new=AsyncMock()) as mock_wb:
             async for _ in _wrap_agent_writeback_sse(
-                _achunks(chunks), "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
+                _achunks(chunks), "chat123", "what is X?", "scope1", "user:u1", "u1", "model-a", "sess1",
             ):
                 pass
+            await asyncio.sleep(0)  # let the traced write-back task run — see comment above
         mock_wb.assert_called_once()
