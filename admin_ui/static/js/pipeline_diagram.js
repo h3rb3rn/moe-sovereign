@@ -54,6 +54,16 @@
     ],
   };
 
+  // Titled group boxes (Cytoscape compound-node parents) around each branch
+  // — a request only ever travels through exactly one of the two, never
+  // both, so without a label the untouched branch reads as "broken" rather
+  // than "not applicable to this request".
+  const GROUPS = {
+    interactive: { id: 'grp_interactive', baseLabel: 'Interaktive Pipeline (LangGraph)' },
+    agent:       { id: 'grp_agent',       baseLabel: 'Agent Tool Path (Claude Code / OpenCode)' },
+  };
+  const UNUSED_SUFFIX = ' — nicht genutzt in dieser Anfrage';
+
   // Three self-contained palettes, independent of the page's own light/dark
   // theme toggle — selectable per-user, persisted in localStorage. idle/skip
   // fills must always stay clearly distinguishable from canvasBg, since the
@@ -126,7 +136,7 @@
             <button type="button" class="btn-close ms-2" onclick="window.closePipelineDiagram()"></button>
           </div>
           <div class="modal-body p-0">
-            <div id="pd-cy" style="width:100%;height:520px;"></div>
+            <div id="pd-cy" style="width:100%;height:600px;"></div>
           </div>
         </div>
       </div>`;
@@ -138,7 +148,33 @@
   function buildStyle(p) {
     return [
       {
-        selector: 'node',
+        // Compound "group box" nodes — titled containers around the
+        // interactive-pipeline and agent-tool-path node sets, mirroring the
+        // labelled "Parallel Execution" subgraph box style already used in
+        // docs/ARCHITECTURE.md's mermaid diagram. Without these the two
+        // node clusters had no indication of what they represent.
+        selector: ':parent',
+        style: {
+          'background-opacity': 0.08,
+          'background-color':   p.idle.text,
+          'border-width':       1,
+          'border-color':       p.edge,
+          'border-style':       'dashed',
+          'label':              'data(label)',
+          'color':              p.idle.text,
+          'font-size':          12,
+          'font-weight':        'bold',
+          'text-valign':        'top',
+          'text-halign':        'center',
+          'text-margin-y':      -8,
+          'padding':            '28px',
+        },
+      },
+      {
+        // :childless excludes the group-box parent nodes above — without it
+        // this rule (later in the array) would win over the :parent style
+        // for group nodes too, since they also match the plain 'node' tag.
+        selector: 'node:childless',
         style: {
           'background-color': p.idle.bg,
           'border-color':     p.idle.border,
@@ -208,7 +244,11 @@
 
   function initCy() {
     const elements = [
-      ...TOPOLOGY.nodes.map(n => ({ data: { id: n.id, label: n.label, branch: n.branch } })),
+      { data: { id: GROUPS.interactive.id, label: GROUPS.interactive.baseLabel } },
+      { data: { id: GROUPS.agent.id,       label: GROUPS.agent.baseLabel } },
+      ...TOPOLOGY.nodes.map(n => ({
+        data: { id: n.id, label: n.label, branch: n.branch, parent: GROUPS[n.branch].id },
+      })),
       ...TOPOLOGY.edges.map(([s, t]) => ({ data: { id: `${s}__${t}`, source: s, target: t } })),
     ];
     const palette = PALETTES[currentPaletteName];
@@ -295,9 +335,11 @@
     });
 
     const seenStages = new Set(Object.keys(byStage));
+    // First TOPOLOGY node (in array order) whose id was actually traced
+    // determines which branch this request took — a request only ever
+    // travels through one of the two.
     const usedBranch = seenStages.size === 0 ? null
-      : (TOPOLOGY.nodes.find(n => n.id === [...seenStages].find(s => n.id === s))?.branch
-         || (seenStages.has('tool_entry') ? 'agent' : 'interactive'));
+      : (TOPOLOGY.nodes.find(n => seenStages.has(n.id)) || {}).branch || null;
 
     TOPOLOGY.nodes.forEach(n => {
       const cls = classifyStage(byStage[n.id], n.id === latestStage);
@@ -305,6 +347,13 @@
       if (cls !== 'idle') node.addClass(`pd-${cls}`);
       if (usedBranch && n.branch !== usedBranch) node.addClass('pd-dim');
     });
+
+    // Label the untouched branch's group box explicitly instead of leaving
+    // it as an unexplained grey block.
+    cy.getElementById(GROUPS.interactive.id).data('label',
+      GROUPS.interactive.baseLabel + (usedBranch === 'agent' ? UNUSED_SUFFIX : ''));
+    cy.getElementById(GROUPS.agent.id).data('label',
+      GROUPS.agent.baseLabel + (usedBranch === 'interactive' ? UNUSED_SUFFIX : ''));
 
     TOPOLOGY.edges.forEach(([s, t]) => {
       if (seenStages.has(s) && seenStages.has(t)) {
