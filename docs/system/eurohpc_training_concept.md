@@ -503,3 +503,123 @@ footprint in production deployment: one model, two adapters, sequentially loaded
 | `_COMPLEX_TOKEN_MIN` | `complexity_estimator.py:29` | 80 | Word count threshold for complex |
 | `_AIC_TRIVIAL_FLOOR` | `complexity_estimator.py:34` | 0.55 | Kolmogorov compressibility → trivial |
 | `_AIC_COMPLEX_CEILING` | `complexity_estimator.py:35` | 0.15 | Kolmogorov compressibility → complex |
+
+---
+
+## Appendix B: AMD MI250X vs. NVIDIA CUDA — Practical Field Notes (LUMI-G)
+
+> This section documents concrete incompatibilities, workarounds, and best practices discovered
+> during active training runs on LUMI-G (AMD MI250X / ROCm). Many standard HuggingFace
+> tutorials implicitly assume NVIDIA/CUDA. These notes close that gap.
+
+### Hardware Reference
+
+| | AMD MI250X (LUMI-G) | NVIDIA A100 SXM | NVIDIA H100 SXM |
+|---|---|---|---|
+| Architecture | CDNA2 (GCDs, 2 dies/card) | Ampere | Hopper |
+| VRAM / GPU slot | 64 GB HBM2e (per GCD) | 80 GB HBM2e | 80 GB HBM3 |
+| VRAM / Full Node | 512 GB (8 GCDs) | 640 GB (8×A100) | 640 GB (8×H100) |
+| Peak BF16 TFLOPS | ~383 (per GCD) | ~312 | ~989 |
+| Software Stack | ROCm 6.x / HIP | CUDA 12.x | CUDA 12.x |
+| EuroHPC Presence | LUMI (Finland, #1 EU) | MareNostrum 5 | Frontier (US) |
+
+### Compatibility Matrix (as of 2026-07)
+
+| Feature | NVIDIA CUDA | AMD MI250X ROCm | Notes |
+|---------|------------|-----------------|-------|
+| **4-bit QLoRA (BitsAndBytes NF4)** | ✅ Stable | ⚠️ Unstable | ROCm build has sporadic compile errors; avoid for production training. Use BF16 + ZeRO-3 instead. |
+| **Flash Attention 2** | ✅ Native `flash_attn` | ❌ Not available | Use `attn_implementation="eager"`. ~10–15% throughput penalty. ROCm FA via Triton exists but unreliable. |
+| **`device_map="auto"` (Pipeline Parallel)** | ✅ Standard | ❌ OOM risk | ROCm layer distribution is unbalanced on heterogeneous model topologies → use `device_map=None` + ZeRO-3. |
+| **DeepSpeed ZeRO-3** | ⚠️ Rarely needed | ✅ Required for 35B+ | Primary memory strategy on LUMI-G. Stable. |
+| **DeepSpeed ZeRO-3 + Multimodal VLMs** | ⚠️ Edge case | ❌ **Crashes without fix** | See "Known Bug" below. Vision-tower zero-param assertion. |
+| **bfloat16 training** | ✅ A100/H100 | ✅ MI250X | Both stable. Preferred over float16 on AMD. |
+| **RCCL (multi-GPU collective)** | ✅ NCCL 2.x | ✅ RCCL (AMD fork) | Functionally equivalent within a node. No measurable difference. |
+| **mmap of large model files on login nodes** | ✅ Works | ❌ `Cannot allocate memory` | Login nodes are CPU-only with limited RAM. Load models only in batch jobs with `--gpus`. |
+| **`amdsmi` / `rocm-smi` in containers** | n/a | ⚠️ `rsmi_init` exception | Only works when container is bound to GPU resources via SLURM `--gpus`. Benign warning, training not affected. |
+| **Transformers new model types** | ✅ Immediate support | ⚠️ Container lag 2–4 weeks | `qwen3_5_moe` required `my_venv` with a newer Transformers install than the container's `/opt/venv`. |
+
+### Known Bug: DeepSpeed ZeRO-3 + Multimodal VLMs (AMD / All)
+
+**Symptom:** `AssertionError: {'status': 'NOT_AVAILABLE', 'numel': 0, ...}` on one or more ranks
+during the first forward pass.
+
+**Root cause:** Multimodal models (e.g. `Qwen3_5MoeForConditionalGeneration`, `Qwen2-VL`,
+`InternVL2`) contain a vision tower with parameters that are **not allocated** during text-only
+SFT — they have `numel=0` and `shape=(0,)`. DeepSpeed ZeRO-3 partitions all registered
+parameters, attempts to `all_gather` these zero-size tensors at runtime, and fails.
+
+**Why this surfaces on AMD specifically:** On NVIDIA, 4-bit QLoRA (BitsAndBytes) is the standard
+memory strategy for large models. It does not require ZeRO-3. On AMD/ROCm, BitsAndBytes is
+unstable, so ZeRO-3 BF16 is used instead — exposing this bug.
+
+**Fix (two-part):**
+
+```python
+# train_judge_lora.py — inside deepspeed.zero.Init() context, BEFORE get_peft_model()
+_TEXT_MODULE_PREFIXES = (
+    "model.language_model",   # Qwen3_5MoeForConditionalGeneration
+    "language_model",         # older VL variants
+    "model.text_model",       # Qwen2-VL style
+    "model.model",            # plain CausalLM fallback
+    "lm_head",
+)
+for name, param in model.named_parameters():
+    is_text = any(name.startswith(p) for p in _TEXT_MODULE_PREFIXES)
+    if not is_text or param.numel() == 0:
+        param.requires_grad_(False)  # prevents ZeRO-3 from partitioning these
+```
+
+```json
+// deepspeed_zero3.json
+"stage3_param_persistence_threshold": 1e7  // prevents partitioning of small/empty tensors
+```
+
+### Recommended AMD MI250X Training Configuration (35B+ models)
+
+```python
+model = AutoModelForCausalLM.from_pretrained(
+    base_model_path,
+    trust_remote_code=True,
+    attn_implementation="eager",    # Flash-Attn 2 unavailable on ROCm
+    torch_dtype=torch.bfloat16,     # BF16 stable; FP16 not recommended on MI250X
+    device_map=None,                # None required for ZeRO-3; "auto" causes OOM
+)
+```
+
+```json
+// deepspeed_zero3.json — recommended baseline for LUMI-G
+{
+  "bf16": { "enabled": true },
+  "fp16": { "enabled": false },
+  "zero_optimization": {
+    "stage": 3,
+    "overlap_comm": true,
+    "contiguous_gradients": true,
+    "stage3_param_persistence_threshold": 1e7,
+    "stage3_gather_16bit_weights_on_model_save": true,
+    "offload_optimizer": { "device": "none" },
+    "offload_param": { "device": "none" }
+  }
+}
+```
+
+### SLURM Script Patterns for LUMI-G
+
+```bash
+# Mandatory for ROCm GPU visibility in Singularity:
+export ROCR_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export MASTER_ADDR=localhost
+export MASTER_PORT=29500
+
+# Use newer Transformers from my_venv if container version is too old:
+export SINGULARITYENV_PYTHONPATH=/scratch/.../my_venv/lib/python3.12/site-packages:/opt/venv/lib/python3.12/site-packages
+
+# Launch with torchrun (handles rank/world_size injection):
+singularity exec --bind /pfs,/scratch,/projappl,/project "${SIF}" \
+    torchrun --nproc_per_node=8 --master_addr="${MASTER_ADDR}" --master_port="${MASTER_PORT}" \
+    train_judge_lora.py --deepspeed deepspeed_zero3.json --no_4bit ...
+```
+
+> **Note:** Do not use `PYTORCH_ALLOC_CONF=expandable_segments` on ROCm — it is not supported
+> and may cause silent memory corruption or training hangs.
