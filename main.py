@@ -140,8 +140,17 @@ from memory_retrieval import get_memory_store, compute_evicted_turns
 # entry point; see that module for the full rationale.
 class _ChatIdLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        from services.helpers import current_chat_id
-        record.chat_id = current_chat_id.get("") or "-"
+        # Lazy + defensive: log calls fired while services.helpers itself is
+        # still mid-import (e.g. from one of its own imports logging a
+        # startup warning) would otherwise hit a partially-initialized
+        # module and crash with ImportError before current_chat_id exists
+        # in its namespace yet. Those early lines never have a real request
+        # context anyway, so falling back to "-" is correct, not just safe.
+        try:
+            from services.helpers import current_chat_id
+            record.chat_id = current_chat_id.get("") or "-"
+        except Exception:
+            record.chat_id = "-"
         return True
 
 
