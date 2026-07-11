@@ -735,6 +735,14 @@ async def _handle_tool_calls(
     # kanban_complete so the worker always closes the task and never exits with
     # a protocol violation. Models reliably write the file but forget to call
     # the completion tool — this guardrail ensures they always do.
+    #
+    # _kc_available must default to False here: follow-up role="tool" turns
+    # legitimately omit `tools` from the request (see _handle_tool_calls'
+    # docstring), so _has_tool_results can be True while request.tools is
+    # empty — without this default, the read below (`_kc_available if
+    # _has_tool_results else False`) raised UnboundLocalError on every such
+    # turn (confirmed live: repeated 500s on /v1/chat/completions).
+    _kc_available = False
     if _has_tool_results and request.tools:
         tool_results_count = sum(1 for m in messages if m.get("role") == "tool")
         _kc_available = any(
