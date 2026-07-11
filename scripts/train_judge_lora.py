@@ -314,6 +314,32 @@ def main() -> None:
                 torch_dtype=torch.bfloat16,
                 ignore_mismatched_sizes=True,    # Ignore size mismatch check for ZeRO-3 placeholders
             )
+
+            # ── Freeze non-text submodules before PEFT wrapping ────────────────────
+            # Qwen3.5-MoE is multimodal (Qwen3_5MoeForConditionalGeneration):
+            #   model.visual.*   → vision tower  (empty params when text-only)
+            #   model.language_model.* → text LM  (what we want to train)
+            # ZeRO-3 partitions *all* parameters including vision ones that have
+            # numel=0. When the forward pass tries to fetch them they are
+            # NOT_AVAILABLE → AssertionError on rank N.
+            # Fix: freeze all non-language-model modules so ZeRO-3 marks them as
+            # persistent (no fetch needed) and won't try to shard/gather them.
+            # We also unconditionally freeze any param with numel==0 as a safety net.
+            _TEXT_MODULE_PREFIXES = (
+                "model.language_model",   # Qwen3_5MoeForConditionalGeneration
+                "language_model",         # some VL variants
+                "model.text_model",       # older VL variants
+                "model.model",            # plain CausalLM (non-VL)
+                "lm_head",
+            )
+            _frozen_count = 0
+            for name, param in model.named_parameters():
+                is_text = any(name.startswith(p) for p in _TEXT_MODULE_PREFIXES)
+                if not is_text or param.numel() == 0:
+                    param.requires_grad_(False)
+                    _frozen_count += 1
+            logger.info("ZeRO-3: Froze %d non-text / empty parameters (vision tower etc.)", _frozen_count)
+
             lora_cfg = get_lora_config(cfg)
             model = get_peft_model(model, lora_cfg)
     else:
