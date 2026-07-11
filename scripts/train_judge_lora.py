@@ -24,6 +24,10 @@ Env vars (optional overrides):
 
 import os
 import sys
+
+scratch_packages = "/scratch/project_465003058/hornphil/my_venv/lib/python3.12/site-packages"
+if os.path.exists(scratch_packages):
+    sys.path.insert(0, scratch_packages)
 import json
 import argparse
 import logging
@@ -88,6 +92,7 @@ class TrainingConfig:
     hf_cache: str = os.getenv(
         "HF_HOME", "/scratch/project_465003058/hornphil/hf_cache"
     )
+    deepspeed: Optional[str] = None
 
 
 # Detect DDP launch (torchrun sets LOCAL_RANK)
@@ -167,11 +172,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output_dir", default=None)
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
+    p.add_argument("--grad_accum", type=int, default=None, help="Gradient accumulation steps")
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--max_seq_len", type=int, default=None)
     p.add_argument("--lora_r", type=int, default=None)
     p.add_argument("--lora_alpha", type=int, default=None)
     p.add_argument("--no_4bit", action="store_true", help="Disable QLoRA 4-bit quantization")
+    p.add_argument("--deepspeed", type=str, default=None, help="Path to DeepSpeed configuration file")
     return p.parse_args()
 
 
@@ -190,6 +197,8 @@ def main() -> None:
         cfg.epochs = args.epochs
     if args.batch_size is not None:
         cfg.batch_size = args.batch_size
+    if args.grad_accum is not None:
+        cfg.grad_accum = args.grad_accum
     if args.lr is not None:
         cfg.lr = args.lr
     if args.max_seq_len is not None:
@@ -200,6 +209,8 @@ def main() -> None:
         cfg.lora_alpha = args.lora_alpha
     if args.no_4bit:
         cfg.use_4bit = False
+    if args.deepspeed:
+        cfg.deepspeed = args.deepspeed
 
     os.makedirs(cfg.output_dir, exist_ok=True)
     os.makedirs(cfg.hf_cache, exist_ok=True)
@@ -263,26 +274,62 @@ def main() -> None:
     # In DDP mode each rank loads its own complete model copy onto its assigned GPU.
     # device_map='auto' must NOT be used with DDP — it triggers pipeline parallelism
     # which conflicts with the DDP gradient synchronisation and causes OOM/hangs.
-    if _IS_DDP:
-        device_map = {""f"cuda:{_LOCAL_RANK}"}
+    # With DeepSpeed, device_map must be None.
+    if cfg.deepspeed:
+        device_map = None
+    elif _IS_DDP:
+        device_map = {"": f"cuda:{_LOCAL_RANK}"}
     else:
         device_map = "auto"
 
-    model = AutoModelForCausalLM.from_pretrained(
-        cfg.base_model,
-        quantization_config=bnb_config,
-        device_map=device_map,
-        trust_remote_code=True,
-        attn_implementation="eager",  # Flash-Attn 2 may not be available on MI250x
-        dtype=torch.bfloat16,
-    )
+    # Check if DeepSpeed ZeRO-3 is enabled
+    is_zero3 = False
+    if cfg.deepspeed:
+        try:
+            with open(cfg.deepspeed, "r") as f:
+                ds_config = json.load(f)
+            if ds_config.get("zero_optimization", {}).get("stage") == 3:
+                is_zero3 = True
+        except Exception as e:
+            logger.warning("Failed to parse DeepSpeed config: %s", e)
 
-    if cfg.use_4bit:
-        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    if is_zero3:
+        if bnb_config is not None:
+            logger.warning(
+                "ZeRO-3: 4-bit quantization is incompatible with ZeRO-3 parameter "
+                "sharding (cannot shard quantized blocks). Disabling QLoRA."
+            )
+            bnb_config = None
+        logger.info("Initializing model and PEFT under DeepSpeed ZeRO-3 context...")
+        import deepspeed
+        # Both base model loading and PEFT adapter wrapping must happen inside zero.Init
+        # context so that all parameters are correctly registered and sharded by ZeRO-3.
+        with deepspeed.zero.Init(remote_device=None, pin_memory=True):
+            model = AutoModelForCausalLM.from_pretrained(
+                cfg.base_model,
+                quantization_config=bnb_config,
+                device_map=device_map,           # None for ZeRO-3
+                trust_remote_code=True,
+                attn_implementation="eager",     # Flash-Attn 2 not available on MI250x
+                torch_dtype=torch.bfloat16,
+                ignore_mismatched_sizes=True,    # Ignore size mismatch check for ZeRO-3 placeholders
+            )
+            lora_cfg = get_lora_config(cfg)
+            model = get_peft_model(model, lora_cfg)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            cfg.base_model,
+            quantization_config=bnb_config,
+            device_map=device_map,
+            trust_remote_code=True,
+            attn_implementation="eager",
+            torch_dtype=torch.bfloat16,
+        )
+        if cfg.use_4bit:
+            model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+        lora_cfg = get_lora_config(cfg)
+        model = get_peft_model(model, lora_cfg)
 
-    # Apply LoRA adapters
-    lora_cfg = get_lora_config(cfg)
-    model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
     # ---- Training config (SFTConfig = TrainingArguments + SFT params in TRL 1.4) ----
@@ -291,6 +338,7 @@ def main() -> None:
         num_train_epochs=cfg.epochs,
         per_device_train_batch_size=cfg.batch_size,
         gradient_accumulation_steps=cfg.grad_accum,
+        deepspeed=cfg.deepspeed,
         learning_rate=cfg.lr,
         lr_scheduler_type="cosine",
         warmup_ratio=cfg.warmup_ratio,

@@ -771,30 +771,8 @@ async def _invoke_planner_with_retry(
 
 
 def _inject_habe_prefix_embeddings(opts: dict, state_: Optional[dict] = None) -> None:
-    """Injects HABE prefix embeddings if HABE is enabled and vector file exists."""
-    if not state_ or not state_.get("enable_habe"):
-        return
-        
-    try:
-        import os
-        import numpy as np
-        from services.vsa_background import HolographicBackgroundEngine
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        repo_root = os.path.dirname(script_dir)
-        models_dir = os.path.join(repo_root, "models")
-        vector_path = os.path.join(models_dir, "habe_vector.npy")
-        vocab_path = os.path.join(models_dir, "habe_vocab.json")
-        
-        if os.path.exists(vector_path) and os.path.exists(vocab_path):
-            engine = HolographicBackgroundEngine(dimension=2048)
-            if engine.load_vocab(vocab_path):
-                hav = np.load(vector_path)
-                embeddings = engine.export_virtual_prefix_embeddings(hav)
-                opts["habe_prefix_embedding"] = embeddings
-                logger.info("🧠 HABE: Injected virtual prefix attention modulation vector (%d dims) into LLM options", len(embeddings))
-    except Exception as e:
-        logger.warning("Failed to inject HABE prefix embeddings: %s", e)
+    """No-op. HABE modulation is now performed client-side in the GraphRAG node prior to LLM call."""
+    return
 
 
 def _judge_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict] = None) -> dict:

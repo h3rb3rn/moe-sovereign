@@ -178,6 +178,8 @@ services:
       - ./services:/app/services:ro
       - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
       - ./models:/app/models:ro
+      - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:ro
+      - ${MOE_DATA_ROOT}/cleanup-history.jsonl:/app/cleanup-history.jsonl:rw
     depends_on:
       terra_cache:
         condition: service_started

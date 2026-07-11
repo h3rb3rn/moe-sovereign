@@ -659,6 +659,7 @@ async function reloadPrometheus() {
 const JOB_META_RAW = {
   docker_prune:       { icon: 'bi-layers',             labelKey: null, label: 'Docker Prune',    color: 'primary',  canRun: true,  hasConfig: false },
   checkpoint_archive: { icon: 'bi-database-down',      labelKey: 'checkpointArchive',            color: 'info',     canRun: true,  hasConfig: true  },
+  rlsf_local_loop:    { icon: 'bi-brain',              label: 'RLSF Local Loop',                 color: 'success',  canRun: true,  hasConfig: true  },
   admin_logs:         { icon: 'bi-file-earmark-text',  label: 'Admin-Log Rotation',              color: 'warning',  canRun: false, hasConfig: true  },
   journal:            { icon: 'bi-journal-text',       label: 'systemd Journal',                 color: 'secondary',canRun: false, hasConfig: true  },
   prometheus:         { icon: 'bi-graph-up',           label: 'Prometheus TSDB',                 color: 'danger',   canRun: false, hasConfig: true  },
@@ -709,6 +710,16 @@ function buildConfigFields(key, cfg) {
           <label class="form-label small mb-1">${_t.archiveRetention}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-retain_days"
                  value="${job.retain_days ?? 90}" min="7">
+        </div>
+      </div>`);
+  }
+  if (key === 'rlsf_local_loop') {
+    fields.push(`
+      <div class="row g-2 mt-1">
+        <div class="col-12">
+          <label class="form-label small mb-1">Batch Size (Max evaluations per run)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-batch_size"
+                 value="${job.batch_size ?? 100}" min="10" max="1000" step="10">
         </div>
       </div>`);
   }
@@ -887,6 +898,8 @@ async function saveJobConfig(key) {
     const envContent = `CHECKPOINT_KEEP_ROWS=${cfg[key].keep_rows}\nARCHIVE_RETAIN_DAYS=${cfg[key].retain_days}\n`;
     await fetch('/api/cleanup/write-cron-env', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({job: key, content: envContent})});
+  } else if (key === 'rlsf_local_loop') {
+    cfg[key].batch_size = getNum(`cfg-${key}-batch_size`) ?? cfg[key].batch_size;
   } else if (key === 'admin_logs') {
     const maxMb = getNum(`cfg-${key}-max_mb`);
     cfg[key].max_bytes    = maxMb !== null ? maxMb * 1048576 : cfg[key].max_bytes;
