@@ -7109,6 +7109,55 @@ async def api_live_request_trace(chat_id: str):
     return {"chat_id": chat_id, "stage_trace": stage_trace}
 
 
+@app.get("/api/live/process-logs/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_process_logs(chat_id: str):
+    """On-demand langgraph-orchestrator log lines belonging to one request.
+
+    Loaded only when an admin explicitly expands the "Logs" section of the
+    pipeline diagram panel (not part of any regular poll) — reads the
+    container's log since the request's started_at timestamp (from
+    moe:active:{chat_id}) and keeps only lines tagged with this chat_id by
+    the %(chat_id)s log filter installed in main.py. Every existing
+    logger.info/warning/... call across the whole pipeline is tagged
+    automatically that way, without threading chat_id through ~270
+    individual call sites.
+    """
+    since_dt = None
+    try:
+        r = await db._get_redis()
+        raw_meta = await r.get(f"moe:active:{chat_id}")
+        if raw_meta:
+            meta = json.loads(raw_meta)
+            started = meta.get("started_at", "")
+            if started:
+                since_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+    except Exception as exc:
+        logger.debug("process-logs: could not resolve started_at for %s: %s", chat_id, exc)
+
+    def _fetch_and_filter() -> list[str]:
+        client = docker.from_env()
+        container = client.containers.get("langgraph-orchestrator")
+        kwargs = {"timestamps": True, "tail": 5000}
+        if since_dt is not None:
+            kwargs["since"] = since_dt
+        raw = container.logs(**kwargs)
+        text = raw.decode("utf-8", errors="replace")
+        tag = f"[{chat_id}]"
+        return [line for line in text.splitlines() if tag in line]
+
+    try:
+        lines = await asyncio.to_thread(_fetch_and_filter)
+    except docker.errors.NotFound:
+        return {"chat_id": chat_id, "lines": [], "error": "container not found"}
+    except Exception as exc:
+        logger.warning("process-logs fetch failed for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "lines": [], "error": str(exc)}
+
+    # Bound the response — a chatty request could otherwise return thousands
+    # of lines; the most recent ones are what matters for live debugging.
+    return {"chat_id": chat_id, "lines": lines[-500:], "truncated": len(lines) > 500}
+
+
 @app.post("/api/live/kill-request/{chat_id}", dependencies=[Depends(require_login)])
 async def api_kill_request(chat_id: str):
     """Removes an active request from live monitoring and writes it to the history."""

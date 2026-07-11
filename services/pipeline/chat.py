@@ -90,6 +90,7 @@ from services.helpers import (
     _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
     _report,
     _shadow_request, _shadow_lock,
+    current_chat_id,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
@@ -915,6 +916,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     def dataset_user_query(*a, **kw): return {}
     def dataset_response(*a, **kw): return {}
     chat_id    = f"chatcmpl-{uuid.uuid4()}"
+    current_chat_id.set(chat_id)
     session_id = _extract_session_id(raw_request)
     _ol_run_id = await _ol_start(
         "chat_completion",

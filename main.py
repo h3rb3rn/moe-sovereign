@@ -133,7 +133,24 @@ from context_budget import graphrag_budget_chars, web_research_budget
 from memory_retrieval import get_memory_store, compute_evicted_turns
 
 # --- LOGGING (LOG_LEVEL imported from config) ---
-logging.basicConfig(level=getattr(logging, LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
+# chat_id tag: injected into every log record via a filter on the root
+# handler (not a per-logger filter — that would skip records from uvicorn,
+# aiokafka, etc. and crash formatting on the missing %(chat_id)s field).
+# services.helpers.current_chat_id is set once per request at each API
+# entry point; see that module for the full rationale.
+class _ChatIdLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        from services.helpers import current_chat_id
+        record.chat_id = current_chat_id.get("") or "-"
+        return True
+
+
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format='%(asctime)s - %(levelname)s - [%(chat_id)s] - %(message)s',
+)
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_ChatIdLogFilter())
 logger = logging.getLogger("MOE-SOVEREIGN")
 
 import state
@@ -1720,6 +1737,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                           session_id: str = None,
                           max_agentic_rounds: int = 0,
                           no_cache: bool = False):
+    from services.helpers import current_chat_id
+    current_chat_id.set(chat_id)
     _deregistered = False
     config   = {"configurable": {"thread_id": str(uuid.uuid4())}}
     created  = int(time.time())

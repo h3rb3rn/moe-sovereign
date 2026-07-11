@@ -134,6 +134,9 @@
             <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
               ${options}
             </select>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-logs-toggle" title="Log-Zeilen dieser Anfrage">
+              <i class="bi bi-terminal"></i>
+            </button>
             <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-maximize" title="Maximieren">
               <i class="bi bi-arrows-fullscreen"></i>
             </button>
@@ -141,6 +144,10 @@
           </div>
           <div class="modal-body p-0">
             <div id="pd-cy" style="width:100%;height:600px;"></div>
+            <div id="pd-logs" class="d-none border-top" style="height:180px;overflow-y:auto;background:#0d1117">
+              <pre id="pd-logs-content" class="text-light m-0 p-2"
+                   style="font-size:.72rem;line-height:1.4;white-space:pre-wrap;word-break:break-all"></pre>
+            </div>
           </div>
           <div id="pd-resize-handle" title="Größe ändern"
                style="position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;
@@ -158,7 +165,46 @@
     );
     panelEl.querySelector('#pd-resize-handle').addEventListener('mousedown', (e) => windowCtl.startResize(e));
     panelEl.querySelector('#pd-maximize').addEventListener('click', () => windowCtl.toggleMaximize());
+    panelEl.querySelector('#pd-logs-toggle').addEventListener('click', toggleLogs);
     return panelEl;
+  }
+
+  // Admin-only (no /user/api/live/process-logs/ endpoint exists — raw
+  // server logs can contain internal details not meant for portal end
+  // users). Loaded strictly on click, never as part of the regular
+  // 1.5s diagram poll, to avoid doubling request volume for admins who
+  // never open it.
+  let currentChatId = null;
+  let logsUrlBase = null;
+  let logsOpen = false;
+  let logsPollTimer = null;
+
+  async function fetchLogsOnce() {
+    if (!currentChatId || !logsUrlBase) return;
+    const content = document.getElementById('pd-logs-content');
+    try {
+      const r = await fetch(`${logsUrlBase}${encodeURIComponent(currentChatId)}`);
+      const data = await r.json();
+      const wasAtBottom = content.scrollHeight - content.scrollTop <= content.clientHeight + 20;
+      content.textContent = (data.lines || []).join('\n') || '(noch keine Log-Zeilen für diese Anfrage)';
+      if (wasAtBottom) content.scrollTop = content.scrollHeight;
+    } catch (e) {
+      console.warn('process-logs fetch failed:', e);
+    }
+  }
+
+  function toggleLogs() {
+    const box = document.getElementById('pd-logs');
+    logsOpen = !logsOpen;
+    box.classList.toggle('d-none', !logsOpen);
+    if (logsOpen) {
+      fetchLogsOnce();
+      if (logsPollTimer) clearInterval(logsPollTimer);
+      logsPollTimer = setInterval(fetchLogsOnce, 1500);
+    } else if (logsPollTimer) {
+      clearInterval(logsPollTimer);
+      logsPollTimer = null;
+    }
   }
 
   // Turns the modal dialog into a free-floating, draggable, resizable,
@@ -487,6 +533,17 @@
   window.openPipelineDiagram = function (chatId, traceUrlBase) {
     ensurePanel();
     document.getElementById('pd-chat-id').textContent = (chatId || '').slice(-16);
+
+    currentChatId = chatId;
+    logsUrlBase = traceUrlBase.startsWith('/user/') ? null : traceUrlBase.replace('request-trace', 'process-logs');
+    document.getElementById('pd-logs-toggle').classList.toggle('d-none', !logsUrlBase);
+    // Reset the log view for the newly-selected request instead of showing
+    // the previous row's stale content until the first poll lands.
+    logsOpen = false;
+    document.getElementById('pd-logs').classList.add('d-none');
+    document.getElementById('pd-logs-content').textContent = '';
+    if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+
     // eslint-disable-next-line no-undef
     const modal = bootstrap.Modal.getOrCreateInstance(panelEl);
     modal.show();
@@ -512,6 +569,8 @@
 
   window.closePipelineDiagram = function () {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+    logsOpen = false;
     if (cy) { cy.destroy(); cy = null; }
   };
 })();
