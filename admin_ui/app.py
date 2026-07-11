@@ -462,6 +462,110 @@ self.addEventListener('fetch', e => {{
 """
     return Response(content=sw_code, media_type="application/javascript",
                     headers={"Service-Worker-Allowed": "/"})
+
+
+_PWA_PORTAL_CACHE_VERSION = "moe-portal-v1"
+_PORTAL_STATIC_ASSETS_TO_CACHE = [
+    "/static/css/bootstrap.min.css",
+    "/static/css/bootstrap-icons.min.css",
+    "/static/js/bootstrap.bundle.min.js",
+    "/static/js/chart.umd.min.js",
+    "/user/dashboard",
+]
+
+
+@app.get("/user/manifest.json")
+async def pwa_portal_manifest():
+    """Web App Manifest for the User Portal — a separate installable PWA
+    from MoE Admin (own name/icon-label/start_url/scope), so end users can
+    install just the portal without pulling in admin-only shortcuts."""
+    return JSONResponse({
+        "name":             "MoE Portal",
+        "short_name":       "MoE Portal",
+        "description":      "MoE Sovereign — User Portal",
+        "start_url":        "/user/dashboard",
+        "scope":            "/user/",
+        "display":          "standalone",
+        "background_color": "#1a1d21",
+        "theme_color":      "#1a1d21",
+        "orientation":      "portrait-primary",
+        "icons": [
+            {
+                "src":     "/static/icons/icon-192.png",
+                "sizes":   "192x192",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-512.png",
+                "sizes":   "512x512",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-192.svg",
+                "sizes":   "192x192",
+                "type":    "image/svg+xml",
+                "purpose": "any maskable",
+            },
+        ],
+        "categories": ["productivity", "utilities"],
+        "shortcuts": [
+            {"name": "Dashboard", "url": "/user/dashboard", "description": "Übersicht"},
+            {"name": "Nutzung",   "url": "/user/usage",     "description": "Nutzungsstatistik & Live Monitor"},
+            {"name": "API-Keys",  "url": "/user/keys",      "description": "API-Schlüssel verwalten"},
+        ],
+    }, headers={"Content-Type": "application/manifest+json"})
+
+
+@app.get("/user/sw.js")
+async def pwa_portal_service_worker():
+    """Service worker for the User Portal — scoped to /user/ (own cache
+    version, own asset list, own Service-Worker-Allowed scope) so it stays
+    independent of MoE Admin's root-scoped /sw.js. A browser that has both
+    apps installed resolves each request to whichever registered scope is
+    the more specific match, so the two never fight over the same cache."""
+    assets_json = json.dumps(_PORTAL_STATIC_ASSETS_TO_CACHE)
+    sw_code = f"""
+const CACHE  = '{_PWA_PORTAL_CACHE_VERSION}';
+const ASSETS = {assets_json};
+
+self.addEventListener('install', e => {{
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
+}});
+
+self.addEventListener('activate', e => {{
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+}});
+
+self.addEventListener('fetch', e => {{
+  const url = new URL(e.request.url);
+  // Cache-first for static assets; network-first for everything else
+  if (url.pathname.startsWith('/static/')) {{
+    e.respondWith(
+      caches.match(e.request).then(cached => cached || fetch(e.request).then(resp => {{
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return resp;
+      }}))
+    );
+  }} else {{
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match(e.request))
+    );
+  }}
+}});
+"""
+    return Response(content=sw_code, media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/user/"})
+
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
