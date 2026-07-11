@@ -572,13 +572,18 @@
     try {
       const r = await fetch(`${traceUrlBase}${encodeURIComponent(chatId)}`);
       const data = await r.json();
-      const { seenStages } = applyTrace(data.stage_trace || []);
+      applyTrace(data.stage_trace || []);
       lastTraceOkTs = Date.now();
-      return seenStages.size;
+      // "active" is the authoritative still-running signal from the
+      // backend (moe:active:{chat_id} existence) — default true so a
+      // response shape without the field (older cache, unexpected error
+      // body) never falsely triggers "beendet".
+      return data.active !== false;
     } catch (e) {
       console.warn('pipeline trace fetch failed:', e);
-      // Deliberately not updating lastTraceOkTs — see renderHeartbeats().
-      return -1;
+      // A failed fetch must NOT be read as "request finished" — keep
+      // polling and let the heartbeat age instead (see renderHeartbeats()).
+      return true;
     }
   }
 
@@ -609,15 +614,16 @@
     renderHeartbeats();
 
     if (pollTimer) clearInterval(pollTimer);
-    let stableTicks = 0;
     pollOnce(chatId, traceUrlBase);
     pollTimer = setInterval(async () => {
-      const n = await pollOnce(chatId, traceUrlBase);
-      // Auto-stop once the trace stops growing for a few ticks (request finished
-      // or expired) — avoids polling forever after the panel is left open.
-      if (n === (pollOnce._lastN || -1)) stableTicks++; else stableTicks = 0;
-      pollOnce._lastN = n;
-      if (stableTicks >= 8) { // ~12-16s of no change
+      // Stop only once the backend confirms moe:active:{chat_id} is gone —
+      // NOT after N polls with no new stage. A single legitimately slow
+      // step (e.g. a 20s expert LLM call) produces no new stage for far
+      // longer than the old 12s window, which falsely marked genuinely
+      // active requests as "beendet". A failed fetch returns true (keep
+      // polling), so a network hiccup can't be misread as "finished" either.
+      const stillActive = await pollOnce(chatId, traceUrlBase);
+      if (!stillActive) {
         clearInterval(pollTimer);
         pollTimer = null;
         traceFinished = true;
