@@ -376,7 +376,7 @@ Top-1 system prompt per category → composite template
 ```
 Prompt
   ↓
-Qwen2.5-1.5B fine-tuned → JSON template (fully structured)
+granite4.1:3b fine-tuned → JSON template (fully structured)
   ↓
 Validation (known categories, model endpoints via config)
   ↓
