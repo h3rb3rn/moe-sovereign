@@ -384,7 +384,11 @@
           'width':            34,
           'height':           34,
           'transition-property': 'background-color, border-color',
-          'transition-duration': '300ms',
+          // Long enough to visibly bridge the ~1.5s poll gap — combined with
+          // the afterglow fade in applyTrace(), a stage that fired and
+          // completed between two polls doesn't just snap straight to the
+          // flat "done" color, it visibly glows out toward it.
+          'transition-duration': '1200ms',
         },
       },
       {
@@ -504,6 +508,26 @@
     return NODE_POSITIONS;
   }
 
+  // Afterglow window: a stage that fires and completes faster than one poll
+  // tick (1.5s) would otherwise jump straight from "idle" to the flat
+  // "done" color the moment it's first observed, with no visible sign it
+  // was ever actively in progress. Instead, a freshly-completed stage
+  // starts at the "active" color and is blended toward "done" over this
+  // many seconds, recomputed on every poll — a fading afterglow rather
+  // than an instant snap.
+  const RECENT_FADE_SECONDS = 5;
+
+  function hexToRgb(hex) {
+    const h = hex.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function lerpColor(hexA, hexB, t) {
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  }
+
   function classifyStage(entries, isLatestOverall) {
     if (!entries || entries.length === 0) return 'idle';
     const last = entries[entries.length - 1];
@@ -538,11 +562,30 @@
     const usedBranch = seenStages.size === 0 ? null
       : (TOPOLOGY.nodes.find(n => seenStages.has(n.id)) || {}).branch || null;
 
+    const nowTs = Date.now() / 1000;
+    const palette = PALETTES[currentPaletteName];
     TOPOLOGY.nodes.forEach(n => {
-      const cls = classifyStage(byStage[n.id], n.id === latestStage);
+      const entries = byStage[n.id];
+      const cls = classifyStage(entries, n.id === latestStage);
       const node = cy.getElementById(n.id);
+      // Clear any afterglow override from a previous poll before
+      // reapplying — otherwise a stage that ages past the fade window
+      // would keep its last interpolated color forever instead of
+      // settling into the flat class-based "done" color.
+      node.removeStyle('background-color border-color');
       if (cls !== 'idle') node.addClass(`pd-${cls}`);
       if (usedBranch && n.branch !== usedBranch) node.addClass('pd-dim');
+
+      if (cls === 'done' && entries && entries.length) {
+        const age = nowTs - (entries[entries.length - 1].ts || 0);
+        if (age >= 0 && age < RECENT_FADE_SECONDS) {
+          const t = Math.min(1, age / RECENT_FADE_SECONDS);
+          node.style({
+            'background-color': lerpColor(palette.active.bg, palette.done.bg, t),
+            'border-color':     lerpColor(palette.active.border, palette.done.border, t),
+          });
+        }
+      }
     });
 
     // Label the untouched branch's group box explicitly instead of leaving
