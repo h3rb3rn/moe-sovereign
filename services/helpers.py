@@ -416,6 +416,21 @@ async def _report(msg: str) -> None:
         await q.put(msg)
 
 
+# ─── PER-REQUEST LOG CORRELATION ─────────────────────────────────────────────
+# Set once at each API entry point (main.py, services/pipeline/chat.py,
+# services/pipeline/anthropic.py) to the request's chat_id. A logging.Filter
+# installed on the root handler (see main.py) reads this on every log record,
+# so every existing logger.info/warning/... call across the whole pipeline
+# gets tagged with the originating request automatically — no need to thread
+# chat_id through the ~270 individual log call sites. Powers the live
+# pipeline diagram's per-request log view (admin_ui/app.py
+# api_live_process_logs). asyncio.create_task() copies the current context,
+# so fire-and-forget tasks spawned from within a request (write-back, judge
+# scoring, etc.) still get the correct chat_id in their own log lines.
+current_chat_id: contextvars.ContextVar[str] = \
+    contextvars.ContextVar("current_chat_id", default="")
+
+
 # ─── SHADOW REQUEST ──────────────────────────────────────────────────────────
 
 async def _shadow_request(user_input: str, user_id: str, api_key: str) -> None:
