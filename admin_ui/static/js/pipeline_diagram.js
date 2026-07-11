@@ -111,6 +111,7 @@
   let cy = null;
   let pollTimer = null;
   let panelEl = null;
+  let windowCtl = null;
 
   function ensurePanel() {
     if (panelEl) return panelEl;
@@ -122,9 +123,9 @@
       `<option value="${key}"${key === currentPaletteName ? ' selected' : ''}>${PALETTES[key].label}</option>`
     ).join('');
     panelEl.innerHTML = `
-      <div class="modal-dialog modal-xl modal-dialog-centered">
-        <div class="modal-content">
-          <div class="modal-header py-2">
+      <div class="modal-dialog modal-xl modal-dialog-centered" id="pd-dialog">
+        <div class="modal-content" style="position:relative">
+          <div class="modal-header py-2" id="pd-header" style="cursor:move;user-select:none">
             <h6 class="modal-title mb-0">
               <i class="bi bi-diagram-3 me-2"></i>Live-Pipeline —
               <code id="pd-chat-id" style="font-size:.8rem"></code>
@@ -133,16 +134,116 @@
             <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
               ${options}
             </select>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-maximize" title="Maximieren">
+              <i class="bi bi-arrows-fullscreen"></i>
+            </button>
             <button type="button" class="btn-close ms-2" onclick="window.closePipelineDiagram()"></button>
           </div>
           <div class="modal-body p-0">
             <div id="pd-cy" style="width:100%;height:600px;"></div>
           </div>
+          <div id="pd-resize-handle" title="Größe ändern"
+               style="position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;
+                      display:flex;align-items:center;justify-content:center;opacity:.6;z-index:5">
+            <i class="bi bi-arrows-angle-expand" style="font-size:.75rem"></i>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(panelEl);
     panelEl.querySelector('#pd-palette').addEventListener('change', (e) => applyPalette(e.target.value));
+    windowCtl = makeWindowControls(
+      panelEl.querySelector('#pd-dialog'),
+      panelEl.querySelector('#pd-header'),
+      'pd-cy',
+    );
+    panelEl.querySelector('#pd-resize-handle').addEventListener('mousedown', (e) => windowCtl.startResize(e));
+    panelEl.querySelector('#pd-maximize').addEventListener('click', () => windowCtl.toggleMaximize());
     return panelEl;
+  }
+
+  // Turns the modal dialog into a free-floating, draggable, resizable,
+  // maximizable window instead of Bootstrap's fixed centered/sized modal.
+  // No new dependency — plain mouse-event dragging, matching this file's
+  // existing "reuse what's vendored, add nothing new" approach.
+  function makeWindowControls(dialogEl, headerEl, cyContainerId) {
+    let dragging = false, resizing = false, maximized = false;
+    let dragStartX = 0, dragStartY = 0, originX = 0, originY = 0;
+    let resizeStartX = 0, resizeStartY = 0, startW = 0, startH = 0;
+    let savedRect = null;
+
+    function toFreePosition() {
+      if (dialogEl.dataset.free === '1') return;
+      const r = dialogEl.getBoundingClientRect();
+      dialogEl.classList.remove('modal-dialog-centered');
+      Object.assign(dialogEl.style, {
+        position: 'fixed', margin: '0', maxWidth: 'none',
+        left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`,
+      });
+      dialogEl.dataset.free = '1';
+    }
+
+    headerEl.addEventListener('mousedown', (e) => {
+      if (e.target.closest('select, button, .btn-close')) return;
+      toFreePosition();
+      dragging = true;
+      dragStartX = e.clientX; dragStartY = e.clientY;
+      const r = dialogEl.getBoundingClientRect();
+      originX = r.left; originY = r.top;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (dragging) {
+        dialogEl.style.left = `${Math.max(0, originX + (e.clientX - dragStartX))}px`;
+        dialogEl.style.top  = `${Math.max(0, originY + (e.clientY - dragStartY))}px`;
+      } else if (resizing) {
+        const newW = Math.max(480, startW + (e.clientX - resizeStartX));
+        const newH = Math.max(360, startH + (e.clientY - resizeStartY));
+        dialogEl.style.width = `${newW}px`;
+        const cyEl = document.getElementById(cyContainerId);
+        if (cyEl) cyEl.style.height = `${Math.max(200, newH - headerEl.offsetHeight)}px`;
+        if (cy) cy.resize();
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging && !resizing) return;
+      dragging = false; resizing = false;
+      if (cy) cy.fit(cy.elements(), 30);
+    });
+
+    return {
+      startResize(e) {
+        toFreePosition();
+        resizing = true;
+        resizeStartX = e.clientX; resizeStartY = e.clientY;
+        const r = dialogEl.getBoundingClientRect();
+        startW = r.width; startH = r.height;
+        e.preventDefault(); e.stopPropagation();
+      },
+      toggleMaximize() {
+        const cyEl = document.getElementById(cyContainerId);
+        if (!maximized) {
+          toFreePosition();
+          savedRect = {
+            left: dialogEl.style.left, top: dialogEl.style.top,
+            width: dialogEl.style.width, cyHeight: cyEl.style.height,
+          };
+          dialogEl.style.left = '8px';
+          dialogEl.style.top = '8px';
+          dialogEl.style.width = `${window.innerWidth - 16}px`;
+          cyEl.style.height = `${window.innerHeight - 16 - headerEl.offsetHeight}px`;
+          maximized = true;
+        } else if (savedRect) {
+          dialogEl.style.left = savedRect.left;
+          dialogEl.style.top = savedRect.top;
+          dialogEl.style.width = savedRect.width;
+          cyEl.style.height = savedRect.cyHeight;
+          maximized = false;
+        }
+        if (cy) { cy.resize(); cy.fit(cy.elements(), 30); }
+      },
+    };
   }
 
   function buildStyle(p) {
