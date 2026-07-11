@@ -64,6 +64,19 @@
       h3, h4 { font-size: 1.1rem; }
       /* Hide low-priority columns on mobile via utility class */
       .d-mobile-none { display: none !important; }
+      /* The "always visible" navbar utilities row (language switcher, PWA
+         install button, theme toggle, logout, hamburger) has no flex-wrap,
+         and the enlarged touch-target buttons above make it wider still —
+         on narrow phone screens it overflowed past the edge, making the
+         PWA install button effectively invisible/unreachable. Wrap instead
+         of overflowing, and drop the language <select> to a second line
+         first since the install button is the more important control here. */
+      .navbar .d-flex.align-items-center.gap-2.ms-auto {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        row-gap: .35rem;
+      }
+      #admin-lang-form { order: 10; }
     }
     /* PWA standalone: add top padding for status bar */
     @media (display-mode: standalone) {
