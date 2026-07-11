@@ -464,13 +464,21 @@ self.addEventListener('fetch', e => {{
                     headers={"Service-Worker-Allowed": "/"})
 
 
+# "/user/dashboard" deliberately not in this list: Cache.addAll()/
+# Cache.put() throw a TypeError for any *redirected* response, even one
+# that ultimately resolves to 200 — and this route redirects to
+# /user/login for unauthenticated requests. That would abort the service
+# worker's install step, leaving it stuck non-active and Chrome unwilling
+# to offer beforeinstallprompt (confirmed live on MoE Admin's identical
+# "/" pattern — see fix/pwa-mobile-nav-overflow). Only genuinely static,
+# always-200 assets belong here; dynamic/auth-gated pages are already
+# covered by the fetch handler's network-first-with-cache-fallback path.
 _PWA_PORTAL_CACHE_VERSION = "moe-portal-v1"
 _PORTAL_STATIC_ASSETS_TO_CACHE = [
     "/static/css/bootstrap.min.css",
     "/static/css/bootstrap-icons.min.css",
     "/static/js/bootstrap.bundle.min.js",
     "/static/js/chart.umd.min.js",
-    "/user/dashboard",
 ]
 
 
