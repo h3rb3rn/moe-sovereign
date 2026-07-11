@@ -113,6 +113,44 @@
   let panelEl = null;
   let windowCtl = null;
 
+  // ── Heartbeat: "time since last successful poll" ────────────────────────
+  // A poll interval firing on schedule proves nothing by itself — the fetch
+  // inside it could be failing silently every tick. Only a timestamp that
+  // actually advances on a *successful* response tells the admin the
+  // connection is alive rather than stuck; a stalled fetch leaves it
+  // growing, which is exactly the "hängt oder tut nichts" ambiguity this
+  // exists to resolve.
+  let lastTraceOkTs = 0;
+  let lastLogsOkTs = 0;
+  let heartbeatTimer = null;
+
+  // Set when polling auto-stops because the trace genuinely stopped
+  // growing (request finished/expired) — a deliberate, expected stop, not
+  // a hang. Without this the heartbeat would age past the warning
+  // threshold and show a false "hängt?" for every completed request left
+  // open in the background.
+  let traceFinished = false;
+
+  function _heartbeatText(ts, finished) {
+    if (finished) return { text: 'beendet', color: '#6b7280' };
+    if (!ts) return { text: '–', color: '#6b7280' };
+    const age = (Date.now() - ts) / 1000;
+    if (age < 3)  return { text: 'aktiv',              color: '#22c55e' };
+    if (age < 8)  return { text: `vor ${age.toFixed(0)}s`, color: '#f59e0b' };
+    return              { text: `⚠ vor ${age.toFixed(0)}s — hängt?`, color: '#ef4444' };
+  }
+
+  function renderHeartbeats() {
+    const t = _heartbeatText(lastTraceOkTs, traceFinished);
+    const traceEl = document.getElementById('pd-heartbeat');
+    if (traceEl) { traceEl.textContent = '● ' + t.text; traceEl.style.color = t.color; }
+    if (logsOpen) {
+      const l = _heartbeatText(lastLogsOkTs, false);
+      const logsEl = document.getElementById('pd-logs-heartbeat');
+      if (logsEl) { logsEl.textContent = '● ' + l.text; logsEl.style.color = l.color; }
+    }
+  }
+
   function ensurePanel() {
     if (panelEl) return panelEl;
     panelEl = document.createElement('div');
@@ -133,6 +171,7 @@
             </h6>
             <div class="d-flex align-items-center flex-wrap ms-auto" style="row-gap:.35rem">
               <span class="badge bg-secondary ms-2" id="pd-status">…</span>
+              <span id="pd-heartbeat" class="ms-2" style="font-size:.7rem;white-space:nowrap" title="Zeit seit dem letzten erfolgreichen Abruf — wächst diese Zahl ungewöhnlich stark, hängt die Verbindung">–</span>
               <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
                 ${options}
               </select>
@@ -147,9 +186,14 @@
           </div>
           <div class="modal-body p-0">
             <div id="pd-cy" style="width:100%;height:600px;"></div>
-            <div id="pd-logs" class="d-none border-top" style="height:180px;overflow-y:auto;background:#0d1117">
-              <pre id="pd-logs-content" class="text-light m-0 p-2"
-                   style="font-size:.72rem;line-height:1.4;white-space:pre-wrap;word-break:break-all"></pre>
+            <div id="pd-logs" class="d-none border-top" style="height:180px;display:flex;flex-direction:column;background:#0d1117">
+              <div class="d-flex justify-content-between align-items-center px-2 py-1 border-bottom border-secondary"
+                   style="font-size:.68rem;background:#161b22;flex-shrink:0">
+                <span class="text-light"><i class="bi bi-terminal me-1"></i>Log-Zeilen dieser Anfrage</span>
+                <span id="pd-logs-heartbeat" style="white-space:nowrap" title="Zeit seit dem letzten erfolgreichen Log-Abruf">–</span>
+              </div>
+              <pre id="pd-logs-content" class="text-light m-0 p-2" style="overflow-y:auto;flex:1 1 auto;
+                   font-size:.72rem;line-height:1.4;white-space:pre-wrap;word-break:break-all"></pre>
             </div>
           </div>
           <div id="pd-resize-handle" title="Größe ändern"
@@ -191,8 +235,11 @@
       const wasAtBottom = content.scrollHeight - content.scrollTop <= content.clientHeight + 20;
       content.textContent = (data.lines || []).join('\n') || '(noch keine Log-Zeilen für diese Anfrage)';
       if (wasAtBottom) content.scrollTop = content.scrollHeight;
+      lastLogsOkTs = Date.now();
     } catch (e) {
       console.warn('process-logs fetch failed:', e);
+      // Deliberately not updating lastLogsOkTs — a failing fetch must let
+      // the heartbeat age instead of masking the failure.
     }
   }
 
@@ -526,9 +573,11 @@
       const r = await fetch(`${traceUrlBase}${encodeURIComponent(chatId)}`);
       const data = await r.json();
       const { seenStages } = applyTrace(data.stage_trace || []);
+      lastTraceOkTs = Date.now();
       return seenStages.size;
     } catch (e) {
       console.warn('pipeline trace fetch failed:', e);
+      // Deliberately not updating lastTraceOkTs — see renderHeartbeats().
       return -1;
     }
   }
@@ -552,6 +601,13 @@
     modal.show();
     initCy();
 
+    lastTraceOkTs = 0;
+    lastLogsOkTs = 0;
+    traceFinished = false;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(renderHeartbeats, 1000);
+    renderHeartbeats();
+
     if (pollTimer) clearInterval(pollTimer);
     let stableTicks = 0;
     pollOnce(chatId, traceUrlBase);
@@ -564,6 +620,8 @@
       if (stableTicks >= 8) { // ~12-16s of no change
         clearInterval(pollTimer);
         pollTimer = null;
+        traceFinished = true;
+        renderHeartbeats();
       }
     }, 1500);
 
@@ -573,6 +631,7 @@
   window.closePipelineDiagram = function () {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
     logsOpen = false;
     if (cy) { cy.destroy(); cy = null; }
   };
