@@ -2,13 +2,28 @@
 <html lang="{{ get_lang(request)[:2] }}" data-bs-theme="light">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MoE Portal">
+  <meta name="theme-color" content="#1a1d21" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#1a1d21">
+  <link rel="manifest" href="/user/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <script>
     /* Apply saved theme before first paint to avoid flash */
     (function(){
       const t = localStorage.getItem('moe-theme') || 'light';
       document.documentElement.setAttribute('data-bs-theme', t);
     })();
+    /* Register service worker — own /user/-scoped app, independent of MoE Admin's */
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () =>
+        navigator.serviceWorker.register('/user/sw.js', {scope: '/user/'})
+          .catch(e => console.debug('SW registration skipped:', e.message))
+      );
+    }
   </script>
   <title>
     {% if page == "login" %}{{ t(request, 'page.login') }}{% elif page == "forgot_password" %}{{ t(request, 'page.forgot_pw') }}{% elif page == "reset_password" %}{{ t(request, 'page.reset_pw') }}{% elif page == "change_password" %}{{ t(request, 'page.change_password') }}{% elif page == "dashboard" %}{{ t(request, 'page.user_dashboard') }}{% elif page == "profile" %}{{ t(request, 'page.profile_pw') }}{% elif page == "usage" %}{{ t(request, 'page.usage') }}{% elif page == "billing" %}{{ t(request, 'page.billing') }}{% elif page == "keys" %}{{ t(request, 'page.api_keys') }}{% elif page == "cc_profiles" %}{{ t(request, 'page.cc_profiles') }}{% else %}User Portal{% endif %}
@@ -19,6 +34,11 @@
   <script src="/static/js/chart.umd.min.js"></script>
   <style>
     body { background-color: var(--bs-body-bg); }
+    /* PWA standalone: add top/bottom padding for the device status/home bar */
+    @media (display-mode: standalone) {
+      body { padding-top: env(safe-area-inset-top); }
+      .navbar { padding-top: calc(.5rem + env(safe-area-inset-top)); }
+    }
     .navbar-brand span { color: #6ea8fe; font-weight: 700; }
     .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: 10px; }
     .card-header { border-radius: 10px 10px 0 0 !important; font-weight: 600; font-size: .9rem; }
@@ -86,6 +106,38 @@ const CSRF_TOKEN = "{{ csrf_token }}";
       <i class="bi bi-box-arrow-right me-1"></i>{{ t(request, 'nav.logout') }}
     </a>
     {% endif %}
+    {# PWA Install Button — always visible unless already running standalone #}
+    <div class="dropdown" id="pwaInstallWrap">
+      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary"
+              data-bs-toggle="dropdown" aria-expanded="false" title="Als App installieren">
+        <i class="bi bi-phone me-1"></i><span class="d-none d-sm-inline">App</span>
+      </button>
+      <div class="dropdown-menu dropdown-menu-end p-3" style="min-width:280px;font-size:.85rem" id="pwaDropdown">
+        <div id="pwaPromptSection" style="display:none">
+          <p class="mb-2 text-body"><strong><i class="bi bi-download me-1"></i>App installieren</strong></p>
+          <button class="btn btn-sm btn-primary w-100" onclick="pwaNativeInstall()">
+            Jetzt installieren
+          </button>
+        </div>
+        <div id="pwaManualSection">
+          <p class="mb-2 text-body"><strong><i class="bi bi-phone me-1"></i>Als App installieren</strong></p>
+          <div id="pwaInstructChrome" style="display:none">
+            <p class="text-muted mb-1">Chrome / Edge:</p>
+            <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+              <li>Adressleiste → <i class="bi bi-three-dots-vertical"></i> Menü</li>
+              <li>„App installieren" oder „Zum Startbildschirm"</li>
+            </ol>
+          </div>
+          <div id="pwaInstructIos" style="display:none">
+            <p class="text-muted mb-1">Safari / iOS:</p>
+            <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+              <li><i class="bi bi-share"></i> Teilen-Button antippen</li>
+              <li>„Zum Home-Bildschirm" wählen</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
     {# ── Dark / Light Mode Toggle ── #}
     <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
             onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
@@ -3663,6 +3715,50 @@ function toggleTheme() {
 document.addEventListener('DOMContentLoaded', function() {
   const cur = localStorage.getItem('moe-theme') || 'light';
   _applyTheme(cur);
+});
+</script>
+<script>
+/* ─── PWA Install Prompt (User Portal — separate app from MoE Admin) ────── */
+let pwaDeferredPrompt = null;
+const _pwaIsIos = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+const _pwaIsStandalone = window.matchMedia('(display-mode: standalone)').matches
+                      || window.navigator.standalone === true;
+
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  pwaDeferredPrompt = e;
+  /* Native prompt available: show install button, hide manual instructions */
+  document.getElementById('pwaPromptSection')?.style.setProperty('display', '');
+  document.getElementById('pwaManualSection')?.style.setProperty('display', 'none');
+});
+window.addEventListener('appinstalled', () => {
+  pwaDeferredPrompt = null;
+  document.getElementById('pwaInstallWrap')?.classList.add('d-none');
+});
+
+function pwaNativeInstall() {
+  if (!pwaDeferredPrompt) return;
+  pwaDeferredPrompt.prompt();
+  pwaDeferredPrompt.userChoice.then(() => {
+    pwaDeferredPrompt = null;
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
+  });
+}
+
+/* On dropdown open: show appropriate instructions when no native prompt */
+document.addEventListener('DOMContentLoaded', () => {
+  if (_pwaIsStandalone) {
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
+    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+    return;
+  }
+  const ios = document.getElementById('pwaInstructIos');
+  const chrome = document.getElementById('pwaInstructChrome');
+  if (_pwaIsIos) {
+    if (ios) ios.style.display = '';
+  } else {
+    if (chrome) chrome.style.display = '';
+  }
 });
 </script>
 </body>

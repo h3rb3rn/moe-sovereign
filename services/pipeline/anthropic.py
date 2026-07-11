@@ -88,6 +88,7 @@ from services.helpers import (
     _report,
     _shadow_request, _shadow_lock,
     _progress_queue,
+    current_chat_id,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc, _get_expert_score
@@ -710,6 +711,7 @@ async def _anthropic_tool_handler(
     All routing, credential, and prompt-prefix configuration is read from session.
     Tokens are not charged to the MoE budget when session.is_user_conn is True.
     """
+    current_chat_id.set(chat_id)
     await _record_stage(chat_id, "tool_entry", "started")
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])

@@ -401,7 +401,7 @@ async def graph_rag_node(state_: AgentState):
                     "confidence": float(_match.group(3)),
                 })
 
-        # VSA Background (HABE) Injection
+        # VSA Background (HABE) Injection & Context Modulation
         if state_.get("enable_habe"):
             try:
                 import os
@@ -461,19 +461,54 @@ async def graph_rag_node(state_: AgentState):
                                     habe_facts.append(
                                         f"- (VSA Hierarchical Background): {parent} --[{rel}]--> {child} (similarity: {sim:.2f})"
                                     )
+                                    
+                        # Helper to compute VSA similarity for any text line
+                        def compute_line_similarity(line_text: str) -> float:
+                            l_words = re.findall(r"\b\w{4,}\b", line_text.lower())
+                            vecs = []
+                            for w in l_words:
+                                for prefix in ["node:", "subj:", "obj:", "relation:", "pred:"]:
+                                    vk = f"{prefix}{w}"
+                                    if vk in engine.vocab:
+                                        vecs.append(engine.vocab[vk])
+                            if not vecs:
+                                return 0.0
+                            return float(engine.cosine_similarity(hav, engine.bundle(vecs)))
                         
-                        if habe_facts:
-                            habe_section = "\n\nHOLOGRAPHIC AMBIENT BACKGROUND KNOWLEDGE (HABE):\n" + "\n".join(habe_facts)
-                            ctx = ctx + habe_section if ctx else habe_section
-                            logger.info(f"🧠 HABE: Injected {len(habe_facts)} background facts dynamically.")
-                            await _report(f"🧠 HABE: Injected {len(habe_facts)} background facts")
+                        # Pool all lines: GraphRAG + HABE facts
+                        all_lines = []
+                        if ctx:
+                            all_lines.extend([line.strip() for line in ctx.split("\n") if line.strip()])
+                        all_lines.extend(habe_facts)
+                        
+                        # Calculate scores and sort/filter
+                        scored_lines = []
+                        for line in all_lines:
+                            if line.startswith("[Note:") or line.startswith("HOLOGRAPHIC") or "[Procedural" in line:
+                                scored_lines.append((line, 1.0))
+                            else:
+                                score = compute_line_similarity(line)
+                                scored_lines.append((line, score))
+                        
+                        # Sort by similarity descending
+                        scored_lines.sort(key=lambda x: x[1], reverse=True)
+                        
+                        # Keep lines with similarity >= 0.12 or explicit overrides
+                        filtered_lines = [line for line, sim in scored_lines if sim >= 0.12 or sim == 1.0]
+                        
+                        # Reconstruct the context string
+                        if filtered_lines:
+                            ctx = "\n".join(filtered_lines)
+                            logger.info(f"🧠 HABE: Modulated context window. Retained {len(filtered_lines)}/{len(all_lines)} facts based on VSA similarity.")
+                            await _report(f"🧠 HABE: Modulated context window (retained {len(filtered_lines)} facts)")
+                        else:
+                            ctx = ""
             except Exception as _habe_exc:
-                logger.warning(f"HABE background retrieval failed: {_habe_exc}")
+                logger.warning(f"HABE background retrieval and modulation failed: {_habe_exc}")
 
         return {"graph_context": ctx, "graphrag_entities": _entity_meta}
     except Exception as e:
         logger.warning(f"GraphRAG query_context error: {e}")
-        return {"graph_context": ""}
 
 
 async def math_node_wrapper(state_: AgentState):

@@ -66,3 +66,7 @@ benchmarks/attachments/
 
 # skills.sh external audit cache (regenerated at runtime)
 skills/community/.skillssh_audits.json
+
+# VSA HABE local models
+models/habe_vocab.json
+models/habe_vector.bin.npy

@@ -113,6 +113,44 @@
   let panelEl = null;
   let windowCtl = null;
 
+  // ── Heartbeat: "time since last successful poll" ────────────────────────
+  // A poll interval firing on schedule proves nothing by itself — the fetch
+  // inside it could be failing silently every tick. Only a timestamp that
+  // actually advances on a *successful* response tells the admin the
+  // connection is alive rather than stuck; a stalled fetch leaves it
+  // growing, which is exactly the "hängt oder tut nichts" ambiguity this
+  // exists to resolve.
+  let lastTraceOkTs = 0;
+  let lastLogsOkTs = 0;
+  let heartbeatTimer = null;
+
+  // Set when polling auto-stops because the trace genuinely stopped
+  // growing (request finished/expired) — a deliberate, expected stop, not
+  // a hang. Without this the heartbeat would age past the warning
+  // threshold and show a false "hängt?" for every completed request left
+  // open in the background.
+  let traceFinished = false;
+
+  function _heartbeatText(ts, finished) {
+    if (finished) return { text: 'beendet', color: '#6b7280' };
+    if (!ts) return { text: '–', color: '#6b7280' };
+    const age = (Date.now() - ts) / 1000;
+    if (age < 3)  return { text: 'aktiv',              color: '#22c55e' };
+    if (age < 8)  return { text: `vor ${age.toFixed(0)}s`, color: '#f59e0b' };
+    return              { text: `⚠ vor ${age.toFixed(0)}s — hängt?`, color: '#ef4444' };
+  }
+
+  function renderHeartbeats() {
+    const t = _heartbeatText(lastTraceOkTs, traceFinished);
+    const traceEl = document.getElementById('pd-heartbeat');
+    if (traceEl) { traceEl.textContent = '● ' + t.text; traceEl.style.color = t.color; }
+    if (logsOpen) {
+      const l = _heartbeatText(lastLogsOkTs, false);
+      const logsEl = document.getElementById('pd-logs-heartbeat');
+      if (logsEl) { logsEl.textContent = '● ' + l.text; logsEl.style.color = l.color; }
+    }
+  }
+
   function ensurePanel() {
     if (panelEl) return panelEl;
     panelEl = document.createElement('div');
@@ -125,22 +163,38 @@
     panelEl.innerHTML = `
       <div class="modal-dialog modal-xl modal-dialog-centered" id="pd-dialog">
         <div class="modal-content" style="position:relative">
-          <div class="modal-header py-2" id="pd-header" style="cursor:move;user-select:none">
-            <h6 class="modal-title mb-0">
+          <div class="modal-header py-2" id="pd-header"
+               style="cursor:move;user-select:none;flex-wrap:wrap;row-gap:.35rem">
+            <h6 class="modal-title mb-0" style="flex:1 1 100%;min-width:0">
               <i class="bi bi-diagram-3 me-2"></i>Live-Pipeline —
               <code id="pd-chat-id" style="font-size:.8rem"></code>
             </h6>
-            <span class="badge bg-secondary ms-2" id="pd-status">…</span>
-            <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
-              ${options}
-            </select>
-            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-maximize" title="Maximieren">
-              <i class="bi bi-arrows-fullscreen"></i>
-            </button>
-            <button type="button" class="btn-close ms-2" onclick="window.closePipelineDiagram()"></button>
+            <div class="d-flex align-items-center flex-wrap ms-auto" style="row-gap:.35rem">
+              <span class="badge bg-secondary ms-2" id="pd-status">…</span>
+              <span id="pd-heartbeat" class="ms-2" style="font-size:.7rem;white-space:nowrap" title="Zeit seit dem letzten erfolgreichen Abruf — wächst diese Zahl ungewöhnlich stark, hängt die Verbindung">–</span>
+              <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
+                ${options}
+              </select>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-logs-toggle" title="Log-Zeilen dieser Anfrage">
+                <i class="bi bi-terminal"></i>
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-maximize" title="Maximieren">
+                <i class="bi bi-arrows-fullscreen"></i>
+              </button>
+              <button type="button" class="btn-close ms-2" onclick="window.closePipelineDiagram()"></button>
+            </div>
           </div>
           <div class="modal-body p-0">
             <div id="pd-cy" style="width:100%;height:600px;"></div>
+            <div id="pd-logs" class="d-none border-top" style="height:180px;display:flex;flex-direction:column;background:#0d1117">
+              <div class="d-flex justify-content-between align-items-center px-2 py-1 border-bottom border-secondary"
+                   style="font-size:.68rem;background:#161b22;flex-shrink:0">
+                <span class="text-light"><i class="bi bi-terminal me-1"></i>Log-Zeilen dieser Anfrage</span>
+                <span id="pd-logs-heartbeat" style="white-space:nowrap" title="Zeit seit dem letzten erfolgreichen Log-Abruf">–</span>
+              </div>
+              <pre id="pd-logs-content" class="text-light m-0 p-2" style="overflow-y:auto;flex:1 1 auto;
+                   font-size:.72rem;line-height:1.4;white-space:pre-wrap;word-break:break-all"></pre>
+            </div>
           </div>
           <div id="pd-resize-handle" title="Größe ändern"
                style="position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;
@@ -158,7 +212,49 @@
     );
     panelEl.querySelector('#pd-resize-handle').addEventListener('mousedown', (e) => windowCtl.startResize(e));
     panelEl.querySelector('#pd-maximize').addEventListener('click', () => windowCtl.toggleMaximize());
+    panelEl.querySelector('#pd-logs-toggle').addEventListener('click', toggleLogs);
     return panelEl;
+  }
+
+  // Admin-only (no /user/api/live/process-logs/ endpoint exists — raw
+  // server logs can contain internal details not meant for portal end
+  // users). Loaded strictly on click, never as part of the regular
+  // 1.5s diagram poll, to avoid doubling request volume for admins who
+  // never open it.
+  let currentChatId = null;
+  let logsUrlBase = null;
+  let logsOpen = false;
+  let logsPollTimer = null;
+
+  async function fetchLogsOnce() {
+    if (!currentChatId || !logsUrlBase) return;
+    const content = document.getElementById('pd-logs-content');
+    try {
+      const r = await fetch(`${logsUrlBase}${encodeURIComponent(currentChatId)}`);
+      const data = await r.json();
+      const wasAtBottom = content.scrollHeight - content.scrollTop <= content.clientHeight + 20;
+      content.textContent = (data.lines || []).join('\n') || '(noch keine Log-Zeilen für diese Anfrage)';
+      if (wasAtBottom) content.scrollTop = content.scrollHeight;
+      lastLogsOkTs = Date.now();
+    } catch (e) {
+      console.warn('process-logs fetch failed:', e);
+      // Deliberately not updating lastLogsOkTs — a failing fetch must let
+      // the heartbeat age instead of masking the failure.
+    }
+  }
+
+  function toggleLogs() {
+    const box = document.getElementById('pd-logs');
+    logsOpen = !logsOpen;
+    box.classList.toggle('d-none', !logsOpen);
+    if (logsOpen) {
+      fetchLogsOnce();
+      if (logsPollTimer) clearInterval(logsPollTimer);
+      logsPollTimer = setInterval(fetchLogsOnce, 1500);
+    } else if (logsPollTimer) {
+      clearInterval(logsPollTimer);
+      logsPollTimer = null;
+    }
   }
 
   // Turns the modal dialog into a free-floating, draggable, resizable,
@@ -288,7 +384,11 @@
           'width':            34,
           'height':           34,
           'transition-property': 'background-color, border-color',
-          'transition-duration': '300ms',
+          // Long enough to visibly bridge the ~1.5s poll gap — combined with
+          // the afterglow fade in applyTrace(), a stage that fired and
+          // completed between two polls doesn't just snap straight to the
+          // flat "done" color, it visibly glows out toward it.
+          'transition-duration': '1200ms',
         },
       },
       {
@@ -408,6 +508,26 @@
     return NODE_POSITIONS;
   }
 
+  // Afterglow window: a stage that fires and completes faster than one poll
+  // tick (1.5s) would otherwise jump straight from "idle" to the flat
+  // "done" color the moment it's first observed, with no visible sign it
+  // was ever actively in progress. Instead, a freshly-completed stage
+  // starts at the "active" color and is blended toward "done" over this
+  // many seconds, recomputed on every poll — a fading afterglow rather
+  // than an instant snap.
+  const RECENT_FADE_SECONDS = 5;
+
+  function hexToRgb(hex) {
+    const h = hex.replace('#', '');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function lerpColor(hexA, hexB, t) {
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  }
+
   function classifyStage(entries, isLatestOverall) {
     if (!entries || entries.length === 0) return 'idle';
     const last = entries[entries.length - 1];
@@ -442,11 +562,30 @@
     const usedBranch = seenStages.size === 0 ? null
       : (TOPOLOGY.nodes.find(n => seenStages.has(n.id)) || {}).branch || null;
 
+    const nowTs = Date.now() / 1000;
+    const palette = PALETTES[currentPaletteName];
     TOPOLOGY.nodes.forEach(n => {
-      const cls = classifyStage(byStage[n.id], n.id === latestStage);
+      const entries = byStage[n.id];
+      const cls = classifyStage(entries, n.id === latestStage);
       const node = cy.getElementById(n.id);
+      // Clear any afterglow override from a previous poll before
+      // reapplying — otherwise a stage that ages past the fade window
+      // would keep its last interpolated color forever instead of
+      // settling into the flat class-based "done" color.
+      node.removeStyle('background-color border-color');
       if (cls !== 'idle') node.addClass(`pd-${cls}`);
       if (usedBranch && n.branch !== usedBranch) node.addClass('pd-dim');
+
+      if (cls === 'done' && entries && entries.length) {
+        const age = nowTs - (entries[entries.length - 1].ts || 0);
+        if (age >= 0 && age < RECENT_FADE_SECONDS) {
+          const t = Math.min(1, age / RECENT_FADE_SECONDS);
+          node.style({
+            'background-color': lerpColor(palette.active.bg, palette.done.bg, t),
+            'border-color':     lerpColor(palette.active.border, palette.done.border, t),
+          });
+        }
+      }
     });
 
     // Label the untouched branch's group box explicitly instead of leaving
@@ -476,34 +615,62 @@
     try {
       const r = await fetch(`${traceUrlBase}${encodeURIComponent(chatId)}`);
       const data = await r.json();
-      const { seenStages } = applyTrace(data.stage_trace || []);
-      return seenStages.size;
+      applyTrace(data.stage_trace || []);
+      lastTraceOkTs = Date.now();
+      // "active" is the authoritative still-running signal from the
+      // backend (moe:active:{chat_id} existence) — default true so a
+      // response shape without the field (older cache, unexpected error
+      // body) never falsely triggers "beendet".
+      return data.active !== false;
     } catch (e) {
       console.warn('pipeline trace fetch failed:', e);
-      return -1;
+      // A failed fetch must NOT be read as "request finished" — keep
+      // polling and let the heartbeat age instead (see renderHeartbeats()).
+      return true;
     }
   }
 
   window.openPipelineDiagram = function (chatId, traceUrlBase) {
     ensurePanel();
     document.getElementById('pd-chat-id').textContent = (chatId || '').slice(-16);
+
+    currentChatId = chatId;
+    logsUrlBase = traceUrlBase.startsWith('/user/') ? null : traceUrlBase.replace('request-trace', 'process-logs');
+    document.getElementById('pd-logs-toggle').classList.toggle('d-none', !logsUrlBase);
+    // Reset the log view for the newly-selected request instead of showing
+    // the previous row's stale content until the first poll lands.
+    logsOpen = false;
+    document.getElementById('pd-logs').classList.add('d-none');
+    document.getElementById('pd-logs-content').textContent = '';
+    if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+
     // eslint-disable-next-line no-undef
     const modal = bootstrap.Modal.getOrCreateInstance(panelEl);
     modal.show();
     initCy();
 
+    lastTraceOkTs = 0;
+    lastLogsOkTs = 0;
+    traceFinished = false;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(renderHeartbeats, 1000);
+    renderHeartbeats();
+
     if (pollTimer) clearInterval(pollTimer);
-    let stableTicks = 0;
     pollOnce(chatId, traceUrlBase);
     pollTimer = setInterval(async () => {
-      const n = await pollOnce(chatId, traceUrlBase);
-      // Auto-stop once the trace stops growing for a few ticks (request finished
-      // or expired) — avoids polling forever after the panel is left open.
-      if (n === (pollOnce._lastN || -1)) stableTicks++; else stableTicks = 0;
-      pollOnce._lastN = n;
-      if (stableTicks >= 8) { // ~12-16s of no change
+      // Stop only once the backend confirms moe:active:{chat_id} is gone —
+      // NOT after N polls with no new stage. A single legitimately slow
+      // step (e.g. a 20s expert LLM call) produces no new stage for far
+      // longer than the old 12s window, which falsely marked genuinely
+      // active requests as "beendet". A failed fetch returns true (keep
+      // polling), so a network hiccup can't be misread as "finished" either.
+      const stillActive = await pollOnce(chatId, traceUrlBase);
+      if (!stillActive) {
         clearInterval(pollTimer);
         pollTimer = null;
+        traceFinished = true;
+        renderHeartbeats();
       }
     }, 1500);
 
@@ -512,6 +679,9 @@
 
   window.closePipelineDiagram = function () {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    logsOpen = false;
     if (cy) { cy.destroy(); cy = null; }
   };
 })();

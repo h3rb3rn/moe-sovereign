@@ -479,10 +479,119 @@ self.addEventListener('fetch', e => {{
 }});
 """
     return Response(content=sw_code, media_type="application/javascript",
-                    headers={
-                        "Service-Worker-Allowed": "/",
-                        "Cache-Control": "no-cache, no-store, must-revalidate",
-                    })
+                    headers={"Service-Worker-Allowed": "/"})
+
+
+# "/user/dashboard" deliberately not in this list: Cache.addAll()/
+# Cache.put() throw a TypeError for any *redirected* response, even one
+# that ultimately resolves to 200 — and this route redirects to
+# /user/login for unauthenticated requests. That would abort the service
+# worker's install step, leaving it stuck non-active and Chrome unwilling
+# to offer beforeinstallprompt (confirmed live on MoE Admin's identical
+# "/" pattern — see fix/pwa-mobile-nav-overflow). Only genuinely static,
+# always-200 assets belong here; dynamic/auth-gated pages are already
+# covered by the fetch handler's network-first-with-cache-fallback path.
+_PWA_PORTAL_CACHE_VERSION = "moe-portal-v1"
+_PORTAL_STATIC_ASSETS_TO_CACHE = [
+    "/static/css/bootstrap.min.css",
+    "/static/css/bootstrap-icons.min.css",
+    "/static/js/bootstrap.bundle.min.js",
+    "/static/js/chart.umd.min.js",
+]
+
+
+@app.get("/user/manifest.json")
+async def pwa_portal_manifest():
+    """Web App Manifest for the User Portal — a separate installable PWA
+    from MoE Admin (own name/icon-label/start_url/scope), so end users can
+    install just the portal without pulling in admin-only shortcuts."""
+    return JSONResponse({
+        "name":             "MoE Portal",
+        "short_name":       "MoE Portal",
+        "description":      "MoE Sovereign — User Portal",
+        "start_url":        "/user/dashboard",
+        "scope":            "/user/",
+        "display":          "standalone",
+        "background_color": "#1a1d21",
+        "theme_color":      "#1a1d21",
+        "orientation":      "portrait-primary",
+        "icons": [
+            {
+                "src":     "/static/icons/icon-192.png",
+                "sizes":   "192x192",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-512.png",
+                "sizes":   "512x512",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-192.svg",
+                "sizes":   "192x192",
+                "type":    "image/svg+xml",
+                "purpose": "any maskable",
+            },
+        ],
+        "categories": ["productivity", "utilities"],
+        "shortcuts": [
+            {"name": "Dashboard", "url": "/user/dashboard", "description": "Übersicht"},
+            {"name": "Nutzung",   "url": "/user/usage",     "description": "Nutzungsstatistik & Live Monitor"},
+            {"name": "API-Keys",  "url": "/user/keys",      "description": "API-Schlüssel verwalten"},
+        ],
+    }, headers={"Content-Type": "application/manifest+json"})
+
+
+@app.get("/user/sw.js")
+async def pwa_portal_service_worker():
+    """Service worker for the User Portal — scoped to /user/ (own cache
+    version, own asset list, own Service-Worker-Allowed scope) so it stays
+    independent of MoE Admin's root-scoped /sw.js. A browser that has both
+    apps installed resolves each request to whichever registered scope is
+    the more specific match, so the two never fight over the same cache."""
+    assets_json = json.dumps(_PORTAL_STATIC_ASSETS_TO_CACHE)
+    sw_code = f"""
+const CACHE  = '{_PWA_PORTAL_CACHE_VERSION}';
+const ASSETS = {assets_json};
+
+self.addEventListener('install', e => {{
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
+}});
+
+self.addEventListener('activate', e => {{
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+}});
+
+self.addEventListener('fetch', e => {{
+  const url = new URL(e.request.url);
+  // Cache-first for static assets; network-first for everything else
+  if (url.pathname.startsWith('/static/')) {{
+    e.respondWith(
+      caches.match(e.request).then(cached => cached || fetch(e.request).then(resp => {{
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return resp;
+      }}))
+    );
+  }} else {{
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match(e.request))
+    );
+  }}
+}});
+"""
+    return Response(content=sw_code, media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/user/"})
+
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
@@ -3164,7 +3273,7 @@ _CLEANUP_CONFIG_PATH  = Path("/app/cleanup-config.json")
 _CLEANUP_HISTORY_PATH = Path("/app/cleanup-history.jsonl")
 _CHECKPOINT_ARCHIVE_DIR = Path("/app/checkpoint-archives")
 
-_KNOWN_JOBS = {"docker_prune", "checkpoint_archive"}
+_KNOWN_JOBS = {"docker_prune", "checkpoint_archive", "rlsf_local_loop"}
 
 def _cleanup_paths() -> tuple[Path, Path]:
     return _CLEANUP_CONFIG_PATH, _CLEANUP_HISTORY_PATH
@@ -3242,7 +3351,7 @@ async def api_cleanup_config_save(request: Request):
     body = await request.json()
 
     # Validate: only known top-level keys allowed
-    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus"}
+    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus", "rlsf_local_loop"}
     unknown = set(body.keys()) - KNOWN
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown keys: {unknown}")
@@ -3410,6 +3519,21 @@ def _run_checkpoint_archive() -> None:
     })
 
 
+def _run_rlsf_local_loop() -> None:
+    import httpx
+    try:
+        cfg = _read_cleanup_config().get("rlsf_local_loop", {})
+        batch_size = int(cfg.get("batch_size", 100))
+        r = httpx.post(
+            f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/rlsf/trigger",
+            json={"batch_size": batch_size},
+            timeout=15.0
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        logger.error("Failed to trigger rlsf_local_loop on orchestrator: %s", exc)
+
+
 @app.post("/api/cleanup/run/{job}", dependencies=[Depends(require_login)])
 async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
     """Triggers a cleanup job immediately in the background."""
@@ -3420,6 +3544,8 @@ async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
         background_tasks.add_task(_run_docker_prune)
     elif job == "checkpoint_archive":
         background_tasks.add_task(_run_checkpoint_archive)
+    elif job == "rlsf_local_loop":
+        background_tasks.add_task(_run_rlsf_local_loop)
 
     return {"ok": True, "job": job, "message": "Job started — check History for status updates"}
 
@@ -5453,10 +5579,14 @@ async def user_api_live_request_trace(chat_id: str, user_id: str = Depends(requi
                 stage_trace.append(json.loads(raw))
             except Exception:
                 pass
-        return {"chat_id": chat_id, "stage_trace": stage_trace}
+        # active_raw was already fetched above for the ownership check —
+        # its presence/absence is also the authoritative "still running"
+        # signal (see api_live_request_trace's docstring for why this
+        # matters instead of a stage-count-stability guess).
+        return {"chat_id": chat_id, "stage_trace": stage_trace, "active": bool(active_raw)}
     except Exception as exc:
         logger.warning("User live request-trace Valkey error: %s", exc)
-        return {"chat_id": chat_id, "stage_trace": []}
+        return {"chat_id": chat_id, "stage_trace": [], "active": True}
 
 
 @app.get("/user/api/my-handovers")
@@ -7115,8 +7245,16 @@ async def api_live_request_trace(chat_id: str):
     Not part of the table poll — fetched only while an admin has a specific
     request's diagram panel open. Reads the bounded Redis list written by
     services.tracking._record_stage.
+
+    "active" reflects whether moe:active:{chat_id} still exists — the
+    authoritative "is this request actually still running" signal. The
+    frontend previously guessed this from "no new stage for N polls", which
+    false-positived on any single step that legitimately takes longer than
+    that window (e.g. a slow expert LLM call), showing "beendet" for a
+    request that was still very much active.
     """
     stage_trace: list[dict] = []
+    active = True
     try:
         r = await db._get_redis()
         raw_entries = await r.lrange(f"moe:active:{chat_id}:trace", 0, -1)
@@ -7125,9 +7263,59 @@ async def api_live_request_trace(chat_id: str):
                 stage_trace.append(json.loads(raw))
             except Exception:
                 pass
+        active = bool(await r.exists(f"moe:active:{chat_id}"))
     except Exception as exc:
         logger.warning("Live request-trace Valkey error: %s", exc)
-    return {"chat_id": chat_id, "stage_trace": stage_trace}
+    return {"chat_id": chat_id, "stage_trace": stage_trace, "active": active}
+
+
+@app.get("/api/live/process-logs/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_process_logs(chat_id: str):
+    """On-demand langgraph-orchestrator log lines belonging to one request.
+
+    Loaded only when an admin explicitly expands the "Logs" section of the
+    pipeline diagram panel (not part of any regular poll) — reads the
+    container's log since the request's started_at timestamp (from
+    moe:active:{chat_id}) and keeps only lines tagged with this chat_id by
+    the %(chat_id)s log filter installed in main.py. Every existing
+    logger.info/warning/... call across the whole pipeline is tagged
+    automatically that way, without threading chat_id through ~270
+    individual call sites.
+    """
+    since_dt = None
+    try:
+        r = await db._get_redis()
+        raw_meta = await r.get(f"moe:active:{chat_id}")
+        if raw_meta:
+            meta = json.loads(raw_meta)
+            started = meta.get("started_at", "")
+            if started:
+                since_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+    except Exception as exc:
+        logger.debug("process-logs: could not resolve started_at for %s: %s", chat_id, exc)
+
+    def _fetch_and_filter() -> list[str]:
+        client = docker.from_env()
+        container = client.containers.get("langgraph-orchestrator")
+        kwargs = {"timestamps": True, "tail": 5000}
+        if since_dt is not None:
+            kwargs["since"] = since_dt
+        raw = container.logs(**kwargs)
+        text = raw.decode("utf-8", errors="replace")
+        tag = f"[{chat_id}]"
+        return [line for line in text.splitlines() if tag in line]
+
+    try:
+        lines = await asyncio.to_thread(_fetch_and_filter)
+    except docker.errors.NotFound:
+        return {"chat_id": chat_id, "lines": [], "error": "container not found"}
+    except Exception as exc:
+        logger.warning("process-logs fetch failed for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "lines": [], "error": str(exc)}
+
+    # Bound the response — a chatty request could otherwise return thousands
+    # of lines; the most recent ones are what matters for live debugging.
+    return {"chat_id": chat_id, "lines": lines[-500:], "truncated": len(lines) > 500}
 
 
 @app.post("/api/live/kill-request/{chat_id}", dependencies=[Depends(require_login)])
