@@ -1208,6 +1208,7 @@ from routes.mission_context  import router as _mc_router
 from routes.graph            import router as _graph_router
 from routes.admin_benchmark  import router as _admin_bench_router
 from routes.admin_ontology   import router as _admin_onto_router
+from routes.admin_rlsf       import router as _admin_rlsf_router
 from routes.admin_stats      import router as _admin_stats_router
 from routes.feedback         import router as _feedback_router
 from routes.ollama_compat    import router as _ollama_router
@@ -1225,6 +1226,7 @@ app.include_router(_mc_router)
 app.include_router(_graph_router)
 app.include_router(_admin_bench_router)
 app.include_router(_admin_onto_router)
+app.include_router(_admin_rlsf_router)
 app.include_router(_admin_stats_router)
 app.include_router(_feedback_router)
 app.include_router(_ollama_router)
