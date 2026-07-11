@@ -5414,32 +5414,44 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
     }
 
 
+async def _user_owns_chat_id(r, chat_id: str, user_id: str) -> tuple[bool, str | None]:
+    """Shared ownership check for portal per-request endpoints (trace,
+    process-logs): chat_id must belong to the requesting user_id, checked
+    against the active-request record, falling back to recent completed
+    history. Returns (owns, active_raw) — active_raw is the raw
+    moe:active:{chat_id} value already fetched here, reused by callers to
+    avoid a duplicate Redis round trip (e.g. for started_at / the "active"
+    still-running flag)."""
+    owns = False
+    active_raw = await r.get(f"moe:active:{chat_id}")
+    if active_raw:
+        try:
+            owns = json.loads(active_raw).get("user_id") == user_id
+        except Exception:
+            owns = False
+    if not owns:
+        for raw in await r.zrevrange("moe:admin:completed", 0, 199):
+            try:
+                meta = json.loads(raw)
+            except Exception:
+                continue
+            if meta.get("chat_id") == chat_id:
+                owns = meta.get("user_id") == user_id
+                break
+    return owns, active_raw
+
+
 @app.get("/user/api/live/request-trace/{chat_id}")
 async def user_api_live_request_trace(chat_id: str, user_id: str = Depends(require_user_login)):
     """On-demand stage trace for the current user's own request, portal-side.
 
-    Ownership check: chat_id must belong to the requesting user_id (checked
-    against the active-request record, falling back to recent completed
-    history) before the trace is returned — prevents cross-user leakage.
+    Ownership check: chat_id must belong to the requesting user_id — see
+    _user_owns_chat_id — before the trace is returned; prevents cross-user
+    leakage.
     """
     try:
         r = await db._get_redis()
-        owns = False
-        active_raw = await r.get(f"moe:active:{chat_id}")
-        if active_raw:
-            try:
-                owns = json.loads(active_raw).get("user_id") == user_id
-            except Exception:
-                owns = False
-        if not owns:
-            for raw in await r.zrevrange("moe:admin:completed", 0, 199):
-                try:
-                    meta = json.loads(raw)
-                except Exception:
-                    continue
-                if meta.get("chat_id") == chat_id:
-                    owns = meta.get("user_id") == user_id
-                    break
+        owns, active_raw = await _user_owns_chat_id(r, chat_id, user_id)
         if not owns:
             return {"chat_id": chat_id, "stage_trace": []}
 
@@ -5457,6 +5469,28 @@ async def user_api_live_request_trace(chat_id: str, user_id: str = Depends(requi
     except Exception as exc:
         logger.warning("User live request-trace Valkey error: %s", exc)
         return {"chat_id": chat_id, "stage_trace": [], "active": True}
+
+
+@app.get("/user/api/live/process-logs/{chat_id}")
+async def user_api_live_process_logs(chat_id: str, user_id: str = Depends(require_user_login)):
+    """On-demand langgraph-orchestrator log lines for the current user's own
+    request, portal-side — same ownership gate as the trace endpoint, then
+    reuses the admin endpoint's fetch+filter logic unchanged. Users only
+    ever see log lines tagged with a chat_id they own; nothing from other
+    users' requests or unrelated internal log lines is ever included,
+    since the container-wide log stream is filtered down to just this one
+    chat_id's tagged lines before the response is built.
+    """
+    try:
+        r = await db._get_redis()
+        owns, active_raw = await _user_owns_chat_id(r, chat_id, user_id)
+        if not owns:
+            return {"chat_id": chat_id, "lines": [], "error": "not found"}
+        since_dt = await _resolve_process_started_at(chat_id, raw_meta=active_raw)
+        return await _fetch_process_logs_response(chat_id, since_dt)
+    except Exception as exc:
+        logger.warning("User process-logs error for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "lines": [], "error": str(exc)}
 
 
 @app.get("/user/api/my-handovers")
@@ -7152,18 +7186,33 @@ async def api_live_process_logs(chat_id: str):
     automatically that way, without threading chat_id through ~270
     individual call sites.
     """
-    since_dt = None
+    since_dt = await _resolve_process_started_at(chat_id)
+    return await _fetch_process_logs_response(chat_id, since_dt)
+
+
+async def _resolve_process_started_at(chat_id: str, raw_meta: str | None = None) -> "datetime | None":
+    """Resolve started_at for a chat_id, from an already-fetched
+    moe:active:{chat_id} value if the caller has one (avoids a duplicate
+    Redis round trip in the portal endpoint, which already fetches it for
+    the ownership check)."""
     try:
-        r = await db._get_redis()
-        raw_meta = await r.get(f"moe:active:{chat_id}")
+        if raw_meta is None:
+            r = await db._get_redis()
+            raw_meta = await r.get(f"moe:active:{chat_id}")
         if raw_meta:
             meta = json.loads(raw_meta)
             started = meta.get("started_at", "")
             if started:
-                since_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                return datetime.fromisoformat(started.replace("Z", "+00:00"))
     except Exception as exc:
         logger.debug("process-logs: could not resolve started_at for %s: %s", chat_id, exc)
+    return None
 
+
+async def _fetch_process_logs_response(chat_id: str, since_dt) -> dict:
+    """Shared Docker-log fetch+filter, used by both the admin and portal
+    process-logs endpoints — only the ownership/auth gate differs between
+    them."""
     def _fetch_and_filter() -> list[str]:
         client = docker.from_env()
         container = client.containers.get("langgraph-orchestrator")

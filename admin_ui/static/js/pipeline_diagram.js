@@ -216,11 +216,11 @@
     return panelEl;
   }
 
-  // Admin-only (no /user/api/live/process-logs/ endpoint exists — raw
-  // server logs can contain internal details not meant for portal end
-  // users). Loaded strictly on click, never as part of the regular
-  // 1.5s diagram poll, to avoid doubling request volume for admins who
-  // never open it.
+  // Available in both Admin and Portal — /user/api/live/process-logs/
+  // enforces the same chat_id ownership check as the trace endpoint, so
+  // portal users only ever see log lines tagged with a chat_id they own.
+  // Loaded strictly on click, never as part of the regular 1.5s diagram
+  // poll, to avoid doubling request volume for anyone who never opens it.
   let currentChatId = null;
   let logsUrlBase = null;
   let logsOpen = false;
@@ -592,8 +592,11 @@
     document.getElementById('pd-chat-id').textContent = (chatId || '').slice(-16);
 
     currentChatId = chatId;
-    logsUrlBase = traceUrlBase.startsWith('/user/') ? null : traceUrlBase.replace('request-trace', 'process-logs');
-    document.getElementById('pd-logs-toggle').classList.toggle('d-none', !logsUrlBase);
+    // Works for both '/api/live/request-trace/' (admin) and
+    // '/user/api/live/request-trace/' (portal) — each has a matching
+    // process-logs endpoint with its own auth/ownership gate.
+    logsUrlBase = traceUrlBase.replace('request-trace', 'process-logs');
+    document.getElementById('pd-logs-toggle').classList.remove('d-none');
     // Reset the log view for the newly-selected request instead of showing
     // the previous row's stale content until the first poll lands.
     logsOpen = false;
