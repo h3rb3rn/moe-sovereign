@@ -616,12 +616,18 @@ async def _wrap_deregister_on_stream_end(body_iterator, chat_id: str):
     for any exit path that turns out to skip it (deregistration is idempotent:
     calling it twice, once explicitly and once here, is a safe no-op the
     second time). Mirrors services/pipeline/chat.py::_wrap_deregister_on_stream_end.
+
+    Also marks the tool_model_call stage-trace entry done — same backstop
+    reasoning: an early client disconnect (aclose() before the generator
+    reaches its own "done" marker) would otherwise leave the pipeline
+    diagram showing that node as permanently "active".
     """
     try:
         async for chunk in body_iterator:
             yield chunk
     finally:
         asyncio.create_task(_deregister_active_request(chat_id))
+        asyncio.create_task(_record_stage(chat_id, "tool_model_call", "done"))
 
 
 async def _anthropic_content_blocks_to_sse(
@@ -1835,6 +1841,7 @@ async def _anthropic_tool_handler(
                         prompt_tokens=_in_tok, completion_tokens=_out_tok,
                     ))
             asyncio.create_task(_deregister_active_request(chat_id))
+            asyncio.create_task(_record_stage(chat_id, "tool_model_call", "error" if _stream_error else "done"))
 
             # ── Tier-4 Episodic Write-Back (fire-and-forget) ──────────────────
             # Parity fix: this path previously lacked the episodic write-back
@@ -2080,6 +2087,7 @@ async def _anthropic_tool_handler(
                         prompt_tokens=_in_tok, completion_tokens=_out_tok,
                     ))
             asyncio.create_task(_deregister_active_request(chat_id))
+            asyncio.create_task(_record_stage(chat_id, "tool_model_call", "error" if _stream_error else "done"))
 
             # ── Tier-4 Episodic Write-Back (fire-and-forget) ──────────────────
             if (CC_CONTEXT_INDEX_ENABLED and session.long_memory
@@ -2430,6 +2438,7 @@ async def _anthropic_tool_handler(
     })
 
     asyncio.create_task(_deregister_active_request(chat_id))
+    asyncio.create_task(_record_stage(chat_id, "tool_model_call", "done"))
 
     # ── Tier-4 Episodic Write-Back (non-streaming path) ───────────────────────
     if (CC_CONTEXT_INDEX_ENABLED and session.long_memory

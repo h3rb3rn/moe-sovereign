@@ -330,6 +330,7 @@ async def _wrap_deregister_on_stream_end(body_iterator, chat_id: str):
             yield chunk
     finally:
         asyncio.create_task(_deregister_active_request(chat_id))
+        asyncio.create_task(_record_stage(chat_id, "tool_model_call", "done"))
 
 
 async def _agent_writeback_traced(chat_id: str, *args, **kwargs) -> None:
@@ -1870,6 +1871,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 )
             else:
                 asyncio.create_task(_deregister_active_request(chat_id))
+                asyncio.create_task(_record_stage(chat_id, "tool_model_call", "done"))
 
             # _handle_tool_calls returns StreamingResponse for stream=True, dict otherwise
             if isinstance(_tc_resp, StreamingResponse):
