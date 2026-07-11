@@ -125,22 +125,25 @@
     panelEl.innerHTML = `
       <div class="modal-dialog modal-xl modal-dialog-centered" id="pd-dialog">
         <div class="modal-content" style="position:relative">
-          <div class="modal-header py-2" id="pd-header" style="cursor:move;user-select:none">
-            <h6 class="modal-title mb-0">
+          <div class="modal-header py-2" id="pd-header"
+               style="cursor:move;user-select:none;flex-wrap:wrap;row-gap:.35rem">
+            <h6 class="modal-title mb-0" style="flex:1 1 100%;min-width:0">
               <i class="bi bi-diagram-3 me-2"></i>Live-Pipeline —
               <code id="pd-chat-id" style="font-size:.8rem"></code>
             </h6>
-            <span class="badge bg-secondary ms-2" id="pd-status">…</span>
-            <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
-              ${options}
-            </select>
-            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-logs-toggle" title="Log-Zeilen dieser Anfrage">
-              <i class="bi bi-terminal"></i>
-            </button>
-            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-maximize" title="Maximieren">
-              <i class="bi bi-arrows-fullscreen"></i>
-            </button>
-            <button type="button" class="btn-close ms-2" onclick="window.closePipelineDiagram()"></button>
+            <div class="d-flex align-items-center flex-wrap ms-auto" style="row-gap:.35rem">
+              <span class="badge bg-secondary ms-2" id="pd-status">…</span>
+              <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
+                ${options}
+              </select>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-logs-toggle" title="Log-Zeilen dieser Anfrage">
+                <i class="bi bi-terminal"></i>
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-maximize" title="Maximieren">
+                <i class="bi bi-arrows-fullscreen"></i>
+              </button>
+              <button type="button" class="btn-close ms-2" onclick="window.closePipelineDiagram()"></button>
+            </div>
           </div>
           <div class="modal-body p-0">
             <div id="pd-cy" style="width:100%;height:600px;"></div>
