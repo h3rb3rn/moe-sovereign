@@ -509,6 +509,7 @@ async def graph_rag_node(state_: AgentState):
         return {"graph_context": ctx, "graphrag_entities": _entity_meta}
     except Exception as e:
         logger.warning(f"GraphRAG query_context error: {e}")
+        return {"graph_context": ""}
 
 
 async def math_node_wrapper(state_: AgentState):
