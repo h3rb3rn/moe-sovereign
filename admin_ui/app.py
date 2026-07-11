@@ -428,7 +428,14 @@ async def pwa_manifest():
             {"name": "Templates",   "url": "/templates",    "description": "Expert templates"},
             {"name": "Modelle",     "url": "/model-metadata","description": "Model metadata"},
         ],
-    }, headers={"Content-Type": "application/manifest+json"})
+    }, headers={
+        "Content-Type": "application/manifest+json",
+        # Best practice for PWA control files: never let a browser or any
+        # intermediate proxy cache these, so an update is picked up on the
+        # very next request instead of possibly being served stale for
+        # however long a caching layer decides to hold onto it.
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+    })
 
 
 @app.get("/sw.js")
@@ -472,7 +479,10 @@ self.addEventListener('fetch', e => {{
 }});
 """
     return Response(content=sw_code, media_type="application/javascript",
-                    headers={"Service-Worker-Allowed": "/"})
+                    headers={
+                        "Service-Worker-Allowed": "/",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                    })
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
