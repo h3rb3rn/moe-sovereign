@@ -371,12 +371,23 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ─── PWA: manifest + service worker ──────────────────────────────────────────
 
-_PWA_CACHE_VERSION = "moe-admin-v2"
+_PWA_CACHE_VERSION = "moe-admin-v3"
+# "/" was previously in this list. Cache.addAll()/Cache.put() throw a
+# TypeError for any *redirected* response — even one that ultimately
+# resolves to 200 — and "/" redirects to /login for unauthenticated
+# requests (and can redirect for other reasons too). That threw during the
+# service worker's install step, which never completed, so the SW never
+# reached "active" — and Chrome requires an active SW with a fetch handler
+# before it will fire beforeinstallprompt, so installability silently
+# failed and the UI fell back to manual "Add to Home Screen" instructions
+# even though the manifest/icons/SW script itself all looked fine over curl.
+# Only genuinely static, always-200 assets belong in this install-time
+# list; dynamic/auth-gated pages are left to the fetch handler's
+# network-first-with-cache-fallback behavior instead.
 _STATIC_ASSETS_TO_CACHE = [
     "/static/css/bootstrap.min.css",
     "/static/css/bootstrap-icons.min.css",
     "/static/js/bootstrap.bundle.min.js",
-    "/",
 ]
 
 @app.get("/manifest.json")
