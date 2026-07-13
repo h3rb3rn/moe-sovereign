@@ -293,6 +293,12 @@ def main() -> None:
         except Exception as e:
             logger.warning("Failed to parse DeepSpeed config: %s", e)
 
+    model_init_kwargs = {
+        "trust_remote_code": True,
+        "attn_implementation": "eager",     # Flash-Attn 2 not available on MI250x
+        "torch_dtype": torch.bfloat16,
+    }
+
     if is_zero3:
         if bnb_config is not None:
             logger.warning(
@@ -300,63 +306,26 @@ def main() -> None:
                 "sharding (cannot shard quantized blocks). Disabling QLoRA."
             )
             bnb_config = None
-        logger.info("Initializing model and PEFT under DeepSpeed ZeRO-3 context...")
-        import deepspeed
-        # Both base model loading and PEFT adapter wrapping must happen inside zero.Init
-        # context so that all parameters are correctly registered and sharded by ZeRO-3.
-        with deepspeed.zero.Init(remote_device=None, pin_memory=True):
-            model = AutoModelForCausalLM.from_pretrained(
-                cfg.base_model,
-                quantization_config=bnb_config,
-                device_map=device_map,           # None for ZeRO-3
-                trust_remote_code=True,
-                attn_implementation="eager",     # Flash-Attn 2 not available on MI250x
-                torch_dtype=torch.bfloat16,
-                ignore_mismatched_sizes=True,    # Ignore size mismatch check for ZeRO-3 placeholders
-            )
-
-            # ── Freeze non-text submodules before PEFT wrapping ────────────────────
-            # Qwen3.5-MoE is multimodal (Qwen3_5MoeForConditionalGeneration):
-            #   model.visual.*   → vision tower  (empty params when text-only)
-            #   model.language_model.* → text LM  (what we want to train)
-            # ZeRO-3 partitions *all* parameters including vision ones that have
-            # numel=0. When the forward pass tries to fetch them they are
-            # NOT_AVAILABLE → AssertionError on rank N.
-            # Fix: freeze all non-language-model modules so ZeRO-3 marks them as
-            # persistent (no fetch needed) and won't try to shard/gather them.
-            # We also unconditionally freeze any param with numel==0 as a safety net.
-            _TEXT_MODULE_PREFIXES = (
-                "model.language_model",   # Qwen3_5MoeForConditionalGeneration
-                "language_model",         # some VL variants
-                "model.text_model",       # older VL variants
-                "model.model",            # plain CausalLM (non-VL)
-                "lm_head",
-            )
-            _frozen_count = 0
-            for name, param in model.named_parameters():
-                is_text = any(name.startswith(p) for p in _TEXT_MODULE_PREFIXES)
-                if not is_text or param.numel() == 0:
-                    param.requires_grad_(False)
-                    _frozen_count += 1
-            logger.info("ZeRO-3: Froze %d non-text / empty parameters (vision tower etc.)", _frozen_count)
-
-            lora_cfg = get_lora_config(cfg)
-            model = get_peft_model(model, lora_cfg)
+        # When using ZeRO-3, we do NOT load the model manually inside the script.
+        # SFTTrainer will load it inside the proper accelerate context, which avoids the false positive
+        # "size mismatch" errors during loading (comparing sharded parameters to the checkpoint).
+        logger.info("ZeRO-3: Passing base model path to SFTTrainer for automatic sharded loading...")
+        model_or_path = cfg.base_model
+        lora_cfg = get_lora_config(cfg)
     else:
         model = AutoModelForCausalLM.from_pretrained(
             cfg.base_model,
             quantization_config=bnb_config,
             device_map=device_map,
-            trust_remote_code=True,
-            attn_implementation="eager",
-            torch_dtype=torch.bfloat16,
+            **model_init_kwargs
         )
         if cfg.use_4bit:
             model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
         lora_cfg = get_lora_config(cfg)
         model = get_peft_model(model, lora_cfg)
-
-    model.print_trainable_parameters()
+        model.print_trainable_parameters()
+        model_or_path = model
+        lora_cfg = None # Already applied to model
 
     # ---- Training config (SFTConfig = TrainingArguments + SFT params in TRL 1.4) ----
     training_args = SFTConfig(
@@ -386,6 +355,7 @@ def main() -> None:
         max_length=cfg.max_seq_len,
         dataset_text_field="text",
         packing=False,
+        model_init_kwargs=model_init_kwargs if is_zero3 else None,
     )
 
     # ---- SFT Trainer ----
@@ -396,12 +366,31 @@ def main() -> None:
     )
 
     trainer = SFTTrainer(
-        model=model,
+        model=model_or_path,
+        peft_config=lora_cfg if is_zero3 else None,
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
         data_collator=collator,
     )
+
+    if is_zero3:
+        # Set ZeRO-3 leaf modules on the trainer's model to prevent AssertionError on custom kernels / MoE blocks
+        try:
+            from deepspeed.utils import set_z3_leaf_modules
+            leaf_classes = []
+            for name, m in trainer.model.named_modules():
+                class_name = m.__class__.__name__
+                if class_name in ("Qwen3_5MoeGatedDeltaNet", "Qwen3_5MoeSparseMoeBlock"):
+                    if m.__class__ not in leaf_classes:
+                        leaf_classes.append(m.__class__)
+            if leaf_classes:
+                set_z3_leaf_modules(trainer.model, leaf_classes)
+                logger.info("ZeRO-3: Registered leaf modules on trainer.model: %s", [c.__name__ for c in leaf_classes])
+        except Exception as e:
+            logger.warning("ZeRO-3: Failed to register leaf modules on trainer.model: %s", e)
+        
+        trainer.model.print_trainable_parameters()
 
     logger.info("Starting LoRA SFT training ...")
     trainer.train()

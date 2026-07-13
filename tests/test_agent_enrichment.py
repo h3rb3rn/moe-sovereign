@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services import agent_enrichment as _ae
 from services.agent_enrichment import (
     TurnInfo,
     classify_turn,
@@ -23,6 +24,13 @@ from services.agent_enrichment import (
     agent_cache_lookup,
     agent_graph_context,
     agent_writeback,
+    classify_file_action,
+    extract_file_touches,
+    accumulate_stream_tool_call_delta,
+    finalize_stream_tool_calls,
+    looks_like_premature_stop,
+    _compile_pattern_rows,
+    _SEED_PREMATURE_STOP_PATTERNS,
 )
 
 
@@ -566,3 +574,192 @@ class TestAgentGraphContext:
         )
         assert len(seen_keys) == 2
         assert seen_keys[0] != seen_keys[1]
+
+
+# ── classify_file_action / extract_file_touches — file-touch view (live-
+# pipeline-visualization "which files did this Agent Tool Path session
+# touch") ─────────────────────────────────────────────────────────────────
+
+class TestClassifyFileAction:
+    @pytest.mark.parametrize("name,expected", [
+        ("Write", "write"), ("Edit", "write"), ("MultiEdit", "write"),
+        ("NotebookEdit", "write"), ("str_replace_editor", "write"),
+        ("Read", "read"), ("View", "read"), ("cat_file", "read"),
+        ("Grep", "search"), ("Glob", "search"), ("ls", "search"),
+        ("Bash", "exec"), ("run_command", "exec"),
+        ("TodoWrite", "write"),  # write-verb wins even though it's not a file tool — acceptable heuristic imprecision
+        ("WebFetch", "other"),
+    ])
+    def test_classifies_known_tool_names(self, name, expected):
+        assert classify_file_action(name) == expected
+
+    def test_empty_name_is_other(self):
+        assert classify_file_action("") == "other"
+
+
+class TestExtractFileTouches:
+    def test_extracts_file_path_key(self):
+        touches = extract_file_touches("Edit", {"file_path": "/repo/main.py", "old_string": "a", "new_string": "b"})
+        assert touches == [{"path": "/repo/main.py", "action": "write", "tool": "Edit"}]
+
+    def test_extracts_path_key_for_read(self):
+        touches = extract_file_touches("Read", {"path": "/repo/README.md"})
+        assert touches == [{"path": "/repo/README.md", "action": "read", "tool": "Read"}]
+
+    def test_notebook_path_key(self):
+        touches = extract_file_touches("NotebookEdit", {"notebook_path": "/repo/nb.ipynb"})
+        assert touches[0]["path"] == "/repo/nb.ipynb"
+        assert touches[0]["action"] == "write"
+
+    def test_no_path_key_yields_empty(self):
+        assert extract_file_touches("Bash", {"command": "ls -la"}) == []
+
+    def test_url_values_are_skipped(self):
+        assert extract_file_touches("Read", {"path": "https://example.com/file.py"}) == []
+
+    def test_non_dict_arguments_never_raises(self):
+        assert extract_file_touches("Read", "not-a-dict") == []
+        assert extract_file_touches("Read", None) == []
+
+    def test_empty_tool_name_yields_empty(self):
+        assert extract_file_touches("", {"path": "/x"}) == []
+
+    def test_multiple_matching_keys_all_recorded(self):
+        touches = extract_file_touches("Move", {"path": "/a.py", "target_file": "/b.py"})
+        paths = {t["path"] for t in touches}
+        assert paths == {"/a.py", "/b.py"}
+
+
+# ── accumulate_stream_tool_call_delta / finalize_stream_tool_calls ─────────
+# OpenAI-style streamed tool_calls: id/name arrive once, arguments arrive as
+# JSON-string fragments spread across many delta chunks, keyed by index.
+
+class TestStreamToolCallAccumulation:
+    def test_single_call_assembled_across_fragments(self):
+        acc: dict = {}
+        accumulate_stream_tool_call_delta(acc, 0, {"id": "call_1", "function": {"name": "Read"}})
+        accumulate_stream_tool_call_delta(acc, 0, {"function": {"arguments": '{"path": '}})
+        accumulate_stream_tool_call_delta(acc, 0, {"function": {"arguments": '"/repo/x.py"}'}})
+        result = finalize_stream_tool_calls(acc)
+        assert result == [{"name": "Read", "arguments": {"path": "/repo/x.py"}}]
+
+    def test_two_parallel_calls_kept_separate_by_index(self):
+        acc: dict = {}
+        accumulate_stream_tool_call_delta(acc, 0, {"function": {"name": "Read", "arguments": '{"path":"/a"}'}})
+        accumulate_stream_tool_call_delta(acc, 1, {"function": {"name": "Read", "arguments": '{"path":"/b"}'}})
+        result = finalize_stream_tool_calls(acc)
+        assert {r["arguments"]["path"] for r in result} == {"/a", "/b"}
+
+    def test_incomplete_json_is_dropped_not_raised(self):
+        acc: dict = {}
+        accumulate_stream_tool_call_delta(acc, 0, {"function": {"name": "Read", "arguments": '{"path": "/x.py"'}})
+        assert finalize_stream_tool_calls(acc) == []
+
+    def test_entry_without_name_is_dropped(self):
+        acc: dict = {}
+        accumulate_stream_tool_call_delta(acc, 0, {"function": {"arguments": '{}'}})
+        assert finalize_stream_tool_calls(acc) == []
+
+    def test_malformed_delta_never_raises(self):
+        acc: dict = {}
+        accumulate_stream_tool_call_delta(acc, 0, {})  # no "function" key at all
+        accumulate_stream_tool_call_delta(acc, 0, None)  # type: ignore[arg-type]
+        assert finalize_stream_tool_calls(acc) == []
+
+
+# ── looks_like_premature_stop — the tool_choice=auto silent-stop retry
+# heuristic (services/pipeline/chat.py's mid-loop retry) ────────────────────
+
+class TestLooksLikePrematureStop:
+    @pytest.fixture(autouse=True)
+    def _use_seed_patterns(self):
+        """looks_like_premature_stop is now DB-backed (admin_premature_stop_patterns,
+        admin-editable without a rebuild) — these tests exercise the same seed data
+        that ships as the table's initial content, compiled directly instead of via
+        a live Postgres connection, so the detection-shape assertions below stay
+        independent of any test DB."""
+        rows = [
+            {"pattern": pattern, "pattern_type": ptype, "category": cat}
+            for pattern, ptype, _lang, cat, _desc in _SEED_PREMATURE_STOP_PATTERNS
+        ]
+        compiled = _compile_pattern_rows(rows)
+        with patch.object(_ae, "_read_premature_stop_patterns", return_value=compiled):
+            yield
+
+    @pytest.mark.parametrize("text", [
+        "I will now read the file and analyze it.",
+        "Let me now check the configuration.",
+        "I'll call the search tool to find that.",
+        "Step 1: identify the relevant files.",
+        "First, I will look at the test suite.",
+    ])
+    def test_detects_announcement_phrasing(self, text):
+        assert looks_like_premature_stop(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "The bug was in the off-by-one index on line 42; fixed and tests pass.",
+        "This function returns the sum of all even numbers in the list.",
+        "Done — the file has been updated and the tests are green.",
+        "",
+    ])
+    def test_does_not_flag_real_answers(self, text):
+        assert looks_like_premature_stop(text) is False
+
+    @pytest.mark.parametrize("text", [
+        "Lass mich die JWT-Funktion komplett neu schreiben mit garantierter Determinism.",
+        "Prüfen wir woher das kommt.",
+        "Lass mich alles am Stück fixen:",
+        "Ich werde jetzt die Konfigurationsdatei anpassen.",
+        "Zunächst muss ich verstehen, warum der Token verloren geht.",
+        "Schauen wir uns die Logs genauer an.",
+    ])
+    def test_detects_german_announcement_phrasing(self, text):
+        assert looks_like_premature_stop(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "Der Fehler lag in der Token-Validierung; jetzt behoben und Tests laufen grün.",
+        "Die Funktion gibt die Summe aller geraden Zahlen zurück.",
+    ])
+    def test_does_not_flag_real_german_answers(self, text):
+        assert looks_like_premature_stop(text) is False
+
+    @pytest.mark.parametrize("text", [
+        "Ich fix das jetzt mit einem saubereren Ansatz:",
+        "Ich mache das jetzt anders.",
+        "Ich löse das jetzt.",
+        "Ich probiere es jetzt nochmal.",
+    ])
+    def test_detects_casual_ich_verb_jetzt_regex(self, text):
+        # Confirmed live: doesn't match the literal "ich werde..." phrases —
+        # covered by the _PREMATURE_STOP_REGEX fallback instead.
+        assert looks_like_premature_stop(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "Die Funktion fixt den Fehler korrekt.",
+        "Das Ergebnis ist jetzt korrekt.",
+        "Der Bug wurde jetzt behoben.",
+    ])
+    def test_ich_verb_jetzt_regex_does_not_flag_real_answers(self, text):
+        assert looks_like_premature_stop(text) is False
+
+    def test_detects_literal_tool_call_markup(self):
+        # Confirmed live: qwen3.6:35b writing its tool call as text markup
+        # instead of populating the structured tool_calls delta.
+        text = (
+            "Der $TOKEN ist im Bash-Kontext verloren! Ich lade den Login neu:\n\n"
+            "<tool_call>\n<function=Bash>\n<parameter=command>\n"
+            "echo test\n</parameter>\n</function>\n</tool_call>"
+        )
+        assert looks_like_premature_stop(text) is True
+
+    @pytest.mark.parametrize("marker", [
+        "<tool_call>", "</tool_call>", "<function=Bash>", "</function>",
+        "<parameter=command>", "</parameter>",
+    ])
+    def test_detects_each_malformed_tool_call_marker(self, marker):
+        assert looks_like_premature_stop(f"some text {marker} more text") is True
+
+    def test_does_not_flag_prose_mentioning_functions_generically(self):
+        assert looks_like_premature_stop(
+            "This function computes the checksum and returns a hex string."
+        ) is False

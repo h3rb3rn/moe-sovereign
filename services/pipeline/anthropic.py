@@ -75,7 +75,8 @@ from services.routing import (
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
-    _check_ip_rate_limit, _record_stage,
+    _check_ip_rate_limit, _record_stage, _patch_active_request_backend,
+    _record_file_touch, _touch_model_recently_used, _record_node_latency,
 )
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
@@ -114,6 +115,7 @@ from services.agent_enrichment import (
     agent_graph_context,
     agent_writeback,
     agent_cache_lookup,
+    extract_file_touches,
 )
 
 
@@ -756,6 +758,20 @@ async def _anthropic_tool_handler(
         effective_url   = _syn_exp["url"]
         effective_token = _syn_exp.get("token", "ollama")
         effective_node  = _syn_exp.get("endpoint", effective_node)
+
+    # The anthropic_messages() caller registers this request via
+    # _register_active_request() before dispatching here, when the tool
+    # model/endpoint aren't resolved yet — patch them in now so
+    # graph/planner.py's and graph/expert.py's proactive VRAM-unload can see
+    # this session as "using" effective_model on this node and skip an unload
+    # that would otherwise evict it out from under a live CC tool session.
+    asyncio.create_task(_patch_active_request_backend(chat_id, effective_model, effective_url))
+    # Covers the gap BETWEEN this CC session's individual HTTP turns (each is
+    # stateless — no moe:active:* entry exists while the user is reading/
+    # typing the next message) — see _RECENT_USE_GRACE_SECONDS in
+    # services/tracking.py for why the in-flight check above isn't
+    # sufficient on its own.
+    asyncio.create_task(_touch_model_recently_used(effective_model, effective_url))
 
     _node_timeout   = float(session.tool_timeout)
 
@@ -1791,6 +1807,19 @@ async def _anthropic_tool_handler(
                 _args = _fn.get("arguments", {})
                 _tc_id = f"call_{uuid.uuid4().hex[:12]}"
                 _args_json = json.dumps(_args) if isinstance(_args, dict) else str(_args)
+                # File-touch extraction for the live-pipeline-visualization's
+                # "which files did this session touch" view — fire-and-forget,
+                # never affects the tool_use block emitted below.
+                _fh_args = _args
+                if not isinstance(_fh_args, dict):
+                    try:
+                        _fh_args = json.loads(_args) if isinstance(_args, str) else {}
+                    except Exception:
+                        _fh_args = {}
+                for _touch in extract_file_touches(_fn.get("name", ""), _fh_args):
+                    asyncio.create_task(_record_file_touch(
+                        chat_id, _touch["path"], _touch["action"], _touch["tool"],
+                    ))
                 yield _sse_event("content_block_start", {
                     "type": "content_block_start", "index": _block_idx,
                     "content_block": {
@@ -1828,6 +1857,9 @@ async def _anthropic_tool_handler(
             PROM_TOOL_CALL_DURATION.labels(
                 node=effective_node, model=effective_model, phase="llm_call"
             ).observe(time.monotonic() - _llm_t0)
+            asyncio.create_task(_record_node_latency(
+                effective_url, effective_model, (time.monotonic() - _llm_t0) * 1000,
+            ))
             if _tool_calls_acc:
                 PROM_TOOL_CALL_SUCCESS.labels(node=effective_node, model=effective_model).inc()
             if user_id != "anon":
@@ -2074,6 +2106,9 @@ async def _anthropic_tool_handler(
             PROM_TOOL_CALL_DURATION.labels(
                 node=effective_node, model=effective_model, phase="llm_call"
             ).observe(time.monotonic() - _llm_t0)
+            asyncio.create_task(_record_node_latency(
+                effective_url, effective_model, (time.monotonic() - _llm_t0) * 1000,
+            ))
             if _tool_calls_acc:
                 PROM_TOOL_CALL_SUCCESS.labels(node=effective_node, model=effective_model).inc()
             if user_id != "anon":

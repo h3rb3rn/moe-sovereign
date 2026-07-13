@@ -17,11 +17,90 @@ Heuristics (no LLM, no network):
 """
 
 from __future__ import annotations
+import os
 import re
 import zlib
+import logging
 from typing import Literal, Optional
 
+# --- MODIFICATION START ---
+# Added ONNX and Transformers runtime imports with try/except fallbacks
+# to support ML-based complexity classification with a robust heuristic fallback.
+logger = logging.getLogger("moe.complexity")
+
+_ort_imported = False
+_transformers_imported = False
+_np_imported = False
+
+try:
+    import onnxruntime as ort
+    _ort_imported = True
+except ImportError:
+    logger.warning("onnxruntime is not installed. Falling back to heuristic complexity estimation.")
+
+try:
+    from transformers import AutoTokenizer
+    _transformers_imported = True
+except ImportError:
+    logger.warning("transformers is not installed. Falling back to heuristic complexity estimation.")
+
+try:
+    import numpy as np
+    _np_imported = True
+except ImportError:
+    logger.warning("numpy is not installed. Falling back to heuristic complexity estimation.")
+
 ComplexityLevel = Literal["trivial", "moderate", "complex", "memory_recall"]
+COMPLEXITY_CLASSES: list[ComplexityLevel] = ["trivial", "moderate", "complex", "memory_recall"]
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_ONNX_PATH = os.path.join(_SCRIPT_DIR, "models", "complexity_deberta.onnx")
+_DEFAULT_TOKENIZER_PATH = os.path.join(_SCRIPT_DIR, "models", "complexity_tokenizer")
+
+COMPLEXITY_ONNX_PATH = os.getenv("SOVEREIGN_COMPLEXITY_ONNX_PATH", _DEFAULT_ONNX_PATH)
+COMPLEXITY_TOKENIZER_PATH = os.getenv("SOVEREIGN_COMPLEXITY_TOKENIZER_PATH", _DEFAULT_TOKENIZER_PATH)
+
+_onnx_session = None
+_tokenizer = None
+
+def init_complexity_classifier() -> None:
+    """Initializes the ONNX inference session and tokenizer for complexity estimation.
+
+    Loads the DeBERTa model and tokenizer from disk. Falls back to None values on failure,
+    which triggers the heuristic complexity path.
+    """
+    global _onnx_session, _tokenizer
+    if not _ort_imported or not _transformers_imported or not _np_imported:
+        return
+    if not os.path.exists(COMPLEXITY_ONNX_PATH) or not os.path.exists(COMPLEXITY_TOKENIZER_PATH):
+        logger.warning(
+            f"ONNX model or tokenizer not found. Paths:\n"
+            f"  ONNX: {COMPLEXITY_ONNX_PATH}\n"
+            f"  Tokenizer: {COMPLEXITY_TOKENIZER_PATH}\n"
+            f"Complexity estimation will fall back to heuristic rules."
+        )
+        return
+
+    try:
+        providers = ['CPUExecutionProvider']
+        if ort.get_device() == 'GPU':
+            available = ort.get_available_providers()
+            if 'MIGraphXExecutionProvider' in available:
+                providers.insert(0, 'MIGraphXExecutionProvider')
+            elif 'ROCMExecutionProvider' in available:
+                providers.insert(0, 'ROCMExecutionProvider')
+            elif 'CUDAExecutionProvider' in available:
+                providers.insert(0, 'CUDAExecutionProvider')
+        
+        _onnx_session = ort.InferenceSession(COMPLEXITY_ONNX_PATH, providers=providers)
+        _tokenizer = AutoTokenizer.from_pretrained(COMPLEXITY_TOKENIZER_PATH, local_files_only=True)
+        logger.info(f"🎯 ONNX complexity classifier loaded from {COMPLEXITY_ONNX_PATH}")
+    except Exception as e:
+        logger.error(f"❌ Failed to load ONNX complexity classifier: {e}")
+        _onnx_session = None
+        _tokenizer = None
+
+# --- MODIFICATION END ---
 
 # ── Thresholds ───────────────────────────────────────────────────────────────
 _TRIVIAL_TOKEN_MAX  = 15   # queries with ≤15 words → trivial candidate
@@ -155,6 +234,30 @@ def estimate_complexity(query: str) -> ComplexityLevel:
     if _MEMORY_RECALL_RE.search(query):
         return "memory_recall"
 
+    # --- MODIFICATION START ---
+    # Try running the DeBERTa ONNX classifier.
+    # If the libraries/model are not available or inference fails, fall back to rule-based heuristics.
+    global _onnx_session, _tokenizer
+    if _onnx_session is None:
+        init_complexity_classifier()
+
+    if _onnx_session is not None and _tokenizer is not None:
+        try:
+            encodings = _tokenizer(query, truncation=True, max_length=64, return_tensors="np")
+            inputs = {
+                "input_ids": encodings["input_ids"].astype(np.int64),
+                "attention_mask": encodings["attention_mask"].astype(np.int64)
+            }
+            outputs = _onnx_session.run(["logits"], inputs)
+            logits = outputs[0][0]  # shape (4,)
+            pred_idx = int(np.argmax(logits))
+            predicted_level = COMPLEXITY_CLASSES[pred_idx]
+            logger.info(f"🎯 ONNX Complexity Classifier: {predicted_level!r} for query: {query!r}")
+            return predicted_level
+        except Exception as e:
+            logger.error(f"❌ ONNX complexity inference failed, falling back to heuristics: {e}")
+
+    # --- Fallback Heuristics ---
     # Hard length limits decide immediately
     if n >= _COMPLEX_TOKEN_MIN:
         return "complex"

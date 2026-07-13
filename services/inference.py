@@ -27,6 +27,7 @@ from context_budget import get_model_context_window as _static_ctx
 from context_budget import resolve_requested_ctx
 from metrics import PROM_THOMPSON
 from services.routing import _server_info, _is_endpoint_error
+from services.tracking import _get_node_latency_stats, _get_premature_stop_rate
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -70,8 +71,38 @@ async def _audit_complete(entry, response_body, prompt_tokens, completion_tokens
 #       blocks the event loop longer than the locked section itself (a few ns);
 #   (b) asyncio.Lock would require async with, which is heavier and unnecessary
 #       for pure-synchronous dict updates.
-_gpu_lock   = threading.Lock()   # guards _endpoint_gpu_indices round-robin index
-_cache_lock = threading.Lock()   # guards _model_avail_cache, _ps_cache
+
+_cache_lock = threading.Lock()
+_gpu_lock   = threading.Lock()
+
+# Local in-process GGUF LLM instance for local planner/SLM mode
+_local_llama_instance = None
+_local_llama_lock = asyncio.Lock()
+
+
+async def _get_local_llama():
+    """Return the cached in-process Llama instance (loaded lazily)."""
+    global _local_llama_instance
+    from config import PLANNER_LOCAL_GGUF_PATH, PLANNER_LOCAL_THREADS
+    if not PLANNER_LOCAL_GGUF_PATH or not os.path.exists(PLANNER_LOCAL_GGUF_PATH):
+        return None
+    if _local_llama_instance is None:
+        async with _local_llama_lock:
+            if _local_llama_instance is None:
+                try:
+                    from llama_cpp import Llama
+                    logger.info("Initializing in-process GGUF Llama model from %s", PLANNER_LOCAL_GGUF_PATH)
+                    _local_llama_instance = Llama(
+                        model_path=PLANNER_LOCAL_GGUF_PATH,
+                        n_ctx=4096,
+                        n_threads=PLANNER_LOCAL_THREADS,
+                        verbose=False
+                    )
+                except ImportError:
+                    logger.warning("llama-cpp-python not installed; in-process GGUF planner unavailable.")
+                except Exception as e:
+                    logger.error("Failed to load in-process GGUF Llama model: %s", e)
+    return _local_llama_instance
 
 # ---------------------------------------------------------------------------
 # Model availability cache
@@ -677,19 +708,51 @@ judge_llm_ollama_aware = _OllamaAwareJudgeLLM()
 
 
 async def _invoke_planner_with_retry(
-    state: "AgentState", prompt: str, temperature: float | None = None
+    state: "AgentState", prompt: str, temperature: float | None = None, attempt: int = 0
 ) -> tuple:
     """Invoke the planner LLM, returns (res, used_fallback: bool).
 
-    For Ollama endpoints, posts directly to /api/chat with options.num_ctx set —
-    the same fix as _invoke_judge_with_retry. The OpenAI-compat /v1/chat/completions
-    endpoint silently drops the `options` dict (Ollama <=0.30.6), so a planner call
-    routed through ChatOpenAI/_get_planner_llm causes Ollama to reload the model at
-    its Modelfile-default num_ctx (8192) — even when the same model is already warm
-    at a much larger ctx for the judge/CC-tool path on the same node.
+    Supports PLANNER_MODE = llm | slm_local | hybrid.
+    If slm_local or (hybrid and attempt == 0), attempts to run local GGUF
+    in-process via llama-cpp-python, falling back to local Ollama/llama.cpp server
+    if unavailable.
     """
     from types import SimpleNamespace as _NS
-    from config import PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN
+    from config import (
+        PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN,
+        PLANNER_MODE, PLANNER_LOCAL_GGUF_PATH
+    )
+
+    # 1. Try local GGUF/SLM in-process execution first if configured
+    use_local_slm = (
+        PLANNER_MODE == "slm_local"
+        or (PLANNER_MODE == "hybrid" and attempt == 0)
+    )
+
+    if use_local_slm:
+        local_llm = await _get_local_llama()
+        if local_llm is not None:
+            try:
+                logger.info("🤖 Executing local GGUF planner (in-process)...")
+                def _run_local():
+                    return local_llm(
+                        prompt=prompt,
+                        max_tokens=MAX_PLANNER_TOKENS,
+                        temperature=temperature if temperature is not None else 0.2,
+                    )
+                _res = await asyncio.to_thread(_run_local)
+                _content = _res["choices"][0]["text"].strip()
+                _usage = _res.get("usage", {})
+                if _content:
+                    return _NS(
+                        content=_content,
+                        usage_metadata={
+                            "input_tokens":  int(_usage.get("prompt_tokens", 0)),
+                            "output_tokens": int(_usage.get("completion_tokens", 0)),
+                        },
+                    ), False
+            except Exception as e:
+                logger.warning("⚠️ Local in-process GGUF planner failed: %s", e)
 
     _pm = (state.get("planner_model_override") or "").strip() or (PLANNER_MODEL or "")
     _pu = (state.get("planner_url_override")   or "").strip() or (PLANNER_URL or "")
@@ -1209,13 +1272,58 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
         )
         return srv, running, is_warm
 
+    # Flood-fill-style reliability weighting: a node/model combo that has
+    # recently been slow (moe:latency:{node}, see services/tracking.py) or
+    # prone to the tool-passthrough "premature stop" failure
+    # (moe:pstop:{model}:{node}) gets its load score inflated, same
+    # multiplicative-penalty shape as the existing Thompson-sampling
+    # THOMPSON_LOAD_PENALTY in _get_expert_score below. Optimistic by
+    # default (factor 1.0) until enough evidence accumulates — a node with
+    # no data yet, or too few premature-stop samples, is never penalized on
+    # a single bad observation, mirroring flood fill assuming a cell is open
+    # until a wall is actually confirmed. Precomputed once per candidate
+    # here (not inside load_score) because load_score itself stays a plain
+    # sync function used inside min()/list comprehensions below — this is
+    # the one extra async gather needed to feed it.
+    _NODE_LATENCY_PENALTY = float(os.getenv("NODE_LATENCY_PENALTY", "0.3"))
+    _NODE_PSTOP_PENALTY   = float(os.getenv("NODE_PSTOP_PENALTY", "2.0"))
+    _LATENCY_BASELINE_MS  = 3000.0
+
+    async def _reliability_factor(srv: dict) -> float:
+        factor = 1.0
+        try:
+            lat = await _get_node_latency_stats(srv["name"])
+            if lat["avg_ms"]:
+                factor *= 1.0 + _NODE_LATENCY_PENALTY * max(0.0, lat["avg_ms"] / _LATENCY_BASELINE_MS - 1.0)
+        except Exception:
+            pass
+        try:
+            pstop_rate = await _get_premature_stop_rate(model_name, srv["name"])
+            factor *= 1.0 + _NODE_PSTOP_PENALTY * pstop_rate
+        except Exception:
+            pass
+        return factor
+
+    _reliability = dict(zip(
+        (s["name"] for s in candidates),
+        await asyncio.gather(*[_reliability_factor(s) for s in candidates]),
+    ))
+
     def load_score(srv: dict, running: list) -> float:
         """Lower score = better candidate. Factors in GPU count AND cost_factor.
         cost_factor acts as a speed/priority weight: higher = faster/preferred.
-        RTX (1.0) is preferred over Tesla M10 (0.8) at equal load."""
+        RTX (1.0) is preferred over Tesla M10 (0.8) at equal load. Also
+        folds in _reliability (latency + premature-stop penalty, see above)
+        — added, not multiplied: at raw_load=0 (fully idle, the common case
+        on lightly-loaded infra) a multiplicative penalty would vanish
+        (0 * factor == 0), silently undoing the whole point of penalizing an
+        idle-but-unreliable node. _reliability - 1.0 is 0.0 for a clean node
+        (no change to existing behaviour) and > 0.0 once latency/pstop
+        evidence justifies a penalty, regardless of current load."""
         raw_load = len(running) / max(int(srv.get("gpu_count", 1)), 1)
         speed = float(srv.get("cost_factor", 1.0))  # higher = faster GPU
-        return raw_load / max(speed, 0.1)  # divide by speed: fast nodes get lower scores
+        base = raw_load / max(speed, 0.1)  # divide by speed: fast nodes get lower scores
+        return base + (_reliability.get(srv["name"], 1.0) - 1.0)
 
     # Select best candidate: warm preferred, then idle, then lowest load
     ps_results = await asyncio.gather(*[_get_ps(s) for s in candidates])

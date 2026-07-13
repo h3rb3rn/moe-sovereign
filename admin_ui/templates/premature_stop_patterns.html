@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, 'page.patterns') }} – MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type }} flash-bar mb-0 text-center py-2">{{ flash }}</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-signpost-split me-2 text-warning"></i>{{ t(request, 'page.patterns') }}</h5>
+  <button class="btn btn-primary btn-sm" onclick="openCreateModal()">
+    <i class="bi bi-plus-circle me-1"></i>{{ t(request, 'btn.new_pattern') }}
+  </button>
+</div>
+
+<div class="alert alert-info py-2 small mb-3">
+  <i class="bi bi-info-circle-fill me-1"></i>
+  {{ t(request, 'patterns.info_desc') }}
+</div>
+
+<div class="card bg-dark text-white border-secondary">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-dark table-hover mb-0 align-middle">
+        <thead>
+          <tr class="text-secondary" style="font-size: 0.85rem;">
+            <th class="ps-3">{{ t(request, 'table.pattern') }}</th>
+            <th style="width: 10%;">{{ t(request, 'table.type') }}</th>
+            <th style="width: 10%;">{{ t(request, 'lbl.language') }}</th>
+            <th style="width: 15%;">{{ t(request, 'lbl.category') }}</th>
+            <th style="width: 20%;">{{ t(request, 'table.description') }}</th>
+            <th style="width: 8%;" class="text-center">{{ t(request, 'table.status') }}</th>
+            <th style="width: 12%;" class="pe-3 text-end">{{ t(request, 'table.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if patterns %}
+            {% for p in patterns %}
+            <tr id="pattern-row-{{ p.id }}">
+              <td class="ps-3"><code>{{ p.pattern }}</code></td>
+              <td>
+                {% if p.pattern_type == 'regex' %}
+                  <span class="badge bg-secondary">regex</span>
+                {% else %}
+                  <span class="badge bg-dark border border-secondary">literal</span>
+                {% endif %}
+              </td>
+              <td>{{ p.language or '—' }}</td>
+              <td><span class="badge bg-info text-dark">{{ p.category }}</span></td>
+              <td class="text-secondary small">{{ p.description or '—' }}</td>
+              <td class="text-center">
+                <div class="form-check form-switch d-inline-block">
+                  <input class="form-check-input" type="checkbox" role="switch"
+                         id="switch-{{ p.id }}" {% if p.enabled %}checked{% endif %}
+                         onchange="togglePattern('{{ p.id }}')">
+                </div>
+              </td>
+              <td class="pe-3 text-end">
+                <button class="btn btn-outline-light btn-xs" onclick='openEditModal({{ p | tojson }})' title="{{ t(request, 'btn.edit') }}">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-outline-danger btn-xs" onclick="deletePattern('{{ p.id }}')" title="{{ t(request, 'btn.delete') }}">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="text-center py-4 text-muted">
+                <i class="bi bi-folder-x display-6 mb-2 d-block"></i>
+                {{ t(request, 'empty.no_patterns') }}
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div class="modal fade" id="patternModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark text-white border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="patternModalTitle"><i class="bi bi-plus-circle me-2 text-primary"></i>{{ t(request, 'btn.new_pattern') }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="patternForm" onsubmit="submitPattern(event)">
+          <input type="hidden" id="patternId" value="">
+          <div class="mb-3">
+            <label for="patternText" class="form-label small text-secondary">{{ t(request, 'table.pattern') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="patternText" required
+                   placeholder="{{ t(request, 'patterns.pattern_placeholder') }}">
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label for="patternType" class="form-label small text-secondary">{{ t(request, 'lbl.type') }}</label>
+              <select class="form-select bg-secondary text-white border-secondary" id="patternType">
+                <option value="literal">literal ({{ t(request, 'patterns.type_literal_hint') }})</option>
+                <option value="regex">regex</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label for="patternLanguage" class="form-label small text-secondary">{{ t(request, 'lbl.language') }} ({{ t(request, 'patterns.language_hint') }})</label>
+              <input type="text" class="form-control bg-secondary text-white border-secondary" id="patternLanguage" placeholder="de">
+            </div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label for="patternCategory" class="form-label small text-secondary">{{ t(request, 'lbl.category') }}</label>
+              <select class="form-select bg-secondary text-white border-secondary" id="patternCategory">
+                <option value="announcement">announcement</option>
+                <option value="malformed_tool_call">malformed_tool_call</option>
+                <option value="trailing_colon">trailing_colon</option>
+                <option value="other">other</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label small text-secondary d-block">{{ t(request, 'lbl.enabled') }}</label>
+              <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" role="switch" id="patternEnabled" checked>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="patternDescription" class="form-label small text-secondary">{{ t(request, 'lbl.description_optional') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="patternDescription">
+          </div>
+          <hr class="border-secondary">
+          <div class="mb-2">
+            <label for="patternSample" class="form-label small text-secondary">{{ t(request, 'patterns.test_section_title') }}</label>
+            <textarea class="form-control bg-secondary text-white border-secondary" id="patternSample" rows="2"
+                      placeholder="{{ t(request, 'patterns.test_placeholder') }}"></textarea>
+          </div>
+          <div class="mb-3">
+            <button type="button" class="btn btn-outline-info btn-sm" onclick="testPattern()">
+              <i class="bi bi-play-circle me-1"></i>{{ t(request, 'btn.test_pattern') }}
+            </button>
+            <span id="testResult" class="ms-2 small"></span>
+          </div>
+          <div class="modal-footer border-secondary px-0 pb-0">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+            <button type="submit" class="btn btn-primary btn-sm">{{ t(request, 'btn.save_short') }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const _patT = {
+  newTitle:    {{ t(request, 'btn.new_pattern') | tojson }},
+  editTitle:   {{ t(request, 'patterns.modal_edit_title') | tojson }},
+  confirmDelete: {{ t(request, 'dialog.confirm_pattern_delete') | tojson }},
+  error:       {{ t(request, 'js.error') | tojson }},
+  matchYes:    {{ t(request, 'js.pattern_match') | tojson }},
+  matchNo:     {{ t(request, 'js.pattern_no_match') | tojson }},
+  needInput:   {{ t(request, 'js.pattern_test_need_input') | tojson }},
+};
+
+async function fn_api(url, method, data = null) {
+  const headers = {
+    "Content-Type": "application/json",
+    "X-CSRF-Token": "{{ csrf_token }}"
+  };
+  const config = { method, headers };
+  if (data) {
+    config.body = JSON.stringify(data);
+  }
+  const r = await fetch(url, config);
+  if (!r.ok) {
+    const err = await r.json();
+    throw new Error(err.detail || "API request failed");
+  }
+  return await r.json();
+}
+
+let patternModal;
+document.addEventListener("DOMContentLoaded", () => {
+  patternModal = new bootstrap.Modal(document.getElementById("patternModal"));
+});
+
+function openCreateModal() {
+  document.getElementById("patternModalTitle").innerHTML = `<i class="bi bi-plus-circle me-2 text-primary"></i>${_patT.newTitle}`;
+  document.getElementById("patternId").value = "";
+  document.getElementById("patternText").value = "";
+  document.getElementById("patternType").value = "literal";
+  document.getElementById("patternLanguage").value = "";
+  document.getElementById("patternCategory").value = "announcement";
+  document.getElementById("patternEnabled").checked = true;
+  document.getElementById("patternDescription").value = "";
+  document.getElementById("patternSample").value = "";
+  document.getElementById("testResult").textContent = "";
+  patternModal.show();
+}
+
+function openEditModal(p) {
+  document.getElementById("patternModalTitle").innerHTML = `<i class="bi bi-pencil me-2 text-primary"></i>${_patT.editTitle}`;
+  document.getElementById("patternId").value = p.id;
+  document.getElementById("patternText").value = p.pattern;
+  document.getElementById("patternType").value = p.pattern_type;
+  document.getElementById("patternLanguage").value = p.language || "";
+  document.getElementById("patternCategory").value = p.category;
+  document.getElementById("patternEnabled").checked = !!p.enabled;
+  document.getElementById("patternDescription").value = p.description || "";
+  document.getElementById("patternSample").value = "";
+  document.getElementById("testResult").textContent = "";
+  patternModal.show();
+}
+
+async function submitPattern(e) {
+  e.preventDefault();
+  const id = document.getElementById("patternId").value;
+  const body = {
+    pattern: document.getElementById("patternText").value,
+    pattern_type: document.getElementById("patternType").value,
+    language: document.getElementById("patternLanguage").value,
+    category: document.getElementById("patternCategory").value,
+    description: document.getElementById("patternDescription").value,
+    enabled: document.getElementById("patternEnabled").checked,
+  };
+  try {
+    if (id) {
+      await fn_api(`/api/premature-stop-patterns/${id}`, "PUT", body);
+    } else {
+      await fn_api("/api/premature-stop-patterns", "POST", body);
+    }
+    window.location.reload();
+  } catch (err) {
+    alert(`${_patT.error}: ${err.message}`);
+  }
+}
+
+async function togglePattern(patternId) {
+  try {
+    await fn_api(`/api/premature-stop-patterns/${patternId}/toggle`, "PATCH");
+  } catch (err) {
+    alert(`${_patT.error}: ${err.message}`);
+    window.location.reload();
+  }
+}
+
+async function deletePattern(patternId) {
+  if (!confirm(_patT.confirmDelete)) return;
+  try {
+    await fn_api(`/api/premature-stop-patterns/${patternId}`, "DELETE");
+    const row = document.getElementById(`pattern-row-${patternId}`);
+    if (row) row.remove();
+  } catch (err) {
+    alert(`${_patT.error}: ${err.message}`);
+  }
+}
+
+async function testPattern() {
+  const pattern = document.getElementById("patternText").value;
+  const pattern_type = document.getElementById("patternType").value;
+  const sample = document.getElementById("patternSample").value;
+  const resultEl = document.getElementById("testResult");
+  if (!pattern || !sample) {
+    resultEl.textContent = _patT.needInput;
+    resultEl.className = "ms-2 small text-secondary";
+    return;
+  }
+  try {
+    const res = await fn_api("/api/premature-stop-patterns/test", "POST", { pattern, pattern_type, sample });
+    if (res.matches) {
+      resultEl.textContent = _patT.matchYes;
+      resultEl.className = "ms-2 small text-success";
+    } else {
+      resultEl.textContent = _patT.matchNo;
+      resultEl.className = "ms-2 small text-danger";
+    }
+  } catch (err) {
+    resultEl.textContent = `${_patT.error}: ${err.message}`;
+    resultEl.className = "ms-2 small text-danger";
+  }
+}
+</script>
+{% endblock %}
