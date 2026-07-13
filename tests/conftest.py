@@ -64,6 +64,14 @@ _STUBS = [
     "langchain_openai",
     "langchain_community",
     "langchain_community.utilities",
+    # services/rlsf_local_loop.py (imported transitively via routes/admin_rlsf.py
+    # -> main.py) uses langchain_core.messages.{SystemMessage,HumanMessage} —
+    # missing from this list broke collection of every test module that
+    # imports main (test_routing.py, tests/smoke/test_graph_wiring.py,
+    # tests/pipeline/test_kafka_handlers.py) with
+    # "ModuleNotFoundError: No module named 'langchain_core'".
+    "langchain_core",
+    "langchain_core.messages",
     "langgraph",
     "langgraph.graph",
     "langgraph.checkpoint",

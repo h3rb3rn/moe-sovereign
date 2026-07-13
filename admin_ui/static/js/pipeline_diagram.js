@@ -131,6 +131,21 @@
   // open in the background.
   let traceFinished = false;
 
+  // ── Session replay (mindwalk-inspired) ───────────────────────────────────
+  // Once a request finishes, its stage_trace (already fetched live while
+  // polling) is kept around so the diagram can be scrubbed/replayed instead
+  // of just showing the final static state — same data, no extra endpoint.
+  let lastTrace = [];        // last-fetched stage_trace, sorted by ts ascending
+  let replayMode = false;    // true once replay controls are shown (request finished)
+  let replayIndex = 0;       // how many of lastTrace's entries are currently revealed
+  let replayPlaying = false;
+  let replayTimer = null;
+  let replaySpeedMs = 500;   // ms per step at 1x
+
+  function sortByTs(trace) {
+    return (trace || []).slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  }
+
   function _heartbeatText(ts, finished) {
     if (finished) return { text: 'beendet', color: '#6b7280' };
     if (!ts) return { text: '–', color: '#6b7280' };
@@ -175,6 +190,9 @@
               <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
                 ${options}
               </select>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-files-toggle" title="Berührte Dateien dieser Anfrage (Agent Tool Path)">
+                <i class="bi bi-folder2-open"></i>
+              </button>
               <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-logs-toggle" title="Log-Zeilen dieser Anfrage">
                 <i class="bi bi-terminal"></i>
               </button>
@@ -186,6 +204,34 @@
           </div>
           <div class="modal-body p-0">
             <div id="pd-cy" style="width:100%;height:600px;"></div>
+            <div id="pd-replay-bar" class="d-none border-top d-flex align-items-center px-2 py-1"
+                 style="font-size:.72rem;background:#161b22;color:#c9d1d9;gap:.5rem;flex-wrap:wrap">
+              <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" id="pd-replay-playpause" title="Play/Pause (Leertaste)">
+                <i class="bi bi-play-fill"></i>
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" id="pd-replay-back" title="Ein Schritt zurück (←)">
+                <i class="bi bi-skip-backward-fill"></i>
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" id="pd-replay-fwd" title="Ein Schritt vor (→)">
+                <i class="bi bi-skip-forward-fill"></i>
+              </button>
+              <input type="range" id="pd-replay-slider" min="0" max="0" value="0" style="flex:1 1 160px;min-width:120px">
+              <span id="pd-replay-counter" style="white-space:nowrap">0/0</span>
+              <select id="pd-replay-speed" class="form-select form-select-sm py-0" style="width:auto">
+                <option value="1000">0.5×</option>
+                <option value="500" selected>1×</option>
+                <option value="250">2×</option>
+                <option value="125">4×</option>
+              </select>
+              <span style="white-space:nowrap;opacity:.75"><i class="bi bi-clock-history me-1"></i>Historische Ansicht — Anfrage abgeschlossen</span>
+            </div>
+            <div id="pd-files" class="d-none border-top" style="height:180px;display:flex;flex-direction:column;background:#0d1117">
+              <div class="d-flex justify-content-between align-items-center px-2 py-1 border-bottom border-secondary"
+                   style="font-size:.68rem;background:#161b22;flex-shrink:0">
+                <span class="text-light"><i class="bi bi-folder2-open me-1"></i>Berührte Dateien (Agent Tool Path)</span>
+              </div>
+              <div id="pd-files-content" class="text-light m-0 p-2" style="overflow-y:auto;flex:1 1 auto;font-size:.72rem;line-height:1.5"></div>
+            </div>
             <div id="pd-logs" class="d-none border-top" style="height:180px;display:flex;flex-direction:column;background:#0d1117">
               <div class="d-flex justify-content-between align-items-center px-2 py-1 border-bottom border-secondary"
                    style="font-size:.68rem;background:#161b22;flex-shrink:0">
@@ -213,6 +259,20 @@
     panelEl.querySelector('#pd-resize-handle').addEventListener('mousedown', (e) => windowCtl.startResize(e));
     panelEl.querySelector('#pd-maximize').addEventListener('click', () => windowCtl.toggleMaximize());
     panelEl.querySelector('#pd-logs-toggle').addEventListener('click', toggleLogs);
+    panelEl.querySelector('#pd-files-toggle').addEventListener('click', toggleFiles);
+    panelEl.querySelector('#pd-replay-playpause').addEventListener('click', () => {
+      replayPlaying ? pauseReplay() : playReplay();
+    });
+    panelEl.querySelector('#pd-replay-back').addEventListener('click', () => stepReplay(-1));
+    panelEl.querySelector('#pd-replay-fwd').addEventListener('click', () => stepReplay(1));
+    panelEl.querySelector('#pd-replay-slider').addEventListener('input', (e) => {
+      pauseReplay();
+      applyReplayStep(parseInt(e.target.value, 10) || 0);
+    });
+    panelEl.querySelector('#pd-replay-speed').addEventListener('change', (e) => {
+      replaySpeedMs = parseInt(e.target.value, 10) || 500;
+      if (replayPlaying) { pauseReplay(); playReplay(); } // restart interval at new speed
+    });
     return panelEl;
   }
 
@@ -254,6 +314,76 @@
     } else if (logsPollTimer) {
       clearInterval(logsPollTimer);
       logsPollTimer = null;
+    }
+  }
+
+  // ── Datei-Touch-Ansicht (Agent Tool Path) ────────────────────────────────
+  // Same on-demand pattern as the Logs section above: fetched only while the
+  // panel's files section is open, never part of the regular diagram poll.
+  // Always shows the full current file list (not filtered by the replay
+  // position from the section below — see plan doc for the reasoning).
+  let filesUrlBase = null;
+  let filesOpen = false;
+  let filesPollTimer = null;
+
+  const _FILE_ACTION_META = {
+    write:  { icon: '✏️', label: 'Write', color: '#f59e0b' },
+    read:   { icon: '👁️', label: 'Read',  color: '#60a5fa' },
+    search: { icon: '🔍', label: 'Search', color: '#9ca3af' },
+    exec:   { icon: '▶️', label: 'Exec',  color: '#a78bfa' },
+    other:  { icon: '•',  label: 'Other', color: '#6b7280' },
+  };
+
+  function _relTime(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, (Date.now() / 1000) - ts);
+    if (s < 60) return `vor ${s.toFixed(0)}s`;
+    if (s < 3600) return `vor ${(s / 60).toFixed(0)}min`;
+    return `vor ${(s / 3600).toFixed(1)}h`;
+  }
+
+  function _escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  async function fetchFilesOnce() {
+    if (!currentChatId || !filesUrlBase) return;
+    const content = document.getElementById('pd-files-content');
+    try {
+      const r = await fetch(`${filesUrlBase}${encodeURIComponent(currentChatId)}`);
+      const data = await r.json();
+      const files = (data.files || []).slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      if (!files.length) {
+        content.innerHTML = '<span style="opacity:.6">(noch keine Dateien berührt)</span>';
+        return;
+      }
+      content.innerHTML = files.map(f => {
+        const meta = _FILE_ACTION_META[f.action] || _FILE_ACTION_META.other;
+        return `<div style="display:flex;gap:.5rem;align-items:baseline;padding:1px 0;white-space:nowrap;overflow:hidden">
+          <span title="${meta.label}">${meta.icon}</span>
+          <span style="color:${meta.color};flex-shrink:0">${meta.label}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis" title="${_escapeHtml(f.path || '')}">${_escapeHtml(f.path || '')}</span>
+          <span style="opacity:.5;margin-left:auto;flex-shrink:0">${_escapeHtml(f.tool || '')} · ${_relTime(f.ts)}</span>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      console.warn('file-touches fetch failed:', e);
+    }
+  }
+
+  function toggleFiles() {
+    const box = document.getElementById('pd-files');
+    filesOpen = !filesOpen;
+    box.classList.toggle('d-none', !filesOpen);
+    if (filesOpen) {
+      fetchFilesOnce();
+      if (filesPollTimer) clearInterval(filesPollTimer);
+      filesPollTimer = setInterval(fetchFilesOnce, 1500);
+    } else if (filesPollTimer) {
+      clearInterval(filesPollTimer);
+      filesPollTimer = null;
     }
   }
 
@@ -615,6 +745,7 @@
     try {
       const r = await fetch(`${traceUrlBase}${encodeURIComponent(chatId)}`);
       const data = await r.json();
+      lastTrace = sortByTs(data.stage_trace || []);
       applyTrace(data.stage_trace || []);
       lastTraceOkTs = Date.now();
       // "active" is the authoritative still-running signal from the
@@ -630,22 +761,96 @@
     }
   }
 
+  // ── Replay controls ───────────────────────────────────────────────────────
+  function updateReplayUI() {
+    const slider = document.getElementById('pd-replay-slider');
+    const counter = document.getElementById('pd-replay-counter');
+    const btn = document.getElementById('pd-replay-playpause');
+    if (!slider) return;
+    slider.max = String(lastTrace.length);
+    slider.value = String(replayIndex);
+    counter.textContent = `${replayIndex}/${lastTrace.length}`;
+    btn.innerHTML = replayPlaying
+      ? '<i class="bi bi-pause-fill"></i>'
+      : '<i class="bi bi-play-fill"></i>';
+  }
+
+  function enterReplayMode() {
+    replayMode = true;
+    replayIndex = lastTrace.length; // start showing the final state, as before
+    const bar = document.getElementById('pd-replay-bar');
+    if (bar) bar.classList.remove('d-none');
+    updateReplayUI();
+  }
+
+  function applyReplayStep(idx) {
+    replayIndex = Math.max(0, Math.min(lastTrace.length, idx));
+    applyTrace(lastTrace.slice(0, replayIndex));
+    updateReplayUI();
+  }
+
+  function playReplay() {
+    if (!replayMode || replayPlaying) return;
+    replayPlaying = true;
+    if (replayIndex >= lastTrace.length) replayIndex = 0; // restart from the beginning
+    if (replayTimer) clearInterval(replayTimer);
+    replayTimer = setInterval(() => {
+      if (replayIndex >= lastTrace.length) { pauseReplay(); return; }
+      applyReplayStep(replayIndex + 1);
+    }, replaySpeedMs);
+    updateReplayUI();
+  }
+
+  function pauseReplay() {
+    replayPlaying = false;
+    if (replayTimer) { clearInterval(replayTimer); replayTimer = null; }
+    updateReplayUI();
+  }
+
+  function stepReplay(delta) {
+    if (!replayMode) return;
+    pauseReplay();
+    applyReplayStep(replayIndex + delta);
+  }
+
+  function handleReplayKeydown(e) {
+    if (!replayMode) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (e.code === 'Space') { e.preventDefault(); replayPlaying ? pauseReplay() : playReplay(); }
+    else if (e.code === 'ArrowRight') { e.preventDefault(); stepReplay(1); }
+    else if (e.code === 'ArrowLeft') { e.preventDefault(); stepReplay(-1); }
+  }
+
   window.openPipelineDiagram = function (chatId, traceUrlBase) {
     ensurePanel();
     document.getElementById('pd-chat-id').textContent = (chatId || '').slice(-16);
 
     currentChatId = chatId;
     // Works for both '/api/live/request-trace/' (admin) and
-    // '/user/api/live/request-trace/' (portal) — each has a matching
-    // process-logs endpoint with its own auth/ownership gate.
+    // '/user/api/live/request-trace/' (portal) — each has matching
+    // process-logs/file-touches endpoints with their own auth/ownership gate.
     logsUrlBase = traceUrlBase.replace('request-trace', 'process-logs');
+    filesUrlBase = traceUrlBase.replace('request-trace', 'file-touches');
     document.getElementById('pd-logs-toggle').classList.remove('d-none');
-    // Reset the log view for the newly-selected request instead of showing
-    // the previous row's stale content until the first poll lands.
+    document.getElementById('pd-files-toggle').classList.remove('d-none');
+    // Reset the log/files view for the newly-selected request instead of
+    // showing the previous row's stale content until the first poll lands.
     logsOpen = false;
     document.getElementById('pd-logs').classList.add('d-none');
     document.getElementById('pd-logs-content').textContent = '';
     if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+    filesOpen = false;
+    document.getElementById('pd-files').classList.add('d-none');
+    document.getElementById('pd-files-content').textContent = '';
+    if (filesPollTimer) { clearInterval(filesPollTimer); filesPollTimer = null; }
+
+    // Reset replay state for the newly-selected request.
+    pauseReplay();
+    replayMode = false;
+    lastTrace = [];
+    replayIndex = 0;
+    document.getElementById('pd-replay-bar').classList.add('d-none');
 
     // eslint-disable-next-line no-undef
     const modal = bootstrap.Modal.getOrCreateInstance(panelEl);
@@ -659,32 +864,44 @@
     heartbeatTimer = setInterval(renderHeartbeats, 1000);
     renderHeartbeats();
 
-    if (pollTimer) clearInterval(pollTimer);
-    pollOnce(chatId, traceUrlBase);
-    pollTimer = setInterval(async () => {
-      // Stop only once the backend confirms moe:active:{chat_id} is gone —
-      // NOT after N polls with no new stage. A single legitimately slow
-      // step (e.g. a 20s expert LLM call) produces no new stage for far
-      // longer than the old 12s window, which falsely marked genuinely
-      // active requests as "beendet". A failed fetch returns true (keep
-      // polling), so a network hiccup can't be misread as "finished" either.
+    // Unified poll step used both for the immediate first check and every
+    // subsequent tick — previously only the interval callback checked
+    // "stillActive", so opening the panel for an already-finished request
+    // (browsing history) never triggered replay mode until a redundant
+    // extra tick 1.5s later just to notice nothing had changed.
+    async function pollStep() {
       const stillActive = await pollOnce(chatId, traceUrlBase);
       if (!stillActive) {
-        clearInterval(pollTimer);
-        pollTimer = null;
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         traceFinished = true;
         renderHeartbeats();
+        enterReplayMode();
       }
-    }, 1500);
+    }
+    if (pollTimer) clearInterval(pollTimer);
+    pollStep();
+    // Stop only once the backend confirms moe:active:{chat_id} is gone —
+    // NOT after N polls with no new stage. A single legitimately slow step
+    // (e.g. a 20s expert LLM call) produces no new stage for far longer than
+    // the old 12s window, which falsely marked genuinely active requests as
+    // "beendet". A failed fetch returns true (keep polling), so a network
+    // hiccup can't be misread as "finished" either.
+    pollTimer = setInterval(pollStep, 1500);
 
+    document.addEventListener('keydown', handleReplayKeydown);
     panelEl.addEventListener('hidden.bs.modal', window.closePipelineDiagram, { once: true });
   };
 
   window.closePipelineDiagram = function () {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (logsPollTimer) { clearInterval(logsPollTimer); logsPollTimer = null; }
+    if (filesPollTimer) { clearInterval(filesPollTimer); filesPollTimer = null; }
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    pauseReplay();
+    replayMode = false;
+    document.removeEventListener('keydown', handleReplayKeydown);
     logsOpen = false;
+    filesOpen = false;
     if (cy) { cy.destroy(); cy = null; }
   };
 })();

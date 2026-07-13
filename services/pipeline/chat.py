@@ -55,6 +55,10 @@ from services.agent_enrichment import (
     agent_graph_context,
     agent_writeback,
     agent_cache_lookup,
+    extract_file_touches,
+    accumulate_stream_tool_call_delta,
+    finalize_stream_tool_calls,
+    looks_like_premature_stop,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -77,7 +81,10 @@ from services.routing import (
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
-    _check_ip_rate_limit, _record_stage,
+    _check_ip_rate_limit, _record_stage, _patch_active_request_backend,
+    _touch_model_recently_used,
+    _record_file_touch, _record_node_latency,
+    _record_premature_stop_outcome,
 )
 from services.conversation_log import log_conversation
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
@@ -164,6 +171,51 @@ def _build_tool_messages(request: "ChatCompletionRequest") -> list:
                 msg["name"] = m.name
         messages.append(msg)
     return messages
+
+
+def _normalize_messages_for_ollama_native(messages: list) -> list:
+    """Normalize OpenAI-format messages (as built by _build_tool_messages)
+    for Ollama's native /api/chat endpoint.
+
+    Mirrors services/pipeline/anthropic.py's _normalize_for_ollama — same
+    underlying bug, same fix, needed at every call site that posts to
+    Ollama's native /api/chat rather than its OpenAI-compatible /v1/...
+    endpoint (the Hermes3 tool-agent path and the premature-stop retry
+    fallback below). Ollama's native wire format differs from the OpenAI
+    format the rest of this file works in:
+    tool_calls[].function.arguments must be a parsed JSON object, not a
+    JSON-encoded string, and 'id'/'type'/'tool_call_id' fields are not part
+    of Ollama's shape. Sending the raw OpenAI-format messages fails
+    immediately with Ollama's "Value looks like object, but can't find
+    closing '}' symbol" — a request-validation rejection, not a generation
+    failure (confirmed live: the error returns in ~20ms, far too fast for
+    the model to have run at all, let alone on a 35B model with 200+ tool
+    messages of history). Returns a new list; never mutates the input,
+    since callers also forward the original OpenAI-format messages
+    elsewhere (client-facing /v1 responses, diagnostics).
+    """
+    out = []
+    for m in messages:
+        role = m.get("role", "")
+        nm = dict(m)
+        if role == "tool":
+            nm.pop("tool_call_id", None)
+        elif role == "assistant" and nm.get("tool_calls"):
+            _native_tcs = []
+            for tc in nm["tool_calls"]:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function", {}) if isinstance(tc.get("function"), dict) else {}
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, ValueError):
+                        args = {}
+                _native_tcs.append({"function": {"name": fn.get("name", ""), "arguments": args}})
+            nm["tool_calls"] = _native_tcs
+        out.append(nm)
+    return out
 
 
 def _normalise_tool_calls_response(upstream: dict, chat_id: str, tool_model: str) -> dict:
@@ -398,6 +450,141 @@ async def _wrap_agent_writeback_sse(
         ))
 
 
+async def _retry_tool_agent_fallback(
+    user_experts: dict, primary_model: str, messages: list, tools, num_ctx: int, max_tokens,
+):
+    """Retry once against a different template tool_agent model when the
+    primary model didn't call a tool on a turn that needed one — either an
+    explicit tool_choice=required violation, or (tool_choice=auto) a
+    text-only reply that reads like a premature "I will now..." announcement
+    instead of a real answer (see agent_enrichment.looks_like_premature_stop).
+
+    An async generator so the caller can forward SSE keepalive pings to the
+    client while this extra network round trip is in flight — mirrors the
+    tool_choice=required retry-wait pattern already used in
+    services/pipeline/anthropic.py's Claude-Code tool path. Yields
+    ("ping", None) tuples while waiting, then exactly one
+    ("result", {...} | None) tuple: None means no fallback model was
+    configured or the retry itself failed — callers must fall back to the
+    original (already-buffered) response in that case, never raise.
+
+    Prefers a genuinely different tool_agent model/endpoint (a different
+    model is more likely to behave differently on a retry). If the template
+    only configures one tool_agent model — confirmed live: this is the
+    common case, e.g. a template with a single qwen3.6:35b entry and no
+    second model at all — falls back to retrying the SAME model instead of
+    giving up, with an explicit corrective instruction appended to the
+    conversation ("you only announced intent, call the tool now"). Without
+    this, retry was a no-op for every template that doesn't happen to define
+    a second tool_agent model, which turned out to be the deployed template
+    that triggered this whole investigation.
+    """
+    _pool = (user_experts or {}).get("tool_agent", [])
+    fb_exp = next(
+        (e for e in _pool if e.get("model") and e.get("url") and e.get("model") != primary_model),
+        None,
+    )
+    _retry_messages = messages
+    if not fb_exp:
+        fb_exp = next((e for e in _pool if e.get("model") == primary_model and e.get("url")), None)
+        if fb_exp:
+            _retry_messages = messages + [{
+                "role": "user",
+                "content": (
+                    "[SYSTEM CORRECTION] Your previous response only described or "
+                    "announced what you were about to do, without actually calling "
+                    "a tool. Do not repeat that announcement or explain again — call "
+                    "the appropriate tool now, as an actual tool call."
+                ),
+            }]
+    if not fb_exp:
+        yield ("result", None)
+        return
+    fb_base = fb_exp["url"].rstrip("/")
+    if fb_base.endswith("/v1"):
+        fb_base = fb_base[:-3]
+
+    # Never downgrade a warm model — same defensive check already used in
+    # services/pipeline/anthropic.py's own num_ctx resolution. Confirmed live
+    # as a real risk: for a same-model retry in particular (the common case
+    # per the docstring above), the primary call may have loaded the model at
+    # a large template-configured context (e.g. 262144), and a retry that
+    # blindly falls back to a hardcoded default here would force Ollama to
+    # reload the SAME model at a much smaller window — destroying the warm
+    # KV-cache the keep_alive=4h fix exists to preserve, and doing so on
+    # every single retry.
+    _retry_num_ctx = num_ctx or 32768
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+            _ps_r = await _ps_cl.get(
+                f"{fb_base}/api/ps",
+                headers={"Authorization": f"Bearer {fb_exp.get('token', 'ollama')}"},
+            )
+            for _loaded in _ps_r.json().get("models", []):
+                _lname = _loaded.get("name", "").split(":")[0]
+                _ename = fb_exp["model"].split(":")[0]
+                _loaded_ctx = _loaded.get("context_length", 0)
+                if _lname == _ename and _loaded_ctx >= _retry_num_ctx:
+                    _retry_num_ctx = _loaded_ctx
+                    break
+    except Exception:
+        pass  # non-fatal — fall through to the configured/default num_ctx
+
+    fb_payload = {
+        "model":    fb_exp["model"],
+        # Retry always targets Ollama's native /api/chat (see _do_call below),
+        # never the OpenAI-compatible endpoint — must be normalized or a
+        # long tool-call history (confirmed live: 234 tool messages) fails
+        # every retry with an immediate 400, leaving the client with nothing
+        # but the original premature-stop text and no working fallback.
+        "messages": _normalize_messages_for_ollama_native(_retry_messages),
+        "stream":   False,
+        "tools":    tools,
+        "options": {
+            "num_ctx":     _retry_num_ctx,
+            "num_predict": max_tokens or 4096,
+        },
+    }
+
+    async def _do_call():
+        async with httpx.AsyncClient(timeout=300.0) as _rcl:
+            return await _rcl.post(
+                f"{fb_base}/api/chat", json=fb_payload,
+                headers={"Authorization": f"Bearer {fb_exp.get('token', 'ollama')}"},
+            )
+
+    task = asyncio.create_task(_do_call())
+    while not task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+        except asyncio.TimeoutError:
+            yield ("ping", None)
+    try:
+        resp = await task
+        resp.raise_for_status()
+        data = resp.json()
+        msg = data.get("message", {})
+        yield ("result", {
+            "content":    msg.get("content", "") or "",
+            "tool_calls": msg.get("tool_calls") or [],
+            "model":      fb_exp["model"],
+        })
+    except httpx.HTTPStatusError as e:
+        # Body included — a bare "400 Bad Request" tells us nothing about
+        # WHY Ollama rejected the retry payload (bad tool schema, bad
+        # message shape, ...); confirmed live this happens in production and
+        # the response body is the only way to find out what's actually
+        # wrong without reproducing it synthetically.
+        logger.warning(
+            "tool-agent fallback retry failed: %s — body: %s",
+            e, e.response.text[:1000],
+        )
+        yield ("result", None)
+    except Exception as e:
+        logger.warning("tool-agent fallback retry failed: %s", e)
+        yield ("result", None)
+
+
 async def _handle_tool_calls(
     request: "ChatCompletionRequest",
     chat_id: str,
@@ -410,6 +597,7 @@ async def _handle_tool_calls(
     content_system_prompt: str = "",
     num_ctx: int = 0,
     system_augment: str = "",
+    user_experts: dict = None,
 ):
     """Direct LLM passthrough that preserves tool_calls in the response.
 
@@ -426,6 +614,10 @@ async def _handle_tool_calls(
     system_augment (Augmented Tool Path, opt-in): extra text merged into the
     single existing system message (or inserted as a new one) — used to inject
     GraphRAG context ahead of the tool model. See services/agent_enrichment.py.
+
+    user_experts: template expert config (category -> [{"model","url","token",
+    "endpoint"}, ...]) — only used for the tool_choice=required retry fallback
+    below (category "tool_agent"). Optional; the retry is skipped without it.
 
     Returns a StreamingResponse (SSE) when request.stream is True, otherwise
     a plain dict. Callers must check the type and wrap accordingly.
@@ -719,9 +911,22 @@ async def _handle_tool_calls(
         _tool_endpoint = tool_base_url.rstrip("/") + "/chat/completions"
 
     payload: dict = {
-        "model":    tool_model,
-        "messages": messages,
-        "stream":   _has_tool_results,
+        "model":      tool_model,
+        # Hermes3 targets Ollama's native /api/chat (see _tool_endpoint above),
+        # which requires tool_calls[].function.arguments as a parsed object,
+        # not the OpenAI-format JSON string _build_tool_messages produces —
+        # see _normalize_messages_for_ollama_native for why sending it raw
+        # fails immediately on any turn with prior tool-call history.
+        "messages":   _normalize_messages_for_ollama_native(messages) if _is_hermes3 else messages,
+        "stream":     _has_tool_results,
+        # Every other Ollama call site in this codebase (main.py, graph/expert.py,
+        # services/inference.py, services/pipeline/anthropic.py) sets a long
+        # keep_alive — this was the one path that didn't, silently falling back
+        # to Ollama's ~5min default. A multi-turn OpenCode/Claude-Code tool
+        # session routinely has multi-minute gaps between turns (local tool
+        # execution, user think time), so the model would idle-unload mid
+        # session and the next turn would hit a cold ~35B reload.
+        "keep_alive": "4h",
     }
     if num_ctx:
         payload["options"] = {"num_ctx": num_ctx}
@@ -834,6 +1039,145 @@ async def _handle_tool_calls(
     _has_kanban_complete = _kc_available if _has_tool_results else False
     if _has_tool_results and request.stream and not _has_kanban_complete:
         async def _stream_tool_synthesis():
+            # Forwards tool_calls deltas to the client live, as they arrive —
+            # once a tool_calls delta is seen, the rest of the stream is pure
+            # live pass-through (this is the successful/common case, per
+            # production diagnostics, and never needs a retry). Content-only
+            # deltas are instead held back (not yet forwarded) until either a
+            # tool_calls delta arrives (then flushed immediately, in order)
+            # or the response concludes with no tool_calls at all: only then
+            # can a text-only "premature stop" be reliably detected, and only
+            # then is it still possible to retry before anything reaches the
+            # client — a live pass-through can't do this, since once text
+            # chunks are forwarded, they can't be un-sent. This was the
+            # actual reason the tool_choice=required retry never fired in
+            # earlier attempts: raw live streaming had already delivered a
+            # "finished" turn to OpenCode by the time a violation could even
+            # be detected.
+            _diag_saw_tc = False
+            _diag_fr = None
+            _diag_chars = 0
+            _diag_chunks = 0
+            _diag_done_seen = False
+            _diag_exit_extra = ""
+            _file_tc_acc: dict = {}
+            _content_acc: list = []
+            _held_lines: list = []
+            _flushed_live = False
+            _t_stream_start = time.monotonic()
+
+            def _log_and_finalize(reason: str):
+                # Shared by every exit path so the diagnostic and file-touch
+                # extraction actually fire regardless of how the stream ends
+                # (clean [DONE], loop-exhausted-without-DONE, cancelled,
+                # retried) — previously only the "data: [DONE]" branch did
+                # this, so a client disconnect or an upstream that closes the
+                # connection without sending [DONE] silently skipped both.
+                #
+                # Level: INFO only for exits worth an admin's attention while
+                # scanning logs (client bailed, or the model stopped without
+                # ever calling a tool — the exact silent-stop failure shape
+                # this whole diagnostic was built to catch); DEBUG for the
+                # routine successful case, which now fires on every single
+                # tool-calling turn and would otherwise flood production logs.
+                _notable = reason == "client-disconnected" or (not _diag_saw_tc and _diag_fr == "stop")
+                _log = logger.info if _notable else logger.debug
+                _log(
+                    "tool-passthrough result (fast/stream path, exit=%s%s): tool_choice=%r "
+                    "has_tool_results=%s finish_reason=%r has_tool_calls=%s "
+                    "content_chars=%d chunks=%d tool_msgs=%d",
+                    reason, _diag_exit_extra, request.tool_choice, _has_tool_results, _diag_fr,
+                    _diag_saw_tc, _diag_chars, _diag_chunks,
+                    sum(1 for m in messages if m.get("role") == "tool"),
+                )
+                for _ftc in finalize_stream_tool_calls(_file_tc_acc):
+                    for _touch in extract_file_touches(_ftc["name"], _ftc["arguments"]):
+                        asyncio.create_task(_record_file_touch(
+                            chat_id, _touch["path"], _touch["action"], _touch["tool"],
+                        ))
+                # Only for turns that actually completed — a client-disconnect
+                # exit isn't a real "how long did the model take" sample.
+                if reason != "client-disconnected":
+                    asyncio.create_task(_record_node_latency(
+                        tool_base_url, tool_model, (time.monotonic() - _t_stream_start) * 1000,
+                    ))
+
+            async def _resolve_text_only_ending():
+                # Called once, only for a turn that ended with no tool_calls
+                # anywhere in the stream — decide whether to retry, and yield
+                # whatever should reach the client (held-back original lines,
+                # or a retried result, or a ping keepalive while retrying).
+                nonlocal _diag_exit_extra
+                _full_text = "".join(_content_acc)
+                _violated_required = bool(request.tools) and request.tool_choice == "required"
+                _premature = looks_like_premature_stop(_full_text)
+                # Persist regardless of whether a retry fires — the rate needs
+                # both premature and clean turns to be meaningful, and this is
+                # the only place this signal exists at all today (see
+                # services/tracking.py::_record_premature_stop_outcome).
+                asyncio.create_task(_record_premature_stop_outcome(tool_model, tool_base_url, _premature))
+                if _violated_required or _premature:
+                    logger.warning(
+                        "tool_choice=%r violated by %s (%s, content_chars=%d)"
+                        " — retrying with template tool_agent",
+                        request.tool_choice, tool_model,
+                        "required" if _violated_required else "premature-stop-heuristic",
+                        len(_full_text),
+                    )
+                    _retry_result = None
+                    async for _kind, _val in _retry_tool_agent_fallback(
+                        user_experts, tool_model, messages, request.tools, num_ctx,
+                        request.max_tokens or request.max_completion_tokens,
+                    ):
+                        if _kind == "ping":
+                            yield ": ping\n\n"
+                        else:
+                            _retry_result = _val
+                    if _retry_result and (_retry_result["tool_calls"] or _retry_result["content"]):
+                        logger.info(
+                            "tool-choice retry done — model=%s tool_calls=%s content_chars=%d",
+                            _retry_result["model"], bool(_retry_result["tool_calls"]),
+                            len(_retry_result["content"]),
+                        )
+                        _fr = "tool_calls" if _retry_result["tool_calls"] else "stop"
+                        _completion = {
+                            "id": chat_id, "created": int(time.time()), "model": _retry_result["model"],
+                            "choices": [{"index": 0, "finish_reason": _fr, "message": {
+                                "role": "assistant", "content": _retry_result["content"],
+                                "tool_calls": [
+                                    {
+                                        "id": f"call_{chat_id[:8]}_{i}", "type": "function",
+                                        "function": {
+                                            "name": (tc.get("function") or {}).get("name", ""),
+                                            "arguments": json.dumps((tc.get("function") or {}).get("arguments", {})),
+                                        },
+                                    }
+                                    for i, tc in enumerate(_retry_result["tool_calls"])
+                                ],
+                            }}],
+                            "usage": {},
+                        }
+                        async for _sse_line in _wrap_completion_as_sse(_completion, chat_id, tool_model):
+                            yield _sse_line
+                        for _tc in _completion["choices"][0]["message"]["tool_calls"]:
+                            _fn = _tc["function"]
+                            try:
+                                _args = json.loads(_fn["arguments"])
+                            except Exception:
+                                _args = {}
+                            for _touch in extract_file_touches(_fn["name"], _args):
+                                asyncio.create_task(_record_file_touch(
+                                    chat_id, _touch["path"], _touch["action"], _touch["tool"],
+                                ))
+                        _diag_exit_extra = ",retried-ok"
+                        return
+                    _diag_exit_extra = ",retry-failed-or-unavailable"
+                # No retry needed, or none available/it didn't help — flush
+                # the original response as-is (never silently drop a reply).
+                for _hl in _held_lines:
+                    yield _hl
+                yield "data: [DONE]\n\n"
+
             try:
                 async with httpx.AsyncClient(timeout=1800) as client:
                     async with client.stream(
@@ -846,10 +1190,80 @@ async def _handle_tool_calls(
                         resp.raise_for_status()
                         async for line in resp.aiter_lines():
                             if line.startswith("data: "):
-                                yield f"{line}\n\n"
+                                _diag_chunks += 1
+                                _payload = line[len("data: "):]
+                                _has_tc_this_line = False
+                                if _payload != "[DONE]":
+                                    try:
+                                        _d = json.loads(_payload)
+                                        _ch0 = (_d.get("choices") or [{}])[0]
+                                        _delta = _ch0.get("delta", {})
+                                        if _delta.get("tool_calls"):
+                                            _diag_saw_tc = True
+                                            _has_tc_this_line = True
+                                            for _tcd in _delta["tool_calls"]:
+                                                accumulate_stream_tool_call_delta(
+                                                    _file_tc_acc, _tcd.get("index", 0), _tcd,
+                                                )
+                                        if _delta.get("content"):
+                                            _diag_chars += len(_delta["content"])
+                                            _content_acc.append(_delta["content"])
+                                        if _ch0.get("finish_reason"):
+                                            _diag_fr = _ch0["finish_reason"]
+                                    except Exception:
+                                        pass
+                                if _flushed_live or _has_tc_this_line:
+                                    if not _flushed_live and _held_lines:
+                                        for _hl in _held_lines:
+                                            yield _hl
+                                        _held_lines = []
+                                    _flushed_live = True
+                                    yield f"{line}\n\n"
+                                else:
+                                    _held_lines.append(f"{line}\n\n")
                             elif line == "data: [DONE]":
-                                yield "data: [DONE]\n\n"
+                                _diag_done_seen = True
+                                if _flushed_live:
+                                    yield "data: [DONE]\n\n"
+                                else:
+                                    async for _out in _resolve_text_only_ending():
+                                        yield _out
+                                _log_and_finalize("done")
                                 return
+                        # The upstream line iterator exhausted (connection closed
+                        # by the server, aiter_lines() returning normally) without
+                        # ever sending a literal "data: [DONE]" — this is Ollama's
+                        # normal behaviour on this endpoint (confirmed live: every
+                        # successful turn observed in production exits this way,
+                        # never via an explicit [DONE]), NOT a truncated read. The
+                        # full response was received either way, so the exact same
+                        # retry decision applies as the "done" branch — this was a
+                        # real, confirmed-live bug: the very first production case
+                        # of finish_reason=stop/no-tool-calls exited through this
+                        # branch and skipped the retry entirely because it used to
+                        # just flush-and-return here without ever considering it.
+                        if not _diag_done_seen:
+                            if _flushed_live:
+                                for _hl in _held_lines:
+                                    yield _hl
+                                # Upstream never sent an explicit [DONE] on this
+                                # exit path — our own contract with the client is
+                                # standard SSE termination, so always supply one
+                                # regardless of what upstream did.
+                                yield "data: [DONE]\n\n"
+                            else:
+                                async for _out in _resolve_text_only_ending():
+                                    yield _out
+                            _log_and_finalize("stream-ended-no-done")
+            except (asyncio.CancelledError, GeneratorExit):
+                # The client (OpenCode/Hermes/...) disconnected or gave up before
+                # the stream finished — Starlette cancels this generator. Without
+                # this handler that cancellation was completely invisible: no
+                # diagnostic, no error log, nothing — which is indistinguishable
+                # from "everything worked" when scanning logs for problems. Must
+                # re-raise so asyncio's own cancellation bookkeeping still happens.
+                _log_and_finalize("client-disconnected")
+                raise
             except Exception as e:
                 logger.error(f"Tool-synthesis stream failed: {e}")
                 err_chunk = {
@@ -896,6 +1310,89 @@ async def _handle_tool_calls(
         upstream = error_response
 
     upstream = _normalise_tool_calls_response(upstream, chat_id, tool_model)
+
+    # ── Diagnostic: visibility into every passthrough turn's outcome.
+    # INFO only for the notable case (model stopped without ever calling a
+    # tool — the exact silent-stop failure shape this diagnostic exists to
+    # catch); DEBUG otherwise, now that it fires on every tool-calling turn.
+    _diag_choice = (upstream.get("choices") or [{}])[0]
+    _diag_msg = _diag_choice.get("message", {})
+    _diag_notable = _diag_choice.get("finish_reason") == "stop" and not _diag_msg.get("tool_calls")
+    (logger.info if _diag_notable else logger.debug)(
+        "tool-passthrough result: tool_choice=%r has_tool_results=%s finish_reason=%r "
+        "has_tool_calls=%s content_chars=%d tool_msgs=%d",
+        request.tool_choice, _has_tool_results, _diag_choice.get("finish_reason"),
+        bool(_diag_msg.get("tool_calls")), len(_diag_msg.get("content") or ""),
+        sum(1 for m in messages if m.get("role") == "tool"),
+    )
+    for _tc in (_diag_msg.get("tool_calls") or []):
+        _tc_fn = _tc.get("function") or {}
+        try:
+            _tc_args = json.loads(_tc_fn.get("arguments") or "{}")
+        except Exception:
+            _tc_args = {}
+        for _touch in extract_file_touches(_tc_fn.get("name", ""), _tc_args):
+            asyncio.create_task(_record_file_touch(
+                chat_id, _touch["path"], _touch["action"], _touch["tool"],
+            ))
+
+    # ── tool_choice=required / premature-stop retry ────────────────────────
+    # Ollama does not enforce tool_choice — a model can ignore "required" and
+    # answer with a plain-text announcement ("I will now …") plus a clean
+    # finish_reason=stop instead of a real tool call. Under tool_choice=auto
+    # (confirmed via the diagnostic above to be what OpenCode actually sends)
+    # a text-only reply is technically valid, but the SAME announcement
+    # pattern still occurs — looks_like_premature_stop catches that case too.
+    # An OpenAI-format client (OpenCode, Hermes, ...) then treats either as a
+    # normal completed turn and stops silently, with no error anywhere.
+    # Mirrors the retry already used by the Claude-Code tool path in
+    # services/pipeline/anthropic.py. NOT restricted to the initial task turn
+    # — OpenCode keeps sending the full tool list on every follow-up turn
+    # too, deep into a long multi-step session (observed tool_msgs in the
+    # 100s), so a text-only reply on a mid-loop turn is just as much a
+    # silent-stop bug as on the first turn.
+    if request.tools and not _diag_msg.get("tool_calls"):
+        _violated_required = request.tool_choice == "required"
+        _premature = looks_like_premature_stop(_diag_msg.get("content") or "")
+        asyncio.create_task(_record_premature_stop_outcome(tool_model, tool_base_url, _premature))
+        if _violated_required or _premature:
+            logger.warning(
+                "tool_choice=%r violated by %s (%s, content_chars=%d)"
+                " — retrying with template tool_agent",
+                request.tool_choice, tool_model,
+                "required" if _violated_required else "premature-stop-heuristic",
+                len(_diag_msg.get("content") or ""),
+            )
+            _rr_result = None
+            async for _kind, _val in _retry_tool_agent_fallback(
+                user_experts, tool_model, messages, request.tools, num_ctx,
+                request.max_tokens or request.max_completion_tokens,
+            ):
+                if _kind == "result":
+                    _rr_result = _val
+                # No client to ping yet on this (non-streaming-to-client-so-far)
+                # path — pings are only meaningful once we've started sending
+                # bytes, which happens below via _wrap_completion_as_sse.
+            if _rr_result and (_rr_result["tool_calls"] or _rr_result["content"]):
+                logger.info(
+                    "tool-choice retry done — model=%s tool_calls=%s content_chars=%d",
+                    _rr_result["model"], bool(_rr_result["tool_calls"]), len(_rr_result["content"]),
+                )
+                if _rr_result["tool_calls"]:
+                    # Ollama native returns arguments as a dict, not a JSON string.
+                    _diag_msg["tool_calls"] = [
+                        {
+                            "id":   f"call_{chat_id[:8]}_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": (tc.get("function") or {}).get("name", ""),
+                                "arguments": json.dumps((tc.get("function") or {}).get("arguments", {})),
+                            },
+                        }
+                        for i, tc in enumerate(_rr_result["tool_calls"])
+                    ]
+                    _diag_choice["finish_reason"] = "tool_calls"
+                _diag_msg["content"] = _rr_result["content"]
 
     if not request.stream:
         return upstream
@@ -1828,6 +2325,19 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 f"tools={len(request.tools or [])} tool_msgs={sum(1 for m in request.messages if getattr(m,'role','')=='tool')} "
                 f"content_model={_content_model or 'none'}"
             )
+            # The initial _register_active_request() call (near the top of this
+            # function) can't know backend_model/backend_host yet — the tool_expert/
+            # judge model+endpoint are only resolved here. Without this patch,
+            # graph/planner.py's and graph/expert.py's proactive VRAM-unload can't
+            # see this session as "using" the model and may evict it out from
+            # under a live multi-turn OpenCode/Claude-Code session.
+            asyncio.create_task(_patch_active_request_backend(chat_id, _tc_model, _tc_url))
+            # Covers the gap BETWEEN this agentic client's individual HTTP
+            # turns (each is stateless — no moe:active:* entry exists while
+            # the user is reading/typing the next message) — see
+            # _RECENT_USE_GRACE_SECONDS in services/tracking.py for why the
+            # in-flight check above isn't sufficient on its own.
+            asyncio.create_task(_touch_model_recently_used(_tc_model, _tc_url))
             _t_tc = time.monotonic()
             _tc_num_ctx = (
                 _tmpl_prompts.get("tool_expert_num_ctx") or 0
@@ -1843,10 +2353,22 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 content_system_prompt=_content_sys,
                 num_ctx=int(_tc_num_ctx),
                 system_augment=_agent_system_augment,
+                user_experts=user_experts,
             )
             PROM_REQUESTS.labels(mode="tool", cache_hit="false",
                                  user_id=(user_id or "anon")).inc()
             PROM_RESPONSE_TIME.labels(mode="tool").observe(time.monotonic() - _t_tc)
+            if not request.stream:
+                # Streaming responses reach this line right after
+                # _handle_tool_calls() returns a StreamingResponse wrapper —
+                # before the client has consumed any of the actual
+                # generation, so timing here would only measure setup, not
+                # the real latency. The accurate streaming measurement is
+                # taken inside _stream_tool_synthesis's _log_and_finalize
+                # instead (services/pipeline/chat.py, _handle_tool_calls).
+                asyncio.create_task(_record_node_latency(
+                    _tc_url, _tc_model, (time.monotonic() - _t_tc) * 1000,
+                ))
 
             # ── Augmented Tool Path: write-back (fire-and-forget) ─────────────
             # Opt-in (template agent_ingest, default off). Only on a clean turn

@@ -231,3 +231,129 @@ async def test_select_node_unknown_endpoint_returns_fallback():
     result = await main._select_node("llama2", ["UNKNOWN_GPU"])
     assert isinstance(result, dict)
     assert result.get("name") == "UNKNOWN_GPU"
+
+
+# ── _select_node reliability weighting (latency + premature-stop) ─────────────
+# _select_node calls services.inference._get_node_latency_stats /
+# _get_premature_stop_rate (services/tracking.py) to fold a flood-fill-style
+# penalty into load_score — patched at their point of use (services.inference),
+# not at services.tracking, since that's where _select_node's closures resolve
+# the names from.
+
+@pytest.mark.asyncio
+async def test_select_node_premature_stop_penalty_breaks_a_tie():
+    """RTX and TESLA are both genuinely idle (empty /api/ps for RTX, TESLA
+    always reports 0 running since it's api_type=openai) — tied
+    load_score=0.0 pre-penalty, so RTX would normally win as the first
+    candidate in a min() tie (see the sibling "no data" test below). A
+    recorded premature-stop rate on RTX for this model must be enough to tip
+    the choice to TESLA even though RTX's raw load is still tied at 0."""
+    _clear_ps_cache()
+    rtx_response = _make_ps_response([])   # RTX idle: 0 running models
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value  = None
+    mock_client.get.return_value        = rtx_response
+
+    async def _fake_latency(node):
+        return {"count": 0, "avg_ms": None}
+
+    async def _fake_pstop(model, node):
+        return 0.5 if node == "RTX" else 0.0
+
+    with patch("main.httpx.AsyncClient", return_value=mock_client), \
+         patch("services.inference._get_node_latency_stats", side_effect=_fake_latency), \
+         patch("services.inference._get_premature_stop_rate", side_effect=_fake_pstop):
+        chosen = await main._select_node("llama2", ["RTX", "TESLA"])
+
+    assert chosen["name"] == "TESLA"
+
+
+@pytest.mark.asyncio
+async def test_select_node_no_pstop_data_keeps_original_tie_winner():
+    """Same genuinely-tied-at-0.0 setup as above, but with zero
+    premature-stop data for either node — behaviour must be unchanged from
+    before this feature existed (RTX wins the tie as the first candidate,
+    confirming the new reliability term contributes exactly 0.0 when there's
+    no evidence either way)."""
+    _clear_ps_cache()
+    rtx_response = _make_ps_response([])
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value  = None
+    mock_client.get.return_value        = rtx_response
+
+    async def _fake_latency(node):
+        return {"count": 0, "avg_ms": None}
+
+    async def _fake_pstop(model, node):
+        return 0.0
+
+    with patch("main.httpx.AsyncClient", return_value=mock_client), \
+         patch("services.inference._get_node_latency_stats", side_effect=_fake_latency), \
+         patch("services.inference._get_premature_stop_rate", side_effect=_fake_pstop):
+        chosen = await main._select_node("llama2", ["RTX", "TESLA"])
+
+    assert chosen["name"] == "RTX"
+
+
+@pytest.mark.asyncio
+async def test_select_node_latency_penalty_prefers_faster_node():
+    """RTX and TESLA genuinely tied on raw load (both idle, 0.0 pre-penalty
+    — RTX would win the tie per the sibling test above), but RTX has a much
+    higher recorded average latency than the 3s baseline — TESLA must win
+    instead despite the tied load."""
+    _clear_ps_cache()
+    rtx_response = _make_ps_response([])
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value  = None
+    mock_client.get.return_value        = rtx_response
+
+    async def _fake_latency(node):
+        return {"count": 20, "avg_ms": 15000} if node == "RTX" else {"count": 20, "avg_ms": 500}
+
+    async def _fake_pstop(model, node):
+        return 0.0
+
+    with patch("main.httpx.AsyncClient", return_value=mock_client), \
+         patch("services.inference._get_node_latency_stats", side_effect=_fake_latency), \
+         patch("services.inference._get_premature_stop_rate", side_effect=_fake_pstop):
+        chosen = await main._select_node("llama2", ["RTX", "TESLA"])
+
+    assert chosen["name"] == "TESLA"
+
+
+@pytest.mark.asyncio
+async def test_select_node_reliability_lookup_failure_never_breaks_selection():
+    """If services.tracking's Redis-backed helpers raise for any reason,
+    _select_node must still return a valid choice (defensive try/except
+    inside _reliability_factor) instead of propagating the exception."""
+    _clear_ps_cache()
+    rtx_response = _make_ps_response([])
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value  = None
+    mock_client.get.return_value        = rtx_response
+
+    with patch("main.httpx.AsyncClient", return_value=mock_client), \
+         patch("services.inference._get_node_latency_stats", side_effect=ConnectionError("redis down")), \
+         patch("services.inference._get_premature_stop_rate", side_effect=ConnectionError("redis down")):
+        chosen = await main._select_node("llama2", ["RTX", "TESLA"])
+
+    assert chosen["name"] in ("RTX", "TESLA")
+
+
+@pytest.mark.asyncio
+async def test_select_node_single_candidate_skips_reliability_lookup():
+    """The len(candidates)==1 fast path must still return immediately without
+    ever calling the new reliability helpers — no behavioural change for the
+    current production config, where every category has exactly one endpoint."""
+    _clear_ps_cache()
+    with patch("services.inference._get_node_latency_stats") as mock_lat, \
+         patch("services.inference._get_premature_stop_rate") as mock_pstop:
+        chosen = await main._select_node("llama2", ["RTX"])
+
+    mock_lat.assert_not_called()
+    mock_pstop.assert_not_called()
+    assert chosen["name"] == "RTX"

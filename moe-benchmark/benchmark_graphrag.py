@@ -73,10 +73,11 @@ async def query_moe(session: httpx.AsyncClient, question: str, enable_graphrag: 
             _MOE_API_URL,
             json=payload,
             headers={"Authorization": f"Bearer {_MOE_API_TOKEN}"},
-            timeout=60,
+            timeout=300,
         )
         data    = resp.json()
-        answer  = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        choices = data.get("choices")
+        answer  = choices[0].get("message", {}).get("content", "") if choices else ""
         tokens  = data.get("usage", {}).get("total_tokens", 0)
         latency = (time.monotonic() - t0) * 1000
         return answer, tokens, latency
@@ -102,9 +103,10 @@ async def judge_score(session: httpx.AsyncClient, ground_truth: str, answer: str
             _MOE_API_URL,
             json=payload,
             headers={"Authorization": f"Bearer {_MOE_API_TOKEN}"},
-            timeout=30,
+            timeout=120,
         )
-        text = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "0").strip()
+        choices = resp.json().get("choices")
+        text = choices[0].get("message", {}).get("content", "0").strip() if choices else "0"
         return float(text[0]) if text and text[0].isdigit() else 0.0
     except Exception:
         return 0.0

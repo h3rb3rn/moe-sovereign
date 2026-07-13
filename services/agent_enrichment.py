@@ -28,15 +28,24 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
+import threading
+import time
+import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Optional
+
+import psycopg
+from psycopg.rows import dict_row
 
 from config import (
     AGENT_CACHE_L0_TTL, AGENT_CACHE_MAX_LOOKUP_MS, AGENT_CACHE_MIN_CONF,
     AGENT_CACHE_TTL_DAYS, AGENT_INGEST_JUDGE, CACHE_MIN_RESPONSE_LEN,
     KAFKA_TOPIC_INGEST, KNOWLEDGE_BYPASS_THRESHOLD,
+    MOE_USERDB_URL, POSTGRES_CHECKPOINT_URL,
 )
 from metrics import PROM_AGENT_CACHE, PROM_AGENT_WRITEBACK
 from services.helpers import _entry_is_fresh
@@ -170,6 +179,223 @@ def is_informational(query: str) -> bool:
     return True
 
 
+# Generalized from the kanban-worker "_planning_keywords" heuristic that
+# already shipped in services/pipeline/chat.py's two-phase kanban handling —
+# same idea (a model announcing what it's about to do is not the same as
+# actually doing it), broadened beyond kanban-specific phrasing for the
+# tool_choice=auto premature-stop retry (see _handle_tool_calls).
+#
+# Patterns live in Postgres (admin_premature_stop_patterns), not hardcoded
+# here: a newly observed announcement phrasing is discovered in production,
+# on a customer's deployment, from a model's own idiosyncratic wording —
+# waiting for a code change + container rebuild every time is not viable
+# there. This list is only the SEED data, inserted once on first use if the
+# table is still empty (see _load_premature_stop_patterns_sync) — after that,
+# the table is the source of truth and is managed via the Admin UI
+# (admin_ui/templates/premature_stop_patterns.html).
+_SEED_PREMATURE_STOP_PATTERNS = [
+    # (pattern, pattern_type, language, category, description)
+    ("i will now", "literal", "en", "announcement", ""),
+    ("i'll now", "literal", "en", "announcement", ""),
+    ("let me now", "literal", "en", "announcement", ""),
+    ("i am going to", "literal", "en", "announcement", ""),
+    ("i'm going to", "literal", "en", "announcement", ""),
+    ("next, i will", "literal", "en", "announcement", ""),
+    ("next i will", "literal", "en", "announcement", ""),
+    ("i will call", "literal", "en", "announcement", ""),
+    ("i will use", "literal", "en", "announcement", ""),
+    ("i will proceed", "literal", "en", "announcement", ""),
+    ("i will start by", "literal", "en", "announcement", ""),
+    ("i will first", "literal", "en", "announcement", ""),
+    ("first, i will", "literal", "en", "announcement", ""),
+    ("step 1:", "literal", "en", "announcement", ""),
+    ("step 1)", "literal", "en", "announcement", ""),
+    ("i'll call", "literal", "en", "announcement", ""),
+    ("i'll use", "literal", "en", "announcement", ""),
+    ("i'll proceed", "literal", "en", "announcement", ""),
+    ("i'll start by", "literal", "en", "announcement", ""),
+    ("i'll first", "literal", "en", "announcement", ""),
+    ("let's orient", "literal", "en", "announcement", ""),
+    ("orient myself", "literal", "en", "announcement", ""),
+    ("orient ourselves", "literal", "en", "announcement", ""),
+    # German — confirmed live: qwen3.6:35b responding in German ("Lass mich
+    # die JWT-Funktion komplett neu schreiben...", "Prüfen wir woher das
+    # kommt...", "Lass mich alles am Stück fixen:") hit none of the English
+    # patterns above and the retry never fired. Deployment templates in this
+    # system are German-first (see AGENTS.md), so German phrasing is at
+    # least as likely as English here, not an edge case.
+    ("lass mich", "literal", "de", "announcement", ""),
+    ("lass uns", "literal", "de", "announcement", ""),
+    ("lasst uns", "literal", "de", "announcement", ""),
+    ("ich werde jetzt", "literal", "de", "announcement", ""),
+    ("ich werde nun", "literal", "de", "announcement", ""),
+    ("ich werde zuerst", "literal", "de", "announcement", ""),
+    ("ich werde zunächst", "literal", "de", "announcement", ""),
+    ("zunächst muss ich", "literal", "de", "announcement", ""),
+    ("zuerst muss ich", "literal", "de", "announcement", ""),
+    ("ich muss zunächst", "literal", "de", "announcement", ""),
+    ("ich muss zuerst", "literal", "de", "announcement", ""),
+    ("als nächstes werde ich", "literal", "de", "announcement", ""),
+    ("als erstes werde ich", "literal", "de", "announcement", ""),
+    ("schauen wir uns", "literal", "de", "announcement", ""),
+    ("schauen wir mal", "literal", "de", "announcement", ""),
+    ("prüfen wir", "literal", "de", "announcement", ""),
+    # Confirmed live: "Ich fix das jetzt mit einem saubereren Ansatz:" —
+    # matched none of the literal phrases above (casual "ich fix das jetzt"
+    # instead of "ich werde ... reparieren"). Enumerating every verb variant
+    # of "ich <verb> das/es jetzt" isn't tractable as a literal list, so this
+    # one narrow regex covers the recurring shape instead.
+    (r"\bich\s+\w{2,12}\s+(das|es|dies)\s+(jetzt|nun)\b", "regex", "de", "announcement",
+     "casual 'ich <verb> das/es jetzt|nun'"),
+    # Confirmed live across three separate incidents: every observed
+    # announcement ended with a trailing colon ("...fixen:", "...Ansatz:",
+    # "...Debate Session:") — the response stops right where it was about to
+    # introduce the next thing. Language-independent, cheap, and matches the
+    # actual observed failure shape better than any phrase list could.
+    (r":\s*$", "regex", "", "trailing_colon",
+     "response text ends on a colon — usually an unfinished announcement"),
+    # Confirmed live: qwen3.6:35b sometimes writes its tool call as literal
+    # XML-ish markup in the plain-text content field instead of populating
+    # the structured OpenAI tool_calls delta — e.g. a message ending in
+    # "</parameter>\n</function>\n</tool_call>" with the actual command
+    # embedded as text a few lines above. The existing text-embedded-tool-
+    # call extraction in _normalise_tool_calls_response (services/pipeline/
+    # chat.py) is deliberately scoped to hermes3/qwen2.5 only, to avoid
+    # misreading ordinary code snippets in general-purpose replies (e.g.
+    # OpenCode discussing a `bash(...)`-style function) as tool calls.
+    # Rather than widen that extraction's blast radius, this is a narrow
+    # *signal* — literal tool-call markup fragments essentially never appear
+    # in a genuine prose answer — used only to decide whether a retry is
+    # warranted.
+    ("<tool_call>", "literal", "", "malformed_tool_call", ""),
+    ("</tool_call>", "literal", "", "malformed_tool_call", ""),
+    ("<function=", "literal", "", "malformed_tool_call", ""),
+    ("</function>", "literal", "", "malformed_tool_call", ""),
+    ("<parameter=", "literal", "", "malformed_tool_call", ""),
+    ("</parameter>", "literal", "", "malformed_tool_call", ""),
+]
+
+
+def _load_premature_stop_patterns_sync() -> Optional[list]:
+    """One-shot sync query against admin_premature_stop_patterns — same
+    pattern as services/templates.py::_load_templates_from_db_sync (sync
+    psycopg, safe to call from a background thread, never touches the
+    asyncio event loop). Seeds the table from _SEED_PREMATURE_STOP_PATTERNS
+    on first use if it's still empty (idempotent — checks emptiness, not a
+    fixed set of ids, so admin-deleted seed rows stay deleted on restart).
+
+    Returns a list of (pattern_type, compiled_matcher, category) tuples
+    ready for looks_like_premature_stop, or None on any DB failure so the
+    caller can fall back to an empty-but-safe default.
+    """
+    dsn = MOE_USERDB_URL or POSTGRES_CHECKPOINT_URL or ""
+    if not dsn:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT COUNT(*) AS n FROM admin_premature_stop_patterns")
+                if (cur.fetchone() or {}).get("n", 0) == 0:
+                    now = datetime.now(timezone.utc).isoformat()
+                    for pattern, ptype, lang, cat, desc in _SEED_PREMATURE_STOP_PATTERNS:
+                        cur.execute(
+                            "INSERT INTO admin_premature_stop_patterns "
+                            "(id, pattern, pattern_type, language, category, description, "
+                            "created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (f"seed-{uuid.uuid4().hex[:12]}", pattern, ptype, lang, cat, desc, now, now),
+                        )
+                    conn.commit()
+                    logger.info(
+                        "admin_premature_stop_patterns was empty — seeded %d default patterns",
+                        len(_SEED_PREMATURE_STOP_PATTERNS),
+                    )
+                cur.execute(
+                    "SELECT pattern, pattern_type, category FROM admin_premature_stop_patterns "
+                    "WHERE enabled = TRUE"
+                )
+                rows = cur.fetchall()
+    except Exception as e:
+        logger.debug("Premature-stop pattern DB load failed: %s", e)
+        return None
+    return _compile_pattern_rows(rows)
+
+
+def _compile_pattern_rows(rows) -> list:
+    """Turns raw {"pattern","pattern_type","category"} rows into matcher
+    tuples for looks_like_premature_stop. Split out from
+    _load_premature_stop_patterns_sync so tests can compile
+    _SEED_PREMATURE_STOP_PATTERNS directly without a live DB connection."""
+    compiled: list = []
+    for row in rows:
+        pattern, ptype, category = row["pattern"], row["pattern_type"], row["category"]
+        if ptype == "regex":
+            try:
+                compiled.append(("regex", re.compile(pattern, re.IGNORECASE), category))
+            except re.error as e:
+                logger.warning("Skipping invalid regex pattern %r: %s", pattern, e)
+                continue
+        else:
+            compiled.append(("literal", pattern.lower(), category))
+    return compiled
+
+
+def _read_premature_stop_patterns() -> list:
+    """Return the current pattern list (60s in-process cache, stale-while-
+    revalidate) — same caching mechanics as
+    services/templates.py::_read_expert_templates, so a pattern added via
+    the Admin UI becomes active within a minute, without a restart, and a
+    slow/unreachable DB never blocks a request on the hot tool-passthrough
+    path (the sync psycopg connect happens in a background thread)."""
+    now = time.monotonic()
+    cache = _read_premature_stop_patterns._cache
+    if cache["data"] is not None:
+        if now - cache["ts"] >= 60 and not cache["refreshing"]:
+            cache["refreshing"] = True
+            threading.Thread(target=_refresh_premature_stop_patterns_cache, daemon=True).start()
+        return cache["data"]
+    _refresh_premature_stop_patterns_cache()
+    return cache["data"] or []
+
+
+def _refresh_premature_stop_patterns_cache() -> None:
+    cache = _read_premature_stop_patterns._cache
+    try:
+        data = _load_premature_stop_patterns_sync()
+        if data is not None:
+            cache["data"] = data
+        elif cache["data"] is None:
+            # DB unreachable on cold start — better to match nothing than to
+            # crash the tool-passthrough path; the next 60s refresh retries.
+            cache["data"] = []
+        cache["ts"] = time.monotonic()
+    finally:
+        cache["refreshing"] = False
+
+
+_read_premature_stop_patterns._cache: dict = {"ts": 0.0, "data": None, "refreshing": False}
+
+
+def looks_like_premature_stop(text: str) -> bool:
+    """True if `text` matches any enabled pattern in
+    admin_premature_stop_patterns — an announcement of intent instead of an
+    actual answer, a tool call written as literal text markup instead of
+    populating the API's structured tool_calls field, or a response that
+    trails off on a colon. All are the same underlying failure mode from the
+    caller's perspective: a finish_reason=stop/no-tool_calls turn that
+    should have been a real tool call.
+    """
+    if not text:
+        return False
+    lowered = text.strip().lower()
+    for ptype, matcher, _category in _read_premature_stop_patterns():
+        if ptype == "literal":
+            if matcher in lowered:
+                return True
+        elif matcher.search(lowered):
+            return True
+    return False
+
+
 # ── Workspace / scope ─────────────────────────────────────────────────────────
 
 _WORKSPACE_RE = re.compile(r"Working directory:\s*(\S+)", re.IGNORECASE)
@@ -218,6 +444,98 @@ def _l0_key(scope: str, query: str) -> str:
     normalized = re.sub(r"\s+", " ", query.lower().strip().rstrip("?!.,;"))
     q_hash = hashlib.sha256(normalized.encode()).hexdigest()[:24]
     return f"moe:agent:qcache:{scope}:{q_hash}"
+
+
+# ── File-touch extraction (live-pipeline-visualization "which files did this
+# session touch" view) ──────────────────────────────────────────────────────
+# Tool schemas are client-defined (OpenCode, Claude Code CLI, ...) and not
+# under our control, so classification is a conservative heuristic on the
+# tool NAME only — good enough for a visualization, not meant to be exact.
+_WRITE_TOOL_RE  = re.compile(r"write|edit|create|delete|remove|str_replace|patch|notebookedit", re.I)
+_READ_TOOL_RE   = re.compile(r"read|view|cat|show", re.I)
+_SEARCH_TOOL_RE = re.compile(r"grep|glob|search|find|^ls$|list", re.I)
+
+# Common path-argument key names across Claude Code / OpenCode style tool
+# schemas (Read/Write/Edit use file_path; NotebookEdit uses notebook_path;
+# some clients use camelCase or a bare "path").
+_PATH_ARG_KEYS = ("file_path", "path", "notebook_path", "filePath", "target_file", "filepath")
+
+
+def classify_file_action(tool_name: str) -> str:
+    """'write' | 'read' | 'search' | 'exec' | 'other' from the tool name alone."""
+    name = tool_name or ""
+    if _WRITE_TOOL_RE.search(name):
+        return "write"
+    if _READ_TOOL_RE.search(name):
+        return "read"
+    if _SEARCH_TOOL_RE.search(name):
+        return "search"
+    if re.search(r"bash|shell|exec|run|command", name, re.I):
+        return "exec"
+    return "other"
+
+
+def extract_file_touches(tool_name: str, arguments) -> list[dict]:
+    """Scan known path-argument keys in a tool call's arguments for file
+    paths. Never raises — malformed/empty/non-dict arguments yield [].
+
+    Deliberately conservative: only looks at a fixed set of known argument
+    key names (see _PATH_ARG_KEYS), skips URLs (http/https — e.g. WebFetch's
+    "url" arg is never one of the known keys anyway, but this guards any
+    client that reuses "path" for a URL). Multiple matching keys on the same
+    call (rare) all get recorded.
+    """
+    if not isinstance(arguments, dict) or not tool_name:
+        return []
+    action = classify_file_action(tool_name)
+    touches = []
+    for key in _PATH_ARG_KEYS:
+        val = arguments.get(key)
+        if isinstance(val, str) and val.strip() and not val.startswith(("http://", "https://")):
+            touches.append({"path": val.strip(), "action": action, "tool": tool_name})
+    return touches
+
+
+def accumulate_stream_tool_call_delta(acc: dict, index: int, delta_fn: dict) -> None:
+    """Merge one OpenAI-style streamed tool_calls delta fragment into acc
+    (keyed by the delta's `index`) — id/name arrive once, arguments arrive
+    as JSON-string fragments across many chunks and must be concatenated.
+
+    Used by the fast/streaming passthrough path (services/pipeline/chat.py
+    _stream_tool_synthesis), which forwards raw upstream SSE chunks to the
+    client unchanged and only needs the fully-assembled tool_calls at the
+    very end (after `data: [DONE]`) to extract file touches — never affects
+    what's forwarded. Mutates acc in place; never raises.
+    """
+    try:
+        entry = acc.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        if delta_fn.get("id"):
+            entry["id"] = delta_fn["id"]
+        fn = delta_fn.get("function") or {}
+        if fn.get("name"):
+            entry["name"] = fn["name"]
+        if fn.get("arguments"):
+            entry["arguments"] += fn["arguments"]
+    except Exception:
+        pass
+
+
+def finalize_stream_tool_calls(acc: dict) -> list[dict]:
+    """Convert the accumulator built by accumulate_stream_tool_call_delta into
+    a list of {"name": ..., "arguments": <dict>} ready for
+    extract_file_touches. Skips entries whose arguments never parsed as JSON
+    (still-partial/malformed) rather than raising."""
+    result = []
+    for entry in acc.values():
+        name = entry.get("name", "")
+        if not name:
+            continue
+        try:
+            args = json.loads(entry.get("arguments") or "{}")
+        except Exception:
+            continue
+        result.append({"name": name, "arguments": args})
+    return result
 
 
 # ── Cache / GraphRAG / write-back ─────────────────────────────────────────────

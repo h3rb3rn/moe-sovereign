@@ -133,3 +133,27 @@ Plan / progress:
 - Action: Resubmitted the three shards as resume jobs (Jobs 19682379, 19682380, 19682381) to complete the remaining ~40,000 samples. The generator script automatically detects the already generated files and resumes from their respective offsets.
 - Action: Resubmitted the merge-and-trigger job (Job 19682382) with `--dependency=afterok:19682379:19682380:19682381`.
 - Updated `PreView/index.html` and `eurohpc_lumi_activity_report.md` to reflect the updated metrics, consumption, and pending queue state.
+
+---
+
+## 2026-07-12T08:05:00Z — TASK-9 — in_progress
+
+Plan / progress:
+- All dataset generation shards (Jobs 19682379-81) and the merge-trigger job (Job 19682382) successfully completed on LUMI-G.
+- They yielded the final merged paraconsistent logic SFT dataset with 90,103 unique samples on scratch at `/scratch/project_465003058/hornphil/data/paraconsistent_large.jsonl`.
+- The subsequent LoRA training run failed (Job 19828849) due to a DeepSpeed ZeRO-3 parameter sharding fetch AssertionError on text layer parameters (due to a bug in model class loading where Qwen3.6-35B-A3B is loaded as Qwen3_5MoeForCausalLM text-only model under transformers 5.13.0, but the freezing code unconditionally froze all parameters as non-text, and the PEFT get_peft_model was called inside the zero.Init context).
+- Modified train_judge_lora.py locally:
+  1. Moved the get_peft_model and parameter freezing code OUTSIDE of the deepspeed.zero.Init() context block (recommended PEFT + ZeRO-3 pattern).
+  2. Added a check `is_multimodal = hasattr(model, "visual") or hasattr(model, "vision_model")` to ensure we do not run the manual non-text parameter freezing loop on text-only model configurations.
+- Copied the updated train_judge_lora.py script to LUMI-G.
+- Submitted a new SFT Sbatch training job (Job 19831396) on standard-g partition. Currently Pending (PD) in queue.
+
+Pre-conditions verified:
+- LUMI-G connectivity is healthy.
+- Scanned model structure on LUMI-G via meta-loading in containers to verify parameter names and shapes of Qwen3_5MoeForCausalLM class, confirming no parameters natively have numel == 0, pointing to ZeRO-3 + PEFT Init interaction bug.
+- Overwrote train_judge_lora.py correctly in the dev repository before sync-copying to LUMI-G.
+
+Notes:
+- Chained jobs: none (the dataset is already merged, so we submitted the SFT script directly via train_judge_lora_large.sh).
+- We will monitor standard-g queue status.
+

@@ -14,6 +14,7 @@ from typing import Optional
 
 import httpx
 import docker
+from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -317,6 +318,61 @@ async def _budget_alert_loop() -> None:
         await _check_budget_alerts()
 
 
+# ── GPU VRAM history (cumulative per-instance usage over time) ─────────────
+# api_live_llm_instances() already polls each Ollama node's hardware/GPU
+# stats, but only live, on-demand, while the dashboard happens to be open —
+# nothing was ever persisted for a historical view. This loop samples the
+# same node-exporter data independently of dashboard traffic and stores a
+# bounded time series per node in Redis (sorted set, score=timestamp) so
+# /api/live/gpu-history can serve a real "usage over the last N hours" chart.
+_GPU_HISTORY_INTERVAL_S = 300       # 5 min between samples
+_GPU_HISTORY_RETENTION_S = 7 * 86400  # keep 7 days
+
+
+def _gpu_history_key(node_name: str) -> str:
+    safe = _re.sub(r"[^a-zA-Z0-9_\-]", "_", node_name or "unknown")
+    return f"moe:gpu_history:{safe}"
+
+
+async def _gpu_history_poll_loop() -> None:
+    # Stagger the first sample so it doesn't compete with startup traffic.
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await _poll_and_record_gpu_history()
+        except Exception as exc:
+            logger.warning("GPU history poll failed: %s", exc)
+        await asyncio.sleep(_GPU_HISTORY_INTERVAL_S)
+
+
+async def _poll_and_record_gpu_history() -> None:
+    from urllib.parse import urlparse
+    servers = _get_inference_servers()
+    now = _time_mod.time()
+    r = await db._get_redis()
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for srv in servers:
+            if srv.get("api_type", "ollama") != "ollama":
+                continue
+            host = urlparse(srv["url"]).hostname
+            if not host or host in ("localhost", "127.0.0.1"):
+                continue
+            try:
+                resp = await client.get(f"http://{host}:9100/metrics", timeout=5.0)
+                gpus = _parse_node_gpu_metrics(resp.text)
+                if not gpus:
+                    continue
+                vram_used  = round(sum(g.get("vram_used_gb", 0) for g in gpus), 1)
+                vram_total = round(sum(g.get("vram_total_gb", 0) for g in gpus), 1)
+                entry = json.dumps({"ts": now, "vram_used_gb": vram_used, "vram_total_gb": vram_total})
+                key = _gpu_history_key(srv["name"])
+                await r.zadd(key, {entry: now})
+                await r.zremrangebyscore(key, 0, now - _GPU_HISTORY_RETENTION_S)
+                await r.expire(key, _GPU_HISTORY_RETENTION_S + 3600)
+            except Exception as exc:
+                logger.debug("GPU history poll skipped for %s: %s", srv["name"], exc)
+
+
 # ─── App ─────────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -335,6 +391,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_permission_cleanup())
     # Daily retention cleanup for conversation audit logs
     asyncio.create_task(_daily_conversation_log_cleanup_loop())
+    # Periodic GPU VRAM history sampling (per-instance cumulative usage over time)
+    asyncio.create_task(_gpu_history_poll_loop())
     yield
 
 async def _daily_conversation_log_cleanup_loop() -> None:
@@ -2276,7 +2334,15 @@ async def api_create_expert_template(request: Request):
         "planner_prompt":          body.get("planner_prompt", "").strip(),
         "judge_prompt":            body.get("judge_prompt", "").strip(),
         "judge_model":             body.get("judge_model", "").strip(),
+        "judge_num_ctx":           body.get("judge_num_ctx", 0),
         "planner_model":           body.get("planner_model", "").strip(),
+        "planner_num_ctx":         body.get("planner_num_ctx", 0),
+        # tool_expert_* — the Augmented Tool Path's dedicated agentic
+        # backend slot (OpenCode/Claude Code tool-calling passthrough, see
+        # services/pipeline/chat.py _handle_tool_calls / routing.py
+        # _resolve_template_prompts). Falls back to judge_model when empty.
+        "tool_expert_model":       body.get("tool_expert_model", "").strip(),
+        "tool_expert_num_ctx":     body.get("tool_expert_num_ctx", 0),
         "experts":                 body.get("experts", {}),
         "enable_cache":            body.get("enable_cache", True),
         "enable_graphrag":         body.get("enable_graphrag", True),
@@ -2310,7 +2376,11 @@ async def api_export_expert_templates(ids: str = ""):
             "planner_prompt":          t.get("planner_prompt", ""),
             "judge_prompt":            t.get("judge_prompt", ""),
             "planner_model":           t.get("planner_model", ""),
+            "planner_num_ctx":         t.get("planner_num_ctx", 0),
             "judge_model":             t.get("judge_model", ""),
+            "judge_num_ctx":           t.get("judge_num_ctx", 0),
+            "tool_expert_model":       t.get("tool_expert_model", ""),
+            "tool_expert_num_ctx":     t.get("tool_expert_num_ctx", 0),
             "experts":                 t.get("experts", {}),
             "enable_cache":            t.get("enable_cache", True),
             "enable_graphrag":         t.get("enable_graphrag", True),
@@ -2386,7 +2456,11 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "planner_prompt":          (item.get("planner_prompt") or "").strip(),
             "judge_prompt":            (item.get("judge_prompt") or "").strip(),
             "planner_model":           (item.get("planner_model") or "").strip(),
+            "planner_num_ctx":         item.get("planner_num_ctx", 0),
             "judge_model":             (item.get("judge_model") or "").strip(),
+            "judge_num_ctx":           item.get("judge_num_ctx", 0),
+            "tool_expert_model":       (item.get("tool_expert_model") or "").strip(),
+            "tool_expert_num_ctx":     item.get("tool_expert_num_ctx", 0),
             "experts":                 item.get("experts") or {},
             "enable_cache":            item.get("enable_cache", True),
             "enable_graphrag":         item.get("enable_graphrag", True),
@@ -2422,7 +2496,11 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["planner_prompt"]         = body.get("planner_prompt",        t.get("planner_prompt", "")).strip()
             t["judge_prompt"]           = body.get("judge_prompt",          t.get("judge_prompt", "")).strip()
             t["judge_model"]            = body.get("judge_model",           t.get("judge_model", "")).strip()
+            t["judge_num_ctx"]          = body.get("judge_num_ctx",         t.get("judge_num_ctx", 0))
             t["planner_model"]          = body.get("planner_model",         t.get("planner_model", "")).strip()
+            t["planner_num_ctx"]        = body.get("planner_num_ctx",       t.get("planner_num_ctx", 0))
+            t["tool_expert_model"]      = body.get("tool_expert_model",     t.get("tool_expert_model", "")).strip()
+            t["tool_expert_num_ctx"]    = body.get("tool_expert_num_ctx",   t.get("tool_expert_num_ctx", 0))
             t["experts"]                = body.get("experts",               t.get("experts", {}))
             t["enable_cache"]           = body.get("enable_cache",          t.get("enable_cache", True))
             t["enable_graphrag"]        = body.get("enable_graphrag",       t.get("enable_graphrag", True))
@@ -2450,6 +2528,143 @@ async def api_delete_expert_template(tmpl_id: str):
     templates = [t for t in templates if t["id"] != tmpl_id]
     save_expert_templates(templates)
     return {"ok": True}
+
+
+# ─── Premature-Stop Pattern Routes ────────────────────────────────────────────
+# Admin-editable replacement for the formerly hardcoded pattern list in
+# services/agent_enrichment.py::looks_like_premature_stop — lets a newly
+# observed "model announces a tool call and then just stops" phrasing be
+# added in production without a code change or container rebuild. This talks
+# to Postgres directly via db._get_pool() rather than importing
+# services.agent_enrichment, because admin_ui's Docker build context
+# (./admin_ui) never includes config.py/state.py — that module transitively
+# imports config and would crash moe-admin on import.
+
+@app.get("/patterns", response_class=HTMLResponse)
+async def premature_stop_patterns_page(request: Request, _=Depends(require_login)):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_premature_stop_patterns ORDER BY category, language, pattern"
+            )
+            patterns = await cur.fetchall()
+    return TEMPLATES.TemplateResponse(request, "premature_stop_patterns.html", {
+        "patterns":   patterns,
+        "csrf_token": get_csrf_token(request),
+        "flash":      request.query_params.get("flash"),
+        "flash_type": request.query_params.get("flash_type", "success"),
+    })
+
+
+@app.get("/api/premature-stop-patterns", dependencies=[Depends(require_login)])
+async def api_get_premature_stop_patterns():
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_premature_stop_patterns ORDER BY category, language, pattern"
+            )
+            return await cur.fetchall()
+
+
+def _validate_pattern_body(body: dict) -> tuple[str, str, str, str, str, bool]:
+    pattern = (body.get("pattern") or "").strip()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="pattern is required")
+    pattern_type = (body.get("pattern_type") or "literal").strip()
+    if pattern_type not in ("literal", "regex"):
+        raise HTTPException(status_code=400, detail="pattern_type must be 'literal' or 'regex'")
+    if pattern_type == "regex":
+        try:
+            _re.compile(pattern)
+        except _re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex: {e}")
+    language = (body.get("language") or "").strip()
+    category = (body.get("category") or "announcement").strip()
+    description = (body.get("description") or "").strip()
+    enabled = bool(body.get("enabled", True))
+    return pattern, pattern_type, language, category, description, enabled
+
+
+@app.post("/api/premature-stop-patterns", dependencies=[Depends(require_login)])
+async def api_create_premature_stop_pattern(request: Request):
+    body = await request.json()
+    pattern, pattern_type, language, category, description, enabled = _validate_pattern_body(body)
+    new_id = f"pat-{secrets.token_hex(4)}"
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO admin_premature_stop_patterns "
+                "(id, pattern, pattern_type, language, category, description, enabled, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (new_id, pattern, pattern_type, language, category, description, enabled, now, now),
+            )
+    return {"ok": True, "id": new_id}
+
+
+@app.put("/api/premature-stop-patterns/{pattern_id}", dependencies=[Depends(require_login)])
+async def api_update_premature_stop_pattern(pattern_id: str, request: Request):
+    body = await request.json()
+    pattern, pattern_type, language, category, description, enabled = _validate_pattern_body(body)
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE admin_premature_stop_patterns SET "
+                "pattern=%s, pattern_type=%s, language=%s, category=%s, description=%s, "
+                "enabled=%s, updated_at=%s WHERE id=%s",
+                (pattern, pattern_type, language, category, description, enabled, now, pattern_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Pattern not found")
+    return {"ok": True}
+
+
+@app.delete("/api/premature-stop-patterns/{pattern_id}", dependencies=[Depends(require_login)])
+async def api_delete_premature_stop_pattern(pattern_id: str):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM admin_premature_stop_patterns WHERE id=%s", (pattern_id,)
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Pattern not found")
+    return {"ok": True}
+
+
+@app.patch("/api/premature-stop-patterns/{pattern_id}/toggle", dependencies=[Depends(require_login)])
+async def api_toggle_premature_stop_pattern(pattern_id: str):
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE admin_premature_stop_patterns SET enabled = NOT enabled, updated_at=%s WHERE id=%s",
+                (now, pattern_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Pattern not found")
+    return {"ok": True}
+
+
+@app.post("/api/premature-stop-patterns/test", dependencies=[Depends(require_login)])
+async def api_test_premature_stop_pattern(request: Request):
+    """Tests a single pattern (not yet necessarily saved) against a sample
+    text — lets an admin verify a new regex before committing it."""
+    body = await request.json()
+    pattern = (body.get("pattern") or "").strip()
+    pattern_type = (body.get("pattern_type") or "literal").strip()
+    sample = body.get("sample") or ""
+    if not pattern or not sample:
+        return {"matches": False}
+    lowered = sample.strip().lower()
+    if pattern_type == "regex":
+        try:
+            matches = bool(_re.search(pattern, lowered, _re.IGNORECASE))
+        except _re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex: {e}")
+    else:
+        matches = pattern.lower() in lowered
+    return {"matches": matches}
 
 
 async def _fetch_available_llms() -> list[str]:
@@ -5623,6 +5838,29 @@ async def user_api_live_process_logs(chat_id: str, user_id: str = Depends(requir
         return {"chat_id": chat_id, "lines": [], "error": str(exc)}
 
 
+@app.get("/user/api/live/file-touches/{chat_id}")
+async def user_api_live_file_touches(chat_id: str, user_id: str = Depends(require_user_login)):
+    """On-demand file-touch list for the current user's own Agent Tool Path
+    request, portal-side — same ownership gate as the trace endpoint (see
+    api_live_file_touches for what this shows and where it's written from).
+    """
+    try:
+        r = await db._get_redis()
+        owns, _ = await _user_owns_chat_id(r, chat_id, user_id)
+        if not owns:
+            return {"chat_id": chat_id, "files": []}
+        files: list[dict] = []
+        for raw in await r.lrange(f"moe:active:{chat_id}:files", 0, -1):
+            try:
+                files.append(json.loads(raw))
+            except Exception:
+                pass
+        return {"chat_id": chat_id, "files": files}
+    except Exception as exc:
+        logger.warning("User file-touches error for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "files": []}
+
+
 @app.get("/user/api/my-handovers")
 async def user_api_my_handovers(user_id: str = Depends(require_user_login)):
     """Return pending handover sessions for the current user."""
@@ -7204,6 +7442,58 @@ def _append_log(path: Path, record: dict) -> None:
         logger.debug("Log write error %s: %s", path, exc)
 
 
+def _latency_key(node: str) -> str:
+    """Same key format as services.tracking._record_node_latency (langgraph-
+    orchestrator, where the actual tool-passthrough latency samples are
+    written) — reimplemented here rather than imported, since importing
+    services.tracking would transitively import config.py/state.py, which
+    aren't part of this container's build context (admin_ui/Dockerfile only
+    COPYs from ./admin_ui) and aren't bind-mounted either — confirmed live,
+    that import crashes this process entirely."""
+    u = (node or "").rstrip("/")
+    normalized = u[:-3] if u.endswith("/v1") else u
+    safe = _re.sub(r"[^a-zA-Z0-9_\-.:]", "_", normalized or node)
+    return f"moe:latency:{safe}"
+
+
+def _parse_node_gpu_metrics(text: str) -> list:
+    """Parse per-GPU memory/utilization out of a node-exporter textfile-
+    collector /metrics response. Returns [{"gpu","vram_used_gb",
+    "vram_total_gb","util_pct"}, ...].
+
+    Keyed by gpu id in a dict while parsing rather than "append an entry on
+    the first used_bytes line seen, then find-and-patch it on the other two
+    metrics" — the latter silently dropped total_bytes/util_pct whenever the
+    exposition text ordered memory_total_bytes before memory_used_bytes
+    (Prometheus text format groups by metric name, and "total" < "used"
+    alphabetically, which is exactly the order this deployment's exporter
+    uses) — confirmed live: vram_total_gb was always 0 in the dashboard.
+
+    Shared by api_live_llm_instances (live view) and _gpu_history_poll_loop
+    (background history recording) so both read the same, correctly-parsed
+    numbers instead of two copies of this logic drifting apart.
+    """
+    gpu_map: dict = {}
+    for line in text.split("\n"):
+        if not line.startswith(("node_gpu_memory_used_bytes{",
+                                 "node_gpu_memory_total_bytes{",
+                                 "node_gpu_utilization_percent{")):
+            continue
+        try:
+            gpu_id = line.split('gpu="')[1].split('"')[0]
+            val = float(line.split("} ")[1])
+        except (IndexError, ValueError):
+            continue
+        g = gpu_map.setdefault(gpu_id, {"gpu": gpu_id})
+        if line.startswith("node_gpu_memory_used_bytes{"):
+            g["vram_used_gb"] = round(val / 1e9, 1)
+        elif line.startswith("node_gpu_memory_total_bytes{"):
+            g["vram_total_gb"] = round(val / 1e9, 1)
+        else:
+            g["util_pct"] = round(val, 1)
+    return list(gpu_map.values())
+
+
 def _parse_prometheus_text(text: str) -> dict:
     """Parses Prometheus text format and returns {metric_name: float}."""
     result: dict = {}
@@ -7301,6 +7591,31 @@ async def api_live_request_trace(chat_id: str):
     except Exception as exc:
         logger.warning("Live request-trace Valkey error: %s", exc)
     return {"chat_id": chat_id, "stage_trace": stage_trace, "active": active}
+
+
+@app.get("/api/live/file-touches/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_file_touches(chat_id: str):
+    """On-demand file-touch list for the live-pipeline-visualization diagram's
+    "Dateien" panel — which files an Agent Tool Path session (OpenCode /
+    Claude Code) read/edited, extracted from its tool calls.
+
+    Same on-demand pattern as api_live_request_trace: not part of the
+    regular table poll, only fetched while an admin has the panel's files
+    section open. Reads the bounded Redis list written by
+    services.tracking._record_file_touch.
+    """
+    files: list[dict] = []
+    try:
+        r = await db._get_redis()
+        raw_entries = await r.lrange(f"moe:active:{chat_id}:files", 0, -1)
+        for raw in raw_entries:
+            try:
+                files.append(json.loads(raw))
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Live file-touches Valkey error: %s", exc)
+    return {"chat_id": chat_id, "files": files}
 
 
 @app.get("/api/live/process-logs/{chat_id}", dependencies=[Depends(require_login)])
@@ -7552,35 +7867,7 @@ async def api_live_llm_instances():
                             _disk_avail = _ne_raw.get("node_filesystem_avail_bytes", 0)
                             if _disk_total:
                                 _hw["disk_pct"] = round((1 - _disk_avail / _disk_total) * 100, 1)
-                            # GPU metrics (from textfile collector)
-                            _gpus = []
-                            # Parse multi-label GPU metrics
-                            for _line in _ne_resp.text.split("\n"):
-                                if _line.startswith("node_gpu_memory_used_bytes{"):
-                                    try:
-                                        _gpu_id = _line.split('gpu="')[1].split('"')[0]
-                                        _val = float(_line.split("} ")[1])
-                                        _gpus.append({"gpu": _gpu_id, "vram_used_gb": round(_val / 1e9, 1)})
-                                    except (IndexError, ValueError):
-                                        pass
-                                elif _line.startswith("node_gpu_memory_total_bytes{"):
-                                    try:
-                                        _gpu_id = _line.split('gpu="')[1].split('"')[0]
-                                        _val = float(_line.split("} ")[1])
-                                        for g in _gpus:
-                                            if g["gpu"] == _gpu_id:
-                                                g["vram_total_gb"] = round(_val / 1e9, 1)
-                                    except (IndexError, ValueError):
-                                        pass
-                                elif _line.startswith("node_gpu_utilization_percent{"):
-                                    try:
-                                        _gpu_id = _line.split('gpu="')[1].split('"')[0]
-                                        _val = float(_line.split("} ")[1])
-                                        for g in _gpus:
-                                            if g["gpu"] == _gpu_id:
-                                                g["util_pct"] = round(_val, 1)
-                                    except (IndexError, ValueError):
-                                        pass
+                            _gpus = _parse_node_gpu_metrics(_ne_resp.text)
                             if _gpus:
                                 _hw["gpus"] = _gpus
                                 _hw["vram_total_gb"] = round(sum(g.get("vram_total_gb", 0) for g in _gpus), 1)
@@ -7608,6 +7895,26 @@ async def api_live_llm_instances():
                 except Exception as exc:
                     entry["error"] = str(exc)
 
+            # Recent-latency trend (last _NODE_LATENCY_SAMPLES tool-passthrough
+            # calls to this node, written by services.tracking._record_node_latency
+            # at the actual call sites in chat.py/anthropic.py). Not a queue-depth
+            # signal — a genuine one isn't obtainable (see that module's docstring)
+            # — just "has this node been slow lately", which is real, honest data.
+            try:
+                _r = await db._get_redis()
+                _lat_raw = await _r.lrange(_latency_key(srv["url"]), 0, -1)
+                _lat_samples = []
+                for _lr in _lat_raw:
+                    try:
+                        _lat_samples.append(json.loads(_lr)["ms"])
+                    except Exception:
+                        continue
+                entry["recent_latency_ms_avg"] = round(sum(_lat_samples) / len(_lat_samples)) if _lat_samples else None
+                entry["recent_latency_samples"] = len(_lat_samples)
+            except Exception:
+                entry["recent_latency_ms_avg"] = None
+                entry["recent_latency_samples"] = 0
+
             results.append(entry)
 
     snapshot = {
@@ -7616,6 +7923,38 @@ async def api_live_llm_instances():
     }
     _append_log(_llm_inst_log, snapshot)
     return snapshot
+
+
+@app.get("/api/live/gpu-history", dependencies=[Depends(require_login)])
+async def api_live_gpu_history(node: str, hours: int = 24):
+    """Cumulative VRAM usage history for one Ollama instance's assigned GPUs,
+    sampled every _GPU_HISTORY_INTERVAL_S by _gpu_history_poll_loop (see
+    lifespan()) — independent of dashboard traffic, so the chart has data
+    even if nobody had the page open earlier. `node` must match a server
+    name from _get_inference_servers() / the llm-instances view.
+
+    GPU utilization % is deliberately not included here: confirmed live,
+    this deployment's node-exporter textfile collector reports 0% on every
+    GPU regardless of actual load (a node-side script issue, out of this
+    codebase's reach) — a history graph of a flat zero line would be
+    actively misleading. VRAM usage is real, correctly-measured data.
+    """
+    hours = max(1, min(hours, 24 * 7))
+    now = _time_mod.time()
+    since = now - hours * 3600
+    try:
+        r = await db._get_redis()
+        raw = await r.zrangebyscore(_gpu_history_key(node), since, now)
+        points = []
+        for item in raw:
+            try:
+                points.append(json.loads(item))
+            except Exception:
+                continue
+        return {"node": node, "hours": hours, "points": points}
+    except Exception as exc:
+        logger.warning("GPU history read failed for %s: %s", node, exc)
+        return {"node": node, "hours": hours, "points": []}
 
 
 # ─── Benchmarks ───────────────────────────────────────────────────────────────

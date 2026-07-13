@@ -16,7 +16,7 @@ import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, MAX_EXPERT_TOKENS,
-    MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE, JUDGE_MODEL,
+    MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
     EXPERT_OUTPUT_DIVISOR, EXPERT_INPUT_MIN_CHARS, EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
@@ -48,15 +48,14 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
-    _estimate_model_vram_gb, _can_coexist_on_node, _node_vram_by_url,
+    _infer_tier, assign_gpu, _refine_expert_response,
     _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget, _record_stage
+from services.tracking import _increment_user_budget, _record_stage, _record_node_latency
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -440,6 +439,7 @@ async def expert_worker(state_: AgentState):
                         break
                 messages = _patched
             from metrics import PROM_TOKENS
+            _expert_call_t0 = time.monotonic()
             try:
                 _primary_url = url.rstrip("/")
                 # Ollama native /api/chat: the only path that reliably passes options.num_ctx.
@@ -526,6 +526,20 @@ async def expert_worker(state_: AgentState):
                         timeout=_expert_node_timeout,
                         label=f"Expert[{cat}]",
                     )
+                # Interactive-pipeline latency was never recorded before —
+                # only the Agent Tool Path (services/pipeline/chat.py) fed
+                # moe:latency:{node}, so _select_node's future latency-aware
+                # weighting would otherwise start blind for the dominant
+                # planner→expert→judge traffic path. Common to all three
+                # branches above (ollama-native/anthropic-native/openai).
+                # Skipped when _used_fallback: the call actually ran against
+                # _FALLBACK_NODE (services/inference.py), not `url` — recording
+                # it under `url` would misattribute a degraded-primary latency
+                # sample to a node that never handled this request.
+                if not _used_fallback:
+                    asyncio.create_task(_record_node_latency(
+                        url, model_name, (time.monotonic() - _expert_call_t0) * 1000,
+                    ))
                 if _used_fallback:
                     await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)
@@ -568,22 +582,21 @@ async def expert_worker(state_: AgentState):
                 # (graph/synthesis.py), where the judge's verdict is available:
                 # a category the judge had to refine counts as negative. Self-
                 # confidence is used only as a fallback when refinement is disabled.
-                # Unload model — unless the same model is needed as judge LLM,
-                # OR both models fit simultaneously in the node's VRAM (avoid
-                # evicting a warm model when there is enough space for both).
-                if api_type == "ollama":
-                    _judge_model_name = (state_.get("judge_model_override") or JUDGE_MODEL).strip()
-                    if model_name == _judge_model_name:
-                        logger.debug(f"⏭️ VRAM unload skipped: {model_name} will be reused as judge")
-                    else:
-                        _node_vram = _node_vram_by_url(expert_base_url)
-                        if _can_coexist_on_node(model_name, _judge_model_name, _node_vram):
-                            logger.debug(
-                                "⏭️ VRAM unload skipped: %s and %s coexist on %.0f GB node",
-                                model_name, _judge_model_name, _node_vram,
-                            )
-                        else:
-                            asyncio.create_task(_ollama_unload(model_name, expert_base_url))
+                # VRAM management is left entirely to Ollama's own automatic
+                # LRU eviction (evicts the least-recently-used loaded model
+                # only when a newly requested model genuinely doesn't fit)
+                # plus each endpoint's own OLLAMA_KEEP_ALIVE/keep_alive
+                # setting. This code used to proactively unload the expert
+                # model here "just in case" after every single invocation,
+                # regardless of whether any other model actually needed the
+                # freed VRAM — which silently overrode a longer keep_alive
+                # (e.g. 4h) with an immediate forced unload on every turn,
+                # including mid-conversation gaps of an unrelated long-lived
+                # agentic tool session sharing the same model+node. Removed;
+                # see git history for the old _can_coexist_on_node /
+                # _is_model_busy_elsewhere-gated proactive-unload logic if
+                # reintroducing anything here for genuinely VRAM-constrained
+                # nodes.
                 res_prefix = f"ENSEMBLE: {model_name.upper()}" if model_cfg.get("forced") else model_name.upper()
                 result = {"res": f"[{res_prefix} / {cat}]: {content}", "model_cat": f"{model_name}::{cat}", **usage}
                 # User-owned connection tokens are tracked separately for budget exclusion.

@@ -1240,6 +1240,10 @@ const CSRF_TOKEN = "{{ csrf_token }}";
               ${r.moe_mode ? `<span class="badge bg-light text-dark border ms-1" style="font-size:.57rem">${escHtml(r.moe_mode)}</span>` : ''}
             </div>
             <span class="text-muted" style="font-size:.72rem;white-space:nowrap;font-family:monospace">${escHtml(dur)}</span>
+            <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.7rem" title="Pipeline-Diagramm (Replay)"
+                    onclick="openPipelineDiagram('${escHtml(r.chat_id||'')}', '/user/api/live/request-trace/')">
+              <i class="bi bi-diagram-3"></i>
+            </button>
           </div>`;
         }).join('');
       }

@@ -46,8 +46,7 @@ from services.inference import (
     _select_node, _invoke_judge_with_retry,
     _invoke_planner_with_retry,
     _get_judge_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
-    _estimate_model_vram_gb, _can_coexist_on_node, _node_vram_by_url,
+    _infer_tier, assign_gpu, _refine_expert_response,
     _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
@@ -644,7 +643,7 @@ JSON array:"""
     from config import PLANNER_URL, PLANNER_MODEL, PLANNER_TOKEN
 
     for attempt in range(PLANNER_RETRIES):
-        res, _planner_fb = await _invoke_planner_with_retry(state_, prompt, temperature=_query_temp)
+        res, _planner_fb = await _invoke_planner_with_retry(state_, prompt, temperature=_query_temp, attempt=attempt)
         if _planner_fb:
             await _report("⚠️ Planner: used local fallback (primary endpoint degraded)")
         u = _extract_usage(res)
@@ -700,35 +699,18 @@ JSON array:"""
             await _report("⚠️ Planner-Fallback: general")
             plan = [{"task": state_["input"], "category": "general"}]
             _extracted_filters = {}
-    # Unload planner model — unless the same model is immediately needed as expert.
-    # Use the template-specific planner model/URL when the template overrides them,
-    # so we unload from the correct node instead of always hitting the global default.
-    _actual_planner_model = (state_.get("planner_model_override") or PLANNER_MODEL).strip()
-    _actual_planner_url   = (state_.get("planner_url_override")   or PLANNER_URL or "").strip()
-    _actual_planner_token = (state_.get("planner_token_override") or PLANNER_TOKEN or "ollama").strip()
-    _actual_planner_base  = _actual_planner_url.rstrip("/").removesuffix("/v1")
-    _upcoming_expert_models: set = set()
-    for _task_item in plan:
-        _cat = _task_item.get("category", "general")
-        _experts_for_cat = (state_.get("user_experts") or {}).get(_cat) or EXPERTS.get(_cat, [])
-        for _e in _experts_for_cat:
-            if _e.get("model"):
-                _upcoming_expert_models.add(_e["model"])
-    # Strip @endpoint suffix from expert model names for comparison
-    _upcoming_base_models = {m.split("@")[0] for m in _upcoming_expert_models}
-    if _actual_planner_model in _upcoming_base_models:
-        logger.debug(f"⏭️ VRAM unload skipped: {_actual_planner_model} will be reused as expert")
-    elif _actual_planner_base and _actual_planner_token == "ollama":
-        # Skip unload if planner + first expert fit together in the node's VRAM.
-        _first_expert = next(iter(_upcoming_base_models), "")
-        _node_vram = _node_vram_by_url(_actual_planner_base)
-        if _first_expert and _can_coexist_on_node(_actual_planner_model, _first_expert, _node_vram):
-            logger.debug(
-                "⏭️ VRAM unload skipped: %s and %s coexist on %.0f GB node",
-                _actual_planner_model, _first_expert, _node_vram,
-            )
-        else:
-            asyncio.create_task(_ollama_unload(_actual_planner_model, _actual_planner_base))
+    # VRAM management is left entirely to Ollama's own automatic LRU eviction
+    # (evicts the least-recently-used loaded model only when a newly
+    # requested model genuinely doesn't fit) plus each endpoint's own
+    # OLLAMA_KEEP_ALIVE/keep_alive setting. This code used to proactively
+    # unload the planner model here "just in case" after every single
+    # invocation, regardless of whether any other model actually needed the
+    # freed VRAM — which silently overrode a longer keep_alive (e.g. 4h) with
+    # an immediate forced unload on every turn, including mid-conversation
+    # gaps of an unrelated long-lived agentic tool session sharing the same
+    # model+node. Removed; see git history for the old _can_coexist_on_node /
+    # _is_model_busy_elsewhere-gated proactive-unload logic if reintroducing
+    # anything here for genuinely VRAM-constrained nodes.
     # ── Deterministic DoR checks ───────────────────────────────────────────────
     # Validate each task before it is dispatched to an expert. Violations are
     # logged as warnings; no task is blocked (fail-open) to preserve existing

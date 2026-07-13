@@ -104,6 +104,12 @@ PLANNER_ENDPOINT = os.getenv("PLANNER_ENDPOINT", os.getenv("JUDGE_ENDPOINT", "")
 PLANNER_URL      = URL_MAP.get(PLANNER_ENDPOINT) if PLANNER_ENDPOINT else None
 PLANNER_TOKEN    = TOKEN_MAP.get(PLANNER_ENDPOINT, "ollama") if PLANNER_ENDPOINT else "ollama"
 
+# ── Planner Execution Mode (llm, slm_local, hybrid) ──────────────────────────
+PLANNER_MODE            = os.getenv("PLANNER_MODE", "llm").lower()
+PLANNER_LOCAL_GGUF_PATH = os.getenv("PLANNER_LOCAL_GGUF_PATH", "")
+PLANNER_LOCAL_THREADS   = int(os.getenv("PLANNER_LOCAL_THREADS", "4"))
+
+
 _JUDGE_BASE   = (JUDGE_URL   or "").rstrip("/").removesuffix("/v1")
 _PLANNER_BASE = (PLANNER_URL or "").rstrip("/").removesuffix("/v1")
 

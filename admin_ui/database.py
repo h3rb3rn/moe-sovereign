@@ -381,6 +381,24 @@ CREATE TABLE IF NOT EXISTS ai_io_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_io_audit_request ON ai_io_audit_log(request_id);
 CREATE INDEX IF NOT EXISTS idx_ai_io_audit_started ON ai_io_audit_log(started_at DESC);
+
+-- Agent Tool Path "premature stop" detection patterns — admin-editable so a
+-- newly observed announcement phrasing (a model writing "Let me now..." /
+-- "Ich fix das jetzt..." and then stopping instead of calling a tool) can be
+-- added in production without a code change or container rebuild. Seeded
+-- once from the patterns that were previously hardcoded in
+-- services/agent_enrichment.py — see scripts/seed_premature_stop_patterns.py.
+CREATE TABLE IF NOT EXISTS admin_premature_stop_patterns (
+    id           TEXT PRIMARY KEY,
+    pattern      TEXT NOT NULL,
+    pattern_type TEXT NOT NULL DEFAULT 'literal',  -- 'literal' | 'regex'
+    language     TEXT NOT NULL DEFAULT '',          -- free tag e.g. 'de','en'; '' = any
+    category     TEXT NOT NULL DEFAULT 'announcement',
+    description  TEXT NOT NULL DEFAULT '',
+    enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL DEFAULT ''
+);
 """
 
 
