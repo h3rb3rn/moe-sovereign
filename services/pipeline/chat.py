@@ -59,6 +59,7 @@ from services.agent_enrichment import (
     accumulate_stream_tool_call_delta,
     finalize_stream_tool_calls,
     looks_like_premature_stop,
+    record_and_classify_tool_ending,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -511,8 +512,8 @@ async def _retry_tool_agent_fallback(
     # a large template-configured context (e.g. 262144), and a retry that
     # blindly falls back to a hardcoded default here would force Ollama to
     # reload the SAME model at a much smaller window — destroying the warm
-    # KV-cache the keep_alive=4h fix exists to preserve, and doing so on
-    # every single retry.
+    # KV-cache that keeping the model loaded is meant to preserve, and doing
+    # so on every single retry.
     _retry_num_ctx = num_ctx or 32768
     try:
         async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
@@ -540,6 +541,15 @@ async def _retry_tool_agent_fallback(
         "messages": _normalize_messages_for_ollama_native(_retry_messages),
         "stream":   False,
         "tools":    tools,
+        # No explicit keep_alive — a hardcoded "4h" here used to fix a real
+        # bug (omitting it silently fell back to Ollama's ~5min default,
+        # evicting a warm 35B model a few minutes after a *successful*
+        # retry). That gap is now closed at the infrastructure level: every
+        # Ollama instance has its own operator-configured OLLAMA_KEEP_ALIVE
+        # server default (e.g. 24h), and a hardcoded "4h" here would
+        # actively cap it *below* that — silently overriding an
+        # intentionally-set operator value the same way the old omission
+        # silently fell back to a too-short one.
         "options": {
             "num_ctx":     _retry_num_ctx,
             "num_predict": max_tokens or 4096,
@@ -598,6 +608,9 @@ async def _handle_tool_calls(
     num_ctx: int = 0,
     system_augment: str = "",
     user_experts: dict = None,
+    user_id: str = "anon",
+    api_key_id: str = "",
+    session_id: Optional[str] = None,
 ):
     """Direct LLM passthrough that preserves tool_calls in the response.
 
@@ -618,6 +631,16 @@ async def _handle_tool_calls(
     user_experts: template expert config (category -> [{"model","url","token",
     "endpoint"}, ...]) — only used for the tool_choice=required retry fallback
     below (category "tool_agent"). Optional; the retry is skipped without it.
+
+    user_id/api_key_id/session_id: only used to write a usage_log row on
+    completion (fast/stream path via _log_and_finalize) — this path used to
+    never log usage at all, unlike _anthropic_tool_handler's equivalent
+    (services/pipeline/anthropic.py), so every OpenCode/OpenAI-format
+    tool-calling turn was invisible in the User Portal's usage history.
+    Token counts are logged as 0 here (unlike the Anthropic path, this
+    passthrough proxy doesn't parse the forwarded SSE stream for exact
+    prompt/completion counts) — this restores audit visibility (who, what
+    model, when) rather than precise cost accounting for this specific path.
 
     Returns a StreamingResponse (SSE) when request.stream is True, otherwise
     a plain dict. Callers must check the type and wrap accordingly.
@@ -919,14 +942,9 @@ async def _handle_tool_calls(
         # fails immediately on any turn with prior tool-call history.
         "messages":   _normalize_messages_for_ollama_native(messages) if _is_hermes3 else messages,
         "stream":     _has_tool_results,
-        # Every other Ollama call site in this codebase (main.py, graph/expert.py,
-        # services/inference.py, services/pipeline/anthropic.py) sets a long
-        # keep_alive — this was the one path that didn't, silently falling back
-        # to Ollama's ~5min default. A multi-turn OpenCode/Claude-Code tool
-        # session routinely has multi-minute gaps between turns (local tool
-        # execution, user think time), so the model would idle-unload mid
-        # session and the next turn would hit a cold ~35B reload.
-        "keep_alive": "4h",
+        # No explicit keep_alive — respects each Ollama instance's own
+        # server-configured OLLAMA_KEEP_ALIVE default (e.g. 24h) instead of
+        # silently overriding it with a shorter app-level value.
     }
     if num_ctx:
         payload["options"] = {"num_ctx": num_ctx}
@@ -1101,6 +1119,21 @@ async def _handle_tool_calls(
                     asyncio.create_task(_record_node_latency(
                         tool_base_url, tool_model, (time.monotonic() - _t_stream_start) * 1000,
                     ))
+                # Confirmed live: this path never wrote to usage_log at all
+                # (unlike the Claude Code tool path), so a user whose daily
+                # traffic is entirely OpenCode/OpenAI-format tool calls saw
+                # zero entries in the Portal's usage history from the moment
+                # they switched away from native/interactive requests.
+                # prompt/completion tokens are logged as 0 — see the
+                # user_id/api_key_id/session_id docstring note above.
+                if reason != "client-disconnected" and user_id != "anon":
+                    asyncio.create_task(_log_usage_to_db(
+                        user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+                        model=tool_model, moe_mode="tool_passthrough",
+                        prompt_tokens=0, completion_tokens=0,
+                        session_id=session_id,
+                        status="ok" if (_diag_saw_tc or _diag_chars) else "empty",
+                    ))
 
             async def _resolve_text_only_ending():
                 # Called once, only for a turn that ended with no tool_calls
@@ -1111,17 +1144,31 @@ async def _handle_tool_calls(
                 _full_text = "".join(_content_acc)
                 _violated_required = bool(request.tools) and request.tool_choice == "required"
                 _premature = looks_like_premature_stop(_full_text)
+                # Confirmed live: a turn can end with finish_reason=stop, no
+                # tool_calls, AND zero characters of content — the model
+                # returned literally nothing. looks_like_premature_stop always
+                # returns False on an empty string (nothing to pattern-match
+                # against), so this was silently passing through with no
+                # retry at all — arguably a worse failure than a premature
+                # announcement, since the client gets no signal whatsoever
+                # that anything happened. This path always has request.tools
+                # set (Augmented Tool Path only), so "no text, no tool call"
+                # is never a valid outcome here.
+                _empty_response = not _full_text.strip()
                 # Persist regardless of whether a retry fires — the rate needs
                 # both premature and clean turns to be meaningful, and this is
                 # the only place this signal exists at all today (see
                 # services/tracking.py::_record_premature_stop_outcome).
-                asyncio.create_task(_record_premature_stop_outcome(tool_model, tool_base_url, _premature))
-                if _violated_required or _premature:
+                asyncio.create_task(_record_premature_stop_outcome(
+                    tool_model, tool_base_url, _premature or _empty_response,
+                ))
+                if _violated_required or _premature or _empty_response:
                     logger.warning(
                         "tool_choice=%r violated by %s (%s, content_chars=%d)"
                         " — retrying with template tool_agent",
                         request.tool_choice, tool_model,
-                        "required" if _violated_required else "premature-stop-heuristic",
+                        "required" if _violated_required else
+                        ("empty-response" if _empty_response else "premature-stop-heuristic"),
                         len(_full_text),
                     )
                     _retry_result = None
@@ -1172,6 +1219,24 @@ async def _handle_tool_calls(
                         _diag_exit_extra = ",retried-ok"
                         return
                     _diag_exit_extra = ",retry-failed-or-unavailable"
+                elif _full_text.strip():
+                    # Confirmed live: a text-only ending that matches no known
+                    # premature-stop pattern and isn't empty still passes
+                    # through unretried — this is exactly the gap a *new*,
+                    # not-yet-catalogued announcement phrasing would slip
+                    # through. Log the actual text (never done elsewhere —
+                    # only content_chars counts are logged) so a genuine
+                    # silent-stop here can be diagnosed and turned into a new
+                    # /patterns entry, instead of only ever seeing "164
+                    # chars, no retry" with no way to tell what happened.
+                    logger.info(
+                        "tool-passthrough text-only ending, no retry triggered — model=%s content=%r",
+                        tool_model, _full_text[:500],
+                    )
+                    asyncio.create_task(record_and_classify_tool_ending(
+                        chat_id, tool_model, _full_text,
+                        sum(1 for m in messages if m.get("role") == "tool"),
+                    ))
                 # No retry needed, or none available/it didn't help — flush
                 # the original response as-is (never silently drop a reply).
                 for _hl in _held_lines:
@@ -1353,15 +1418,23 @@ async def _handle_tool_calls(
     # silent-stop bug as on the first turn.
     if request.tools and not _diag_msg.get("tool_calls"):
         _violated_required = request.tool_choice == "required"
-        _premature = looks_like_premature_stop(_diag_msg.get("content") or "")
-        asyncio.create_task(_record_premature_stop_outcome(tool_model, tool_base_url, _premature))
-        if _violated_required or _premature:
+        _diag_content = _diag_msg.get("content") or ""
+        _premature = looks_like_premature_stop(_diag_content)
+        # See the matching comment in the fast/stream path above — an empty
+        # response (no text, no tool call) never matches any premature-stop
+        # pattern by design, so it was silently passing through unretried.
+        _empty_response = not _diag_content.strip()
+        asyncio.create_task(_record_premature_stop_outcome(
+            tool_model, tool_base_url, _premature or _empty_response,
+        ))
+        if _violated_required or _premature or _empty_response:
             logger.warning(
                 "tool_choice=%r violated by %s (%s, content_chars=%d)"
                 " — retrying with template tool_agent",
                 request.tool_choice, tool_model,
-                "required" if _violated_required else "premature-stop-heuristic",
-                len(_diag_msg.get("content") or ""),
+                "required" if _violated_required else
+                ("empty-response" if _empty_response else "premature-stop-heuristic"),
+                len(_diag_content),
             )
             _rr_result = None
             async for _kind, _val in _retry_tool_agent_fallback(
@@ -1393,6 +1466,34 @@ async def _handle_tool_calls(
                     ]
                     _diag_choice["finish_reason"] = "tool_calls"
                 _diag_msg["content"] = _rr_result["content"]
+        elif _diag_content.strip():
+            # See the matching branch in the fast/stream path above.
+            logger.info(
+                "tool-passthrough text-only ending, no retry triggered — model=%s content=%r",
+                tool_model, _diag_content[:500],
+            )
+            asyncio.create_task(record_and_classify_tool_ending(
+                chat_id, tool_model, _diag_content,
+                sum(1 for m in messages if m.get("role") == "tool"),
+            ))
+
+    # Slow-path usage logging — same gap as the fast/stream path's
+    # _log_and_finalize (services/pipeline/anthropic.py's tool handler has
+    # always done this; this passthrough proxy never did). Real token
+    # counts when the upstream response carries them (OpenAI-compatible
+    # /chat/completions does; Ollama's native /api/chat does not — see the
+    # Hermes3 conversion above, which only copies a "usage" key that
+    # Ollama's native response doesn't actually have, so this is 0 for
+    # Hermes3 turns and real for everything else).
+    if user_id != "anon":
+        _slow_usage = upstream.get("usage") or {}
+        asyncio.create_task(_log_usage_to_db(
+            user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+            model=tool_model, moe_mode="tool_passthrough",
+            prompt_tokens=_slow_usage.get("prompt_tokens", 0),
+            completion_tokens=_slow_usage.get("completion_tokens", 0),
+            session_id=session_id,
+        ))
 
     if not request.stream:
         return upstream
@@ -1491,7 +1592,23 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     # stays None and the native-endpoint block below incorrectly intercepts the request,
     # routing it as a direct LLM call (native mode) instead of through the MoE pipeline.
     # Fix: detect user templates early and set _tmpl_override so the pipeline is used.
-    if not _tmpl_override:
+    #
+    # Also runs when an ADMIN template happens to share the exact same name but was
+    # never actually granted to this key — confirmed live: user "horndev"
+    # (moe-sk-e24f2c9eb) owned a template named identically to an unrelated,
+    # ungranted admin template ("moe-n04-rtx-qwen3.6:35b-256k"). The name match
+    # above unconditionally claimed _tmpl_override, silently shadowing the
+    # user's own working template and failing authorization against the
+    # inaccessible admin one instead ("Template '...' is not authorized for
+    # this API key"). A same-named admin template this key isn't authorized
+    # for is, from this key's point of view, indistinguishable from one that
+    # doesn't exist — so an owned template match always takes priority over
+    # an unauthorized same-name admin collision. If no owned template matches
+    # either, _tmpl_override is left untouched (the admin match, if any),
+    # preserving the existing "not authorized" 403 for the case where the
+    # collision isn't actually resolvable by an owned template.
+    _tmpl_override_authorized = bool(_tmpl_override) and _tmpl_override in user_perms.get("expert_template", [])
+    if not _tmpl_override_authorized:
         _early_user_tmpls: dict = {}
         try:
             _early_user_tmpls = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
@@ -2039,7 +2156,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "messages":   _ns_msgs,
                 "stream":     False,
                 "think":      False,
-                "keep_alive": "4h",
+                # No explicit keep_alive — respects each Ollama instance's
+                # own server-configured OLLAMA_KEEP_ALIVE default instead of
+                # silently overriding it.
             }
             _ns_opts: dict = {}
             if _native_num_ctx > 0:
@@ -2354,6 +2473,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 num_ctx=int(_tc_num_ctx),
                 system_augment=_agent_system_augment,
                 user_experts=user_experts,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id,
             )
             PROM_REQUESTS.labels(mode="tool", cache_hit="false",
                                  user_id=(user_id or "anon")).inc()

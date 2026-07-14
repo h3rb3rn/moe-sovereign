@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 import psycopg
 from psycopg.rows import dict_row
 
@@ -387,6 +388,18 @@ def looks_like_premature_stop(text: str) -> bool:
     if not text:
         return False
     lowered = text.strip().lower()
+    # An odd number of ``` fence markers means a code/diagram block was
+    # opened and never closed — the same "cut off mid-thought" failure as
+    # the trailing-colon heuristic below, just spanning a block instead of
+    # a single line. Confirmed live: qwen3.6:35b announcing a plan
+    # ("Ich erstelle die komplette Lösung aufgesetzt aus:") with an opened
+    # ```mermaid block, then stopping without closing it or calling a tool
+    # — matched none of the phrase/regex patterns below since the text
+    # itself is fluent, not a truncated word. This is a structural
+    # invariant, not a wording variant, so it lives in code rather than the
+    # admin-editable pattern table alongside it.
+    if lowered.count("```") % 2 == 1:
+        return True
     for ptype, matcher, _category in _read_premature_stop_patterns():
         if ptype == "literal":
             if matcher in lowered:
@@ -394,6 +407,204 @@ def looks_like_premature_stop(text: str) -> bool:
         elif matcher.search(lowered):
             return True
     return False
+
+
+# ── Tool-ending classifier (LLM-judged, admin-configurable) ────────────────────
+# Text-only tool-passthrough endings that match none of
+# admin_premature_stop_patterns still slip through silently (confirmed live —
+# see admin_unclassified_tool_endings). Rather than only logging these for a
+# human to review, an admin-assignable LLM judges each one asynchronously.
+# The model/endpoint is a single DB row (admin_classifier_config), not a
+# config.py constant, specifically so it can be pointed at a different Ollama
+# instance or a different model size without a code change or rebuild — the
+# same reasoning that made the premature-stop patterns themselves DB-backed.
+
+_DEFAULT_CLASSIFIER_MODEL = "gemma4:12b"
+_DEFAULT_CLASSIFIER_URL = "http://192.168.155.224:11435/v1"  # N04-RGTX
+_DEFAULT_CLASSIFIER_TOKEN = "ollama"
+
+
+def _load_classifier_config_sync() -> Optional[dict]:
+    """Sync psycopg read of the admin_classifier_config singleton row, safe to
+    call from a background thread. Seeds the default row (gemma4:12b@N04-RGTX)
+    on first use if missing — same idempotent-seed shape as
+    _load_premature_stop_patterns_sync. Returns None on any DB failure."""
+    dsn = MOE_USERDB_URL or POSTGRES_CHECKPOINT_URL or ""
+    if not dsn:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT model, base_url, token, enabled "
+                    "FROM admin_classifier_config WHERE id = 'default'"
+                )
+                row = cur.fetchone()
+                if row is None:
+                    now = datetime.now(timezone.utc).isoformat()
+                    cur.execute(
+                        "INSERT INTO admin_classifier_config "
+                        "(id, model, base_url, token, enabled, updated_at) "
+                        "VALUES ('default', %s, %s, %s, TRUE, %s) "
+                        "ON CONFLICT (id) DO NOTHING",
+                        (_DEFAULT_CLASSIFIER_MODEL, _DEFAULT_CLASSIFIER_URL,
+                         _DEFAULT_CLASSIFIER_TOKEN, now),
+                    )
+                    conn.commit()
+                    row = {
+                        "model": _DEFAULT_CLASSIFIER_MODEL,
+                        "base_url": _DEFAULT_CLASSIFIER_URL,
+                        "token": _DEFAULT_CLASSIFIER_TOKEN,
+                        "enabled": True,
+                    }
+    except Exception as e:
+        logger.debug("Classifier config DB load failed: %s", e)
+        return None
+    return dict(row)
+
+
+def _read_classifier_config() -> Optional[dict]:
+    """60s stale-while-revalidate cache in front of _load_classifier_config_sync
+    — same caching mechanics as _read_premature_stop_patterns, so a model
+    swapped via the Admin UI takes effect within a minute, without a restart."""
+    now = time.monotonic()
+    cache = _read_classifier_config._cache
+    if cache["data"] is not None:
+        if now - cache["ts"] >= 60 and not cache["refreshing"]:
+            cache["refreshing"] = True
+            threading.Thread(target=_refresh_classifier_config_cache, daemon=True).start()
+        return cache["data"]
+    _refresh_classifier_config_cache()
+    return cache["data"]
+
+
+def _refresh_classifier_config_cache() -> None:
+    cache = _read_classifier_config._cache
+    try:
+        data = _load_classifier_config_sync()
+        if data is not None:
+            cache["data"] = data
+        cache["ts"] = time.monotonic()
+    finally:
+        cache["refreshing"] = False
+
+
+_read_classifier_config._cache: dict = {"ts": 0.0, "data": None, "refreshing": False}
+
+_CLASSIFIER_PROMPT_TEMPLATE = (
+    "Du bewertest die Antwort eines LLM-Coding-Agenten (OpenCode/Claude Code) "
+    "in einem Tool-Calling-Kontext. Die Antwort war reiner Text, ohne einen "
+    "Tool-Call auszulösen, mitten in einer laufenden Coding-Session.\n\n"
+    "Ist das ein VORZEITIGER ABBRUCH (der Agent kündigt eine Aktion oder einen "
+    "Plan an, führt ihn aber nicht aus — z.B. eine Beschreibung dessen, was "
+    "gleich erstellt/geändert wird) oder eine LEGITIME Text-Antwort (z.B. eine "
+    "Rückfrage an den Nutzer oder eine abschließende Zusammenfassung, bei der "
+    "wirklich keine weitere Aktion nötig ist)?\n\n"
+    "Antwort-Text:\n---\n{text}\n---\n\n"
+    'Antworte NUR als JSON: {{"premature": true|false, "reasoning": "kurze Begründung, max 1 Satz"}}'
+)
+
+
+async def _classify_tool_ending(text: str) -> Optional[dict]:
+    """Calls the admin-configured classifier LLM (default: gemma4:12b@N04-RGTX,
+    see admin_classifier_config) to judge whether `text` is a premature stop
+    or a legitimate text-only answer. Returns {"premature": bool, "reasoning": str}
+    or None if the classifier is disabled/unreachable/returns unparseable
+    output — best-effort only, never raises for the caller
+    (services/tracking.py::_record_and_classify_tool_ending)."""
+    cfg = _read_classifier_config()
+    if not cfg or not cfg.get("enabled") or not cfg.get("model"):
+        return None
+    base = (cfg.get("base_url") or "").rstrip("/").removesuffix("/v1")
+    if not base:
+        return None
+    payload = {
+        "model": cfg["model"],
+        "messages": [{"role": "user", "content": _CLASSIFIER_PROMPT_TEMPLATE.format(text=text[:2000])}],
+        "stream": False,
+        "format": "json",
+    }
+    try:
+        # No explicit keep_alive here on purpose — the operator has already
+        # configured OLLAMA_KEEP_ALIVE=24h server-side on the target Ollama
+        # instance for exactly this reason (keep a loaded model warm), and a
+        # per-request override here would silently defeat that. This is now
+        # the convention across every Ollama call site in this codebase, not
+        # just this one. A cold first call after 24h of inactivity can still
+        # spend well over 60s on the VRAM load before generating anything,
+        # which is why the timeout below is generous — this call is
+        # fire-and-forget background work and never blocks a user request.
+        async with httpx.AsyncClient(timeout=180) as hc:
+            r = await hc.post(
+                f"{base}/api/chat", json=payload,
+                headers={"Authorization": f"Bearer {cfg.get('token', '')}"},
+            )
+        r.raise_for_status()
+        content = r.json().get("message", {}).get("content", "")
+        parsed = json.loads(content)
+        return {
+            "premature": bool(parsed.get("premature")),
+            "reasoning": str(parsed.get("reasoning", ""))[:500],
+        }
+    except Exception as e:
+        logger.debug("Classifier LLM call failed (model=%s): %s", cfg.get("model"), e)
+        return None
+
+
+def _insert_unclassified_tool_ending_sync(row_id: str, chat_id: str, model: str,
+                                           content: str, tool_msgs: int, now: str) -> None:
+    dsn = MOE_USERDB_URL or POSTGRES_CHECKPOINT_URL or ""
+    if not dsn:
+        return
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO admin_unclassified_tool_endings "
+                    "(id, chat_id, model, content, content_chars, tool_msgs, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                    (row_id, chat_id or "", model or "", content, len(content), tool_msgs, now),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.debug("Unclassified tool ending insert failed: %s", e)
+
+
+def _update_tool_ending_classification_sync(row_id: str, verdict: dict) -> None:
+    dsn = MOE_USERDB_URL or POSTGRES_CHECKPOINT_URL or ""
+    if not dsn:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    classification = "premature_stop" if verdict.get("premature") else "legitimate"
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE admin_unclassified_tool_endings SET "
+                    "classification=%s, classifier_reasoning=%s, classified_at=%s WHERE id=%s",
+                    (classification, verdict.get("reasoning", ""), now, row_id),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.debug("Unclassified tool ending classification update failed: %s", e)
+
+
+async def record_and_classify_tool_ending(chat_id: str, model: str, content: str, tool_msgs: int) -> None:
+    """Fire-and-forget entry point called from services/pipeline/chat.py at
+    the existing "text-only ending, no retry triggered" diagnostic points —
+    persists the ending to admin_unclassified_tool_endings (visible in the
+    Admin UI review queue immediately) and asks the configured classifier LLM
+    to judge it, updating the row once a verdict comes back. Two separate
+    sync DB round-trips (insert, then update) so a slow/unreachable
+    classifier never delays the insert. Never raises."""
+    row_id = f"ute-{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+    await asyncio.to_thread(
+        _insert_unclassified_tool_ending_sync, row_id, chat_id, model, content, tool_msgs, now,
+    )
+    verdict = await _classify_tool_ending(content)
+    if verdict is not None:
+        await asyncio.to_thread(_update_tool_ending_classification_sync, row_id, verdict)
 
 
 # ── Workspace / scope ─────────────────────────────────────────────────────────

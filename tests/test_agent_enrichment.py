@@ -31,6 +31,8 @@ from services.agent_enrichment import (
     looks_like_premature_stop,
     _compile_pattern_rows,
     _SEED_PREMATURE_STOP_PATTERNS,
+    _classify_tool_ending,
+    record_and_classify_tool_ending,
 )
 
 
@@ -763,3 +765,107 @@ class TestLooksLikePrematureStop:
         assert looks_like_premature_stop(
             "This function computes the checksum and returns a hex string."
         ) is False
+
+    def test_detects_unclosed_code_fence(self):
+        # Confirmed live: qwen3.6:35b announcing a plan, opening a ```mermaid
+        # block, then stopping without closing it or calling a tool.
+        text = (
+            "Alles klar - du willst eine komplett lokale WebUI. Ich erstelle "
+            "die komplette Lösung aufgesetzt aus:\n\n```mermaid\ngraph LR\n"
+            "    A[Komplette Single-File UI] --> B[Lokales HTML]"
+        )
+        assert looks_like_premature_stop(text) is True
+
+    def test_does_not_flag_closed_code_fence(self):
+        text = (
+            "Hier ist die Funktion:\n\n```python\ndef add(a, b):\n"
+            "    return a + b\n```\n\nDas war's, alles fertig."
+        )
+        assert looks_like_premature_stop(text) is False
+
+
+# ── _classify_tool_ending / record_and_classify_tool_ending — the admin-
+# configurable LLM judge for text-only endings that matched no known
+# premature-stop pattern (admin_unclassified_tool_endings review queue) ──────
+
+class TestClassifyToolEnding:
+    @pytest.mark.asyncio
+    async def test_returns_none_when_classifier_disabled(self):
+        with patch.object(_ae, "_read_classifier_config",
+                           return_value={"model": "gemma4:12b", "base_url": "http://x/v1",
+                                         "token": "ollama", "enabled": False}):
+            assert await _classify_tool_ending("some text") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_config_unavailable(self):
+        with patch.object(_ae, "_read_classifier_config", return_value=None):
+            assert await _classify_tool_ending("some text") is None
+
+    @pytest.mark.asyncio
+    async def test_parses_valid_json_verdict(self):
+        cfg = {"model": "gemma4:12b", "base_url": "http://192.168.155.224:11435/v1",
+               "token": "ollama", "enabled": True}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "message": {"content": '{"premature": true, "reasoning": "announces a plan, never executes"}'}
+        }
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch.object(_ae, "_read_classifier_config", return_value=cfg), \
+             patch.object(_ae.httpx, "AsyncClient", return_value=mock_client):
+            result = await _classify_tool_ending("Ich erstelle die Loesung aus: ```mermaid")
+        assert result == {"premature": True, "reasoning": "announces a plan, never executes"}
+        mock_client.post.assert_awaited_once()
+        call_url = mock_client.post.await_args.args[0]
+        assert call_url == "http://192.168.155.224:11435/api/chat"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_malformed_json(self):
+        cfg = {"model": "gemma4:12b", "base_url": "http://x/v1", "token": "ollama", "enabled": True}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"message": {"content": "not json at all"}}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch.object(_ae, "_read_classifier_config", return_value=cfg), \
+             patch.object(_ae.httpx, "AsyncClient", return_value=mock_client):
+            assert await _classify_tool_ending("some text") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_http_call_raises(self):
+        cfg = {"model": "gemma4:12b", "base_url": "http://x/v1", "token": "ollama", "enabled": True}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=ConnectionError("unreachable"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        with patch.object(_ae, "_read_classifier_config", return_value=cfg), \
+             patch.object(_ae.httpx, "AsyncClient", return_value=mock_client):
+            assert await _classify_tool_ending("some text") is None
+
+
+class TestRecordAndClassifyToolEnding:
+    @pytest.mark.asyncio
+    async def test_inserts_then_updates_on_positive_verdict(self):
+        with patch.object(_ae, "_insert_unclassified_tool_ending_sync") as mock_insert, \
+             patch.object(_ae, "_update_tool_ending_classification_sync") as mock_update, \
+             patch.object(_ae, "_classify_tool_ending",
+                           AsyncMock(return_value={"premature": True, "reasoning": "test"})):
+            await record_and_classify_tool_ending("chat-1", "qwen3.6:35b", "Ich erstelle...", 12)
+        mock_insert.assert_called_once()
+        assert mock_insert.call_args.args[1:5] == ("chat-1", "qwen3.6:35b", "Ich erstelle...", 12)
+        mock_update.assert_called_once()
+        assert mock_update.call_args.args[1] == {"premature": True, "reasoning": "test"}
+
+    @pytest.mark.asyncio
+    async def test_skips_update_when_classifier_returns_none(self):
+        with patch.object(_ae, "_insert_unclassified_tool_ending_sync") as mock_insert, \
+             patch.object(_ae, "_update_tool_ending_classification_sync") as mock_update, \
+             patch.object(_ae, "_classify_tool_ending", AsyncMock(return_value=None)):
+            await record_and_classify_tool_ending("chat-1", "qwen3.6:35b", "text", 3)
+        mock_insert.assert_called_once()
+        mock_update.assert_not_called()

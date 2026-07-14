@@ -359,6 +359,17 @@ async function fetchActiveRequests() {
 
 
 /* ── LLM Instanzen ─────────────────────────────────────────────────────────── */
+// Confirmed live: N04-RTX runs OLLAMA_NUM_PARALLEL=1 and serves the entire
+// platform's traffic — its lightweight /api/ps health-check can occasionally
+// time out while Ollama is busy generating, which previously made
+// "loaded_models" flip to [] for that one 5s poll tick, flashing the whole
+// panel to "idle" and back. Sticky per-server cache: only overwrite the
+// displayed loaded-models state on a poll that actually SUCCEEDED
+// (srv.ok === true) — a failed poll keeps showing the last known-good state
+// instead of flickering, and a genuine unload is still reflected immediately
+// since that's srv.ok===true with an empty models list, not a fetch error.
+const _lastKnownLoaded = {};
+
 async function fetchLLMInstances() {
   try {
     const data = await fetch('/api/live/llm-instances').then(r => r.json());
@@ -367,6 +378,11 @@ async function fetchLLMInstances() {
     const container = document.getElementById('llm-cards');
 
     container.innerHTML = servers.map(srv => {
+      if (srv.ok) {
+        _lastKnownLoaded[srv.name] = srv.loaded_models || [];
+      } else if (_lastKnownLoaded[srv.name] !== undefined) {
+        srv = {...srv, loaded_models: _lastKnownLoaded[srv.name], _stale: true};
+      }
       const statusBadge = srv.ok
         ? `<span class="badge bg-success">Online</span>`
         : `<span class="badge bg-danger">Offline</span>`;
@@ -395,10 +411,15 @@ async function fetchLLMInstances() {
       let loadedSection = '';
       if (srv.api_type === 'ollama') {
         const loaded = srv.loaded_models || [];
+        const staleNote = srv._stale
+          ? `<span class="badge bg-secondary ms-1" title="Health-Check fehlgeschlagen — zeigt den letzten bekannten Stand">
+               <i class="bi bi-clock-history me-1"></i>letzter bekannter Stand
+             </span>`
+          : '';
         if (loaded.length > 0) {
           loadedSection = `
             <div class="mt-3">
-              <div class="fw-semibold mb-2" style="font-size:.85rem">
+              <div class="fw-semibold mb-2" style="font-size:.85rem">${staleNote}
                 <i class="bi bi-lightning-charge-fill text-warning me-1"></i>Loaded models (${loaded.length})
               </div>
               <table class="table table-sm table-bordered mb-0 model-row">
@@ -422,7 +443,7 @@ async function fetchLLMInstances() {
               </table>
             </div>`;
         } else {
-          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>${_tlive.noModelIdle}</div>`;
+          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>${_tlive.noModelIdle}${staleNote}</div>`;
         }
       }
 
@@ -504,9 +525,9 @@ async function fetchLLMInstances() {
                 <span class="badge bg-light text-dark border ms-1">Tier ${srv.tier}</span>
                 <span class="badge bg-light text-dark border">×${srv.cost_factor}</span>
                 ${recentLatencyBadge}
-                ${srv.api_type === 'ollama' ? `<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1"
-                    title="VRAM-Verlauf" onclick="openGpuHistory('${escHtml(srv.name)}')">
-                    <i class="bi bi-graph-up"></i>
+                ${srv.api_type === 'ollama' ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 ms-2"
+                    title="Historische VRAM-Auslastung dieser Instanz anzeigen" onclick="openGpuHistory('${escHtml(srv.name)}')">
+                    <i class="bi bi-graph-up me-1"></i>Verlauf
                   </button>` : ''}
               </div>
             </div>

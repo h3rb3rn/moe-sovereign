@@ -65,7 +65,12 @@ async def clear_ontology_healer_status():
 
 @router.post("/v1/admin/ontology/dedicated/start")
 async def start_dedicated_healer(body: dict = None):
-    """Start a permanent gap-healer loop pinned to a single curator template."""
+    """Start a permanent gap-healer loop pinned to a single Expert Template
+    or raw model string — `template` is forwarded verbatim as TEMPLATE_POOL
+    (scripts/gap_healer_templates.py), which in turn sends it unchanged as
+    the `model` field of a /v1/chat/completions call. Not restricted to the
+    auto-named moe-ontology-curator-* per-node templates; those are just the
+    common case surfaced first in the Admin UI dropdown."""
     body = body or {}
     template = (body.get("template") or "").strip()
     if not template:

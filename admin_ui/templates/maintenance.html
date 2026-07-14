@@ -58,9 +58,12 @@
         <p class="text-muted small mb-3">{{ t(request, 'msg.dedicated_healer_desc') }}</p>
         <div class="mb-3">
           <label class="form-label small mb-1">{{ t(request, 'lbl.dedicated_healer_template') }}</label>
-          <select id="dedicated-template" class="form-select form-select-sm">
+          <select id="dedicated-template" class="form-select form-select-sm mb-2" onchange="onDedicatedTemplateChange()">
             <option value="">— {{ t(request, 'msg.dedicated_healer_loading') }} —</option>
           </select>
+          <input type="text" id="dedicated-template-custom"
+                 class="form-control form-control-sm d-none"
+                 placeholder="{{ t(request, 'msg.dedicated_healer_custom_placeholder') }}">
         </div>
         <div class="form-check form-switch mb-3">
           <input class="form-check-input" type="checkbox" role="switch" id="dedicated-block-server" checked>
@@ -281,6 +284,10 @@ const _t = {
   staleTmplRefsFound:       "{{ t(request, 'js.stale_template_refs_found') }}",
   confirmTmplRefCleanup:    "{{ t(request, 'js.confirm_template_ref_cleanup') }}",
   tmplRefCleanupDone:       "{{ t(request, 'js.template_ref_cleanup_done') }}",
+  ontologyCuratorGroup:     "{{ t(request, 'js.ontology_curator_group') }}",
+  otherTemplatesGroup:      "{{ t(request, 'js.other_templates_group') }}",
+  nativeLlmsGroup:          "{{ t(request, 'js.native_llms_group') }}",
+  customModelOption:        "{{ t(request, 'js.custom_model_option') }}",
 };
 
 function flash(msg, type='success') {
@@ -301,25 +308,62 @@ function fmtStatus(s, extra) {
 
 async function loadDedicatedTemplates() {
   try {
-    const templates = await fetch('/api/expert-templates').then(r => r.json());
+    const [templates, llms] = await Promise.all([
+      fetch('/api/expert-templates').then(r => r.json()),
+      fetch('/api/available-llms').then(r => r.json()).catch(() => []),
+    ]);
     const sel = document.getElementById('dedicated-template');
     sel.innerHTML = '';
+    // The healer just forwards `template` verbatim as the `model` field of a
+    // /v1/chat/completions call (scripts/gap_healer_templates.py) — any
+    // Expert Template OR a raw "model@node" string already works
+    // server-side, identical to how any other MoE Sovereign client picks a
+    // model. The per-node "moe-ontology-curator-*" templates are the common
+    // case (one pinned GPU node each, so the pool round-robins with a warm
+    // cache per node) and are grouped first, but they're not the only
+    // valid choice.
     const curatorTpls = (templates || []).filter(t => (t.name || '').startsWith('moe-ontology-curator-'));
-    if (curatorTpls.length === 0) {
-      sel.innerHTML = `<option value="">— ${_t.noOntologyServers} —</option>`;
-      return;
+    const otherTpls    = (templates || []).filter(t => !(t.name || '').startsWith('moe-ontology-curator-'));
+    if (curatorTpls.length) {
+      const og = document.createElement('optgroup');
+      og.label = _t.ontologyCuratorGroup;
+      curatorTpls.forEach(t => og.appendChild(new Option(t.name, t.name)));
+      sel.appendChild(og);
     }
-    curatorTpls.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.name;
-      opt.textContent = t.name;
-      sel.appendChild(opt);
-    });
+    if (otherTpls.length) {
+      const og = document.createElement('optgroup');
+      og.label = _t.otherTemplatesGroup;
+      otherTpls.forEach(t => og.appendChild(new Option(t.name, t.name)));
+      sel.appendChild(og);
+    }
+    if (Array.isArray(llms) && llms.length) {
+      const og = document.createElement('optgroup');
+      og.label = _t.nativeLlmsGroup;
+      // /api/available-llms may append "[tag1, tag2]" for display — strip it
+      // for the actual value sent to the backend (same convention the
+      // orchestrator itself uses: value.split('[')[0]).
+      llms.forEach(entry => og.appendChild(new Option(entry, entry.split('[')[0].trim())));
+      sel.appendChild(og);
+    }
+    sel.appendChild(new Option(_t.customModelOption, '__custom__'));
     // Pre-select currently running template if any
     pollDedicatedHealer();
   } catch (e) {
     document.getElementById('dedicated-template').innerHTML = `<option value="">— ${_t.loadingError} —</option>`;
   }
+}
+
+function onDedicatedTemplateChange() {
+  const sel = document.getElementById('dedicated-template');
+  document.getElementById('dedicated-template-custom').classList.toggle('d-none', sel.value !== '__custom__');
+}
+
+function _selectedDedicatedTemplate() {
+  const sel = document.getElementById('dedicated-template');
+  if (sel.value === '__custom__') {
+    return document.getElementById('dedicated-template-custom').value.trim();
+  }
+  return (sel.value || '').trim();
 }
 
 async function pollDedicatedHealer() {
@@ -336,12 +380,20 @@ async function pollDedicatedHealer() {
     document.getElementById('dedicated-failed').textContent = d.failed || 0;
     document.getElementById('btn-dedicated-start').disabled = running;
     document.getElementById('btn-dedicated-stop').disabled = !running;
-    // Pre-select template in dropdown if running
+    // Pre-select template in dropdown if running — falls back to the custom
+    // slot when the running template isn't one of the listed options (e.g.
+    // started with a raw model string, not a saved Expert Template).
     if (running && d.template) {
       const sel = document.getElementById('dedicated-template');
+      let matched = false;
       for (const opt of sel.options) {
-        if (opt.value === d.template) { sel.value = opt.value; break; }
+        if (opt.value === d.template) { sel.value = opt.value; matched = true; break; }
       }
+      if (!matched) {
+        sel.value = '__custom__';
+        document.getElementById('dedicated-template-custom').value = d.template;
+      }
+      onDedicatedTemplateChange();
     }
   } catch (e) { /* ignore */ }
 }
@@ -354,7 +406,7 @@ function _tplToServerName(tpl) {
 }
 
 async function startDedicatedHealer() {
-  const template = document.getElementById('dedicated-template').value.trim();
+  const template = _selectedDedicatedTemplate();
   if (!template) { alert(_t.selectTemplateFirst); return; }
   const blockServer = document.getElementById('dedicated-block-server').checked;
   const btnStart = document.getElementById('btn-dedicated-start');

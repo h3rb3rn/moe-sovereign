@@ -399,6 +399,44 @@ CREATE TABLE IF NOT EXISTS admin_premature_stop_patterns (
     created_at   TEXT NOT NULL DEFAULT '',
     updated_at   TEXT NOT NULL DEFAULT ''
 );
+
+-- Singleton config row (same shape as federation_config) for the LLM that
+-- judges tool-passthrough text-only endings which none of the
+-- admin_premature_stop_patterns rules matched. Admin-editable so the model
+-- can be swapped (different Ollama instance, different size) without a code
+-- change or container rebuild — see services/agent_enrichment.py::_classify_tool_ending.
+CREATE TABLE IF NOT EXISTS admin_classifier_config (
+    id         TEXT PRIMARY KEY DEFAULT 'default',
+    model      TEXT NOT NULL DEFAULT 'gemma4:12b',
+    base_url   TEXT NOT NULL DEFAULT 'http://192.168.155.224:11435/v1',
+    token      TEXT NOT NULL DEFAULT 'ollama',
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+
+-- One row per tool-passthrough response that ended as plain text (no
+-- tool_calls, finish_reason=stop) mid-session without triggering the
+-- existing premature-stop retry — i.e. exactly the case that previously
+-- required a human watching the logs to notice. classification is filled
+-- in asynchronously by the configured classifier LLM (NULL = still
+-- pending/classifier disabled/call failed); promoted_to_pattern tracks
+-- whether an admin has already turned this into a permanent
+-- admin_premature_stop_patterns rule via the review UI.
+CREATE TABLE IF NOT EXISTS admin_unclassified_tool_endings (
+    id                   TEXT PRIMARY KEY,
+    chat_id              TEXT NOT NULL DEFAULT '',
+    model                TEXT NOT NULL DEFAULT '',
+    content              TEXT NOT NULL DEFAULT '',
+    content_chars        INTEGER NOT NULL DEFAULT 0,
+    tool_msgs            INTEGER NOT NULL DEFAULT 0,
+    classification       TEXT,                       -- 'premature_stop' | 'legitimate' | NULL=pending
+    classifier_reasoning TEXT NOT NULL DEFAULT '',
+    promoted_to_pattern  BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at           TEXT NOT NULL DEFAULT '',
+    classified_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_unclassified_tool_endings_created
+    ON admin_unclassified_tool_endings(created_at DESC);
 """
 
 
