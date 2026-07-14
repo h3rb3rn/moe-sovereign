@@ -109,7 +109,7 @@
     {% set _p = request.url.path %}
     {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log', '/gates', '/decision-log', '/ai-io-audit', '/model-capabilities'] %}
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
-    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates', '/advice'] or _p.startswith('/templates') or _p.startswith('/advice') or _p.startswith('/patterns') %}
+    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates', '/advice'] or _p.startswith('/templates') or _p.startswith('/advice') or _p.startswith('/patterns') or _p.startswith('/tool-endings') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
     {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance', '/workshop', '/timeseries', '/notes', '/geo', '/dossier'] %}
 
@@ -224,6 +224,9 @@
           </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/patterns') %}active{% endif %}" href="/patterns">
             <i class="bi bi-signpost-split me-2 text-warning"></i>{{ t(request, 'nav.patterns') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/tool-endings') %}active{% endif %}" href="/tool-endings">
+            <i class="bi bi-search-heart me-2 text-warning"></i>{{ t(request, 'nav.tool_endings') }}
           </a></li>
         </ul>
       </div>
@@ -475,6 +478,11 @@
           <li class="nav-item">
             <a href="/patterns" class="nav-link text-white {% if request.url.path.startswith('/patterns') %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-signpost-split me-2 text-warning"></i>{{ t(request, 'nav.patterns') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/tool-endings" class="nav-link text-white {% if request.url.path.startswith('/tool-endings') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-search-heart me-2 text-warning"></i>{{ t(request, 'nav.tool_endings') }}
             </a>
           </li>
           <li><hr class="border-secondary my-1"></li>

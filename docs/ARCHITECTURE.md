@@ -124,6 +124,108 @@ flowchart TD
 
 ---
 
+## Augmented Tool Path (Agentic Clients)
+
+The LangGraph Pipeline above assumes MoE Sovereign owns the tool-calling
+loop — it plans, dispatches to `mcp`/`research`/`math`, and synthesizes the
+result itself. Agentic CLI clients (Claude Code, OpenCode) already run their
+*own* tool-calling loop client-side (their own planning, their own MCP
+tools, their own file edits) and only need a raw model to talk to — running
+them through the full planner→workers→judge pipeline on every turn would
+mean double planning, wrong latency characteristics for an interactive CLI,
+and cache/GraphRAG enrichment aimed at a different kind of query entirely.
+
+Any request whose body carries a `tools` array is therefore routed around
+the LangGraph graph completely, straight to the configured tool-capable
+model — the "Augmented Tool Path", implemented in
+`_handle_tool_calls` (`services/pipeline/chat.py`, OpenCode / OpenAI-format
+clients) and `_anthropic_tool_handler` (`services/pipeline/anthropic.py`,
+Claude Code / Anthropic-format clients).
+
+```mermaid
+flowchart TD
+    IN([Client Request\nhas tools array?]) -->|no| PIPE[LangGraph Pipeline\nsee above]
+    IN -->|yes| ATP[Augmented Tool Path\nbypasses planner/workers/judge]
+
+    ATP --> ENR{Opt-in enrichment\nper CC profile / template}
+    ENR -->|agent_cache| L0L1[L0 Valkey exact-match\n+ L1 ChromaDB semantic]
+    ENR -->|agent_graphrag| GR2[Neo4j entity context\nfirst turn only, 2s hard timeout]
+    ENR -->|agent_ingest| ING[Async write-back\njudge-scored promotion]
+
+    ATP --> CALL[Direct call to tool model\nOllama native /api/chat]
+    CALL --> CHK{finish_reason=stop\nAND no tool_calls?}
+    CHK -->|no — valid tool_calls\nor real answer| OUT([Response to client])
+    CHK -->|yes — silent stop| HEUR{Matches known\npattern? §11}
+    HEUR -->|yes| RETRY[One retry:\nfallback tool_agent model\nor same model + correction]
+    RETRY --> OUT
+    HEUR -->|no| REVIEW[Self-hosted classifier\nreview queue §12]
+    REVIEW -.->|admin promotes| PATTERNS[(admin_premature_stop_patterns)]
+    PATTERNS -.-> HEUR
+
+    style ATP fill:#1e3a5f,color:#fff
+    style CHK fill:#4a1a1a,color:#fff
+    style REVIEW fill:#2d1b4e,color:#fff
+```
+
+The three enrichment layers (`agent_cache`, `agent_graphrag`, `agent_ingest`)
+are opt-in per CC profile / Expert Template and otherwise inert —
+`services/agent_enrichment.py` is written so every public function is safe
+to call unconditionally and degrades to plain passthrough on any failure or
+disabled flag. Silent-stop detection and its retry (§11) and the review
+queue for cases that slip past it (§12) are the one part of this path that
+is **not** opt-in — see [expert-template-guide.md § Augmented Tool
+Path](reference/expert-template-guide.md#augmented-tool-path-agentic-clients)
+for the full operational writeup and the [Configuration
+Reference](#augmented-tool-path-agentic-clients_1) below for the tunable
+flags.
+
+---
+
+## Live Pipeline Visualization
+
+Both paths above are observable while they run, not just after the fact,
+from the Admin UI's Live Monitoring page (`/live-monitoring`,
+`admin_ui/templates/live_monitoring.html` +
+`admin_ui/static/js/pipeline_diagram.js`) and the equivalent panel in the
+User Portal.
+
+**LangGraph Pipeline diagram.** A Cytoscape.js graph mirrors the node
+diagram from the LangGraph Pipeline section above, live, per in-flight
+request: `_record_stage` (`services/tracking.py`) appends
+`{stage, status, detail, ts}` to a capped Redis list
+(`moe:active:{chat_id}:trace`, `LTRIM -30 -1`, TTL'd) at each LangGraph node
+transition; the panel polls `/api/live/request-trace/{chat_id}` (admin) or
+`/user/api/live/request-trace/{chat_id}` (portal, gated by
+`_user_owns_chat_id`) and colors nodes by their latest status. Per-template
+**experts and MCP tools** are overlaid on the same diagram filtered to only
+the ones actually used by the in-flight request (not the full configured
+set) — extracted from the request's Expert Template at render time — so the
+diagram stays readable instead of listing every idle tool the template
+merely has access to.
+
+**Session replay.** Once a request completes, the same stage trace doesn't
+disappear — `applyTrace(stageTrace.slice(0, i))` (`pipeline_diagram.js`)
+replays it against the diagram frame-by-frame. `enterReplayMode` /
+`playReplay` / `stepReplay` drive a scrub bar (play/pause, step, speed
+select, `Space`/`←`/`→` keyboard control while the panel is open) — the
+same "replay a completed agent session as a timeline" idea as
+[cosmtrek/mindwalk](https://github.com/cosmtrek/mindwalk), adapted to this
+project's existing Redis-trace/Cytoscape machinery rather than a new
+storage layer.
+
+**File-touch view (Augmented Tool Path only).** For OpenCode/Claude Code
+sessions specifically, `extract_file_touches` (`services/agent_enrichment.py`)
+scans each tool call's arguments for known path keys, classifies the action
+(`classify_file_action`: read / write / search / exec / other), and
+`_record_file_touch` appends it to `moe:active:{chat_id}:files` — surfaced
+as a compact, newest-first list (`/api/live/file-touches/{chat_id}`)
+alongside the diagram, answering "which files has this session actually
+touched" without attaching a file-system node to the graph itself (files
+aren't LangGraph stages, so they get their own panel rather than polluting
+the diagram's node set).
+
+---
+
 ## Service Topology
 
 ```mermaid
@@ -388,7 +490,9 @@ The LangGraph state object passed through all nodes:
 
 ### Augmented Tool Path (Agentic Clients)
 
-See [expert-template-guide.md § Augmented Tool Path](reference/expert-template-guide.md#augmented-tool-path-agentic-clients)
+See [Augmented Tool Path](#augmented-tool-path-agentic-clients) above for
+the architectural overview and [expert-template-guide.md § Augmented Tool
+Path](reference/expert-template-guide.md#augmented-tool-path-agentic-clients)
 for the full operational writeup. All flags default off and are normally
 set per CC profile / Expert Template via the Admin UI or User Portal, not
 globally — the env defaults below are the fallback when a profile doesn't
@@ -447,6 +551,9 @@ set the field explicitly.
 | `/mcp-tools` | MCP tool enable/disable |
 | `/monitoring` | Prometheus/Grafana integration |
 | `/tool-eval` | Tool invocation logs |
+| `/live-monitoring` | Live LangGraph pipeline diagram, session replay, file-touch view — see [Live Pipeline Visualization](#live-pipeline-visualization) |
+| `/patterns` | Admin-editable premature-stop detection patterns — see §11 |
+| `/tool-endings` | Self-hosted LLM-judged review queue for silent stops that matched no pattern — see §12 |
 
 ---
 
@@ -814,6 +921,161 @@ primary pipeline.
 
 ---
 
+### 10 — Incremental Cost-Map Node Selection (Flood-Fill Heuristic)
+
+**Basis:** Flood-fill maze-solving (breadth-first shortest-path search from a
+known goal state, incrementally recomputed only in the region where a new
+wall was just observed, rather than a full re-plan) — the dominant algorithm
+in autonomous maze-solving robotics (Micromouse competitions), chosen for its
+combination of an optimistic prior (a cell is assumed open until a wall is
+actually observed) and cheap incremental updates.  
+**Location:** `services/inference.py` (`_select_node`), `services/tracking.py`
+(`_record_node_latency`, `_get_node_latency_stats`, `_record_premature_stop_outcome`,
+`_get_premature_stop_rate`)
+
+§5 above already adjusts Thompson-sampling expert *model* selection by
+current node load. This extension applies the same infrastructure-adaptive
+principle one level lower, to `_select_node`'s node/endpoint choice itself,
+using two rolling signals that were previously collected only for
+observability (admin dashboards) and never fed back into a routing decision:
+
+- **Recent latency** — a bounded rolling window (last 20 samples, 1h TTL) of
+  wall-clock call duration per node, keyed `moe:latency:{node}`.
+- **Recent premature-stop rate** — the fraction of recent Agent Tool Path
+  turns for a given `(model, node)` pair that ended without a valid tool
+  call or answer (see §11), keyed `moe:pstop:{model}:{node}`.
+
+Both feed into `load_score` as an **additive**, not multiplicative, penalty:
+
+```
+reliability = (1 + LATENCY_PENALTY × max(0, avg_ms/BASELINE_MS − 1))
+            × (1 + PSTOP_PENALTY × premature_stop_rate)
+load_score  = (running / gpu_count / cost_factor) + (reliability − 1)
+```
+
+The additive form is deliberate: at `raw_load = 0` (the common case on an
+idle node) a multiplicative penalty would vanish (`0 × factor == 0`),
+silently defeating the whole mechanism for exactly the nodes most likely to
+be selected. `reliability − 1` is `0` for a clean node (no behavioural
+change) and grows only once evidence justifies it.
+
+**Optimistic prior:** a node/model pair with no data yet, or fewer than
+`_PSTOP_MIN_SAMPLES` (3) premature-stop observations, contributes a factor of
+exactly `1.0` — mirroring flood fill's core property of assuming a cell is
+open (no wall) until a wall has actually been confirmed, rather than
+penalizing on a single unlucky sample.
+
+**Scope:** only takes effect once `_select_node` has more than one candidate
+endpoint for a category (`len(candidates) > 1`); the single-candidate fast
+path is unchanged. Currently gated by production `EXPERT_MODELS` config
+(every category has exactly one endpoint as of this writing), but the
+mechanism is live and ready as soon as a category is given a second
+fallback endpoint.
+
+---
+
+### 11 — Premature-Stop Detection (Agent Tool Path)
+
+**Basis:** Not a formal-logic import — a pragmatic pattern-matching
+heuristic layered defensively over structural protocol violations (a model
+must either answer in text or call a tool; neither is never valid under
+`tool_choice=auto` with `tools` present).  
+**Location:** `services/agent_enrichment.py` (`looks_like_premature_stop`),
+`services/pipeline/chat.py` (`_resolve_text_only_ending`, slow-path
+equivalent), Admin UI at `/patterns`
+
+Some tool-calling models (confirmed live: qwen3.6:35b) occasionally end a
+turn with a plain-text announcement of intent ("Let me now…", "Ich fixe das
+jetzt…") instead of an actual tool call, or write a tool call as literal
+XML-like text instead of populating the API's structured `tool_calls` field
+— both are protocol-valid completions (`finish_reason=stop`) that an
+OpenAI-format client (OpenCode, Hermes, …) has no way to distinguish from a
+real, finished answer, so the session just goes silent with no error
+anywhere.
+
+Detection patterns (announcement phrases, malformed tool-call markers,
+trailing-colon endings, …) are stored in Postgres
+(`admin_premature_stop_patterns`, cached 60s per-process, stale-while-
+revalidate — same mechanism as `services/templates.py`) rather than
+hardcoded, so a newly observed phrasing can be added or disabled from the
+Admin UI in production, without a code change or container rebuild.
+`looks_like_premature_stop` always returns `False` on empty text (nothing to
+pattern-match); a fully empty response (no text, no tool call) is instead
+caught by a separate, unconditional check in the two call sites — an even
+more clear-cut failure signal, since under `tool_choice=auto` with `tools`
+offered, returning literally nothing is never a valid outcome. One check is
+structural rather than DB-driven and lives directly in
+`looks_like_premature_stop`: an odd number of ` ``` ` fence markers means a
+code/diagram block was opened and never closed — confirmed live as a plan
+narrated inside an unclosed ` ```mermaid ` block that matched no phrase
+pattern (fluent text, not a truncated word) — a language-independent
+invariant that doesn't fit the literal/regex pattern shape at all.
+
+On a match, `_retry_tool_agent_fallback` retries once against a different
+configured `tool_agent` model where available, or the same model with an
+appended corrective instruction otherwise — preserving the warm model's
+context window (queries `/api/ps` first, never downgrades `num_ctx`) and
+targeting Ollama's native `/api/chat` endpoint with tool-call history
+normalized to Ollama's wire format (`arguments` as a parsed object, not the
+OpenAI JSON-string form) rather than the OpenAI-compatible endpoint the
+initial call used.
+
+Both the match/no-match outcome and the retry outcome feed
+`moe:pstop:{model}:{node}` (§10) regardless of whether a retry fires, so the
+reliability signal stays representative of the underlying model's real
+behaviour on that node.
+
+---
+
+### 12 — Self-Hosted LLM-Judged Review Queue for Undetected Silent Stops
+
+**Basis:** Human-in-the-loop escalation with a self-hosted judge model,
+closing back into §11's deterministic pattern set — not a formal-logic
+import.  
+**Location:** `services/agent_enrichment.py` (`_classify_tool_ending`,
+`record_and_classify_tool_ending`, `admin_classifier_config`), wired from
+`services/pipeline/chat.py` at both text-only-ending diagnostic points,
+Admin UI at `/tool-endings`
+
+**The problem.** §11's pattern list and the structural fence check catch
+every *previously observed* shape of silent stop, by construction — a new
+phrasing that matches none of them still passes through unretried. Finding
+one used to mean a human watching `docker logs -f langgraph-orchestrator`
+live, recognising the shape by eye, and manually adding a pattern — exactly
+how the unclosed-`` ```mermaid `` gap above was found. That doesn't scale
+past the person doing the watching, and it only catches whatever incident
+happens to occur while someone happens to be looking.
+
+**The path to a self-hosted solution.** Rather than only logging these
+residual cases for someone to eventually notice, every text-only ending that
+matches no known pattern is now persisted
+(`admin_unclassified_tool_endings`) and judged asynchronously by an LLM —
+deliberately **another local Ollama instance**, not an external API call.
+Routing this through a hosted third-party classifier would have been
+simpler to wire up, but it would mean every ambiguous agent turn — often
+containing in-progress source code, file paths, and internal reasoning —
+leaves the sovereign infrastructure purely to decide whether a *different*
+local model behaved correctly. That's a real confidentiality cost for a
+diagnostic side-channel, and it runs against this project's sovereign-by-
+default premise. `admin_classifier_config` is a single admin-editable
+Postgres row (model, base URL, token, enabled — default
+`gemma4:12b@N04-RGTX`) rather than a `config.py` constant, so the judge
+model/endpoint can be pointed at a different local instance or a different
+size without a code change or rebuild, the same reasoning that made §11's
+patterns DB-backed rather than hardcoded.
+
+**Closing the loop.** A judged case surfaces at `/tool-endings` with the
+model's verdict and reasoning; an admin reviewing a real finding promotes it
+into a permanent `admin_premature_stop_patterns` row with one click. From
+then on, that phrasing is caught by §11's cheap, deterministic, sub-
+millisecond pattern match — the LLM judge's cost (a full inference call,
+paid once per genuinely novel case) is never paid twice for the same shape
+of failure. The system's blind spot shrinks with usage instead of staying
+fixed at whatever was known at deploy time, without needing a human to be
+watching logs at the moment it happens.
+
+---
+
 ### Implementation Summary
 
 | Component | Logic / Theory | Pub. basis | Status |
@@ -830,6 +1092,9 @@ primary pipeline.
 | `_corrective_relevance_score` | Retrieval quality gating | Yan et al. 2024 (CRAG) | ✅ Active |
 | `compliance_cag` (CAG layer) | Context-augmented generation | Chan et al. 2024 | ✅ Active |
 | `:Episode` nodes + `log_episode` | Episodic memory | Tulving 1972; Park et al. 2023; Packer et al. 2023 | ✅ Active |
+| `_select_node` reliability weighting | Flood-fill incremental cost map | Micromouse maze-solving heuristic | ✅ Active |
+| `looks_like_premature_stop` + DB-backed patterns | Protocol-violation detection | — (pragmatic heuristic) | ✅ Active |
+| `record_and_classify_tool_ending` + self-hosted judge | Human-in-the-loop escalation | — (pragmatic heuristic) | ✅ Active |
 | `ConstructiveProof` executor node | Intuitionistic | De Vries 2007, §3 | ⏳ Planned |
 
 ---
@@ -848,3 +1113,4 @@ primary pipeline.
 - E. Tulving, *Episodic and semantic memory*, in *Organisation of Memory*, Academic Press, 1972.
 - J. S. Park et al., *Generative Agents: Interactive Simulacra of Human Behavior*, arXiv:2304.03442, 2023. <https://arxiv.org/abs/2304.03442>
 - C. Packer et al., *MemGPT: Towards LLMs as Operating Systems*, arXiv:2310.08560, 2023. <https://arxiv.org/abs/2310.08560>
+- I. A. Sutherland, *A Method for Solving Arbitrary-Wall Mazes by Computer*, IEEE Transactions on Computers C-18(12), 1969 — early precursor to the flood-fill maze-solving approach standardised by the Micromouse competition (est. 1977, IEEE Spectrum).

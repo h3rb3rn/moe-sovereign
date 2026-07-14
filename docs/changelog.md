@@ -8,6 +8,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-07-13 — v2.9.0: Admin-Editable Premature-Stop Detection & Reliability-Weighted Routing
+
+> `impact: minor` · `breaking: no` · `domain: agent_enrichment, inference, tracking, pipeline/chat, admin_ui`
+
+### Added
+
+- **Admin-editable Agent Tool Path premature-stop patterns.** `looks_like_premature_stop` (`services/agent_enrichment.py`) now reads detection patterns (announcement phrases, malformed tool-call markers, trailing-colon endings) from Postgres (`admin_premature_stop_patterns`) instead of hardcoded constants — full CRUD Admin UI at `/patterns`, including a "test pattern against sample text" tool. A new pattern takes effect within ~60s, no rebuild required. Seeded from the previously-hardcoded pattern set on first cold start.
+- **Empty-response detection.** A tool-calling turn that ends with `finish_reason=stop`, no `tool_calls`, and zero characters of content — a more severe, previously undetected variant of the silent-stop failure — now triggers the same retry as a matched pattern (`services/pipeline/chat.py`, both fast/stream and slow paths). `looks_like_premature_stop` always returns `False` on empty text by design, so this is a separate, unconditional check.
+- **Reliability-weighted node selection (flood-fill heuristic).** `_select_node` (`services/inference.py`) now factors recent per-node latency (`moe:latency:{node}`) and per-(model,node) premature-stop rate (`moe:pstop:{model}:{node}`) into its load score as an additive penalty — optimistic by default (no penalty until enough evidence accumulates), only active once a category has more than one candidate endpoint. `graph/expert.py` now also records latency for the interactive planner→expert→judge pipeline (previously only the Agent Tool Path did). See `docs/ARCHITECTURE.md` §10–11.
+- **mindwalk-inspired session-replay scrubbing** in the live pipeline diagram (Admin UI → Live Monitoring) — play/pause/step through a completed request's stage trace instead of only viewing the final state.
+- **Unclosed-code-fence premature-stop detection.** `looks_like_premature_stop` now flags any text with an odd number of ` ``` ` fence markers — a structural, language-independent signal for "opened a code/diagram block and stopped without closing it or calling a tool" (confirmed live: `qwen3.6:35b` announcing a plan with an unclosed `` ```mermaid `` block).
+- **LLM-judged review queue for unclassified tool-passthrough endings.** Text-only Agent Tool Path endings that match no `admin_premature_stop_patterns` rule are now recorded (`admin_unclassified_tool_endings`) and judged asynchronously by an admin-assignable classifier LLM (`admin_classifier_config`, default `gemma4:12b@N04-RGTX`, model/endpoint swappable without a rebuild) — new Admin UI at `/tool-endings` with one-click promotion of a confirmed finding into a permanent pattern. Closes the loop that previously required a human watching container logs live.
+
+### Fixed
+
+- **Ollama native `/api/chat` rejecting tool-call history on retry.** The `tool_choice=auto` premature-stop retry and the Hermes3 tool-agent path both post to Ollama's native `/api/chat` endpoint, which requires `tool_calls[].function.arguments` as a parsed JSON object — the code was sending the OpenAI wire-format JSON-*string* form instead, causing an immediate `400 Bad Request` (`"Value looks like object, but can't find closing '}' symbol"`) on any turn with prior tool-call history. Confirmed live against a real failing production payload (234 accumulated tool messages) before and after the fix. New `_normalize_messages_for_ollama_native` (`services/pipeline/chat.py`), ported from the equivalent, already-correct logic in `services/pipeline/anthropic.py`.
+- **Premature-stop retry silently evicting the model it just warmed up.** `_retry_tool_agent_fallback`'s Ollama-native payload (`services/pipeline/chat.py`) omitted `keep_alive`, unlike every other Ollama call site in this codebase — a successful retry would still leave the model on Ollama's ~5min default eviction timer instead of the 4h all other call sites deliberately set, so a 35B model warmed by a *successful* retry got unloaded a few minutes later, forcing the next turn into a full cold reload. Confirmed live: a real OpenCode session hit exactly this window (several successful retries in quick succession, model unloaded ~5 min after the last one, next turn stalled on a cold reload).
+
+---
+
 ## 2026-06-23 — v2.8.0: Scientific Theories Integration (McCarthy, Smolensky, Lenat)
 
 > `impact: minor` · `breaking: no` · `domain: orchestrator, vsa, breeder, rule-engine`

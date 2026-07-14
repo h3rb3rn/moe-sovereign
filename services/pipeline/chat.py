@@ -59,6 +59,7 @@ from services.agent_enrichment import (
     accumulate_stream_tool_call_delta,
     finalize_stream_tool_calls,
     looks_like_premature_stop,
+    record_and_classify_tool_ending,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -540,6 +541,14 @@ async def _retry_tool_agent_fallback(
         "messages": _normalize_messages_for_ollama_native(_retry_messages),
         "stream":   False,
         "tools":    tools,
+        # Confirmed live: omitting this let every retry silently fall back to
+        # Ollama's ~5min default keep_alive, evicting a warm 35B model a few
+        # minutes after a *successful* retry — every other Ollama call site
+        # in this codebase (main.py, graph/expert.py, services/inference.py,
+        # services/pipeline/anthropic.py, and the main tool-agent payload
+        # earlier in this same file) deliberately sets a long keep_alive;
+        # this retry path was the one that didn't.
+        "keep_alive": "4h",
         "options": {
             "num_ctx":     _retry_num_ctx,
             "num_predict": max_tokens or 4096,
@@ -1111,17 +1120,31 @@ async def _handle_tool_calls(
                 _full_text = "".join(_content_acc)
                 _violated_required = bool(request.tools) and request.tool_choice == "required"
                 _premature = looks_like_premature_stop(_full_text)
+                # Confirmed live: a turn can end with finish_reason=stop, no
+                # tool_calls, AND zero characters of content — the model
+                # returned literally nothing. looks_like_premature_stop always
+                # returns False on an empty string (nothing to pattern-match
+                # against), so this was silently passing through with no
+                # retry at all — arguably a worse failure than a premature
+                # announcement, since the client gets no signal whatsoever
+                # that anything happened. This path always has request.tools
+                # set (Augmented Tool Path only), so "no text, no tool call"
+                # is never a valid outcome here.
+                _empty_response = not _full_text.strip()
                 # Persist regardless of whether a retry fires — the rate needs
                 # both premature and clean turns to be meaningful, and this is
                 # the only place this signal exists at all today (see
                 # services/tracking.py::_record_premature_stop_outcome).
-                asyncio.create_task(_record_premature_stop_outcome(tool_model, tool_base_url, _premature))
-                if _violated_required or _premature:
+                asyncio.create_task(_record_premature_stop_outcome(
+                    tool_model, tool_base_url, _premature or _empty_response,
+                ))
+                if _violated_required or _premature or _empty_response:
                     logger.warning(
                         "tool_choice=%r violated by %s (%s, content_chars=%d)"
                         " — retrying with template tool_agent",
                         request.tool_choice, tool_model,
-                        "required" if _violated_required else "premature-stop-heuristic",
+                        "required" if _violated_required else
+                        ("empty-response" if _empty_response else "premature-stop-heuristic"),
                         len(_full_text),
                     )
                     _retry_result = None
@@ -1172,6 +1195,24 @@ async def _handle_tool_calls(
                         _diag_exit_extra = ",retried-ok"
                         return
                     _diag_exit_extra = ",retry-failed-or-unavailable"
+                elif _full_text.strip():
+                    # Confirmed live: a text-only ending that matches no known
+                    # premature-stop pattern and isn't empty still passes
+                    # through unretried — this is exactly the gap a *new*,
+                    # not-yet-catalogued announcement phrasing would slip
+                    # through. Log the actual text (never done elsewhere —
+                    # only content_chars counts are logged) so a genuine
+                    # silent-stop here can be diagnosed and turned into a new
+                    # /patterns entry, instead of only ever seeing "164
+                    # chars, no retry" with no way to tell what happened.
+                    logger.info(
+                        "tool-passthrough text-only ending, no retry triggered — model=%s content=%r",
+                        tool_model, _full_text[:500],
+                    )
+                    asyncio.create_task(record_and_classify_tool_ending(
+                        chat_id, tool_model, _full_text,
+                        sum(1 for m in messages if m.get("role") == "tool"),
+                    ))
                 # No retry needed, or none available/it didn't help — flush
                 # the original response as-is (never silently drop a reply).
                 for _hl in _held_lines:
@@ -1353,15 +1394,23 @@ async def _handle_tool_calls(
     # silent-stop bug as on the first turn.
     if request.tools and not _diag_msg.get("tool_calls"):
         _violated_required = request.tool_choice == "required"
-        _premature = looks_like_premature_stop(_diag_msg.get("content") or "")
-        asyncio.create_task(_record_premature_stop_outcome(tool_model, tool_base_url, _premature))
-        if _violated_required or _premature:
+        _diag_content = _diag_msg.get("content") or ""
+        _premature = looks_like_premature_stop(_diag_content)
+        # See the matching comment in the fast/stream path above — an empty
+        # response (no text, no tool call) never matches any premature-stop
+        # pattern by design, so it was silently passing through unretried.
+        _empty_response = not _diag_content.strip()
+        asyncio.create_task(_record_premature_stop_outcome(
+            tool_model, tool_base_url, _premature or _empty_response,
+        ))
+        if _violated_required or _premature or _empty_response:
             logger.warning(
                 "tool_choice=%r violated by %s (%s, content_chars=%d)"
                 " — retrying with template tool_agent",
                 request.tool_choice, tool_model,
-                "required" if _violated_required else "premature-stop-heuristic",
-                len(_diag_msg.get("content") or ""),
+                "required" if _violated_required else
+                ("empty-response" if _empty_response else "premature-stop-heuristic"),
+                len(_diag_content),
             )
             _rr_result = None
             async for _kind, _val in _retry_tool_agent_fallback(
@@ -1393,6 +1442,16 @@ async def _handle_tool_calls(
                     ]
                     _diag_choice["finish_reason"] = "tool_calls"
                 _diag_msg["content"] = _rr_result["content"]
+        elif _diag_content.strip():
+            # See the matching branch in the fast/stream path above.
+            logger.info(
+                "tool-passthrough text-only ending, no retry triggered — model=%s content=%r",
+                tool_model, _diag_content[:500],
+            )
+            asyncio.create_task(record_and_classify_tool_ending(
+                chat_id, tool_model, _diag_content,
+                sum(1 for m in messages if m.get("role") == "tool"),
+            ))
 
     if not request.stream:
         return upstream

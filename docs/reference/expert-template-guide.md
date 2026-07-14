@@ -371,6 +371,57 @@ opt-in, never a global switch.
   — this is an additive layer, not a replacement for the existing
   passthrough.
 
+### Premature-Stop Detection & Retry (always on, not an opt-in flag)
+
+Unlike the three flags above, this safety net is unconditional — it applies
+to every tool-calling request regardless of CC profile / Expert Template
+settings, because it guards against a structural protocol violation rather
+than adding an optional enrichment.
+
+Under `tool_choice: "auto"` with `tools` present, a valid completion must
+either answer in text or call a tool. Some tool-calling models (confirmed
+live: qwen3.6:35b) occasionally do neither correctly: they write a plain-
+text *announcement* of intent ("Let me now…", "Ich fixe das jetzt…") instead
+of the actual tool call, embed the tool call as literal text markup instead
+of the API's structured `tool_calls` field, or — the least detectable case
+— return completely empty content with no tool call at all. All three are
+protocol-valid `finish_reason=stop` completions from the client's point of
+view, so the agentic session just goes silent with no visible error.
+
+**Detection patterns are admin-editable, not hardcoded.** They live in
+Postgres (`admin_premature_stop_patterns`) and can be viewed, added, edited,
+or disabled from the Admin UI at `/patterns` — including a "test against
+sample text" tool to verify a new pattern before saving — without a code
+change or container rebuild. Changes take effect within ~60 seconds
+(in-process cache, stale-while-revalidate). A completely empty response is
+always treated as a failure regardless of pattern configuration, since no
+pattern can match an empty string.
+
+**On detection, one retry is attempted** against a different configured
+`tool_agent` model where the template defines one, or the same model with an
+appended corrective instruction otherwise. The retry preserves the primary
+model's warm context window (queries Ollama's `/api/ps` first, never
+requests a smaller `num_ctx` than what's already loaded) and always targets
+Ollama's native `/api/chat` endpoint rather than the OpenAI-compatible one —
+this requires normalizing the accumulated tool-call history into Ollama's
+wire format first (`function.arguments` as a parsed object, not the OpenAI
+JSON-string form), since sending it unconverted is rejected immediately.
+
+If the retry also fails, the client receives the original (broken) response
+— there is currently no second-level fallback beyond one retry.
+
+**Endings that match no known pattern are still recorded, not just lost.**
+A text-only ending that isn't caught above is persisted to
+`admin_unclassified_tool_endings` and judged asynchronously by an
+admin-configurable, self-hosted classifier LLM (Admin UI at
+`/classifier-config` inside `/tool-endings`, default `gemma4:12b@N04-RGTX` —
+deliberately another local Ollama instance rather than an external API, so
+in-progress source code never leaves the sovereign infrastructure just to be
+triage-judged). Review the queue at `/tool-endings`; promoting a real finding
+turns it into a permanent `admin_premature_stop_patterns` row with one
+click, so the same phrasing is caught deterministically — without a second
+LLM call — the next time it occurs. See `docs/ARCHITECTURE.md` §12.
+
 ---
 
 ## Key Design Principles

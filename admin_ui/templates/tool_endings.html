@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+
+{% block title %}{{ t(request, 'page.tool_endings') }} – MoE Admin{% endblock %}
+
+{% block flash %}
+{% if flash %}
+<div class="alert alert-{{ flash_type }} flash-bar mb-0 text-center py-2">{{ flash }}</div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0"><i class="bi bi-search-heart me-2 text-warning"></i>{{ t(request, 'page.tool_endings') }}</h5>
+  <button class="btn btn-outline-light btn-sm" onclick="openClassifierModal()">
+    <i class="bi bi-cpu me-1"></i>{{ t(request, 'btn.classifier_settings') }}
+  </button>
+</div>
+
+<div class="alert alert-info py-2 small mb-3">
+  <i class="bi bi-info-circle-fill me-1"></i>
+  {{ t(request, 'tool_endings.info_desc') }}
+</div>
+
+<div class="card bg-dark text-white border-secondary">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-dark table-hover mb-0 align-middle">
+        <thead>
+          <tr class="text-secondary" style="font-size: 0.85rem;">
+            <th class="ps-3" style="width: 12%;">{{ t(request, 'table.time') }}</th>
+            <th style="width: 12%;">{{ t(request, 'table.model') }}</th>
+            <th style="width: 30%;">{{ t(request, 'table.content') }}</th>
+            <th style="width: 14%;">{{ t(request, 'tool_endings.classification') }}</th>
+            <th style="width: 20%;">{{ t(request, 'tool_endings.reasoning') }}</th>
+            <th style="width: 12%;" class="pe-3 text-end">{{ t(request, 'table.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if endings %}
+            {% for e in endings %}
+            <tr id="ending-row-{{ e.id }}">
+              <td class="ps-3 text-secondary small">{{ e.created_at[:19].replace('T', ' ') if e.created_at else '—' }}</td>
+              <td><code class="small">{{ e.model }}</code></td>
+              <td class="small" style="max-width: 360px; white-space: pre-wrap;">{{ e.content[:280] }}{% if e.content|length > 280 %}…{% endif %}</td>
+              <td>
+                {% if e.classification == 'premature_stop' %}
+                  <span class="badge bg-danger">{{ t(request, 'tool_endings.premature_stop') }}</span>
+                {% elif e.classification == 'legitimate' %}
+                  <span class="badge bg-success">{{ t(request, 'tool_endings.legitimate') }}</span>
+                {% else %}
+                  <span class="badge bg-secondary">{{ t(request, 'tool_endings.pending') }}</span>
+                {% endif %}
+                {% if e.promoted_to_pattern %}
+                  <div class="mt-1"><span class="badge bg-dark border border-success text-success"><i class="bi bi-check-circle me-1"></i>{{ t(request, 'tool_endings.promoted') }}</span></div>
+                {% endif %}
+              </td>
+              <td class="text-secondary small">{{ e.classifier_reasoning or '—' }}</td>
+              <td class="pe-3 text-end">
+                {% if not e.promoted_to_pattern %}
+                <button class="btn btn-outline-warning btn-xs" onclick='openPromoteModal({{ e | tojson }})' title="{{ t(request, 'btn.promote_to_pattern') }}">
+                  <i class="bi bi-signpost-split"></i>
+                </button>
+                {% endif %}
+                <button class="btn btn-outline-danger btn-xs" onclick="dismissEnding('{{ e.id }}')" title="{{ t(request, 'btn.dismiss') }}">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="6" class="text-center py-4 text-muted">
+                <i class="bi bi-folder-x display-6 mb-2 d-block"></i>
+                {{ t(request, 'tool_endings.empty') }}
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Promote-to-Pattern Modal -->
+<div class="modal fade" id="promoteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark text-white border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-signpost-split me-2 text-warning"></i>{{ t(request, 'btn.promote_to_pattern') }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="promoteForm" onsubmit="submitPromote(event)">
+          <input type="hidden" id="promoteEndingId" value="">
+          <div class="mb-3">
+            <label for="promoteSource" class="form-label small text-secondary">{{ t(request, 'tool_endings.source_text') }}</label>
+            <textarea class="form-control bg-secondary text-white border-secondary" id="promoteSource" rows="4" readonly></textarea>
+          </div>
+          <div class="mb-3">
+            <label for="promotePattern" class="form-label small text-secondary">{{ t(request, 'table.pattern') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="promotePattern" required
+                   placeholder="{{ t(request, 'patterns.pattern_placeholder') }}">
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label for="promoteType" class="form-label small text-secondary">{{ t(request, 'lbl.type') }}</label>
+              <select class="form-select bg-secondary text-white border-secondary" id="promoteType">
+                <option value="literal">literal</option>
+                <option value="regex">regex</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label for="promoteLanguage" class="form-label small text-secondary">{{ t(request, 'lbl.language') }}</label>
+              <input type="text" class="form-control bg-secondary text-white border-secondary" id="promoteLanguage" placeholder="de">
+            </div>
+          </div>
+          <div class="mb-3">
+            <label for="promoteDescription" class="form-label small text-secondary">{{ t(request, 'lbl.description_optional') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="promoteDescription">
+          </div>
+          <div class="modal-footer border-secondary px-0 pb-0">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+            <button type="submit" class="btn btn-primary btn-sm">{{ t(request, 'btn.save_short') }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Classifier Settings Modal -->
+<div class="modal fade" id="classifierModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content bg-dark text-white border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title"><i class="bi bi-cpu me-2 text-warning"></i>{{ t(request, 'btn.classifier_settings') }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-secondary py-2 small">{{ t(request, 'tool_endings.classifier_hint') }}</div>
+        <form id="classifierForm" onsubmit="submitClassifierConfig(event)">
+          <div class="mb-3">
+            <label for="classifierModel" class="form-label small text-secondary">{{ t(request, 'tool_endings.classifier_model') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="classifierModel"
+                   value="{{ classifier_config.model }}" required placeholder="gemma4:12b">
+          </div>
+          <div class="mb-3">
+            <label for="classifierUrl" class="form-label small text-secondary">{{ t(request, 'tool_endings.classifier_url') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="classifierUrl"
+                   value="{{ classifier_config.base_url }}" required placeholder="http://192.168.155.224:11435/v1">
+          </div>
+          <div class="mb-3">
+            <label for="classifierToken" class="form-label small text-secondary">{{ t(request, 'tool_endings.classifier_token') }}</label>
+            <input type="text" class="form-control bg-secondary text-white border-secondary" id="classifierToken"
+                   value="{{ classifier_config.token }}">
+          </div>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="classifierEnabled"
+                   {% if classifier_config.enabled %}checked{% endif %}>
+            <label class="form-check-label small text-secondary" for="classifierEnabled">{{ t(request, 'lbl.enabled') }}</label>
+          </div>
+          <div class="modal-footer border-secondary px-0 pb-0">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{{ t(request, 'btn.cancel') }}</button>
+            <button type="submit" class="btn btn-primary btn-sm">{{ t(request, 'btn.save_short') }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const _teT = {
+  error:         {{ t(request, 'js.error') | tojson }},
+  confirmDismiss: {{ t(request, 'dialog.confirm_ending_dismiss') | tojson }},
+};
+
+async function fn_api(url, method, data = null) {
+  const headers = { "Content-Type": "application/json", "X-CSRF-Token": "{{ csrf_token }}" };
+  const config = { method, headers };
+  if (data) config.body = JSON.stringify(data);
+  const r = await fetch(url, config);
+  if (!r.ok) {
+    const err = await r.json();
+    throw new Error(err.detail || "API request failed");
+  }
+  return await r.json();
+}
+
+let promoteModal, classifierModal;
+document.addEventListener("DOMContentLoaded", () => {
+  promoteModal = new bootstrap.Modal(document.getElementById("promoteModal"));
+  classifierModal = new bootstrap.Modal(document.getElementById("classifierModal"));
+});
+
+function openPromoteModal(e) {
+  document.getElementById("promoteEndingId").value = e.id;
+  document.getElementById("promoteSource").value = e.content;
+  document.getElementById("promotePattern").value = "";
+  document.getElementById("promoteType").value = "literal";
+  document.getElementById("promoteLanguage").value = "";
+  document.getElementById("promoteDescription").value = "";
+  promoteModal.show();
+}
+
+async function submitPromote(ev) {
+  ev.preventDefault();
+  const id = document.getElementById("promoteEndingId").value;
+  const body = {
+    pattern: document.getElementById("promotePattern").value,
+    pattern_type: document.getElementById("promoteType").value,
+    language: document.getElementById("promoteLanguage").value,
+    category: "announcement",
+    description: document.getElementById("promoteDescription").value,
+    enabled: true,
+  };
+  try {
+    await fn_api(`/api/tool-endings/${id}/promote`, "POST", body);
+    window.location.reload();
+  } catch (err) {
+    alert(`${_teT.error}: ${err.message}`);
+  }
+}
+
+async function dismissEnding(id) {
+  if (!confirm(_teT.confirmDismiss)) return;
+  try {
+    await fn_api(`/api/tool-endings/${id}`, "DELETE");
+    const row = document.getElementById(`ending-row-${id}`);
+    if (row) row.remove();
+  } catch (err) {
+    alert(`${_teT.error}: ${err.message}`);
+  }
+}
+
+function openClassifierModal() {
+  classifierModal.show();
+}
+
+async function submitClassifierConfig(ev) {
+  ev.preventDefault();
+  const body = {
+    model: document.getElementById("classifierModel").value,
+    base_url: document.getElementById("classifierUrl").value,
+    token: document.getElementById("classifierToken").value,
+    enabled: document.getElementById("classifierEnabled").checked,
+  };
+  try {
+    await fn_api("/api/classifier-config", "PUT", body);
+    window.location.reload();
+  } catch (err) {
+    alert(`${_teT.error}: ${err.message}`);
+  }
+}
+</script>
+{% endblock %}

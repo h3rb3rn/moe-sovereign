@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import json
 import re as _re
@@ -429,7 +430,33 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ─── PWA: manifest + service worker ──────────────────────────────────────────
 
-_PWA_CACHE_VERSION = "moe-admin-v3"
+def _compute_pwa_cache_version(prefix: str) -> str:
+    """Derives the service worker's Cache Storage version from the actual
+    content of every JS/CSS file under static/.
+
+    The service worker's fetch handler caches any /static/* request
+    cache-first (see sw.js below) with no other invalidation path — once a
+    file is in a browser's Cache Storage under a given version string, that
+    exact byte content is served forever, network never consulted again,
+    until the version string itself changes. A hand-maintained version
+    constant is easy to forget to bump (confirmed live: pipeline_diagram.js
+    was edited repeatedly across a session without ever touching
+    _PWA_CACHE_VERSION, so every returning browser kept serving a stale copy
+    indefinitely — only a full cache-storage-clearing hard reload worked
+    around it). Hashing file content instead of relying on mtimes is immune
+    to any build/COPY step that doesn't preserve original timestamps.
+    """
+    h = hashlib.sha256()
+    static_dir = Path("static")
+    for f in sorted(static_dir.rglob("*.js")) + sorted(static_dir.rglob("*.css")):
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            continue
+    return f"{prefix}-{h.hexdigest()[:12]}"
+
+
+_PWA_CACHE_VERSION = _compute_pwa_cache_version("moe-admin")
 # "/" was previously in this list. Cache.addAll()/Cache.put() throw a
 # TypeError for any *redirected* response — even one that ultimately
 # resolves to 200 — and "/" redirects to /login for unauthenticated
@@ -549,7 +576,7 @@ self.addEventListener('fetch', e => {{
 # "/" pattern — see fix/pwa-mobile-nav-overflow). Only genuinely static,
 # always-200 assets belong here; dynamic/auth-gated pages are already
 # covered by the fetch handler's network-first-with-cache-fallback path.
-_PWA_PORTAL_CACHE_VERSION = "moe-portal-v1"
+_PWA_PORTAL_CACHE_VERSION = _compute_pwa_cache_version("moe-portal")
 _PORTAL_STATIC_ASSETS_TO_CACHE = [
     "/static/css/bootstrap.min.css",
     "/static/css/bootstrap-icons.min.css",
@@ -691,6 +718,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Confirmed live: server-rendered pages (templates/*.html, bind-mounted
+        # and updated on every restart) had no Cache-Control at all, leaving
+        # staleness entirely up to browser heuristics — a redeployed template
+        # change (e.g. the live-monitoring flicker fix) could silently keep
+        # showing the old page to a returning browser with no way to tell.
+        # /static/* is deliberately excluded: those assets are already
+        # correctly long-cacheable via the service worker's content-hash
+        # versioned Cache Storage (see _compute_pwa_cache_version) — forcing
+        # no-cache here would defeat that and hurt load performance for no
+        # benefit, since that mechanism already invalidates on real changes.
+        if not path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
         if is_notebook:
             # JupyterLab needs WebSocket (ws:/wss:) and blob: workers for its kernel.
@@ -997,6 +1036,64 @@ def load_expert_templates() -> list:
         return _expert_templates_cache
     # Fallback: read from .env (before DB is initialized)
     return _load_expert_templates_from_env()
+
+
+def _get_template_expert_catalog(template_id: str) -> dict:
+    """Return {category: [model_name, ...]} for every model configured in a
+    template — the "menu" of experts available to a request, used by the
+    live pipeline diagram to show which experts a request COULD have used
+    alongside which ones the stage trace says it actually used.
+
+    Standalone re-implementation of services/routing.py's function of the
+    same name (NOT imported — services.routing imports config.py, which
+    isn't available in admin_ui's Docker build context, same reason
+    _latency_key is duplicated here rather than imported from
+    services.tracking). Falls back to the global EXPERT_MODELS config when
+    no template is assigned (the common case — confirmed live: most
+    requests have no expert_template_id at all) — read via read_env(), the
+    same .env-parsing helper used for every other config.py-sourced value
+    already exposed to admin_ui, NOT by importing config.py itself.
+    """
+    def _flatten(experts_cfg: dict) -> dict:
+        catalog: dict = {}
+        for cat, cat_cfg in (experts_cfg or {}).items():
+            models: list = []
+            if isinstance(cat_cfg, dict) and "models" in cat_cfg:
+                # Template format: {category: {"models": [{"model":...}, ...]}}
+                models = [m.get("model", "") for m in cat_cfg.get("models", []) if m.get("model")]
+            elif isinstance(cat_cfg, dict):
+                # Legacy template format: {category: {"model":..., "endpoint":...}}
+                if cat_cfg.get("model"):
+                    models = [cat_cfg["model"]]
+            elif isinstance(cat_cfg, list):
+                # Global EXPERT_MODELS format: {category: [{"model":...,"endpoints":[...]}, ...]}
+                models = [m.get("model", "") for m in cat_cfg if isinstance(m, dict) and m.get("model")]
+            if models:
+                catalog[cat] = models
+        return catalog
+
+    def _global_catalog() -> dict:
+        try:
+            return _flatten(json.loads(read_env().get("EXPERT_MODELS", "{}")))
+        except Exception:
+            return {}
+
+    if not template_id:
+        return _global_catalog()
+    tmpl = next((t for t in load_expert_templates() if t.get("id") == template_id), None)
+    if not tmpl:
+        # Confirmed live: moe-auto's dynamic per-user routing stamps a
+        # synthetic "user:<id>..." resolved_tmpl_id (services/pipeline/
+        # chat.py's dynamic_tmpl branch) that was never a persistent,
+        # admin-managed template — it never appears in
+        # load_expert_templates()'s DB-backed list, so this branch is the
+        # COMMON case whenever dynamic routing fired, not a rare "ghost
+        # template" edge case. Falling back to the global catalog here
+        # (instead of an empty dict) means the panel still shows something
+        # useful rather than going blank for every dynamically-routed
+        # request.
+        return _global_catalog()
+    return _flatten(tmpl.get("experts", {}))
 
 
 def _load_expert_templates_from_env() -> list:
@@ -2665,6 +2762,129 @@ async def api_test_premature_stop_pattern(request: Request):
     else:
         matches = pattern.lower() in lowered
     return {"matches": matches}
+
+
+# ─── Unclassified Tool-Ending Review + Classifier Config ─────────────────────
+# Companion to the Premature-Stop Pattern routes above: text-only
+# tool-passthrough endings that matched none of admin_premature_stop_patterns
+# are recorded (services/agent_enrichment.py::record_and_classify_tool_ending)
+# and judged asynchronously by an admin-assignable LLM (admin_classifier_config,
+# default gemma4:12b@N04-RGTX). This page is where an admin reviews the
+# classifier's verdicts and promotes a real finding into a permanent pattern
+# with one click — closing the loop that previously required a human watching
+# container logs live.
+
+@app.get("/tool-endings", response_class=HTMLResponse)
+async def tool_endings_page(request: Request, _=Depends(require_login)):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_unclassified_tool_endings "
+                "ORDER BY created_at DESC LIMIT 200"
+            )
+            endings = await cur.fetchall()
+            await cur.execute(
+                "SELECT model, base_url, token, enabled FROM admin_classifier_config WHERE id = 'default'"
+            )
+            classifier_config = await cur.fetchone()
+    return TEMPLATES.TemplateResponse(request, "tool_endings.html", {
+        "endings":           endings,
+        "classifier_config": classifier_config or {
+            "model": "gemma4:12b", "base_url": "http://192.168.155.224:11435/v1",
+            "token": "ollama", "enabled": True,
+        },
+        "csrf_token": get_csrf_token(request),
+        "flash":      request.query_params.get("flash"),
+        "flash_type": request.query_params.get("flash_type", "success"),
+    })
+
+
+@app.get("/api/tool-endings", dependencies=[Depends(require_login)])
+async def api_get_tool_endings():
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_unclassified_tool_endings "
+                "ORDER BY created_at DESC LIMIT 200"
+            )
+            return await cur.fetchall()
+
+
+@app.delete("/api/tool-endings/{ending_id}", dependencies=[Depends(require_login)])
+async def api_delete_tool_ending(ending_id: str):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM admin_unclassified_tool_endings WHERE id=%s", (ending_id,)
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Ending not found")
+    return {"ok": True}
+
+
+@app.post("/api/tool-endings/{ending_id}/promote", dependencies=[Depends(require_login)])
+async def api_promote_tool_ending(ending_id: str, request: Request):
+    """Turns a reviewed tool-ending into a permanent admin_premature_stop_patterns
+    row — same validation as api_create_premature_stop_pattern, plus marking
+    the source row so the review queue shows it's already been acted on."""
+    body = await request.json()
+    pattern, pattern_type, language, category, description, enabled = _validate_pattern_body(body)
+    new_id = f"pat-{secrets.token_hex(4)}"
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO admin_premature_stop_patterns "
+                "(id, pattern, pattern_type, language, category, description, enabled, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (new_id, pattern, pattern_type, language, category, description, enabled, now, now),
+            )
+            await cur.execute(
+                "UPDATE admin_unclassified_tool_endings SET promoted_to_pattern = TRUE WHERE id=%s",
+                (ending_id,),
+            )
+    return {"ok": True, "id": new_id}
+
+
+@app.get("/api/classifier-config", dependencies=[Depends(require_login)])
+async def api_get_classifier_config():
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT model, base_url, token, enabled FROM admin_classifier_config WHERE id = 'default'"
+            )
+            row = await cur.fetchone()
+    return row or {
+        "model": "gemma4:12b", "base_url": "http://192.168.155.224:11435/v1",
+        "token": "ollama", "enabled": True,
+    }
+
+
+@app.put("/api/classifier-config", dependencies=[Depends(require_login)])
+async def api_update_classifier_config(request: Request):
+    """Admin-editable — lets the classifier model/endpoint be swapped (a
+    different Ollama instance, a different size) without a code change or
+    container rebuild. Picked up within 60s by the orchestrator's
+    services/agent_enrichment.py::_read_classifier_config cache."""
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    base_url = (body.get("base_url") or "").strip()
+    if not model or not base_url:
+        raise HTTPException(status_code=400, detail="model and base_url are required")
+    token = (body.get("token") or "").strip()
+    enabled = bool(body.get("enabled", True))
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO admin_classifier_config (id, model, base_url, token, enabled, updated_at) "
+                "VALUES ('default', %s, %s, %s, %s, %s) "
+                "ON CONFLICT (id) DO UPDATE SET "
+                "model=EXCLUDED.model, base_url=EXCLUDED.base_url, token=EXCLUDED.token, "
+                "enabled=EXCLUDED.enabled, updated_at=EXCLUDED.updated_at",
+                (model, base_url, token, enabled, now),
+            )
+    return {"ok": True}
 
 
 async def _fetch_available_llms() -> list[str]:
@@ -5810,7 +6030,13 @@ async def user_api_live_request_trace(chat_id: str, user_id: str = Depends(requi
         # its presence/absence is also the authoritative "still running"
         # signal (see api_live_request_trace's docstring for why this
         # matters instead of a stage-count-stability guess).
-        return {"chat_id": chat_id, "stage_trace": stage_trace, "active": bool(active_raw)}
+        resolved_tmpl_id, resolved_tmpl_name = await _get_resolved_template_meta(chat_id, r)
+        return {
+            "chat_id": chat_id, "stage_trace": stage_trace, "active": bool(active_raw),
+            "resolved_tmpl_id": resolved_tmpl_id, "resolved_tmpl_name": resolved_tmpl_name,
+            "available_experts": _get_template_expert_catalog(resolved_tmpl_id),
+            "available_mcp_tools": await _get_available_mcp_tools(),
+        }
     except Exception as exc:
         logger.warning("User live request-trace Valkey error: %s", exc)
         return {"chat_id": chat_id, "stage_trace": [], "active": True}
@@ -7562,6 +7788,53 @@ async def api_live_active_requests():
     return snapshot
 
 
+async def _get_resolved_template_meta(chat_id: str, r) -> tuple[str, str]:
+    """Returns (resolved_tmpl_id, resolved_tmpl_name) for a chat_id.
+
+    Checks the live moe:active:{chat_id} key first (set at request-registration
+    time, see services/tracking.py::_register_active_request). Falls back to
+    scanning a bounded recent window of the moe:admin:completed history (the
+    full meta dict, including resolved_tmpl_id/name, is copied there on
+    deregistration — see services/tracking.py::_deregister_active_request) for
+    requests that have already finished. No dedicated by-chat_id index exists
+    on the history sorted set, so this is a linear scan capped at 500 entries
+    — acceptable here since the diagram panel is only ever opened for a
+    request visible in the (recent) history table to begin with.
+    """
+    try:
+        raw = await r.get(f"moe:active:{chat_id}")
+        if raw:
+            meta = json.loads(raw)
+            return meta.get("resolved_tmpl_id", ""), meta.get("resolved_tmpl_name", "")
+    except Exception:
+        pass
+    try:
+        for raw in await r.zrevrange("moe:admin:completed", 0, 499):
+            try:
+                meta = json.loads(raw)
+            except Exception:
+                continue
+            if meta.get("chat_id") == chat_id:
+                return meta.get("resolved_tmpl_id", ""), meta.get("resolved_tmpl_name", "")
+    except Exception:
+        pass
+    return "", ""
+
+
+async def _get_available_mcp_tools() -> list[str]:
+    """Global MCP tool names (not template-scoped — see admin_premature_stop_patterns-
+    style CRUD precedent for why this stays a simple passthrough rather than a
+    cached table: mcp-precision is the single source of truth and the diagram
+    panel only calls this once per open, not per poll)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{MCP_URL}/tools")
+            r.raise_for_status()
+            return [t.get("name", "") for t in r.json().get("tools", []) if t.get("name")]
+    except Exception:
+        return []
+
+
 @app.get("/api/live/request-trace/{chat_id}", dependencies=[Depends(require_login)])
 async def api_live_request_trace(chat_id: str):
     """On-demand stage trace for the live-pipeline-visualization diagram.
@@ -7576,9 +7849,15 @@ async def api_live_request_trace(chat_id: str):
     false-positived on any single step that legitimately takes longer than
     that window (e.g. a slow expert LLM call), showing "beendet" for a
     request that was still very much active.
+
+    resolved_tmpl_id/name + available_experts/available_mcp_tools let the
+    panel show which experts/tools a request COULD have used (the template's
+    full catalog), not just which stage-trace entries actually fired.
     """
     stage_trace: list[dict] = []
     active = True
+    resolved_tmpl_id = ""
+    resolved_tmpl_name = ""
     try:
         r = await db._get_redis()
         raw_entries = await r.lrange(f"moe:active:{chat_id}:trace", 0, -1)
@@ -7588,9 +7867,15 @@ async def api_live_request_trace(chat_id: str):
             except Exception:
                 pass
         active = bool(await r.exists(f"moe:active:{chat_id}"))
+        resolved_tmpl_id, resolved_tmpl_name = await _get_resolved_template_meta(chat_id, r)
     except Exception as exc:
         logger.warning("Live request-trace Valkey error: %s", exc)
-    return {"chat_id": chat_id, "stage_trace": stage_trace, "active": active}
+    return {
+        "chat_id": chat_id, "stage_trace": stage_trace, "active": active,
+        "resolved_tmpl_id": resolved_tmpl_id, "resolved_tmpl_name": resolved_tmpl_name,
+        "available_experts": _get_template_expert_catalog(resolved_tmpl_id),
+        "available_mcp_tools": await _get_available_mcp_tools(),
+    }
 
 
 @app.get("/api/live/file-touches/{chat_id}", dependencies=[Depends(require_login)])

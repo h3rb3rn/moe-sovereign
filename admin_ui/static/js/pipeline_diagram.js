@@ -190,6 +190,9 @@
               <select id="pd-palette" class="form-select form-select-sm ms-2" style="width:auto" title="Farbschema">
                 ${options}
               </select>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-experts-toggle" title="Experten &amp; MCP-Tools des Templates (verfügbar vs. benutzt)">
+                <i class="bi bi-people"></i>
+              </button>
               <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="pd-files-toggle" title="Berührte Dateien dieser Anfrage (Agent Tool Path)">
                 <i class="bi bi-folder2-open"></i>
               </button>
@@ -203,7 +206,16 @@
             </div>
           </div>
           <div class="modal-body p-0">
-            <div id="pd-cy" style="width:100%;height:600px;"></div>
+            <div id="pd-cy-row" style="display:flex;width:100%">
+              <div id="pd-cy" style="flex:1 1 auto;min-width:0;height:600px;"></div>
+              <div id="pd-experts" class="d-none border-start" style="width:300px;flex-shrink:0;height:600px;display:flex;flex-direction:column;background:#0d1117">
+                <div class="d-flex justify-content-between align-items-center px-2 py-1 border-bottom border-secondary"
+                     style="font-size:.68rem;background:#161b22;flex-shrink:0">
+                  <span class="text-light"><i class="bi bi-people me-1"></i>Experten &amp; MCP-Tools (Template)</span>
+                </div>
+                <div id="pd-experts-content" class="text-light m-0 p-2" style="overflow-y:auto;flex:1 1 auto;font-size:.72rem;line-height:1.5"></div>
+              </div>
+            </div>
             <div id="pd-replay-bar" class="d-none border-top d-flex align-items-center px-2 py-1"
                  style="font-size:.72rem;background:#161b22;color:#c9d1d9;gap:.5rem;flex-wrap:wrap">
               <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" id="pd-replay-playpause" title="Play/Pause (Leertaste)">
@@ -260,6 +272,7 @@
     panelEl.querySelector('#pd-maximize').addEventListener('click', () => windowCtl.toggleMaximize());
     panelEl.querySelector('#pd-logs-toggle').addEventListener('click', toggleLogs);
     panelEl.querySelector('#pd-files-toggle').addEventListener('click', toggleFiles);
+    panelEl.querySelector('#pd-experts-toggle').addEventListener('click', toggleExperts);
     panelEl.querySelector('#pd-replay-playpause').addEventListener('click', () => {
       replayPlaying ? pauseReplay() : playReplay();
     });
@@ -385,6 +398,96 @@
       clearInterval(filesPollTimer);
       filesPollTimer = null;
     }
+  }
+
+  // ── Experts & MCP Tools panel ───────────────────────────────────────────
+  // Unlike files/logs, this needs no dedicated fetch/poll loop: the trace
+  // endpoint (already polled every ~1.5s for the diagram itself) was
+  // extended to also return resolved_tmpl_name/available_experts/
+  // available_mcp_tools alongside stage_trace — pollOnce() caches those
+  // into the module-level variables below, and applyTrace() (which already
+  // runs on every poll) re-renders this panel's content for free. Toggling
+  // only shows/hides the already-current content.
+  let expertsOpen = false;
+  let resolvedTmplName = '';
+  let availableExperts = {};   // {category: [model, ...]}
+  let availableMcpTools = [];  // [tool_name, ...]
+
+  function toggleExperts() {
+    const box = document.getElementById('pd-experts');
+    expertsOpen = !expertsOpen;
+    box.classList.toggle('d-none', !expertsOpen);
+  }
+
+  function _parseExpertDetail(detail) {
+    // services/tracking.py::_record_stage writes "model/category" for
+    // started/done expert entries, but a bare "model" (no category) for
+    // error entries — see graph/expert.py's two _record_stage("expert",
+    // "error", model_name) call sites. Model names use ':' for tags
+    // (e.g. "qwen3.6:35b"), never '/', so splitting on the last '/' is safe.
+    const idx = (detail || '').lastIndexOf('/');
+    if (idx === -1) return { model: detail || '', category: '' };
+    return { model: detail.slice(0, idx), category: detail.slice(idx + 1) };
+  }
+
+  function _usedExpertsFromByStage(byStage) {
+    const used = new Set(); // "category::model"
+    (byStage['expert'] || []).forEach(e => {
+      const { model, category } = _parseExpertDetail(e.detail);
+      if (model) used.add(`${category}::${model}`);
+    });
+    return used;
+  }
+
+  function _usedMcpToolsFromByStage(byStage) {
+    const used = new Set();
+    (byStage['mcp'] || []).forEach(e => {
+      (e.detail || '').split(',').map(s => s.trim()).filter(Boolean).forEach(t => used.add(t));
+    });
+    return used;
+  }
+
+  function renderExpertsPanel(byStage) {
+    const content = document.getElementById('pd-experts-content');
+    if (!content) return;
+    const usedExperts = _usedExpertsFromByStage(byStage);   // Set of "category::model"
+    const usedMcp = _usedMcpToolsFromByStage(byStage);      // Set of tool name
+
+    // Only actually-used entries are shown — the full catalog (13+ expert
+    // categories, 50+ MCP tools) made this panel a scroll-fest with almost
+    // everything greyed out and irrelevant to a single request. Confirmed
+    // by the user live: "die Liste der MCP-Tools ist zu lang... nur die
+    // Tools und Experten einblenden die verwendet werden". availableExperts
+    // is still fetched/cached (used below only to resolve a used model's
+    // category label — the trace's "category::model" key is already
+    // self-describing, so this is now a light nicety, not load-bearing).
+    let html = '';
+    if (resolvedTmplName) {
+      html += `<div style="opacity:.7;margin-bottom:.4rem">Template: <strong>${_escapeHtml(resolvedTmplName)}</strong></div>`;
+    }
+    const _row = (label, sub) => `
+      <div style="display:flex;gap:.4rem;align-items:baseline;padding:1px 0">
+        <span>✅</span>
+        <span style="color:#4ade80">${_escapeHtml(label)}</span>
+        ${sub ? `<span style="opacity:.6;font-size:.68rem">(${_escapeHtml(sub)})</span>` : ''}
+      </div>`;
+
+    if (usedExperts.size) {
+      html += '<div style="margin-bottom:.5rem"><div style="opacity:.6;font-size:.65rem;text-transform:uppercase;margin-bottom:.2rem">Experten</div>';
+      Array.from(usedExperts).sort().forEach(key => {
+        const [cat, model] = key.split('::');
+        html += _row(model, cat);
+      });
+      html += '</div>';
+    }
+    if (usedMcp.size) {
+      html += '<div><div style="opacity:.6;font-size:.65rem;text-transform:uppercase;margin-bottom:.2rem">MCP Tools</div>';
+      Array.from(usedMcp).sort().forEach(tool => {
+        html += _row(tool, '');
+      });
+      html += '</div>';
+    }
+    content.innerHTML = html || '<span style="opacity:.6">(noch keine Experten/Tools in diesem Lauf benutzt)</span>';
   }
 
   // Turns the modal dialog into a free-floating, draggable, resizable,
@@ -731,6 +834,8 @@
       }
     });
 
+    renderExpertsPanel(byStage);
+
     const statusEl = document.getElementById('pd-status');
     if (statusEl) {
       const terminal = latestStage && ['critic', 'agent_writeback', 'merger'].includes(latestStage)
@@ -746,6 +851,9 @@
       const r = await fetch(`${traceUrlBase}${encodeURIComponent(chatId)}`);
       const data = await r.json();
       lastTrace = sortByTs(data.stage_trace || []);
+      if (data.resolved_tmpl_name !== undefined) resolvedTmplName = data.resolved_tmpl_name || '';
+      if (data.available_experts) availableExperts = data.available_experts;
+      if (data.available_mcp_tools) availableMcpTools = data.available_mcp_tools;
       applyTrace(data.stage_trace || []);
       lastTraceOkTs = Date.now();
       // "active" is the authoritative still-running signal from the
@@ -844,6 +952,12 @@
     document.getElementById('pd-files').classList.add('d-none');
     document.getElementById('pd-files-content').textContent = '';
     if (filesPollTimer) { clearInterval(filesPollTimer); filesPollTimer = null; }
+    expertsOpen = false;
+    document.getElementById('pd-experts').classList.add('d-none');
+    document.getElementById('pd-experts-content').innerHTML = '';
+    resolvedTmplName = '';
+    availableExperts = {};
+    availableMcpTools = [];
 
     // Reset replay state for the newly-selected request.
     pauseReplay();
@@ -902,6 +1016,7 @@
     document.removeEventListener('keydown', handleReplayKeydown);
     logsOpen = false;
     filesOpen = false;
+    expertsOpen = false;
     if (cy) { cy.destroy(); cy = null; }
   };
 })();

@@ -132,6 +132,50 @@ def _resolve_user_experts(
         return None
 
 
+def _get_template_expert_catalog(template_id: str) -> dict:
+    """Return {category: [model_name, ...]} for every model configured in a
+    template — the "menu" of experts available to a request, independent of
+    any user/API-key permission context (unlike _resolve_user_experts, which
+    always needs a permissions_json to resolve against). Used by the live
+    pipeline diagram (admin_ui) to show which experts a request COULD have
+    used, alongside which ones the stage trace says it actually used.
+
+    Falls back to the global EXPERT_MODELS config when template_id is empty
+    or not found — matching the same fallback graph/expert.py itself uses
+    at runtime (state_.get("user_experts") or EXPERTS).
+    """
+    from config import EXPERTS as _GLOBAL_EXPERTS
+
+    def _flatten(experts_cfg: dict) -> dict:
+        catalog: dict = {}
+        for cat, cat_cfg in (experts_cfg or {}).items():
+            models: list = []
+            if isinstance(cat_cfg, dict) and "models" in cat_cfg:
+                models = [m.get("model", "") for m in cat_cfg.get("models", []) if m.get("model")]
+            elif isinstance(cat_cfg, dict):
+                # Legacy format: {model, endpoint}
+                if cat_cfg.get("model"):
+                    models = [cat_cfg["model"]]
+            elif isinstance(cat_cfg, list):
+                # Already-resolved EXPERTS-style list (global config / _resolve_user_experts output)
+                models = [m.get("model", "") for m in cat_cfg if isinstance(m, dict) and m.get("model")]
+            if models:
+                catalog[cat] = models
+        return catalog
+
+    if not template_id:
+        return _flatten(_GLOBAL_EXPERTS)
+    try:
+        templates = _read_expert_templates()
+        tmpl = next((t for t in templates if t.get("id") == template_id), None)
+        if not tmpl:
+            return _flatten(_GLOBAL_EXPERTS)
+        return _flatten(tmpl.get("experts", {}))
+    except Exception:
+        logger.exception("_get_template_expert_catalog failed for template_id=%s", template_id)
+        return _flatten(_GLOBAL_EXPERTS)
+
+
 def _resolve_template_prompts(
     permissions_json: str,
     override_tmpl_id: Optional[str] = None,

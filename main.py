@@ -1357,8 +1357,21 @@ async def _stream_native_llm(
                 _native_opts["presence_penalty"] = request.presence_penalty
             _native_msgs = []
             for _nm_m in request.messages:
+                # Confirmed live: some clients (OpenCode's "Plan" mode) send
+                # OpenAI multi-part content (a list of {type, text} blocks)
+                # instead of a plain string — valid per the OpenAI spec, but
+                # Ollama's native /api/chat Go struct requires content to be
+                # a string and rejects the request outright with "json:
+                # cannot unmarshal array into Go struct field
+                # ChatRequest.messages.content of type string" (HTTP 400,
+                # every single request, immediately). _oai_content_to_str
+                # already does exactly this str-or-list flattening (see
+                # services/pipeline/chat.py's _build_tool_messages / the
+                # equivalent fix in services/pipeline/anthropic.py's
+                # _normalize_for_ollama) — was imported here but never
+                # applied at these three call sites.
                 if _nm_m.role == "tool":
-                    _nm_d = {"role": "tool", "content": _nm_m.content if _nm_m.content is not None else ""}
+                    _nm_d = {"role": "tool", "content": _oai_content_to_str(_nm_m.content)}
                     if _nm_m.tool_call_id:
                         _nm_d["tool_call_id"] = _nm_m.tool_call_id
                 elif _nm_m.role == "assistant" and _nm_m.tool_calls:
@@ -1377,13 +1390,11 @@ async def _stream_native_llm(
                         return {**tc, "function": {**fn, "arguments": args}}
                     _nm_d = {
                         "role": "assistant",
-                        "content": "",
+                        "content": _oai_content_to_str(_nm_m.content),
                         "tool_calls": [_norm_tc(tc) for tc in (_nm_m.tool_calls or [])],
                     }
-                    if _nm_m.content:
-                        _nm_d["content"] = _nm_m.content if isinstance(_nm_m.content, str) else str(_nm_m.content)
                 else:
-                    _nm_d = {"role": _nm_m.role, "content": _nm_m.content if _nm_m.content is not None else ""}
+                    _nm_d = {"role": _nm_m.role, "content": _oai_content_to_str(_nm_m.content)}
                 _native_msgs.append(_nm_d)
             # When tools are present, prepend a system directive that nudges qwen3
             # to call tools immediately instead of announcing plans in plain text.
