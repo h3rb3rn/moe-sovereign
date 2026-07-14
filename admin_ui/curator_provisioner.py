@@ -118,6 +118,63 @@ def build_curator_template(
     return tmpl
 
 
+def _build_genesis_curator_template(model: str, node: str) -> dict:
+    """Build a curator template from scratch, no parent to clone from.
+
+    _pick_parent_template requires an EXISTING moe-ontology-curator-* row to
+    copy prompts/experts from — on a deployment where none has ever been
+    created (confirmed live: a fresh install with only Eurisko-bred Dynamic
+    Templates in admin_expert_templates, zero manually-created ones), that
+    lookup always returns None and provisioning a server failed permanently
+    with "no parent curator template found" — a bootstrap deadlock, since
+    the clone-based path can never produce the first curator template on its
+    own. This mirrors build_curator_template's own stated invariant ("All 6
+    components use {new_model}") instead of inventing a new shape: every
+    field not set here (planner_prompt, judge_prompt, the boolean/int
+    knobs) is optional and cascades to config.py's global defaults — a
+    template is fully functional the moment id/name exist.
+    """
+    lower = node.lower()
+    model_at_node = f"{model}@{node}"
+    return {
+        "id":                 f"tmpl-curator-{lower}",
+        "name":               f"moe-ontology-curator-{lower}",
+        "description": (
+            f"Ontology gap curator pinned to {node}. All 6 components use "
+            f"{model}. Auto-generated genesis template — no prior curator "
+            f"template existed to clone from (provisioner)."
+        ),
+        "planner_prompt":     "",
+        "judge_prompt":       "",
+        "planner_model":      model_at_node,
+        "judge_model":        model_at_node,
+        "tool_expert_model":  model_at_node,
+        "planner_num_ctx":    0,
+        "judge_num_ctx":      0,
+        "tool_expert_num_ctx": 0,
+        "experts": {
+            "general": {
+                "system_prompt": "",
+                "models": [{"model": model, "endpoint": node, "role": "always"}],
+            },
+        },
+        "enable_cache":            True,
+        "enable_graphrag":         True,
+        "enable_habe":             False,
+        "enable_web_research":     False,
+        "force_think":             False,
+        "enable_mission_context":  False,
+        "enable_semantic_memory":  False,
+        "graphrag_max_chars":      0,
+        "history_max_turns":       0,
+        "history_max_chars":       0,
+        "agent_cache":             False,
+        "agent_graphrag":          False,
+        "agent_ingest":            False,
+        "is_active":               True,
+    }
+
+
 def _infer_parent_node(parent: dict) -> str:
     """Read the node suffix from the parent's planner_model (e.g. mistral:7b@N06-M10)."""
     pm = parent.get("planner_model", "")
@@ -257,11 +314,10 @@ async def provision_curator_for_server(
         all_templates = await database.list_admin_templates()
         parent = _pick_parent_template(all_templates, server)
         if parent is None:
-            await progress("failed", "no parent curator template found")
-            result["message"] = "no parent curator template"
-            return result
-
-        tmpl = build_curator_template(parent, new_node=name, new_model=model)
+            await progress("pending", "no parent curator template — building genesis template")
+            tmpl = _build_genesis_curator_template(model, node=name)
+        else:
+            tmpl = build_curator_template(parent, new_node=name, new_model=model)
 
         # Optional per-server planner/judge override (e.g. use a stronger
         # reasoning model for routing while keeping experts on a cheaper one).

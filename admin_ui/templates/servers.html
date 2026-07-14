@@ -75,6 +75,17 @@
           </label>
           <span id="srv-onto-status-{{ loop.index0 }}" class="ms-2 small text-muted"></span>
         </div>
+        <div class="input-group input-group-sm mb-2">
+          <input type="text" class="form-control" id="srv-onto-model-{{ loop.index0 }}"
+                 data-server="{{ srv.name }}"
+                 value="{{ srv.get('curator_model', '') }}"
+                 placeholder="{{ t(request, 'msg.ontology_model_auto') }}">
+          <button class="btn btn-outline-secondary" type="button"
+                  onclick="applyOntologyModel({{ loop.index0 }})"
+                  title="{{ t(request, 'btn.ontology_model_apply') }}">
+            <i class="bi bi-check-lg"></i>
+          </button>
+        </div>
         <div class="form-check form-switch mb-1">
           <input class="form-check-input" type="checkbox" role="switch" checked
                  id="srv-floating-{{ loop.index0 }}"
@@ -223,11 +234,13 @@ async function toggleOntology(input) {
   const idx  = input.dataset.idx;
   const statusEl = document.getElementById(`srv-onto-status-${idx}`);
   statusEl.textContent = input.checked ? 'queued…' : '';
+  const modelInput = document.getElementById(`srv-onto-model-${idx}`);
+  const curatorModel = modelInput ? modelInput.value.trim() : '';
   try {
     const r = await fetch(`/api/servers/${encodeURIComponent(name)}/ontology-toggle`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({enabled: input.checked}),
+      body: JSON.stringify({enabled: input.checked, curator_model: curatorModel}),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   } catch (e) {
@@ -266,6 +279,36 @@ async function pollOntologyStatus(name, idx, input) {
     statusEl.textContent = 'poll error';
     statusEl.className = 'ms-2 small text-danger';
   }
+}
+
+// Re-provisions the curator template with a different model — works both to
+// change an already-active curator (re-upserts the same moe-ontology-curator-*
+// template with the new model swapped in) and to enable ontology gap-healing
+// for the first time with an explicit model instead of the VRAM-tier auto-pick.
+async function applyOntologyModel(idx) {
+  const modelInput = document.getElementById(`srv-onto-model-${idx}`);
+  const toggleInput = document.getElementById(`srv-onto-${idx}`);
+  const statusEl = document.getElementById(`srv-onto-status-${idx}`);
+  const name = modelInput.dataset.server;
+  const curatorModel = modelInput.value.trim();
+  statusEl.textContent = 'queued…';
+  statusEl.className = 'ms-2 small text-muted';
+  try {
+    const r = await fetch(`/api/servers/${encodeURIComponent(name)}/ontology-toggle`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({enabled: true, curator_model: curatorModel}),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    statusEl.textContent = _tservers.error + ': ' + e.message;
+    statusEl.className = 'ms-2 small text-danger';
+    return;
+  }
+  toggleInput.checked = true;
+  clearInterval(_ontoPolls[idx]);
+  _ontoPolls[idx] = setInterval(() => pollOntologyStatus(name, idx, toggleInput), 2000);
+  pollOntologyStatus(name, idx, toggleInput);
 }
 
 async function toggleActive(input) {

@@ -94,7 +94,9 @@ async def _ollama_generate(url: str, token: str, model: str, prompt: str,
         "model": model, "stream": False, "think": False,
         "messages": [{"role": "user", "content": prompt}],
         "options": {"num_ctx": num_ctx, "num_predict": 4096},
-        "keep_alive": "4h",
+        # No explicit keep_alive — respects each Ollama instance's own
+        # server-configured OLLAMA_KEEP_ALIVE default instead of silently
+        # overriding it.
     }
     async with httpx.AsyncClient(timeout=timeout) as cl:
         r = await cl.post(f"{base}/api/chat", json=payload,

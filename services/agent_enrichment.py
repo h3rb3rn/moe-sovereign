@@ -528,14 +528,12 @@ async def _classify_tool_ending(text: str) -> Optional[dict]:
         # No explicit keep_alive here on purpose — the operator has already
         # configured OLLAMA_KEEP_ALIVE=24h server-side on the target Ollama
         # instance for exactly this reason (keep a loaded model warm), and a
-        # per-request override here would silently defeat that. Only
-        # override keep_alive at a call site when there's a concrete reason
-        # (see _retry_tool_agent_fallback's keep_alive="4h", which exists
-        # because that path's omission was an actual bug, not a deliberate
-        # choice). A cold first call after 24h of inactivity can still spend
-        # well over 60s on the VRAM load before generating anything, which
-        # is why the timeout below is generous — this call is fire-and-forget
-        # background work and never blocks a user request.
+        # per-request override here would silently defeat that. This is now
+        # the convention across every Ollama call site in this codebase, not
+        # just this one. A cold first call after 24h of inactivity can still
+        # spend well over 60s on the VRAM load before generating anything,
+        # which is why the timeout below is generous — this call is
+        # fire-and-forget background work and never blocks a user request.
         async with httpx.AsyncClient(timeout=180) as hc:
             r = await hc.post(
                 f"{base}/api/chat", json=payload,

@@ -464,7 +464,9 @@ async def expert_worker(state_: AgentState):
                         "messages":   _native_msgs,
                         "stream":     False,
                         "options":    _native_opts,
-                        "keep_alive": "4h",
+                        # No explicit keep_alive — respects each Ollama
+                        # instance's own server-configured OLLAMA_KEEP_ALIVE
+                        # default instead of silently overriding it.
                     }
                     if state_.get("enable_habe"):
                         from services.inference import _inject_habe_prefix_embeddings

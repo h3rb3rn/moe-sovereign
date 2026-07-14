@@ -1346,7 +1346,9 @@ async def _anthropic_tool_handler(
             "model":      effective_model,
             "messages":   _ollama_messages,
             "stream":     _do_ollama_stream,
-            "keep_alive": "4h",
+            # No explicit keep_alive — respects each Ollama instance's own
+            # server-configured OLLAMA_KEEP_ALIVE default instead of
+            # silently overriding it.
             "options":    {"num_ctx": max(_ollama_num_ctx, 32768), "num_predict": max_tokens},
         }
         # NATIVE OLLAMA TOOL CALLING: pass tools directly to Ollama's /api/chat instead

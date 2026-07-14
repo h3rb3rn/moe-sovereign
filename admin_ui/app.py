@@ -7450,7 +7450,14 @@ async def api_available_llms_rich(user_id: str = Depends(require_user_login)):
     Format: [{id: "model@host", tags: [], context_window: N}]
     Falls back to plain strings for models without cache metadata.
     """
-    plain = await _get_user_llm_options(user_id)
+    # Reuses user_api_permitted_models's logic directly (same "llm@host" /
+    # "template:<id>" shape this function's enrichment loop below already
+    # expects) — a call to the never-defined `_get_user_llm_options` sat
+    # here before, crashing every call with NameError and silently breaking
+    # every LLM dropdown in the Expert Template editor (planner/judge/
+    # tool_expert/per-category pickers all source their options from this
+    # endpoint via fetchAvailableLlms() in expert_templates.html).
+    plain = await user_api_permitted_models(user_id=user_id)
     meta_map: dict = {}
     try:
         for row in await db.list_all_model_metadata():

@@ -1490,7 +1490,9 @@ async def _stream_native_llm(
                 "messages":   _native_msgs,
                 "stream":     True,
                 "think":      _think,
-                "keep_alive": "4h",
+                # No explicit keep_alive — respects each Ollama instance's
+                # own server-configured OLLAMA_KEEP_ALIVE default instead of
+                # silently overriding it.
             }
             if _native_opts:
                 payload["options"] = _native_opts
