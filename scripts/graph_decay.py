@@ -4,7 +4,7 @@ scripts/graph_decay.py — Prune knowledge-graph chunks that never help.
 
 Deletes chunk nodes that were retrieved >= MIN_RETRIEVALS times with zero
 hits, or not hit at all for DECAY_DAYS days. Run daily via host crontab:
-    17 3 * * * cd /opt/deployment/moe-sovereign/moe-infra && python3 scripts/graph_decay.py >> /var/log/moe-graph-decay.log 2>&1
+    17 3 * * * cd /opt/moe-infra && python3 scripts/graph_decay.py >> /var/log/moe-graph-decay.log 2>&1
 
 DRY_RUN=1 (default!) only reports; set DRY_RUN=0 to actually delete.
 """

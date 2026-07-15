@@ -442,8 +442,8 @@ Local preview: `pip install mkdocs-material && mkdocs serve`
 
 | Document | Format | Pages |
 |---|---|---|
-| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | PDF | ~60 |
-| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | PDF | ~63 |
+| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | PDF | ~108 |
+| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | PDF | ~118 |
 | [arXiv Paper (IEEE format)](https://moe-sovereign.org/arxiv-paper.pdf) | PDF | ~12 |
 
 ---

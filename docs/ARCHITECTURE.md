@@ -404,6 +404,31 @@ flowchart LR
 | `data_analyst` | Data, CSV, table, visualization, pandas | T1 |
 | `science` | Chemistry, biology, physics, environment, research | T1 |
 
+### Template Resolution & Authorization
+
+`request.model` is matched against Expert Templates by exact name before
+anything else happens (`chat_completions`, `services/pipeline/chat.py`) —
+this is how a client selects a specific planner/judge/experts configuration
+instead of the global defaults, for both the LangGraph Pipeline and the
+Augmented Tool Path. Two independent template stores exist: **admin
+templates** (`admin_expert_templates`, shared, requires an explicit
+`expert_template` permission grant per API key) and **user-owned templates**
+(Valkey-cached per key, private by construction — owning one *is* the
+authorization).
+
+A name match against the admin store is only treated as authoritative when
+it's actually granted to the calling key. If it isn't — including the
+common case where the admin template simply isn't the one this key was ever
+meant to use — resolution falls through to the key's own owned templates
+before failing. This matters specifically when an admin template happens to
+share its exact name with a user's private one: without this fallback, the
+unauthorized admin match wins by virtue of being checked first, and the
+user's own (perfectly valid, perfectly reachable under any other name)
+template becomes permanently unusable under that name — confirmed live, see
+`docs/changelog.md`. A same-named admin template a key isn't authorized for
+is, from that key's point of view, indistinguishable from one that doesn't
+exist; ownership of an equally-named private template is what should win.
+
 ---
 
 ## AgentState
@@ -1076,6 +1101,58 @@ watching logs at the moment it happens.
 
 ---
 
+### 13 — Ontology Gap-Healer: Curator Template Bootstrap
+
+**Basis:** Fixes a bootstrap deadlock in the clone-based provisioning flow —
+not a formal-logic import.  
+**Location:** `admin_ui/curator_provisioner.py`
+(`_build_genesis_curator_template`, `provision_curator_for_server`), Admin
+UI at `/servers` (per-server curator-model override) and `/maintenance`
+(Dedicated Healer)
+
+The Ontology Gap-Healer (`services/healer.py`, `scripts/gap_healer_templates.py`)
+resolves unknown terms encountered by GraphRAG into typed knowledge-graph
+entities, either as a pool of per-node **curator templates**
+(`moe-ontology-curator-{node}`, one GPU node each, round-robined so each
+node keeps a warm model cache) or pinned to a single template/model via the
+Dedicated Healer. Enabling a server for this pool is a one-click Admin UI
+toggle (`/servers`) that provisions its curator template automatically —
+picking a model by the server's VRAM tier (or an explicit override),
+ensuring Ollama has it pulled, and writing the template.
+
+**The problem.** Provisioning has always been clone-based:
+`build_curator_template` copies an *existing* curator template's full
+config (prompts, experts) and swaps in the new node/model. On a deployment
+where no curator template had ever been manually created — confirmed live:
+one where only Eurisko-bred `Dynamic Template *` entries existed in
+`admin_expert_templates` — `_pick_parent_template` always returns `None`,
+and enabling any server failed permanently with "no parent curator
+template found." No code path could produce the *first* curator template;
+cloning presupposes something to clone.
+
+**The fix.** `_build_genesis_curator_template` constructs a curator
+template directly when no parent exists, rather than failing — matching
+the clone path's own stated invariant ("all 6 components use the same
+model") instead of inventing a new shape: planner/judge/tool_expert models
+and a single `general` expert category all pin to the picked model@node:
+
+```python
+if parent is None:
+    tmpl = _build_genesis_curator_template(model, node=name)
+else:
+    tmpl = build_curator_template(parent, new_node=name, new_model=model)
+```
+
+Once one genesis template exists for any node, the ordinary clone path
+handles every subsequent server — the bootstrap gap only ever blocked the
+*first* one. The Admin UI's server list also gained a curator-model input
+(`curator_model`, already accepted by the backend but previously
+unreachable from the UI) so an operator can override the VRAM-tier
+auto-pick or change an already-provisioned curator's model without
+disabling and re-enabling the toggle.
+
+---
+
 ### Implementation Summary
 
 | Component | Logic / Theory | Pub. basis | Status |
@@ -1095,6 +1172,7 @@ watching logs at the moment it happens.
 | `_select_node` reliability weighting | Flood-fill incremental cost map | Micromouse maze-solving heuristic | ✅ Active |
 | `looks_like_premature_stop` + DB-backed patterns | Protocol-violation detection | — (pragmatic heuristic) | ✅ Active |
 | `record_and_classify_tool_ending` + self-hosted judge | Human-in-the-loop escalation | — (pragmatic heuristic) | ✅ Active |
+| `_build_genesis_curator_template` | Ontology curator bootstrap | — (pragmatic heuristic) | ✅ Active |
 | `ConstructiveProof` executor node | Intuitionistic | De Vries 2007, §3 | ⏳ Planned |
 
 ---

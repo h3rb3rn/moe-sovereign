@@ -9,7 +9,7 @@ scripts/model_lifecycle.py — Detect new local models and benchmark them.
    expert's score produce a PROMOTION-CANDIDATE log line (no auto-change).
 
 Run weekly via host crontab:
-    23 4 * * 1 cd /opt/deployment/moe-sovereign/moe-infra && python3 scripts/model_lifecycle.py >> /var/log/moe-model-lifecycle.log 2>&1
+    23 4 * * 1 cd /opt/moe-infra && python3 scripts/model_lifecycle.py >> /var/log/moe-model-lifecycle.log 2>&1
 """
 
 import json

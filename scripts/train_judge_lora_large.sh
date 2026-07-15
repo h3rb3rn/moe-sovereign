@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=judge-lora-large
 #SBATCH --account=project_465003058
-#SBATCH --partition=small-g
+#SBATCH --partition=standard-g
 #SBATCH --nodes=1
 #SBATCH --gpus=8                     # 8 GCDs × 64 GB — DDP, each GPU holds full QLoRA model (~17 GB)
-#SBATCH --time=12:00:00              # 10k samples × 3 epochs ≈ 2-4h; 12h buffer
+#SBATCH --time=24:00:00              # 24h limit to allow resuming and completing the remaining 2 epochs
 #SBATCH --output=/scratch/project_465003058/hornphil/logs/judge_lora_large_%j.log
 #SBATCH --mem=200G
 
@@ -19,8 +19,8 @@ LOGS_DIR="${SCRATCH}/logs"
 mkdir -p "${LOGS_DIR}" "${MODELS_DIR}"
 
 # ── Model configuration ───────────────────────────────────────────────────────
-SNAPSHOT=$(ls "${HF_CACHE}/models--Qwen--Qwen2.5-32B-Instruct/snapshots/" 2>/dev/null | head -1)
-BASE_MODEL="${HF_CACHE}/models--Qwen--Qwen2.5-32B-Instruct/snapshots/${SNAPSHOT}"
+SNAPSHOT=$(ls "${HF_CACHE}/models--Qwen--Qwen3.6-35B-A3B/snapshots/" 2>/dev/null | head -1)
+BASE_MODEL="${HF_CACHE}/models--Qwen--Qwen3.6-35B-A3B/snapshots/${SNAPSHOT}"
 
 DATASET_PATH="${DATA_DIR}/paraconsistent_large.jsonl"
 
@@ -30,7 +30,7 @@ if [ ! -f "${DATASET_PATH}" ]; then
     DATASET_PATH="${DATA_DIR}/paraconsistent_training_data.jsonl"
 fi
 
-OUTPUT_DIR="${MODELS_DIR}/sovereign-judge-32b-lora-v2"
+OUTPUT_DIR="${MODELS_DIR}/sovereign-judge-35b-lora-v3"
 
 echo "🚀 Sovereign Judge LoRA Large Training (DDP, 8 GPUs)"
 echo "   Base model  : ${BASE_MODEL}"
@@ -42,21 +42,17 @@ echo "   Job ID      : ${SLURM_JOB_ID}"
 echo "   Start       : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # ── Environment ──────────────────────────────────────────────────────────────
-# module purge
-# module use /appl/local/laifs/modules
-# module load lumi-aif-singularity-bindings
-
 export SIF=/scratch/project_465003058/hornphil/lumi-multitorch-latest.sif
 export HF_HOME="${HF_CACHE}"
 export TRANSFORMERS_CACHE="${HF_CACHE}/transformers"
 export TOKENIZERS_PARALLELISM=false
+export PYTHONPATH=/scratch/project_465003058/hornphil/my_venv/lib/python3.12/site-packages:${PYTHONPATH}
 
 # DDP environment (all 8 GPUs, each with full model copy)
 export ROCR_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export MASTER_ADDR=localhost
 export MASTER_PORT=29500
-# Do NOT set PYTORCH_ALLOC_CONF=expandable_segments (not supported on ROCm)
 
 echo ""
 echo "── Container info ──────────────────────────────────────────────────"
@@ -72,8 +68,7 @@ for i in range(torch.cuda.device_count()):
 
 echo ""
 echo "── Starting DDP training (torchrun, 8 GPUs) ─────────────────────────"
-# Use torchrun for proper DDP — each GPU gets an independent copy of the 4-bit model
-# (no pipeline parallelism, no device_map across GPUs)
+# Use torchrun with DeepSpeed ZeRO-3 to shard the model weights across GPUs.
 singularity exec \
     --bind /pfs,/scratch,/projappl,/project \
     "${SIF}" \
@@ -90,7 +85,10 @@ singularity exec \
             --grad_accum  8 \
             --max_seq_len 2048 \
             --lora_r      64 \
-            --lora_alpha  128
+            --lora_alpha  128 \
+            --no_4bit \
+            --deepspeed   "${SCRIPTS_DIR}/deepspeed_zero3.json" \
+            --resume
 
 TRAIN_EXIT=$?
 

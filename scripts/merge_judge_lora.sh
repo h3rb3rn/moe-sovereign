@@ -85,7 +85,7 @@ if [ ${MERGE_EXIT} -eq 0 ]; then
     echo "✅ Merge completed successfully."
     echo ""
     echo "   To copy to deployment host:"
-    echo "   scp -r lumi-g:${MERGED_PATH}/ /opt/deployment/moe-sovereign/moe-infra/models/sovereign-judge-32b/"
+    echo "   scp -r lumi-g:${MERGED_PATH}/ /opt/moe-infra/models/sovereign-judge-32b/"
 else
     echo "❌ Merge failed with exit code ${MERGE_EXIT}."
     exit ${MERGE_EXIT}

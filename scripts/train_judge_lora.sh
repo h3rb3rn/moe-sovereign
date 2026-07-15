@@ -133,7 +133,7 @@ if [ ${TRAIN_EXIT} -eq 0 ]; then
     echo "✅ Training completed successfully."
     echo ""
     echo "   To copy the merged model back to the deployment host, run:"
-    echo "   scp -r lumi-g:${OUTPUT_DIR}/merged/ /opt/deployment/moe-sovereign/moe-infra/models/sovereign-judge-32b/"
+    echo "   scp -r lumi-g:${OUTPUT_DIR}/merged/ /opt/moe-infra/models/sovereign-judge-32b/"
 else
     echo "❌ Training failed with exit code ${TRAIN_EXIT}."
     exit ${TRAIN_EXIT}

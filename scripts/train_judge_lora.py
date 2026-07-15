@@ -179,6 +179,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lora_alpha", type=int, default=None)
     p.add_argument("--no_4bit", action="store_true", help="Disable QLoRA 4-bit quantization")
     p.add_argument("--deepspeed", type=str, default=None, help="Path to DeepSpeed configuration file")
+    p.add_argument("--resume", action="store_true", help="Resume training from the latest checkpoint")
     return p.parse_args()
 
 
@@ -393,7 +394,7 @@ def main() -> None:
         trainer.model.print_trainable_parameters()
 
     logger.info("Starting LoRA SFT training ...")
-    trainer.train()
+    trainer.train(resume_from_checkpoint=True if args.resume else None)
 
     # ---- Save LoRA adapters ----
     adapter_path = os.path.join(cfg.output_dir, "final-adapter")
