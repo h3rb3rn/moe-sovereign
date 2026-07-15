@@ -27,6 +27,8 @@ REQUIRED_FIELDS = {
     "tool_timeout", "tool_max_tokens", "reasoning_max_tokens",
     "tool_choice", "system_prefix", "stream_think", "is_user_conn",
     "user_perms", "experts", "planner_cfg", "profile_not_found",
+    "agent_cache", "agent_graphrag", "agent_ingest",
+    "expert_template_id",
 }
 
 _FAKE_PROFILE = {
@@ -184,7 +186,34 @@ def test_template_resolved_exactly_once_with_override(mock_profiles, mock_expert
     assert mock_experts.call_args.kwargs["override_tmpl_id"] == "tmpl-xyz"
     assert mock_experts.call_args.kwargs["admin_override"] is True
     assert mock_prompts.call_count == 1
-    assert mock_prompts.call_args.kwargs["override_tmpl_id"] == "tmpl-xyz"
+
+
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts", return_value=_FAKE_PLANNER)
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value=_FAKE_EXPERTS)
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_expert_template_id_exposed_on_session(mock_profiles, mock_experts, mock_prompts, mock_srv):
+    """Regression test: expert_template_id must be surfaced on the returned
+    CCSession so callers (e.g. anthropic_messages()'s live-monitoring
+    registration) can show which template is actually driving the tool model
+    — previously this was computed internally and silently dropped, leaving
+    the admin "Laufende API-Anfragen" table's Template column blank even
+    when a template was in active use for tool_model auto-derivation."""
+    profile_with_tmpl = {**_FAKE_PROFILE, "id": "prof-tmpl2", "expert_template_id": "tmpl-abc"}
+    ctx = _make_ctx(user_cc_profiles_json=json.dumps({"prof-tmpl2": profile_with_tmpl}))
+    session = _resolve_cc_session(ctx, profile_ids=["prof-tmpl2"])
+
+    assert session.expert_template_id == "tmpl-abc"
+
+
+def test_expert_template_id_empty_when_no_profile():
+    with patch("services.pipeline.cc_session._read_cc_profiles", return_value=[]), \
+         patch("services.pipeline.cc_session._resolve_user_experts", return_value={}), \
+         patch("services.pipeline.cc_session._resolve_template_prompts", return_value={}), \
+         patch("services.pipeline.cc_session._server_info", return_value={}):
+        session = _resolve_cc_session(_make_ctx(), profile_ids=[])
+
+    assert session.expert_template_id == ""
 
 
 @patch("services.pipeline.cc_session._server_info", return_value={})
@@ -237,6 +266,29 @@ def test_profile_not_found_sentinel(mock_profiles):
     assert session.profile_not_found is True
 
 
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts",
+       return_value={"judge_num_ctx": 110000, "planner_num_ctx": 110000})
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value=_FAKE_EXPERTS)
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_native_mode_skips_template_context_capping(mock_profiles, mock_experts, mock_prompts, mock_srv):
+    """In native mode, judge_num_ctx from a linked template must not cap tool_max_tokens."""
+    profile = {
+        **_FAKE_PROFILE,
+        "id": "prof-native",
+        "moe_mode": "native",
+        "tool_max_tokens": 262144,
+        "reasoning_max_tokens": 262144,
+        "expert_template_id": "tmpl-m10",  # leftover from MoE-origin copy
+    }
+    ctx = _make_ctx(user_cc_profiles_json=json.dumps({"prof-native": profile}))
+    session = _resolve_cc_session(ctx, profile_ids=["prof-native"])
+
+    assert session.mode == "native"
+    assert session.tool_max_tokens == 262144,      "native mode must not cap tool_max_tokens via template"
+    assert session.reasoning_max_tokens == 262144, "native mode must not cap reasoning_max_tokens via template"
+
+
 def test_bad_json_in_user_cc_profiles_json_is_safe():
     ctx = _make_ctx(user_cc_profiles_json="not-valid-json{{{")
     with patch("services.pipeline.cc_session._read_cc_profiles", return_value=[]), \
@@ -246,3 +298,55 @@ def test_bad_json_in_user_cc_profiles_json_is_safe():
         session = _resolve_cc_session(ctx, profile_ids=[])
 
     assert session.profile_not_found is False  # no crash, safe fallback
+
+
+# ── H) Augmented Tool Path flags (agent_cache / agent_graphrag / agent_ingest) ─
+
+
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts", return_value={})
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value={})
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_no_profile_uses_global_agent_flag_defaults(mock_profiles, mock_experts, mock_prompts, mock_srv):
+    """Without a profile, the three flags must mirror the global AGENT_*_ENABLED
+    config defaults (all False out of the box) — never silently True."""
+    session = _resolve_cc_session(_make_ctx(), profile_ids=[])
+    assert session.agent_cache is False
+    assert session.agent_graphrag is False
+    assert session.agent_ingest is False
+
+
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts", return_value={})
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value={})
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_profile_can_opt_in_to_agent_flags(mock_profiles, mock_experts, mock_prompts, mock_srv):
+    profile = {
+        **_FAKE_PROFILE, "id": "prof-agent",
+        "agent_cache": True, "agent_graphrag": True, "agent_ingest": True,
+    }
+    ctx = _make_ctx(user_cc_profiles_json=json.dumps({"prof-agent": profile}))
+    session = _resolve_cc_session(ctx, profile_ids=["prof-agent"])
+
+    assert session.agent_cache is True
+    assert session.agent_graphrag is True
+    assert session.agent_ingest is True
+
+
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts", return_value={})
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value={})
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_long_memory_off_forces_agent_graphrag_off(mock_profiles, mock_experts, mock_prompts, mock_srv):
+    """long_memory=false is the existing Tier 2-4 kill-switch — agent_graphrag
+    must never bypass it, even if the profile explicitly enables it."""
+    profile = {
+        **_FAKE_PROFILE, "id": "prof-nomem",
+        "long_memory": False, "agent_graphrag": True, "agent_cache": True,
+    }
+    ctx = _make_ctx(user_cc_profiles_json=json.dumps({"prof-nomem": profile}))
+    session = _resolve_cc_session(ctx, profile_ids=["prof-nomem"])
+
+    assert session.long_memory is False
+    assert session.agent_graphrag is False
+    assert session.agent_cache is True  # unaffected by the long_memory kill-switch

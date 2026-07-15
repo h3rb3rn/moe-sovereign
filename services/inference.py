@@ -27,14 +27,41 @@ from context_budget import get_model_context_window as _static_ctx
 from context_budget import resolve_requested_ctx
 from metrics import PROM_THOMPSON
 from services.routing import _server_info, _is_endpoint_error
+from services.tracking import _get_node_latency_stats, _get_premature_stop_rate
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI  # noqa: F811 — type hints only
 
 from services.llm_instances import judge_llm, planner_llm
+from services.model_capabilities import get_model_caps, model_supports_streaming
 
 logger = logging.getLogger("MOE-SOVEREIGN")
+
+# ── AI I/O Audit helper (TASK-29) ─────────────────────────────────────────────
+# Imported lazily so that init-time failures (e.g. DB not yet up) don't crash
+# the entire inference module.
+
+def _audit_create(session_id: str, request_id: str, model: str, endpoint: str,
+                  stage: str, request_body: dict):
+    """Best-effort: create an AI I/O audit entry. Never raises."""
+    try:
+        from services.ai_io_audit import create_audit_entry
+        return create_audit_entry(session_id, request_id, model, endpoint, stage, request_body)
+    except Exception:
+        return None
+
+
+async def _audit_complete(entry, response_body, prompt_tokens, completion_tokens, status="completed"):
+    """Best-effort: complete an AI I/O audit entry. Never raises."""
+    if entry is None:
+        return
+    try:
+        from services.ai_io_audit import complete_audit_entry
+        await complete_audit_entry(entry.audit_id, response_body, prompt_tokens,
+                                   completion_tokens, status)
+    except Exception:
+        pass
 
 # Module-level threading locks
 # synchronous dict mutation (e.g. _endpoint_gpu_indices[k] = v) is NOT atomic
@@ -44,8 +71,38 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 #       blocks the event loop longer than the locked section itself (a few ns);
 #   (b) asyncio.Lock would require async with, which is heavier and unnecessary
 #       for pure-synchronous dict updates.
-_gpu_lock   = threading.Lock()   # guards _endpoint_gpu_indices round-robin index
-_cache_lock = threading.Lock()   # guards _model_avail_cache, _ps_cache
+
+_cache_lock = threading.Lock()
+_gpu_lock   = threading.Lock()
+
+# Local in-process GGUF LLM instance for local planner/SLM mode
+_local_llama_instance = None
+_local_llama_lock = asyncio.Lock()
+
+
+async def _get_local_llama():
+    """Return the cached in-process Llama instance (loaded lazily)."""
+    global _local_llama_instance
+    from config import PLANNER_LOCAL_GGUF_PATH, PLANNER_LOCAL_THREADS
+    if not PLANNER_LOCAL_GGUF_PATH or not os.path.exists(PLANNER_LOCAL_GGUF_PATH):
+        return None
+    if _local_llama_instance is None:
+        async with _local_llama_lock:
+            if _local_llama_instance is None:
+                try:
+                    from llama_cpp import Llama
+                    logger.info("Initializing in-process GGUF Llama model from %s", PLANNER_LOCAL_GGUF_PATH)
+                    _local_llama_instance = Llama(
+                        model_path=PLANNER_LOCAL_GGUF_PATH,
+                        n_ctx=4096,
+                        n_threads=PLANNER_LOCAL_THREADS,
+                        verbose=False
+                    )
+                except ImportError:
+                    logger.warning("llama-cpp-python not installed; in-process GGUF planner unavailable.")
+                except Exception as e:
+                    logger.error("Failed to load in-process GGUF Llama model: %s", e)
+    return _local_llama_instance
 
 # ---------------------------------------------------------------------------
 # Model availability cache
@@ -508,6 +565,36 @@ async def _invoke_judge_with_retry(
                 # Native Ollama /api/chat — respects options.num_ctx unlike /v1/chat/completions.
                 _ollama_base = _j_url_base.removesuffix("/v1")
                 _ctx = int(state.get("judge_num_ctx") or 0) or JUDGE_NUM_CTX or _static_ctx(_jm)
+                # Never downgrade a warm model: if Ollama already has this model loaded
+                # with a larger context window, reuse that window instead of forcing a
+                # reload — llama-server can't resize a running instance's context, so a
+                # smaller request for the SAME model triggers a full unload+reload cycle.
+                # Confirmed live: qwen3.6:35b on N04-RTX reloading every 5-40 minutes all
+                # day, alternating between an Augmented Tool Path session's large template
+                # context and this judge call's smaller JUDGE_NUM_CTX default — the exact
+                # same-model downgrade this check exists to prevent already protects the
+                # Augmented Tool Path (services/pipeline/anthropic.py,
+                # services/pipeline/chat.py's _retry_tool_agent_fallback) but was never
+                # applied to the judge/planner path that competes with it on the same node.
+                try:
+                    async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                        _ps_r = await _ps_cl.get(
+                            f"{_ollama_base}/api/ps",
+                            headers={"Authorization": f"Bearer {_jt}"},
+                        )
+                        for _loaded in _ps_r.json().get("models", []):
+                            _lname = _loaded.get("name", "").split(":")[0]
+                            _ename = _jm.split(":")[0]
+                            _loaded_ctx = _loaded.get("context_length", 0)
+                            if _lname == _ename and _loaded_ctx >= _ctx:
+                                logger.info(
+                                    "judge: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                                    _loaded_ctx, _ctx, _jm,
+                                )
+                                _ctx = _loaded_ctx
+                                break
+                except Exception:
+                    pass  # non-fatal — fall through to the configured num_ctx
                 _opts: dict = {}
                 if _ctx > 0:
                     _opts["num_ctx"] = _ctx
@@ -525,14 +612,26 @@ async def _invoke_judge_with_retry(
                 }
                 if _opts:
                     _payload["options"] = _opts
-                async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
-                    _r = await _hc.post(
-                        f"{_ollama_base}/api/chat",
-                        json=_payload,
-                        headers={"Authorization": f"Bearer {_jt}"},
-                    )
-                _r.raise_for_status()
-                res = _NS(content=_r.json().get("message", {}).get("content", ""))
+                logger.debug("model=%s caps=%s", _jm, get_model_caps(_jm))
+                _audit_entry = _audit_create(
+                    state.get("session_id", ""), state.get("response_id", ""),
+                    _jm, f"{_ollama_base}/api/chat", "judge", _payload,
+                )
+                _resp_json: dict = {}
+                try:
+                    async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
+                        _r = await _hc.post(
+                            f"{_ollama_base}/api/chat",
+                            json=_payload,
+                            headers={"Authorization": f"Bearer {_jt}"},
+                        )
+                    _r.raise_for_status()
+                    _resp_json = _r.json()
+                    await _audit_complete(_audit_entry, _resp_json, None, None)
+                except Exception as _ae:
+                    await _audit_complete(_audit_entry, {"error": str(_ae)}, None, None, "error")
+                    raise
+                res = _NS(content=_resp_json.get("message", {}).get("content", ""))
             else:
                 # Non-Ollama path (AIHUB, cloud providers): use LangChain ChatOpenAI
                 llm = await _get_judge_llm(state)
@@ -639,19 +738,51 @@ judge_llm_ollama_aware = _OllamaAwareJudgeLLM()
 
 
 async def _invoke_planner_with_retry(
-    state: "AgentState", prompt: str, temperature: float | None = None
+    state: "AgentState", prompt: str, temperature: float | None = None, attempt: int = 0
 ) -> tuple:
     """Invoke the planner LLM, returns (res, used_fallback: bool).
 
-    For Ollama endpoints, posts directly to /api/chat with options.num_ctx set —
-    the same fix as _invoke_judge_with_retry. The OpenAI-compat /v1/chat/completions
-    endpoint silently drops the `options` dict (Ollama <=0.30.6), so a planner call
-    routed through ChatOpenAI/_get_planner_llm causes Ollama to reload the model at
-    its Modelfile-default num_ctx (8192) — even when the same model is already warm
-    at a much larger ctx for the judge/CC-tool path on the same node.
+    Supports PLANNER_MODE = llm | slm_local | hybrid.
+    If slm_local or (hybrid and attempt == 0), attempts to run local GGUF
+    in-process via llama-cpp-python, falling back to local Ollama/llama.cpp server
+    if unavailable.
     """
     from types import SimpleNamespace as _NS
-    from config import PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN
+    from config import (
+        PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN,
+        PLANNER_MODE, PLANNER_LOCAL_GGUF_PATH
+    )
+
+    # 1. Try local GGUF/SLM in-process execution first if configured
+    use_local_slm = (
+        PLANNER_MODE == "slm_local"
+        or (PLANNER_MODE == "hybrid" and attempt == 0)
+    )
+
+    if use_local_slm:
+        local_llm = await _get_local_llama()
+        if local_llm is not None:
+            try:
+                logger.info("🤖 Executing local GGUF planner (in-process)...")
+                def _run_local():
+                    return local_llm(
+                        prompt=prompt,
+                        max_tokens=MAX_PLANNER_TOKENS,
+                        temperature=temperature if temperature is not None else 0.2,
+                    )
+                _res = await asyncio.to_thread(_run_local)
+                _content = _res["choices"][0]["text"].strip()
+                _usage = _res.get("usage", {})
+                if _content:
+                    return _NS(
+                        content=_content,
+                        usage_metadata={
+                            "input_tokens":  int(_usage.get("prompt_tokens", 0)),
+                            "output_tokens": int(_usage.get("completion_tokens", 0)),
+                        },
+                    ), False
+            except Exception as e:
+                logger.warning("⚠️ Local in-process GGUF planner failed: %s", e)
 
     _pm = (state.get("planner_model_override") or "").strip() or (PLANNER_MODEL or "")
     _pu = (state.get("planner_url_override")   or "").strip() or (PLANNER_URL or "")
@@ -669,6 +800,30 @@ async def _invoke_planner_with_retry(
     if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
         _ollama_base = _p_url_base.removesuffix("/v1")
         _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        # Never downgrade a warm model — same reasoning and pattern as the judge
+        # branch above (_invoke_judge_with_retry) and the Augmented Tool Path
+        # (services/pipeline/anthropic.py). Checked before the eviction call
+        # below so reusing a warm larger-context load also correctly skips
+        # evicting competing models for VRAM this request doesn't actually need.
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {_pt}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = _pm.split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _ctx:
+                        logger.info(
+                            "planner: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _ctx, _pm,
+                        )
+                        _ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         if _ctx >= 65536:
             await _evict_competing_models(_ollama_base, _pm, ctx=_ctx)
         _opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
@@ -733,30 +888,8 @@ async def _invoke_planner_with_retry(
 
 
 def _inject_habe_prefix_embeddings(opts: dict, state_: Optional[dict] = None) -> None:
-    """Injects HABE prefix embeddings if HABE is enabled and vector file exists."""
-    if not state_ or not state_.get("enable_habe"):
-        return
-        
-    try:
-        import os
-        import numpy as np
-        from services.vsa_background import HolographicBackgroundEngine
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        repo_root = os.path.dirname(script_dir)
-        models_dir = os.path.join(repo_root, "models")
-        vector_path = os.path.join(models_dir, "habe_vector.npy")
-        vocab_path = os.path.join(models_dir, "habe_vocab.json")
-        
-        if os.path.exists(vector_path) and os.path.exists(vocab_path):
-            engine = HolographicBackgroundEngine(dimension=2048)
-            if engine.load_vocab(vocab_path):
-                hav = np.load(vector_path)
-                embeddings = engine.export_virtual_prefix_embeddings(hav)
-                opts["habe_prefix_embedding"] = embeddings
-                logger.info("🧠 HABE: Injected virtual prefix attention modulation vector (%d dims) into LLM options", len(embeddings))
-    except Exception as e:
-        logger.warning("Failed to inject HABE prefix embeddings: %s", e)
+    """No-op. HABE modulation is now performed client-side in the GraphRAG node prior to LLM call."""
+    return
 
 
 def _judge_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict] = None) -> dict:
@@ -1193,13 +1326,58 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
         )
         return srv, running, is_warm
 
+    # Flood-fill-style reliability weighting: a node/model combo that has
+    # recently been slow (moe:latency:{node}, see services/tracking.py) or
+    # prone to the tool-passthrough "premature stop" failure
+    # (moe:pstop:{model}:{node}) gets its load score inflated, same
+    # multiplicative-penalty shape as the existing Thompson-sampling
+    # THOMPSON_LOAD_PENALTY in _get_expert_score below. Optimistic by
+    # default (factor 1.0) until enough evidence accumulates — a node with
+    # no data yet, or too few premature-stop samples, is never penalized on
+    # a single bad observation, mirroring flood fill assuming a cell is open
+    # until a wall is actually confirmed. Precomputed once per candidate
+    # here (not inside load_score) because load_score itself stays a plain
+    # sync function used inside min()/list comprehensions below — this is
+    # the one extra async gather needed to feed it.
+    _NODE_LATENCY_PENALTY = float(os.getenv("NODE_LATENCY_PENALTY", "0.3"))
+    _NODE_PSTOP_PENALTY   = float(os.getenv("NODE_PSTOP_PENALTY", "2.0"))
+    _LATENCY_BASELINE_MS  = 3000.0
+
+    async def _reliability_factor(srv: dict) -> float:
+        factor = 1.0
+        try:
+            lat = await _get_node_latency_stats(srv["name"])
+            if lat["avg_ms"]:
+                factor *= 1.0 + _NODE_LATENCY_PENALTY * max(0.0, lat["avg_ms"] / _LATENCY_BASELINE_MS - 1.0)
+        except Exception:
+            pass
+        try:
+            pstop_rate = await _get_premature_stop_rate(model_name, srv["name"])
+            factor *= 1.0 + _NODE_PSTOP_PENALTY * pstop_rate
+        except Exception:
+            pass
+        return factor
+
+    _reliability = dict(zip(
+        (s["name"] for s in candidates),
+        await asyncio.gather(*[_reliability_factor(s) for s in candidates]),
+    ))
+
     def load_score(srv: dict, running: list) -> float:
         """Lower score = better candidate. Factors in GPU count AND cost_factor.
         cost_factor acts as a speed/priority weight: higher = faster/preferred.
-        RTX (1.0) is preferred over Tesla M10 (0.8) at equal load."""
+        RTX (1.0) is preferred over Tesla M10 (0.8) at equal load. Also
+        folds in _reliability (latency + premature-stop penalty, see above)
+        — added, not multiplied: at raw_load=0 (fully idle, the common case
+        on lightly-loaded infra) a multiplicative penalty would vanish
+        (0 * factor == 0), silently undoing the whole point of penalizing an
+        idle-but-unreliable node. _reliability - 1.0 is 0.0 for a clean node
+        (no change to existing behaviour) and > 0.0 once latency/pstop
+        evidence justifies a penalty, regardless of current load."""
         raw_load = len(running) / max(int(srv.get("gpu_count", 1)), 1)
         speed = float(srv.get("cost_factor", 1.0))  # higher = faster GPU
-        return raw_load / max(speed, 0.1)  # divide by speed: fast nodes get lower scores
+        base = raw_load / max(speed, 0.1)  # divide by speed: fast nodes get lower scores
+        return base + (_reliability.get(srv["name"], 1.0) - 1.0)
 
     # Select best candidate: warm preferred, then idle, then lowest load
     ps_results = await asyncio.gather(*[_get_ps(s) for s in candidates])

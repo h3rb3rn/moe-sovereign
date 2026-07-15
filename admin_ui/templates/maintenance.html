@@ -58,12 +58,16 @@
         <p class="text-muted small mb-3">{{ t(request, 'msg.dedicated_healer_desc') }}</p>
         <div class="mb-3">
           <label class="form-label small mb-1">{{ t(request, 'lbl.dedicated_healer_template') }}</label>
-          <select id="dedicated-template" class="form-select form-select-sm">
+          <select id="dedicated-template" class="form-select form-select-sm mb-2" onchange="onDedicatedTemplateChange()">
             <option value="">— {{ t(request, 'msg.dedicated_healer_loading') }} —</option>
           </select>
+          <input type="text" id="dedicated-template-custom"
+                 class="form-control form-control-sm d-none"
+                 placeholder="{{ t(request, 'msg.dedicated_healer_custom_placeholder') }}">
         </div>
         <div class="form-check form-switch mb-3">
           <input class="form-check-input" type="checkbox" role="switch" id="dedicated-block-server" checked>
+          <span id="dedicated-block-live" class="badge bg-secondary ms-1 d-none">—</span>
           <label class="form-check-label small" for="dedicated-block-server">
             {{ t(request, 'lbl.dedicated_healer_block') }}
           </label>
@@ -281,6 +285,10 @@ const _t = {
   staleTmplRefsFound:       "{{ t(request, 'js.stale_template_refs_found') }}",
   confirmTmplRefCleanup:    "{{ t(request, 'js.confirm_template_ref_cleanup') }}",
   tmplRefCleanupDone:       "{{ t(request, 'js.template_ref_cleanup_done') }}",
+  ontologyCuratorGroup:     "{{ t(request, 'js.ontology_curator_group') }}",
+  otherTemplatesGroup:      "{{ t(request, 'js.other_templates_group') }}",
+  nativeLlmsGroup:          "{{ t(request, 'js.native_llms_group') }}",
+  customModelOption:        "{{ t(request, 'js.custom_model_option') }}",
 };
 
 function flash(msg, type='success') {
@@ -301,25 +309,62 @@ function fmtStatus(s, extra) {
 
 async function loadDedicatedTemplates() {
   try {
-    const templates = await fetch('/api/expert-templates').then(r => r.json());
+    const [templates, llms] = await Promise.all([
+      fetch('/api/expert-templates').then(r => r.json()),
+      fetch('/api/available-llms').then(r => r.json()).catch(() => []),
+    ]);
     const sel = document.getElementById('dedicated-template');
     sel.innerHTML = '';
+    // The healer just forwards `template` verbatim as the `model` field of a
+    // /v1/chat/completions call (scripts/gap_healer_templates.py) — any
+    // Expert Template OR a raw "model@node" string already works
+    // server-side, identical to how any other MoE Sovereign client picks a
+    // model. The per-node "moe-ontology-curator-*" templates are the common
+    // case (one pinned GPU node each, so the pool round-robins with a warm
+    // cache per node) and are grouped first, but they're not the only
+    // valid choice.
     const curatorTpls = (templates || []).filter(t => (t.name || '').startsWith('moe-ontology-curator-'));
-    if (curatorTpls.length === 0) {
-      sel.innerHTML = `<option value="">— ${_t.noOntologyServers} —</option>`;
-      return;
+    const otherTpls    = (templates || []).filter(t => !(t.name || '').startsWith('moe-ontology-curator-'));
+    if (curatorTpls.length) {
+      const og = document.createElement('optgroup');
+      og.label = _t.ontologyCuratorGroup;
+      curatorTpls.forEach(t => og.appendChild(new Option(t.name, t.name)));
+      sel.appendChild(og);
     }
-    curatorTpls.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.name;
-      opt.textContent = t.name;
-      sel.appendChild(opt);
-    });
+    if (otherTpls.length) {
+      const og = document.createElement('optgroup');
+      og.label = _t.otherTemplatesGroup;
+      otherTpls.forEach(t => og.appendChild(new Option(t.name, t.name)));
+      sel.appendChild(og);
+    }
+    if (Array.isArray(llms) && llms.length) {
+      const og = document.createElement('optgroup');
+      og.label = _t.nativeLlmsGroup;
+      // /api/available-llms may append "[tag1, tag2]" for display — strip it
+      // for the actual value sent to the backend (same convention the
+      // orchestrator itself uses: value.split('[')[0]).
+      llms.forEach(entry => og.appendChild(new Option(entry, entry.split('[')[0].trim())));
+      sel.appendChild(og);
+    }
+    sel.appendChild(new Option(_t.customModelOption, '__custom__'));
     // Pre-select currently running template if any
     pollDedicatedHealer();
   } catch (e) {
     document.getElementById('dedicated-template').innerHTML = `<option value="">— ${_t.loadingError} —</option>`;
   }
+}
+
+function onDedicatedTemplateChange() {
+  const sel = document.getElementById('dedicated-template');
+  document.getElementById('dedicated-template-custom').classList.toggle('d-none', sel.value !== '__custom__');
+}
+
+function _selectedDedicatedTemplate() {
+  const sel = document.getElementById('dedicated-template');
+  if (sel.value === '__custom__') {
+    return document.getElementById('dedicated-template-custom').value.trim();
+  }
+  return (sel.value || '').trim();
 }
 
 async function pollDedicatedHealer() {
@@ -336,48 +381,61 @@ async function pollDedicatedHealer() {
     document.getElementById('dedicated-failed').textContent = d.failed || 0;
     document.getElementById('btn-dedicated-start').disabled = running;
     document.getElementById('btn-dedicated-stop').disabled = !running;
-    // Pre-select template in dropdown if running
+    // Reflect the backend's persisted block preference — the healer's own
+    // lifecycle (services/healer.py) owns block/unblock dynamically, this
+    // checkbox is a read-back of that state, not the source of truth.
+    if (d.block_server === '0' || d.block_server === '1') {
+      document.getElementById('dedicated-block-server').checked = (d.block_server === '1');
+    }
+    const liveBadge = document.getElementById('dedicated-block-live');
+    if (running && d.server_blocked !== undefined && d.server_blocked !== '') {
+      liveBadge.classList.remove('d-none');
+      if (d.server_blocked === '1') {
+        liveBadge.textContent = _t.serverBlockedNow || 'blockiert';
+        liveBadge.className = 'badge bg-danger ms-1';
+      } else {
+        liveBadge.textContent = _t.serverFreeNow || 'frei';
+        liveBadge.className = 'badge bg-success ms-1';
+      }
+    } else {
+      liveBadge.classList.add('d-none');
+    }
+    // Pre-select template in dropdown if running — falls back to the custom
+    // slot when the running template isn't one of the listed options (e.g.
+    // started with a raw model string, not a saved Expert Template).
     if (running && d.template) {
       const sel = document.getElementById('dedicated-template');
+      let matched = false;
       for (const opt of sel.options) {
-        if (opt.value === d.template) { sel.value = opt.value; break; }
+        if (opt.value === d.template) { sel.value = opt.value; matched = true; break; }
       }
+      if (!matched) {
+        sel.value = '__custom__';
+        document.getElementById('dedicated-template-custom').value = d.template;
+      }
+      onDedicatedTemplateChange();
     }
   } catch (e) { /* ignore */ }
 }
 
-// Extract the node name from a curator template name
-// "moe-ontology-curator-n04-rtx" → "n04-rtx"
-function _tplToServerName(tpl) {
-  const prefix = 'moe-ontology-curator-';
-  return tpl.startsWith(prefix) ? tpl.slice(prefix.length) : tpl;
-}
 
 async function startDedicatedHealer() {
-  const template = document.getElementById('dedicated-template').value.trim();
+  const template = _selectedDedicatedTemplate();
   if (!template) { alert(_t.selectTemplateFirst); return; }
   const blockServer = document.getElementById('dedicated-block-server').checked;
   const btnStart = document.getElementById('btn-dedicated-start');
   const btnStop  = document.getElementById('btn-dedicated-stop');
   btnStart.disabled = true;
 
-  // 1. Block server for regular routing if requested.
-  if (blockServer) {
-    const serverName = _tplToServerName(template);
-    try {
-      await fetch(`/api/servers/${encodeURIComponent(serverName)}/block-toggle`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({blocked: true}),
-      });
-    } catch (e) { /* non-fatal */ }
-  }
-
-  // 2. Clean stale Redis state from any previous run before starting.
+  // 1. Clean stale Redis state from any previous run before starting.
   try {
     await fetch('/api/maintenance/ontology/dedicated/status', {method: 'DELETE'});
   } catch (e) { /* non-fatal */ }
 
-  // 3. Start the healer.
+  // 2. Start the healer. block_server is a preference only — the backend
+  // (services/healer.py) owns the actual block/unblock lifecycle from here:
+  // it blocks the node while probing/processing gaps and releases it the
+  // moment the queue is empty, so idle periods don't starve other traffic.
   let startOk = false;
   try {
     const r = await fetch('/api/maintenance/ontology/dedicated/start', {
@@ -422,24 +480,12 @@ async function startDedicatedHealer() {
 async function stopDedicatedHealer() {
   if (!confirm(_t.confirmStopHealer)) return;
   document.getElementById('btn-dedicated-stop').disabled = true;
-  let template = '';
   try {
-    // Get current template from status before stopping
-    const s = await fetch('/api/maintenance/ontology/dedicated/status').then(r => r.json());
-    template = s.template || '';
+    // The stop endpoint itself releases the node unconditionally
+    // (routes/admin_ontology.py::stop_dedicated_healer) — no client-side
+    // block-toggle call needed.
     await fetch('/api/maintenance/ontology/dedicated/stop', {method: 'POST'});
   } catch (e) { alert('Error: ' + e.message); }
-
-  // If block_server was set, unblock now
-  if (template) {
-    const serverName = _tplToServerName(template);
-    try {
-      await fetch(`/api/servers/${encodeURIComponent(serverName)}/block-toggle`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({blocked: false}),
-      });
-    } catch (e) { /* non-fatal */ }
-  }
   setTimeout(pollDedicatedHealer, 800);
 }
 
@@ -659,6 +705,7 @@ async function reloadPrometheus() {
 const JOB_META_RAW = {
   docker_prune:       { icon: 'bi-layers',             labelKey: null, label: 'Docker Prune',    color: 'primary',  canRun: true,  hasConfig: false },
   checkpoint_archive: { icon: 'bi-database-down',      labelKey: 'checkpointArchive',            color: 'info',     canRun: true,  hasConfig: true  },
+  rlsf_local_loop:    { icon: 'bi-brain',              label: 'RLSF Local Loop',                 color: 'success',  canRun: true,  hasConfig: true  },
   admin_logs:         { icon: 'bi-file-earmark-text',  label: 'Admin-Log Rotation',              color: 'warning',  canRun: false, hasConfig: true  },
   journal:            { icon: 'bi-journal-text',       label: 'systemd Journal',                 color: 'secondary',canRun: false, hasConfig: true  },
   prometheus:         { icon: 'bi-graph-up',           label: 'Prometheus TSDB',                 color: 'danger',   canRun: false, hasConfig: true  },
@@ -709,6 +756,16 @@ function buildConfigFields(key, cfg) {
           <label class="form-label small mb-1">${_t.archiveRetention}</label>
           <input type="number" class="form-control form-control-sm" id="cfg-${key}-retain_days"
                  value="${job.retain_days ?? 90}" min="7">
+        </div>
+      </div>`);
+  }
+  if (key === 'rlsf_local_loop') {
+    fields.push(`
+      <div class="row g-2 mt-1">
+        <div class="col-12">
+          <label class="form-label small mb-1">Batch Size (Max evaluations per run)</label>
+          <input type="number" class="form-control form-control-sm" id="cfg-${key}-batch_size"
+                 value="${job.batch_size ?? 100}" min="10" max="1000" step="10">
         </div>
       </div>`);
   }
@@ -887,6 +944,8 @@ async function saveJobConfig(key) {
     const envContent = `CHECKPOINT_KEEP_ROWS=${cfg[key].keep_rows}\nARCHIVE_RETAIN_DAYS=${cfg[key].retain_days}\n`;
     await fetch('/api/cleanup/write-cron-env', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({job: key, content: envContent})});
+  } else if (key === 'rlsf_local_loop') {
+    cfg[key].batch_size = getNum(`cfg-${key}-batch_size`) ?? cfg[key].batch_size;
   } else if (key === 'admin_logs') {
     const maxMb = getNum(`cfg-${key}-max_mb`);
     cfg[key].max_bytes    = maxMb !== null ? maxMb * 1048576 : cfg[key].max_bytes;

@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="de" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MoE Sovereign — EuroHPC LUMI-G Dashboard</title>
+  <!-- Local TailwindCSS -->
+  <script src="tailwind.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              bg: '#0f172a',
+              card: '#1e293b',
+              accent: '#6366f1',
+              accentHover: '#4f46e5',
+              success: '#10b981',
+              warning: '#f59e0b',
+              danger: '#ef4444',
+              info: '#0ea5e9'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    /* Custom scrollbar for slate theme */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Top Navigation & Header -->
+  <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-accent to-purple-500 flex items-center justify-center shadow-lg shadow-brand-accent/20">
+          <svg class="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">MoE Sovereign</h1>
+          <p class="text-xs text-slate-400 font-mono">Grant No. EHPC-DEV-2026D06-XXX</p>
+        </div>
+      </div>
+      
+      <div class="flex space-x-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+        <button onclick="switchTab('dashboard')" id="btn-dashboard" class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 bg-brand-accent text-white shadow-sm">
+          Dashboard
+        </button>
+        <button onclick="switchTab('activities')" id="btn-activities" class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-slate-400 hover:text-white">
+          Aktivitäten & Jobs
+        </button>
+        <button onclick="switchTab('vision')" id="btn-vision" class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-slate-400 hover:text-white">
+          Roadmap & Vision
+        </button>
+        <button onclick="switchTab('explorer')" id="btn-explorer" class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-slate-400 hover:text-white">
+          Dateistruktur
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+    
+    <!-- 1. DASHBOARD TAB -->
+    <section id="tab-dashboard" class="space-y-8 transition-opacity duration-300">
+      
+      <!-- Highlight Banner -->
+      <div class="relative overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 p-8 shadow-xl">
+        <div class="absolute top-0 right-0 -mt-12 -mr-12 w-80 h-80 bg-brand-accent/10 rounded-full blur-3xl"></div>
+        <div class="absolute bottom-0 left-0 -mb-12 -ml-12 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl"></div>
+        
+        <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div class="space-y-2">
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-brand-accent/20 text-brand-accent border border-brand-accent/30 font-mono">
+              Live Status: Resubmitted & Chained
+            </span>
+            <h2 class="text-3xl font-bold tracking-tight text-white">Judge v2 Datengenerierung läuft auf LUMI-G</h2>
+            <p class="text-slate-400 max-w-2xl">
+              Nach dem erfolgreichen Merge des v1-Piloten werden derzeit 90.000 parakonsistente Trainingsproben generiert. 
+              Die Pipeline läuft vollautomatisch über eine SLURM-Job-Kette (Datengen &rarr; Merge &rarr; DDP Training).
+            </p>
+          </div>
+          <div class="flex items-center space-x-4">
+            <span class="relative flex h-3 w-3">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-warning opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-brand-warning"></span>
+            </span>
+            <span class="text-sm font-semibold text-slate-300 font-mono">4 Jobs in SLURM-Queue</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resource Gauges & Highlights -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <!-- GPU Hours Gauge -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-slate-400">GPU-Stunden (MI250X GCDs)</h3>
+            <span class="text-xs text-brand-accent font-mono">1,631% verbraucht</span>
+          </div>
+          <div class="space-y-2">
+            <div class="flex justify-between items-baseline">
+              <span class="text-4xl font-extrabold text-white">293,66</span>
+              <span class="text-slate-500 font-mono">/ 18.000 h</span>
+            </div>
+            <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+              <div class="bg-gradient-to-r from-brand-accent to-purple-500 h-2.5 rounded-full" style="width: 1.63%"></div>
+            </div>
+            <p class="text-xs text-slate-500 flex justify-between">
+              <span>Laufende Jobs (Schätzung):</span>
+              <span class="text-slate-300 font-mono">+96 GPU-h</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- Node Hours Gauge -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-slate-400">Knoten-Stunden (Nodes)</h3>
+            <span class="text-xs text-brand-info font-mono">0,915% verbraucht</span>
+          </div>
+          <div class="space-y-2">
+            <div class="flex justify-between items-baseline">
+              <span class="text-4xl font-extrabold text-white">41,17</span>
+              <span class="text-slate-500 font-mono">/ 4.500 h</span>
+            </div>
+            <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+              <div class="bg-gradient-to-r from-brand-info to-teal-500 h-2.5 rounded-full" style="width: 0.91%"></div>
+            </div>
+            <p class="text-xs text-slate-500 flex justify-between">
+              <span>Laufende Jobs (Schätzung):</span>
+              <span class="text-slate-300 font-mono">+12 Node-h</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- Scratch Storage Gauge -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-slate-400">Scratch-Speicher</h3>
+            <span class="text-xs text-brand-success font-mono">3,90% belegt</span>
+          </div>
+          <div class="space-y-2">
+            <div class="flex justify-between items-baseline">
+              <span class="text-4xl font-extrabold text-white">78</span>
+              <span class="text-slate-500 font-mono">/ 2.000 GB</span>
+            </div>
+            <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800">
+              <div class="bg-gradient-to-r from-brand-success to-emerald-400 h-2.5 rounded-full" style="width: 3.9%"></div>
+            </div>
+            <p class="text-xs text-slate-500 flex justify-between">
+              <span>Modell- & Image-Cache:</span>
+              <span class="text-slate-300 font-mono">76 GB (incl. 14GB SIF)</span>
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Live Job Monitor -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
+        <div class="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+          <div>
+            <h3 class="text-lg font-bold text-white">SLURM Job-Queue & Abhängigkeiten</h3>
+            <p class="text-xs text-slate-400">Live-Prozesskette für Judge v2 Training auf LUMI-G</p>
+          </div>
+          <div class="px-3 py-1 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-400">
+            hornphil@lumi-g
+          </div>
+        </div>
+        <div class="p-6">
+          <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 relative">
+            
+            <!-- Shard 0 -->
+            <div class="bg-slate-950/50 border border-slate-800 p-5 rounded-xl space-y-4">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-500 font-mono">Job 19682379</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-warning/10 text-brand-warning border border-brand-warning/20">PENDING</span>
+              </div>
+              <div>
+                <h4 class="font-bold text-white text-sm">judge-datagen (Shard 0)</h4>
+                <p class="text-xs text-slate-400 mt-1">Offset 0 | Target 30k</p>
+              </div>
+              <div class="text-[11px] text-slate-500 bg-slate-900 p-2 rounded font-mono">
+                Skipped: 16.843 (Resume)<br>
+                Script: generate_judge_dataset_async.py
+              </div>
+            </div>
+
+            <!-- Shard 1 -->
+            <div class="bg-slate-950/50 border border-slate-800 p-5 rounded-xl space-y-4">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-500 font-mono">Job 19682380</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-warning/10 text-brand-warning border border-brand-warning/20">PENDING</span>
+              </div>
+              <div>
+                <h4 class="font-bold text-white text-sm">judge-datagen (Shard 1)</h4>
+                <p class="text-xs text-slate-400 mt-1">Offset 30k | Target 30k</p>
+              </div>
+              <div class="text-[11px] text-slate-500 bg-slate-900 p-2 rounded font-mono">
+                Skipped: 16.792 (Resume)<br>
+                Script: generate_judge_dataset_async.py
+              </div>
+            </div>
+
+            <!-- Shard 2 -->
+            <div class="bg-slate-950/50 border border-slate-800 p-5 rounded-xl space-y-4">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-500 font-mono">Job 19682381</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-warning/10 text-brand-warning border border-brand-warning/20">PENDING</span>
+              </div>
+              <div>
+                <h4 class="font-bold text-white text-sm">judge-datagen (Shard 2)</h4>
+                <p class="text-xs text-slate-400 mt-1">Offset 60k | Target 30k</p>
+              </div>
+              <div class="text-[11px] text-slate-500 bg-slate-900 p-2 rounded font-mono">
+                Skipped: 16.641 (Resume)<br>
+                Script: generate_judge_dataset_async.py
+              </div>
+            </div>
+
+            <!-- Merge & Train Trigger -->
+            <div class="bg-slate-950/50 border border-slate-800 p-5 rounded-xl space-y-4 relative border-dashed">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-500 font-mono">Job 19682382</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-info/10 text-brand-info border border-brand-info/20">DEPENDENCY</span>
+              </div>
+              <div>
+                <h4 class="font-bold text-white text-sm">merge-and-trigger-train</h4>
+                <p class="text-xs text-slate-400 mt-1">CPU | Time 30m | Mem 64G</p>
+              </div>
+              <div class="text-[11px] text-slate-500 bg-slate-900 p-2 rounded font-mono">
+                Trigger: afterok:19682379:19682380:19682381<br>
+                Submits: train_judge_lora_large.sh
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Core Project Metrics & Success Details -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Scientific Highlights -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4 shadow-lg">
+          <h3 class="text-lg font-bold text-white flex items-center gap-2">
+            <svg class="h-5 w-5 text-brand-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Wissenschaftliche Highlights & Erkenntnisse
+          </h3>
+          <ul class="space-y-3 text-sm text-slate-300">
+            <li class="flex items-start gap-2">
+              <span class="text-brand-success mt-1">&bull;</span>
+              <div>
+                <strong class="text-white">QLoRA / ROCm Stabilität:</strong> 4-Bit-QLoRA (NF4) ermöglicht das Training des 32B-Modells auf LUMI-G bei einem Speicherbedarf von nur 17 GB VRAM.
+              </div>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="text-brand-success mt-1">&bull;</span>
+              <div>
+                <strong class="text-white">vLLM Concurrency-Sprung:</strong> Umstellung auf `generate_judge_dataset_async.py` (Concurrency=48) steigert den Inferenzdurchsatz um den Faktor 10–20×.
+              </div>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="text-brand-success mt-1">&bull;</span>
+              <div>
+                <strong class="text-white">Deduplizierungs-Bugfix:</strong> Sicherung aller 5.080 bereits generierten Proben durch die Umstellung von 120-Zeichen-Truncation auf vollständigen Textabgleich.
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Next Actions & Open Decisions -->
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4 shadow-lg">
+          <h3 class="text-lg font-bold text-white flex items-center gap-2">
+            <svg class="h-5 w-5 text-brand-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            Nächste Schritte & Entscheidungsbedarf
+          </h3>
+          <ul class="space-y-3 text-sm text-slate-300">
+            <li class="flex items-start gap-2">
+              <span class="text-brand-accent mt-1">&bull;</span>
+              <div>
+                <strong class="text-white">Ergebnis-Evaluierung:</strong> Festlegung eines quantitativen Evaluierungs-Benchmarks für den neuen parakonsistenten Judge v2 (vs. v1 Pilot).
+              </div>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="text-brand-accent mt-1">&bull;</span>
+              <div>
+                <strong class="text-white">Auswahl des Quantisierungsformats:</strong> AWQ/GPTQ (für maximale Geschwindigkeit in vLLM/GPU) vs. GGUF (für flexiblen CPU-VRAM-Mischbetrieb).
+              </div>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="text-brand-accent mt-1">&bull;</span>
+              <div>
+                <strong class="text-white">Phase 3 Vorbereitung:</strong> Datensynthese für die Destillation des CPU-Planners (Granite-3B) anstoßen.
+              </div>
+            </li>
+          </ul>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- 2. ACTIVITIES & JOBS TAB -->
+    <section id="tab-activities" class="space-y-8 hidden transition-opacity duration-300">
+      
+      <!-- Filter Bar -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-md">
+        <div class="flex flex-wrap gap-2" id="job-filters">
+          <button onclick="filterJobs('all')" id="filter-all" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-accent text-white shadow-sm">Alle</button>
+          <button onclick="filterJobs('COMPLETED')" id="filter-completed" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white">Completed</button>
+          <button onclick="filterJobs('PENDING')" id="filter-pending" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white">Pending</button>
+          <button onclick="filterJobs('TIMEOUT')" id="filter-timeout" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white">Timeout</button>
+          <button onclick="filterJobs('FAILED')" id="filter-failed" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white">Failed</button>
+        </div>
+        <div class="text-xs text-slate-400 font-mono">
+          Anzeige von <span id="visible-jobs-count">24</span> Jobs
+        </div>
+      </div>
+
+      <!-- Jobs Table -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-950/60 border-b border-slate-800 text-slate-400 font-semibold font-mono text-xs">
+                <th class="p-4">Job-ID</th>
+                <th class="p-4">Bezeichnung</th>
+                <th class="p-4">Partition</th>
+                <th class="p-4">Status</th>
+                <th class="p-4">Laufzeit</th>
+                <th class="p-4 text-right">GPUs</th>
+                <th class="p-4 text-right">GPU-Stunden</th>
+                <th class="p-4 text-right">Node-Stunden</th>
+                <th class="p-4 text-right">Speicher</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-table-body" class="divide-y divide-slate-800/50">
+              <!-- JS will inject rows here -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Detailed Activities Accordion -->
+      <div class="space-y-4">
+        <h3 class="text-xl font-bold text-white">EuroHPC Aktivitäten im Detail</h3>
+        
+        <!-- Activity 1 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <button onclick="toggleAccordion('act1')" class="w-full p-5 text-left flex justify-between items-center hover:bg-slate-800/30 transition-colors">
+            <div>
+              <span class="text-xs text-brand-accent font-mono font-semibold">Aktivität 1</span>
+              <h4 class="font-bold text-white">System-Exploration & Umgebungsverifikation</h4>
+            </div>
+            <svg id="arrow-act1" class="h-5 w-5 text-slate-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="content-act1" class="hidden p-5 border-t border-slate-800/80 bg-slate-950/40 space-y-4 text-sm text-slate-300">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <strong class="text-white block mb-1">Begründung & Ziel:</strong>
+                Verifikation der ROCm-Umgebung, GPU-Sichtbarkeit (`rocm-smi`) und Singularity-Container-Kompatibilität (`lumi-multitorch-latest.sif`) auf AMD MI250X Hardware.
+              </div>
+              <div>
+                <strong class="text-white block mb-1">Ergebnis & Verwendungszweck:</strong>
+                ✅ ROCm-Stack einsatzbereit, PyTorch 2.4+ mit AMD-Backend verfügbar. Verifikation der Kommunikations-Bibliotheken (NCCL/RCCL) für Multi-GPU-Setups.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity 3 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <button onclick="toggleAccordion('act3')" class="w-full p-5 text-left flex justify-between items-center hover:bg-slate-800/30 transition-colors">
+            <div>
+              <span class="text-xs text-brand-accent font-mono font-semibold">Aktivität 3</span>
+              <h4 class="font-bold text-white">ONNX-Router-Modell-Export & Benchmark</h4>
+            </div>
+            <svg id="arrow-act3" class="h-5 w-5 text-slate-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="content-act3" class="hidden p-5 border-t border-slate-800/80 bg-slate-950/40 space-y-4 text-sm text-slate-300">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <strong class="text-white block mb-1">Begründung & Ziel:</strong>
+                Export des gelernten Gating-Netzwerks (Router) nach ONNX, um die Inferenz auf den reinen CPU-Systemen der MoE Sovereign VM zu ermöglichen.
+              </div>
+              <div>
+                <strong class="text-white block mb-1">Ergebnis & Verwendungszweck:</strong>
+                ✅ ONNX-Export erfolgreich. Datei liegt auf Scratch: `/models/sovereign_router.onnx` (16 KB). Erreichte Inferenzlatenz auf CPU: &lt;1ms.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity 6 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <button onclick="toggleAccordion('act6')" class="w-full p-5 text-left flex justify-between items-center hover:bg-slate-800/30 transition-colors">
+            <div>
+              <span class="text-xs text-brand-accent font-mono font-semibold">Aktivität 6</span>
+              <h4 class="font-bold text-white">Judge-LoRA-Fine-Tuning (Pilottraining, v1)</h4>
+            </div>
+            <svg id="arrow-act6" class="h-5 w-5 text-slate-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="content-act6" class="hidden p-5 border-t border-slate-800/80 bg-slate-950/40 space-y-4 text-sm text-slate-300">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <strong class="text-white block mb-1">Begründung & Ziel:</strong>
+                Erstes Pilot-Training von Qwen2.5-32B-Instruct mittels QLoRA (4-Bit NF4) auf 140 handkuratierten parakonsistenten Proben, um den ROCm-BitsAndBytes-Trainingsstack auf AMD-GPUs zu validieren.
+              </div>
+              <div>
+                <strong class="text-white block mb-1">Ergebnis & Verwendungszweck:</strong>
+                ✅ Adapter v1 erfolgreich trainiert und gespeichert (Adapter-Größe: 257 MB). Finale Token-Genauigkeit bei 90,4 % bei train_loss = 0.597. Der CPU-Merge-Schritt stieß an OOM (64GB Limit), was die Erhöhung des Limits auf 200GB offenbarte.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity 7 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+          <button onclick="toggleAccordion('act7')" class="w-full p-5 text-left flex justify-between items-center hover:bg-slate-800/30 transition-colors">
+            <div>
+              <span class="text-xs text-brand-accent font-mono font-semibold">Aktivität 7</span>
+              <h4 class="font-bold text-white">LoRA-Adapter-Merge (v1)</h4>
+            </div>
+            <svg id="arrow-act7" class="h-5 w-5 text-slate-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="content-act7" class="hidden p-5 border-t border-slate-800/80 bg-slate-950/40 space-y-4 text-sm text-slate-300">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <strong class="text-white block mb-1">Begründung & Ziel:</strong>
+                Einbrennen des gelernten Adapters v1 in das 32B-Basismaterial auf einer CPU-Node mit erhöhtem Arbeitsspeicher, um ein voll funktionsfähiges, eigenständiges Judge-Modell zu generieren.
+              </div>
+              <div>
+                <strong class="text-white block mb-1">Ergebnis & Verwendungszweck:</strong>
+                ✅ Merge erfolgreich (22m 35s, Job 19540774). Das 62 GB große FP16-Modell wurde auf Scratch abgelegt und steht für Inferenz-Tests bereit.
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- 3. ROADMAP & VISION TAB -->
+    <section id="tab-vision" class="space-y-8 hidden transition-opacity duration-300">
+      
+      <!-- Target Architecture Showcase -->
+      <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg space-y-6">
+        <div>
+          <h3 class="text-xl font-bold text-white">Souveräne Hybrid-Architektur</h3>
+          <p class="text-xs text-slate-400">Verteilung von Rechenlasten zwischen CPU-VM und GPU-Hosts nach der SFT-Optimierung</p>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- CPU VM -->
+          <div class="bg-slate-950/50 p-6 rounded-xl border border-slate-800 space-y-4">
+            <div class="flex items-center space-x-2 text-brand-info">
+              <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 5h10a2 2 0 012 2v10a2 2 0 01-2 2H7a2 2 0 01-2-2V7a2 2 0 012-2z"/>
+              </svg>
+              <h4 class="font-bold text-white text-base">MoE Sovereign VM (CPU-only)</h4>
+            </div>
+            <p class="text-sm text-slate-400">Fokus: Minimale Latenz, maximale Energieeffizienz. Führt die Orchestrierung und Ablaufplanung aus.</p>
+            <ul class="space-y-2 text-xs text-slate-300">
+              <li class="flex items-center gap-2 bg-slate-900/60 p-2 rounded">
+                <span class="text-brand-info font-bold">1. Komplexitätsschätzung (DeBERTa-v3, ONNX)</span>
+                <span class="ml-auto font-mono text-[10px] text-slate-400">~3-6ms</span>
+              </li>
+              <li class="flex items-center gap-2 bg-slate-900/60 p-2 rounded">
+                <span class="text-brand-info font-bold">2. Semantisches Routing (MiniLM, FAISS)</span>
+                <span class="ml-auto font-mono text-[10px] text-slate-400">~8-12ms</span>
+              </li>
+              <li class="flex items-center gap-2 bg-slate-900/60 p-2 rounded">
+                <span class="text-brand-info font-bold">3. JSON-Ablaufplanung (Granite-3B, GGUF)</span>
+                <span class="ml-auto font-mono text-[10px] text-slate-400">&lt;200ms</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- GPU Host -->
+          <div class="bg-slate-950/50 p-6 rounded-xl border border-slate-800 space-y-4">
+            <div class="flex items-center space-x-2 text-brand-accent">
+              <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/>
+              </svg>
+              <h4 class="font-bold text-white text-base">GPU Host (N04-RTX)</h4>
+            </div>
+            <p class="text-sm text-slate-400">Fokus: Hohe Rechenleistung, komplexe Argumentation. Löst Konflikte auf und führt Experten aus.</p>
+            <ul class="space-y-2 text-xs text-slate-300">
+              <li class="flex items-center gap-2 bg-slate-900/60 p-2 rounded">
+                <span class="text-brand-accent font-bold">Experten-LLMs (z.B. Coder-7B, Legal-14B)</span>
+                <span class="ml-auto font-mono text-[10px] text-slate-400">VRAM-beschränkt</span>
+              </li>
+              <li class="flex items-center gap-2 bg-slate-900/60 p-2 rounded">
+                <span class="text-brand-accent font-bold">Parakonsistenter Judge (Granite-30B, 4-Bit AWQ)</span>
+                <span class="ml-auto font-mono text-[10px] text-slate-400">~20GB VRAM</span>
+              </li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Roadmap Timeline -->
+      <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-lg space-y-6">
+        <h3 class="text-xl font-bold text-white">Projekt-Roadmap (Phasen 1–6)</h3>
+        
+        <div class="relative pl-8 border-l border-slate-800 space-y-8">
+          
+          <!-- Phase 1 -->
+          <div class="relative">
+            <div class="absolute -left-12 top-1.5 h-8 w-8 rounded-full bg-brand-success border-4 border-slate-900 flex items-center justify-center font-bold text-xs text-slate-900 font-mono">1</div>
+            <div>
+              <span class="text-xs text-brand-success font-mono font-semibold">Phase 1 — Datengenerierung & Judge-Training v2 (Aktiv)</span>
+              <h4 class="font-bold text-white text-base mt-1">SFT & QLoRA des parakonsistenten Judges</h4>
+              <p class="text-sm text-slate-400 mt-2">
+                Erstellung des 90k Datensatzes unter Einsatz asynchroner paralleler vLLM-Aufrufe. 
+                Daran schließt sich das Multi-GPU-Training und der merge im 200GB-RAM Segment an.
+              </p>
+            </div>
+          </div>
+
+          <!-- Phase 2 -->
+          <div class="relative">
+            <div class="absolute -left-12 top-1.5 h-8 w-8 rounded-full bg-slate-800 border-4 border-slate-900 flex items-center justify-center font-bold text-xs text-slate-400 font-mono">2</div>
+            <div>
+              <span class="text-xs text-slate-500 font-mono font-semibold">Phase 2 — Encoder/Klassifikator-Training</span>
+              <h4 class="font-bold text-slate-300 text-base mt-1">Ersatz deterministischer Regex- & ChromaDB-Abfragen</h4>
+              <p class="text-sm text-slate-500 mt-2">
+                Training eines DeBERTa-v3-small Modells (Komplexitätsschätzer) und MiniLM-L12 (semantischer Template-Cache). 
+                Export zu ONNX für extrem performante CPU-Inferenz (3–12ms).
+              </p>
+            </div>
+          </div>
+
+          <!-- Phase 3 -->
+          <div class="relative">
+            <div class="absolute -left-12 top-1.5 h-8 w-8 rounded-full bg-slate-800 border-4 border-slate-900 flex items-center justify-center font-bold text-xs text-slate-400 font-mono">3</div>
+            <div>
+              <span class="text-xs text-slate-500 font-mono font-semibold">Phase 3 — Planner SFT & DPO</span>
+              <h4 class="font-bold text-slate-300 text-base mt-1">Destillation des Granite-3B CPU-JSON-Planners</h4>
+              <p class="text-sm text-slate-500 mt-2">
+                Erstellung eines 200.000 Samples umfassenden Teacher-Plänesatzes und Training des SLM. 
+                Optimierung der syntaktischen Validität und Logik über DPO.
+              </p>
+            </div>
+          </div>
+
+          <!-- Phase 4 -->
+          <div class="relative">
+            <div class="absolute -left-12 top-1.5 h-8 w-8 rounded-full bg-slate-800 border-4 border-slate-900 flex items-center justify-center font-bold text-xs text-slate-400 font-mono">4</div>
+            <div>
+              <span class="text-xs text-slate-500 font-mono font-semibold">Phase 4 — Offline RL Routing</span>
+              <h4 class="font-bold text-slate-300 text-base mt-1">Decision-Transformer basierte Routing-Optimierung</h4>
+              <p class="text-sm text-slate-500 mt-2">
+                Training einer Routing-Policy basierend auf Prometheus/Grafana-Performance-Logs. 
+                Minimierung von Token-Kosten und Latenz unter Einhaltung eines festen Qualitätsanspruchs.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </section>
+
+    <!-- 4. FILE EXPLORER TAB -->
+    <section id="tab-explorer" class="space-y-8 hidden transition-opacity duration-300">
+      
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
+        <div class="p-6 border-b border-slate-800 bg-slate-900/50">
+          <h3 class="text-lg font-bold text-white">Visualisiertes Scratch-Dateisystem auf LUMI-G</h3>
+          <p class="text-xs text-slate-400">Verteilung der Cached Models, Trainingsdaten und Log-Dateien</p>
+        </div>
+        <div class="p-6 font-mono text-sm text-slate-300 space-y-1">
+          
+          <div class="flex items-center space-x-2 py-1">
+            <span class="text-brand-accent font-bold">/scratch/project_465003058/hornphil/</span>
+          </div>
+
+          <div class="pl-4 flex items-center space-x-2 py-1">
+            <span class="text-slate-500">├──</span>
+            <span class="text-brand-info font-bold">data/</span>
+            <span class="text-slate-500 text-xs">(Trainings- & Seed-Daten)</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>├── paraconsistent_training_data.jsonl (v1 Pilot, 140 Samples)</span>
+            <span>356 KB</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>├── routellm_train.jsonl (RouteLLM-Seeds)</span>
+            <span>277 MB</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>├── paraconsistent_shard0.jsonl (Shard 0)</span>
+            <span>6,9 MB</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>├── paraconsistent_shard1.jsonl (Shard 1)</span>
+            <span>6,9 MB</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>└── paraconsistent_shard2.jsonl (Shard 2)</span>
+            <span>6,9 MB</span>
+          </div>
+
+          <div class="pl-4 flex items-center space-x-2 py-1">
+            <span class="text-slate-500">├──</span>
+            <span class="text-brand-info font-bold">hf_cache/</span>
+            <span class="text-slate-500 text-xs">(Basismodell-Cache)</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>└── models--ibm-granite--granite-3.0-30b-instruct/ (16 Safetensor-Shards)</span>
+            <span>62 GB</span>
+          </div>
+
+          <div class="pl-4 flex items-center space-x-2 py-1">
+            <span class="text-slate-500">├──</span>
+            <span class="text-brand-info font-bold">models/</span>
+            <span class="text-slate-500 text-xs">(Trainierte LoRA Adapters & ONNX Outputs)</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>├── sovereign_router.onnx (ONNX Gating Classifier)</span>
+            <span>16 KB</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>├── sovereign_router.onnx.data (ONNX Classifier-Daten)</span>
+            <span>528 KB</span>
+          </div>
+          <div class="pl-8 flex items-center justify-between py-0.5 text-xs text-slate-400">
+            <span>└── sovereign-judge-32b-lora/</span>
+            <span>1,8 GB</span>
+          </div>
+          <div class="pl-12 flex items-center justify-between py-0.5 text-xs text-slate-500">
+            <span>├── final-adapter/ (PEFT Weights v1 Pilot)</span>
+            <span>257 MB</span>
+          </div>
+          <div class="pl-12 flex items-center justify-between py-0.5 text-xs text-slate-500">
+            <span>└── merged/ (FP16 full weights v1 Pilot)</span>
+            <span>62 GB</span>
+          </div>
+
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800 bg-slate-900/30 py-6 text-center text-xs text-slate-500 mt-auto">
+    MoE Sovereign Orchestrator &bull; Generiert am 2026-06-28
+  </footer>
+
+  <script>
+    // Tab switching logic
+    function switchTab(tabName) {
+      // Hide all tabs
+      document.getElementById('tab-dashboard').classList.add('hidden');
+      document.getElementById('tab-activities').classList.add('hidden');
+      document.getElementById('tab-vision').classList.add('hidden');
+      document.getElementById('tab-explorer').classList.add('hidden');
+      
+      // Show requested tab
+      document.getElementById('tab-' + tabName).classList.remove('hidden');
+
+      // Update button colors
+      const buttons = ['dashboard', 'activities', 'vision', 'explorer'];
+      buttons.forEach(btn => {
+        const el = document.getElementById('btn-' + btn);
+        if (btn === tabName) {
+          el.className = 'px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 bg-brand-accent text-white shadow-sm';
+        } else {
+          el.className = 'px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-slate-400 hover:text-white';
+        }
+      });
+    }
+
+    // Accordion expand/collapse
+    function toggleAccordion(id) {
+      const el = document.getElementById('content-' + id);
+      const arrow = document.getElementById('arrow-' + id);
+      if (el.classList.contains('hidden')) {
+        el.classList.remove('hidden');
+        arrow.classList.add('rotate-180');
+      } else {
+        el.classList.add('hidden');
+        arrow.classList.remove('rotate-180');
+      }
+    }
+
+    // SLURM Job Data
+    const jobs = [
+      { id: 19160893, name: 'hostname (Exploration)', partition: 'dev-g', state: 'COMPLETED', elapsed: '0s', gpus: 1, gpuh: 0.0000, nodeh: 0.0000, mem: '64 GB' },
+      { id: 19160894, name: 'rocm-smi (GPU-Verify)', partition: 'dev-g', state: 'COMPLETED', elapsed: '1s', gpus: 1, gpuh: 0.0003, nodeh: 0.0003, mem: '64 GB' },
+      { id: 19166029, name: 'moe-router (Datagen-Val.)', partition: 'small-g', state: 'COMPLETED', elapsed: '15s', gpus: 1, gpuh: 0.0042, nodeh: 0.0042, mem: '64 GB' },
+      { id: 19166081, name: 'moe-router (Datagen-Val.)', partition: 'small-g', state: 'COMPLETED', elapsed: '22s', gpus: 1, gpuh: 0.0061, nodeh: 0.0061, mem: '64 GB' },
+      { id: 19220741, name: 'moe-datagen (Abgebrochen)', partition: 'small-g', state: 'FAILED', elapsed: '21s', gpus: 1, gpuh: 0.0058, nodeh: 0.0058, mem: '64 GB' },
+      { id: 19220748, name: 'moe-datagen (Abgebrochen)', partition: 'small-g', state: 'FAILED', elapsed: '54s', gpus: 1, gpuh: 0.0150, nodeh: 0.0150, mem: '64 GB' },
+      { id: 19221070, name: 'moe-datagen (Abgebrochen)', partition: 'small-g', state: 'FAILED', elapsed: '10min 4s', gpus: 1, gpuh: 0.1678, nodeh: 0.1678, mem: '64 GB' },
+      { id: 19221170, name: 'moe-datagen (Erfolgreich)', partition: 'small-g', state: 'COMPLETED', elapsed: '20min 23s', gpus: 1, gpuh: 0.3397, nodeh: 0.3397, mem: '64 GB' },
+      { id: 19239779, name: 'moe-router ONNX Export', partition: 'small-g', state: 'COMPLETED', elapsed: '40s', gpus: 1, gpuh: 0.0111, nodeh: 0.0111, mem: '64 GB' },
+      { id: 19517008, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '39s', gpus: 1, gpuh: 0.0108, nodeh: 0.0108, mem: '64 GB' },
+      { id: 19518295, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '42s', gpus: 1, gpuh: 0.0117, nodeh: 0.0117, mem: '64 GB' },
+      { id: 19518304, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '9min 36s', gpus: 1, gpuh: 0.1600, nodeh: 0.1600, mem: '64 GB' },
+      { id: 19518660, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '9min 11s', gpus: 1, gpuh: 0.1531, nodeh: 0.1531, mem: '64 GB' },
+      { id: 19520142, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '14min 47s', gpus: 1, gpuh: 0.2464, nodeh: 0.2464, mem: '64 GB' },
+      { id: 19534098, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '8min 22s', gpus: 1, gpuh: 0.1394, nodeh: 0.1394, mem: '64 GB' },
+      { id: 19534252, name: 'sovereign-judge (FAILED)', partition: 'small-g', state: 'FAILED', elapsed: '7min 55s', gpus: 1, gpuh: 0.1319, nodeh: 0.1319, mem: '64 GB' },
+      { id: 19534326, name: 'sovereign-judge v1 Pilot', partition: 'small-g', state: 'COMPLETED', elapsed: '38min 49s', gpus: 1, gpuh: 0.6469, nodeh: 0.6469, mem: '64 GB' },
+      { id: 19540774, name: 'merge LoRA -> Base', partition: 'small-g', state: 'COMPLETED', elapsed: '22min 35s', gpus: 0, gpuh: 0.0000, nodeh: 0.3764, mem: '200 GB' },
+      { id: 19540836, name: 'judge-datagen (Timeout Shard 0)', partition: 'small-g', state: 'TIMEOUT', elapsed: '8h 0min 14s', gpus: 8, gpuh: 64.03, nodeh: 8.003, mem: '200 GB' },
+      { id: 19540837, name: 'judge-datagen (Timeout Shard 1)', partition: 'small-g', state: 'TIMEOUT', elapsed: '8h 0min 14s', gpus: 8, gpuh: 64.03, nodeh: 8.003, mem: '200 GB' },
+      { id: 19540838, name: 'judge-datagen (Timeout Shard 2)', partition: 'small-g', state: 'TIMEOUT', elapsed: '8h 0min 14s', gpus: 8, gpuh: 64.03, nodeh: 8.003, mem: '200 GB' },
+      { id: 19588284, name: 'judge-datagen (Attempt 1 Shard 0)', partition: 'small-g', state: 'FAILED', elapsed: '2min 4s', gpus: 8, gpuh: 0.2753, nodeh: 0.0344, mem: '200 GB' },
+      { id: 19588285, name: 'judge-datagen (Attempt 1 Shard 1)', partition: 'small-g', state: 'FAILED', elapsed: '2min 1s', gpus: 8, gpuh: 0.2688, nodeh: 0.0336, mem: '200 GB' },
+      { id: 19588286, name: 'judge-datagen (Attempt 1 Shard 2)', partition: 'small-g', state: 'FAILED', elapsed: '1min 34s', gpus: 8, gpuh: 0.2088, nodeh: 0.0261, mem: '200 GB' },
+      { id: 19598021, name: 'judge-datagen (Async Shard 0)', partition: 'small-g', state: 'TIMEOUT', elapsed: '4h 0min 24s', gpus: 8, gpuh: 32.05, nodeh: 4.007, mem: '200 GB' },
+      { id: 19598022, name: 'judge-datagen (Async Shard 1)', partition: 'small-g', state: 'TIMEOUT', elapsed: '4h 0min 18s', gpus: 8, gpuh: 32.04, nodeh: 4.005, mem: '200 GB' },
+      { id: 19598023, name: 'judge-datagen (Async Shard 2)', partition: 'small-g', state: 'TIMEOUT', elapsed: '4h 0min 9s', gpus: 8, gpuh: 32.02, nodeh: 4.003, mem: '200 GB' },
+      { id: 19598025, name: 'merge-and-trigger-train (Stale)', partition: 'small-g', state: 'FAILED', elapsed: '0s', gpus: 0, gpuh: 0.0000, nodeh: 0.0000, mem: '64 GB' },
+      { id: 19682379, name: 'judge-datagen (Async Resume Shard 0)', partition: 'small-g', state: 'PENDING', elapsed: '0s', gpus: 8, gpuh: 0.0000, nodeh: 0.0000, mem: '200 GB' },
+      { id: 19682380, name: 'judge-datagen (Async Resume Shard 1)', partition: 'small-g', state: 'PENDING', elapsed: '0s', gpus: 8, gpuh: 0.0000, nodeh: 0.0000, mem: '200 GB' },
+      { id: 19682381, name: 'judge-datagen (Async Resume Shard 2)', partition: 'small-g', state: 'PENDING', elapsed: '0s', gpus: 8, gpuh: 0.0000, nodeh: 0.0000, mem: '200 GB' },
+      { id: 19682382, name: 'merge-and-trigger-train', partition: 'small-g', state: 'PENDING', elapsed: '0s', gpus: 0, gpuh: 0.0000, nodeh: 0.0000, mem: '64 GB' }
+    ];
+
+    // Filter and Render Jobs
+    function filterJobs(status) {
+      // Set active button style
+      const filters = ['all', 'completed', 'pending', 'timeout', 'failed'];
+      filters.forEach(f => {
+        const el = document.getElementById('filter-' + f);
+        if (f === status.toLowerCase()) {
+          el.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-accent text-white shadow-sm';
+        } else {
+          el.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white';
+        }
+      });
+
+      const body = document.getElementById('jobs-table-body');
+      body.innerHTML = '';
+      
+      const filtered = jobs.filter(j => status === 'all' || j.state === status);
+      document.getElementById('visible-jobs-count').innerText = filtered.length;
+
+      filtered.forEach(j => {
+        let statusBadge = '';
+        if (j.state === 'COMPLETED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-success/10 text-brand-success border border-brand-success/20">COMPLETED</span>';
+        } else if (j.state === 'PENDING') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-warning/10 text-brand-warning border border-brand-warning/20">PENDING</span>';
+        } else if (j.state === 'TIMEOUT') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">TIMEOUT</span>';
+        } else if (j.state === 'FAILED') {
+          statusBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-mono bg-brand-danger/10 text-brand-danger border border-brand-danger/20">FAILED</span>';
+        }
+
+        const row = `
+          <tr class="hover:bg-slate-800/20 transition-colors">
+            <td class="p-4 font-mono text-xs text-slate-400">${j.id}</td>
+            <td class="p-4 font-bold text-white">${j.name}</td>
+            <td class="p-4 font-mono text-xs text-slate-400">${j.partition}</td>
+            <td class="p-4">${statusBadge}</td>
+            <td class="p-4 text-slate-300 font-mono text-xs">${j.elapsed}</td>
+            <td class="p-4 text-right text-slate-300 font-mono">${j.gpus}</td>
+            <td class="p-4 text-right font-bold text-white font-mono">${j.gpuh.toFixed(4)}</td>
+            <td class="p-4 text-right text-slate-300 font-mono">${j.nodeh.toFixed(4)}</td>
+            <td class="p-4 text-right text-slate-300 font-mono text-xs">${j.mem}</td>
+          </tr>
+        `;
+        body.innerHTML += row;
+      });
+    }
+
+    // Init table
+    filterJobs('all');
+  </script>
+</body>
+</html>

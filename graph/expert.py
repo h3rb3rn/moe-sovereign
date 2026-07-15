@@ -16,7 +16,7 @@ import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
     PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, MAX_EXPERT_TOKENS,
-    MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE, JUDGE_MODEL,
+    MAX_EXPERT_TOKENS_CODE, MAX_EXPERT_OUTPUT_CHARS_CODE,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
     EXPERT_OUTPUT_DIVISOR, EXPERT_INPUT_MIN_CHARS, EXPERT_CHARS_PER_TOKEN,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
@@ -48,15 +48,14 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
-    _estimate_model_vram_gb, _can_coexist_on_node, _node_vram_by_url,
+    _infer_tier, assign_gpu, _refine_expert_response,
     _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage, _record_node_latency
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -125,6 +124,7 @@ async def expert_worker(state_: AgentState):
         return {"expert_results": []}
 
     NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
+    local_conflicts = []
     plan         = state_.get("plan", [])
     chat_history = state_.get("chat_history") or []
     expert_tasks = [
@@ -273,6 +273,37 @@ async def expert_worker(state_: AgentState):
                 )
                 if _safe_ctx > 0 and _pinned_ctx > _safe_ctx:
                     _pinned_ctx = _safe_ctx
+                # Never downgrade a warm model: this pin's own stated purpose is
+                # avoiding reload-thrashing, but it assumed every large-model
+                # caller (CC-tool path included) warms up at JUDGE_NUM_CTX — no
+                # longer true once a template's own context_window (e.g. 262144)
+                # differs from the global default. Confirmed live: qwen3.6:35b on
+                # N04-RTX reloading from a 262144-ctx OpenCode session down to
+                # 32768 for an expert call minutes later, well before its 24h
+                # keep_alive — this exact pin was the cause, unconditionally
+                # capping down regardless of what was already loaded. Same
+                # check/pattern as _invoke_judge_with_retry / _invoke_planner_with_retry
+                # (services/inference.py) and the Augmented Tool Path.
+                if url:
+                    try:
+                        async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                            _ps_r = await _ps_cl.get(
+                                f"{url.rstrip('/').removesuffix('/v1')}/api/ps",
+                                headers={"Authorization": f"Bearer {token}"},
+                            )
+                            for _loaded in _ps_r.json().get("models", []):
+                                _lname = _loaded.get("name", "").split(":")[0]
+                                _ename = model_name.split(":")[0]
+                                _loaded_ctx = _loaded.get("context_length", 0)
+                                if _lname == _ename and _loaded_ctx >= _pinned_ctx:
+                                    logger.info(
+                                        "expert: reusing warm model ctx=%d (pin would have requested %d, no reload needed, model=%s)",
+                                        _loaded_ctx, _pinned_ctx, model_name,
+                                    )
+                                    _pinned_ctx = _loaded_ctx
+                                    break
+                    except Exception:
+                        pass  # non-fatal — fall through to the pinned ctx
                 if _pinned_ctx != _expert_ctx_window:
                     logger.info(
                         "expert: ctx pinned to min(resolved=%d, JUDGE_NUM_CTX=%d, safe=%d)=%d model=%s",
@@ -378,6 +409,7 @@ async def expert_worker(state_: AgentState):
                 f"  Task: {task_text}"
                 + (f" | ctx={_expert_ctx_window//1024}K" if _expert_ctx_window else "")
             )
+            await _record_stage(state_.get("response_id", ""), "expert", "started", f"{model_name}/{cat}")
             await _report(
                 f"📤 Expert [{model_name} / {cat}] System-Prompt:\n{sys_prompt}"
             )
@@ -404,7 +436,11 @@ async def expert_worker(state_: AgentState):
             # model_kwargs — LangChain warns and silently drops extra_body from model_kwargs,
             # which causes Ollama to use the Modelfile default (8192) instead of JUDGE_NUM_CTX
             # (32768), triggering a reload of the already-warm model on every expert call.
-            _extra_body = {"options": {"num_ctx": _expert_ctx_window}} if _expert_ctx_window > 0 else {}
+            # Only send num_ctx when the template explicitly sets context_window.
+            # Without an explicit override, rely on OLLAMA_CONTEXT_LENGTH / Modelfile defaults —
+            # sending the GGUF training context would downgrade and reload an already-warm model.
+            _expert_ctx_for_api = _expert_ctx_window if _expert_ctx_override > 0 else 0
+            _extra_body = {"options": {"num_ctx": _expert_ctx_for_api}} if _expert_ctx_for_api > 0 else {}
             if state_.get("enable_habe"):
                 from services.inference import _inject_habe_prefix_embeddings
                 _opts = _extra_body.setdefault("options", {})
@@ -434,6 +470,7 @@ async def expert_worker(state_: AgentState):
                         break
                 messages = _patched
             from metrics import PROM_TOKENS
+            _expert_call_t0 = time.monotonic()
             try:
                 _primary_url = url.rstrip("/")
                 # Ollama native /api/chat: the only path that reliably passes options.num_ctx.
@@ -441,7 +478,7 @@ async def expert_worker(state_: AgentState):
                 # in Ollama ≤0.30.6, causing every cold expert call to load qwen3.6:35b at the
                 # Modelfile default (8192) instead of 32768 — evicting the CC tool model and
                 # forcing a 90-second reload on the next CC request.
-                if api_type == "ollama" and _expert_ctx_window > 0:
+                if api_type == "ollama":
                     _native_msgs = []
                     for _m in messages:
                         _role = ("assistant" if (hasattr(_m, "type") and _m.type == "ai") else
@@ -450,12 +487,17 @@ async def expert_worker(state_: AgentState):
                         _native_msgs.append({"role": _role,
                                              "content": _m.content if hasattr(_m, "content") else str(_m)})
                     _ollama_base = url.rstrip("/").removesuffix("/v1")
+                    _native_opts: dict = {"num_predict": _expert_max_tokens}
+                    if _expert_ctx_for_api > 0:
+                        _native_opts["num_ctx"] = _expert_ctx_for_api
                     _native_payload: dict = {
                         "model":      model_name,
                         "messages":   _native_msgs,
                         "stream":     False,
-                        "options":    {"num_ctx": _expert_ctx_window, "num_predict": _expert_max_tokens},
-                        "keep_alive": "4h",
+                        "options":    _native_opts,
+                        # No explicit keep_alive — respects each Ollama
+                        # instance's own server-configured OLLAMA_KEEP_ALIVE
+                        # default instead of silently overriding it.
                     }
                     if state_.get("enable_habe"):
                         from services.inference import _inject_habe_prefix_embeddings
@@ -517,6 +559,20 @@ async def expert_worker(state_: AgentState):
                         timeout=_expert_node_timeout,
                         label=f"Expert[{cat}]",
                     )
+                # Interactive-pipeline latency was never recorded before —
+                # only the Agent Tool Path (services/pipeline/chat.py) fed
+                # moe:latency:{node}, so _select_node's future latency-aware
+                # weighting would otherwise start blind for the dominant
+                # planner→expert→judge traffic path. Common to all three
+                # branches above (ollama-native/anthropic-native/openai).
+                # Skipped when _used_fallback: the call actually ran against
+                # _FALLBACK_NODE (services/inference.py), not `url` — recording
+                # it under `url` would misattribute a degraded-primary latency
+                # sample to a node that never handled this request.
+                if not _used_fallback:
+                    asyncio.create_task(_record_node_latency(
+                        url, model_name, (time.monotonic() - _expert_call_t0) * 1000,
+                    ))
                 if _used_fallback:
                     await _report(f"⚠️ Expert [{cat}]: used local fallback (primary endpoint degraded)")
                 usage = _extract_usage(res)
@@ -532,6 +588,7 @@ async def expert_worker(state_: AgentState):
                 if len(_raw_content) > _expert_max_output:
                     content += "\n[…truncated]"
                 await _report(f"✅ Expert [{model_name} / {cat}]:\n{content}\n---")
+                await _record_stage(state_.get("response_id", ""), "expert", "done", f"{model_name}/{cat}")
                 # Token metrics
                 _uid = state_.get("user_id", "anon")
                 PROM_TOKENS.labels(model=model_name, token_type="prompt",      node=endpoint, user_id=_uid).inc(usage.get("prompt_tokens", 0))
@@ -558,22 +615,21 @@ async def expert_worker(state_: AgentState):
                 # (graph/synthesis.py), where the judge's verdict is available:
                 # a category the judge had to refine counts as negative. Self-
                 # confidence is used only as a fallback when refinement is disabled.
-                # Unload model — unless the same model is needed as judge LLM,
-                # OR both models fit simultaneously in the node's VRAM (avoid
-                # evicting a warm model when there is enough space for both).
-                if api_type == "ollama":
-                    _judge_model_name = (state_.get("judge_model_override") or JUDGE_MODEL).strip()
-                    if model_name == _judge_model_name:
-                        logger.debug(f"⏭️ VRAM unload skipped: {model_name} will be reused as judge")
-                    else:
-                        _node_vram = _node_vram_by_url(expert_base_url)
-                        if _can_coexist_on_node(model_name, _judge_model_name, _node_vram):
-                            logger.debug(
-                                "⏭️ VRAM unload skipped: %s and %s coexist on %.0f GB node",
-                                model_name, _judge_model_name, _node_vram,
-                            )
-                        else:
-                            asyncio.create_task(_ollama_unload(model_name, expert_base_url))
+                # VRAM management is left entirely to Ollama's own automatic
+                # LRU eviction (evicts the least-recently-used loaded model
+                # only when a newly requested model genuinely doesn't fit)
+                # plus each endpoint's own OLLAMA_KEEP_ALIVE/keep_alive
+                # setting. This code used to proactively unload the expert
+                # model here "just in case" after every single invocation,
+                # regardless of whether any other model actually needed the
+                # freed VRAM — which silently overrode a longer keep_alive
+                # (e.g. 4h) with an immediate forced unload on every turn,
+                # including mid-conversation gaps of an unrelated long-lived
+                # agentic tool session sharing the same model+node. Removed;
+                # see git history for the old _can_coexist_on_node /
+                # _is_model_busy_elsewhere-gated proactive-unload logic if
+                # reintroducing anything here for genuinely VRAM-constrained
+                # nodes.
                 res_prefix = f"ENSEMBLE: {model_name.upper()}" if model_cfg.get("forced") else model_name.upper()
                 result = {"res": f"[{res_prefix} / {cat}]: {content}", "model_cat": f"{model_name}::{cat}", **usage}
                 # User-owned connection tokens are tracked separately for budget exclusion.
@@ -593,10 +649,12 @@ async def expert_worker(state_: AgentState):
                     PROM_EXPERT_FAILURES.labels(model=model_name, reason="vram").inc()
                     logger.error(f"❌ VRAM/HTTP error GPU#{gpu} {model_name}: {e}")
                     await _report(f"❌ Expert {model_name}: GPU/HTTP error")
+                    await _record_stage(state_.get("response_id", ""), "expert", "error", model_name)
                     return {"res": f"[{model_name} ERROR]: VRAM/HTTP", "model_cat": None}
                 PROM_EXPERT_FAILURES.labels(model=model_name, reason="error").inc()
                 logger.error(f"❌ Expert {model_name}: {e}")
                 await _report(f"❌ Expert {model_name}: error")
+                await _record_stage(state_.get("response_id", ""), "expert", "error", model_name)
                 return {"res": f"[{model_name} ERROR]: {e}", "model_cat": None}
 
     async def run_task(i: int, task: dict) -> List[dict]:
@@ -606,6 +664,17 @@ async def expert_worker(state_: AgentState):
         Intended for ensemble approaches: evaluate different providers/training data in parallel.
         """
         cat              = task.get("category", "general")
+
+        # ── Scope Guard (TASK-17) ──────────────────────────────────────────────
+        try:
+            from services.scope_guard import check_scope
+            _scope_violation = check_scope(task, cat)
+            if _scope_violation:
+                logger.warning("🚫 Scope Guard blocked expert task: %s", _scope_violation.message)
+                return []
+        except Exception as _sg_e:
+            logger.debug("scope_guard: check failed (fail-open): %s", _sg_e)
+
         effective_experts = state_.get("user_experts") or EXPERTS
         all_experts = [e for e in effective_experts.get(cat, effective_experts.get("general", EXPERTS.get(cat, EXPERTS.get("general", [])))) if e.get("enabled", True)]
 
@@ -618,8 +687,99 @@ async def expert_worker(state_: AgentState):
             scored.append((score, e))
         scored.sort(key=lambda x: -x[0])
 
+        # Check if J-MoE debate should run (Theory C: Game-Theoretic Debate)
+        from config import JMOE_DEBATE_ENABLED
+        if JMOE_DEBATE_ENABLED and len(scored) >= 2:
+            proponent = scored[0][1]
+            skeptic = scored[1][1]
+            logger.info(f"⚖️ Starting J-MoE Debate in category '{cat}' between Proponent ({proponent['model']}) and Skeptic ({skeptic['model']})")
+            await _report(f"⚖️ Debate [{cat}]: Proponent ({proponent['model']}) vs Skeptic ({skeptic['model']})")
+            
+            # 1. Proponent Initial Answer
+            prop_res = await run_single(proponent, task, i + 1, 1)
+            prop_ans = prop_res.get("res", "")
+            
+            # 2. Skeptic Critique
+            skeptic_task = task.copy()
+            skeptic_task["input"] = (
+                f"[User Query]\n{task.get('input', '')}\n\n"
+                f"[Proponent Initial Answer]\n{prop_ans}\n\n"
+                f"[Task]\n"
+                f"You are an adversarial Skeptic/Opponent in a formal debate. Critique the Proponent's answer above. "
+                f"Identify logical fallacies, errors, omissions, or assumptions. Be critical, objective, and precise."
+            )
+            sk_res = await run_single(skeptic, skeptic_task, i + 1, 2)
+            sk_critique = sk_res.get("res", "")
+            
+            # 3. Proponent Rebuttal & Refined Answer
+            rebuttal_task = task.copy()
+            rebuttal_task["input"] = (
+                f"[User Query]\n{task.get('input', '')}\n\n"
+                f"[Your Initial Answer]\n{prop_ans}\n\n"
+                f"[Skeptic Critique]\n{sk_critique}\n\n"
+                f"[Task]\n"
+                f"You are the Proponent. Review the Skeptic's critique. Defend your correct claims, accept "
+                f"valid corrections, and output a refined, high-quality final response."
+            )
+            rebuttal_res = await run_single(proponent, rebuttal_task, i + 1, 3)
+            rebutted_ans = rebuttal_res.get("res", "")
+            
+            debate_transcript = (
+                f"[DEBATE] Proponent: {proponent['model']} | Skeptic: {skeptic['model']}\n"
+                f"### Proponent Initial Answer:\n{prop_ans}\n\n"
+                f"### Skeptic Critique:\n{sk_critique}\n\n"
+                f"### Proponent Final Rebutted Answer:\n{rebutted_ans}"
+            )
+            
+            # Record paraconsistent conflicts
+            from parsing import _improvement_ratio
+            div_score = _improvement_ratio(prop_ans, sk_critique)
+            if div_score >= 0.35:
+                conflict_entry = {
+                    "category": cat,
+                    "proposition_a": prop_ans[:600],
+                    "proposition_b": sk_critique[:600],
+                    "divergence_score": round(div_score, 3),
+                    "resolution": "pending",
+                    "resolved_by": ""
+                }
+                local_conflicts.append(conflict_entry)
+                logger.info(f"⚖️ Registered paraconsistent conflict in J-MoE debate: div_score={div_score:.2f}")
+            
+            final_res = {
+                "res": f"[{cat}]: {debate_transcript}",
+                "model_cat": f"{proponent['model']}::Debate::{cat}",
+                "prompt_tokens": prop_res.get("prompt_tokens", 0) + sk_res.get("prompt_tokens", 0) + rebuttal_res.get("prompt_tokens", 0),
+                "completion_tokens": prop_res.get("completion_tokens", 0) + sk_res.get("completion_tokens", 0) + rebuttal_res.get("completion_tokens", 0),
+                "user_conn_prompt_tokens": prop_res.get("user_conn_prompt_tokens", 0) + sk_res.get("user_conn_prompt_tokens", 0) + rebuttal_res.get("user_conn_prompt_tokens", 0),
+                "user_conn_completion_tokens": prop_res.get("user_conn_completion_tokens", 0) + sk_res.get("user_conn_completion_tokens", 0) + rebuttal_res.get("user_conn_completion_tokens", 0),
+            }
+            return [final_res]
+
         tier1 = [(s, e) for s, e in scored if e.get("_tier", 1) == 1 and s >= EXPERT_MIN_SCORE]
         tier2 = [(s, e) for s, e in scored if e.get("_tier", 2) == 2 and s >= EXPERT_MIN_SCORE]
+
+        # GPU-load-aware tie-break: among candidates with an IDENTICAL score
+        # (true ties only — never reorders by score), prefer the endpoint with
+        # fewer in-flight requests. Flag: MOE_LOAD_AWARE_ROUTING=1.
+        if os.getenv("MOE_LOAD_AWARE_ROUTING", "0") == "1":
+            from services.node_load import inflight as _nl_inflight
+
+            def _tiebreak_by_load(pairs: list) -> list:
+                out, i = [], 0
+                while i < len(pairs):
+                    j = i
+                    while j < len(pairs) and pairs[j][0] == pairs[i][0]:
+                        j += 1
+                    group = pairs[i:j]
+                    if len(group) > 1:
+                        group = sorted(group, key=lambda se: _nl_inflight(se[1].get("endpoint", "")))
+                    out.extend(group)
+                    i = j
+                return out
+
+            tier1 = _tiebreak_by_load(tier1)
+            tier2 = _tiebreak_by_load(tier2)
 
         # If no T1 results available, treat all normal results as T1
         if not tier1:
@@ -733,4 +893,5 @@ async def expert_worker(state_: AgentState):
         "completion_tokens":           sum(r.get("completion_tokens",           0) for r in all_results),
         "user_conn_prompt_tokens":     sum(r.get("user_conn_prompt_tokens",     0) for r in all_results),
         "user_conn_completion_tokens": sum(r.get("user_conn_completion_tokens", 0) for r in all_results),
+        "conflict_registry":           local_conflicts,
     }

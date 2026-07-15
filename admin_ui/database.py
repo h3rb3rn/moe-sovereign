@@ -344,6 +344,8 @@ ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS dynamic_routing    BOOLEAN NOT NUL
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS local_only_routing BOOLEAN NOT NULL DEFAULT FALSE;
 -- Per-key Ollama num_ctx override for native model calls (0 = use model default)
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS native_num_ctx INTEGER NOT NULL DEFAULT 0;
+-- Soft-archive: key is hidden from UI but kept for audit trail (only valid when is_active=FALSE)
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Connection-level rate limit config for tagged models (JSON: {window_seconds, max_requests, tagged})
 ALTER TABLE user_api_connections ADD COLUMN IF NOT EXISTS rate_limit_config TEXT NOT NULL DEFAULT '{}';
@@ -353,6 +355,88 @@ ALTER TABLE model_metadata ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT
 
 -- Dynamic template ID resolved for moe-auto requests (references admin_expert_templates.id)
 ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS dynamic_tmpl_id TEXT;
+
+-- Quality signals from TASK-10 to TASK-22 (Trust Score, Cynefin, Self-Critique)
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_score              DOUBLE PRECISION;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS trust_verdict            TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cynefin_domain           TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS self_critique_round      INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS cascade_type             TEXT;
+ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS structured_failure_round INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS ai_io_audit_log (
+    audit_id          TEXT PRIMARY KEY,
+    session_id        TEXT,
+    request_id        TEXT,
+    model             TEXT,
+    endpoint          TEXT,
+    stage             TEXT,
+    prompt_tokens     INTEGER,
+    completion_tokens INTEGER,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    status            TEXT,
+    request_body      JSONB,
+    response_body     JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_ai_io_audit_request ON ai_io_audit_log(request_id);
+CREATE INDEX IF NOT EXISTS idx_ai_io_audit_started ON ai_io_audit_log(started_at DESC);
+
+-- Agent Tool Path "premature stop" detection patterns — admin-editable so a
+-- newly observed announcement phrasing (a model writing "Let me now..." /
+-- "Ich fix das jetzt..." and then stopping instead of calling a tool) can be
+-- added in production without a code change or container rebuild. Seeded
+-- once from the patterns that were previously hardcoded in
+-- services/agent_enrichment.py — see scripts/seed_premature_stop_patterns.py.
+CREATE TABLE IF NOT EXISTS admin_premature_stop_patterns (
+    id           TEXT PRIMARY KEY,
+    pattern      TEXT NOT NULL,
+    pattern_type TEXT NOT NULL DEFAULT 'literal',  -- 'literal' | 'regex'
+    language     TEXT NOT NULL DEFAULT '',          -- free tag e.g. 'de','en'; '' = any
+    category     TEXT NOT NULL DEFAULT 'announcement',
+    description  TEXT NOT NULL DEFAULT '',
+    enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL DEFAULT ''
+);
+
+-- Singleton config row (same shape as federation_config) for the LLM that
+-- judges tool-passthrough text-only endings which none of the
+-- admin_premature_stop_patterns rules matched. Admin-editable so the model
+-- can be swapped (different Ollama instance, different size) without a code
+-- change or container rebuild — see services/agent_enrichment.py::_classify_tool_ending.
+CREATE TABLE IF NOT EXISTS admin_classifier_config (
+    id         TEXT PRIMARY KEY DEFAULT 'default',
+    model      TEXT NOT NULL DEFAULT 'gemma4:12b',
+    base_url   TEXT NOT NULL DEFAULT 'http://192.168.155.224:11435/v1',
+    token      TEXT NOT NULL DEFAULT 'ollama',
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+
+-- One row per tool-passthrough response that ended as plain text (no
+-- tool_calls, finish_reason=stop) mid-session without triggering the
+-- existing premature-stop retry — i.e. exactly the case that previously
+-- required a human watching the logs to notice. classification is filled
+-- in asynchronously by the configured classifier LLM (NULL = still
+-- pending/classifier disabled/call failed); promoted_to_pattern tracks
+-- whether an admin has already turned this into a permanent
+-- admin_premature_stop_patterns rule via the review UI.
+CREATE TABLE IF NOT EXISTS admin_unclassified_tool_endings (
+    id                   TEXT PRIMARY KEY,
+    chat_id              TEXT NOT NULL DEFAULT '',
+    model                TEXT NOT NULL DEFAULT '',
+    content              TEXT NOT NULL DEFAULT '',
+    content_chars        INTEGER NOT NULL DEFAULT 0,
+    tool_msgs            INTEGER NOT NULL DEFAULT 0,
+    classification       TEXT,                       -- 'premature_stop' | 'legitimate' | NULL=pending
+    classifier_reasoning TEXT NOT NULL DEFAULT '',
+    promoted_to_pattern  BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at           TEXT NOT NULL DEFAULT '',
+    classified_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_unclassified_tool_endings_created
+    ON admin_unclassified_tool_endings(created_at DESC);
 """
 
 
@@ -961,12 +1045,13 @@ async def create_api_key(user_id: str, label: str = "") -> tuple[str, dict]:
 
 
 async def list_api_keys(user_id: str) -> list[dict]:
+    """Returns all non-archived keys for a user (active and deactivated)."""
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id,user_id,key_prefix,label,is_active,created_at,last_used_at,expires_at,"
+                "SELECT id,user_id,key_prefix,label,is_active,is_archived,created_at,last_used_at,expires_at,"
                 "cc_profile_id,dynamic_routing,local_only_routing,native_num_ctx "
-                "FROM api_keys WHERE user_id=%s ORDER BY created_at DESC",
+                "FROM api_keys WHERE user_id=%s AND is_archived=FALSE ORDER BY created_at DESC",
                 (user_id,),
             )
             return await cur.fetchall()
@@ -983,6 +1068,37 @@ async def revoke_api_key(key_id: str) -> Optional[str]:
             key_hash = row["key_hash"]
             await cur.execute("UPDATE api_keys SET is_active=FALSE WHERE id=%s", (key_id,))
     return key_hash
+
+
+async def reactivate_api_key(key_id: str, user_id: str) -> Optional[str]:
+    """Re-enables a previously locked key; returns key_hash for Valkey re-sync."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT key_hash FROM api_keys WHERE id=%s AND user_id=%s AND is_archived=FALSE",
+                (key_id, user_id),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return None
+            key_hash = row["key_hash"]
+            await cur.execute(
+                "UPDATE api_keys SET is_active=TRUE WHERE id=%s AND user_id=%s",
+                (key_id, user_id),
+            )
+    return key_hash
+
+
+async def archive_api_key(key_id: str, user_id: str) -> bool:
+    """Soft-deletes a deactivated key; hidden from UI, kept for audit trail."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE api_keys SET is_archived=TRUE "
+                "WHERE id=%s AND user_id=%s AND is_active=FALSE",
+                (key_id, user_id),
+            )
+            return cur.rowcount > 0
 
 
 async def get_active_key_hashes(user_id: str) -> list[dict]:
@@ -1100,16 +1216,39 @@ async def set_api_key_native_num_ctx(key_id: str, user_id: str, num_ctx: int) ->
 
 async def log_usage(user_id: str, api_key_id: Optional[str], request_id: str,
                     model: str, moe_mode: str, prompt_tokens: int,
-                    completion_tokens: int, status: str = "ok") -> None:
+                    completion_tokens: int, status: str = "ok",
+                    session_id: Optional[str] = None,
+                    latency_ms: Optional[int] = None,
+                    complexity_level: Optional[str] = None,
+                    expert_domains: Optional[str] = None,
+                    cache_hit: bool = False,
+                    agentic_rounds: int = 0,
+                    dynamic_tmpl_id: Optional[str] = None,
+                    trust_score: Optional[float] = None,
+                    trust_verdict: Optional[str] = None,
+                    cynefin_domain: Optional[str] = None,
+                    self_critique_round: int = 0,
+                    cascade_type: Optional[str] = None,
+                    structured_failure_round: int = 0) -> None:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "INSERT INTO usage_log (id,user_id,api_key_id,request_id,model,moe_mode,"
-                "prompt_tokens,completion_tokens,total_tokens,status,requested_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                "prompt_tokens,completion_tokens,total_tokens,status,requested_at,"
+                "session_id,latency_ms,complexity_level,expert_domains,cache_hit,"
+                "agentic_rounds,dynamic_tmpl_id,"
+                "trust_score,trust_verdict,cynefin_domain,self_critique_round,cascade_type,"
+                "structured_failure_round) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+                "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (new_id(), user_id, api_key_id, request_id, model, moe_mode,
                  prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
-                 status, now_iso()),
+                 status, now_iso(),
+                 session_id, latency_ms, complexity_level, expert_domains, cache_hit,
+                 agentic_rounds, dynamic_tmpl_id,
+                 trust_score, trust_verdict or None, cynefin_domain or None,
+                 self_critique_round, cascade_type or None,
+                 structured_failure_round),
             )
 
 
@@ -1722,6 +1861,7 @@ def _get_user_cost_factor(perms: dict) -> float:
                 max_factor = max(max_factor, server_map[srv])
         return max_factor
     except Exception:
+        logger.exception("_get_user_cost_factor failed — defaulting to 1.0")
         return 1.0
 
 
@@ -1923,6 +2063,12 @@ async def list_dynamic_templates() -> list[dict]:
             r["config"] = json.loads(r.pop("config_json"))
         except Exception:
             r["config"] = {}
+            
+        # Fallback: extract reasoning trace from description if not in config
+        if "reasoning_trace" not in r["config"] and r.get("description") and " | Reasoning: " in r["description"]:
+            parts = r["description"].split(" | Reasoning: ", 1)
+            r["config"]["reasoning_trace"] = parts[1]
+            
         result.append(r)
     return result
 

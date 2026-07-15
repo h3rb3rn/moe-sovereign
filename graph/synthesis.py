@@ -54,7 +54,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -141,6 +141,7 @@ async def merger_node(state_: AgentState):
     if state_.get("cache_hit"):
         logger.info("--- [NODE] MERGER (cache hit, direct return) ---")
         await _report("💨 Merger: cached response delivered directly")
+        await _record_stage(state_.get("response_id", ""), "merger", "cache_shortcut")
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
             "response_id": state_.get("response_id", ""),
             "input":       state_["input"][:300],
@@ -153,6 +154,7 @@ async def merger_node(state_: AgentState):
 
     logger.info("--- [NODE] MERGER & INGEST ---")
     await _report("🔀 Merger analyzing expert confidence...")
+    await _record_stage(state_.get("response_id", ""), "merger", "started")
 
     _all_expert_raw = state_.get("expert_results") or []
     _ensemble_raw   = [r for r in _all_expert_raw if re.match(r'\[ENSEMBLE:', r)]
@@ -169,14 +171,47 @@ async def merger_node(state_: AgentState):
         logger.info(f"⚖️  Conflict registry: {len(_new_conflicts)} paraconsistent conflicts in {_cats}")
         await _report(f"⚖️ Paraconsistent conflicts detected: {', '.join(_cats)}")
 
-    web            = state_.get("web_research")    or ""
-    cached         = state_.get("cached_facts")    or ""
-    math_res       = state_.get("math_result")     or ""
-    mcp_res        = state_.get("mcp_result")      or ""
-    graph_ctx      = state_.get("graph_context")   or ""
-    reasoning      = state_.get("reasoning_trace") or ""
+    # ── Boundary contract check (Expert→Judge stage boundary) ─────────────────
+    try:
+        from services.boundary_check import check_boundary as _check_boundary
+        for _bc_r in expert_results:
+            if _bc_r:
+                _check_boundary("expert_to_judge", {"content": _bc_r, "category": _expert_category(_bc_r)})
+    except Exception as _bc_e:
+        logger.debug("Expert→Judge boundary check skipped: %s", _bc_e)
+
+    web              = state_.get("web_research")      or ""
+    cached           = state_.get("cached_facts")      or ""
+    math_res         = state_.get("math_result")       or ""
+    mcp_res          = state_.get("mcp_result")        or ""
+    graph_ctx        = state_.get("graph_context")     or ""
+    reasoning        = state_.get("reasoning_trace")   or ""
+    strategy_feedback = state_.get("strategy_feedback") or ""
 
     _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
+
+    # ── 3A: Trust-Score / Verification Substrate (TASK-10) ────────────────────
+    _trust_score_result = None
+    try:
+        from services.trust_score import compute_trust_score, TrustVerdict
+        _trust_score_result = compute_trust_score(dict(state_))
+        logger.info(
+            "🔍 Trust-Score: %.3f [%s]%s — %s",
+            _trust_score_result.score,
+            _trust_score_result.verdict,
+            " HARD-BLOCK" if _trust_score_result.hard_blocked else "",
+            _trust_score_result.reason,
+        )
+        if _trust_score_result.verdict == TrustVerdict.BLOCK or _trust_score_result.hard_blocked:
+            from services.decision_log import log_decision, DecisionType
+            log_decision(
+                DecisionType.TRUST_BLOCK,
+                state_.get("response_id", ""),
+                rationale=f"Trust-Score blocked response: {_trust_score_result.reason}",
+                metadata={"score": _trust_score_result.score, "factors": _trust_score_result.factors},
+            )
+    except Exception as _ts_e:
+        logger.debug("Trust-Score skipped: %s", _ts_e)
 
     # ── 3B: Confidence analysis (normal + ensemble results) ────────────────
     low_conf_critical = [
@@ -437,6 +472,8 @@ async def merger_node(state_: AgentState):
     sections: List[str] = [f"REQUEST: {_query_in}"]
     if reasoning:
         sections.append(f"REASONING ANALYSIS:\n{reasoning}")
+    if strategy_feedback:
+        sections.append(f"STRATEGY REVIEW (structural, content-free):\n{strategy_feedback}")
     if graph_ctx:
         _gctx = graph_ctx
         # Compute per-template GraphRAG char budget: explicit override > auto from
@@ -743,6 +780,23 @@ async def merger_node(state_: AgentState):
                            outputs=[dataset_response(state_.get("response_id", "fast"))])
         return {"final_response": fast_resp, "prompt_tokens": 0, "completion_tokens": 0}
 
+    # Judge gate: when all expert answers agree (or only one exists) and no
+    # auxiliary context needs merging, the judge call adds tokens without
+    # discriminative power — take the consensus answer directly.
+    # Flag: MOE_JUDGE_GATE=1 (services/judge_gate.py).
+    if not ensemble_results and not web and not mcp_res and not math_res and not graph_ctx:
+        from services.judge_gate import should_skip_judge as _sj_gate
+        _gate_inputs = [re.sub(r'^\[[^\]]+\]:\s*', '', r or '') for r in expert_results]
+        _g_skip, _g_reason, _g_idx = _sj_gate(_gate_inputs)
+        if _g_skip:
+            _g_raw = _gate_inputs[_g_idx]
+            _g_det = re.search(r'DETAILS:\n?(.*)', _g_raw, re.DOTALL)
+            _g_resp = (_g_det.group(1).strip() if _g_det else _g_raw.strip())
+            if _g_resp:
+                logger.info("⚡ judge_gate: skipping merger judge (%s)", _g_reason)
+                await _report(f"⚡ Judge-Gate: {_g_reason} — Merger-Judge übersprungen")
+                return {"final_response": _g_resp, "prompt_tokens": 0, "completion_tokens": 0}
+
     await _report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
     try:
         res = await _invoke_judge_with_retry(state_, prompt, temperature=state_.get("query_temperature"))
@@ -777,6 +831,7 @@ async def merger_node(state_: AgentState):
         await _ol_fail(_ol_merger_run, job_name="merger_node", error="judge_empty_or_error")
         return {"final_response": fallback, **merger_usage}
     await _report(f"✅ Response complete ({len(res.content)} chars)")
+    await _record_stage(state_.get("response_id", ""), "merger", "done")
 
     # Parse and strip any SYNTHESIS_INSIGHT block from the LLM output.
     # The clean content is shown to the user; the insight is persisted to Neo4j separately.
@@ -1210,6 +1265,14 @@ async def merger_node(state_: AgentState):
 
     await _ol_complete(_ol_merger_run, job_name="merger_node",
                        outputs=[dataset_response(state_.get("response_id", "synthesis"))])
+
+    _trust_state = {}
+    if _trust_score_result is not None:
+        _trust_state = {
+            "trust_score":   _trust_score_result.score,
+            "trust_verdict": _trust_score_result.verdict.value,
+        }
+
     return {
         "final_response":         res_content_clean,
         "provenance_sources":     _provenance_sources,
@@ -1220,6 +1283,7 @@ async def merger_node(state_: AgentState):
         ],
         **merger_usage,
         **_agentic_extra,
+        **_trust_state,
     }
 
 
@@ -1263,6 +1327,7 @@ async def thinking_node(state_: AgentState):
 
     logger.info("--- [NODE] THINKING (Chain-of-Thought) ---")
     await _report("🧠 Reasoning: strukturierte Analyse des Problems...")
+    await _record_stage(state_.get("response_id", ""), "thinking", "started")
 
     sections = [f"QUESTION: {state_['input']}"]
     if expert_results:
@@ -1293,6 +1358,7 @@ async def thinking_node(state_: AgentState):
         usage = _extract_usage(res)
         trace = res.content.strip()
         await _report(f"🧠 Reasoning result ({len(trace)} chars):\n{trace}")
+        await _record_stage(state_.get("response_id", ""), "thinking", "done")
         logger.info(f"🧠 Reasoning Trace: {trace[:200]}")
         return {"reasoning_trace": trace, **usage}
     except Exception as e:
@@ -1301,19 +1367,28 @@ async def thinking_node(state_: AgentState):
 
 
 def _should_replan(state_: AgentState) -> str:
-    """Router: decides whether merger should loop back to planner or proceed to critic."""
-    _max   = state_.get("max_agentic_rounds") or 0
-    _iter  = state_.get("agentic_iteration") or 0
-    if _max <= 0:
-        return "critic"
-    if _iter >= _max:
-        return "critic"
-    _gap = (state_.get("agentic_gap") or "").strip()
-    if not _gap or _gap.upper() == "COMPLETE" or _gap.lower() in ("none", ""):
-        return "critic"
-    # agentic_iteration is incremented in merger_node via state return — no direct mutation here.
-    logger.info(f"🔄 Agentic router: iteration {_iter}/{_max}, gap='{_gap[:60]}'")
-    return "planner"
+    """Router: decides whether merger should loop back to planner, run self-critique, or proceed."""
+    import os
+
+    # ── 1. Agentic re-planning (existing logic, highest priority) ────────────
+    _max  = state_.get("max_agentic_rounds") or 0
+    _iter = state_.get("agentic_iteration") or 0
+    if _max > 0 and _iter < _max:
+        _gap = (state_.get("agentic_gap") or "").strip()
+        if _gap and _gap.upper() != "COMPLETE" and _gap.lower() not in ("none", ""):
+            logger.info(f"🔄 Agentic router: iteration {_iter}/{_max}, gap='{_gap[:60]}'")
+            return "planner"
+
+    # ── 2. Self-Critique Loop (TASK-11) ───────────────────────────────────────
+    trust_verdict = (state_.get("trust_verdict") or "").upper()
+    if trust_verdict == "PROCEED_WITH_ASSUMPTION":
+        sc_round = state_.get("self_critique_round") or 0
+        sc_max   = state_.get("self_critique_max") or int(os.getenv("SELF_CRITIQUE_MAX_ROUNDS", "2"))
+        if sc_round < sc_max:
+            logger.info("🔄 Self-Critique router: round %d/%d, verdict=%s", sc_round + 1, sc_max, trust_verdict)
+            return "self_critique"
+
+    return "critic"
 
 
 async def resolve_conflicts_node(state_: AgentState):
@@ -1323,9 +1398,9 @@ async def resolve_conflicts_node(state_: AgentState):
     contradictions — this node does not eliminate them but makes them explicit
     so downstream nodes (critic, agentic re-planner) can act on them.
 
-    Resolution strategy is implemented by the user-facing TODO below.
-    Until resolved, all entries remain 'pending' and are visible in the
-    audit trail (conflict_registry in AgentState).
+    Resolution involves two sequential strategies:
+    - Strategy A: auto-dismiss low-divergence conflicts (< 0.5 Jaccard distance) as formulaic variations.
+    - Strategy B: escalate safety-critical conflicts (medical, legal) to the Judge LLM for Belnap-Dunn arbitration.
     """
     _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
     conflicts = state_.get("conflict_registry") or []
@@ -1335,6 +1410,7 @@ async def resolve_conflicts_node(state_: AgentState):
 
     logger.info(f"⚖️  resolve_conflicts_node: {len(pending)} pending conflicts")
     await _report(f"⚖️ Resolving {len(pending)} paraconsistent conflict(s)...")
+    await _record_stage(state_.get("response_id", ""), "resolve_conflicts", "started")
 
     # Strategy A: auto-dismiss low-divergence conflicts (formulaic variation, not real contradiction).
     # Strategy B: escalate safety-critical conflicts to a judge LLM call.
@@ -1409,6 +1485,81 @@ async def resolve_conflicts_node(state_: AgentState):
     return {"conflict_registry": resolved}
 
 
+async def self_critique_node(state_: AgentState):
+    """Self-Critique Iteration Loop (TASK-11).
+
+    Triggered when trust_verdict == PROCEED_WITH_ASSUMPTION and self_critique_round
+    is below self_critique_max. Runs a single LLM call reviewing existing expert
+    results and emits an improved synthesis fragment appended as an extra expert_result
+    so merger re-evaluates with enriched context.
+    """
+    import os
+
+    round_num   = (state_.get("self_critique_round") or 0) + 1
+    max_rounds  = state_.get("self_critique_max") or int(os.getenv("SELF_CRITIQUE_MAX_ROUNDS", "2"))
+    request_id  = state_.get("response_id", "")
+    trust_score = state_.get("trust_score", 0.0)
+
+    logger.info("--- [NODE] SELF-CRITIQUE (round %d/%d, score=%.3f) ---", round_num, max_rounds, trust_score)
+    await _report(f"🔄 Self-Critique round {round_num}/{max_rounds} (trust={trust_score:.2f})…")
+    await _record_stage(request_id, "self_critique", "started", f"round {round_num}/{max_rounds}")
+
+    try:
+        from services.decision_log import log_decision, DecisionType
+        log_decision(
+            DecisionType.SELF_CRITIQUE_TRIGGERED, request_id,
+            rationale=f"Trust-Score {trust_score:.3f} triggered self-critique (round {round_num}/{max_rounds})",
+            metadata={"round": round_num, "max": max_rounds, "score": trust_score},
+        )
+    except Exception as _e:
+        logger.debug("Self-critique decision log failed: %s", _e)
+
+    expert_results = state_.get("expert_results") or []
+    plan           = state_.get("plan") or []
+    user_input     = state_.get("input", "")
+
+    non_empty     = [r for r in expert_results if r and len(r.strip()) > 20]
+    missing_count = max(len(plan) - len(non_empty), 0)
+
+    gap_parts = [f"Trust-Score {trust_score:.2f} is below the PROCEED threshold."]
+    if missing_count:
+        gap_parts.append(f"{missing_count} plan task(s) have insufficient expert coverage.")
+    conflicts = state_.get("conflict_registry") or []
+    pending_c = [c for c in conflicts if c.get("resolution") == "pending"]
+    if pending_c:
+        gap_parts.append(f"{len(pending_c)} unresolved expert conflict(s) detected.")
+    gap_summary = " ".join(gap_parts)
+
+    existing_summary = "\n---\n".join(r[:400] for r in non_empty[:3]) if non_empty else "(no expert results yet)"
+
+    critique_prompt = (
+        "You are reviewing a multi-expert response with insufficient confidence.\n\n"
+        f"USER REQUEST: {user_input}\n\n"
+        f"QUALITY ISSUES: {gap_summary}\n\n"
+        f"EXISTING EXPERT SUMMARIES (truncated):\n{existing_summary}\n\n"
+        "Identify what is missing or uncertain, then provide a concise, well-grounded "
+        "supplementary answer that fills the identified gaps. "
+        "Be specific and factual. Maximum 400 words. Start directly with the content."
+    )
+
+    try:
+        from parsing import _extract_usage
+        res      = await _invoke_judge_with_retry(state_, critique_prompt)
+        usage    = _extract_usage(res)
+        improved = res.content.strip()
+
+        if improved and len(improved) > 30:
+            new_expert = f"[SELF_CRITIQUE_R{round_num} / judge]: {improved}"
+            await _report(f"✅ Self-Critique produced {len(improved)} chars")
+            await _record_stage(request_id, "self_critique", "done")
+            logger.info("✅ Self-Critique round %d: %d chars added", round_num, len(improved))
+            return {"expert_results": [new_expert], "self_critique_round": round_num, **usage}
+    except Exception as _ex:
+        logger.warning("⚠️ Self-Critique LLM call failed: %s", _ex)
+
+    return {"self_critique_round": round_num}
+
+
 async def critic_node(state_: AgentState):
     """
     Fact-check for safety-critical domains (medical_consult, legal_advisor).
@@ -1432,6 +1583,7 @@ async def critic_node(state_: AgentState):
 
     logger.info(f"--- [NODE] CRITIC (fact-check: {active}) ---")
     await _report(f"🔎 Critic: fact-check for {', '.join(sorted(active))}...")
+    await _record_stage(state_.get("response_id", ""), "critic", "started")
 
     critic_prompt = (
         f"You are a critical reviewer for {', '.join(sorted(active))} answers.\n"
@@ -1464,10 +1616,12 @@ async def critic_node(state_: AgentState):
 
         if critic_out.upper().startswith("CONFIRMED"):
             await _report("✅ Critic: answer confirmed correct")
+            await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
             return {"final_response": final_response, **usage}
 
         await _report(f"⚠️ Critic: answer corrected ({len(critic_out)} chars)")
+        await _record_stage(state_.get("response_id", ""), "critic", "corrected")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         return {"final_response": critic_out, **usage}
     except Exception as e:

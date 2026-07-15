@@ -53,7 +53,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -64,6 +64,7 @@ from services.helpers import (
     _store_response_metadata, _self_evaluate, _neo4j_terms_exist,
     _report,
     _shadow_request, _shadow_lock,
+    _entry_is_fresh,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.skills import _build_skill_catalog
@@ -109,16 +110,6 @@ async def _seed_task_type_prototypes() -> None:
 
 # --- NODES ---
 
-def _entry_is_fresh(ts_iso: str, ttl_days: int) -> bool:
-    """True if an ISO-8601 timestamp is within ttl_days of now. Missing/garbage ts → stale."""
-    if not ts_iso:
-        return False
-    try:
-        from datetime import datetime, timedelta
-        return datetime.now() - datetime.fromisoformat(ts_iso) <= timedelta(days=ttl_days)
-    except Exception:
-        return False
-
 
 async def cache_lookup_node(state_: AgentState):
     logger.debug("--- [NODE] CACHE LOOKUP ---")
@@ -130,6 +121,7 @@ async def cache_lookup_node(state_: AgentState):
     if state_.get("mode", "default") != "default":
         return {"cached_facts": "", "cache_hit": False}
     await _report("🔍 Cache-Lookup...")
+    await _record_stage(state_.get("response_id", ""), "cache", "started")
     # Normalized query for similarity search — pipeline input stays unchanged
     _cache_query = re.sub(r'\s+', ' ', state_["input"].lower().strip().rstrip('?!.,;'))
 
@@ -148,6 +140,7 @@ async def cache_lookup_node(state_: AgentState):
                     PROM_CACHE_HITS.inc()
                     logger.info(f"⚡ L0 query-hash cache hit ({len(_l0_text)} chars)")
                     await _report(f"⚡ L0 cache hit — instant response")
+                    await _record_stage(state_.get("response_id", ""), "cache", "hit_l0")
                     return {"cached_facts": _l0_text, "cache_hit": True}
         except Exception as _l0e:
             logger.debug(f"L0 cache check failed: {_l0e}")
@@ -177,6 +170,7 @@ async def cache_lookup_node(state_: AgentState):
                 PROM_CACHE_HITS.inc()
                 logger.info(f"✅ Cache hit (distance={dist:.3f}) — skipping pipeline")
                 await _report(f"✅ Cache hit (similarity {1-dist:.2f}) — pipeline skipped")
+                await _record_stage(state_.get("response_id", ""), "cache", "hit_l1")
             elif (
                 KNOWLEDGE_BYPASS_ENABLED
                 and dist < KNOWLEDGE_BYPASS_THRESHOLD
@@ -195,6 +189,7 @@ async def cache_lookup_node(state_: AgentState):
                     f"🧠 Knowledge bypass (similarity {1-dist:.2f}, "
                     f"confidence {meta.get('confidence')}) — pipeline skipped"
                 )
+                await _record_stage(state_.get("response_id", ""), "cache", "hit_bypass")
             break
     if not hit:
         PROM_CACHE_MISSES.inc()
@@ -204,6 +199,7 @@ async def cache_lookup_node(state_: AgentState):
                 f"(hit<{CACHE_HIT_THRESHOLD}, bypass<{KNOWLEDGE_BYPASS_THRESHOLD})"
             )
         await _report("📭 No cache hit — starting full pipeline")
+        await _record_stage(state_.get("response_id", ""), "cache", "miss")
     # Soft hits (0.15 < dist < 0.50): collect as few-shot examples
     soft_examples = []
     if res['documents'] and res['documents'][0]:
@@ -261,6 +257,7 @@ async def semantic_router_node(state_: AgentState):
                 f"🧭 Semantic Router: Fast-Path → expert '{category}' "
                 f"(similarity {1-top_dist:.2f}, uniqueness {gap:.2f})"
             )
+            await _record_stage(state_.get("response_id", ""), "semantic_router", "matched", category)
             return {"direct_expert": category, "plan": synthetic_plan}
     except Exception as e:
         logger.debug(f"Semantic Router error: {e}")
@@ -354,6 +351,7 @@ async def fuzzy_router_node(state_: AgentState):
         f"web={'✓' if not new_skip_research else '✗'} (score={tnorm_vector:.2f}) | "
         f"graph={'✓' if new_enable_graphrag else '✗'} (score={tnorm_graph:.2f})"
     )
+    await _record_stage(state_.get("response_id", ""), "fuzzy_router", "done")
 
     return {
         "vector_confidence":    vector_conf,

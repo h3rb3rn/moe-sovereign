@@ -1,0 +1,96 @@
+name: Deploy Documentation
+
+# Trigger only on changes that actually affect the docs site — either the
+# content itself or this workflow file (so a workflow edit gets verified
+# against a real build/lint run too).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/deploy-docs.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/deploy-docs.yml"
+
+# Required for the modern Pages deployment flow (actions/deploy-pages):
+# - pages:write    → publish the built site to GitHub Pages
+# - id-token:write  → OIDC token the deploy-pages action uses to authenticate
+# contents:read is the default minimum and is listed explicitly for clarity.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment may run at a time. Do not cancel an in-progress
+# deployment with a newer one — let it finish so Pages never ends up serving
+# a half-published state.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # ── Lightweight Markdown link-check — PRs only ────────────────────────────
+  # Catches broken internal/external links before they land in docs/. Scoped
+  # to changed files only, so it stays fast even though docs/ is large.
+  lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Markdown link check (changed files only)
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "yes"
+          check-modified-files-only: "yes"
+          base-branch: ${{ github.event.pull_request.base.ref }}
+          config-file: ".github/workflows/markdown-link-check-config.json"
+
+  # ── Build the MkDocs (Material) site ──────────────────────────────────────
+  # Runs on every push and PR that touches docs/ — PRs get build verification
+  # (broken nav entries, missing pages, etc. fail here) without ever
+  # deploying; only a push to main proceeds to the deploy job below.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install MkDocs Material
+        run: pip install mkdocs-material
+
+      - name: Build site
+        run: mkdocs build --site-dir _site
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  # ── Deploy to GitHub Pages ─────────────────────────────────────────────────
+  # Only on push to main — a PR build is verified above but never published.
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

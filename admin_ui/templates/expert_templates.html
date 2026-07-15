@@ -229,6 +229,16 @@
               <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
             </div>
           </div>
+          <div class="col-md-6">
+            <label class="form-label small mb-1"><i class="bi bi-tools me-1 text-warning"></i>Tool-Expert LLM <span class="text-muted fw-normal">(agentic tool-calling backend for OpenCode/Claude Code — empty = falls back to Judge/Merger LLM)</span></label>
+            <div id="ct_tool_expert_llm_select"></div>
+            <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the tool-expert model. 0 = auto-detect from model.">
+              <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+              <input type="number" id="ct_tool_expert_num_ctx" value="" class="form-control form-control-sm"
+                     style="font-size:.75rem;width:100px" min="0" step="1024" placeholder="auto">
+              <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+            </div>
+          </div>
           <div class="col-12">
             <div class="d-flex align-items-center gap-2 mb-1">
               <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:.1rem .4rem"
@@ -269,6 +279,12 @@
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_web_research" checked><label class="form-check-label small" for="ct_enable_web_research">Web Research</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_force_think"><label class="form-check-label small" for="ct_force_think">{{ t(request, 'label.force_think') }}</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_enable_mission_context"><label class="form-check-label small" for="ct_enable_mission_context">Mission Context</label></div></div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-12"><small class="text-muted fw-bold">Augmented Tool Path <span class="fw-normal">(opt-in — agentic tool-call fast path enrichment)</span></small></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_cache"><label class="form-check-label small" for="ct_agent_cache">Agent Cache</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_graphrag"><label class="form-check-label small" for="ct_agent_graphrag">Agent GraphRAG</label></div></div>
+          <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_ingest"><label class="form-check-label small" for="ct_agent_ingest">Agent Ingestion</label></div></div>
         </div>
         <div class="row g-2 mt-1">
           <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
@@ -659,9 +675,10 @@ function addExpertCategory(prefix) {
 document.addEventListener('DOMContentLoaded', async () => {
   const llms = await fetchAvailableLlms();
   document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, llms);
-  // Pre-populate planner/judge selects so they are ready before the modal opens
+  // Pre-populate planner/judge/tool-expert selects so they are ready before the modal opens
   buildLlmDropdown('ct_planner_llm_select', llms, '');
   buildLlmDropdown('ct_judge_llm_select',   llms, '');
+  buildLlmDropdown('ct_tool_expert_llm_select', llms, '');
 
   document.getElementById('createTemplateModal').addEventListener('show.bs.modal', async () => {
     if (document.getElementById('ct_name').dataset.prefilled) return;
@@ -672,6 +689,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, l);
     buildLlmDropdown('ct_planner_llm_select', l, '');
     buildLlmDropdown('ct_judge_llm_select',   l, '');
+    buildLlmDropdown('ct_tool_expert_llm_select', l, '');
     _updateMedicalLegalWarning('ct');
   });
   document.getElementById('createTemplateModal').addEventListener('hidden.bs.modal', () => {
@@ -700,10 +718,13 @@ async function copyTemplate(tmplId) {
   if (ctJudge)   { ctJudge.value   = src.judge_prompt   || ''; if (src.judge_prompt)   document.getElementById('ct_judge_area').style.display   = ''; }
   buildLlmDropdown('ct_planner_llm_select', llms, src.planner_model || '');
   buildLlmDropdown('ct_judge_llm_select',   llms, src.judge_model   || '');
+  buildLlmDropdown('ct_tool_expert_llm_select', llms, src.tool_expert_model || '');
   const ctPlannerCtx = document.getElementById('ct_planner_num_ctx');
   const ctJudgeCtx   = document.getElementById('ct_judge_num_ctx');
+  const ctToolExpertCtx = document.getElementById('ct_tool_expert_num_ctx');
   if (ctPlannerCtx) ctPlannerCtx.value = src.planner_num_ctx || '';
   if (ctJudgeCtx)   ctJudgeCtx.value   = src.judge_num_ctx   || '';
+  if (ctToolExpertCtx) ctToolExpertCtx.value = src.tool_expert_num_ctx || '';
   _updateMedicalLegalWarning('ct');
   document.getElementById('ct_error').classList.add('d-none');
   new bootstrap.Modal(document.getElementById('createTemplateModal')).show();
@@ -730,6 +751,8 @@ async function createTemplate() {
         planner_num_ctx:  parseInt(document.getElementById('ct_planner_num_ctx').value) || 0,
         judge_model:      getLlmValue('ct_judge_llm_select'),
         judge_num_ctx:    parseInt(document.getElementById('ct_judge_num_ctx').value) || 0,
+        tool_expert_model:    getLlmValue('ct_tool_expert_llm_select'),
+        tool_expert_num_ctx:  parseInt(document.getElementById('ct_tool_expert_num_ctx').value) || 0,
         experts:          collectExperts('ct'),
         enable_cache:            document.getElementById('ct_enable_cache').checked,
         enable_graphrag:         document.getElementById('ct_enable_graphrag').checked,
@@ -737,6 +760,9 @@ async function createTemplate() {
         enable_web_research:     document.getElementById('ct_enable_web_research').checked,
         force_think:             document.getElementById('ct_force_think').checked,
         enable_mission_context:  document.getElementById('ct_enable_mission_context').checked,
+        agent_cache:             document.getElementById('ct_agent_cache').checked,
+        agent_graphrag:          document.getElementById('ct_agent_graphrag').checked,
+        agent_ingest:            document.getElementById('ct_agent_ingest').checked,
         graphrag_max_chars:  parseInt(document.getElementById('ct_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('ct_compression_enabled').checked
                                ? (parseInt(document.getElementById('ct_history_max_turns').value) || 0)
@@ -819,6 +845,17 @@ async function openEditModal(tmplId) {
           <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
         </div>
       </div>
+      <div class="col-md-6">
+        <label class="form-label small mb-1"><i class="bi bi-tools me-1 text-warning"></i>Tool-Expert LLM <span class="text-muted fw-normal">(agentic tool-calling backend for OpenCode/Claude Code — empty = falls back to Judge/Merger LLM)</span></label>
+        <div id="et_tool_expert_llm_select"></div>
+        <div class="d-flex align-items-center gap-1 mt-1" title="Ollama num_ctx for the tool-expert model. 0 = auto-detect from model.">
+          <i class="bi bi-window-sidebar text-muted" style="font-size:.75rem"></i>
+          <input type="number" id="et_tool_expert_num_ctx" value="${tmpl.tool_expert_num_ctx || ''}"
+                 class="form-control form-control-sm" style="font-size:.75rem;width:100px"
+                 min="0" step="1024" placeholder="auto">
+          <small class="text-muted" style="font-size:.68rem">ctx (tokens)</small>
+        </div>
+      </div>
       <div class="col-12">
         <div class="d-flex align-items-center gap-2 mb-1">
           <button type="button" class="btn btn-xs btn-outline-secondary" style="font-size:.72rem;padding:.1rem .4rem"
@@ -894,6 +931,27 @@ async function openEditModal(tmplId) {
       </div>
     </div>
     <div class="row g-2 mt-1">
+      <div class="col-12"><small class="text-muted fw-bold">Augmented Tool Path <span class="fw-normal">(opt-in — agentic tool-call fast path enrichment)</span></small></div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_agent_cache" ${tmpl.agent_cache ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_agent_cache">Agent Cache</label>
+        </div>
+      </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_agent_graphrag" ${tmpl.agent_graphrag ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_agent_graphrag">Agent GraphRAG</label>
+        </div>
+      </div>
+      <div class="col-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="et_agent_ingest" ${tmpl.agent_ingest ? 'checked' : ''}>
+          <label class="form-check-label small" for="et_agent_ingest">Agent Ingestion</label>
+        </div>
+      </div>
+    </div>
+    <div class="row g-2 mt-1">
       <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
       <div class="col-6">
         <div class="form-check form-switch">
@@ -933,6 +991,7 @@ async function openEditModal(tmplId) {
 
   buildLlmDropdown('et_planner_llm_select', llms, tmpl.planner_model || '');
   buildLlmDropdown('et_judge_llm_select',   llms, tmpl.judge_model   || '');
+  buildLlmDropdown('et_tool_expert_llm_select', llms, tmpl.tool_expert_model || '');
   _updateMedicalLegalWarning('et');
   document.getElementById('saveEditBtn').onclick = saveEditTemplate;
 }
@@ -957,6 +1016,8 @@ async function saveEditTemplate() {
         planner_num_ctx:  parseInt(document.getElementById('et_planner_num_ctx').value) || 0,
         judge_model:      getLlmValue('et_judge_llm_select'),
         judge_num_ctx:    parseInt(document.getElementById('et_judge_num_ctx').value) || 0,
+        tool_expert_model:    getLlmValue('et_tool_expert_llm_select'),
+        tool_expert_num_ctx:  parseInt(document.getElementById('et_tool_expert_num_ctx').value) || 0,
         experts:          collectExperts('et'),
         enable_cache:            document.getElementById('et_enable_cache').checked,
         enable_graphrag:         document.getElementById('et_enable_graphrag').checked,
@@ -964,6 +1025,9 @@ async function saveEditTemplate() {
         enable_web_research:     document.getElementById('et_enable_web_research').checked,
         force_think:             document.getElementById('et_force_think').checked,
         enable_mission_context:  document.getElementById('et_enable_mission_context').checked,
+        agent_cache:             document.getElementById('et_agent_cache').checked,
+        agent_graphrag:          document.getElementById('et_agent_graphrag').checked,
+        agent_ingest:            document.getElementById('et_agent_ingest').checked,
         graphrag_max_chars:  parseInt(document.getElementById('et_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('et_compression_enabled').checked
                                ? (parseInt(document.getElementById('et_history_max_turns').value) || 0)

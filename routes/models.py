@@ -20,6 +20,51 @@ from config import (
 from services.auth import _extract_api_key, _validate_api_key
 from services.templates import _read_expert_templates
 
+
+async def _context_window_for_model(model_id: str) -> Optional[int]:
+    """Look up context_window from model_metadata for a given model ID."""
+    try:
+        from admin_ui.database import _get_pool
+        from psycopg.rows import dict_row as _dict_row
+        async with _get_pool().connection() as conn:
+            async with conn.cursor(row_factory=_dict_row) as cur:
+                await cur.execute(
+                    "SELECT context_window FROM model_metadata WHERE model_id = %s", (model_id,)
+                )
+                row = await cur.fetchone()
+                if row and row["context_window"] and row["context_window"] > 4096:
+                    return row["context_window"]
+    except Exception:
+        pass
+    return None
+
+
+async def _get_public_models(created: int) -> list:
+    """Return all models from model_metadata for unauthenticated /v1/models calls."""
+    try:
+        from admin_ui.database import _get_pool
+        from psycopg.rows import dict_row as _dict_row
+        async with _get_pool().connection() as conn:
+            async with conn.cursor(row_factory=_dict_row) as cur:
+                await cur.execute(
+                    "SELECT model_id, context_window FROM model_metadata WHERE context_window > 4096 ORDER BY model_id"
+                )
+                rows = await cur.fetchall()
+        result = []
+        for r in rows:
+            entry: dict = {
+                "id":             r["model_id"],
+                "object":         "model",
+                "owned_by":       "moe-sovereign",
+                "created":        created,
+                "context_length": r["context_window"],
+            }
+            result.append(entry)
+        return result
+    except Exception as _e:
+        logger.warning("_get_public_models failed: %s", _e)
+    return []
+
 router = APIRouter()
 
 
@@ -111,11 +156,10 @@ async def list_models(raw_request: Request):
     # ── End diagnostic block ───────────────────────────────────────────────
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
     if "error" in user_ctx:
-        return JSONResponse(status_code=401, content={"error": {
-            "message": "Invalid or missing API key",
-            "type":    "invalid_request_error",
-            "code":    "invalid_api_key",
-        }})
+        # Unauthenticated: return public model list from model_metadata (for context-window discovery)
+        _pub_created = int(time.time())
+        _pub_models  = await _get_public_models(_pub_created)
+        return JSONResponse(content={"object": "list", "data": _pub_models})
 
     user_perms        = json.loads(user_ctx.get("permissions_json", "{}"))
     allowed_modes     = user_perms.get("moe_mode")
@@ -245,14 +289,18 @@ async def list_models(raw_request: Request):
             model_id = f"{model_n}@{node}" if node else model_n
             if model_id not in seen and model_id not in existing_ids:
                 seen.add(model_id)
-                native_models.append({
+                _ctx_len = await _context_window_for_model(model_id)
+                _native_entry: dict = {
                     "id":           model_id,
                     "object":       "model",
                     "owned_by":     "moe-sovereign",
                     "created":      _model_created,
                     "description":  f"Direkt via {node}" if node else "Direktzugriff",
                     "display_name": f"{model_n} ({node})" if node else model_n,
-                })
+                }
+                if _ctx_len:
+                    _native_entry["context_length"] = _ctx_len
+                native_models.append(_native_entry)
 
     _user_conns_m: dict = {}
     try:

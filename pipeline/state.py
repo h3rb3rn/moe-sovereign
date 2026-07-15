@@ -157,4 +157,21 @@ class AgentState(TypedDict):
     # ── 14. Cascade & constitution ────────────────────────────────────────────
     cascade_type: str                   # Typed cascade event: CONTEXT_GAP|EXPERT_FAILURE|CONTRADICTION|SCOPE_DRIFT|TOOL_FAILURE|COMPLETE
     stuck: bool                         # True when agentic loop exhausted budget without resolving the gap
+
+    # ── 15. Trust-Score & quality gates ──────────────────────────────────────
+    trust_score: float                  # Computed quality score [0.0–1.0] after expert round
+    trust_verdict: str                  # PROCEED | PROCEED_WITH_ASSUMPTION | BLOCK
+    self_critique_round: int            # Current self-critique iteration (0 = first pass)
+    self_critique_max: int              # Max self-critique rounds (from SELF_CRITIQUE_MAX_ROUNDS env)
     constitution_violations: list       # [{rule_id, on_violation, detail}] from constitution enforcement
+
+    # ── 16. Cynefin & HITL Gate ──────────────────────────────────────────────
+    cynefin_domain: str                 # CLEAR | COMPLICATED | COMPLEX | CHAOTIC (TASK-15)
+    hitl_gate_id: str                   # Gate ID if HITL freeze is active (TASK-14)
+
+    # ── 17. Strategy Review (TASK-22) ────────────────────────────────────────
+    strategy_feedback: str              # Structural feedback from strategy reviewer (content-free)
+
+    # ── 18. Structured-Output Failure Recovery (TASK-30) ─────────────────────
+    structured_failure: dict            # Serialised StructuredFailure (None = no failure)
+    structured_failure_round: int       # Current retry round (0 = first attempt)

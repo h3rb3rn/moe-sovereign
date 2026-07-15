@@ -5,6 +5,54 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.9.0] - 2026-07-10
+
+### Added
+
+- **Augmented Tool Path for Agentic Clients** (`services/agent_enrichment.py`): opt-in enrichment
+  layer sitting between the tool-calling fast path (`_anthropic_tool_handler` in
+  `services/pipeline/anthropic.py`, `_handle_tool_calls` in `services/pipeline/chat.py`) and the
+  tool model, fully transparent to the client (streaming events, `stop_reason` semantics, and
+  tool-use blocks preserved byte-for-byte). Adds three independently gated capabilities for
+  Claude Code CLI / OpenCode / comparable function-calling clients, which previously bypassed the
+  entire cache and GraphRAG infrastructure on every request:
+  - **Agent cache** (`AGENT_CACHE_ENABLED`): dedicated L0 Valkey + L1 ChromaDB
+    (`moe_agent_cache`) cache, scoped per `sha256(user_id|workspace)`. Only informational queries
+    on a session's first turn are served, at confidence ≥ 0.85 and freshness ≤ 14 days. Tool-use
+    decisions are never cached.
+  - **Agent GraphRAG injection** (`AGENT_GRAPHRAG_ENABLED`): tenant-scoped Neo4j context injected
+    into the tool model's system prompt once per session (cached in Redis for subsequent turns),
+    fixing three pre-existing bugs in the former inline Tier-4 block (`tenant_ids=None`, no
+    budget cap, cross-tenant cache-key leak).
+  - **Agent write-back / ingestion** (`AGENT_INGEST_ENABLED`): clean-ending agentic sessions
+    publish their Q/A pair to the same Kafka ingestion topic the interactive pipeline uses.
+    Fresh answers start at confidence 0.6 (below the serve threshold) and are promoted to 0.9 by
+    an async judge call, mirroring the trust-building pattern of the interactive L1 cache.
+  - All three flags default `false` (opt-in per CC profile / Expert Template); with everything
+    disabled, behaviour is bit-identical to the plain tool-calling fast path. Latency is
+    hard-bounded (300 ms cache lookup, 2 s GraphRAG query) and fails open. New test profile
+    `configs/cc_profiles/cc-agent-augmented.json`. Capability **#50**. See
+    `docs/reference/expert-template-guide.md#augmented-tool-path-agentic-clients`.
+
+### Fixed
+
+- **Missing request deregistration in tool-calling passthrough** (`services/pipeline/chat.py`,
+  `services/pipeline/anthropic.py`): streaming tool-call responses never called
+  `_deregister_active_request` on stream end, leaving stale entries in the admin "Laufende
+  API-Anfragen" table after the client had already disconnected. Fixed with a
+  `_wrap_deregister_on_stream_end()` `try/finally` generator wrapper around both streaming paths.
+- **Missing template name in Claude Code session monitoring**: `_register_active_request()` calls
+  in the Anthropic tool handler did not pass `template_name`/`resolved_tmpl_id`, leaving the
+  "Template" column blank for CC sessions in the admin monitoring table.
+
+### User Portal
+
+- **Selective template export**: checkbox-based multi-select export for own Expert Templates
+  (previously all-or-nothing), mirroring the existing Admin-panel export pattern.
+- **Copy/duplicate own template**: one-click duplication of an existing user template into a new
+  editable draft.
+- Cleaned up orphaned "ghost template" permission grants pointing at deleted admin templates.
+
 ## [2.8.0] - 2026-06-23
 
 ### Added

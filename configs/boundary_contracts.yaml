@@ -1,0 +1,33 @@
+# boundary_contracts.yaml — Stage boundary contracts for the MoE pipeline.
+#
+# Defines required and optional fields at each pipeline stage boundary.
+# Checked deterministically before any expensive LLM dispatch.
+# A missing required field emits the declared cascade_type instead of allowing
+# a garbage-in/garbage-out LLM call.
+
+stages:
+  planner_to_expert:
+    description: "Planner output task must be well-formed before expert dispatch"
+    required_fields:
+      - task      # Non-empty task description
+      - category  # Routing category (research, code, math, …)
+    optional_fields:
+      - search_query
+      - mcp_tool
+      - mcp_args
+      - constraints
+      - depends_on
+      - metadata_filters
+    on_violation: SPEC_GAP   # CascadeType emitted on missing required field
+
+  expert_to_judge:
+    description: "Expert result must carry content and provenance before judge merge"
+    required_fields:
+      - content   # Non-empty answer text from the expert
+      - category  # Echo of the dispatched expert category
+    optional_fields:
+      - citations
+      - confidence
+      - model
+      - latency_ms
+    on_violation: EXPERT_FAILURE  # CascadeType emitted on missing required field

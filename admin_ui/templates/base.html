@@ -10,7 +10,7 @@
   <meta name="theme-color" content="#1a1d21" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#1a1d21">
   <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>{% block title %}MoE Admin{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/bootstrap.min.css">
   <link rel="stylesheet" href="/static/css/bootstrap-icons.min.css">
@@ -64,6 +64,19 @@
       h3, h4 { font-size: 1.1rem; }
       /* Hide low-priority columns on mobile via utility class */
       .d-mobile-none { display: none !important; }
+      /* The "always visible" navbar utilities row (language switcher, PWA
+         install button, theme toggle, logout, hamburger) has no flex-wrap,
+         and the enlarged touch-target buttons above make it wider still —
+         on narrow phone screens it overflowed past the edge, making the
+         PWA install button effectively invisible/unreachable. Wrap instead
+         of overflowing, and drop the language <select> to a second line
+         first since the install button is the more important control here. */
+      .navbar .d-flex.align-items-center.gap-2.ms-auto {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        row-gap: .35rem;
+      }
+      #admin-lang-form { order: 10; }
     }
     /* PWA standalone: add top padding for status bar */
     @media (display-mode: standalone) {
@@ -94,9 +107,9 @@
     {# ── Desktop Nav: visible ≥992px — grouped dropdowns ── #}
     {# Active-state helpers for dropdown highlight #}
     {% set _p = request.url.path %}
-    {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log'] %}
+    {% set _monitoring_active   = _p in ['/monitoring', '/live-monitoring', '/statistics', '/benchmarks', '/starfleet', '/pipeline-log', '/gates', '/decision-log', '/ai-io-audit', '/model-capabilities'] %}
     {% set _infra_active        = _p in ['/servers', '/knowledge', '/federation', '/quarantine', '/maintenance'] %}
-    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates', '/advice'] or _p.startswith('/templates') or _p.startswith('/advice') %}
+    {% set _tools_active        = _p in ['/profiles', '/skills', '/mcp-tools', '/tool-eval', '/dynamic-templates', '/advice'] or _p.startswith('/templates') or _p.startswith('/advice') or _p.startswith('/patterns') or _p.startswith('/tool-endings') %}
     {% set _users_active        = _p.startswith('/users') or _p.startswith('/teams') or _p.startswith('/user-content') %}
     {% set _codex_active   = _p in ['/codex', '/catalog', '/approval', '/explorer', '/notebook', '/link-analysis', '/timeline', '/kestra', '/forms', '/search', '/charts', '/superset', '/compliance', '/workshop', '/timeseries', '/notes', '/geo', '/dossier'] %}
 
@@ -135,6 +148,18 @@
           </a></li>
           <li><a class="dropdown-item {% if _p == '/pipeline-log' %}active{% endif %}" href="/pipeline-log">
             <i class="bi bi-journal-text me-2 text-success"></i>{{ t(request, 'nav.pipeline_log') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/gates' %}active{% endif %}" href="/gates">
+            <i class="bi bi-shield-check me-2 text-warning"></i>{{ t(request, 'page.gates') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/decision-log' %}active{% endif %}" href="/decision-log">
+            <i class="bi bi-journal-code me-2 text-info"></i>{{ t(request, 'page.decision_log') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/ai-io-audit' %}active{% endif %}" href="/ai-io-audit">
+            <i class="bi bi-eye me-2 text-warning"></i>{{ t(request, 'page.ai_io_audit') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p == '/model-capabilities' %}active{% endif %}" href="/model-capabilities">
+            <i class="bi bi-cpu me-2 text-info"></i>{{ t(request, 'page.model_capabilities') }}
           </a></li>
         </ul>
       </div>
@@ -196,6 +221,12 @@
           </a></li>
           <li><a class="dropdown-item {% if _p.startswith('/advice') %}active{% endif %}" href="/advice">
             <i class="bi bi-chat-text me-2 text-warning"></i>Advice Rules
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/patterns') %}active{% endif %}" href="/patterns">
+            <i class="bi bi-signpost-split me-2 text-warning"></i>{{ t(request, 'nav.patterns') }}
+          </a></li>
+          <li><a class="dropdown-item {% if _p.startswith('/tool-endings') %}active{% endif %}" href="/tool-endings">
+            <i class="bi bi-search-heart me-2 text-warning"></i>{{ t(request, 'nav.tool_endings') }}
           </a></li>
         </ul>
       </div>
@@ -333,11 +364,38 @@
           <option value="zh_CN" {% if cur_lang == 'zh_CN' %}selected{% endif %}>🇨🇳</option>
         </select>
       </form>
-      {# PWA Install Button — only shown when browser fires beforeinstallprompt #}
-      <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary d-none"
-              onclick="pwaDeferredPrompt?.prompt()" title="Als App installieren">
-        <i class="bi bi-download me-1"></i><span class="d-none d-sm-inline">App</span>
-      </button>
+      {# PWA Install Button — always visible unless already running standalone #}
+      <div class="dropdown" id="pwaInstallWrap">
+        <button id="pwaInstallBtn" class="btn btn-sm btn-outline-primary"
+                data-bs-toggle="dropdown" aria-expanded="false" title="Als App installieren">
+          <i class="bi bi-phone me-1"></i><span class="d-none d-sm-inline">App</span>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-3" style="min-width:280px;font-size:.85rem" id="pwaDropdown">
+          <div id="pwaPromptSection" style="display:none">
+            <p class="mb-2 text-body"><strong><i class="bi bi-download me-1"></i>App installieren</strong></p>
+            <button class="btn btn-sm btn-primary w-100" onclick="pwaNativeInstall()">
+              Jetzt installieren
+            </button>
+          </div>
+          <div id="pwaManualSection">
+            <p class="mb-2 text-body"><strong><i class="bi bi-phone me-1"></i>Als App installieren</strong></p>
+            <div id="pwaInstructChrome" style="display:none">
+              <p class="text-muted mb-1">Chrome / Edge:</p>
+              <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+                <li>Adressleiste → <i class="bi bi-three-dots-vertical"></i> Menü</li>
+                <li>„App installieren" oder „Zum Startbildschirm"</li>
+              </ol>
+            </div>
+            <div id="pwaInstructIos" style="display:none">
+              <p class="text-muted mb-1">Safari / iOS:</p>
+              <ol class="ps-3 mb-0 text-muted" style="font-size:.8rem">
+                <li><i class="bi bi-share"></i> Teilen-Button antippen</li>
+                <li>„Zum Home-Bildschirm" wählen</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
       {# Theme Toggle #}
       <button type="button" id="themeToggleBtn" class="btn btn-sm btn-outline-light"
               onclick="toggleTheme()" title="{{ t(request, 'btn.toggle_theme') }}">
@@ -415,6 +473,16 @@
           <li class="nav-item">
             <a href="/advice" class="nav-link text-white {% if request.url.path.startswith('/advice') %}fw-bold{% endif %} rounded px-2 py-2">
               <i class="bi bi-chat-text me-2 text-warning"></i>Advice Rules
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/patterns" class="nav-link text-white {% if request.url.path.startswith('/patterns') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-signpost-split me-2 text-warning"></i>{{ t(request, 'nav.patterns') }}
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="/tool-endings" class="nav-link text-white {% if request.url.path.startswith('/tool-endings') %}fw-bold{% endif %} rounded px-2 py-2">
+              <i class="bi bi-search-heart me-2 text-warning"></i>{{ t(request, 'nav.tool_endings') }}
             </a>
           </li>
           <li><hr class="border-secondary my-1"></li>
@@ -793,26 +861,47 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 /* ─── PWA Install Prompt ────────────────────────────────────────────────── */
 let pwaDeferredPrompt = null;
+const _pwaIsIos = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+const _pwaIsStandalone = window.matchMedia('(display-mode: standalone)').matches
+                      || window.navigator.standalone === true;
+
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   pwaDeferredPrompt = e;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.classList.remove('d-none');
+  /* Native prompt available: show install button, hide manual instructions */
+  document.getElementById('pwaPromptSection')?.style.setProperty('display', '');
+  document.getElementById('pwaManualSection')?.style.setProperty('display', 'none');
 });
 window.addEventListener('appinstalled', () => {
   pwaDeferredPrompt = null;
-  const btn = document.getElementById('pwaInstallBtn');
-  if (btn) btn.classList.add('d-none');
+  document.getElementById('pwaInstallWrap')?.classList.add('d-none');
 });
-/* Hide install button when already running as standalone PWA */
-if (window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true) {
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('pwaInstallBtn')?.classList.add('d-none');
-    /* Add safe-area padding for notched phones */
-    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+
+function pwaNativeInstall() {
+  if (!pwaDeferredPrompt) return;
+  pwaDeferredPrompt.prompt();
+  pwaDeferredPrompt.userChoice.then(() => {
+    pwaDeferredPrompt = null;
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
   });
 }
+
+/* On dropdown open: show appropriate instructions when no native prompt */
+document.addEventListener('DOMContentLoaded', () => {
+  if (_pwaIsStandalone) {
+    document.getElementById('pwaInstallWrap')?.classList.add('d-none');
+    document.body.style.paddingBottom = 'env(safe-area-inset-bottom)';
+    return;
+  }
+  /* Pre-fill manual instructions based on platform */
+  const ios = document.getElementById('pwaInstructIos');
+  const chrome = document.getElementById('pwaInstructChrome');
+  if (_pwaIsIos) {
+    if (ios) ios.style.display = '';
+  } else {
+    if (chrome) chrome.style.display = '';
+  }
+});
 </script>
 </body>
 </html>

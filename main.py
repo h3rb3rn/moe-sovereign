@@ -133,7 +133,33 @@ from context_budget import graphrag_budget_chars, web_research_budget
 from memory_retrieval import get_memory_store, compute_evicted_turns
 
 # --- LOGGING (LOG_LEVEL imported from config) ---
-logging.basicConfig(level=getattr(logging, LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
+# chat_id tag: injected into every log record via a filter on the root
+# handler (not a per-logger filter — that would skip records from uvicorn,
+# aiokafka, etc. and crash formatting on the missing %(chat_id)s field).
+# services.helpers.current_chat_id is set once per request at each API
+# entry point; see that module for the full rationale.
+class _ChatIdLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Lazy + defensive: log calls fired while services.helpers itself is
+        # still mid-import (e.g. from one of its own imports logging a
+        # startup warning) would otherwise hit a partially-initialized
+        # module and crash with ImportError before current_chat_id exists
+        # in its namespace yet. Those early lines never have a real request
+        # context anyway, so falling back to "-" is correct, not just safe.
+        try:
+            from services.helpers import current_chat_id
+            record.chat_id = current_chat_id.get("") or "-"
+        except Exception:
+            record.chat_id = "-"
+        return True
+
+
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format='%(asctime)s - %(levelname)s - [%(chat_id)s] - %(message)s',
+)
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_ChatIdLogFilter())
 logger = logging.getLogger("MOE-SOVEREIGN")
 
 import state
@@ -413,16 +439,23 @@ if _EDGE_MODE:
     default_ef       = None
     cache_collection = chroma_client.get_or_create_collection("moe_fact_cache")
     route_collection = chroma_client.get_or_create_collection("task_type_prototypes")
+    # Augmented Tool Path cache (agentic clients) — own namespace, never mixed
+    # with the interactive cache_collection. See services/agent_enrichment.py.
+    agent_cache_collection = chroma_client.get_or_create_collection("moe_agent_cache")
 else:
     chroma_client    = chromadb.HttpClient(host=os.getenv("CHROMA_HOST", "chromadb-vector"), port=8000)
     default_ef       = embedding_functions.DefaultEmbeddingFunction()
     cache_collection = chroma_client.get_or_create_collection(name="moe_fact_cache", embedding_function=default_ef)
     # Second collection for semantic pre-routing: prototypical task queries per category
     route_collection = chroma_client.get_or_create_collection(name="task_type_prototypes", embedding_function=default_ef)
+    # Augmented Tool Path cache (agentic clients) — own namespace, never mixed
+    # with the interactive cache_collection. See services/agent_enrichment.py.
+    agent_cache_collection = chroma_client.get_or_create_collection(name="moe_agent_cache", embedding_function=default_ef)
 
 import state as _state_ref
 _state_ref.cache_collection = cache_collection
 _state_ref.route_collection = route_collection
+_state_ref.agent_cache_collection = agent_cache_collection
 
 # MODES, _MODEL_ID_TO_MODE imported from config.py
 from config import MODES, _MODEL_ID_TO_MODE
@@ -431,6 +464,10 @@ from config import MODES, _MODEL_ID_TO_MODE
 class Message(BaseModel):
     role: str
     content: Optional[Union[str, List[Any]]] = None  # str or multimodal list (image_url etc.)
+    tool_call_id: Optional[str] = None   # required for role="tool"
+    tool_calls: Optional[Any] = None     # list of tool calls for role="assistant"
+    name: Optional[str] = None           # participant name (all roles)
+    refusal: Optional[str] = None        # refusal text (assistant only)
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -440,10 +477,28 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Optional[Any] = None
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    max_completion_tokens: Optional[int] = None  # OpenAI alias for max_tokens
     stream_options: Optional[Dict] = None
     files: Optional[List[Any]] = None           # OpenWebUI file attachments [{type, id, name, ...}]
     no_cache: bool = False                      # If True, skip L0 (Redis) and L1 (ChromaDB) cache reads and writes
     max_agentic_rounds: Optional[int] = None   # Override template's max_agentic_rounds for this request
+    # Standard OpenAI parameters (passed through to backends)
+    top_p: Optional[float] = None
+    n: Optional[int] = None
+    stop: Optional[Any] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    seed: Optional[int] = None
+    user: Optional[str] = None
+    response_format: Optional[Any] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
+    logit_bias: Optional[Any] = None
+    parallel_tool_calls: Optional[bool] = None
+    service_tier: Optional[str] = None
+    store: Optional[bool] = None
+    metadata: Optional[Any] = None
+    reasoning_effort: Optional[str] = None
 
 class FeedbackRequest(BaseModel):
     response_id: str           # chat_id from the response ("chatcmpl-...")
@@ -653,7 +708,8 @@ from graph import (
     research_node,
     _extract_authoritative_domains, _rerank_graph_context, _compress_graph_context_llm,
     merger_node, research_fallback_node, thinking_node,
-    _should_replan, resolve_conflicts_node, critic_node, _route_cache,
+    _should_replan, resolve_conflicts_node, critic_node, self_critique_node, _route_cache,
+    strategy_review_node,
 )
 
 async def _init_graph_rag() -> None:
@@ -973,6 +1029,8 @@ builder.add_node("research_fallback",  research_fallback_node)
 builder.add_node("thinking",           thinking_node)
 builder.add_node("merger",             merger_node)
 builder.add_node("resolve_conflicts",  resolve_conflicts_node)
+builder.add_node("self_critique",      self_critique_node)
+builder.add_node("strategy_review",    strategy_review_node)
 builder.add_node("critic",             critic_node)
 
 builder.set_entry_point("cache")
@@ -992,11 +1050,15 @@ builder.add_edge(
     "research_fallback",
 )
 builder.add_edge("research_fallback", "thinking")
-builder.add_edge("thinking", "merger")
+builder.add_edge("thinking", "strategy_review")
+# strategy_review is a pass-through when STRATEGY_REVIEW_ENABLED is not set
+builder.add_edge("strategy_review", "merger")
 builder.add_conditional_edges(
     "merger", _should_replan,
-    {"planner": "planner", "critic": "resolve_conflicts"},
+    {"planner": "planner", "critic": "resolve_conflicts", "self_critique": "self_critique"},
 )
+# Self-critique loops back to merger for re-evaluation (TASK-11)
+builder.add_edge("self_critique", "merger")
 builder.add_edge("resolve_conflicts", "critic")
 builder.add_edge("critic", END)
 
@@ -1146,6 +1208,7 @@ from routes.mission_context  import router as _mc_router
 from routes.graph            import router as _graph_router
 from routes.admin_benchmark  import router as _admin_bench_router
 from routes.admin_ontology   import router as _admin_onto_router
+from routes.admin_rlsf       import router as _admin_rlsf_router
 from routes.admin_stats      import router as _admin_stats_router
 from routes.feedback         import router as _feedback_router
 from routes.ollama_compat    import router as _ollama_router
@@ -1153,12 +1216,17 @@ from routes.models           import router as _models_router
 from routes.anthropic_compat import router as _anthropic_router
 from routes.codex_proxy      import router as _codex_proxy_router
 from routes.context_search   import router as _context_search_router
+from routes.embeddings       import router as _embeddings_router
+from routes.gates            import router as _gates_router
+from routes.handover         import router as _handover_router
+from routes.kpi              import router as _kpi_router
 app.include_router(_health_router)
 app.include_router(_watchdog_router)
 app.include_router(_mc_router)
 app.include_router(_graph_router)
 app.include_router(_admin_bench_router)
 app.include_router(_admin_onto_router)
+app.include_router(_admin_rlsf_router)
 app.include_router(_admin_stats_router)
 app.include_router(_feedback_router)
 app.include_router(_ollama_router)
@@ -1166,6 +1234,10 @@ app.include_router(_models_router)
 app.include_router(_anthropic_router)
 app.include_router(_codex_proxy_router)
 app.include_router(_context_search_router)
+app.include_router(_gates_router)
+app.include_router(_handover_router)
+app.include_router(_embeddings_router)
+app.include_router(_kpi_router)
 
 # ── HTTP middleware (extracted to services/middleware.py) ─────────────────────
 # Added in the original order; Starlette executes add_middleware in reverse.
@@ -1244,24 +1316,250 @@ async def _stream_native_llm(
             headers["Authorization"] = f"Bearer {token}"
         payload = _ant_payload
     else:
-        # ── OpenAI / Ollama path (existing behaviour) ──────────────────────────
-        url     = endpoint["url"].rstrip("/") + "/chat/completions"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        payload = {
-            "model":          endpoint["model"],
-            "messages":       [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],
-            "stream":         True,
-            "stream_options": {"include_usage": True},
-        }
-        if request.max_tokens:              payload["max_tokens"]  = request.max_tokens
-        if request.temperature is not None: payload["temperature"] = request.temperature
-        if num_ctx > 0 and _ep_api_type == "ollama":
-            payload["options"] = {"num_ctx": num_ctx}
+        # ── Thinking-model detection ────────────────────────────────────────────
+        # Ollama ≤ 0.30.x does not honour think:false on the OpenAI-compat /v1
+        # path. For qwen3/gemma4/qwq we therefore fall back to the native
+        # /api/chat endpoint which has supported think:false since these models
+        # shipped. This also lets us forward tool definitions properly — the
+        # OpenAI-compat passthrough strips them and the agent gets a plain-text
+        # answer with no tool calls.
+        _THINKING_MODEL_PREFIXES = ("qwen3", "gemma4", "qwq")
+        _use_ollama_native = (
+            _ep_api_type == "ollama"
+            and any(t in endpoint["model"].lower() for t in _THINKING_MODEL_PREFIXES)
+        )
+
+        if _use_ollama_native:
+            # ── Native Ollama /api/chat path ────────────────────────────────────
+            _ollama_base = endpoint["url"].rstrip("/")
+            if _ollama_base.endswith("/v1"):
+                _ollama_base = _ollama_base[:-3]
+            url = _ollama_base + "/api/chat"
+            _native_opts: dict = {}
+            if num_ctx > 0:
+                _native_opts["num_ctx"] = num_ctx
+            _eff_max_tok = request.max_tokens or getattr(request, "max_completion_tokens", None)
+            if _eff_max_tok:
+                _native_opts["num_predict"] = _eff_max_tok
+            if request.temperature is not None:
+                _native_opts["temperature"] = request.temperature
+            if getattr(request, "top_p", None) is not None:
+                _native_opts["top_p"] = request.top_p
+            if getattr(request, "seed", None) is not None:
+                _native_opts["seed"] = request.seed
+            if getattr(request, "stop", None) is not None:
+                _s = request.stop
+                _native_opts["stop"] = _s if isinstance(_s, list) else [_s]
+            if getattr(request, "frequency_penalty", None) is not None:
+                _native_opts["repeat_penalty"] = 1.0 + request.frequency_penalty
+            if getattr(request, "presence_penalty", None) is not None:
+                _native_opts["presence_penalty"] = request.presence_penalty
+            _native_msgs = []
+            for _nm_m in request.messages:
+                # Confirmed live: some clients (OpenCode's "Plan" mode) send
+                # OpenAI multi-part content (a list of {type, text} blocks)
+                # instead of a plain string — valid per the OpenAI spec, but
+                # Ollama's native /api/chat Go struct requires content to be
+                # a string and rejects the request outright with "json:
+                # cannot unmarshal array into Go struct field
+                # ChatRequest.messages.content of type string" (HTTP 400,
+                # every single request, immediately). _oai_content_to_str
+                # already does exactly this str-or-list flattening (see
+                # services/pipeline/chat.py's _build_tool_messages / the
+                # equivalent fix in services/pipeline/anthropic.py's
+                # _normalize_for_ollama) — was imported here but never
+                # applied at these three call sites.
+                if _nm_m.role == "tool":
+                    _nm_d = {"role": "tool", "content": _oai_content_to_str(_nm_m.content)}
+                    if _nm_m.tool_call_id:
+                        _nm_d["tool_call_id"] = _nm_m.tool_call_id
+                elif _nm_m.role == "assistant" and _nm_m.tool_calls:
+                    # Normalize tool_calls: Ollama expects function.arguments as a JSON
+                    # object, but OpenAI clients send it as a JSON string. Parse it here.
+                    def _norm_tc(tc):
+                        if not isinstance(tc, dict):
+                            return tc
+                        fn = tc.get("function", {})
+                        args = fn.get("arguments")
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except Exception:
+                                pass
+                        return {**tc, "function": {**fn, "arguments": args}}
+                    _nm_d = {
+                        "role": "assistant",
+                        "content": _oai_content_to_str(_nm_m.content),
+                        "tool_calls": [_norm_tc(tc) for tc in (_nm_m.tool_calls or [])],
+                    }
+                else:
+                    _nm_d = {"role": _nm_m.role, "content": _oai_content_to_str(_nm_m.content)}
+                _native_msgs.append(_nm_d)
+            # When tools are present, prepend a system directive that nudges qwen3
+            # to call tools immediately instead of announcing plans in plain text.
+            # In non-thinking mode qwen3 tends to produce a "I will research…"
+            # response first (no tool call), which causes agent loops to terminate
+            # immediately. The directive is injected only when tools are present
+            # and no tool-result messages exist yet (first agent round).
+            _has_tools_req = bool(getattr(request, "tools", None))
+            _has_tool_results = any(m.role == "tool" for m in request.messages)
+            if _has_tools_req:
+                # Build the list of available tool names for the directive
+                _avail_tool_names = ", ".join(
+                    t.get("function", {}).get("name") or t.get("name", "")
+                    for t in (request.tools or [])
+                    if isinstance(t, dict)
+                ) or "the tools listed above"
+                _tool_directive = (
+                    "CRITICAL TOOL-USE RULES:\n"
+                    f"1. ONLY these tools exist: {_avail_tool_names}. "
+                    "Services like PDFSpark, ConvertAPI, pdftemp.vip, pdf.co or ANY external PDF/file API "
+                    "DO NOT EXIST in this environment — calling or simulating them is forbidden.\n"
+                    "2. For PDF creation: use the `generate_file` tool with format='pdf'. "
+                    "For HTML pages: use format='html'. For Word: format='docx'. "
+                    "All formats create real downloadable files. The returned URL starts with "
+                    "https://files.moe-sovereign.org — that is the ONLY valid download domain.\n"
+                    "3. NEVER invent a download URL. Any URL you provide that was not returned by a "
+                    "real tool call is fabricated and will be flagged as an error.\n"
+                    "4. Make tool calls IMMEDIATELY — no preamble, no 'I will now...', no 'Let me...'.\n"
+                    "5. If a needed capability is not in the tool list, state this clearly and "
+                    "suggest the best available alternative."
+                )
+                # Inject into system message only on first round (no tool results yet)
+                if not _has_tool_results:
+                    if _native_msgs and _native_msgs[0].get("role") == "system":
+                        _native_msgs[0] = {**_native_msgs[0], "content": _tool_directive + "\n\n" + _native_msgs[0]["content"]}
+                    else:
+                        _native_msgs.insert(0, {"role": "system", "content": _tool_directive})
+                # Count previous assistant text responses (non-tool-call turns)
+                _prev_text_turns = sum(
+                    1 for _m in _native_msgs
+                    if _m.get("role") == "assistant" and not _m.get("tool_calls")
+                    and len(_m.get("content") or "") > 200
+                    if not isinstance(_m.get("content"), list)
+                )
+                for _di in range(len(_native_msgs) - 1, -1, -1):
+                    if _native_msgs[_di].get("role") == "user":
+                        _raw_content = _native_msgs[_di].get("content") or ""
+                        # content can be a list (multi-part: text + images/tool_results)
+                        if isinstance(_raw_content, list):
+                            _user_text = " ".join(
+                                b.get("text", "") for b in _raw_content
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            ).strip()
+                        else:
+                            _user_text = str(_raw_content).strip()
+                        _is_short_followup = _prev_text_turns >= 1 and len(_user_text) < 50
+                        if _is_short_followup:
+                            _agent_rule = (
+                                "[AGENT RULE: The previous turn already contained a complete answer. "
+                                "Respond DIRECTLY and briefly — no tools needed.]"
+                            )
+                        else:
+                            _agent_rule = (
+                                "[AGENT RULE: Choose ONE of these two options right now:\n"
+                                "A) Call a tool immediately (no announcement, just the call).\n"
+                                "B) Write the complete final answer right now.\n"
+                                "FORBIDDEN: Writing 'I will...', 'Let me...', 'I'm going to...' or any plan/announcement "
+                                "without an actual tool call in the same response. "
+                                "Only use tools from the approved list — never invent tool or API names.]"
+                            )
+                        # Append agent rule while preserving list structure
+                        if isinstance(_raw_content, list):
+                            _new_content = list(_raw_content)
+                            for _bi in range(len(_new_content) - 1, -1, -1):
+                                if isinstance(_new_content[_bi], dict) and _new_content[_bi].get("type") == "text":
+                                    _new_content[_bi] = {**_new_content[_bi], "text": _new_content[_bi].get("text", "") + "\n\n" + _agent_rule}
+                                    break
+                            else:
+                                _new_content.append({"type": "text", "text": _agent_rule})
+                        else:
+                            _new_content = _user_text + "\n\n" + _agent_rule
+                        _native_msgs[_di] = {**_native_msgs[_di], "content": _new_content}
+                        break
+            # Enable thinking when the system prompt is complex (>2000 chars),
+            # e.g. when a third-party agent like Odysseus sends its own full
+            # agent-rule system prompt alongside 20+ tool definitions.
+            # Without thinking, Qwen3 "meta-reasons" in text instead of calling
+            # tools when it sees conflicting multi-system instructions.
+            _sys_len = len((_native_msgs[0].get("content") or "")) if _native_msgs and _native_msgs[0].get("role") == "system" else 0
+            _think = _sys_len > 2000
+            payload = {
+                "model":      endpoint["model"],
+                "messages":   _native_msgs,
+                "stream":     True,
+                "think":      _think,
+                # No explicit keep_alive — respects each Ollama instance's
+                # own server-configured OLLAMA_KEEP_ALIVE default instead of
+                # silently overriding it.
+            }
+            if _native_opts:
+                payload["options"] = _native_opts
+            if _has_tools_req:
+                payload["tools"] = request.tools
+        else:
+            # ── OpenAI / Ollama-compat path ─────────────────────────────────────
+            url = endpoint["url"].rstrip("/") + "/chat/completions"
+            # Build messages with proper tool-call fields
+            _oa_msgs = []
+            for _oam in request.messages:
+                if _oam.role == "tool":
+                    _oad = {"role": "tool", "content": _oam.content if _oam.content is not None else ""}
+                    if _oam.tool_call_id:
+                        _oad["tool_call_id"] = _oam.tool_call_id
+                    if _oam.name:
+                        _oad["name"] = _oam.name
+                elif _oam.role == "assistant" and _oam.tool_calls:
+                    _oad = {"role": "assistant", "content": "", "tool_calls": _oam.tool_calls}
+                    if _oam.content:
+                        _oad["content"] = _oam.content if isinstance(_oam.content, str) else str(_oam.content)
+                else:
+                    _oad = {"role": _oam.role, "content": _oam.content if _oam.content is not None else ""}
+                    if _oam.name:
+                        _oad["name"] = _oam.name
+                _oa_msgs.append(_oad)
+            payload = {
+                "model":          endpoint["model"],
+                "messages":       _oa_msgs,
+                "stream":         True,
+                "stream_options": {"include_usage": True},
+            }
+            _oa_max_tok = request.max_tokens or getattr(request, "max_completion_tokens", None)
+            if _oa_max_tok:
+                payload["max_tokens"] = _oa_max_tok
+            if request.temperature is not None:
+                payload["temperature"] = request.temperature
+            if num_ctx > 0 and _ep_api_type == "ollama":
+                payload["options"] = {"num_ctx": num_ctx}
+            # Forward all standard OpenAI parameters
+            for _pname in ("top_p", "n", "stop", "presence_penalty", "frequency_penalty",
+                           "seed", "user", "response_format", "logprobs", "top_logprobs",
+                           "logit_bias", "parallel_tool_calls"):
+                _pval = getattr(request, _pname, None)
+                if _pval is not None:
+                    payload[_pname] = _pval
+            # Forward tool definitions so the backend can execute tool calls.
+            if request.tools:
+                payload["tools"] = request.tools
+                if request.tool_choice:
+                    payload["tool_choice"] = request.tool_choice
 
     _t_start = time.monotonic()
     _t_first: Optional[float] = None
     p_tok = c_tok = 0
     _did_deregister = False
+    # Estimate total prompt size from request messages. Ollama's prompt_eval_count
+    # only covers newly-evaluated tokens (KV-cache misses), not the full context.
+    # We use this as a lower bound so clients see the actual context fill level.
+    def _msg_chars(m: dict) -> int:
+        c = m.get("content") or ""
+        if isinstance(c, str):
+            return len(c)
+        if isinstance(c, list):
+            return sum(len(str(p.get("text") or p.get("content") or "")) for p in c if isinstance(p, dict))
+        return len(str(c))
+    _req_prompt_tokens: int = sum(4 + _msg_chars(m) // 4 for m in payload.get("messages", []))
 
     # Use the per-server timeout from INFERENCE_SERVERS config (fallback: 300s).
     # A 10s connect timeout prevents silent hangs when the server URL is wrong.
@@ -1314,6 +1612,69 @@ async def _stream_native_llm(
                                 yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok}})}\n\n"
                             elif evt_type == "message_stop":
                                 break
+                    elif _use_ollama_native:
+                        # ── Native Ollama NDJSON → OpenAI SSE conversion ───────
+                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+                        _has_tool_calls = False
+                        _global_tc_idx = 0
+                        _native_full_text = []  # accumulate for URL guard
+                        async for _nline in resp.aiter_lines():
+                            _nline = _nline.strip()
+                            if not _nline:
+                                continue
+                            try:
+                                _nc = json.loads(_nline)
+                            except Exception:
+                                continue
+                            _nmsg     = _nc.get("message", {})
+                            _ncontent = _nmsg.get("content", "")
+                            _ntcs     = _nmsg.get("tool_calls") or []
+                            _ndone    = _nc.get("done", False)
+                            if _ncontent:
+                                if _t_first is None:
+                                    _t_first = time.monotonic()
+                                _native_full_text.append(_ncontent)
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': _ncontent}, 'finish_reason': None}]})}\n\n"
+                            for _tci, _tc in enumerate(_ntcs):
+                                _abs_tci = _global_tc_idx + _tci
+                                _has_tool_calls = True
+                                _fn      = _tc.get("function", {})
+                                _tc_args = _fn.get("arguments", {})
+                                _tc_args_str = json.dumps(_tc_args) if isinstance(_tc_args, dict) else str(_tc_args)
+                                _call_id = f"call_{uuid.uuid4().hex[:8]}"
+                                if _t_first is None:
+                                    _t_first = time.monotonic()
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': _abs_tci, 'id': _call_id, 'type': 'function', 'function': {'name': _fn.get('name', ''), 'arguments': ''}}]}, 'finish_reason': None}]})}\n\n"
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': _abs_tci, 'function': {'arguments': _tc_args_str}}]}, 'finish_reason': None}]})}\n\n"
+                            _global_tc_idx += len(_ntcs)
+                            if _ndone:
+                                p_tok = _nc.get("prompt_eval_count", 0)
+                                c_tok = _nc.get("eval_count", 0)
+                                _fin  = "tool_calls" if _has_tool_calls else _nc.get("done_reason", "stop")
+                                _num_ctx_used = _nc.get("num_ctx") or num_ctx
+                                # URL hallucination guard — check accumulated text
+                                if not _has_tool_calls and _native_full_text and request.tools:
+                                    import re as _re2
+                                    _full_resp = "".join(_native_full_text)
+                                    _ext_urls  = _re2.findall(r'https?://[^\s\)\]"\'<>]+', _full_resp)
+                                    _SAFE = ("files.moe-sovereign.org", "localhost", "127.0.0.1",
+                                             "192.168.", "10.", "172.", ".hc-hosting.de",
+                                             "4noobs.de", "adesso-ai-hub")
+                                    _bad = [u for u in _ext_urls if not any(d in u for d in _SAFE)]
+                                    if _bad:
+                                        logger.warning("URL hallucination in native stream: %s", _bad)
+                                        _warn = (
+                                            "\n\n---\n"
+                                            "⚠️ **Fehler:** Die obige URL wurde von keinem echten Tool zurückgegeben und ist **ungültig**. "
+                                            "Externe Dienste wie PDFSpark oder pdftemp.vip existieren in dieser Umgebung nicht. "
+                                            "Bitte nutze `generate_file` mit `format='pdf'` für PDFs oder `format='html'` für HTML-Seiten — die echte Download-URL beginnt mit `https://files.moe-sovereign.org`."
+                                        )
+                                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': _warn}, 'finish_reason': None}]})}\n\n"
+                                _rpt_p = max(p_tok, _req_prompt_tokens)
+                                _done_usage: dict = {'prompt_tokens': _rpt_p, 'completion_tokens': c_tok, 'total_tokens': _rpt_p + c_tok}
+                                if _num_ctx_used:
+                                    _done_usage['num_ctx_limit'] = _num_ctx_used
+                                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {}, 'finish_reason': _fin}], 'usage': _done_usage})}\n\n"
                     else:
                         # ── OpenAI SSE passthrough ─────────────────────────────
                         async for line in resp.aiter_lines():
@@ -1361,7 +1722,17 @@ async def _stream_native_llm(
                 asyncio.create_task(_increment_user_budget(user_id, p_tok + c_tok, prompt_tokens=p_tok, completion_tokens=c_tok))
         asyncio.create_task(_deregister_active_request(chat_id))
         _did_deregister = True
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [], 'usage': {'prompt_tokens': p_tok, 'completion_tokens': c_tok, 'total_tokens': p_tok + c_tok, 'tokens_per_second': tps, 'response_token_per_s': tps, 'prompt_token_per_s': prompt_tps, 'total_duration': total_dur_ns, 'load_duration': load_dur_ns, 'prompt_eval_count': p_tok, 'prompt_eval_duration': p_eval_dur_ns, 'eval_count': c_tok, 'eval_duration': eval_dur_ns, 'approximate_total': approx_total}})}\n\n"
+        _rpt_p = max(p_tok, _req_prompt_tokens)
+        _ext_usage: dict = {
+            'prompt_tokens': _rpt_p, 'completion_tokens': c_tok, 'total_tokens': _rpt_p + c_tok,
+            'tokens_per_second': tps, 'response_token_per_s': tps, 'prompt_token_per_s': prompt_tps,
+            'total_duration': total_dur_ns, 'load_duration': load_dur_ns,
+            'prompt_eval_count': p_tok, 'prompt_eval_duration': p_eval_dur_ns,
+            'eval_count': c_tok, 'eval_duration': eval_dur_ns, 'approximate_total': approx_total,
+        }
+        if num_ctx > 0:
+            _ext_usage['num_ctx_limit'] = num_ctx
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [], 'usage': _ext_usage})}\n\n"
         yield "data: [DONE]\n\n"
     finally:
         if not _did_deregister:
@@ -1390,6 +1761,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                           session_id: str = None,
                           max_agentic_rounds: int = 0,
                           no_cache: bool = False):
+    from services.helpers import current_chat_id
+    current_chat_id.set(chat_id)
     _deregistered = False
     config   = {"configurable": {"thread_id": str(uuid.uuid4())}}
     created  = int(time.time())
@@ -1453,7 +1826,15 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "vector_confidence": 0.5,
                  "graph_confidence": 0.5,
                  "fuzzy_routing_scores": {},
-                 "no_cache": no_cache},
+                 "no_cache": no_cache,
+                 "trust_score": 0.0,
+                 "trust_verdict": "",
+                 "self_critique_round": 0,
+                 "self_critique_max": int(__import__("os").getenv("SELF_CRITIQUE_MAX_ROUNDS", "2")),
+                 "constitution_violations": [],
+                 "cynefin_domain": "",
+                 "hitl_gate_id": "",
+                 "strategy_feedback": ""},
                 config,
             )
         except Exception as e:
@@ -1491,7 +1872,12 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
     # Pipeline complete — deregister now, before streaming content.
     # This prevents the request from remaining "active" if the client closes the connection
     # after the last content chunk (normal OpenWebUI behavior).
-    asyncio.create_task(_deregister_active_request(chat_id))
+    _pipeline_data = result_box.get("data") or {}
+    asyncio.create_task(_deregister_active_request(chat_id, extra_meta={
+        "trust_verdict":  _pipeline_data.get("trust_verdict") or "",
+        "trust_score":    _pipeline_data.get("trust_score")  or 0.0,
+        "cynefin_domain": _pipeline_data.get("cynefin_domain") or "",
+    }))
     _deregistered = True
 
     # Plan mode: output execution plan as visible markdown block before the answer
@@ -1551,6 +1937,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             t.get("category", "") for t in _plan if isinstance(t, dict) and t.get("category")
         }))
         _agentic_rounds = int(data.get("agentic_round", 0))
+        _trust_score  = data.get("trust_score") or None
+        _trust_verdict = data.get("trust_verdict") or None
+        _cynefin_domain = data.get("cynefin_domain") or None
+        _self_critique_round = int(data.get("self_critique_round") or 0)
+        _cascade_type = data.get("cascade_type") or None
         if _uid != "anon":
             asyncio.create_task(_log_usage_to_db(
                 user_id=_uid,
@@ -1566,6 +1957,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 expert_domains=_expert_domains,
                 cache_hit=bool(cache_hit_flag),
                 agentic_rounds=_agentic_rounds,
+                trust_score=_trust_score,
+                trust_verdict=_trust_verdict,
+                cynefin_domain=_cynefin_domain,
+                self_critique_round=_self_critique_round,
+                cascade_type=_cascade_type,
             ))
             # Deduct user-conn tokens: those are billed by the user's own provider.
             _uc_p = data.get("user_conn_prompt_tokens", 0)
@@ -1591,6 +1987,30 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             ))
         if not _deregistered:
             asyncio.create_task(_deregister_active_request(chat_id))
+        # URL hallucination guard: if the response contains external URLs that were
+        # not returned by a real tool call, append a visible warning to the stream.
+        _resp_text = content if isinstance(content, str) else ""
+        if _resp_text and False:  # request.tools not available in stream_response scope
+            import re as _re
+            _url_pattern = _re.compile(r'https?://[^\s\)\]"\'<>]+', _re.IGNORECASE)
+            _found_urls = _url_pattern.findall(_resp_text)
+            _SAFE_DOMAINS = ("files.moe-sovereign.org", "localhost", "127.0.0.1",
+                             "192.168.", "10.", "172.", "moe-", ".hc-hosting.de",
+                             "adesso-ai-hub", ".4noobs.de")
+            _fake_urls = [
+                u for u in _found_urls
+                if not any(d in u for d in _SAFE_DOMAINS)
+                and not u.startswith("http://moe")
+            ]
+            if _fake_urls:
+                _warn = (
+                    "\n\n---\n⚠️ **Hinweis:** Die oben genannte(n) URL(s) wurden von keinem echten Tool zurückgegeben "
+                    "und sind möglicherweise nicht erreichbar. "
+                    "Bitte verwende `generate_file` um echte Dateien zu erstellen — "
+                    "die Download-URL kommt dann von `https://files.moe-sovereign.org`."
+                )
+                logger.warning("URL hallucination detected in response: %s", _fake_urls)
+                yield _chunk({"content": _warn})
         # Stop chunk WITHOUT usage (OpenAI spec: usage comes in its own chunk after)
         yield _chunk({}, finish_reason="stop")
         # Separate usage chunk with choices=[] — recognized by Open-WebUI as statistics

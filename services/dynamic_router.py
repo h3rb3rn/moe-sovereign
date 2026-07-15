@@ -14,7 +14,7 @@ from chromadb.utils import embedding_functions
 
 import state
 from admin_ui.database import _get_pool, log_dynamic_template_feedback
-from config import MOE_USERDB_URL, URL_MAP, API_TYPE_MAP, TOKEN_MAP, INFERENCE_SERVERS_LIST
+from config import MOE_USERDB_URL, URL_MAP, API_TYPE_MAP, TOKEN_MAP, INFERENCE_SERVERS_LIST, EXPERT_TIER_BOUNDARY_B
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -157,9 +157,16 @@ _embedding_function = None
 
 _cluster_state_cache = {"ts": 0.0, "models": []}
 
+ROUTELLM_WEIGHTS_PATH = os.getenv("ROUTELLM_WEIGHTS_PATH", "/app/models/routellm_bge_weights.json")
+ROUTELLM_THRESHOLD = float(os.getenv("ROUTELLM_THRESHOLD", "0.5"))
+ROUTELLM_ENABLED = os.getenv("ROUTELLM_ENABLED", "true").lower() in ("true", "1", "yes")
+
+_routellm_w = None
+_routellm_b = 0.0
+
 def init_router():
-    """Initializes the ONNX session and ChromaDB collection."""
-    global _onnx_session, _chroma_client, _template_collection, _embedding_function
+    """Initializes the ONNX session, ChromaDB collection, and RouteLLM weights."""
+    global _onnx_session, _chroma_client, _template_collection, _embedding_function, _routellm_w, _routellm_b
     
     # 1. Load ONNX model
     if os.path.exists(ROUTER_ONNX_PATH):
@@ -197,6 +204,40 @@ def init_router():
             logger.info("connected to ChromaDB moe_template_cache collection.")
         except Exception as e:
             logger.error(f"❌ Failed to connect to ChromaDB moe_template_cache: {e}")
+
+    # 3. Load RouteLLM weights
+    if ROUTELLM_ENABLED:
+        if os.path.exists(ROUTELLM_WEIGHTS_PATH):
+            try:
+                with open(ROUTELLM_WEIGHTS_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    _routellm_w = np.array(data["w"], dtype=np.float32)
+                    _routellm_b = float(data["b"])
+                logger.info(f"🎯 RouteLLM weights loaded from {ROUTELLM_WEIGHTS_PATH}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load RouteLLM weights: {e}")
+        else:
+            logger.warning(f"⚠️ RouteLLM weights not found at {ROUTELLM_WEIGHTS_PATH}")
+
+
+async def get_bge_embedding(prompt: str) -> Optional[np.ndarray]:
+    embed_url = os.getenv("MOE_EMBED_URL", "http://moe-embed:11434").rstrip("/") + "/api/embed"
+    try:
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "model": "bge-m3",
+                "input": [prompt]
+            }
+            response = await client.post(embed_url, json=payload, timeout=10.0)
+            if response.status_code == 200:
+                embeds = response.json().get("embeddings", [])
+                if embeds:
+                    return np.array(embeds[0], dtype=np.float32)
+            else:
+                logger.error(f"Failed to fetch BGE embedding: status={response.status_code}, response={response.text}")
+    except Exception as e:
+        logger.error(f"Exception fetching BGE embedding: {e}")
+    return None
 
 
 async def _run_sovereign_classifier(prompt: str) -> Optional[dict]:
@@ -370,8 +411,21 @@ async def _get_thompson_score(model: str, category: str) -> float:
         return 0.5
 
 
-async def _score_and_allocate_model(category: str, models: list[dict], model_metadata: dict, local_only: bool, complexity: str = "moderate", interventions: list = None) -> list[dict]:
+async def _score_and_allocate_model(category: str, models: list[dict], model_metadata: dict, local_only: bool, complexity: str = "moderate", interventions: list = None, force_weak: bool = False) -> list[dict]:
     """Scores models based on parameter size, context window, warmed status, strengths, and Thompson Sampling."""
+    if force_weak:
+        weak_models = []
+        for m in models:
+            meta = model_metadata.get(m["model_id"], {})
+            param_size = meta.get("parameter_size_b", 7.0)
+            if m["is_local"] and param_size <= EXPERT_TIER_BOUNDARY_B:
+                weak_models.append(m)
+        if weak_models:
+            models = weak_models
+            logger.debug(f"RouteLLM forced weak models: {', '.join([m['model_id'] for m in models])}")
+        else:
+            logger.debug("RouteLLM: force_weak is True, but no Tier-1 models found. Falling back to all models.")
+
     scored_models = []
     
     # Weights for scoring formula (optimized for quality, latency-agnostic)
@@ -786,6 +840,24 @@ async def get_dynamic_template(
     enable_web_research = classification["enable_web_research"]
     enable_graphrag = classification["enable_graphrag"]
 
+    # Run RouteLLM classifier
+    prob = None
+    force_weak = False
+    if ROUTELLM_ENABLED:
+        if _routellm_w is None:
+            init_router()
+        if _routellm_w is not None:
+            embedding = await get_bge_embedding(prompt)
+            if embedding is not None:
+                z = np.dot(embedding, _routellm_w) + _routellm_b
+                prob = 1.0 / (1.0 + np.exp(-np.clip(z, -50, 50)))
+                logger.info(f"RouteLLM routing score: {prob:.4f} (threshold={ROUTELLM_THRESHOLD})")
+                if prob < ROUTELLM_THRESHOLD:
+                    logger.info("RouteLLM decided: WEAK model path")
+                    force_weak = True
+                else:
+                    logger.info("RouteLLM decided: STRONG model path")
+
     # 3. Model Scoring and Allocation
     try:
         models = []
@@ -873,6 +945,8 @@ async def get_dynamic_template(
         # Compile expert models configurations
         experts_config = {}
         justification_trace = f"Complexity={complexity}, WebSearch={enable_web_research}, GraphRAG={enable_graphrag}. "
+        if prob is not None:
+            justification_trace = f"RouteLLM_Score={prob:.4f} (threshold={ROUTELLM_THRESHOLD}, path={'strong' if not force_weak else 'weak'}), " + justification_trace
 
         # Resolve prompt-specific system prompts dynamically
         resolved_prompts = await _generate_prompt_specific_prompts(prompt, active_experts)
@@ -880,10 +954,10 @@ async def get_dynamic_template(
         interventions = []
         for exp in active_experts:
             # Allocate models for this expert category
-            allocated = await _score_and_allocate_model(exp, models, model_metadata, local_only, complexity, interventions)
+            allocated = await _score_and_allocate_model(exp, models, model_metadata, local_only, complexity, interventions, force_weak=force_weak)
             if not allocated:
                 # If local_only is active but no local model is available, fall back to whatever is available
-                allocated = await _score_and_allocate_model(exp, models, model_metadata, False, complexity, interventions)
+                allocated = await _score_and_allocate_model(exp, models, model_metadata, False, complexity, interventions, force_weak=force_weak)
                 
             if allocated:
                 models_cfg = []
@@ -943,7 +1017,8 @@ async def get_dynamic_template(
             "enable_graphrag": enable_graphrag,
             "enable_web_research": enable_web_research,
             "experts": experts_config,
-            "causal_intervention": interventions[0] if interventions else None
+            "causal_intervention": interventions[0] if interventions else None,
+            "reasoning_trace": justification_trace
         }
         
         # Save to Postgres and cache in ChromaDB

@@ -149,7 +149,9 @@ function renderCcProfiles(rows) {
   tbody.innerHTML = rows.map(p => {
     let cfg = {};
     try { cfg = JSON.parse(p.config_json || '{}'); } catch {}
-    const toolModel = cfg.tool_model ? `${cfg.tool_model}@${cfg.tool_endpoint||'?'}` : '—';
+    const toolModel = cfg.tool_model?.startsWith('template:')
+      ? cfg.tool_model
+      : (cfg.tool_model ? `${cfg.tool_model}@${cfg.tool_endpoint||'?'}` : '—');
     return `
     <tr data-username="${escHtml((p.username||'').toLowerCase())}" data-name="${escHtml((p.name||'').toLowerCase())}">
       <td><span class="badge bg-light text-dark border">${escHtml(p.display_name || p.username)}</span>

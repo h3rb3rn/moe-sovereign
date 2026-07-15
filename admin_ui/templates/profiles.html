@@ -83,7 +83,7 @@
           </tr>
           <tr>
             <th class="text-muted fw-normal ps-0">Tool-Modell</th>
-            <td class="font-monospace">{{ p.tool_model or '—' }}</td>
+            <td class="font-monospace">{% if p.tool_model and p.tool_model.startswith('template:') %}<span class="badge bg-primary-subtle text-primary border">{{ p.tool_model }}</span>{% else %}{{ p.tool_model or '—' }}{% endif %}</td>
           </tr>
           <tr>
             <th class="text-muted fw-normal ps-0">Endpoint</th>
@@ -119,6 +119,16 @@
           <tr>
             <th class="text-muted fw-normal ps-0">Timeout</th>
             <td class="font-monospace">{{ p.tool_timeout }}s</td>
+          </tr>
+          {% endif %}
+          {% if p.agent_cache or p.agent_graphrag or p.agent_ingest %}
+          <tr>
+            <th class="text-muted fw-normal ps-0">Augmented Tool Path</th>
+            <td>
+              {% if p.agent_cache %}<span class="badge bg-success-subtle text-success border me-1">Cache</span>{% endif %}
+              {% if p.agent_graphrag %}<span class="badge bg-success-subtle text-success border me-1">GraphRAG</span>{% endif %}
+              {% if p.agent_ingest %}<span class="badge bg-success-subtle text-success border">Ingestion</span>{% endif %}
+            </td>
           </tr>
           {% endif %}
           {% if p.expert_template_id %}
@@ -183,14 +193,6 @@
             <textarea class="form-control font-monospace" id="pm-models" rows="3"
               placeholder="claude-sonnet-4-6,claude-haiku-4-5-20251001"></textarea>
           </div>
-          <div class="col-12">
-            <label class="form-label">Tool-Modell <span class="text-muted small">(model@host)</span></label>
-            <div id="pm-llm-select">
-              <select class="form-select font-monospace" disabled>
-                <option>{{ t(request, 'js.loading_models') }}</option>
-              </select>
-            </div>
-          </div>
           <div class="col-md-4">
             <label class="form-label">MoE-Modus</label>
             <select class="form-select" id="pm-moe-mode" onchange="onMoeModeChange()">
@@ -201,12 +203,23 @@
           </div>
           <div class="col-md-8 d-none" id="pm-template-row">
             <label class="form-label">Expert Template <span class="text-muted small">(for moe_orchestrated)</span></label>
-            <select class="form-select" id="pm-expert-template">
+            <select class="form-select" id="pm-expert-template" onchange="onExpertTemplateChange()">
               <option value="">— no template (global experts) —</option>
               {% for tmpl in expert_templates %}
-              <option value="{{ tmpl.id }}">{{ tmpl.name }}</option>
+              <option value="{{ tmpl.id }}" data-has-tool-agent="{{ 'true' if tmpl.get('experts', {}).get('tool_agent') else 'false' }}">{{ tmpl.name }}</option>
               {% endfor %}
             </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Tool-Modell <span class="text-muted small">(model@host)</span></label>
+            <div id="pm-llm-select">
+              <select class="form-select font-monospace" disabled>
+                <option>{{ t(request, 'js.loading_models') }}</option>
+              </select>
+            </div>
+            <div id="pm-tool-model-hint" class="form-text d-none">
+              <span class="text-success"><i class="bi bi-check-circle me-1"></i>Wird automatisch aus dem Experten-Template (tool_agent) übernommen — kein Tool-Modell nötig.</span>
+            </div>
           </div>
           <div class="col-md-4">
             <label class="form-label">Tool Choice <span class="text-muted small">(for OSS models)</span></label>
@@ -244,6 +257,28 @@
                 <span class="text-muted small">(shows pipeline progress: 📋 Planner analyzing…)</span>
               </label>
             </div>
+          </div>
+          <div class="col-12"><hr class="my-1"><small class="text-muted fw-bold">Augmented Tool Path <span class="fw-normal">(opt-in — enrich the tool-call fast path)</span></small></div>
+          <div class="col-4">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="pm-agent-cache">
+              <label class="form-check-label small" for="pm-agent-cache">Cache</label>
+            </div>
+            <div class="form-text" style="font-size:.7rem">Serve informational answers from the agent cache instead of calling the LLM</div>
+          </div>
+          <div class="col-4">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="pm-agent-graphrag">
+              <label class="form-check-label small" for="pm-agent-graphrag">GraphRAG</label>
+            </div>
+            <div class="form-text" style="font-size:.7rem">Inject knowledge-graph context into the tool model's system prompt</div>
+          </div>
+          <div class="col-4">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="pm-agent-ingest">
+              <label class="form-check-label small" for="pm-agent-ingest">Ingestion</label>
+            </div>
+            <div class="form-text" style="font-size:.7rem">Write clean session answers back into cache + knowledge graph</div>
           </div>
         </div>
       </div>
@@ -301,15 +336,27 @@ function buildLlmDropdown(containerId, availableLlms, selectedVal) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const richMap = Object.fromEntries((_availableLlmsRich||[]).map(m => [m.id||m, m]));
-  const opts = availableLlms.map(v => {
+  const nativeOpts = [], tmplOpts = [];
+  availableLlms.forEach(v => {
     const id  = typeof v === 'string' ? v : v.id;
     const sel = id === selectedVal ? 'selected' : '';
     const m   = richMap[id] || {};
-    const tagSuffix = (m.tags && m.tags.length) ? ` [${m.tags.join(', ')}]` : '';
-    return `<option value="${id}" ${sel}>${id}${tagSuffix}</option>`;
-  }).join('');
-  container.innerHTML = `<select class="form-select font-monospace" style="font-size:.85rem" id="pm-llm-select-inner">
-    <option value="">— Select model —</option>${opts}
+    if (id.startsWith('template:')) {
+      const label = m.display_name || id;
+      tmplOpts.push(`<option value="${id}" ${sel}>${label}</option>`);
+    } else {
+      const tagSuffix = (m.tags && m.tags.length) ? ` [${m.tags.join(', ')}]` : '';
+      nativeOpts.push(`<option value="${id}" ${sel}>${id}${tagSuffix}</option>`);
+    }
+  });
+  const tmplGroup = tmplOpts.length
+    ? `<optgroup label="Expert Templates (MoE)">${tmplOpts.join('')}</optgroup>`
+    : '';
+  const nativeGroup = nativeOpts.length
+    ? `<optgroup label="Native LLMs">${nativeOpts.join('')}</optgroup>`
+    : '';
+  container.innerHTML = `<select class="form-select font-monospace" style="font-size:.85rem" id="pm-llm-select-inner" onchange="onToolModelChange()">
+    <option value="">— automatisch (aus Experten-Template) —</option>${tmplGroup}${nativeGroup}
   </select>`;
   if (selectedVal) container.querySelector('select').value = selectedVal;
 }
@@ -331,6 +378,9 @@ async function fillModal(profile) {
   syncDropdown('pm-tool-choice');
   document.getElementById('pm-prefix').value         = profile?.system_prompt_prefix || '';
   document.getElementById('pm-stream-think').checked = profile?.stream_think || false;
+  document.getElementById('pm-agent-cache').checked    = profile?.agent_cache || false;
+  document.getElementById('pm-agent-graphrag').checked = profile?.agent_graphrag || false;
+  document.getElementById('pm-agent-ingest').checked   = profile?.agent_ingest || false;
   document.getElementById('pm-tool-tokens').value    = profile?.tool_max_tokens || 8192;
   document.getElementById('pm-context-window').value = profile?.context_window || 0;
   document.getElementById('pm-reasoning-tokens').value = profile?.reasoning_max_tokens || 16384;
@@ -340,11 +390,37 @@ async function fillModal(profile) {
 
   // Populate LLM dropdown
   const llms = await fetchAvailableLlms();
-  const selectedLlm = (profile?.tool_model && profile?.tool_endpoint)
-    ? `${profile.tool_model}@${profile.tool_endpoint}`
-    : (profile?.tool_model || '');
+  const selectedLlm = profile?.tool_model?.startsWith('template:')
+    ? profile.tool_model
+    : (profile?.tool_model && profile?.tool_endpoint)
+      ? `${profile.tool_model}@${profile.tool_endpoint}`
+      : (profile?.tool_model || '');
   buildLlmDropdown('pm-llm-select', llms, selectedLlm);
+  _updateToolModelHint();
 }
+
+function _selectedTemplateHasToolAgent() {
+  const sel = document.getElementById('pm-expert-template');
+  if (!sel) return false;
+  const opt = sel.options[sel.selectedIndex];
+  return opt && opt.dataset.hasToolAgent === 'true';
+}
+
+function _updateToolModelHint() {
+  const hint    = document.getElementById('pm-tool-model-hint');
+  const toolVal = getLlmSelectValue();
+  const mode    = document.getElementById('pm-moe-mode').value;
+  if (!hint) return;
+  if (!toolVal && mode === 'moe_orchestrated' && _selectedTemplateHasToolAgent()) {
+    hint.classList.remove('d-none');
+  } else {
+    hint.classList.add('d-none');
+  }
+}
+
+function onToolModelChange() { _updateToolModelHint(); }
+
+function onExpertTemplateChange() { _updateToolModelHint(); }
 
 function onMoeModeChange() {
   const mode = document.getElementById('pm-moe-mode').value;
@@ -355,6 +431,7 @@ function onMoeModeChange() {
     row.classList.add('d-none');
     document.getElementById('pm-expert-template').value = '';
   }
+  _updateToolModelHint();
 }
 
 async function openCreateModal() {
@@ -398,9 +475,15 @@ document.addEventListener('DOMContentLoaded', () => {
 async function saveProfile() {
   const id = document.getElementById('pm-id').value;
   const _llmVal = getLlmSelectValue();
-  const _atIdx  = _llmVal.lastIndexOf('@');
-  const _toolModel    = _atIdx >= 0 ? _llmVal.slice(0, _atIdx)    : _llmVal;
-  const _toolEndpoint = _atIdx >= 0 ? _llmVal.slice(_atIdx + 1)   : '';
+  let _toolModel, _toolEndpoint;
+  if (_llmVal.startsWith('template:')) {
+    _toolModel    = _llmVal;
+    _toolEndpoint = '';
+  } else {
+    const _atIdx  = _llmVal.lastIndexOf('@');
+    _toolModel    = _atIdx >= 0 ? _llmVal.slice(0, _atIdx)  : _llmVal;
+    _toolEndpoint = _atIdx >= 0 ? _llmVal.slice(_atIdx + 1) : '';
+  }
   const body = {
     name:                 document.getElementById('pm-name').value.trim(),
     accepted_models:      document.getElementById('pm-models').value.split(',').map(s => s.trim()).filter(Boolean),
@@ -410,6 +493,9 @@ async function saveProfile() {
     tool_choice:          document.getElementById('pm-tool-choice').value,
     system_prompt_prefix: document.getElementById('pm-prefix').value.trim(),
     stream_think:         document.getElementById('pm-stream-think').checked,
+    agent_cache:          document.getElementById('pm-agent-cache').checked,
+    agent_graphrag:       document.getElementById('pm-agent-graphrag').checked,
+    agent_ingest:         document.getElementById('pm-agent-ingest').checked,
     tool_max_tokens:      parseInt(document.getElementById('pm-tool-tokens').value) || 8192,
     context_window:       parseInt(document.getElementById('pm-context-window').value) || 0,
     reasoning_max_tokens: parseInt(document.getElementById('pm-reasoning-tokens').value) || 16384,

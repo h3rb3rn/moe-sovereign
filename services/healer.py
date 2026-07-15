@@ -23,8 +23,78 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 _DEDICATED_HEALER_KEY       = "moe:ontology:dedicated"
 _ONTOLOGY_RUN_KEY           = "moe:maintenance:ontology:run"
 _ONTOLOGY_RUNS_HISTORY_KEY  = "moe:maintenance:ontology:runs"
+_BLOCKED_SERVERS_KEY        = "moe:blocked_servers"
+_NODE_ACTIVE_PREFIX         = "moe:healer:active:"  # scripts/gap_healer_templates.py's per-node slot counter
 _HEALER_STALL_SECONDS       = 300   # 5 min without output → stalled
 _HEALER_RESTART_DELAY_S     = 30    # pause between auto-restarts
+
+
+def _node_names_for_template_pool(template_pool: str) -> list[str]:
+    """Python mirror of gap_healer_templates.py::_node_name_from_template,
+    for the comma-separated TEMPLATE_POOL string stored in the dedicated
+    healer's Redis hash."""
+    names = []
+    for t in (template_pool or "").split(","):
+        t = t.strip()
+        if t:
+            names.append(t.replace("moe-ontology-curator-", ""))
+    return names
+
+
+async def _clear_orphaned_node_slots(template_pool: str) -> None:
+    """Reset the per-node concurrency slot counter(s) after forcibly killing
+    the healer subprocess.
+
+    gap_healer_templates.py's _try_acquire_node_slot()/_release_node_slot()
+    coordinate concurrent LLM calls per node via a Redis INCR/DECR counter
+    (moe:healer:active:{node}), released in a `finally:` block around each
+    call. SIGTERM does not run that cleanup, so a kill mid-call leaves the
+    counter incremented forever (TTL 3600s — far longer than the 300s stall
+    window that triggers this kill). Once the counter exceeds the node's
+    allowed-slots cap, every future acquire attempt fails immediately and
+    the healer spins re-queueing gaps without ever calling the LLM again —
+    observed in production as "model loaded, zero API calls, zero
+    throughput" until manually cleared. Safe to reset unconditionally here:
+    by the time this runs the owning process is confirmed dead, so nothing
+    can legitimately be relying on that reservation anymore.
+    """
+    if state.redis_client is None:
+        return
+    for node in _node_names_for_template_pool(template_pool):
+        try:
+            await state.redis_client.set(_NODE_ACTIVE_PREFIX + node, 0)
+        except Exception:
+            pass
+
+
+def _target_server_for_template(template: str) -> str:
+    """Resolve the INFERENCE_SERVERS node name a healer template pins to.
+
+    Mirrors admin_ui/curator_provisioner.py's moe-ontology-curator-{node}
+    naming, and falls back to the "model@node" suffix for raw model strings
+    (both are valid TEMPLATE_POOL values, see start_dedicated_healer).
+    """
+    template = (template or "").strip()
+    if template.startswith("moe-ontology-curator-"):
+        return template[len("moe-ontology-curator-"):].upper()
+    if "@" in template:
+        return template.rsplit("@", 1)[1].strip()
+    return ""
+
+
+async def _set_server_blocked(server_name: str, blocked: bool) -> None:
+    """Hard-block/unblock a server for regular routing (mirrors the
+    /api/servers/{name}/block-toggle endpoint's Redis side, called here
+    directly since the healer lifecycle owns this decision dynamically)."""
+    if state.redis_client is None or not server_name:
+        return
+    try:
+        if blocked:
+            await state.redis_client.sadd(_BLOCKED_SERVERS_KEY, server_name)
+        else:
+            await state.redis_client.srem(_BLOCKED_SERVERS_KEY, server_name)
+    except Exception:
+        pass
 
 
 async def _set_healer_status_dedicated(**fields) -> None:
@@ -55,6 +125,16 @@ async def _stream_dedicated_healer(
     assert proc.stdout is not None
     start_ts = time.time()
 
+    block_pref = False
+    target_server = ""
+    if state.redis_client is not None:
+        try:
+            init = await state.redis_client.hgetall(_DEDICATED_HEALER_KEY)
+            block_pref = (init or {}).get("block_server") == "1"
+            target_server = _target_server_for_template((init or {}).get("template", ""))
+        except Exception:
+            pass
+
     async def _handle(text: str) -> None:
         if "✓" in text and "→" in text:
             stats["written"] += 1
@@ -63,6 +143,11 @@ async def _stream_dedicated_healer(
         elif "✗" in text:
             stats["failed"] += 1
         await _set_healer_status_dedicated(last_activity_ts=str(time.time()), **stats)
+        # Idle signal: the healer's gap queue is empty and the subprocess is
+        # about to exit cleanly — release the node for regular routing right
+        # away instead of waiting for the process to actually terminate.
+        if block_pref and target_server and "No more gaps" in text:
+            await _set_server_blocked(target_server, False)
 
     try:
         if first_line:
@@ -75,6 +160,11 @@ async def _stream_dedicated_healer(
         rc = await proc.wait()
     except Exception:
         rc = -1
+
+    # Safety net: always release the node when the subprocess actually exits
+    # (crash, stall-kill, manual stop) even if no "No more gaps" line was seen.
+    if block_pref and target_server:
+        await _set_server_blocked(target_server, False)
 
     if state.redis_client is not None:
         try:
@@ -124,6 +214,7 @@ async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> N
         template = (cur or {}).get("template", "") or template_hint
         if not template:
             return
+        stale_pid = (cur or {}).get("pid", "")
 
         logger.info("🔄 Dedicated healer exited — auto-restart in %ds (template=%s)",
                     _HEALER_RESTART_DELAY_S, template)
@@ -135,6 +226,20 @@ async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> N
                 return
         except Exception:
             return
+        # Someone else (manual stop/start while we were sleeping) already
+        # replaced this run — the pid we were tracking is gone from Redis,
+        # so a newer lifecycle already owns this key. Don't clobber its
+        # (possibly different) template/block_server settings.
+        if (cur2 or {}).get("pid", "") != stale_pid:
+            return
+        template = (cur2 or {}).get("template", "") or template
+        block_pref = (cur2 or {}).get("block_server") == "1"
+
+        # The exited process (whatever the reason) can no longer be holding
+        # any per-node concurrency slot — release it so the fresh process
+        # isn't blocked from ever calling the LLM by its predecessor's
+        # orphaned reservation.
+        await _clear_orphaned_node_slots(template)
 
         env = os.environ.copy()
         env["TEMPLATE_POOL"] = template
@@ -158,8 +263,13 @@ async def _dedicated_healer_auto_restart_if_needed(template_hint: str = "") -> N
                 "started_at": str(time.time()),
                 "last_activity_ts": str(time.time()),
                 "processed": "0", "written": "0", "failed": "0",
-                "auto_restart": "1",
+                "auto_restart": "1", "block_server": "1" if block_pref else "0",
             })
+            # A fresh restart means we're probing for new gaps again — re-block
+            # the node for the duration of this attempt; it's released again
+            # the moment "No more gaps" is seen or the process exits.
+            if block_pref:
+                await _set_server_blocked(_target_server_for_template(template), True)
             asyncio.create_task(_stream_dedicated_healer(new_proc))
             logger.info("✅ Dedicated healer auto-restarted — PID %s", new_proc.pid)
         except Exception as exc:
@@ -273,6 +383,7 @@ async def _auto_resume_dedicated_healer() -> None:
     template = data.get("template", "").strip()
     if not template:
         return
+    block_pref = data.get("block_server") == "1"
 
     # Confirm the previous PID is dead — if still alive, no restart needed.
     pid = int(data.get("pid", 0))
@@ -283,6 +394,10 @@ async def _auto_resume_dedicated_healer() -> None:
             return
         except OSError:
             pass  # process dead; container was restarted
+
+    # The previous process is confirmed dead (container restart) — any
+    # per-node slot it held is orphaned; see _clear_orphaned_node_slots.
+    await _clear_orphaned_node_slots(template)
 
     logger.info("🔄 Auto-resuming dedicated healer (template=%s, prev_pid=%s)", template, pid)
 
@@ -298,6 +413,7 @@ async def _auto_resume_dedicated_healer() -> None:
             "stalled": "0",
             "started_at": str(_t.time()),
             "auto_restart": "1",
+            "block_server": "1" if block_pref else "0",
         })
     except Exception:
         pass
@@ -358,6 +474,8 @@ async def _auto_resume_dedicated_healer() -> None:
             pass
 
         await state.redis_client.hset(_DEDICATED_HEALER_KEY, mapping={"status": "running"})
+        if block_pref:
+            await _set_server_blocked(_target_server_for_template(template), True)
         asyncio.create_task(_stream_dedicated_healer(proc, first_line=first_line))
         logger.info("✅ Dedicated healer auto-resumed — PID %s (template=%s)", proc.pid, template)
     except Exception as e:
@@ -435,48 +553,25 @@ async def _watchdog_dedicated_healer() -> None:
         except Exception:
             pass
 
-        # Kill the stuck subprocess before restarting.
+        # Kill the stuck subprocess. Do NOT respawn it here — the process's
+        # own _stream_dedicated_healer background task (started when it was
+        # originally spawned) is still awaiting its exit and will detect the
+        # termination itself, then perform the actual respawn via the
+        # lock-protected _dedicated_healer_auto_restart_if_needed(). Spawning
+        # a second replacement from here as well would race that task: both
+        # would write pid/template/block_server to the same Redis hash, and
+        # whichever wrote last (typically the other one, ~30s later) wins —
+        # in production this silently reset block_server back to unblocked
+        # even though the operator had it enabled.
         proc = state._dedicated_healer_proc
         if proc is not None and proc.returncode is None:
             try:
                 proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=5)
             except Exception:
                 try:
                     proc.kill()
                 except Exception:
                     pass
-
-        # Re-use the same template to restart.
-        template = data.get("template", "").strip()
-        if not template:
-            continue
-        env = os.environ.copy()
-        env["TEMPLATE_POOL"] = template
-        env.setdefault("REQUEST_TIMEOUT", "900")
-        env.setdefault("MOE_API_BASE", "http://localhost:8000")
-        sys_key = os.environ.get("SYSTEM_API_KEY", "").strip()
-        if sys_key:
-            env["MOE_API_KEY"] = sys_key
-        try:
-            new_proc = await asyncio.create_subprocess_exec(
-                "python3", "/app/scripts/gap_healer_templates.py",
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            state._dedicated_healer_proc = new_proc
-            await state.redis_client.hset(_DEDICATED_HEALER_KEY, mapping={
-                "status": "running",
-                "stalled": "0",
-                "pid": str(new_proc.pid),
-                "started_at": str(_t.time()),
-                "last_activity_ts": str(_t.time()),
-            })
-            asyncio.create_task(_stream_dedicated_healer(new_proc))
-            logger.info("✅ Dedicated healer auto-restarted after stall — PID %s", new_proc.pid)
-        except Exception as exc:
-            logger.error("❌ Dedicated healer restart failed: %s", exc)
 
 
 # _set_healer_status_dedicated, _stream_dedicated_healer,

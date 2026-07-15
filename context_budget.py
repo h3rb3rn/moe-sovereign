@@ -131,6 +131,20 @@ async def get_model_max_output_async(
     return result
 
 
+_CLAUDE_CTX_TABLE: dict[str, int] = {
+    # Claude 4.x family — 200k context window
+    "claude-opus-4":    200_000,
+    "claude-sonnet-4":  200_000,
+    "claude-haiku-4":   200_000,
+    # Claude 3.x family — 200k context window
+    "claude-3-7":       200_000,
+    "claude-3-5":       200_000,
+    "claude-3-opus":    200_000,
+    "claude-3-sonnet":  200_000,
+    "claude-3-haiku":   200_000,
+}
+
+
 def get_model_context_window(model: str) -> int:
     """Estimate context window (tokens) for *model* using a parameter-count heuristic.
 
@@ -141,15 +155,21 @@ def get_model_context_window(model: str) -> int:
     This replaces the old name-based lookup table, which required manual maintenance
     and silently returned wrong values for renamed or future models.
     """
-    # First check for explicit ctx suffixes (e.g. ctx4k, ctx8k, 32k, 128k) in name
     name_lower = (model or "").lower()
+
+    # Claude models carry no parameter-count suffix — look up by name prefix.
+    for prefix, ctx in _CLAUDE_CTX_TABLE.items():
+        if name_lower.startswith(prefix):
+            return ctx
+
+    # First check for explicit ctx suffixes (e.g. ctx4k, ctx8k, 32k, 128k) in name
     ctx_match = re.search(r'ctx(\d+)k', name_lower)
     if not ctx_match:
         ctx_match = re.search(r'-(\d+)k\b', name_lower)
     if not ctx_match:
         # Avoid matching parameter sizes like "32b" by matching "32k"
         ctx_match = re.search(r'\b(\d+)k\b', name_lower)
-        
+
     if ctx_match:
         return int(ctx_match.group(1)) * 1024
     if "128k" in name_lower or "ctx128k" in name_lower:
@@ -178,12 +198,21 @@ def resolve_requested_ctx(model: str, state_num_ctx: int = 0, num_ctx_env: int =
     per-template override → global env default → static parameter-count heuristic,
     clamped to that heuristic if it is smaller (VRAM-safety clamp).
 
+    Explicit overrides (state_num_ctx, num_ctx_env) are never clamped — the
+    heuristic is a last-resort fallback only and must not silently override an
+    admin-configured value (e.g. a 9B model whose GGUF supports 256k would
+    otherwise be clamped to the conservative 8 192 heuristic).
+
     PRE-FLIGHT budget checks MUST use this instead of querying the model's
     *currently loaded* state via Ollama ``/api/ps`` (``get_model_ctx_async``) —
     that reflects whatever a prior call loaded, which can disagree with what
     THIS call will request and cause spurious overflow warnings.
     """
     requested_ctx = state_num_ctx or num_ctx_env or get_model_context_window(model)
+    # Explicit overrides must be respected as-is — only apply the VRAM-safety
+    # clamp when the context window was determined by the heuristic fallback.
+    if state_num_ctx or num_ctx_env:
+        return requested_ctx
     safe_ctx = get_model_context_window(model)
     if safe_ctx > 0 and safe_ctx < requested_ctx:
         if label:
@@ -312,7 +341,11 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
             except Exception:
                 pass
 
-            # 2. /api/show — explicit num_ctx in parameters OR native context_length in model_info
+            # 2. /api/show — explicit num_ctx in Modelfile parameters only.
+            # We intentionally do NOT fall back to the GGUF model_info.context_length here.
+            # That field is the model's TRAINING context, not its deployment context.
+            # Sending it explicitly would override OLLAMA_CONTEXT_LENGTH on the server,
+            # causing an unnecessary model reload to a smaller context window.
             resp = await client.post(
                 f"{api_base}/api/show",
                 json={"model": model},
@@ -327,13 +360,6 @@ async def fetch_ollama_num_ctx(model: str, base_url: str, token: str = "ollama",
                 m = re.match(r"^\s*num_ctx\s+(\d+)", line, re.IGNORECASE)
                 if m:
                     return int(m.group(1))
-            # 3. model_info — native context_length from the GGUF metadata
-            # Covers models without explicit num_ctx in their Modelfile (e.g. qwen3.6:35b).
-            # Field names vary by architecture; scan all keys ending in "context_length".
-            model_info = data.get("model_info") or {}
-            for key, val in model_info.items():
-                if key.endswith("context_length") and isinstance(val, int) and val > 0:
-                    return val
     except Exception:
         pass
     return 0

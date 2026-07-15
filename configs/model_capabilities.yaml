@@ -1,0 +1,91 @@
+# configs/model_capabilities.yaml — Per-model capability matrix (TASK-31).
+#
+# Missing models fall back to "default" — no KeyError.
+# Hot-reload: set CAPABILITIES_RELOAD_ON_REQUEST=true (dev only, avoids rebuild).
+#
+# Fields:
+#   json_schema  — honours response_format={"type":"json_schema",...}
+#   json_object  — honours response_format={"type":"json_object"}
+#   stream       — supports streaming (stream=true)
+#   responses_api — uses /v1/responses instead of /v1/chat/completions
+#   hints        — capability tokens for router/prompt selection
+
+default:
+  json_schema: false
+  json_object: true
+  stream: true
+  responses_api: false
+  hints: []
+
+models:
+  "qwen3:32b":
+    json_schema: true
+    json_object: true
+    stream: true
+    hints: ["schema+"]
+
+  "qwen3.6:35b":
+    json_schema: true
+    json_object: true
+    stream: true
+    hints: ["schema+"]
+
+  "qwen2.5:32b":
+    json_schema: true
+    json_object: true
+    stream: true
+    hints: ["schema+"]
+
+  "qwen2.5:72b":
+    json_schema: true
+    json_object: true
+    stream: true
+    hints: ["schema+"]
+
+  "llama3.3-70b-ctx4k:latest":
+    json_schema: false
+    json_object: false
+    stream: true
+    hints: []
+
+  "llama3.3:70b":
+    json_schema: false
+    json_object: true
+    stream: true
+    hints: []
+
+  "llama3:70b":
+    json_schema: false
+    json_object: true
+    stream: true
+    hints: []
+
+  "mistral:7b":
+    json_schema: true
+    json_object: true
+    stream: false
+    hints: ["schema+", "chat+"]
+
+  "mistral-nemo:12b":
+    json_schema: true
+    json_object: true
+    stream: true
+    hints: ["schema+"]
+
+  "phi4:14b":
+    json_schema: true
+    json_object: true
+    stream: true
+    hints: ["schema+"]
+
+  "deepseek-r1:32b":
+    json_schema: false
+    json_object: true
+    stream: true
+    hints: []
+
+  "gemma3:27b":
+    json_schema: false
+    json_object: true
+    stream: true
+    hints: []

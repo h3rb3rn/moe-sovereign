@@ -114,15 +114,17 @@
             <th>Template</th>
             <th class="sort-hd" data-col="complexity_level" style="cursor:pointer" onclick="sortBy('complexity_level')">Complexity <span id="si-complexity_level"></span></th>
             <th>Experts</th>
+            <th class="sort-hd" data-col="trust_score" style="cursor:pointer" onclick="sortBy('trust_score')">{{ t(request, 'lbl.trust_verdict') }} <span id="si-trust_score"></span></th>
+            <th>{{ t(request, 'lbl.cynefin_domain') }}</th>
             <th class="sort-hd" data-col="total_tokens" style="cursor:pointer" onclick="sortBy('total_tokens')">Tokens <span id="si-total_tokens"></span></th>
             <th class="sort-hd" data-col="latency_ms" style="cursor:pointer" onclick="sortBy('latency_ms')">Latency <span id="si-latency_ms"></span></th>
-            <th>Agentic</th>
+            <th>{{ t(request, 'lbl.self_critique_round') }}</th>
             <th>Cache</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody id="log-body">
-          <tr><td colspan="12" class="text-center text-muted py-4">
+          <tr><td colspan="14" class="text-center text-muted py-4">
             <div class="spinner-border spinner-border-sm me-2"></div>{{ t(request, 'loading') }}
           </td></tr>
         </tbody>
@@ -196,6 +198,7 @@ async function loadLog() {
   document.getElementById('log-body').innerHTML =
     '<tr><td colspan="12" class="text-center text-muted py-4">' +
     '<div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+  // colspan updated from 12 to 14 for new quality-signal columns
   try {
     const r = await fetch(buildUrl(''));
     if (!r.ok) throw new Error(await r.text());
@@ -208,55 +211,8 @@ async function loadLog() {
     document.getElementById('csv-export-btn').href = buildUrl('csv');
   } catch (e) {
     document.getElementById('log-body').innerHTML =
-      `<tr><td colspan="12" class="text-danger text-center py-3">${e.message}</td></tr>`;
+      `<tr><td colspan="14" class="text-danger text-center py-3">${e.message}</td></tr>`;
   }
-}
-
-function renderTable(rows) {
-  const expertColor = {
-    reasoning: 'text-warning', web_researcher: 'text-info', code_reviewer: 'text-primary',
-    medical_consult: 'text-danger', legal_advisor: 'text-success', math: 'text-secondary',
-    general: 'text-muted', translation: 'text-info', science: 'text-success',
-  };
-  const cxBadge = {
-    trivial: 'bg-secondary', moderate: 'bg-primary', complex: 'bg-warning text-dark',
-    memory_recall: 'bg-info text-dark',
-  };
-  const tbody = rows.map(r => {
-    const ts = r.requested_at ? r.requested_at.replace('T', ' ').substring(0, 19) : '—';
-    const domains = (r.expert_domains || '').split(',').filter(Boolean).map(d =>
-      `<span class="badge bg-dark border me-1 ${expertColor[d] || ''}" title="${d}">${d.replace('_', ' ')}</span>`
-    ).join('');
-    const cx = r.complexity_level || '';
-    const cxHtml = cx ? `<span class="badge ${cxBadge[cx] || 'bg-dark'}">${cx}</span>` : '<span class="text-muted">—</span>';
-    const lat = r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + 's' : '—';
-    const hit = r.cache_hit ?
-      '<span class="badge bg-success">hit</span>' :
-      '<span class="badge bg-outline-secondary text-muted border">miss</span>';
-    const st = r.status === 'ok' ?
-      '<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>' :
-      `<span class="text-danger" title="${r.status}"><i class="bi bi-x-circle-fill"></i></span>`;
-    return `<tr>
-      <td class="text-muted small text-nowrap">${ts}</td>
-      <td class="small">${r.username || r.user_id?.substring(0,8) || '—'}</td>
-      <td class="small text-truncate" style="max-width:120px" title="${r.model}">${r.model}</td>
-      <td><span class="badge bg-secondary">${r.moe_mode}</span></td>
-      <td>${r.dynamic_tmpl_id
-        ? `<a href="/dynamic-templates#${r.dynamic_tmpl_id}" class="text-decoration-none small font-monospace"
-              title="${r.dynamic_tmpl_name || r.dynamic_tmpl_id}">
-             <i class="bi bi-diagram-3 me-1 text-warning"></i>${(r.dynamic_tmpl_name || r.dynamic_tmpl_id).substring(0,20)}
-           </a>`
-        : '<span class="text-muted">—</span>'}</td>
-      <td>${cxHtml}</td>
-      <td>${domains || '<span class="text-muted">—</span>'}</td>
-      <td class="small text-nowrap">${(r.total_tokens||0).toLocaleString()}</td>
-      <td class="small">${lat}</td>
-      <td class="text-center">${r.agentic_rounds || 0}</td>
-      <td>${hit}</td>
-      <td>${st}</td>
-    </tr>`;
-  }).join('');
-  document.getElementById('log-body').innerHTML = tbody || '<tr><td colspan="12" class="text-center text-muted py-4">No records</td></tr>';
 }
 
 function renderPagination(limit) {
@@ -283,6 +239,199 @@ function renderPagination(limit) {
   pg.append(mkBtn('»', (pages - 1) * limit, cur >= pages - 1));
 }
 
+// ── Detail Modal ────────────────────────────────────────────────────────────
+let _detailRows = {};
+
+function openDetail(requestId) {
+  const r = _detailRows[requestId];
+  if (!r) return;
+  const tv = r.trust_verdict || '—';
+  const tvClass = {PROCEED: 'success', PROCEED_WITH_ASSUMPTION: 'warning', BLOCK: 'danger'}[tv] || 'secondary';
+  const cf = r.cynefin_domain || '—';
+  const cfClass = {CLEAR: 'success', COMPLICATED: 'primary', COMPLEX: 'warning', CHAOTIC: 'danger'}[cf] || 'secondary';
+  const scRound = r.self_critique_round || 0;
+  const scMax   = r.self_critique_max   || 2;
+  document.getElementById('dm-request-id').textContent   = r.request_id  || '—';
+  document.getElementById('dm-session-id').textContent   = r.session_id  || '—';
+  document.getElementById('dm-model').textContent        = r.model       || '—';
+  document.getElementById('dm-mode').textContent         = r.moe_mode    || '—';
+  document.getElementById('dm-complexity').textContent   = r.complexity_level || '—';
+  document.getElementById('dm-experts').textContent      = r.expert_domains  || '—';
+  document.getElementById('dm-tokens').textContent       = (r.total_tokens  || 0).toLocaleString();
+  document.getElementById('dm-latency').textContent      = r.latency_ms ? (r.latency_ms / 1000).toFixed(2) + 's' : '—';
+  document.getElementById('dm-agentic').textContent      = r.agentic_rounds || 0;
+  document.getElementById('dm-trust-verdict').innerHTML  = `<span class="badge bg-${tvClass}">${tv}</span>`;
+  document.getElementById('dm-trust-score').textContent  = r.trust_score != null ? r.trust_score.toFixed(3) : '—';
+  document.getElementById('dm-cynefin').innerHTML        = `<span class="badge bg-${cfClass}">${cf}</span>`;
+  document.getElementById('dm-self-critique').textContent = `${scRound} / ${scMax}`;
+  document.getElementById('dm-cascade-type').textContent = r.cascade_type || '—';
+  document.getElementById('dm-cache-hit').textContent    = r.cache_hit ? 'Yes' : 'No';
+  document.getElementById('dm-status').textContent       = r.status      || '—';
+  document.getElementById('dm-template').textContent     = r.dynamic_tmpl_name || r.dynamic_tmpl_id || '—';
+  const modal = new bootstrap.Modal(document.getElementById('detailModal'));
+  modal.show();
+}
+
+// Store rows for detail lookup
+function renderTable(rows) {
+  _detailRows = {};
+  rows.forEach(r => { if (r.request_id) _detailRows[r.request_id] = r; });
+  const expertColor = {
+    reasoning: 'text-warning', web_researcher: 'text-info', code_reviewer: 'text-primary',
+    medical_consult: 'text-danger', legal_advisor: 'text-success', math: 'text-secondary',
+    general: 'text-muted', translation: 'text-info', science: 'text-success',
+  };
+  const cxBadge = {
+    trivial: 'bg-secondary', moderate: 'bg-primary', complex: 'bg-warning text-dark',
+    memory_recall: 'bg-info text-dark',
+  };
+  const trustBadge = {
+    'PROCEED':                '<span class="badge bg-success">PROCEED</span>',
+    'PROCEED_WITH_ASSUMPTION': '<span class="badge bg-warning text-dark">ASSUMPTION</span>',
+    'BLOCK':                  '<span class="badge bg-danger">BLOCK</span>',
+  };
+  const cynefinBadge = {
+    'CLEAR':       '<span class="badge bg-success">CLEAR</span>',
+    'COMPLICATED': '<span class="badge bg-primary">COMPLICATED</span>',
+    'COMPLEX':     '<span class="badge bg-warning text-dark">COMPLEX</span>',
+    'CHAOTIC':     '<span class="badge bg-danger">CHAOTIC</span>',
+  };
+  const tbody = rows.map(r => {
+    const ts = r.requested_at ? r.requested_at.replace('T', ' ').substring(0, 19) : '—';
+    const domains = (r.expert_domains || '').split(',').filter(Boolean).map(d =>
+      `<span class="badge bg-dark border me-1 ${expertColor[d] || ''}" title="${d}">${d.replace('_', ' ')}</span>`
+    ).join('');
+    const cx = r.complexity_level || '';
+    const cxHtml = cx ? `<span class="badge ${cxBadge[cx] || 'bg-dark'}">${cx}</span>` : '<span class="text-muted">—</span>';
+    const lat = r.latency_ms ? (r.latency_ms / 1000).toFixed(1) + 's' : '—';
+    const hit = r.cache_hit ?
+      '<span class="badge bg-success">hit</span>' :
+      '<span class="badge bg-outline-secondary text-muted border">miss</span>';
+    const st = r.status === 'ok' ?
+      '<span class="text-success"><i class="bi bi-check-circle-fill"></i></span>' :
+      `<span class="text-danger" title="${r.status}"><i class="bi bi-x-circle-fill"></i></span>`;
+    const tv = r.trust_verdict ? (trustBadge[r.trust_verdict] || `<span class="badge bg-secondary">${r.trust_verdict}</span>`) : '<span class="text-muted">—</span>';
+    const ts_score = r.trust_score != null ? ` <small class="text-muted">${r.trust_score.toFixed(2)}</small>` : '';
+    const cf = r.cynefin_domain ? (cynefinBadge[r.cynefin_domain] || `<span class="badge bg-secondary">${r.cynefin_domain}</span>`) : '<span class="text-muted">—</span>';
+    const sc = (r.self_critique_round || 0) > 0
+      ? `<span class="badge bg-info text-dark">${r.self_critique_round}</span>`
+      : '<span class="text-muted">0</span>';
+    return `<tr style="cursor:pointer" onclick="openDetail('${r.request_id}')">
+      <td class="text-muted small text-nowrap">${ts}</td>
+      <td class="small">${r.username || r.user_id?.substring(0,8) || '—'}</td>
+      <td class="small text-truncate" style="max-width:120px" title="${r.model}">${r.model}</td>
+      <td><span class="badge bg-secondary">${r.moe_mode}</span></td>
+      <td>${r.dynamic_tmpl_id
+        ? `<a href="/dynamic-templates#${r.dynamic_tmpl_id}" class="text-decoration-none small font-monospace"
+              title="${r.dynamic_tmpl_name || r.dynamic_tmpl_id}">
+             <i class="bi bi-diagram-3 me-1 text-warning"></i>${(r.dynamic_tmpl_name || r.dynamic_tmpl_id).substring(0,20)}
+           </a>`
+        : '<span class="text-muted">—</span>'}</td>
+      <td>${cxHtml}</td>
+      <td>${domains || '<span class="text-muted">—</span>'}</td>
+      <td class="text-nowrap">${tv}${ts_score}</td>
+      <td>${cf}</td>
+      <td class="small text-nowrap">${(r.total_tokens||0).toLocaleString()}</td>
+      <td class="small">${lat}</td>
+      <td class="text-center">${sc}</td>
+      <td>${hit}</td>
+      <td>${st}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('log-body').innerHTML = tbody || '<tr><td colspan="14" class="text-center text-muted py-4">No records</td></tr>';
+}
+
 loadLog();
 </script>
+
+{# ── Request Detail Modal ─────────────────────────────────────────────────── #}
+<div class="modal fade" id="detailModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-white">
+      <div class="modal-header border-secondary">
+        <h6 class="modal-title"><i class="bi bi-info-circle me-2 text-info"></i>Request Detail</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label text-muted small mb-0">Request ID</label>
+            <div class="font-monospace small" id="dm-request-id">—</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label text-muted small mb-0">Session ID</label>
+            <div class="small" id="dm-session-id">—</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label text-muted small mb-0">Template</label>
+            <div class="small" id="dm-template">—</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label text-muted small mb-0">Model</label>
+            <div class="small" id="dm-model">—</div>
+          </div>
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Mode</label>
+            <div class="small" id="dm-mode">—</div>
+          </div>
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Status</label>
+            <div class="small" id="dm-status">—</div>
+          </div>
+          <div class="col-12"><hr class="border-secondary my-1"></div>
+          {# Quality Signals #}
+          <div class="col-4">
+            <label class="form-label text-muted small mb-0">{{ t(request, 'lbl.trust_verdict') }}</label>
+            <div id="dm-trust-verdict">—</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small mb-0">Trust Score</label>
+            <div class="small font-monospace" id="dm-trust-score">—</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small mb-0">{{ t(request, 'lbl.cynefin_domain') }}</label>
+            <div id="dm-cynefin">—</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small mb-0">{{ t(request, 'lbl.self_critique_round') }}</label>
+            <div class="small" id="dm-self-critique">—</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small mb-0">{{ t(request, 'lbl.cascade_type') }}</label>
+            <div class="small" id="dm-cascade-type">—</div>
+          </div>
+          <div class="col-4">
+            <label class="form-label text-muted small mb-0">Cache</label>
+            <div class="small" id="dm-cache-hit">—</div>
+          </div>
+          <div class="col-12"><hr class="border-secondary my-1"></div>
+          {# Performance #}
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Complexity</label>
+            <div class="small" id="dm-complexity">—</div>
+          </div>
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Experts</label>
+            <div class="small" id="dm-experts">—</div>
+          </div>
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Tokens</label>
+            <div class="small" id="dm-tokens">—</div>
+          </div>
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Latency</label>
+            <div class="small" id="dm-latency">—</div>
+          </div>
+          <div class="col-3">
+            <label class="form-label text-muted small mb-0">Agentic Rounds</label>
+            <div class="small" id="dm-agentic">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

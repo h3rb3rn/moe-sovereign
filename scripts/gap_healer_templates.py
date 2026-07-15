@@ -175,14 +175,43 @@ TEMPLATE_POOL: list[str] = []  # populated in main() once Redis is reachable
 
 
 # ─── User prompt ─────────────────────────────────────────────────────────────
-
-USER_PROMPT = """Classify this unknown term for our knowledge graph:
+# The exact field names below are load-bearing: parse_entity() only accepts a
+# top-level "name" key, and write_entity() reads entity_type/description_en/
+# description_de/aliases/confidence/relations by name. TEMPLATE_POOL entries
+# can be either an admin-configured curator template (whose own judge_prompt
+# — if set — supplies this schema as a system message) or a raw "model@node"
+# string (native passthrough, no template, no system prompt at all). Confirmed
+# live: a curator template with an empty judge_prompt (the case for a
+# genesis-bootstrapped template, or any raw-model TEMPLATE_POOL entry) leaves
+# the model with no schema guidance whatsoever — it still returns valid JSON,
+# just in whatever shape it invents (e.g. {"term":..., "classification": {...}}
+# instead of {"name":...}), which parse_entity() correctly rejects (no "name"
+# key) with zero visible error beyond "could not parse JSON". The schema is
+# now spelled out here so every pool entry works regardless of template
+# configuration, rather than depending on prompt injection that isn't always
+# present.
+USER_PROMPT = """Classify this unknown term for our knowledge graph.
 
 TERM: "{term}"
 
 {context_section}
 
-The Judge will return a JSON entity entry. Do not respond with prose outside the JSON."""
+Respond with ONLY a single JSON object, no markdown code fence, no prose before or after it, in EXACTLY this schema:
+
+{{
+  "name": "<canonical entity name>",
+  "entity_type": "<one of: Person, Organization, Technology, Concept, Product, Location, Event, Uncertain>",
+  "description_en": "<1-2 sentence description in English>",
+  "description_de": "<1-2 sentence description in German>",
+  "aliases": ["<alternative spellings or synonyms>"],
+  "confidence": <number between 0.0 and 1.0>,
+  "relations": [{{"type": "<UPPERCASE_RELATION_TYPE>", "target": "<related entity name>"}}]
+}}
+
+Rules:
+- "name" is REQUIRED — the response is discarded without it.
+- If the term cannot be meaningfully classified (noise, a code fragment, too generic), set entity_type to "Uncertain" and confidence low.
+- "aliases" and "relations" may be empty lists but must be present as lists."""
 
 
 # ─── Per-node slot management ─────────────────────────────────────────────────

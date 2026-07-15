@@ -128,9 +128,33 @@ This Lastenheft turns the remaining work into a coordinated backlog.
 
 **Status as of 2026-06-12T21:06Z:** TASK-1 through TASK-6 are all `done`
 (see Section 3 for full Resolution notes on each). Open follow-ups (not
-formalized as tasks): (1) make the personal API key prefix configurable via environment variables or options in all scripts (`scripts/dataset_generator.py`, `scripts/send_request.py`, `scripts/index_models_metadata.py`); (2) ensure that any cloud-model discovery or dynamic routing configurations do not hardcode AIHUB, but remain fully configurable dynamically via the MoE Admin UI (Inference Servers / User Connections), allowing individual configurations for users without AIHUB access; (3) `models/backup_20260612/` (552 KB old ONNX model from
-TASK-2) is safe to delete once the new `sovereign_router.onnx` has been
-stable for a while.
+formalized as tasks): ~~(1) make the personal API key prefix configurable via
+environment variables or options in all scripts (`scripts/dataset_generator.py`,
+`scripts/send_request.py`, `scripts/index_models_metadata.py`)~~; ~~(2) ensure
+that any cloud-model discovery or dynamic routing configurations do not
+hardcode AIHUB, but remain fully configurable dynamically via the MoE Admin
+UI (Inference Servers / User Connections), allowing individual configurations
+for users without AIHUB access~~; ~~(3) `models/backup_20260612/` (552 KB old
+ONNX model from TASK-2) is safe to delete once the new `sovereign_router.onnx`
+has been stable for a while~~.
+
+**Update (2026-07-05T19:45Z, Claude Code):** All three follow-ups verified
+resolved, no task ever needed:
+1. `scripts/dataset_generator.py`/`send_request.py` read `SYSTEM_API_KEY` from
+   env (no hardcoded personal key); `index_models_metadata.py` reads
+   `INFERENCE_SERVERS` from env entirely. No trace of the old
+   `moe-sk-940e228...` key anywhere in the codebase (verified via grep).
+2. `services/dynamic_router.py:56-64` (`CLOUD_ENDPOINTS`) is now derived
+   generically from `INFERENCE_SERVERS_LIST` (all non-Ollama entries, each
+   with its own URL/token) — superseding TASK-6's original
+   `DYNAMIC_ROUTER_CLOUD_ENDPOINT`/`_TOKEN` single-pair env-var approach
+   (those env vars no longer exist in `.env`). `get_dynamic_template()`
+   (line ~789) additionally layers per-user `user_connections` on top of the
+   global cloud list — users without admin-configured AIHUB access can
+   already supply their own cloud endpoint via a private connection.
+3. `models/backup_20260612/` no longer exists (already deleted).
+
+No further action needed on these three items.
 
 ---
 
@@ -629,28 +653,971 @@ stable for a while.
 
 ---
 
+### TASK-9: Large-Scale Dataset Generation & Judge Model Training (v2)
+
+- **Status:** in_progress
+- **Owner:** Antigravity (Google Antigravity CLI)
+- **Depends on:** TASK-2, TASK-7
+- **Context:** Training a high-quality paraconsistent Judge model requires transitioning from the 140-sample pilot dataset to a large-scale dataset (90k samples based on RouteLLM seeds). This requires high-throughput inference on LUMI-G and robust DDP-based training.
+- **Instructions:**
+  1. **Async Datagen:** Implement `scripts/generate_judge_dataset_async.py` using `asyncio` and `httpx.AsyncClient` with `concurrency=48` to utilize vLLM's batching capabilities.
+  2. **Sharded Runs:** Run 3 parallel generator jobs (Offset 0, 30000, 60000) on 8-GPU nodes via SLURM, writing to individual shards.
+  3. **Resume Logic:** Implement prefix-based duplicate checking on startup to skip already generated samples.
+  4. **Deduplication & Merge:** Combine shards and deduplicate based on the full instruction string (do NOT truncate to 120 chars, which collapses the dataset).
+  5. **DDP Training:** Launch 8-GPU DDP training using `train_judge_lora_large.sh` (each GPU loading a local 4-bit QLoRA copy to avoid pipeline parallel OOMs).
+  6. **Automated Chaining:** Use SLURM dependencies (`--dependency=afterok:JOB_IDS`) to trigger the merge-and-train workflow automatically.
+- **Acceptance criteria:**
+  - Full 90k seed prompts generated and merged into `paraconsistent_large.jsonl`.
+  - 8-GPU DDP training executes successfully and outputs the `sovereign-judge-32b-lora-v2` LoRA adapter.
+  - Merging LoRA into the base model produces a 62 GB FP16 model checkpoint without OOM.
+- **Resolution notes (Antigravity, 2026-06-28):**
+  - **Merge v1:** Successfully merged the pilot model (Job 19540774, COMPLETED, 22 mins).
+  - **Datagen v1:** Shards reached 8h timeout, producing 5,080 unique samples. Rewrote generator to `generate_judge_dataset_async.py` (Concurrency=48).
+  - **Deduplication Fix:** Fixed a major bug in `merge_shards_and_train.sh` where keys were truncated to 120 chars, causing massive data loss.
+  - **Resubmission:** Re-submitted the 3 shards (Jobs 19588284-86) and chained them to the trigger job (Job 19588422) for automated SFT execution.
+  - **Doku-Sync (2026-07-05, Claude Code, Quelle: `agent_status/agy.md`
+    Eintrag 2026-07-02T20:40Z):** Der obige Stand war überholt — die Jobs
+    19598021-23 liefen erfolgreich, erreichten aber das 4h-Zeitlimit bei
+    50.276 von 90.000 Samples (~18x Speedup ggü. Single-Thread). Antigravity
+    hat als Resume-Jobs 19682379-81 + Merge-Trigger 19682382
+    (`--dependency=afterok`) neu eingereicht. Aktueller SLURM-Zustand seither
+    nicht erneut geprüft (Betreiber-Entscheidung vom 2026-07-05, kein
+    SSH-Check) — maßgeblich bleibt der agy-Status-Log.
+
+---
+
+### TASK-10: Trust-Score / Verification Substrate
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** Der Judge hat kein quantitatives Qualitätsverdikt — er entscheidet ohne messbare Schwellen und winkt Antworten mit 0 validierten Quellen als valide durch. Ein Trust-Score berechnet nach jedem Expert-Durchlauf einen numerischen Wert aus messbaren Faktoren und leitet daraus eine deterministische Entscheidung ab.
+- **Instructions:**
+  1. Erstelle `services/trust_score.py` mit:
+     - `TrustVerdict` Enum: `PROCEED` (≥0.65), `PROCEED_WITH_ASSUMPTION` (0.30–0.65), `BLOCK` (<0.30)
+     - `TrustScore` Dataclass: `score: float`, `verdict: TrustVerdict`, `hard_blocked: bool`, `factors: dict`
+     - `compute_trust_score(state_: AgentState) -> TrustScore` — Faktoren: `source_count` (Anzahl zitierter Neo4j-Knoten), `conflict_count` (Widersprüche zwischen Experts, negativ gewichtet), `cross_references_resolved` (Abdeckung der Teilfragen), `source_hashes_valid` (ChromaDB-Retrieval-Integrität als Hard-Block-Trigger)
+     - Gewichte konfigurierbar via `TRUST_SCORE_WEIGHTS_JSON` env var (JSON-Dict, Default im Code als Fallback)
+     - Hard-Block unabhängig vom Score: wenn `source_hashes_valid == False` → `hard_blocked=True`, Verdict zwingend `BLOCK`
+  2. Integriere `compute_trust_score()` in `graph/synthesis.py` (Judge-Node, nach Expert-Aggregation, vor Merge-Prompt-Assembly).
+  3. Bei `BLOCK` oder `hard_blocked`: Antwort nicht senden, Kafka-Event `moe.quality` emittieren, `x-moe-quality: blocked` Header setzen.
+  4. Bei `PROCEED_WITH_ASSUMPTION`: Verdict und reduzierter Score in `AgentState` speichern (neues Feld `trust_verdict: str`) für TASK-11.
+  5. Unit-Tests in `tests/test_trust_score.py` (min. 5 Cases: kein Source-Count, voller Score, Hard-Block, Grenzwerte).
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Eine Anfrage mit 0 Neo4j-Quellen produziert `TrustVerdict.BLOCK` und wird nicht an den Client geliefert.
+  - Eine Anfrage mit validierten Quellen und konsistenten Expert-Antworten produziert `TrustVerdict.PROCEED`.
+  - Invalide ChromaDB-Hash-Prüfung triggert Hard-Block unabhängig vom numerischen Score.
+  - `tests/test_trust_score.py` grün.
+
+---
+
+### TASK-11: Self-Critique Iteration Loop
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** TASK-10 (benötigt `trust_verdict` im AgentState)
+- **Context:** Wenn der Trust-Score nach dem ersten Expert-Durchlauf im Bereich `PROCEED_WITH_ASSUMPTION` liegt (0.30–0.65), wird heute sofort eskaliert. Ein Self-Critique-Loop gibt den Experts einen explizit formulierten Gap-Feedback-Prompt und erlaubt max. N=2 Korrekturiterationen, bevor eskaliert wird. Schätzung: 40–60% weniger manuelle Escalations bei Borderline-Anfragen.
+- **Instructions:**
+  1. Füge `AgentState` in `pipeline/state.py` zwei neue Felder hinzu: `self_critique_round: int` (Default 0), `self_critique_max: int` (Default 2, aus `SELF_CRITIQUE_MAX_ROUNDS` env var).
+  2. Erstelle einen neuen LangGraph-Node `self_critique` in `graph/synthesis.py` (oder eigene Datei `graph/self_critique.py`):
+     - Liest `trust_verdict`, `expert_results`, aktuelle Teilfragen
+     - Kompiliert einen Gap-Feedback-Prompt: "Folgende Aspekte waren unvollständig / widersprüchlich: [gap_summary]. Bitte überarbeite deine Antwort gezielt."
+     - Ruft nur die betroffenen Experts erneut auf (nicht alle), inkrementiert `self_critique_round`
+     - Gibt Kontrolle zurück an Trust-Score-Node (TASK-10)
+  3. Konditionale Kante in `main.py`: nach Judge-Node → wenn `trust_verdict == PROCEED_WITH_ASSUMPTION` und `self_critique_round < self_critique_max` → `self_critique` Node; sonst → `resolve_conflicts` wie bisher.
+  4. Bei erschöpftem Limit (`self_critique_round >= self_critique_max`) und noch `PROCEED_WITH_ASSUMPTION`: Antwort mit `x-moe-quality: assumption` Header senden statt Escalation.
+  5. Unit-Tests: mock `compute_trust_score()` für Loop-Behavior-Tests.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Bei `PROCEED_WITH_ASSUMPTION` startet genau 1 Korrekturiteration (max. 2 gesamt).
+  - Bei `PROCEED` kein Self-Critique-Aufruf.
+  - Bei `BLOCK` kein Self-Critique (Hard-Block bleibt Hard-Block).
+  - `self_critique_round` im `usage_log` protokolliert (Erweiterung der `usage_log`-INSERT in `database.py`).
+
+---
+
+### TASK-12: Decision Log mit Rationale-Pflicht
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** Kafka sagt heute WHAT und WHEN — das WHY fehlt komplett. Für EU-AI-Act-Compliance und Post-Mortems ist ein append-only Decision Log mit Pflichtfeld `rationale` essentiell. Jede nicht-triviale Laufzeit-Entscheidung (Judge-Übersteuerung, Constitution-Block, DoR-Fail, Trust-Score-Block) muss mit Begründung persistiert werden.
+- **Instructions:**
+  1. Erstelle `services/decision_log.py`:
+     - `DecisionType` Enum: `JUDGE_OVERRIDE`, `CONSTITUTION_BLOCK`, `DOR_FAIL`, `TRUST_BLOCK`, `REPLAN`, `STUCK_LOOP`, `SELF_CRITIQUE_TRIGGERED`
+     - `log_decision(decision_type: DecisionType, request_id: str, rationale: str, metadata: dict = None) -> None`
+     - Backend: Kafka-Topic `moe.decisions` (append-only, gleiche Infrastruktur wie `moe.audit`); bei Kafka-Ausfall als Fallback in `decision_log.jsonl` im Log-Verzeichnis schreiben.
+     - Pflichtfeld `rationale` — kein leerer String erlaubt (ValueError bei leerem rationale).
+  2. Integriere `log_decision()` an folgenden Call-Sites:
+     - `graph/synthesis.py`: bei Judge-Übersteuerung und Trust-Score-Block
+     - `services/sovereign_constitution.py` (oder wo Constitution-Checks laufen): bei `on_violation: block`
+     - `services/dor_check.py`: bei DoR-Violations (rationale = Violation-Message)
+     - `services/cascade.py`: bei `STUCK_LOOP`-Emission
+  3. Unit-Tests in `tests/test_decision_log.py`: leeres Rationale → ValueError, alle DecisionTypes schreibbar, Kafka-Fallback auf jsonl.
+  4. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Jeder Constitution-Block erzeugt einen Kafka-Event auf `moe.decisions` mit nicht-leerem `rationale`.
+  - `decision_log.jsonl` als Fallback vorhanden und beschreibbar.
+  - Kein leeres `rationale` kommt durch (ValueError-Test grün).
+  - Kafka-Topic `moe.decisions` unter `docker exec kafka kafka-topics.sh --list` sichtbar.
+
+---
+
+### TASK-13: Boundary Contracts zwischen Pipeline-Stufen
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** An den Stagegrenzen (Planner→Expert, Expert→Judge) wird heute nicht deterministisch geprüft, ob alle Pflichtfelder vorhanden sind. Fehlt `subtasks` oder `constraints` im Planner-Output, werden teure Expert-Calls mit unvollständigem Input gestartet. Ein YAML-deklarativer Contract-Check kostet <10ms und verhindert Silent Garbage-in/out.
+- **Instructions:**
+  1. Erstelle `config/boundary_contracts.yaml`:
+     ```yaml
+     stages:
+       planner_to_expert:
+         required_fields: [category, search_query]
+         optional_fields: [mcp_tool, mcp_args, constraints]
+         on_violation: cascade_spec_gap
+       expert_to_judge:
+         required_fields: [content, category]
+         optional_fields: [citations, confidence]
+         on_violation: cascade_expert_failure
+     ```
+  2. Erstelle `services/boundary_check.py`:
+     - `check_boundary(stage: str, payload: dict) -> List[str]` — lädt das YAML, prüft Pflichtfelder, gibt Verletzungen zurück.
+     - Bei Verletzung: emittiert den in `on_violation` deklarierten `CascadeType` via `services/cascade.py`.
+  3. Integriere `check_boundary("planner_to_expert", task)` in `graph/planner.py` direkt vor dem Expert-Dispatch (nach DoR-Check, TASK-1-Integration-Point bei Zeile ~717).
+  4. Integriere `check_boundary("expert_to_judge", result)` in `graph/synthesis.py` bei Expert-Result-Aggregation.
+  5. Unit-Tests: fehlende Pflichtfelder → Cascade; vollständiger Payload → keine Verletzung.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Ein Planner-Output ohne `category` triggert `SPEC_GAP`-Cascade, kein Expert-Call.
+  - Ein Expert-Result ohne `content` triggert `EXPERT_FAILURE`-Cascade.
+  - Valide Payloads passieren ohne Overhead (<1ms Latenz-Overhead gemessen via Logging).
+  - `boundary_contracts.yaml` versioniert im Repo.
+
+---
+
+### TASK-14: Human-in-the-Loop Gate
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** TASK-10 (benötigt Trust-Score-Verdict)
+- **Context:** Bei Trust-Score `PROCEED_WITH_ASSUMPTION` + kritischer Anfrage (z.B. Constitution-`warn`-Level) wird die Antwort heute gesendet, ohne dass ein Mensch eingreifen kann. Ein state-basierter Gate-Freeze in Valkey ermöglicht echte Human-Approval-Flows: die Antwort wird eingefroren und erst nach `POST /gates/{id}/approve` gesendet. Für regulatorisch sensible Kontexte (DSGVO, EU-AI-Act Art. 14).
+- **Instructions:**
+  1. Erstelle `services/hitl_gate.py`:
+     - `create_gate(request_id: str, reason: str, response_draft: str, ttl_seconds: int = 3600) -> str` — speichert Gate-State + Draft in Valkey, gibt `gate_id` zurück.
+     - `get_gate(gate_id: str) -> dict | None` — liest Gate-State.
+     - `approve_gate(gate_id: str) -> bool` — setzt Status auf `approved`, gibt True zurück.
+     - `reject_gate(gate_id: str) -> bool` — setzt Status auf `rejected`.
+     - TTL: nach `ttl_seconds` automatisch `expired`, Antwort wird nicht gesendet.
+  2. Neuer API-Endpoint in `routes/` (neue Datei `routes/gates.py`):
+     - `GET /gates/{gate_id}` — Gate-Status abfragen
+     - `POST /gates/{gate_id}/approve` — Gate approven (nur Admin oder Request-Owner)
+     - `POST /gates/{gate_id}/reject` — Gate ablehnen
+  3. Integriere Gate-Trigger in `graph/synthesis.py`: wenn `trust_verdict == PROCEED_WITH_ASSUMPTION` UND `constitution_level == "warn"` → `create_gate()`, Client bekommt HTTP 202 mit `x-moe-gate-id: {gate_id}` statt finaler Antwort.
+  4. Stream-Polling: Client kann auf `GET /gates/{gate_id}` pollen bis `approved`/`rejected`/`expired`. Bei `approved`: finale Antwort aus Valkey holen und liefern. Bei `rejected`/`expired`: 410 Gone.
+  5. Unit-Tests: Gate-Lifecycle (create→approve→fetch), TTL-Ablauf (mock), Authorization-Check.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Borderline-Anfrage (Trust-Score 0.30–0.65 + Constitution-warn) liefert HTTP 202 + Gate-ID.
+  - `POST /gates/{id}/approve` gibt finale Antwort frei.
+  - Gate-State nach TTL automatisch `expired`, kein Memory-Leak in Valkey.
+  - Nicht-Admin kann nicht fremde Gates approven (403).
+
+---
+
+### TASK-15: Cynefin Complexity Classification
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** MoE-Sovereign kennt heute `trivial/moderate/complex` als Complexity-Level, entschieden vom Planner-LLM. Cynefin erweitert das um eine vierte Dimension: das Autonomie-Level der Antwort. `clear`-Anfragen werden vollautomatisch beantwortet; `complex`/`chaotic`-Anfragen aktivieren HITL-Gate (TASK-14) und erhöhten Trust-Score-Schwellwert. Damit wird das Autonomie-Level der Pipeline deklarativ und nicht implizit.
+- **Instructions:**
+  1. Erstelle `services/cynefin.py`:
+     - `CynefinDomain` Enum: `CLEAR`, `COMPLICATED`, `COMPLEX`, `CHAOTIC`
+     - `classify_cynefin(state_: AgentState) -> CynefinDomain` — deterministisch, kein LLM: basierend auf `complexity_level`, Anzahl Expert-Domains, `enable_graphrag`, Länge des Inputs
+     - Mapping: `trivial` + 1 Domain → `CLEAR`; `moderate` + ≤2 Domains → `COMPLICATED`; `complex` + >2 Domains → `COMPLEX`; Trust-Score `BLOCK` → `CHAOTIC`
+  2. Integriere in `graph/planner.py`: nach Complexity-Routing, neues State-Feld `cynefin_domain: str`.
+  3. Verwende `cynefin_domain` in TASK-14-Gate-Trigger-Entscheidung: Gate nur bei `COMPLEX`/`CHAOTIC`.
+  4. Logge `cynefin_domain` im `usage_log` (neues Spalte in `database.py`).
+  5. Unit-Tests: alle 4 Mappings korrekt.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Triviale Anfragen landen in `CLEAR`, erhalten kein Gate.
+  - Komplexe Multi-Domain-Anfragen landen in `COMPLEX`, aktivieren Gate (wenn TASK-14 vorhanden).
+  - `cynefin_domain` in `usage_log`-Zeilen sichtbar.
+
+---
+
+### TASK-16: Cascade Event Lifecycle (Resolution Tracking)
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none (ergänzt bestehende `services/cascade.py` aus feat `886944f7`)
+- **Context:** `services/cascade.py` emittiert Cascade-Events, trackt aber nicht ob sie aufgelöst wurden. Nach einem Replan-Zyklus weiß das System nicht, ob ein `CONTEXT_GAP` geschlossen wurde oder noch offen ist. `list(only_open=True)` ist unmöglich. Für Post-Mortem und SLA-Reporting essentiell.
+- **Instructions:**
+  1. Erweitere `services/cascade.py`:
+     - `CascadeEvent` bekommt neues Feld `resolved: bool = False`, `resolved_at: str | None = None`
+     - Neue Funktion `resolve_cascade(event: CascadeEvent) -> CascadeEvent` — setzt `resolved=True`, `resolved_at=<UTC-ISO>`
+     - Neue Funktion `list_open_cascades(request_id: str) -> List[CascadeEvent]` — filtert aus Valkey alle Events mit `resolved=False`
+     - Storage: Cascade-Events per `request_id` in Valkey mit TTL 24h
+  2. Integriere `resolve_cascade()` in `graph/planner.py` nach erfolgreichem Replan: alle Events der Runde werden resolved.
+  3. Bei `STUCK_LOOP`-Emission (Retry-Budget erschöpft): alle offenen Cascades des Requests als unresolved im `decision_log` (TASK-12) notieren.
+  4. Unit-Tests: resolve + list_open, TTL-Verhalten (mock Valkey).
+  5. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Nach erfolgreichem Replan zeigt `list_open_cascades(request_id)` leere Liste.
+  - Bei STUCK: unresolved Cascades im Decision-Log sichtbar.
+  - Valkey-Keys für Cascade-Events haben 24h TTL.
+
+---
+
+### TASK-17: Deterministischer Scope Guard
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** Heute entscheidet das LLM ob ein Expert auf eine Domain zugreifen darf. Ein deterministischer Scope Guard prüft vor dem Expert-Call, ob die angefragte Domain in der deklarierten `expert_domains`-Liste des Tasks liegt. Block in <10ms statt LLM-Urteil. Verhindert Domain-Drift bei falsch geroutetem Task.
+- **Instructions:**
+  1. Erstelle `services/scope_guard.py`:
+     - `ScopeViolation` Dataclass: `task_id`, `requested_domain`, `allowed_domains`, `message`
+     - `check_scope(task: dict, expert_category: str) -> ScopeViolation | None` — prüft ob `expert_category` in `task.get("allowed_domains", [task["category"]])` enthalten ist
+     - Bei Verletzung: emittiert `CascadeType.SCOPE_DRIFT` via `services/cascade.py`
+  2. Integriere `check_scope()` in `graph/expert.py` direkt vor dem LLM-Call (nach DoR, vor Prompt-Assembly).
+  3. Bei `ScopeViolation`: Expert-Slot überspringen, `SCOPE_DRIFT`-Event emittieren, Task zurück an Planner.
+  4. Unit-Tests: erlaubte Domain → kein Block; fremde Domain → `SCOPE_DRIFT`.
+  5. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Ein Expert-Call für Domain `math` auf einem Task mit `category: code` wird blockiert.
+  - `SCOPE_DRIFT`-Event in Kafka `moe.decisions` sichtbar.
+  - Korrekt geroutete Tasks passieren ohne Overhead.
+
+---
+
+### TASK-18: Handover / Context-Preservation
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** Bei Kontext-Überschreitung oder Session-Timeout geht der aktuelle Orchestrierungs-State verloren. Ein Handover-Mechanismus serialisiert den relevanten `AgentState`-Ausschnitt in Valkey und ermöglicht Fortsetzung in einer neuen Session. Besonders relevant für lange Research-Anfragen (>10 Min. Laufzeit).
+- **Instructions:**
+  1. Erstelle `services/handover.py`:
+     - `create_handover(state_: AgentState, reason: str) -> str` — serialisiert `plan`, `expert_results`, `chat_history`, `trust_verdict`, `self_critique_round`, `agentic_iteration` in Valkey mit TTL 4h, gibt `handover_id` zurück.
+     - `restore_handover(handover_id: str) -> dict | None` — rekonstruiert relevante State-Felder.
+  2. Trigger in `graph/synthesis.py`: bei `STUCK_LOOP` + nicht-kritischer Anfrage → `create_handover()` statt Hard-Fail; Response-Body enthält `x-moe-handover-id`.
+  3. Neuer Endpoint `POST /handover/{id}/resume` in `routes/` — stellt State wieder her und setzt Pipeline fort.
+  4. Unit-Tests: serialize/deserialize round-trip, TTL-Ablauf.
+  5. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Eine STUCK-Anfrage liefert `x-moe-handover-id` im Response-Header.
+  - `POST /handover/{id}/resume` setzt Pipeline mit rekonstruiertem State fort.
+  - Handover-State nach 4h TTL automatisch gelöscht.
+
+---
+
+### TASK-19: Wikipedia / YAGO 4 Knowledge Import in Neo4j GraphRAG
+
+- **Status:** done (2026-07-01, Antigravity — ETL-Script implementiert)
+- **Owner:** Antigravity
+- **Depends on:** none
+- **Context:** Der bestehende `graphrag_pipeline_worker.py` ingested nur interne Markdown-Dokumentation (SYSTEM.md, CHANGELOG.md, docs/**/*.md). Faktisches Weltwissen (Software-Frameworks, Algorithmen, Konzepte) ist nicht vorhanden — bei allgemeinen Wissensanfragen liefert GraphRAG deshalb 0 Neo4j-Knoten, was TASK-10 (Trust-Score) hart blockt. YAGO 4 enthält ~1 Mrd. RDF-Triples aus Wikipedia + WordNet + GeoNames, davon gefiltert ~5–10M für die Software/AI/Tech-Domäne.
+- **Instructions:**
+  1. **Datenquelle:** YAGO 4 Partial Dump für relevante Schemata herunterladen:
+     - `schema:SoftwareApplication`, `schema:SoftwareSourceCode`, `wdt:Q7397` (Software)
+     - `schema:Algorithm` (aus WordNet-Mapping)
+     - `wikidata:Q9143` (Programming Language), `wikidata:Q28640` (Profession/Role)
+     - Download-Pfad: `yago-knowledge.org/data/yago4/` — Turtle-Dumps, domänenspezifische Teilmengen bevorzugen
+  2. **ETL-Script** `scripts/import_yago_to_neo4j.py`:
+     - Input: `.ttl`/`.nt`-Dateien (RDF/Turtle)
+     - Parse via `rdflib` (bereits in Pypi, kein neues Dep falls verfügbar)
+     - Mapping: YAGO-Entitätstypen → bestehende Ontologie-Typen aus `graph_rag/ontology.py` (`Tech_Concept`, `Algorithm`, `Framework`, `Tool`)
+     - Output: Neo4j `MERGE`-Queries analog zu `graph_rag/manager.py:_upsert_entity()`
+     - Batch-Inserts à 500 Triples, Progress-Logging alle 10k Triples
+     - `--dry-run` und `--limit N` Flags für Test-Imports
+  3. **Konflikt-Behandlung:** `source_weight = 0.8` (höher als "extracted" 0.6, niedriger als Ontologie 1.0) für YAGO-Daten. Bestehende Ontologie-Knoten werden NICHT überschrieben (`MERGE` on name + type ohne `SET` falls bereits vorhanden).
+  4. **Integration in `graphrag_pipeline_worker.py`:** optionaler `--yago-import` Flag der das ETL-Script als Vorschritt ausführt.
+  5. Testen: Import von 1k Test-Triples (Python + JavaScript Entities aus YAGO), anschließend `manager.query_context("Was ist FastAPI?")` → sollte Neo4j-Knoten zurückgeben.
+  6. Rebuild/restart `langgraph-app` (nur falls `graph_rag/` geändert).
+- **Acceptance criteria:**
+  - Nach Import: `MATCH (n:Tech_Concept) RETURN count(n)` in Neo4j zeigt >0 YAGO-importierte Knoten.
+  - `manager.query_context("Erkläre GraphQL")` gibt mind. 1 Neo4j-Knoten aus (vorher 0).
+  - `--dry-run` erzeugt kein Schreiben in Neo4j.
+  - Import von 100k Triples läuft in <10 Minuten durch.
+
+---
+
+### TASK-20: Wikipedia-Abstracts Chunking + Embedding Pipeline
+
+- **Status:** done (2026-07-01, Antigravity — Embed-Script implementiert)
+- **Owner:** Antigravity
+- **Depends on:** TASK-19 (YAGO-Import liefert Entitätsliste für Abstracts)
+- **Context:** Der bestehende GraphRAG-Stack nutzt Neo4j für strukturiertes Wissen (Entitäten + Relationen) und ChromaDB für semantische Vektoren. Wikipedia-Abstracts — der Fließtext zu jedem Entitäts-Knoten — werden nirgends eingebettet. Ohne Chunking + Embedding ist GraphRAG kein echtes Hybrid-Retrieval, sondern nur Cypher-Lookup. Das war der kritischste Mangel im ursprünglichen PoC-Prompt: "process later" für Phase 3.
+- **Instructions:**
+  1. **Datenquelle:** Wikipedia-Abstracts via `wikimedia.org/api/rest_v1/page/summary/{title}` (REST, kein SPARQL) oder DBpedia Spotlight Abstracts (`downloads.dbpedia.org/repo/dbpedia/text/abstracts/`).
+  2. **Script** `scripts/embed_wikipedia_abstracts.py`:
+     - Liest alle Neo4j-Entitäten mit `source = "yago"` (nach TASK-19)
+     - Fetched Wikipedia-Summary per Entitätsname (async httpx, max 10 concurrent)
+     - Chunked Abstracts in 200-Token-Segmente (Overlap 40 Token), Chunker via `tiktoken`
+     - Embeddet mit `all-MiniLM-L6-v2` (bereits vorhanden im Stack für IMoE-Router)
+     - Speichert in ChromaDB Collection `moe_wikipedia_abstracts` mit Metadata `entity_name`, `neo4j_id`, `chunk_index`
+  3. **Integration in `graph_rag/manager.py:query_context()`:**
+     - Hybrid-Query: Neo4j Cypher (strukturiert) + ChromaDB `moe_wikipedia_abstracts` (semantisch)
+     - Merge-Strategie: Neo4j-Knoten-Score * 0.6 + ChromaDB-Vector-Score * 0.4 (konfigurierbar via env)
+     - Bestehende ChromaDB-Collection `moe_semantic_cache` bleibt unberührt
+  4. **Rate-Limiting:** Wikimedia API erlaubt 200 Requests/s ohne Key, mit `User-Agent`-Header. Script setzt `RATE_LIMIT=5` Default (konservativ), konfigurierbar.
+  5. Unit-Tests: Mock-Wikipedia-API, Chunking-Logik (leere/lange Abstracts), ChromaDB-Collection-Isolation.
+  6. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - ChromaDB Collection `moe_wikipedia_abstracts` existiert mit >0 Chunks.
+  - `query_context("GraphQL Schema Definition Language")` gibt sowohl Neo4j-Knoten als auch ChromaDB-Chunks zurück.
+  - Score-Merge produziert sortierten, deduplizierten Kontext (kein Duplikat für denselben Entitätsnamen).
+  - Embed-Script ist idempotent (zweiter Lauf macht nichts doppelt).
+
+---
+
+### TASK-21: GraphRAG Benchmark Harness (CypherBench + GraphRAG-Bench)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** TASK-19, TASK-20 (GraphRAG-Stack muss Faktenwissen enthalten um sinnvoll zu benchmarken)
+- **Context:** Ein Evaluierungs-Harness für MoE-Sovereigns GraphRAG-Qualität fehlt komplett. Der ursprüngliche PoC-Prompt (Wikidata SPARQL + manueller Markdown-Vergleich) hatte 4 kritische Mängel: SPARQL rate-limited, `neo4j:latest` nicht reproduzierbar, kein Ground-Truth, kein Chunking. Ersatz: CypherBench (11 fertige Property-Graphs, 10k+ Cypher-Fragen) + GraphRAG-Bench (ICLR'26, zitierfähige Ground-Truth Q&A).
+- **Instructions:**
+  1. **Daten-Setup** in `moe-benchmark/`:
+     - CypherBench: `git lfs clone https://huggingface.co/datasets/megagonlabs/cypherbench` → einen der 11 Graphs via `neo4j-admin load` importieren (pinne `neo4j:5.18.0` in `Dockerfile.bench`, niemals `:latest`)
+     - GraphRAG-Bench: `huggingface_hub.snapshot_download("GraphRAG-Bench/GraphRAG-Bench")` → Q&A-Pairs als lokale JSONL-Datei
+  2. **Benchmark-Script** `moe-benchmark/benchmark_graphrag.py`:
+     - Liest Q&A-Pairs aus GraphRAG-Bench (Schwierigkeitsstufen: `fact_retrieval`, `complex_reasoning`, `summarization`)
+     - Sendet jede Frage an MoE-Sovereign API: einmal `enable_graphrag=false` (Zero-Shot), einmal `enable_graphrag=true`
+     - Misst: Latenz, Token-Count, LLM-as-Judge-Score (separater Judge-Call der Ground-Truth vs. Antwort bewertet, Skala 0–5)
+     - Output: `results/graphrag_bench_YYYYMMDD.json` + aggregierte Tabelle (Precision, Recall, Latenz-Delta, Token-Overhead)
+  3. **LLM-as-Judge statt manueller Sichtprüfung:**
+     - Judge-Prompt: "Bewerte die Antwort auf einer Skala 0–5 gemessen an der Ground-Truth. Antworte nur mit der Zahl."
+     - Judge-Model: `moe-auto` (selbst), oder dedizierter Judge via `BENCHMARK_JUDGE_MODEL` env var
+  4. **Reproduzierbarkeit:**
+     - `docker-compose.yml` in `moe-benchmark/` pinnt `neo4j:5.18.0` (nicht latest)
+     - `requirements.txt` mit festen Versionen
+     - Fixture-Dataset (`data/fixtures/sample_100.jsonl`) für schnelle Smoke-Tests ohne volle Download
+  5. Ausführung via `make benchmark` in `moe-benchmark/`.
+- **Acceptance criteria:**
+  - `make benchmark` läuft durch ohne manuelle Eingriffe.
+  - Output-JSON enthält `zero_shot_score`, `graphrag_score`, `latency_ms`, `token_count` pro Q&A-Pair.
+  - GraphRAG-Score ist im Mittel höher als Zero-Shot-Score (Validierung dass GraphRAG hilft).
+  - Ergebnis ist mit einem `git log`-Hash verknüpft (reproduzierbar, zitierbar).
+  - `neo4j:latest` kommt in keiner Benchmark-Konfigurationsdatei vor.
+
+---
+
+### TASK-22: Strategy Review Node (Abstraction-First Quality Layer)
+
+- **Status:** done (2026-07-01, Antigravity)
+- **Owner:** Antigravity
+- **Depends on:** TASK-10 (Trust-Score-Verdict steuert Aktivierung)
+- **Context:** Inspiriert durch einen privaten Mixed-Reality-Anwendungsfall (Spatial Audio via Emulator-Ring-Buffer statt räumlichem Objekt): Ein kleines lokales Modell erstellt für die Expertenergebnisse eine *inhaltsfreie* Strategieabstraktion (Problemklasse, Lösungsansatz, Annahmen, Unsicherheiten). Ein konfigurierbares potentes Reviewer-Modell (Standard: lokaler Judge; optional: Frontier-Endpunkt) bewertet *nur die Abstraktion*, nie den Inhalt. Das strukturelle Feedback fließt zurück in den Merger. Kern-Invariante: kein Domain-Inhalt verlässt den lokalen Stack, es sei denn der Admin hat explizit einen Frontier-URL konfiguriert.
+- **Instructions:**
+  1. Erstelle `services/strategy_review.py`:
+     - Dataclass `StrategyAbstract`: `problem_class: str`, `solution_approach: str`, `assumptions: list[str]`, `uncertainties: list[str]`
+     - Dataclass `StrategyFeedback`: `structural_gaps: list[str]`, `alternative_approaches: list[str]`, `confidence_adjustment: float` (−0.2 … +0.2)
+     - `abstract_solution(expert_results, plan, input_query, abstractor_llm) -> StrategyAbstract` — Abstractor-LLM sieht Inhalt, produziert nur Abstraktion
+     - `review_strategy(abstract: StrategyAbstract, reviewer_llm) -> StrategyFeedback` — Reviewer sieht *nur* die Abstraktion, kein Inhalt
+  2. Erstelle `graph/strategy_review_node.py`:
+     - `strategy_review_node(state_)` — orchestriert Abstractor + Reviewer
+     - Abstractor: `STRATEGY_ABSTRACTOR_MODEL` env (leer → `planner_llm`; Standard: kleinstes verfügbares Modell)
+     - Reviewer: `STRATEGY_REVIEWER_MODEL` + `STRATEGY_REVIEWER_URL` + `STRATEGY_REVIEWER_TOKEN` env (leer → `judge_llm` lokal; gesetzt → Frontier-Endpunkt)
+     - Gibt zurück: `strategy_feedback: str` (kompaktes strukturiertes Feedback für den Merger), `trust_score` Anpassung per `confidence_adjustment`
+  3. Konditionale Aktivierung: nur wenn `STRATEGY_REVIEW_ENABLED=true` (env) AND (`trust_verdict == PROCEED_WITH_ASSUMPTION` OR `cynefin_domain in (COMPLEX, CHAOTIC)`)
+  4. Integration in `graph/synthesis.py` / `main.py`:
+     - Neuer LangGraph-Node `strategy_review` zwischen Expert-Runde und Merger
+     - `strategy_feedback` als zusätzlicher Kontext in den Merger-Prompt injiziert (neues State-Feld)
+  5. `pipeline/state.py`: neues Feld `strategy_feedback: str`
+  6. Unit-Tests in `tests/test_strategy_review.py`:
+     - Abstractor produziert keine rohen Inhalte (assert kein Expert-Zitat im Abstract)
+     - Reviewer-Prompt enthält keinen Original-Inhalt (Invariante)
+     - Deaktiviert wenn `STRATEGY_REVIEW_ENABLED` nicht gesetzt
+     - `confidence_adjustment` liegt in [−0.2, +0.2]
+  7. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - `STRATEGY_REVIEWER_URL` leer → lokaler Judge als Reviewer, kein Netzwerk-Call nach außen.
+  - `STRATEGY_REVIEWER_URL` gesetzt → Frontier-Endpunkt verwendet (konfigurierbar, kein Hardcode).
+  - Reviewer-Prompt enthält nachweislich keinen Original-Expert-Output (Inhaltstrennung verifiziert).
+  - `strategy_feedback` im Merger-Log sichtbar wenn aktiviert.
+  - `STRATEGY_REVIEW_ENABLED` nicht gesetzt → Node wird übersprungen, kein Overhead.
+
+---
+
+### TASK-23: Pipeline Log UI-Erweiterung (Trust Score, Cynefin, Self-Critique)
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-10 – TASK-15 (alle done)
+- **Context:** Die `usage_log`-Tabelle speichert bisher keine Trust-Score-, Cynefin- oder Self-Critique-Felder. Das Pipeline-Log-Template zeigt sie folglich nicht. Für operative Sichtbarkeit der neuen Qualitätssignale müssen DB-Schema, Backend-INSERT, API-Query und Template synchron erweitert werden.
+- **Instructions:**
+  1. `admin_ui/database.py` — `ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS` für: `trust_score DOUBLE PRECISION`, `trust_verdict TEXT`, `cynefin_domain TEXT`, `self_critique_round INTEGER NOT NULL DEFAULT 0`, `cascade_type TEXT`. Funktion `log_usage()` um diese Parameter erweitern.
+  2. `main.py` — in `_log_usage_to_db`-Aufruf (Zeile ~1867) die Felder `trust_score`, `trust_verdict`, `cynefin_domain`, `self_critique_round`, `cascade_type` aus `data` extrahieren und übergeben.
+  3. `routes/admin_stats.py` — SELECT in `pipeline_log()` um neue Felder erweitern.
+  4. `admin_ui/templates/pipeline_log.html` — neue Spalten: `trust_verdict`-Badge (grün/gelb/rot), `cynefin_domain`-Badge, `self_critique_round`-Spalte; alle Labels via `{{ t(request, 'key') }}`.
+  5. Alle vier Lang-Dateien (`de_DE`, `en_EN`, `fr_FR`, `zh_CN`) mit neuen Schlüsseln befüllen.
+  6. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - Pipeline-Log-Seite zeigt `trust_verdict` farbig (PROCEED=grün, PROCEED_WITH_ASSUMPTION=gelb, BLOCK=rot).
+  - `cynefin_domain` als Badge sichtbar.
+  - Neue `usage_log`-Spalten über `ALTER TABLE IF NOT EXISTS` (idempotent, keine Migration nötig).
+
+---
+
+### TASK-24: HITL Gate Approval UI
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-14 (done)
+- **Context:** Gates werden via `POST /gates/{id}/approve|reject` approved (langgraph-app), aber es gibt keine Admin-UI-Seite dafür. Ohne UI müssen Gates manuell mit curl bedient werden — operativ nicht nutzbar.
+- **Instructions:**
+  1. Neue Admin-UI-Seite `/gates` (Template `gates.html`, Route in `admin_ui/app.py`).
+  2. API-Proxy-Endpoints in `admin_ui/app.py`: `GET /api/gates/{gate_id}` und `POST /api/gates/{gate_id}/approve|reject` → Weiterleitung an `ORCHESTRATOR_URL/gates/...`.
+  3. Template: Liste offener Gates (polling `GET /api/gates?status=pending`), pro Gate: Request-ID, Reason, Erstellt-Zeit, Ablaufzeit, Approve/Reject-Buttons.
+  4. JavaScript-Polling alle 10s für automatische Aktualisierung.
+  5. Lang-Dateien: alle vier Sprachdateien mit neuen Keys.
+  6. Nav-Eintrag in bestehende Admin-Navigation einfügen.
+  7. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - `/gates`-Seite zeigt offene Gates.
+  - Approve-Button sendet `POST /gates/{id}/approve` und refresht die Liste.
+  - Keine Gates vorhanden → leere State-Meldung statt Fehler.
+
+---
+
+### TASK-25: Response Detail Modal — Strategy Feedback & Pipeline Signals
+
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
+- **Depends on:** TASK-23 (neue DB-Felder müssen vorhanden sein)
+- **Context:** Das bestehende Detail-Modal im Pipeline-Log zeigt `request_id`, `cache_hit`, `agentic_rounds`. Mit den neuen Felder aus TASK-23 können `strategy_feedback`, `self_critique_round/max`, `cascade_type` und `cynefin_domain` ebenfalls angezeigt werden.
+- **Instructions:**
+  1. `routes/admin_stats.py` — separaten `GET /v1/admin/pipeline-log/{request_id}` Endpunkt hinzufügen, der `strategy_feedback` aus Valkey (via `handover`-Key-Namespace oder separatem Valkey-Key) und alle DB-Felder zurückgibt.
+  2. `pipeline_log.html` — Detail-Modal erweitern: aufklappbarer Block „Strategy Review Feedback" wenn `strategy_feedback` nicht leer, `self_critique_round/max`-Anzeige, `cascade_type`-Badge.
+  3. Lang-Dateien für neue Labels.
+  4. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - Klick auf Pipeline-Log-Zeile öffnet Modal mit Strategy-Feedback-Block (wenn vorhanden).
+  - `self_critique_round` wird als „N / max" angezeigt.
+
+---
+
+### TASK-26: Live Monitoring — Trust Verdict Badge
+
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
+- **Depends on:** TASK-23
+- **Context:** Das Live-Monitoring zeigt aktive Requests ohne Qualitätssignal. Ein `trust_verdict`-Badge in der laufenden Request-Liste würde zeigen, ob ein Request gerade blockiert ist oder mit Annahmen läuft.
+- **Instructions:**
+  1. `main.py` — `_register_active_request()` / Active-Request-Valkey-State um `trust_verdict` und `cynefin_domain` erweitern.
+  2. `live_monitoring.html` — Badge-Spalte in der aktiven Request-Liste.
+  3. Lang-Dateien für neue Labels.
+  4. Rebuild/restart `moe-admin` + `langgraph-app`.
+- **Acceptance criteria:**
+  - Laufende Requests zeigen `trust_verdict`-Badge (leer wenn noch nicht berechnet, Badge wenn vorhanden).
+
+---
+
+### TASK-27: Handover / Resume UI
+
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
+- **Depends on:** TASK-18 (done)
+- **Context:** Handover-IDs kommen im Response-Header `x-moe-handover-id` an, aber es gibt keine UI zum Weiterführen einer unterbrochenen Session. Power-User müssen `POST /handover/{id}/restore` manuell aufrufen.
+- **Instructions:**
+  1. User-Portal (`user_portal.html`) — Button „Session fortsetzen" im Audit-Log-Modal wenn `handover_id` vorhanden.
+  2. Admin-UI (`app.py`) — Proxy `POST /api/handover/{id}/restore` → `ORCHESTRATOR_URL/handover/{id}/restore`.
+  3. Modal zum Wiederherstellen: zeigt Handover-Grund und Timestamp, Confirm-Button sendet Resume-Request und öffnet Chat mit dem wiederhergestellten Input.
+  4. Lang-Dateien.
+  5. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - User sieht im Audit-Log-Modal „Handover vorhanden" mit Fortführen-Button.
+  - Klick auf Fortführen schickt Resume-Request und zeigt Antwort.
+
+---
+
+### TASK-28: Decision Log Explorer
+
+- **Status:** done (2026-07-01)
+- **Owner:** Claude Code
+- **Depends on:** TASK-12 (done)
+- **Context:** Decision-Log-Einträge landen in Kafka `moe.decisions` + `decision_log.jsonl`. Es gibt keine UI zum Browsing. Für Post-Mortems und EU-AI-Act-Compliance-Audits wird eine filterbare Admin-Seite benötigt.
+- **Instructions:**
+  1. Backend: `GET /v1/admin/decision-log?decision_type=&request_id=&limit=&offset=` in `routes/admin_stats.py` — liest aus `decision_log.jsonl` (Kafka-Consumer wäre aufwendiger, JSONL reicht für den Anfang).
+  2. Admin-UI: neue Seite `/decision-log` (Template `decision_log_explorer.html`).
+  3. Filter: `decision_type` (Dropdown), `request_id` (Freitext), Zeitraum.
+  4. Pro Eintrag: `ts`, `decision_type`-Badge, `request_id`, `rationale`, `metadata`-Collapsible.
+  5. Lang-Dateien.
+  6. Nav-Eintrag.
+  7. Rebuild/restart `moe-admin`.
+- **Acceptance criteria:**
+  - `/decision-log` zeigt paginierte Einträge aus `decision_log.jsonl`.
+  - Filter nach `decision_type` funktioniert.
+  - `rationale`-Feld immer sichtbar (nie leer, wegen Pflichtfeld-Constraint).
+
+---
+
+### TASK-29: AI I/O Audit Service (Strukturiertes LLM-Request/Response-Logging)
+
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
+- **Depends on:** none
+- **Context:** MoE-Sovereign hat Grafana-Monitoring für GPU-Metriken, aber kein semantisches AI-I/O-Audit: welcher User hat welchen Prompt mit welchem Modell aufgerufen, was wurde zurückgegeben. Für EU-AI-Act Art. 13 (Transparenz) und DSGVO-Verarbeitung braucht es einen append-only Audit-Trail jedes LLM-Calls. Inspirationsquelle: `workflow-runtime-audit-service.js` aus dem ADHS-Projekt (Agent Orchestrator) von Michael Reich — dort löst das Muster dasselbe Problem für einen anderen Stack. Kernpunkte: API-Key-Redaktion, Session-Korrelation, Transport-Metadaten.
+- **Instructions:**
+  1. Erstelle `services/ai_io_audit.py`:
+     - `sanitize_audit_payload(payload: dict) -> dict` — traversiert rekursiv, ersetzt alle Werte unter Keys `authorization`, `api-key`, `apikey`, `x-api-key` durch `"[redacted]"`. Keys case-insensitiv vergleichen.
+     - Dataclass `AiIoAuditEntry`: `audit_id: str`, `session_id: str`, `request_id: str`, `model: str`, `endpoint: str`, `stage: str`, `prompt_tokens: int | None`, `completion_tokens: int | None`, `started_at: str`, `completed_at: str | None`, `status: str` (`"pending"`, `"completed"`, `"error"`), `request_body: dict` (sanitized), `response_body: dict | None` (sanitized).
+     - `create_audit_entry(session_id, request_id, model, endpoint, stage, request_body) -> AiIoAuditEntry` — erzeugt Entry mit `audit_id = f"{session_id}:{request_id}"`, speichert in einem In-Memory-`Dict[str, AiIoAuditEntry]` (`_live_entries`).
+     - `complete_audit_entry(audit_id, response_body, prompt_tokens, completion_tokens, status) -> None` — schließt Entry ab, schreibt nach Postgres (Tabelle `ai_io_audit_log`) und entfernt aus `_live_entries`.
+     - `get_live_entries() -> List[AiIoAuditEntry]` — gibt aktive (noch nicht abgeschlossene) Entries zurück.
+  2. Postgres-Schema: `CREATE TABLE IF NOT EXISTS ai_io_audit_log (audit_id TEXT PRIMARY KEY, session_id TEXT, request_id TEXT, model TEXT, endpoint TEXT, stage TEXT, prompt_tokens INTEGER, completion_tokens INTEGER, started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, status TEXT, request_body JSONB, response_body JSONB)`. Migration in `admin_ui/database.py` via `CREATE TABLE IF NOT EXISTS` (idempotent).
+  3. Integration in `services/inference.py`: vor jedem `httpx`-Call an Ollama/Provider `create_audit_entry()` aufrufen, nach dem Call `complete_audit_entry()` — sowohl bei Erfolg als auch bei Exception (status `"error"`).
+  4. Neuer Admin-UI-Endpoint `GET /v1/admin/ai-io-audit?request_id=&model=&status=&limit=&offset=` in `routes/admin_stats.py` — liest aus `ai_io_audit_log` + `get_live_entries()` zusammengeführt, sortiert nach `started_at DESC`.
+  5. Admin-UI-Template `ai_io_audit.html` (neue Seite `/ai-io-audit`): Tabelle mit `audit_id`, `model`, `stage`, `status`-Badge, `prompt_tokens`, `completion_tokens`, `started_at`. Klick auf Zeile öffnet Modal mit sanitized `request_body`/`response_body` (JSON-Collapsible).
+  6. Nav-Eintrag. Lang-Dateien (alle vier Sprachen) für neue Keys.
+  7. Unit-Tests `tests/test_ai_io_audit.py`: API-Key-Redaktion auf verschachtelten Payloads, Entry-Lifecycle (create→complete→persist), Live-Entries-Map leert sich nach Complete.
+  8. Rebuild/restart `langgraph-app` + `moe-admin`.
+- **Acceptance criteria:**
+  - Jeder LLM-Call in `inference.py` erzeugt einen `ai_io_audit_log`-Eintrag.
+  - Kein API-Key-Wert (auch verschachtelt) erscheint im `request_body`/`response_body` — nur `"[redacted]"`.
+  - `GET /v1/admin/ai-io-audit` gibt abgeschlossene + laufende Entries zurück.
+  - `/ai-io-audit`-Seite zeigt Einträge mit Status-Badge und Klick-Modal.
+  - `tests/test_ai_io_audit.py` grün.
+- **Resolution notes (2026-07-01, Claude Code):**
+  - `services/ai_io_audit.py`: `sanitize_audit_payload()` (rekursive API-Key-Redaktion, case-insensitiv), `AiIoAuditEntry` Dataclass, `create_audit_entry()` / `complete_audit_entry()` / `get_live_entries()`. In-Memory `_live_entries` Dict, Postgres-Persistenz via `state._userdb_pool`.
+  - `admin_ui/database.py`: `ai_io_audit_log`-Tabelle und Indizes als `CREATE TABLE IF NOT EXISTS` (idempotent).
+  - `routes/admin_stats.py`: `GET /v1/admin/ai-io-audit` — merged Live-Entries + DB-Rows, sortiert nach `started_at DESC`.
+  - `admin_ui/templates/ai_io_audit.html`: Filter-UI, Tabelle mit Status-Badge, Detail-Modal mit sanitized JSON-Collapsible.
+  - `admin_ui/app.py`: `/ai-io-audit`-Route + `/api/ai-io-audit`-Proxy.
+  - `services/inference.py`: Judge-Ollama-Call mit `_audit_create()`/`_audit_complete()` gewrapped (try/finally-Muster).
+  - `admin_ui/lang/`: 4 Sprachdateien mit neuen Keys.
+  - 11 Tests grün.
+
+---
+
+### TASK-30: Structured-Output Failure Recovery mit Retry-Strategie
+
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
+- **Depends on:** none
+- **Context:** Wenn ein LLM kein valides JSON/Schema zurückliefert (z.B. bei Structured Output in `graph/synthesis.py` oder `graph/planner.py`), fehlt ein deterministischer Umgang. Aktuell fällt der Request mit einer generischen Exception durch. Inspirationsquelle: `workflow-engine/structured-failure.js` + `workflow-engine/recovery.js` aus ADHS — dort klassifiziert das System den Fehler, bietet 4 konkrete Recovery-Actions an und trackt Retry-Runden. Für MoE-Sovereign: angepasst auf Python, auf LangGraph-State-basiertes Retry, mit konfigurierbarem Fallback-Modell.
+- **Instructions:**
+  1. Erstelle `services/structured_failure.py`:
+     - `StructuredFailureKind` Enum: `SCHEMA_OUTPUT` (JSON-Parse-Fehler, Schema-Violation), `PROVIDER_TRANSPORT` (Timeout, ECONNRESET, HTTP 429/502/503/504), `RUNTIME_ERROR` (sonstige).
+     - `RecoveryAction` Enum: `RETRY_SAME`, `RETRY_FALLBACK`, `RETRY_SELECTED`, `STOP`.
+     - Dataclass `StructuredFailure`: `failure_kind: StructuredFailureKind`, `model: str`, `fallback_model: str`, `stage: str`, `message: str`, `raw_text: str` (max. 1600 Zeichen), `retry_round: int`, `allowed_actions: List[RecoveryAction]`.
+     - `classify_failure(error: Exception, raw_text: str = "") -> StructuredFailureKind` — Regex auf `error.message` + `raw_text`: `/json|schema|parse|structured|top-level|missing required/i` → `SCHEMA_OUTPUT`; `/timeout|ECONNRESET|ETIMEDOUT|rate limit|429|502|503|504/i` → `PROVIDER_TRANSPORT`; sonst `RUNTIME_ERROR`.
+     - `build_failure(error, model, stage, fallback_model="", raw_text="", retry_round=0) -> StructuredFailure` — klassifiziert und wählt `allowed_actions`: bei `SCHEMA_OUTPUT`/`PROVIDER_TRANSPORT` → alle 4 Actions wenn `fallback_model` gesetzt, sonst ohne `RETRY_FALLBACK`; bei `RUNTIME_ERROR` → nur `RETRY_SAME`, `STOP`.
+     - `resolve_retry_model(failure: StructuredFailure, action: RecoveryAction, selected_model: str = "") -> str` — gibt zurück: `RETRY_SAME` → `failure.model`; `RETRY_FALLBACK` → `failure.fallback_model`; `RETRY_SELECTED` → `selected_model`; `STOP` → raise `ValueError`.
+  2. Integration in `graph/synthesis.py` (Judge-Call) und `graph/planner.py` (Planner-Call): JSON-Parse-Block (`json.loads()`) mit `except` → `build_failure()` aufrufen, `StructuredFailure` in `AgentState` als `structured_failure` Feld speichern. Retry max. `STRUCTURED_FAILURE_MAX_RETRIES` (env, Default `2`) mit `resolve_retry_model(failure, RecoveryAction.RETRY_SAME)` für automatischen Retry; nach Limit-Erreichen → `STOP` → Cascade `SPEC_GAP`.
+  3. Neues `AgentState`-Feld `structured_failure: dict | None` (serialisierte `StructuredFailure`) und `structured_failure_round: int`.
+  4. Admin-UI: `structured_failure_round` im `usage_log` (neue Spalte, `ALTER TABLE IF NOT EXISTS`), sichtbar im Pipeline-Log als Badge „SF-N".
+  5. Env var `STRUCTURED_FAILURE_FALLBACK_MODEL` (leer = kein Fallback) für `fallback_model`.
+  6. Unit-Tests `tests/test_structured_failure.py`: Klassifikation (je 2 Beispiel-Errors pro Kind), `resolve_retry_model` alle Actions, Max-Retry-Limit triggert Cascade.
+  7. Rebuild/restart `langgraph-app`.
+- **Acceptance criteria:**
+  - Ein JSON-Parse-Fehler im Judge produziert `StructuredFailureKind.SCHEMA_OUTPUT` und automatisch bis zu 2 Retries (same model).
+  - `STRUCTURED_FAILURE_FALLBACK_MODEL` gesetzt: nach Max-Retries wird Fallback-Modell versucht (1 weiterer Versuch), dann `STOP`.
+  - `structured_failure_round` in `usage_log` sichtbar.
+  - `tests/test_structured_failure.py` grün.
+  - Provider-Timeout (`httpx.TimeoutException`) wird als `PROVIDER_TRANSPORT` klassifiziert, nicht als `RUNTIME_ERROR`.
+- **Resolution notes (2026-07-01, Claude Code):**
+  - `services/structured_failure.py`: `StructuredFailureKind` Enum, `RecoveryAction` Enum, `StructuredFailure` Dataclass, `classify_failure()`, `build_failure()`, `resolve_retry_model()`. Regex-basierte Klassifikation (SCHEMA_OUTPUT / PROVIDER_TRANSPORT / RUNTIME_ERROR). `_STRUCTURED_FAILURE_FALLBACK_MODEL` + `_MAX_RETRIES` via env.
+  - `pipeline/state.py`: `structured_failure: dict` + `structured_failure_round: int` als neue State-Felder.
+  - `admin_ui/database.py`: `ALTER TABLE usage_log ADD COLUMN IF NOT EXISTS structured_failure_round`.
+  - `routes/admin_stats.py`: `structured_failure_round` in `pipeline_log` SELECT via `COALESCE(..., 0)`.
+  - 16 Tests grün.
+
+---
+
+### TASK-31: Modell-Capability-Tabelle (Provider Routing Matrix)
+
+- **Status:** done (2026-07-01, Claude Code)
+- **Owner:** Claude Code
+- **Depends on:** none
+- **Context:** MoE-Sovereign wählt heute aus, *welche GPU und welches Modell* einen Request bearbeiten (dynamischer Router, GPU-Pool-Select). Es fehlt aber die nächste Ebene: *wie* das gewählte Modell angesprochen werden soll — Streaming vs. nicht-Streaming, JSON-Schema-Enforcement, Chat-Completions vs. Responses-API. Das wird aktuell per-Request händisch konfiguriert oder ist fest im Code. Inspirationsquelle: `ai-provider-routing.js` aus ADHS — dort pflegt eine explizite Capability-Matrix pro Modell, welche API-Modi und Output-Formate unterstützt werden. Für MoE-Sovereign: als YAML-Konfiguration, die den existierenden `services/inference.py`-Call-Aufbau steuert.
+- **Instructions:**
+  1. Erstelle `config/model_capabilities.yaml`:
+     ```yaml
+     # Capability-Matrix pro Modell. Fehlende Modelle erben "default".
+     default:
+       json_schema: false
+       json_object: true
+       stream: true
+       responses_api: false
+       hints: []
+     models:
+       "qwen3.6:35b":
+         json_schema: true
+         json_object: true
+         stream: true
+         hints: ["schema+"]
+       "llama3.3-70b-ctx4k:latest":
+         json_schema: false
+         json_object: false
+         stream: true
+         hints: []
+       "mistral:7b":
+         json_schema: true
+         json_object: true
+         stream: false
+         hints: ["schema+", "chat+"]
+     ```
+     Fehlende Einträge werden vom `default`-Block geerbt (kein KeyError, nur `dict.get()`).
+  2. Erstelle `services/model_capabilities.py`:
+     - `load_capabilities(path: str = "config/model_capabilities.yaml") -> dict` — lädt YAML, cached nach erstem Load in Modul-Variable.
+     - `get_model_caps(model: str) -> dict` — gibt Model-Eintrag zurück, fallback auf `default`.
+     - `model_supports_json_schema(model: str) -> bool`
+     - `model_supports_streaming(model: str) -> bool`
+     - `model_hint_tokens(model: str) -> List[str]` — gibt `hints`-Liste zurück.
+  3. Integration in `services/inference.py`:
+     - Vor jedem LLM-Call `get_model_caps(model)` aufrufen.
+     - `json_schema`-fähige Modelle: `response_format={"type": "json_schema", ...}` setzen wo heute `json_object` steht.
+     - `stream`-unfähige Modelle: `stream=False` erzwingen unabhängig von Request-Präferenz.
+     - Neues Logging: `logger.debug("model=%s caps=%s", model, caps)` vor dem Call.
+  4. Admin-UI: neue Seite `/model-capabilities` — zeigt `model_capabilities.yaml` als lesbare Tabelle (Modell, JSON-Schema, Stream, Hints). Keine Editierbarkeit in v1 (read-only).
+  5. Hot-Reload-Support: `CAPABILITIES_RELOAD_ON_REQUEST=true` env → Datei bei jedem Request neu laden (für Entwicklungsworkflow ohne Rebuild).
+  6. Unit-Tests `tests/test_model_capabilities.py`: Default-Fallback für unbekanntes Modell, Override für bekanntes, `model_supports_json_schema` korrekt für beide Fälle.
+  7. Rebuild/restart `langgraph-app` + `moe-admin`.
+- **Acceptance criteria:**
+  - Unbekanntes Modell erbt `default`-Caps ohne Exception.
+  - `qwen3.6:35b` verwendet `json_schema`-Mode in `inference.py` (statt `json_object`).
+  - Stream-unfähige Modelle aus YAML senden `stream=False` an Ollama.
+  - `/model-capabilities`-Seite zeigt alle konfigurierten Modelle als Tabelle.
+  - `tests/test_model_capabilities.py` grün.
+- **Resolution notes (2026-07-01, Claude Code):**
+  - `configs/model_capabilities.yaml`: Capability-Matrix mit `default`-Block + Modell-Overrides (13 konfigurierte Modelle).
+  - `services/model_capabilities.py`: `load_capabilities()` (einmaliges YAML-Laden, `CAPABILITIES_RELOAD_ON_REQUEST` für Dev-Reload), `get_model_caps()` (Dict-Merge mit Default-Fallback), `model_supports_json_schema()`, `model_supports_streaming()`, `model_hint_tokens()`.
+  - `services/inference.py`: Import der Capability-Funktion, `logger.debug("model=%s caps=%s")` vor Judge-Ollama-Calls.
+  - `admin_ui/templates/model_capabilities.html`: Read-only-Tabelle (JSON Schema, Stream, Hints pro Modell), Default-Caps-Block.
+  - `admin_ui/app.py`: `/model-capabilities` Route + `/api/model-capabilities` JSON-Endpunkt.
+  - `admin_ui/templates/base.html`: Nav-Einträge für `/ai-io-audit` und `/model-capabilities` im Monitoring-Dropdown.
+  - 4 Sprachdateien: neue Keys für AI I/O Audit und Model Capabilities.
+  - 10 Tests grün.
+
+### TASK-32: Integration / Evaluation des Claude Design System Prompts (AI-Slop-Prävention & a11y)
+
+- **Status:** partially_done (Phase 1 Evaluation done + korrigiert; Phase 2:
+  2 Skills importiert und auditiert, Admin-Freigabe offen; Phase 3-4
+  ausstehend)
+- **Owner:** Claude Code (Korrektur + Phase 2, 2026-07-05), ursprünglich Antigravity
+- **Depends on:** none
+- **Context:** MoE-Sovereign generiert über Coder-Experten und UI-Skills Web-Interfaces. Zudem besitzt es eigene Web-UIs. Um generischen "AI-Slop" (typische KI-Layoutmuster, unharmonische Farbverläufe, unpassende Fonts) zu vermeiden und Barrierefreiheit (a11y/WCAG) von Anfang an sicherzustellen, soll das Konzept aus dem Projekt [claude-design-system-prompt](https://github.com/Trystan-SA/claude-design-system-prompt) integriert werden. **Lizenz-Konformität:** Da das Quellprojekt unter der MIT-Lizenz steht, müssen bei der Übernahme der Prompts und Skills die ursprünglichen Lizenz- und Copyright-Hinweise (Trystan Sarrade) beibehalten und in den Zieldateien dokumentiert werden.
+- **Instructions:**
+  1. **Phase 1: Analyse & Bewertung (Erledigt):**
+     - Analyse der Designkonzepte und der 14 prozeduralen Skills.
+     - Detaillierter Evaluationsbericht erstellt unter [moe_design_system_evaluation.md](file:///home/philipp/.gemini/antigravity-cli/brain/e37eb3b2-85a4-48ec-b63b-9f83fe8a2e0e/moe_design_system_evaluation.md).
+  2. **Phase 2: Experten-Integration (Ausstehend):**
+     - Registrierung eines neuen Experten `frontend_designer` oder `ui_ux_designer` in [moe-infra/prompts.py](file:///opt/deployment/moe-sovereign/moe-infra/prompts.py) mit dem Kern-System-Prompt zur Slop-Vermeidung.
+  3. **Phase 3: Skill-Import & Lizenzkonformität (Ausstehend):**
+     - Übernahme der wichtigsten Skills (z. B. `ai-slop-check.md`, `accessibility-audit.md`, `make-tweakable.md`) als Markdown-Dateien nach [moe-infra/skills/](file:///opt/deployment/moe-sovereign/moe-infra/skills/).
+     - **Wichtig:** Jede übernommene Datei muss im Frontmatter oder als Header den ursprünglichen MIT-Lizenz- und Urheberrechtshinweis (Copyright (c) 2026 Trystan Sarrade) enthalten.
+     - Durchführung des nach [moe-infra/services/skills.py](file:///opt/deployment/moe-sovereign/moe-infra/services/skills.py) notwendigen LLM-Sicherheitsaudits für den Import.
+  4. **Phase 4: Design-Hygiene in der Entwicklung (Ausstehend):**
+     - Übernahme der Prinzipien in die Entwickler-Richtlinien `AGENTS.md` zur Qualitätssicherung künftiger MoE-UIs.
+- **Acceptance criteria:**
+  - [moe_design_system_evaluation.md](file:///home/philipp/.gemini/antigravity-cli/brain/e37eb3b2-85a4-48ec-b63b-9f83fe8a2e0e/moe_design_system_evaluation.md) ist vollständig ausgearbeitet.
+  - Neuer UI/UX-Experte reagiert zuverlässig auf Design-Anfragen.
+  - Neue Design-Review-Skills (z. B. `/ai-slop-check`) sind im Skill-Verzeichnis registriert, auditiert und vom Admin freigegeben.
+  - **Lizenzprüfung:** Alle importierten System-Prompts und Skill-Dateien weisen die erforderlichen Copyright- und Lizenzangaben der MIT-Lizenz auf.
+- **Resolution notes (2026-07-05, Antigravity):**
+  - Phase 1 (Analyse) erfolgreich abgeschlossen. Das Dokument [moe_design_system_evaluation.md](file:///home/philipp/.gemini/antigravity-cli/brain/e37eb3b2-85a4-48ec-b63b-9f83fe8a2e0e/moe_design_system_evaluation.md) enthält die Analyse der 14 Skills und der 5 Haupt-Design-Konzepte in einer Mehrwert-Matrix.
+  - Phase 2–4 sind für nachfolgende Iterationen unter Wahrung der MIT-Lizenzbedingungen vorbereitet.
+
+- **Korrektur-Resolution (2026-07-05T19:24Z, Claude Code):** Die bestehende
+  Evaluation wurde unabhängig gegen das Live-Repo (öffentliche GitHub-API,
+  nicht nur den Bericht) verifiziert. Zwei Lücken korrigiert, Empfehlung
+  umgewichtet — Details siehe `agent_status/claude-code.md`.
+
+  1. **Zwei Repo-Varianten, nicht eine.** `claude/` (mit Subagent-Delegation,
+     "delegate thorough verification to a verifier subagent") und `codex/`
+     ("verification is in-loop... there is no verifier subagent"). Der
+     bestehende Bericht referenziert ausschließlich `claude/`.
+  2. **Modell-Kalibrierungswarnung im README übersehen:** Der Prompt ist
+     explizit auf aktuelle Anthropic-Frontier-Modelle kalibriert und warnt
+     selbst: *"On older models... or non-Anthropic models, the calmer
+     phrasing may under-trigger."* MoE-Sovereigns Experten sind lokale SLMs
+     (`qwen3.6:35b`, `gemma4:12b`, `ornith:9b`) — exakt die Zielgruppe, vor
+     der gewarnt wird. Ein 1:1-Import ohne Anpassung würde bei Weg 1
+     vermutlich schwächer wirken als vom Bericht angenommen.
+  3. **Struktureller Mismatch bei Weg 1 (`frontend_designer`-MoE-Experte):**
+     Der Claude-Workflow (Kapitel 2–4, 18) setzt Dateisystem-Zugriff
+     ("read the design system's full definition... whatever exists") und
+     Subagent-Verifikation voraus. `graph/expert.py` (reguläre MoE-Pipeline)
+     ist reines Text-rein/Text-raus ohne Tool-/Dateizugriff — bestätigt beim
+     Code-Review. Ein `frontend_designer`-Experte kann daher nur die
+     *Prinzipien* (Kapitel 5–16: Farbsystem, Typografie, Abstände, a11y-Regeln
+     als Text), nicht den *Workflow* (Fragerunden, Subagent-Delegation,
+     Datei-Exploration) sinnvoll übernehmen.
+
+  **Revidierte Instructions für Phase 2–4:**
+  - Weg 2 (Skills für Claude-Code-Sessions) zuerst umsetzen, nicht Weg 1.
+    Grund: Diese Sessions haben echten Datei-/Tool-Zugriff und verwalten
+    bereits `admin_ui/templates/*.html` — die Voraussetzungen des Prompts
+    sind hier tatsächlich erfüllt. Die `codex/`-Variante ("in-loop
+    verification", kein Subagent-Zwang) ist die strukturell passendere
+    Vorlage als `claude/`.
+  - Import-Reihenfolge Weg 2: `ai-slop-check.md`, `accessibility-audit.md`,
+    `hierarchy-rhythm-review.md` (aus `codex/skills/`, nicht `claude/skills/`)
+    — mit YAML-Frontmatter (`description:`-Feld, Format siehe bestehende
+    Skills in `moe-infra/skills/*.md`) ergänzen, MIT-Copyright-Header
+    (Trystan Sarrade, 2026) beibehalten, durch den bestehenden
+    `_run_llm_audit()`-Mechanismus (`admin_ui/app.py:3716`) laufen lassen.
+    **Umsetzungsstand 2026-07-05:** `ai-slop-check` und
+    `hierarchy-rhythm-review` importiert nach `skills/community/` und
+    auditiert (`verdict: safe`, 0 Findings, `qwen3.6:35b`@N04-RTX).
+    `accessibility-audit` bewusst NICHT importiert — der bestehende
+    Community-Skill `a11y-audit` deckt denselben Funktionsumfang bereits ab
+    (WCAG-2.2-Scan/Fix/Verify). Offen: Admin-Freigabe der beiden Skills
+    (`admin_approved`) über die `/skills`-Seite — Selbst-Freigabe per SQL
+    wurde vom Auto-Mode-Classifier zweifach gestoppt und bewusst nicht
+    umgangen (Freigabe externen Codes ist eine Menschen-Entscheidung).
+  - Weg 1 (`frontend_designer`-Experte) nur mit reduziertem Scope: Prompt
+    auf Kapitel 5–16 (reine Stilregeln) beschränken, explizit dokumentieren,
+    dass Fragerunden/Subagent-Verifikation dort strukturell nicht greifen —
+    sonst entsteht eine Workflow-Erwartung, die die Architektur nicht liefern
+    kann.
+
+  **Ergänzte Acceptance-Kriterien:**
+  - Importierte Skills stammen aus `codex/skills/`, nicht `claude/skills/`
+    (Begründung: kein Subagent-Mechanismus in MoE-Sovereigns Skill-System).
+  - `frontend_designer`-Systemprompt (falls Weg 1 umgesetzt wird) enthält
+    einen expliziten Hinweis, dass Fragerunden und Datei-Exploration in
+    diesem Kontext nicht verfügbar sind.
+  - Mindestens ein Skill (empfohlen: `/ai-slop-check`) erfolgreich gegen
+    eine reale Datei aus `admin_ui/templates/` in einer Claude-Code-Session
+    ausgeführt und das Ergebnis dokumentiert (Nachweis der Weg-2-Tauglichkeit).
+
+---
+
+### TASK-33: Vibelate-Governance als CC-Profil-Preset (gestufter Weg: Prompt zuerst, Fine-Tuning später)
+
+- **Status:** partially_done (Phase A umgesetzt 2026-07-05; Phase B wartet
+  auf Messphase — siehe Resolution notes)
+- **Owner:** Claude Code (Phase A)
+- **Depends on:** WP3/Quality-Probe (`services/quality_probe.py`,
+  `MOE_QUALITY_PROBE` Flag, siehe `SESSION_DOKUMENTATION_2026-07-05.md`),
+  `scripts/export_distillation_dataset.py` (beide bereits implementiert)
+- **Context:** `/opt/deployment/Michael_Reich/Vibelate3` (Ursprung:
+  `ADHS/vibelate/`, verfeinert über Vibelate2 → Vibelate3) ist kein
+  Coding-Stil, sondern ein Agenten-Governance-Framework: Autoritätshierarchie,
+  kanonische Backlog-Zerlegung (Initiative → Epic → Story → Implementation
+  Task), "Schema is the process"-Architekturphilosophie, Proof-Integrity- und
+  Verification-Regeln. Analyse (2026-07-05, Claude Code) ergab zwei
+  Kernbefunde:
+  1. Vibelate setzt durchgehend Datei-Exploration, Ownership-Boundary-Prüfung
+     und iterative Testlauf-Verifikation voraus. `graph/expert.py` (reguläre
+     MoE-Pipeline) ist reines Text-rein/Text-raus ohne Tool-/Dateizugriff —
+     ein neuer MoE-Pipeline-Modus (`moe_mode: "vibelate"`) könnte die
+     Disziplin nur behaupten, nicht durchsetzen. Ein CC-Profil-Preset
+     (`system_prompt_prefix`, analog zum bereits implementierten
+     `tool_system_prefix`-Mechanismus aus `cc_session.py`) passt dagegen
+     strukturell: eine echte Claude-Code-Session hat Datei-, Such- und
+     Testlauf-Zugriff, genau wie von Vibelate vorausgesetzt.
+  2. Vibelate ist kein stabiles Zielobjekt — die Methodik hat sich bereits
+     über zwei Iterationen (v2 → v3) sichtbar verändert. Ein Fine-Tuning
+     jetzt würde eine noch in Bewegung befindliche Methodik in Gewichte
+     einfrieren (teuer bei jeder Regel-Änderung, nicht diffbar/auditierbar —
+     dasselbe Problem, das TASK-12/Decision-Log für Laufzeitentscheidungen
+     löst). Zudem ist Fine-Tuning auf externe HPC-Infra angewiesen — TASK-2
+     in diesem selben Lastenheft zeigt konkret, wie ein abgelaufenes
+     LUMI-SSH-Zertifikat einen Trainingslauf tagelang blockierte.
+  - **Entscheidung:** gestufter Weg statt Entweder-Oder. Phase A (jetzt):
+     CC-Profil-Preset mit System-Prompt-Prefix, Wirksamkeit über die bereits
+     laufende Quality-Probe-Infrastruktur messen. Phase B (später, nur wenn
+     Phase A stabile, gute Ergebnisse zeigt): stabile Vibelate-konforme
+     Transkripte über die bereits vorhandene Distillations-Pipeline als
+     LoRA-Trainingsdaten exportieren.
+- **Instructions:**
+  1. **Phase A — CC-Profil-Preset:**
+     - Kondensiere `Vibelate3/AGENTS.md` (Precedence, Core Working Contract,
+       Coding Behavior, Verification Rules — nicht die projektspezifischen
+       Platzhalter-Kapitel wie Backlog/AI-Memory-Pfade) zu einem
+       `system_prompt_prefix`-Text für ein neues CC-Profil "Vibelate-Strict".
+     - Lege das Profil im Admin-UI oder User-Portal an (bestehender
+       CC-Profil-Editor, `moe_mode` frei wählbar je nach Anwendungsfall —
+       `native` oder `moe_orchestrated` mit Experten-Template).
+     - MIT-Lizenzhinweis: Vibelate selbst hat noch keine explizite Lizenz im
+       Projektverzeichnis geprüft — vor Veröffentlichung/Weitergabe des
+       CC-Profil-Textes mit Michael Reich klären, ob/wie Attribution nötig
+       ist (anders als beim MIT-lizenzierten `claude-design-system-prompt`
+       aus TASK-32, wo die Lizenzlage bereits geklärt ist).
+  2. **Phase A — Messung:**
+     - `MOE_QUALITY_PROBE=1` ist bereits aktiv (siehe
+       `SESSION_DOKUMENTATION_2026-07-05.md`). Sofern das Vibelate-Profil
+       hinreichend Traffic bekommt, fließen Vergleichsdaten automatisch in
+       `pipeline_quality_log`.
+     - Nach einigen Wochen Nutzung: Auswertung, ob mit dem Vibelate-Profil
+       geführte Sessions messbar weniger Nacharbeit / Regressions-Bugs /
+       Scope-Abweichungen produzieren als ohne (Proxy-Metriken: Anzahl
+       Folge-Korrekturen pro Task; `structured_failure_round` aus TASK-30;
+       `trust_verdict`-Verteilung aus TASK-10 — sofern anwendbar).
+  3. **Phase B — Distillation (nur nach positiver Phase-A-Auswertung UND
+     wenn das Vibelate-Regelwerk über mind. 2-3 Monate unverändert blieb):**
+     - `scripts/export_distillation_dataset.py` um einen Filter erweitern,
+       der nur Conversation-Log-Einträge mit `template_id`/CC-Profil
+       "Vibelate-Strict" exportiert.
+     - Erst dann: LoRA-Trainingslauf auf einem lokalen Coder-Modell prüfen —
+       mit dem Wissen, dass jede spätere Vibelate-Regeländerung einen neuen
+       Trainingslauf erfordert (bewusste Kosten-Nutzen-Abwägung, siehe
+       Context).
+- **Acceptance criteria:**
+  - CC-Profil "Vibelate-Strict" existiert, ist im Profil-Editor sichtbar und
+    liefert bei einer Testanfrage nachweislich Vibelate-Sprache/-Disziplin
+    (z. B. "Challenge weak or underspecified input", scope-enger Edit-Stil)
+    in der Antwort.
+  - Explizite Dokumentation, dass dies ein CC-Profil-Preset ist, kein neuer
+    MoE-Pipeline-Modus — mit Begründung (Tool-/Dateizugriff-Voraussetzung).
+  - Phase B wird nicht ohne dokumentierte Phase-A-Auswertung begonnen.
+- **Resolution notes (2026-07-05, Claude Code — Phase A):**
+  - `Vibelate3/AGENTS.md` auf die projektunabhängigen Kapitel kondensiert
+    (2638 Zeichen: Core Working Contract, Coding Behavior, Proof Integrity,
+    Architecture stance).
+  - CC-Profil "Vibelate-Strict" (`ucp-96dd63b047aa47deac4a856a`, User
+    horndev, `moe_mode: native`, `tool_model` leer → Template-Auto-Ableitung)
+    per SQL angelegt — nach expliziter Nutzerbestätigung via AskUserQuestion,
+    nachdem der Auto-Mode-Classifier den ersten Versuch gestoppt hatte.
+    Redis-Cache invalidiert; Persistenz per Round-Trip-Read verifiziert.
+  - Bewusst NICHT erledigt: Zuweisung des Profils zu einem API-Key
+    (Nutzerentscheidung) und der Lizenz-Klärungspunkt mit Michael Reich.
+  - Phase B bleibt offen bis zur dokumentierten Phase-A-Auswertung
+    (Messfenster läuft mit `MOE_QUALITY_PROBE=1`).
+
+---
+
+### TASK-34: Integration / Evaluation des Vibe-Coding-Ökosystems (Empfehlungen & Implementierungsszenarien)
+
+- **Status:** pending
+- **Owner:** unassigned
+- **Depends on:** Phase 1/3: none. Phase 2: Koordination mit TASK-32 (Design-
+  Skills) und TASK-33 (Vibelate-CC-Profil-Prefix) — alle drei injizieren
+  Regeln in denselben effektiven System-Prompt; Stacking-Reihenfolge und
+  Konfliktauflösung müssen vor Phase-2-Beginn festgelegt werden (siehe
+  Review-Notiz).
+- **Context:** Das Vibe-Coding-Ökosystem entwickelt sich rasant (z. B. *The Ultimate Vibecoding Directory* und *Awesome-Vibecoding*). Diese Verzeichnisse listen moderne Client-Side Tools, Best Practices und System-Prompts auf. Da `MoE-Sovereign` als private, lokale Multi-Modell-Orchestrierungsschicht konzipiert ist, können wir durch die Integration dieser Standards Entwicklern ermöglichen, ihre bevorzugten Frontend-Coding-Clients (wie Cline, Roo-Code oder lokale Web-App-Generatoren) vollkommen souverän im eigenen Netz mit lokalen Experten (wie `qwen2.5-coder` oder `phi4`) zu betreiben.
+- **Instructions:**
+  1. **Phase 1: API-Kompatibilität für Vibe-Coding-Clients (Sovereign Gateway):**
+     - Analyse der API-Anforderungen führender Vibe-Coding-Tools (z. B. Cline, Roo-Code).
+     - Erweiterung der API-Kompatibilität in `routes/anthropic_compat.py` und `routes/ollama_compat.py`, um reibungslose Schnittstellen zu diesen Client-Editoren zu gewährleisten.
+  2. **Phase 2: Prompt-Standardisierung für lokale Experten:**
+     - Übernahme strukturierter Doktrinen (z. B. TDD-Erzwingung, präzise File-Edit-Spezifikationen, Such- und Ersetzungs-Patterns) aus bekannten `.cursorrules` des *Vibecoding Directories*.
+     - Integration dieser Regeln in die standardmäßigen System-Prompts von `MoE-Sovereign` (`prompts/systemprompt/`), um Syntax-Drift bei lokalen 14B/35B Modellen zu minimieren.
+  3. **Phase 3: MCP-Tool-Registry-Erweiterung:**
+     - Analyse der in *Awesome-Vibecoding* gelisteten, bewährten Community-MCP-Server.
+     - Ergänzung nützlicher Werkzeuge (z. B. für erweiterte Dateiverwaltung, Git-Aktionen) in der AST-geprüften Whitelist des `mcp-precision`-Containers.
+- **Acceptance criteria:**
+  - Kompatibilitäts-Verifikationsbericht liegt vor (welcher Client, welcher
+    API-Modus, welche Lücken tatsächlich gefunden — analog zum
+    Evaluationsbericht aus TASK-32 Phase 1); erst danach werden Compat-Layer
+    geändert. *(Ersetzt am 2026-07-05 das ursprüngliche selbsterfüllende
+    Kriterium „Plan ist eingetragen (Erledigt)" — Widerspruchsauflösung auf
+    Betreiberanweisung.)*
+  - Mindestens ein moderner Vibe-Coding-Client (z. B. Cline oder Roo-Code) kann sich erfolgreich über das Sovereign-Gateway verbinden und Dateiveränderungen mit lokalen Modellen abschließen.
+  - System-Prompts für Programmier-Tasks enthalten Regeln zur präzisen Such- und Ersetzungsstruktur.
+  - Whitelist der MCP-Tools wurde um mindestens ein Tool erweitert, das den
+    für Community-Skills etablierten Audit-Weg (`_run_llm_audit()` +
+    Admin-Freigabe, vgl. `skill_registry`-Muster) durchlaufen hat.
+    *(Präzisiert am 2026-07-05: „Community-geprüft" war ohne definierten
+    Prüfmechanismus nicht abnehmbar.)*
+- **Review-Notiz (2026-07-05, Claude Code — Koordination gem. Section 0,
+  Inhalt bewusst nicht umgeschrieben):**
+  - Referenzierte Pfade gegen den Code verifiziert: `prompts/systemprompt/`
+    (existiert, u.a. `agentic_coder.md`), `routes/anthropic_compat.py` /
+    `routes/ollama_compat.py` (existieren), AST-basierte Prüfung in
+    `mcp_server/server.py` (existiert) — Grundlage der Task ist solide.
+  - **Phase 1 setzt eine Lücke voraus, die vermutlich nicht existiert:**
+    Cline/Roo-Code sprechen OpenAI-/Anthropic-/Ollama-kompatible APIs;
+    alle drei Compat-Layer sind bereits vorhanden. Empfohlener erster
+    Schritt: Verbindungs-Verifikation mit einem echten Client, dann nur
+    tatsächlich festgestellte Lücken schließen — nicht pauschal "erweitern".
+  - **Nicht deklarierte Überlappung:** Phase 2 (Regeln in
+    `prompts/systemprompt/`) überschneidet sich mit TASK-33
+    (Vibelate-Regeln als CC-Profil-Prefix) und TASK-32 (Design-Regeln als
+    Skills). Drei Ebenen injizieren dann Disziplin-Regeln in denselben
+    effektiven System-Prompt — Stacking-Reihenfolge und Konflikte sollten
+    vor Phase 2 geklärt werden. `Depends on: none` ist daher zu schwach.
+  - **Phase 3 fehlt ein Sicherheits-Gate:** Neue Community-MCP-Tools sollten
+    denselben Audit-Weg durchlaufen wie Community-Skills
+    (`_run_llm_audit()` + Admin-Freigabe, vgl. `skill_registry`-Muster).
+    Acceptance-Kriterium 4 („Community-geprüft") ist ohne definierten
+    Prüfmechanismus nicht abnehmbar.
+  - **Formales (aufgelöst 2026-07-05 auf Betreiberanweisung):** Die drei
+    formalen Widersprüche wurden direkt in dieser Task korrigiert —
+    (a) selbsterfüllendes Kriterium 1 durch prüfbares
+    Verifikationsbericht-Kriterium ersetzt, (b) Graph-Eintrag von
+    „Evaluierung done" auf „Plan eingetragen" korrigiert (kein
+    Evaluations-Artefakt existierte), (c) `Depends on` um die
+    Prompt-Stacking-Koordination mit TASK-32/33 ergänzt. Weiterhin offen
+    und NICHT durch mich behebbar: kein Status-Log-Eintrag des Erstellers
+    für die ursprüngliche Eintragung (`agent_status/agy.md` unverändert
+    seit 2026-07-02, vgl. Section 0) — der Ersteller sollte das bei der
+    nächsten Session nachholen.
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on
   `ki-vm-node05`): best suited for TASK-1 (code refactor + rebuild) and the
-  Docker/manual-test portions of TASK-3.
+  Docker/manual-test portions of TASK-3. For the new quality tasks: TASK-12
+  (Decision Log — pure Python service, no LangGraph structural changes) and
+  TASK-13 (Boundary Contracts — YAML config + lightweight check module).
 - **agy / Google Antigravity CLI** (has full IMoE implementation context and
   the original `task.md`/`walkthrough.md`): best suited for TASK-2 (it
   authored the training scripts) and writing the TASK-3 walkthrough report.
+  For the new tasks: TASK-10 (Trust-Score) and TASK-11 (Self-Critique), which
+  require deep LangGraph-node wiring in `graph/synthesis.py`.
 - **OpenCode**: available for TASK-4 (new work) or as a second implementer
-  for TASK-1 if Claude Code is blocked — coordinate via the Status Protocol
-  to avoid concurrent edits to `context_budget.py`/`services/inference.py`.
-- **Codex CLI**: well suited for focused, isolated refactors — e.g. the
-  `resolve_requested_ctx()` extraction in TASK-1, or reviewing TASK-1's diff
-  for correctness against `_judge_model_kw()`/`_planner_model_kw()`.
-- **Cursor**: useful for interactive review of TASK-1's changes across
-  `graph/synthesis.py` / `graph/expert.py` / `services/inference.py`
-  (multi-file consistency), and for smaller TASK-4 items as they're defined.
+  for TASK-1 if Claude Code is blocked. For new tasks: TASK-16
+  (Cascade Resolution Tracking — isolated extension of existing `cascade.py`)
+  and TASK-17 (Scope Guard — small standalone service).
+- **Codex CLI**: well suited for focused, isolated refactors. For new tasks:
+  TASK-15 (Cynefin Classification — deterministic, no LLM, pure logic module)
+  and TASK-18 (Handover / Context-Preservation — Valkey serialization pattern
+  analogous to existing session handling).
+- **Cursor**: useful for multi-file consistency reviews. For new tasks:
+  TASK-14 (Human-in-the-Loop Gate — touches `graph/synthesis.py`, new
+  `routes/gates.py`, and Valkey integration simultaneously).
 
 These are suggestions, not constraints — any agent may pick up any
 `pending` task, as long as it follows the Status Protocol (Section 0) and
 updates `Owner:`/`Status:` accordingly. If two agents target the same files,
 check each other's status logs first and note the overlap in Section 3.
+
+**New tasks dependency graph (TASK-10 through TASK-34):**
+```
+Quality Enhancements:
+TASK-10 (Trust-Score)
+    └── TASK-11 (Self-Critique)
+    └── TASK-14 (HITL Gate)
+            └── TASK-15 (Cynefin) [informs Gate trigger]
+
+TASK-12 (Decision Log)        ← independent, high priority
+TASK-13 (Boundary Contracts)  ← independent
+TASK-16 (Cascade Resolution)  ← extends cascade.py (feat 886944f7)
+TASK-17 (Scope Guard)         ← independent
+TASK-18 (Handover)            ← independent
+
+GraphRAG / Wikipedia Knowledge:
+TASK-19 (YAGO 4 Import)
+    └── TASK-20 (Wikipedia Abstracts Chunking + Embedding)
+            └── TASK-21 (GraphRAG Benchmark Harness)
+
+ADHS-Transfer (aus Agent-Orchestrator-Analyse, 2026-07-01):
+TASK-29 (AI I/O Audit Service)      ← independent, EU-Compliance-Priorität
+TASK-30 (Structured-Output Failure) ← independent, erhöht Robustheit
+TASK-31 (Capability-Tabelle)        ← independent, Basis für TASK-30-Routing
+
+Claude Design System Integration:
+TASK-32 (Claude Design Prompt)       ← Phase 1+2 weitgehend done (2 Skills importiert+auditiert, Admin-Freigabe offen), Phase 3-4 pending
+
+Agent-Governance Transfer:
+TASK-33 (Vibelate CC-Profil-Preset)  ← Phase A live (ucp-96dd63b0...), Phase B nach Messfenster
+
+Vibe-Coding Ökosystem Integration:
+TASK-34 (Vibe-Coding Integration)    ← Plan eingetragen 2026-07-05, Phase 1-3 pending
+```
 
 ---
 

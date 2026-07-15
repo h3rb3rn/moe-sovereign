@@ -26,8 +26,9 @@ KAFKA_TOPIC_INGEST   = "moe.ingest"
 KAFKA_TOPIC_REQUESTS = "moe.requests"
 KAFKA_TOPIC_FEEDBACK = "moe.feedback"
 KAFKA_TOPIC_LINTING  = "moe.linting"
-KAFKA_TOPIC_AUDIT    = "moe.audit"
-KAFKA_TOPIC_STUCK    = "moe.stuck"
+KAFKA_TOPIC_AUDIT      = "moe.audit"
+KAFKA_TOPIC_STUCK      = "moe.stuck"
+KAFKA_TOPIC_DECISIONS  = "moe.decisions"
 
 # =============================================================================
 # Database & cache
@@ -102,6 +103,12 @@ PLANNER_MODEL    = os.getenv("PLANNER_MODEL", "")
 PLANNER_ENDPOINT = os.getenv("PLANNER_ENDPOINT", os.getenv("JUDGE_ENDPOINT", ""))
 PLANNER_URL      = URL_MAP.get(PLANNER_ENDPOINT) if PLANNER_ENDPOINT else None
 PLANNER_TOKEN    = TOKEN_MAP.get(PLANNER_ENDPOINT, "ollama") if PLANNER_ENDPOINT else "ollama"
+
+# ── Planner Execution Mode (llm, slm_local, hybrid) ──────────────────────────
+PLANNER_MODE            = os.getenv("PLANNER_MODE", "llm").lower()
+PLANNER_LOCAL_GGUF_PATH = os.getenv("PLANNER_LOCAL_GGUF_PATH", "")
+PLANNER_LOCAL_THREADS   = int(os.getenv("PLANNER_LOCAL_THREADS", "4"))
+
 
 _JUDGE_BASE   = (JUDGE_URL   or "").rstrip("/").removesuffix("/v1")
 _PLANNER_BASE = (PLANNER_URL or "").rstrip("/").removesuffix("/v1")
@@ -283,6 +290,22 @@ CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 # stays stable under docker stats. When disabled, CC tool requests use the plain
 # pass-through path (system prompt forwarded verbatim, budget-trimmed).
 CC_CONTEXT_INDEX_ENABLED = os.getenv("CC_CONTEXT_INDEX_ENABLED", "false").lower() in ("1", "true", "yes")
+
+# ── Augmented Tool Path (agentic clients: Claude Code / OpenCode) ────────────
+# Opt-in enrichment layer for the tool-call fast path (_handle_tool_calls /
+# _anthropic_tool_handler), which today bypasses cache, GraphRAG and ingestion
+# entirely. All flags default OFF; enabled per CC profile / expert template.
+# See moe-infra/UMSETZUNGSPLAN_AGENT_ENRICHMENT_2026-07-09.md for the design.
+AGENT_CACHE_ENABLED       = os.getenv("AGENT_CACHE_ENABLED", "false").lower() in ("1", "true", "yes")
+AGENT_CACHE_MIN_CONF      = float(os.getenv("AGENT_CACHE_MIN_CONF", str(KNOWLEDGE_BYPASS_MIN_CONF)))
+AGENT_CACHE_TTL_DAYS      = int(os.getenv("AGENT_CACHE_TTL_DAYS", str(KNOWLEDGE_BYPASS_TTL_DAYS)))
+AGENT_CACHE_L0_TTL        = int(os.getenv("AGENT_CACHE_L0_TTL", "1800"))
+AGENT_CACHE_MAX_LOOKUP_MS = int(os.getenv("AGENT_CACHE_MAX_LOOKUP_MS", "300"))
+AGENT_GRAPHRAG_ENABLED    = os.getenv("AGENT_GRAPHRAG_ENABLED", "false").lower() in ("1", "true", "yes")
+AGENT_GRAPHRAG_TIMEOUT_S  = float(os.getenv("AGENT_GRAPHRAG_TIMEOUT_S", "2.0"))
+AGENT_GRAPHRAG_MAX_CHARS  = int(os.getenv("AGENT_GRAPHRAG_MAX_CHARS", "4000"))
+AGENT_INGEST_ENABLED      = os.getenv("AGENT_INGEST_ENABLED", "false").lower() in ("1", "true", "yes")
+AGENT_INGEST_JUDGE        = os.getenv("AGENT_INGEST_JUDGE", "true").lower() in ("1", "true", "yes")
 
 # =============================================================================
 # Timeouts & LLM call limits

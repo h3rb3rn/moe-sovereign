@@ -1,0 +1,23 @@
+{
+  "id": "cc-agent-augmented",
+  "name": "Test: Augmented Tool Path (Agent Cache + GraphRAG + Ingestion)",
+  "description": "Opt-in test profile for the Augmented Tool Path (see UMSETZUNGSPLAN_AGENT_ENRICHMENT_2026-07-09.md). Enables GraphRAG context injection, knowledge-graph ingestion from agent sessions, and cache-serving for informational final answers on the Claude Code tool-call fast path. tool_choice is 'auto' (not 'required') so a cacheable informational answer is not forced into a tool_use turn. Intended for the horndev test API key / north-mini-code profile only — do not assign broadly until AP5 (write-back) has run in production for several days per the rollout plan.",
+  "moe_mode": "moe_orchestrated",
+  "tool_model": "gemma4:31b",
+  "tool_endpoint": "",
+  "accepted_models": [
+    "claude-sonnet-4-20250514",
+    "claude-sonnet-4-6-20250725"
+  ],
+  "expert_template_id": "moe-reference-30b-balanced",
+  "system_prompt_prefix": "",
+  "stream_think": false,
+  "tool_max_tokens": 8192,
+  "context_window": 32768,
+  "reasoning_max_tokens": 8192,
+  "tool_choice": "auto",
+  "agent_cache": true,
+  "agent_graphrag": true,
+  "agent_ingest": true,
+  "enabled": true
+}

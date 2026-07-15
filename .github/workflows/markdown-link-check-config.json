@@ -1,0 +1,17 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^http://localhost" },
+    { "pattern": "^https?://127\\.0\\.0\\.1" },
+    { "pattern": "^https?://192\\.168\\." },
+    { "pattern": "^https?://10\\." },
+    { "pattern": "^https?://172\\.(1[6-9]|2[0-9]|3[0-1])\\." },
+    { "pattern": "^https?://host\\.docker\\.internal" },
+    { "pattern": "\\.internal(:|/|$)" },
+    { "pattern": "\\.intern(:|/|$)" },
+    { "pattern": "^https?://[a-zA-Z0-9.-]+:(8000|8002|8003|8010|8080|8088|8090|9080|9090|9999|3000|3001|4000|5000|7474|7687|11434)(/|$)" }
+  ],
+  "timeout": "10s",
+  "retryOn429": true,
+  "retryCount": 2,
+  "aliveStatusCodes": [200, 206, 301, 302, 303, 307, 308]
+}

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import json
 import re as _re
@@ -14,6 +15,7 @@ from typing import Optional
 
 import httpx
 import docker
+from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, UploadFile, File, BackgroundTasks, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -317,6 +319,61 @@ async def _budget_alert_loop() -> None:
         await _check_budget_alerts()
 
 
+# ── GPU VRAM history (cumulative per-instance usage over time) ─────────────
+# api_live_llm_instances() already polls each Ollama node's hardware/GPU
+# stats, but only live, on-demand, while the dashboard happens to be open —
+# nothing was ever persisted for a historical view. This loop samples the
+# same node-exporter data independently of dashboard traffic and stores a
+# bounded time series per node in Redis (sorted set, score=timestamp) so
+# /api/live/gpu-history can serve a real "usage over the last N hours" chart.
+_GPU_HISTORY_INTERVAL_S = 300       # 5 min between samples
+_GPU_HISTORY_RETENTION_S = 7 * 86400  # keep 7 days
+
+
+def _gpu_history_key(node_name: str) -> str:
+    safe = _re.sub(r"[^a-zA-Z0-9_\-]", "_", node_name or "unknown")
+    return f"moe:gpu_history:{safe}"
+
+
+async def _gpu_history_poll_loop() -> None:
+    # Stagger the first sample so it doesn't compete with startup traffic.
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await _poll_and_record_gpu_history()
+        except Exception as exc:
+            logger.warning("GPU history poll failed: %s", exc)
+        await asyncio.sleep(_GPU_HISTORY_INTERVAL_S)
+
+
+async def _poll_and_record_gpu_history() -> None:
+    from urllib.parse import urlparse
+    servers = _get_inference_servers()
+    now = _time_mod.time()
+    r = await db._get_redis()
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for srv in servers:
+            if srv.get("api_type", "ollama") != "ollama":
+                continue
+            host = urlparse(srv["url"]).hostname
+            if not host or host in ("localhost", "127.0.0.1"):
+                continue
+            try:
+                resp = await client.get(f"http://{host}:9100/metrics", timeout=5.0)
+                gpus = _parse_node_gpu_metrics(resp.text)
+                if not gpus:
+                    continue
+                vram_used  = round(sum(g.get("vram_used_gb", 0) for g in gpus), 1)
+                vram_total = round(sum(g.get("vram_total_gb", 0) for g in gpus), 1)
+                entry = json.dumps({"ts": now, "vram_used_gb": vram_used, "vram_total_gb": vram_total})
+                key = _gpu_history_key(srv["name"])
+                await r.zadd(key, {entry: now})
+                await r.zremrangebyscore(key, 0, now - _GPU_HISTORY_RETENTION_S)
+                await r.expire(key, _GPU_HISTORY_RETENTION_S + 3600)
+            except Exception as exc:
+                logger.debug("GPU history poll skipped for %s: %s", srv["name"], exc)
+
+
 # ─── App ─────────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -335,6 +392,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_permission_cleanup())
     # Daily retention cleanup for conversation audit logs
     asyncio.create_task(_daily_conversation_log_cleanup_loop())
+    # Periodic GPU VRAM history sampling (per-instance cumulative usage over time)
+    asyncio.create_task(_gpu_history_poll_loop())
     yield
 
 async def _daily_conversation_log_cleanup_loop() -> None:
@@ -371,12 +430,49 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ─── PWA: manifest + service worker ──────────────────────────────────────────
 
-_PWA_CACHE_VERSION = "moe-admin-v1"
+def _compute_pwa_cache_version(prefix: str) -> str:
+    """Derives the service worker's Cache Storage version from the actual
+    content of every JS/CSS file under static/.
+
+    The service worker's fetch handler caches any /static/* request
+    cache-first (see sw.js below) with no other invalidation path — once a
+    file is in a browser's Cache Storage under a given version string, that
+    exact byte content is served forever, network never consulted again,
+    until the version string itself changes. A hand-maintained version
+    constant is easy to forget to bump (confirmed live: pipeline_diagram.js
+    was edited repeatedly across a session without ever touching
+    _PWA_CACHE_VERSION, so every returning browser kept serving a stale copy
+    indefinitely — only a full cache-storage-clearing hard reload worked
+    around it). Hashing file content instead of relying on mtimes is immune
+    to any build/COPY step that doesn't preserve original timestamps.
+    """
+    h = hashlib.sha256()
+    static_dir = Path("static")
+    for f in sorted(static_dir.rglob("*.js")) + sorted(static_dir.rglob("*.css")):
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            continue
+    return f"{prefix}-{h.hexdigest()[:12]}"
+
+
+_PWA_CACHE_VERSION = _compute_pwa_cache_version("moe-admin")
+# "/" was previously in this list. Cache.addAll()/Cache.put() throw a
+# TypeError for any *redirected* response — even one that ultimately
+# resolves to 200 — and "/" redirects to /login for unauthenticated
+# requests (and can redirect for other reasons too). That threw during the
+# service worker's install step, which never completed, so the SW never
+# reached "active" — and Chrome requires an active SW with a fetch handler
+# before it will fire beforeinstallprompt, so installability silently
+# failed and the UI fell back to manual "Add to Home Screen" instructions
+# even though the manifest/icons/SW script itself all looked fine over curl.
+# Only genuinely static, always-200 assets belong in this install-time
+# list; dynamic/auth-gated pages are left to the fetch handler's
+# network-first-with-cache-fallback behavior instead.
 _STATIC_ASSETS_TO_CACHE = [
     "/static/css/bootstrap.min.css",
     "/static/css/bootstrap-icons.min.css",
     "/static/js/bootstrap.bundle.min.js",
-    "/",
 ]
 
 @app.get("/manifest.json")
@@ -393,14 +489,20 @@ async def pwa_manifest():
         "orientation":      "portrait-primary",
         "icons": [
             {
-                "src":     "/static/icons/icon-192.svg",
+                "src":     "/static/icons/icon-192.png",
                 "sizes":   "192x192",
-                "type":    "image/svg+xml",
+                "type":    "image/png",
                 "purpose": "any maskable",
             },
             {
-                "src":     "/static/icons/icon-512.svg",
+                "src":     "/static/icons/icon-512.png",
                 "sizes":   "512x512",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-192.svg",
+                "sizes":   "192x192",
                 "type":    "image/svg+xml",
                 "purpose": "any maskable",
             },
@@ -411,7 +513,14 @@ async def pwa_manifest():
             {"name": "Templates",   "url": "/templates",    "description": "Expert templates"},
             {"name": "Modelle",     "url": "/model-metadata","description": "Model metadata"},
         ],
-    }, headers={"Content-Type": "application/manifest+json"})
+    }, headers={
+        "Content-Type": "application/manifest+json",
+        # Best practice for PWA control files: never let a browser or any
+        # intermediate proxy cache these, so an update is picked up on the
+        # very next request instead of possibly being served stale for
+        # however long a caching layer decides to hold onto it.
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+    })
 
 
 @app.get("/sw.js")
@@ -456,6 +565,118 @@ self.addEventListener('fetch', e => {{
 """
     return Response(content=sw_code, media_type="application/javascript",
                     headers={"Service-Worker-Allowed": "/"})
+
+
+# "/user/dashboard" deliberately not in this list: Cache.addAll()/
+# Cache.put() throw a TypeError for any *redirected* response, even one
+# that ultimately resolves to 200 — and this route redirects to
+# /user/login for unauthenticated requests. That would abort the service
+# worker's install step, leaving it stuck non-active and Chrome unwilling
+# to offer beforeinstallprompt (confirmed live on MoE Admin's identical
+# "/" pattern — see fix/pwa-mobile-nav-overflow). Only genuinely static,
+# always-200 assets belong here; dynamic/auth-gated pages are already
+# covered by the fetch handler's network-first-with-cache-fallback path.
+_PWA_PORTAL_CACHE_VERSION = _compute_pwa_cache_version("moe-portal")
+_PORTAL_STATIC_ASSETS_TO_CACHE = [
+    "/static/css/bootstrap.min.css",
+    "/static/css/bootstrap-icons.min.css",
+    "/static/js/bootstrap.bundle.min.js",
+    "/static/js/chart.umd.min.js",
+]
+
+
+@app.get("/user/manifest.json")
+async def pwa_portal_manifest():
+    """Web App Manifest for the User Portal — a separate installable PWA
+    from MoE Admin (own name/icon-label/start_url/scope), so end users can
+    install just the portal without pulling in admin-only shortcuts."""
+    return JSONResponse({
+        "name":             "MoE Portal",
+        "short_name":       "MoE Portal",
+        "description":      "MoE Sovereign — User Portal",
+        "start_url":        "/user/dashboard",
+        "scope":            "/user/",
+        "display":          "standalone",
+        "background_color": "#1a1d21",
+        "theme_color":      "#1a1d21",
+        "orientation":      "portrait-primary",
+        "icons": [
+            {
+                "src":     "/static/icons/icon-192.png",
+                "sizes":   "192x192",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-512.png",
+                "sizes":   "512x512",
+                "type":    "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src":     "/static/icons/icon-192.svg",
+                "sizes":   "192x192",
+                "type":    "image/svg+xml",
+                "purpose": "any maskable",
+            },
+        ],
+        "categories": ["productivity", "utilities"],
+        "shortcuts": [
+            {"name": "Dashboard", "url": "/user/dashboard", "description": "Übersicht"},
+            {"name": "Nutzung",   "url": "/user/usage",     "description": "Nutzungsstatistik & Live Monitor"},
+            {"name": "API-Keys",  "url": "/user/keys",      "description": "API-Schlüssel verwalten"},
+        ],
+    }, headers={"Content-Type": "application/manifest+json"})
+
+
+@app.get("/user/sw.js")
+async def pwa_portal_service_worker():
+    """Service worker for the User Portal — scoped to /user/ (own cache
+    version, own asset list, own Service-Worker-Allowed scope) so it stays
+    independent of MoE Admin's root-scoped /sw.js. A browser that has both
+    apps installed resolves each request to whichever registered scope is
+    the more specific match, so the two never fight over the same cache."""
+    assets_json = json.dumps(_PORTAL_STATIC_ASSETS_TO_CACHE)
+    sw_code = f"""
+const CACHE  = '{_PWA_PORTAL_CACHE_VERSION}';
+const ASSETS = {assets_json};
+
+self.addEventListener('install', e => {{
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
+}});
+
+self.addEventListener('activate', e => {{
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+}});
+
+self.addEventListener('fetch', e => {{
+  const url = new URL(e.request.url);
+  // Cache-first for static assets; network-first for everything else
+  if (url.pathname.startsWith('/static/')) {{
+    e.respondWith(
+      caches.match(e.request).then(cached => cached || fetch(e.request).then(resp => {{
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return resp;
+      }}))
+    );
+  }} else {{
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match(e.request))
+    );
+  }}
+}});
+"""
+    return Response(content=sw_code, media_type="application/javascript",
+                    headers={"Service-Worker-Allowed": "/user/"})
+
+
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
@@ -497,6 +718,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Confirmed live: server-rendered pages (templates/*.html, bind-mounted
+        # and updated on every restart) had no Cache-Control at all, leaving
+        # staleness entirely up to browser heuristics — a redeployed template
+        # change (e.g. the live-monitoring flicker fix) could silently keep
+        # showing the old page to a returning browser with no way to tell.
+        # /static/* is deliberately excluded: those assets are already
+        # correctly long-cacheable via the service worker's content-hash
+        # versioned Cache Storage (see _compute_pwa_cache_version) — forcing
+        # no-cache here would defeat that and hurt load performance for no
+        # benefit, since that mechanism already invalidates on real changes.
+        if not path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
         if is_notebook:
             # JupyterLab needs WebSocket (ws:/wss:) and blob: workers for its kernel.
@@ -803,6 +1036,64 @@ def load_expert_templates() -> list:
         return _expert_templates_cache
     # Fallback: read from .env (before DB is initialized)
     return _load_expert_templates_from_env()
+
+
+def _get_template_expert_catalog(template_id: str) -> dict:
+    """Return {category: [model_name, ...]} for every model configured in a
+    template — the "menu" of experts available to a request, used by the
+    live pipeline diagram to show which experts a request COULD have used
+    alongside which ones the stage trace says it actually used.
+
+    Standalone re-implementation of services/routing.py's function of the
+    same name (NOT imported — services.routing imports config.py, which
+    isn't available in admin_ui's Docker build context, same reason
+    _latency_key is duplicated here rather than imported from
+    services.tracking). Falls back to the global EXPERT_MODELS config when
+    no template is assigned (the common case — confirmed live: most
+    requests have no expert_template_id at all) — read via read_env(), the
+    same .env-parsing helper used for every other config.py-sourced value
+    already exposed to admin_ui, NOT by importing config.py itself.
+    """
+    def _flatten(experts_cfg: dict) -> dict:
+        catalog: dict = {}
+        for cat, cat_cfg in (experts_cfg or {}).items():
+            models: list = []
+            if isinstance(cat_cfg, dict) and "models" in cat_cfg:
+                # Template format: {category: {"models": [{"model":...}, ...]}}
+                models = [m.get("model", "") for m in cat_cfg.get("models", []) if m.get("model")]
+            elif isinstance(cat_cfg, dict):
+                # Legacy template format: {category: {"model":..., "endpoint":...}}
+                if cat_cfg.get("model"):
+                    models = [cat_cfg["model"]]
+            elif isinstance(cat_cfg, list):
+                # Global EXPERT_MODELS format: {category: [{"model":...,"endpoints":[...]}, ...]}
+                models = [m.get("model", "") for m in cat_cfg if isinstance(m, dict) and m.get("model")]
+            if models:
+                catalog[cat] = models
+        return catalog
+
+    def _global_catalog() -> dict:
+        try:
+            return _flatten(json.loads(read_env().get("EXPERT_MODELS", "{}")))
+        except Exception:
+            return {}
+
+    if not template_id:
+        return _global_catalog()
+    tmpl = next((t for t in load_expert_templates() if t.get("id") == template_id), None)
+    if not tmpl:
+        # Confirmed live: moe-auto's dynamic per-user routing stamps a
+        # synthetic "user:<id>..." resolved_tmpl_id (services/pipeline/
+        # chat.py's dynamic_tmpl branch) that was never a persistent,
+        # admin-managed template — it never appears in
+        # load_expert_templates()'s DB-backed list, so this branch is the
+        # COMMON case whenever dynamic routing fired, not a rare "ghost
+        # template" edge case. Falling back to the global catalog here
+        # (instead of an empty dict) means the panel still shows something
+        # useful rather than going blank for every dynamically-routed
+        # request.
+        return _global_catalog()
+    return _flatten(tmpl.get("experts", {}))
 
 
 def _load_expert_templates_from_env() -> list:
@@ -1793,6 +2084,10 @@ async def api_create_profile(request: Request):
         "tool_choice":          body.get("tool_choice", "auto"),
         "expert_template_id":   body.get("expert_template_id", ""),
         "tool_timeout":         int(_tt) if _tt else None,
+        "long_memory":          bool(body.get("long_memory", True)),
+        "agent_cache":          bool(body.get("agent_cache", False)),
+        "agent_graphrag":       bool(body.get("agent_graphrag", False)),
+        "agent_ingest":         bool(body.get("agent_ingest", False)),
     }
     profiles.append(profile)
     save_profiles(profiles)
@@ -1820,6 +2115,10 @@ async def api_export_profiles(ids: str = ""):
             "tool_choice":          p.get("tool_choice", "auto"),
             "expert_template_id":   p.get("expert_template_id", ""),
             "tool_timeout":         p.get("tool_timeout"),
+            "long_memory":          p.get("long_memory", True),
+            "agent_cache":          p.get("agent_cache", False),
+            "agent_graphrag":       p.get("agent_graphrag", False),
+            "agent_ingest":         p.get("agent_ingest", False),
         }
         for p in profiles
     ]
@@ -1891,6 +2190,10 @@ async def api_import_profiles(request: Request, mode: str = "merge"):
             "tool_choice":          item.get("tool_choice", "auto"),
             "expert_template_id":   item.get("expert_template_id", ""),
             "tool_timeout":         int(_tt_imp) if _tt_imp else None,
+            "long_memory":          bool(item.get("long_memory", True)),
+            "agent_cache":          bool(item.get("agent_cache", False)),
+            "agent_graphrag":       bool(item.get("agent_graphrag", False)),
+            "agent_ingest":         bool(item.get("agent_ingest", False)),
         })
         existing_names.add(name)
         imported += 1
@@ -1922,6 +2225,10 @@ async def api_update_profile(profile_id: str, request: Request):
                 "tool_choice":          body.get("tool_choice", p.get("tool_choice", "auto")),
                 "expert_template_id":   body.get("expert_template_id", p.get("expert_template_id", "")),
                 "tool_timeout":         int(_tt_upd) if _tt_upd else p.get("tool_timeout"),
+                "long_memory":          bool(body.get("long_memory", p.get("long_memory", True))),
+                "agent_cache":          bool(body.get("agent_cache", p.get("agent_cache", False))),
+                "agent_graphrag":       bool(body.get("agent_graphrag", p.get("agent_graphrag", False))),
+                "agent_ingest":         bool(body.get("agent_ingest", p.get("agent_ingest", False))),
             })
             save_profiles(profiles)
             return {"ok": True, "restart_hint": True}
@@ -2124,7 +2431,15 @@ async def api_create_expert_template(request: Request):
         "planner_prompt":          body.get("planner_prompt", "").strip(),
         "judge_prompt":            body.get("judge_prompt", "").strip(),
         "judge_model":             body.get("judge_model", "").strip(),
+        "judge_num_ctx":           body.get("judge_num_ctx", 0),
         "planner_model":           body.get("planner_model", "").strip(),
+        "planner_num_ctx":         body.get("planner_num_ctx", 0),
+        # tool_expert_* — the Augmented Tool Path's dedicated agentic
+        # backend slot (OpenCode/Claude Code tool-calling passthrough, see
+        # services/pipeline/chat.py _handle_tool_calls / routing.py
+        # _resolve_template_prompts). Falls back to judge_model when empty.
+        "tool_expert_model":       body.get("tool_expert_model", "").strip(),
+        "tool_expert_num_ctx":     body.get("tool_expert_num_ctx", 0),
         "experts":                 body.get("experts", {}),
         "enable_cache":            body.get("enable_cache", True),
         "enable_graphrag":         body.get("enable_graphrag", True),
@@ -2136,6 +2451,9 @@ async def api_create_expert_template(request: Request):
         "graphrag_max_chars":      body.get("graphrag_max_chars", 0),
         "history_max_turns":       body.get("history_max_turns", 0),
         "history_max_chars":       body.get("history_max_chars", 0),
+        "agent_cache":             body.get("agent_cache", False),
+        "agent_graphrag":          body.get("agent_graphrag", False),
+        "agent_ingest":            body.get("agent_ingest", False),
     }
     templates.append(tmpl)
     save_expert_templates(templates)
@@ -2155,7 +2473,11 @@ async def api_export_expert_templates(ids: str = ""):
             "planner_prompt":          t.get("planner_prompt", ""),
             "judge_prompt":            t.get("judge_prompt", ""),
             "planner_model":           t.get("planner_model", ""),
+            "planner_num_ctx":         t.get("planner_num_ctx", 0),
             "judge_model":             t.get("judge_model", ""),
+            "judge_num_ctx":           t.get("judge_num_ctx", 0),
+            "tool_expert_model":       t.get("tool_expert_model", ""),
+            "tool_expert_num_ctx":     t.get("tool_expert_num_ctx", 0),
             "experts":                 t.get("experts", {}),
             "enable_cache":            t.get("enable_cache", True),
             "enable_graphrag":         t.get("enable_graphrag", True),
@@ -2167,6 +2489,9 @@ async def api_export_expert_templates(ids: str = ""):
             "graphrag_max_chars":      t.get("graphrag_max_chars", 0),
             "history_max_turns":       t.get("history_max_turns", 0),
             "history_max_chars":       t.get("history_max_chars", 0),
+            "agent_cache":             t.get("agent_cache", False),
+            "agent_graphrag":          t.get("agent_graphrag", False),
+            "agent_ingest":            t.get("agent_ingest", False),
         }
         for t in templates
     ]
@@ -2228,7 +2553,11 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "planner_prompt":          (item.get("planner_prompt") or "").strip(),
             "judge_prompt":            (item.get("judge_prompt") or "").strip(),
             "planner_model":           (item.get("planner_model") or "").strip(),
+            "planner_num_ctx":         item.get("planner_num_ctx", 0),
             "judge_model":             (item.get("judge_model") or "").strip(),
+            "judge_num_ctx":           item.get("judge_num_ctx", 0),
+            "tool_expert_model":       (item.get("tool_expert_model") or "").strip(),
+            "tool_expert_num_ctx":     item.get("tool_expert_num_ctx", 0),
             "experts":                 item.get("experts") or {},
             "enable_cache":            item.get("enable_cache", True),
             "enable_graphrag":         item.get("enable_graphrag", True),
@@ -2240,6 +2569,9 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "graphrag_max_chars":      item.get("graphrag_max_chars", 0),
             "history_max_turns":       item.get("history_max_turns", 0),
             "history_max_chars":       item.get("history_max_chars", 0),
+            "agent_cache":             item.get("agent_cache", False),
+            "agent_graphrag":          item.get("agent_graphrag", False),
+            "agent_ingest":            item.get("agent_ingest", False),
         })
         existing_names.add(name)
         imported += 1
@@ -2261,7 +2593,11 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["planner_prompt"]         = body.get("planner_prompt",        t.get("planner_prompt", "")).strip()
             t["judge_prompt"]           = body.get("judge_prompt",          t.get("judge_prompt", "")).strip()
             t["judge_model"]            = body.get("judge_model",           t.get("judge_model", "")).strip()
+            t["judge_num_ctx"]          = body.get("judge_num_ctx",         t.get("judge_num_ctx", 0))
             t["planner_model"]          = body.get("planner_model",         t.get("planner_model", "")).strip()
+            t["planner_num_ctx"]        = body.get("planner_num_ctx",       t.get("planner_num_ctx", 0))
+            t["tool_expert_model"]      = body.get("tool_expert_model",     t.get("tool_expert_model", "")).strip()
+            t["tool_expert_num_ctx"]    = body.get("tool_expert_num_ctx",   t.get("tool_expert_num_ctx", 0))
             t["experts"]                = body.get("experts",               t.get("experts", {}))
             t["enable_cache"]           = body.get("enable_cache",          t.get("enable_cache", True))
             t["enable_graphrag"]        = body.get("enable_graphrag",       t.get("enable_graphrag", True))
@@ -2273,6 +2609,9 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["graphrag_max_chars"]     = body.get("graphrag_max_chars",    t.get("graphrag_max_chars", 0))
             t["history_max_turns"]      = body.get("history_max_turns",     t.get("history_max_turns", 0))
             t["history_max_chars"]      = body.get("history_max_chars",     t.get("history_max_chars", 0))
+            t["agent_cache"]            = body.get("agent_cache",           t.get("agent_cache", False))
+            t["agent_graphrag"]         = body.get("agent_graphrag",        t.get("agent_graphrag", False))
+            t["agent_ingest"]           = body.get("agent_ingest",          t.get("agent_ingest", False))
             save_expert_templates(templates)
             return {"ok": True}
     raise HTTPException(status_code=404, detail="Template not found")
@@ -2285,6 +2624,266 @@ async def api_delete_expert_template(tmpl_id: str):
         raise HTTPException(status_code=404, detail="Template not found")
     templates = [t for t in templates if t["id"] != tmpl_id]
     save_expert_templates(templates)
+    return {"ok": True}
+
+
+# ─── Premature-Stop Pattern Routes ────────────────────────────────────────────
+# Admin-editable replacement for the formerly hardcoded pattern list in
+# services/agent_enrichment.py::looks_like_premature_stop — lets a newly
+# observed "model announces a tool call and then just stops" phrasing be
+# added in production without a code change or container rebuild. This talks
+# to Postgres directly via db._get_pool() rather than importing
+# services.agent_enrichment, because admin_ui's Docker build context
+# (./admin_ui) never includes config.py/state.py — that module transitively
+# imports config and would crash moe-admin on import.
+
+@app.get("/patterns", response_class=HTMLResponse)
+async def premature_stop_patterns_page(request: Request, _=Depends(require_login)):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_premature_stop_patterns ORDER BY category, language, pattern"
+            )
+            patterns = await cur.fetchall()
+    return TEMPLATES.TemplateResponse(request, "premature_stop_patterns.html", {
+        "patterns":   patterns,
+        "csrf_token": get_csrf_token(request),
+        "flash":      request.query_params.get("flash"),
+        "flash_type": request.query_params.get("flash_type", "success"),
+    })
+
+
+@app.get("/api/premature-stop-patterns", dependencies=[Depends(require_login)])
+async def api_get_premature_stop_patterns():
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_premature_stop_patterns ORDER BY category, language, pattern"
+            )
+            return await cur.fetchall()
+
+
+def _validate_pattern_body(body: dict) -> tuple[str, str, str, str, str, bool]:
+    pattern = (body.get("pattern") or "").strip()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="pattern is required")
+    pattern_type = (body.get("pattern_type") or "literal").strip()
+    if pattern_type not in ("literal", "regex"):
+        raise HTTPException(status_code=400, detail="pattern_type must be 'literal' or 'regex'")
+    if pattern_type == "regex":
+        try:
+            _re.compile(pattern)
+        except _re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex: {e}")
+    language = (body.get("language") or "").strip()
+    category = (body.get("category") or "announcement").strip()
+    description = (body.get("description") or "").strip()
+    enabled = bool(body.get("enabled", True))
+    return pattern, pattern_type, language, category, description, enabled
+
+
+@app.post("/api/premature-stop-patterns", dependencies=[Depends(require_login)])
+async def api_create_premature_stop_pattern(request: Request):
+    body = await request.json()
+    pattern, pattern_type, language, category, description, enabled = _validate_pattern_body(body)
+    new_id = f"pat-{secrets.token_hex(4)}"
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO admin_premature_stop_patterns "
+                "(id, pattern, pattern_type, language, category, description, enabled, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (new_id, pattern, pattern_type, language, category, description, enabled, now, now),
+            )
+    return {"ok": True, "id": new_id}
+
+
+@app.put("/api/premature-stop-patterns/{pattern_id}", dependencies=[Depends(require_login)])
+async def api_update_premature_stop_pattern(pattern_id: str, request: Request):
+    body = await request.json()
+    pattern, pattern_type, language, category, description, enabled = _validate_pattern_body(body)
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE admin_premature_stop_patterns SET "
+                "pattern=%s, pattern_type=%s, language=%s, category=%s, description=%s, "
+                "enabled=%s, updated_at=%s WHERE id=%s",
+                (pattern, pattern_type, language, category, description, enabled, now, pattern_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Pattern not found")
+    return {"ok": True}
+
+
+@app.delete("/api/premature-stop-patterns/{pattern_id}", dependencies=[Depends(require_login)])
+async def api_delete_premature_stop_pattern(pattern_id: str):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM admin_premature_stop_patterns WHERE id=%s", (pattern_id,)
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Pattern not found")
+    return {"ok": True}
+
+
+@app.patch("/api/premature-stop-patterns/{pattern_id}/toggle", dependencies=[Depends(require_login)])
+async def api_toggle_premature_stop_pattern(pattern_id: str):
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE admin_premature_stop_patterns SET enabled = NOT enabled, updated_at=%s WHERE id=%s",
+                (now, pattern_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Pattern not found")
+    return {"ok": True}
+
+
+@app.post("/api/premature-stop-patterns/test", dependencies=[Depends(require_login)])
+async def api_test_premature_stop_pattern(request: Request):
+    """Tests a single pattern (not yet necessarily saved) against a sample
+    text — lets an admin verify a new regex before committing it."""
+    body = await request.json()
+    pattern = (body.get("pattern") or "").strip()
+    pattern_type = (body.get("pattern_type") or "literal").strip()
+    sample = body.get("sample") or ""
+    if not pattern or not sample:
+        return {"matches": False}
+    lowered = sample.strip().lower()
+    if pattern_type == "regex":
+        try:
+            matches = bool(_re.search(pattern, lowered, _re.IGNORECASE))
+        except _re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex: {e}")
+    else:
+        matches = pattern.lower() in lowered
+    return {"matches": matches}
+
+
+# ─── Unclassified Tool-Ending Review + Classifier Config ─────────────────────
+# Companion to the Premature-Stop Pattern routes above: text-only
+# tool-passthrough endings that matched none of admin_premature_stop_patterns
+# are recorded (services/agent_enrichment.py::record_and_classify_tool_ending)
+# and judged asynchronously by an admin-assignable LLM (admin_classifier_config,
+# default gemma4:12b@N04-RGTX). This page is where an admin reviews the
+# classifier's verdicts and promotes a real finding into a permanent pattern
+# with one click — closing the loop that previously required a human watching
+# container logs live.
+
+@app.get("/tool-endings", response_class=HTMLResponse)
+async def tool_endings_page(request: Request, _=Depends(require_login)):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_unclassified_tool_endings "
+                "ORDER BY created_at DESC LIMIT 200"
+            )
+            endings = await cur.fetchall()
+            await cur.execute(
+                "SELECT model, base_url, token, enabled FROM admin_classifier_config WHERE id = 'default'"
+            )
+            classifier_config = await cur.fetchone()
+    return TEMPLATES.TemplateResponse(request, "tool_endings.html", {
+        "endings":           endings,
+        "classifier_config": classifier_config or {
+            "model": "gemma4:12b", "base_url": "http://192.168.155.224:11435/v1",
+            "token": "ollama", "enabled": True,
+        },
+        "csrf_token": get_csrf_token(request),
+        "flash":      request.query_params.get("flash"),
+        "flash_type": request.query_params.get("flash_type", "success"),
+    })
+
+
+@app.get("/api/tool-endings", dependencies=[Depends(require_login)])
+async def api_get_tool_endings():
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM admin_unclassified_tool_endings "
+                "ORDER BY created_at DESC LIMIT 200"
+            )
+            return await cur.fetchall()
+
+
+@app.delete("/api/tool-endings/{ending_id}", dependencies=[Depends(require_login)])
+async def api_delete_tool_ending(ending_id: str):
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM admin_unclassified_tool_endings WHERE id=%s", (ending_id,)
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Ending not found")
+    return {"ok": True}
+
+
+@app.post("/api/tool-endings/{ending_id}/promote", dependencies=[Depends(require_login)])
+async def api_promote_tool_ending(ending_id: str, request: Request):
+    """Turns a reviewed tool-ending into a permanent admin_premature_stop_patterns
+    row — same validation as api_create_premature_stop_pattern, plus marking
+    the source row so the review queue shows it's already been acted on."""
+    body = await request.json()
+    pattern, pattern_type, language, category, description, enabled = _validate_pattern_body(body)
+    new_id = f"pat-{secrets.token_hex(4)}"
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO admin_premature_stop_patterns "
+                "(id, pattern, pattern_type, language, category, description, enabled, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (new_id, pattern, pattern_type, language, category, description, enabled, now, now),
+            )
+            await cur.execute(
+                "UPDATE admin_unclassified_tool_endings SET promoted_to_pattern = TRUE WHERE id=%s",
+                (ending_id,),
+            )
+    return {"ok": True, "id": new_id}
+
+
+@app.get("/api/classifier-config", dependencies=[Depends(require_login)])
+async def api_get_classifier_config():
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT model, base_url, token, enabled FROM admin_classifier_config WHERE id = 'default'"
+            )
+            row = await cur.fetchone()
+    return row or {
+        "model": "gemma4:12b", "base_url": "http://192.168.155.224:11435/v1",
+        "token": "ollama", "enabled": True,
+    }
+
+
+@app.put("/api/classifier-config", dependencies=[Depends(require_login)])
+async def api_update_classifier_config(request: Request):
+    """Admin-editable — lets the classifier model/endpoint be swapped (a
+    different Ollama instance, a different size) without a code change or
+    container rebuild. Picked up within 60s by the orchestrator's
+    services/agent_enrichment.py::_read_classifier_config cache."""
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    base_url = (body.get("base_url") or "").strip()
+    if not model or not base_url:
+        raise HTTPException(status_code=400, detail="model and base_url are required")
+    token = (body.get("token") or "").strip()
+    enabled = bool(body.get("enabled", True))
+    now = db.now_iso()
+    async with db._get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO admin_classifier_config (id, model, base_url, token, enabled, updated_at) "
+                "VALUES ('default', %s, %s, %s, %s, %s) "
+                "ON CONFLICT (id) DO UPDATE SET "
+                "model=EXCLUDED.model, base_url=EXCLUDED.base_url, token=EXCLUDED.token, "
+                "enabled=EXCLUDED.enabled, updated_at=EXCLUDED.updated_at",
+                (model, base_url, token, enabled, now),
+            )
     return {"ok": True}
 
 
@@ -3109,7 +3708,7 @@ _CLEANUP_CONFIG_PATH  = Path("/app/cleanup-config.json")
 _CLEANUP_HISTORY_PATH = Path("/app/cleanup-history.jsonl")
 _CHECKPOINT_ARCHIVE_DIR = Path("/app/checkpoint-archives")
 
-_KNOWN_JOBS = {"docker_prune", "checkpoint_archive"}
+_KNOWN_JOBS = {"docker_prune", "checkpoint_archive", "rlsf_local_loop"}
 
 def _cleanup_paths() -> tuple[Path, Path]:
     return _CLEANUP_CONFIG_PATH, _CLEANUP_HISTORY_PATH
@@ -3187,7 +3786,7 @@ async def api_cleanup_config_save(request: Request):
     body = await request.json()
 
     # Validate: only known top-level keys allowed
-    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus"}
+    KNOWN = {"docker_prune", "checkpoint_archive", "admin_logs", "journal", "prometheus", "rlsf_local_loop"}
     unknown = set(body.keys()) - KNOWN
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown keys: {unknown}")
@@ -3355,6 +3954,21 @@ def _run_checkpoint_archive() -> None:
     })
 
 
+def _run_rlsf_local_loop() -> None:
+    import httpx
+    try:
+        cfg = _read_cleanup_config().get("rlsf_local_loop", {})
+        batch_size = int(cfg.get("batch_size", 100))
+        r = httpx.post(
+            f"{_maintenance.ORCH_URL.rstrip('/')}/v1/admin/rlsf/trigger",
+            json={"batch_size": batch_size},
+            timeout=15.0
+        )
+        r.raise_for_status()
+    except Exception as exc:
+        logger.error("Failed to trigger rlsf_local_loop on orchestrator: %s", exc)
+
+
 @app.post("/api/cleanup/run/{job}", dependencies=[Depends(require_login)])
 async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
     """Triggers a cleanup job immediately in the background."""
@@ -3365,6 +3979,8 @@ async def api_cleanup_run(job: str, background_tasks: BackgroundTasks):
         background_tasks.add_task(_run_docker_prune)
     elif job == "checkpoint_archive":
         background_tasks.add_task(_run_checkpoint_archive)
+    elif job == "rlsf_local_loop":
+        background_tasks.add_task(_run_rlsf_local_loop)
 
     return {"ok": True, "job": job, "message": "Job started — check History for status updates"}
 
@@ -4814,6 +5430,23 @@ async def api_revoke_key(user_id: str, key_id: str):
     return {"ok": True}
 
 
+@app.post("/api/users/{user_id}/keys/{key_id}/reactivate", dependencies=[Depends(require_login)])
+async def api_reactivate_key(user_id: str, key_id: str):
+    key_hash = await db.reactivate_api_key(key_id, user_id)
+    if not key_hash:
+        raise HTTPException(status_code=404, detail="Key not found or archived")
+    await db.sync_user_to_redis(user_id)
+    return {"ok": True}
+
+
+@app.post("/api/users/{user_id}/keys/{key_id}/archive", dependencies=[Depends(require_login)])
+async def api_archive_key(user_id: str, key_id: str):
+    ok = await db.archive_api_key(key_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found or already active")
+    return {"ok": True}
+
+
 @app.patch("/api/users/{user_id}/keys/{key_id}", dependencies=[Depends(require_login)])
 async def api_update_key_label(user_id: str, key_id: str, request: Request):
     body = await request.json()
@@ -5346,6 +5979,143 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
     }
 
 
+async def _user_owns_chat_id(r, chat_id: str, user_id: str) -> tuple[bool, str | None]:
+    """Shared ownership check for portal per-request endpoints (trace,
+    process-logs): chat_id must belong to the requesting user_id, checked
+    against the active-request record, falling back to recent completed
+    history. Returns (owns, active_raw) — active_raw is the raw
+    moe:active:{chat_id} value already fetched here, reused by callers to
+    avoid a duplicate Redis round trip (e.g. for started_at / the "active"
+    still-running flag)."""
+    owns = False
+    active_raw = await r.get(f"moe:active:{chat_id}")
+    if active_raw:
+        try:
+            owns = json.loads(active_raw).get("user_id") == user_id
+        except Exception:
+            owns = False
+    if not owns:
+        for raw in await r.zrevrange("moe:admin:completed", 0, 199):
+            try:
+                meta = json.loads(raw)
+            except Exception:
+                continue
+            if meta.get("chat_id") == chat_id:
+                owns = meta.get("user_id") == user_id
+                break
+    return owns, active_raw
+
+
+@app.get("/user/api/live/request-trace/{chat_id}")
+async def user_api_live_request_trace(chat_id: str, user_id: str = Depends(require_user_login)):
+    """On-demand stage trace for the current user's own request, portal-side.
+
+    Ownership check: chat_id must belong to the requesting user_id — see
+    _user_owns_chat_id — before the trace is returned; prevents cross-user
+    leakage.
+    """
+    try:
+        r = await db._get_redis()
+        owns, active_raw = await _user_owns_chat_id(r, chat_id, user_id)
+        if not owns:
+            return {"chat_id": chat_id, "stage_trace": []}
+
+        stage_trace: list[dict] = []
+        for raw in await r.lrange(f"moe:active:{chat_id}:trace", 0, -1):
+            try:
+                stage_trace.append(json.loads(raw))
+            except Exception:
+                pass
+        # active_raw was already fetched above for the ownership check —
+        # its presence/absence is also the authoritative "still running"
+        # signal (see api_live_request_trace's docstring for why this
+        # matters instead of a stage-count-stability guess).
+        resolved_tmpl_id, resolved_tmpl_name = await _get_resolved_template_meta(chat_id, r)
+        return {
+            "chat_id": chat_id, "stage_trace": stage_trace, "active": bool(active_raw),
+            "resolved_tmpl_id": resolved_tmpl_id, "resolved_tmpl_name": resolved_tmpl_name,
+            "available_experts": _get_template_expert_catalog(resolved_tmpl_id),
+            "available_mcp_tools": await _get_available_mcp_tools(),
+        }
+    except Exception as exc:
+        logger.warning("User live request-trace Valkey error: %s", exc)
+        return {"chat_id": chat_id, "stage_trace": [], "active": True}
+
+
+@app.get("/user/api/live/process-logs/{chat_id}")
+async def user_api_live_process_logs(chat_id: str, user_id: str = Depends(require_user_login)):
+    """On-demand langgraph-orchestrator log lines for the current user's own
+    request, portal-side — same ownership gate as the trace endpoint, then
+    reuses the admin endpoint's fetch+filter logic unchanged. Users only
+    ever see log lines tagged with a chat_id they own; nothing from other
+    users' requests or unrelated internal log lines is ever included,
+    since the container-wide log stream is filtered down to just this one
+    chat_id's tagged lines before the response is built.
+    """
+    try:
+        r = await db._get_redis()
+        owns, active_raw = await _user_owns_chat_id(r, chat_id, user_id)
+        if not owns:
+            return {"chat_id": chat_id, "lines": [], "error": "not found"}
+        since_dt = await _resolve_process_started_at(chat_id, raw_meta=active_raw)
+        return await _fetch_process_logs_response(chat_id, since_dt)
+    except Exception as exc:
+        logger.warning("User process-logs error for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "lines": [], "error": str(exc)}
+
+
+@app.get("/user/api/live/file-touches/{chat_id}")
+async def user_api_live_file_touches(chat_id: str, user_id: str = Depends(require_user_login)):
+    """On-demand file-touch list for the current user's own Agent Tool Path
+    request, portal-side — same ownership gate as the trace endpoint (see
+    api_live_file_touches for what this shows and where it's written from).
+    """
+    try:
+        r = await db._get_redis()
+        owns, _ = await _user_owns_chat_id(r, chat_id, user_id)
+        if not owns:
+            return {"chat_id": chat_id, "files": []}
+        files: list[dict] = []
+        for raw in await r.lrange(f"moe:active:{chat_id}:files", 0, -1):
+            try:
+                files.append(json.loads(raw))
+            except Exception:
+                pass
+        return {"chat_id": chat_id, "files": files}
+    except Exception as exc:
+        logger.warning("User file-touches error for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "files": []}
+
+
+@app.get("/user/api/my-handovers")
+async def user_api_my_handovers(user_id: str = Depends(require_user_login)):
+    """Return pending handover sessions for the current user."""
+    try:
+        from services.handover import list_handovers_for_user
+        handovers = list_handovers_for_user(user_id)
+    except Exception as exc:
+        logger.warning("my-handovers failed: %s", exc)
+        handovers = []
+    return {"handovers": handovers}
+
+
+@app.post("/user/api/proxy-handover/{handover_id}/resume")
+async def user_api_proxy_handover_resume(
+    handover_id: str,
+    _user_id: str = Depends(require_user_login),
+):
+    """Proxy POST /handover/{id}/resume to the orchestrator on behalf of the user."""
+    import httpx
+    orch = ORCHESTRATOR_URL.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(f"{orch}/handover/{handover_id}/resume")
+        return resp.json()
+    except Exception as exc:
+        logger.warning("proxy-handover-resume failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Orchestrator unreachable")
+
+
 @app.get("/user/audit-log", response_class=HTMLResponse)
 async def user_audit_log_page(request: Request, user_id: str = Depends(require_user_login)):
     ctx = await _user_portal_ctx(user_id)
@@ -5681,7 +6451,6 @@ async def user_revoke_key(
     csrf_token: str = Form(...),
 ):
     validate_csrf(request, csrf_token)
-    # Ensure the key belongs to the user
     keys = await db.list_api_keys(user_id)
     if not any(k["id"] == key_id for k in keys):
         raise HTTPException(status_code=403, detail="Key does not belong to this user")
@@ -5689,6 +6458,35 @@ async def user_revoke_key(
     if key_hash:
         await db.invalidate_api_key_redis(key_hash)
     return RedirectResponse("/user/keys?flash=Key+gesperrt&flash_type=warning", status_code=303)
+
+
+@app.post("/user/keys/{key_id}/reactivate")
+async def user_reactivate_key(
+    request: Request,
+    key_id:     str = ...,
+    user_id:    str = Depends(require_user_login),
+    csrf_token: str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    key_hash = await db.reactivate_api_key(key_id, user_id)
+    if not key_hash:
+        raise HTTPException(status_code=404, detail="Key not found or archived")
+    await db.sync_user_to_redis(user_id)
+    return RedirectResponse("/user/keys?flash=Key+reaktiviert&flash_type=success", status_code=303)
+
+
+@app.post("/user/keys/{key_id}/archive")
+async def user_archive_key(
+    request: Request,
+    key_id:     str = ...,
+    user_id:    str = Depends(require_user_login),
+    csrf_token: str = Form(...),
+):
+    validate_csrf(request, csrf_token)
+    ok = await db.archive_api_key(key_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found or still active")
+    return RedirectResponse("/user/keys?flash=Key+archiviert&flash_type=secondary", status_code=303)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -5802,9 +6600,12 @@ async def user_api_create_template(request: Request, user_id: str = Depends(requ
 
 
 @app.get("/user/api/templates/export")
-async def user_api_export_templates(user_id: str = Depends(require_user_login)):
+async def user_api_export_templates(ids: str = "", user_id: str = Depends(require_user_login)):
     await _require_template_access(user_id, None)
     templates = await db.list_user_templates(user_id)
+    if ids:
+        id_set = {i.strip() for i in ids.split(",") if i.strip()}
+        templates = [t for t in templates if t.get("id") in id_set]
     items = []
     for t in templates:
         try:
@@ -5996,16 +6797,29 @@ async def user_cc_profiles_page(request: Request, user_id: str = Depends(require
             })
     permitted_servers = _get_permitted_servers_for_user(perms)
     tmpl_ids = set(perms.get("expert_template", []))
-    # Admin-granted templates
-    permitted_expert_templates = [t for t in load_expert_templates() if t["id"] in tmpl_ids]
+    # Admin-granted templates — normalized to {id, name, has_tool_agent} so the
+    # CC editor can offer tool-model auto-derivation for templates with a tool_agent.
+    permitted_expert_templates = [
+        {
+            "id":             t["id"],
+            "name":           t.get("name", t["id"]),
+            "has_tool_agent": bool((t.get("experts") or {}).get("tool_agent")),
+        }
+        for t in load_expert_templates() if t["id"] in tmpl_ids
+    ]
     # User's own templates (stored in user_expert_templates, never in perms)
     own_user_templates = await db.list_user_templates(user_id)
     own_tmpl_ids = {t["id"] for t in permitted_expert_templates}
     for ut in own_user_templates:
         if ut["id"] not in own_tmpl_ids:
+            try:
+                _ut_cfg = json.loads(ut.get("config_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                _ut_cfg = {}
             permitted_expert_templates.append({
-                "id":   ut["id"],
-                "name": ut["name"],
+                "id":             ut["id"],
+                "name":           ut["name"],
+                "has_tool_agent": bool((_ut_cfg.get("experts") or {}).get("tool_agent")),
             })
     return TEMPLATES.TemplateResponse(request, "user_portal.html", {
         "page":                   "cc_profiles",
@@ -6072,6 +6886,10 @@ async def user_api_create_cc_profile(request: Request, user_id: str = Depends(re
         raise HTTPException(status_code=403, detail=f"Server '{tool_endpoint}' nicht freigeschaltet")
     accepted_models   = [m.strip() for m in (body.get("accepted_models") or []) if isinstance(m, str) and m.strip()]
     expert_template_id = (body.get("expert_template_id") or "").strip()
+    # expert_template_id is only meaningful for moe_orchestrated — clear it for other modes
+    moe_mode_new = body.get("moe_mode", "native") if "moe_mode" in body else None
+    if moe_mode_new and moe_mode_new != "moe_orchestrated":
+        expert_template_id = ""
     if expert_template_id:
         allowed_tmpl_ids = set(perms.get("expert_template", []))
         own_tmpl_ids = {t["id"] for t in await db.list_user_templates(user_id)}
@@ -6089,6 +6907,9 @@ async def user_api_create_cc_profile(request: Request, user_id: str = Depends(re
         "tool_choice":          body.get("tool_choice", "auto"),
         "accepted_models":      accepted_models,
         "expert_template_id":   expert_template_id,
+        "agent_cache":          bool(body.get("agent_cache", False)),
+        "agent_graphrag":       bool(body.get("agent_graphrag", False)),
+        "agent_ingest":         bool(body.get("agent_ingest", False)),
     }
     profile = await db.create_user_cc_profile(user_id, name, config)
     await db.grant_permission(user_id, "cc_profile", profile["id"])
@@ -6178,6 +6999,9 @@ async def user_api_import_cc_profiles(
             "tool_choice":          cfg.get("tool_choice", "auto"),
             "expert_template_id":   (cfg.get("expert_template_id") or "").strip(),
             "tool_timeout":         int(_tt) if _tt else None,
+            "agent_cache":          bool(cfg.get("agent_cache", False)),
+            "agent_graphrag":       bool(cfg.get("agent_graphrag", False)),
+            "agent_ingest":         bool(cfg.get("agent_ingest", False)),
         }
         profile = await db.create_user_cc_profile(user_id, name, config)
         await db.grant_permission(user_id, "cc_profile", profile["id"])
@@ -6211,6 +7035,10 @@ async def user_api_update_cc_profile(profile_id: str, request: Request, user_id:
     old_cfg = json.loads(existing["config_json"])
     accepted_models   = [m.strip() for m in (body.get("accepted_models") or []) if isinstance(m, str) and m.strip()]
     expert_template_id = (body.get("expert_template_id") or "").strip()
+    # expert_template_id is only meaningful for moe_orchestrated — clear it for other modes
+    moe_mode_new = body.get("moe_mode", "native") if "moe_mode" in body else None
+    if moe_mode_new and moe_mode_new != "moe_orchestrated":
+        expert_template_id = ""
     if expert_template_id:
         allowed_tmpl_ids = set(perms.get("expert_template", []))
         own_tmpl_ids = {t["id"] for t in await db.list_user_templates(user_id)}
@@ -6228,6 +7056,9 @@ async def user_api_update_cc_profile(profile_id: str, request: Request, user_id:
         "tool_choice":          body.get("tool_choice", old_cfg.get("tool_choice", "auto")),
         "accepted_models":      accepted_models if "accepted_models" in body else old_cfg.get("accepted_models", []),
         "expert_template_id":   expert_template_id if "expert_template_id" in body else old_cfg.get("expert_template_id", ""),
+        "agent_cache":          bool(body.get("agent_cache", old_cfg.get("agent_cache", False))),
+        "agent_graphrag":       bool(body.get("agent_graphrag", old_cfg.get("agent_graphrag", False))),
+        "agent_ingest":         bool(body.get("agent_ingest", old_cfg.get("agent_ingest", False))),
     }
     profile = await db.update_user_cc_profile(profile_id, user_id, name, config)
     if not profile:
@@ -6275,7 +7106,11 @@ async def user_api_clear_default_cc_profile(user_id: str = Depends(require_user_
 
 @app.get("/user/api/permitted-models")
 async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
-    """Returns all llm@host options for the user's permitted servers and private connections."""
+    """Returns llm@host options and template:id entries for the user's CC tool-model picker.
+
+    Expert Templates with a tool_agent expert are included as "template:<id>" entries
+    so users can select a template-backed MoE stack as their CC tool model.
+    """
     perms = await db.get_permissions_map(user_id)
     servers = _get_permitted_servers_for_user(perms)
     results: set[str] = set()
@@ -6315,6 +7150,25 @@ async def user_api_permitted_models(user_id: str = Depends(require_user_login)):
             if not model_id:
                 continue
             results.add(f"{model_id}@{conn['name']}")
+    # Expert Templates accessible to this user that contain a tool_agent expert.
+    # Returned as "template:<id>" so the CC tool-model picker can show them.
+    _tmpl_ids = set(perms.get("expert_template", []))
+    _own_tmpls = [t for t in await db.list_user_templates(user_id) if t.get("is_active", True)]
+    _own_tmpl_ids = {t["id"] for t in _own_tmpls}
+    _all_accessible_tmpl_ids = _tmpl_ids | _own_tmpl_ids
+    for _tmpl in load_expert_templates():
+        if _tmpl.get("id") not in _all_accessible_tmpl_ids:
+            continue
+        _experts = _tmpl.get("experts") or {}
+        if "tool_agent" in _experts and _experts["tool_agent"]:
+            results.add(f"template:{_tmpl['id']}")
+    for _ut in _own_tmpls:
+        try:
+            _ut_cfg = json.loads(_ut.get("config_json") or "{}")
+        except Exception:
+            continue
+        if "tool_agent" in (_ut_cfg.get("experts") or {}) and _ut_cfg["experts"]["tool_agent"]:
+            results.add(f"template:{_ut['id']}")
     return sorted(results)
 
 
@@ -6596,7 +7450,14 @@ async def api_available_llms_rich(user_id: str = Depends(require_user_login)):
     Format: [{id: "model@host", tags: [], context_window: N}]
     Falls back to plain strings for models without cache metadata.
     """
-    plain = await _get_user_llm_options(user_id)
+    # Reuses user_api_permitted_models's logic directly (same "llm@host" /
+    # "template:<id>" shape this function's enrichment loop below already
+    # expects) — a call to the never-defined `_get_user_llm_options` sat
+    # here before, crashing every call with NameError and silently breaking
+    # every LLM dropdown in the Expert Template editor (planner/judge/
+    # tool_expert/per-category pickers all source their options from this
+    # endpoint via fetchAvailableLlms() in expert_templates.html).
+    plain = await user_api_permitted_models(user_id=user_id)
     meta_map: dict = {}
     try:
         for row in await db.list_all_model_metadata():
@@ -6623,6 +7484,20 @@ async def api_available_llms_rich(user_id: str = Depends(require_user_login)):
 
     result = []
     for llm_id in plain:
+        if llm_id.startswith("template:"):
+            # Template-backed tool model entries — resolve display name from template.
+            _tid = llm_id.removeprefix("template:")
+            _tmpl = next(
+                (t for t in load_expert_templates() if t.get("id") == _tid), None
+            )
+            _tmpl_name = _tmpl.get("name", _tid) if _tmpl else _tid
+            result.append({
+                "id":           llm_id,
+                "tags":         ["template", "moe"],
+                "context_window": None,
+                "display_name": f"[Template] {_tmpl_name}",
+            })
+            continue
         entry: dict = {"id": llm_id}
         if llm_id in conn_cache:
             entry["tags"]           = conn_cache[llm_id]["tags"]
@@ -6800,6 +7675,58 @@ def _append_log(path: Path, record: dict) -> None:
         logger.debug("Log write error %s: %s", path, exc)
 
 
+def _latency_key(node: str) -> str:
+    """Same key format as services.tracking._record_node_latency (langgraph-
+    orchestrator, where the actual tool-passthrough latency samples are
+    written) — reimplemented here rather than imported, since importing
+    services.tracking would transitively import config.py/state.py, which
+    aren't part of this container's build context (admin_ui/Dockerfile only
+    COPYs from ./admin_ui) and aren't bind-mounted either — confirmed live,
+    that import crashes this process entirely."""
+    u = (node or "").rstrip("/")
+    normalized = u[:-3] if u.endswith("/v1") else u
+    safe = _re.sub(r"[^a-zA-Z0-9_\-.:]", "_", normalized or node)
+    return f"moe:latency:{safe}"
+
+
+def _parse_node_gpu_metrics(text: str) -> list:
+    """Parse per-GPU memory/utilization out of a node-exporter textfile-
+    collector /metrics response. Returns [{"gpu","vram_used_gb",
+    "vram_total_gb","util_pct"}, ...].
+
+    Keyed by gpu id in a dict while parsing rather than "append an entry on
+    the first used_bytes line seen, then find-and-patch it on the other two
+    metrics" — the latter silently dropped total_bytes/util_pct whenever the
+    exposition text ordered memory_total_bytes before memory_used_bytes
+    (Prometheus text format groups by metric name, and "total" < "used"
+    alphabetically, which is exactly the order this deployment's exporter
+    uses) — confirmed live: vram_total_gb was always 0 in the dashboard.
+
+    Shared by api_live_llm_instances (live view) and _gpu_history_poll_loop
+    (background history recording) so both read the same, correctly-parsed
+    numbers instead of two copies of this logic drifting apart.
+    """
+    gpu_map: dict = {}
+    for line in text.split("\n"):
+        if not line.startswith(("node_gpu_memory_used_bytes{",
+                                 "node_gpu_memory_total_bytes{",
+                                 "node_gpu_utilization_percent{")):
+            continue
+        try:
+            gpu_id = line.split('gpu="')[1].split('"')[0]
+            val = float(line.split("} ")[1])
+        except (IndexError, ValueError):
+            continue
+        g = gpu_map.setdefault(gpu_id, {"gpu": gpu_id})
+        if line.startswith("node_gpu_memory_used_bytes{"):
+            g["vram_used_gb"] = round(val / 1e9, 1)
+        elif line.startswith("node_gpu_memory_total_bytes{"):
+            g["vram_total_gb"] = round(val / 1e9, 1)
+        else:
+            g["util_pct"] = round(val, 1)
+    return list(gpu_map.values())
+
+
 def _parse_prometheus_text(text: str) -> dict:
     """Parses Prometheus text format and returns {metric_name: float}."""
     result: dict = {}
@@ -6866,6 +7793,185 @@ async def api_live_active_requests():
     }
     _append_log(_active_req_log, snapshot)
     return snapshot
+
+
+async def _get_resolved_template_meta(chat_id: str, r) -> tuple[str, str]:
+    """Returns (resolved_tmpl_id, resolved_tmpl_name) for a chat_id.
+
+    Checks the live moe:active:{chat_id} key first (set at request-registration
+    time, see services/tracking.py::_register_active_request). Falls back to
+    scanning a bounded recent window of the moe:admin:completed history (the
+    full meta dict, including resolved_tmpl_id/name, is copied there on
+    deregistration — see services/tracking.py::_deregister_active_request) for
+    requests that have already finished. No dedicated by-chat_id index exists
+    on the history sorted set, so this is a linear scan capped at 500 entries
+    — acceptable here since the diagram panel is only ever opened for a
+    request visible in the (recent) history table to begin with.
+    """
+    try:
+        raw = await r.get(f"moe:active:{chat_id}")
+        if raw:
+            meta = json.loads(raw)
+            return meta.get("resolved_tmpl_id", ""), meta.get("resolved_tmpl_name", "")
+    except Exception:
+        pass
+    try:
+        for raw in await r.zrevrange("moe:admin:completed", 0, 499):
+            try:
+                meta = json.loads(raw)
+            except Exception:
+                continue
+            if meta.get("chat_id") == chat_id:
+                return meta.get("resolved_tmpl_id", ""), meta.get("resolved_tmpl_name", "")
+    except Exception:
+        pass
+    return "", ""
+
+
+async def _get_available_mcp_tools() -> list[str]:
+    """Global MCP tool names (not template-scoped — see admin_premature_stop_patterns-
+    style CRUD precedent for why this stays a simple passthrough rather than a
+    cached table: mcp-precision is the single source of truth and the diagram
+    panel only calls this once per open, not per poll)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{MCP_URL}/tools")
+            r.raise_for_status()
+            return [t.get("name", "") for t in r.json().get("tools", []) if t.get("name")]
+    except Exception:
+        return []
+
+
+@app.get("/api/live/request-trace/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_request_trace(chat_id: str):
+    """On-demand stage trace for the live-pipeline-visualization diagram.
+
+    Not part of the table poll — fetched only while an admin has a specific
+    request's diagram panel open. Reads the bounded Redis list written by
+    services.tracking._record_stage.
+
+    "active" reflects whether moe:active:{chat_id} still exists — the
+    authoritative "is this request actually still running" signal. The
+    frontend previously guessed this from "no new stage for N polls", which
+    false-positived on any single step that legitimately takes longer than
+    that window (e.g. a slow expert LLM call), showing "beendet" for a
+    request that was still very much active.
+
+    resolved_tmpl_id/name + available_experts/available_mcp_tools let the
+    panel show which experts/tools a request COULD have used (the template's
+    full catalog), not just which stage-trace entries actually fired.
+    """
+    stage_trace: list[dict] = []
+    active = True
+    resolved_tmpl_id = ""
+    resolved_tmpl_name = ""
+    try:
+        r = await db._get_redis()
+        raw_entries = await r.lrange(f"moe:active:{chat_id}:trace", 0, -1)
+        for raw in raw_entries:
+            try:
+                stage_trace.append(json.loads(raw))
+            except Exception:
+                pass
+        active = bool(await r.exists(f"moe:active:{chat_id}"))
+        resolved_tmpl_id, resolved_tmpl_name = await _get_resolved_template_meta(chat_id, r)
+    except Exception as exc:
+        logger.warning("Live request-trace Valkey error: %s", exc)
+    return {
+        "chat_id": chat_id, "stage_trace": stage_trace, "active": active,
+        "resolved_tmpl_id": resolved_tmpl_id, "resolved_tmpl_name": resolved_tmpl_name,
+        "available_experts": _get_template_expert_catalog(resolved_tmpl_id),
+        "available_mcp_tools": await _get_available_mcp_tools(),
+    }
+
+
+@app.get("/api/live/file-touches/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_file_touches(chat_id: str):
+    """On-demand file-touch list for the live-pipeline-visualization diagram's
+    "Dateien" panel — which files an Agent Tool Path session (OpenCode /
+    Claude Code) read/edited, extracted from its tool calls.
+
+    Same on-demand pattern as api_live_request_trace: not part of the
+    regular table poll, only fetched while an admin has the panel's files
+    section open. Reads the bounded Redis list written by
+    services.tracking._record_file_touch.
+    """
+    files: list[dict] = []
+    try:
+        r = await db._get_redis()
+        raw_entries = await r.lrange(f"moe:active:{chat_id}:files", 0, -1)
+        for raw in raw_entries:
+            try:
+                files.append(json.loads(raw))
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Live file-touches Valkey error: %s", exc)
+    return {"chat_id": chat_id, "files": files}
+
+
+@app.get("/api/live/process-logs/{chat_id}", dependencies=[Depends(require_login)])
+async def api_live_process_logs(chat_id: str):
+    """On-demand langgraph-orchestrator log lines belonging to one request.
+
+    Loaded only when an admin explicitly expands the "Logs" section of the
+    pipeline diagram panel (not part of any regular poll) — reads the
+    container's log since the request's started_at timestamp (from
+    moe:active:{chat_id}) and keeps only lines tagged with this chat_id by
+    the %(chat_id)s log filter installed in main.py. Every existing
+    logger.info/warning/... call across the whole pipeline is tagged
+    automatically that way, without threading chat_id through ~270
+    individual call sites.
+    """
+    since_dt = await _resolve_process_started_at(chat_id)
+    return await _fetch_process_logs_response(chat_id, since_dt)
+
+
+async def _resolve_process_started_at(chat_id: str, raw_meta: str | None = None) -> "datetime | None":
+    """Resolve started_at for a chat_id, from an already-fetched
+    moe:active:{chat_id} value if the caller has one (avoids a duplicate
+    Redis round trip in the portal endpoint, which already fetches it for
+    the ownership check)."""
+    try:
+        if raw_meta is None:
+            r = await db._get_redis()
+            raw_meta = await r.get(f"moe:active:{chat_id}")
+        if raw_meta:
+            meta = json.loads(raw_meta)
+            started = meta.get("started_at", "")
+            if started:
+                return datetime.fromisoformat(started.replace("Z", "+00:00"))
+    except Exception as exc:
+        logger.debug("process-logs: could not resolve started_at for %s: %s", chat_id, exc)
+    return None
+
+
+async def _fetch_process_logs_response(chat_id: str, since_dt) -> dict:
+    """Shared Docker-log fetch+filter, used by both the admin and portal
+    process-logs endpoints — only the ownership/auth gate differs between
+    them."""
+    def _fetch_and_filter() -> list[str]:
+        client = docker.from_env()
+        container = client.containers.get("langgraph-orchestrator")
+        kwargs = {"timestamps": True, "tail": 5000}
+        if since_dt is not None:
+            kwargs["since"] = since_dt
+        raw = container.logs(**kwargs)
+        text = raw.decode("utf-8", errors="replace")
+        tag = f"[{chat_id}]"
+        return [line for line in text.splitlines() if tag in line]
+
+    try:
+        lines = await asyncio.to_thread(_fetch_and_filter)
+    except docker.errors.NotFound:
+        return {"chat_id": chat_id, "lines": [], "error": "container not found"}
+    except Exception as exc:
+        logger.warning("process-logs fetch failed for %s: %s", chat_id, exc)
+        return {"chat_id": chat_id, "lines": [], "error": str(exc)}
+
+    # Bound the response — a chatty request could otherwise return thousands
+    # of lines; the most recent ones are what matters for live debugging.
+    return {"chat_id": chat_id, "lines": lines[-500:], "truncated": len(lines) > 500}
 
 
 @app.post("/api/live/kill-request/{chat_id}", dependencies=[Depends(require_login)])
@@ -7053,35 +8159,7 @@ async def api_live_llm_instances():
                             _disk_avail = _ne_raw.get("node_filesystem_avail_bytes", 0)
                             if _disk_total:
                                 _hw["disk_pct"] = round((1 - _disk_avail / _disk_total) * 100, 1)
-                            # GPU metrics (from textfile collector)
-                            _gpus = []
-                            # Parse multi-label GPU metrics
-                            for _line in _ne_resp.text.split("\n"):
-                                if _line.startswith("node_gpu_memory_used_bytes{"):
-                                    try:
-                                        _gpu_id = _line.split('gpu="')[1].split('"')[0]
-                                        _val = float(_line.split("} ")[1])
-                                        _gpus.append({"gpu": _gpu_id, "vram_used_gb": round(_val / 1e9, 1)})
-                                    except (IndexError, ValueError):
-                                        pass
-                                elif _line.startswith("node_gpu_memory_total_bytes{"):
-                                    try:
-                                        _gpu_id = _line.split('gpu="')[1].split('"')[0]
-                                        _val = float(_line.split("} ")[1])
-                                        for g in _gpus:
-                                            if g["gpu"] == _gpu_id:
-                                                g["vram_total_gb"] = round(_val / 1e9, 1)
-                                    except (IndexError, ValueError):
-                                        pass
-                                elif _line.startswith("node_gpu_utilization_percent{"):
-                                    try:
-                                        _gpu_id = _line.split('gpu="')[1].split('"')[0]
-                                        _val = float(_line.split("} ")[1])
-                                        for g in _gpus:
-                                            if g["gpu"] == _gpu_id:
-                                                g["util_pct"] = round(_val, 1)
-                                    except (IndexError, ValueError):
-                                        pass
+                            _gpus = _parse_node_gpu_metrics(_ne_resp.text)
                             if _gpus:
                                 _hw["gpus"] = _gpus
                                 _hw["vram_total_gb"] = round(sum(g.get("vram_total_gb", 0) for g in _gpus), 1)
@@ -7109,6 +8187,26 @@ async def api_live_llm_instances():
                 except Exception as exc:
                     entry["error"] = str(exc)
 
+            # Recent-latency trend (last _NODE_LATENCY_SAMPLES tool-passthrough
+            # calls to this node, written by services.tracking._record_node_latency
+            # at the actual call sites in chat.py/anthropic.py). Not a queue-depth
+            # signal — a genuine one isn't obtainable (see that module's docstring)
+            # — just "has this node been slow lately", which is real, honest data.
+            try:
+                _r = await db._get_redis()
+                _lat_raw = await _r.lrange(_latency_key(srv["url"]), 0, -1)
+                _lat_samples = []
+                for _lr in _lat_raw:
+                    try:
+                        _lat_samples.append(json.loads(_lr)["ms"])
+                    except Exception:
+                        continue
+                entry["recent_latency_ms_avg"] = round(sum(_lat_samples) / len(_lat_samples)) if _lat_samples else None
+                entry["recent_latency_samples"] = len(_lat_samples)
+            except Exception:
+                entry["recent_latency_ms_avg"] = None
+                entry["recent_latency_samples"] = 0
+
             results.append(entry)
 
     snapshot = {
@@ -7117,6 +8215,38 @@ async def api_live_llm_instances():
     }
     _append_log(_llm_inst_log, snapshot)
     return snapshot
+
+
+@app.get("/api/live/gpu-history", dependencies=[Depends(require_login)])
+async def api_live_gpu_history(node: str, hours: int = 24):
+    """Cumulative VRAM usage history for one Ollama instance's assigned GPUs,
+    sampled every _GPU_HISTORY_INTERVAL_S by _gpu_history_poll_loop (see
+    lifespan()) — independent of dashboard traffic, so the chart has data
+    even if nobody had the page open earlier. `node` must match a server
+    name from _get_inference_servers() / the llm-instances view.
+
+    GPU utilization % is deliberately not included here: confirmed live,
+    this deployment's node-exporter textfile collector reports 0% on every
+    GPU regardless of actual load (a node-side script issue, out of this
+    codebase's reach) — a history graph of a flat zero line would be
+    actively misleading. VRAM usage is real, correctly-measured data.
+    """
+    hours = max(1, min(hours, 24 * 7))
+    now = _time_mod.time()
+    since = now - hours * 3600
+    try:
+        r = await db._get_redis()
+        raw = await r.zrangebyscore(_gpu_history_key(node), since, now)
+        points = []
+        for item in raw:
+            try:
+                points.append(json.loads(item))
+            except Exception:
+                continue
+        return {"node": node, "hours": hours, "points": points}
+    except Exception as exc:
+        logger.warning("GPU history read failed for %s: %s", node, exc)
+        return {"node": node, "hours": hours, "points": []}
 
 
 # ─── Benchmarks ───────────────────────────────────────────────────────────────
@@ -9079,4 +10209,148 @@ async def toggle_starfleet_feature(name: str, request: Request):
         return {"ok": True, "feature": name, "enabled": enabled, "previous": current, "source": "redis"}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─── HITL Gates (TASK-24) ────────────────────────────────────────────────────
+
+@app.get("/gates", response_class=HTMLResponse)
+async def gates_page(request: Request, _=Depends(require_login)):
+    """HITL Gate approval UI — list and manage pending pipeline gates."""
+    return TEMPLATES.TemplateResponse(request, "gates.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/gates", dependencies=[Depends(require_login)])
+async def api_gates_list(status: str = "pending"):
+    """Proxy to orchestrator: list gates by status."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/gates", params={"status": status})
+            return r.json() if r.status_code == 200 else {"gates": []}
+    except Exception as e:
+        return {"gates": [], "error": str(e)}
+
+
+@app.get("/api/gates/{gate_id}", dependencies=[Depends(require_login)])
+async def api_gate_detail(gate_id: str):
+    """Proxy to orchestrator: get gate state."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/gates/{gate_id}")
+            if r.status_code == 404:
+                raise HTTPException(status_code=404, detail="Gate not found")
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/gates/{gate_id}/approve", dependencies=[Depends(require_login)])
+async def api_gate_approve(gate_id: str):
+    """Proxy to orchestrator: approve a gate."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/gates/{gate_id}/approve")
+            return r.json() if r.status_code == 200 else JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/gates/{gate_id}/reject", dependencies=[Depends(require_login)])
+async def api_gate_reject(gate_id: str):
+    """Proxy to orchestrator: reject a gate."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/gates/{gate_id}/reject")
+            return r.json() if r.status_code == 200 else JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ─── Decision Log Explorer (TASK-28) ────────────────────────────────────────
+
+# ─── AI I/O Audit (TASK-29) ──────────────────────────────────────────────────
+
+@app.get("/ai-io-audit", response_class=HTMLResponse)
+async def ai_io_audit_page(request: Request, _=Depends(require_admin)):
+    """AI I/O Audit log — every LLM call with API-key redaction."""
+    return TEMPLATES.TemplateResponse(request, "ai_io_audit.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/ai-io-audit", dependencies=[Depends(require_admin)])
+async def api_ai_io_audit(
+    request_id: Optional[str] = None,
+    model: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+):
+    """Proxy to orchestrator: get AI I/O audit log entries."""
+    try:
+        params: dict = {"limit": limit, "offset": offset}
+        if request_id: params["request_id"] = request_id
+        if model:      params["model"] = model
+        if status:     params["status"] = status
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/v1/admin/ai-io-audit", params=params)
+            if r.status_code == 200:
+                return r.json()
+            return {"records": [], "total": 0}
+    except Exception as e:
+        return {"records": [], "total": 0, "error": str(e)}
+
+
+# ─── Model Capabilities (TASK-31) ────────────────────────────────────────────
+
+@app.get("/model-capabilities", response_class=HTMLResponse)
+async def model_capabilities_page(request: Request, _=Depends(require_admin)):
+    """Read-only view of configs/model_capabilities.yaml capability matrix."""
+    return TEMPLATES.TemplateResponse(request, "model_capabilities.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/model-capabilities", dependencies=[Depends(require_admin)])
+async def api_model_capabilities():
+    """Return parsed model_capabilities.yaml as JSON."""
+    from services.model_capabilities import load_capabilities
+    caps = load_capabilities()
+    return caps or {"default": {}, "models": {}}
+
+
+# ─── Decision Log Explorer (TASK-28) ─────────────────────────────────────────
+
+@app.get("/decision-log", response_class=HTMLResponse)
+async def decision_log_page(request: Request, _=Depends(require_admin)):
+    """Decision Log Explorer — browse and filter pipeline decisions."""
+    return TEMPLATES.TemplateResponse(request, "decision_log_explorer.html", {
+        "csrf_token": get_csrf_token(request),
+    })
+
+
+@app.get("/api/decision-log", dependencies=[Depends(require_admin)])
+async def api_decision_log(
+    decision_type: Optional[str] = None,
+    request_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Read decision_log.jsonl via orchestrator and return filtered records."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            params: dict = {"limit": limit, "offset": offset}
+            if decision_type:
+                params["decision_type"] = decision_type
+            if request_id:
+                params["request_id"] = request_id
+            r = await client.get(f"{ORCHESTRATOR_URL}/v1/admin/decision-log", params=params)
+            if r.status_code == 200:
+                return r.json()
+            return {"records": [], "total": 0}
+    except Exception as e:
+        return {"records": [], "total": 0, "error": str(e)}
 

@@ -50,7 +50,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
 )
 from services.kafka import _kafka_publish
-from services.tracking import _increment_user_budget
+from services.tracking import _increment_user_budget, _record_stage
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
     _log_tool_eval,
@@ -116,6 +116,7 @@ async def mcp_node(state_: AgentState):
 
     tool_names = [t.get("mcp_tool") for t in precision_tasks]
     await _report(f"⚙️ MCP Precision Tools: {', '.join(tool_names)}")
+    await _record_stage(state_.get("response_id", ""), "mcp", "started", ", ".join(tool_names))
     logger.info(f"--- [NODE] MCP ({len(precision_tasks)} Tools parallel) ---")
 
     # Working Memory accumulators — carry over facts from previous iterations
@@ -242,6 +243,7 @@ async def mcp_node(state_: AgentState):
 
     combined = "\n".join(results)
     await _report(f"⚙️ MCP: {len(results)} result(s) received")
+    await _record_stage(state_.get("response_id", ""), "mcp", "done")
     logger.info(f"🔧 MCP: {combined[:300]}")
     if _wm:
         logger.info(f"📝 Working Memory: {len(_wm)} facts extracted")
@@ -281,6 +283,7 @@ async def graph_rag_node(state_: AgentState):
     if _is_public_fact_query and not _has_knowledge_healing:
         logger.info("⚡ GraphRAG skipped (public-fact query — internal graph not relevant)")
         await _report("⚡ GraphRAG: skipped (external research query)")
+        await _record_stage(state_.get("response_id", ""), "graph_rag", "skipped")
         return {"graph_context": ""}
 
     # GraphRAG-Cache (Valkey, TTL=3600s)
@@ -293,6 +296,7 @@ async def graph_rag_node(state_: AgentState):
                 _cached_ctx_str = _cached_ctx if isinstance(_cached_ctx, str) else _cached_ctx.decode()
                 logger.info(f"🔗 GraphRAG cache hit (Valkey) — {len(_cached_ctx_str)} chars")
                 await _report(f"🔗 GraphRAG: context from Valkey cache ({len(_cached_ctx_str)} chars)")
+                await _record_stage(state_.get("response_id", ""), "graph_rag", "cache_hit")
                 return {"graph_context": _cached_ctx_str}
         except Exception as _ge:
             logger.debug(f"GraphRAG cache read error: {_ge}")
@@ -319,6 +323,7 @@ async def graph_rag_node(state_: AgentState):
         _ep_hint = ""
 
     await _report("🔗 GraphRAG — knowledge graph query (Neo4j)...")
+    await _record_stage(state_.get("response_id", ""), "graph_rag", "started")
     try:
         if GRAPH_VIA_MCP:
             # Flange: MCP server as graph-as-a-tool (accessible to external agents)
@@ -348,12 +353,14 @@ async def graph_rag_node(state_: AgentState):
                 ctx = ctx + "\n\n" + _ep_hint if ctx else _ep_hint
             logger.info(f"📊 GraphRAG: {len(ctx)} chars context found (via_mcp={GRAPH_VIA_MCP})")
             await _report(f"🔗 GraphRAG: {len(ctx)} chars structured context")
+            await _record_stage(state_.get("response_id", ""), "graph_rag", "done")
             if state.redis_client is not None:
                 asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, ctx))
         else:
             # No Neo4j context, but still inject episode hint if available.
             ctx = _ep_hint
             await _report("🔗 GraphRAG: no matching context found")
+            await _record_stage(state_.get("response_id", ""), "graph_rag", "miss")
 
         # Domain-filtered ChromaDB retrieval using planner-extracted metadata_filters
         _meta_filters = state_.get("metadata_filters") or {}
@@ -394,7 +401,7 @@ async def graph_rag_node(state_: AgentState):
                     "confidence": float(_match.group(3)),
                 })
 
-        # VSA Background (HABE) Injection
+        # VSA Background (HABE) Injection & Context Modulation
         if state_.get("enable_habe"):
             try:
                 import os
@@ -454,14 +461,50 @@ async def graph_rag_node(state_: AgentState):
                                     habe_facts.append(
                                         f"- (VSA Hierarchical Background): {parent} --[{rel}]--> {child} (similarity: {sim:.2f})"
                                     )
+                                    
+                        # Helper to compute VSA similarity for any text line
+                        def compute_line_similarity(line_text: str) -> float:
+                            l_words = re.findall(r"\b\w{4,}\b", line_text.lower())
+                            vecs = []
+                            for w in l_words:
+                                for prefix in ["node:", "subj:", "obj:", "relation:", "pred:"]:
+                                    vk = f"{prefix}{w}"
+                                    if vk in engine.vocab:
+                                        vecs.append(engine.vocab[vk])
+                            if not vecs:
+                                return 0.0
+                            return float(engine.cosine_similarity(hav, engine.bundle(vecs)))
                         
-                        if habe_facts:
-                            habe_section = "\n\nHOLOGRAPHIC AMBIENT BACKGROUND KNOWLEDGE (HABE):\n" + "\n".join(habe_facts)
-                            ctx = ctx + habe_section if ctx else habe_section
-                            logger.info(f"🧠 HABE: Injected {len(habe_facts)} background facts dynamically.")
-                            await _report(f"🧠 HABE: Injected {len(habe_facts)} background facts")
+                        # Pool all lines: GraphRAG + HABE facts
+                        all_lines = []
+                        if ctx:
+                            all_lines.extend([line.strip() for line in ctx.split("\n") if line.strip()])
+                        all_lines.extend(habe_facts)
+                        
+                        # Calculate scores and sort/filter
+                        scored_lines = []
+                        for line in all_lines:
+                            if line.startswith("[Note:") or line.startswith("HOLOGRAPHIC") or "[Procedural" in line:
+                                scored_lines.append((line, 1.0))
+                            else:
+                                score = compute_line_similarity(line)
+                                scored_lines.append((line, score))
+                        
+                        # Sort by similarity descending
+                        scored_lines.sort(key=lambda x: x[1], reverse=True)
+                        
+                        # Keep lines with similarity >= 0.12 or explicit overrides
+                        filtered_lines = [line for line, sim in scored_lines if sim >= 0.12 or sim == 1.0]
+                        
+                        # Reconstruct the context string
+                        if filtered_lines:
+                            ctx = "\n".join(filtered_lines)
+                            logger.info(f"🧠 HABE: Modulated context window. Retained {len(filtered_lines)}/{len(all_lines)} facts based on VSA similarity.")
+                            await _report(f"🧠 HABE: Modulated context window (retained {len(filtered_lines)} facts)")
+                        else:
+                            ctx = ""
             except Exception as _habe_exc:
-                logger.warning(f"HABE background retrieval failed: {_habe_exc}")
+                logger.warning(f"HABE background retrieval and modulation failed: {_habe_exc}")
 
         return {"graph_context": ctx, "graphrag_entities": _entity_meta}
     except Exception as e:

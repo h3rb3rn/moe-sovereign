@@ -10,7 +10,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -119,6 +119,23 @@ def _check_rate_limit_exhausted(endpoint: str) -> bool:
     if not entry or not entry.get("exhausted"):
         return False
     return _time.time() < entry.get("reset_time", 0)
+
+
+def _entry_is_fresh(ts_iso: str, ttl_days: int) -> bool:
+    """True if an ISO-8601 timestamp is within ttl_days of now. Missing/garbage ts → stale.
+
+    Shared by the interactive knowledge-bypass gate (graph/router_nodes.py::
+    cache_lookup_node) and the Augmented Tool Path agent-cache gate
+    (services/agent_enrichment.py::agent_cache_lookup) — moved here so both
+    can import it without graph/router_nodes.py <-> services/agent_enrichment.py
+    creating a dependency in either direction.
+    """
+    if not ts_iso:
+        return False
+    try:
+        return datetime.now() - datetime.fromisoformat(ts_iso) <= timedelta(days=ttl_days)
+    except Exception:
+        return False
 
 
 # ─── EXPERT PROMPT RESOLUTION ────────────────────────────────────────────────
@@ -397,6 +414,21 @@ async def _report(msg: str) -> None:
     q = _progress_queue.get()
     if q is not None:
         await q.put(msg)
+
+
+# ─── PER-REQUEST LOG CORRELATION ─────────────────────────────────────────────
+# Set once at each API entry point (main.py, services/pipeline/chat.py,
+# services/pipeline/anthropic.py) to the request's chat_id. A logging.Filter
+# installed on the root handler (see main.py) reads this on every log record,
+# so every existing logger.info/warning/... call across the whole pipeline
+# gets tagged with the originating request automatically — no need to thread
+# chat_id through the ~270 individual log call sites. Powers the live
+# pipeline diagram's per-request log view (admin_ui/app.py
+# api_live_process_logs). asyncio.create_task() copies the current context,
+# so fire-and-forget tasks spawned from within a request (write-back, judge
+# scoring, etc.) still get the correct chat_id in their own log lines.
+current_chat_id: contextvars.ContextVar[str] = \
+    contextvars.ContextVar("current_chat_id", default="")
 
 
 # ─── SHADOW REQUEST ──────────────────────────────────────────────────────────

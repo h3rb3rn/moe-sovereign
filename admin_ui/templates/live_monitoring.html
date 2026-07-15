@@ -2,6 +2,9 @@
 {% block title %}{{ t(request, 'page.live') }} – MoE Admin{% endblock %}
 
 {% block content %}
+<script src="/static/js/cytoscape.min.js"></script>
+<script src="/static/js/pipeline_diagram.js"></script>
+<script src="/static/js/chart.umd.min.js"></script>
 <style>
   .live-badge {
     display: inline-block;
@@ -176,7 +179,9 @@
               <th>{{ t(request, 'table.mode') }}</th>
               <th>{{ t(request, 'table.type') }}</th>
               <th>API-Key</th>
+              <th>{{ t(request, 'lbl.trust_verdict') }}</th>
               <th>{{ t(request, 'table.status') }}</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="history-tbody"></tbody>
@@ -306,17 +311,22 @@ function applyActiveFilter() {
         <td>${escHtml(r.username || r.user_id || '–')}</td>
         <td><code style="font-size:.8rem">${escHtml(r.model || '–')}${(r.moe_mode === 'native' && r.backend_host) ? `<span class="text-info" style="font-size:.8rem">@${escHtml(r.backend_host)}</span>` : ''}${(r.backend_model && r.backend_model !== (r.model || '')) ? `<span class="text-muted ms-1" style="font-size:.75rem">(${escHtml(r.backend_model)})</span>` : ''}</code></td>
         <td><span class="badge bg-info text-dark">${escHtml(r.moe_mode || '–')}</span></td>
-        <td>${r.resolved_tmpl_id
-              ? `<a href="/templates?highlight=${encodeURIComponent(r.resolved_tmpl_id)}" target="_blank" class="text-decoration-none" title="${escHtml(r.resolved_tmpl_id)}">${escHtml(r.template_name || '–')}<span class="text-muted ms-1" style="font-size:.78em">(${escHtml(r.resolved_tmpl_name || r.resolved_tmpl_id)})</span></a>`
-              : escHtml(r.template_name || '–')}</td>
+        <td>${escHtml(r.template_name || '–')}</td>
         <td><span class="badge ${r.type==='streaming'?'bg-primary':'bg-secondary'}">${escHtml(r.type || '–')}</span></td>
         <td><code style="font-size:.75rem">${escHtml(r.client_ip || '–')}</code></td>
         <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
         <td><code style="font-size:.7rem">${escHtml((r.chat_id||'').slice(-12))}</code></td>
-        <td><button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.72rem"
+        <td class="text-nowrap">
+          <button class="btn btn-xs btn-outline-primary py-0 px-1 me-1" style="font-size:.72rem"
+                    title="Live-Pipeline-Diagramm"
+                    onclick="openPipelineDiagram('${escHtml(r.chat_id||'')}', '/api/live/request-trace/')">
+              <i class="bi bi-diagram-3"></i>
+            </button>
+          <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.72rem"
                     onclick="killRequest('${escHtml(r.chat_id||'')}')">
               <i class="bi bi-x-circle me-1"></i>Kill
-            </button></td>
+            </button>
+        </td>
       </tr>`;
     } catch(_e) {
       return `<tr><td colspan="11" class="text-warning small py-1">Render error for request ${escHtml(r.chat_id||'?')}: ${escHtml(String(_e))}</td></tr>`;
@@ -349,6 +359,17 @@ async function fetchActiveRequests() {
 
 
 /* ── LLM Instanzen ─────────────────────────────────────────────────────────── */
+// Confirmed live: N04-RTX runs OLLAMA_NUM_PARALLEL=1 and serves the entire
+// platform's traffic — its lightweight /api/ps health-check can occasionally
+// time out while Ollama is busy generating, which previously made
+// "loaded_models" flip to [] for that one 5s poll tick, flashing the whole
+// panel to "idle" and back. Sticky per-server cache: only overwrite the
+// displayed loaded-models state on a poll that actually SUCCEEDED
+// (srv.ok === true) — a failed poll keeps showing the last known-good state
+// instead of flickering, and a genuine unload is still reflected immediately
+// since that's srv.ok===true with an empty models list, not a fetch error.
+const _lastKnownLoaded = {};
+
 async function fetchLLMInstances() {
   try {
     const data = await fetch('/api/live/llm-instances').then(r => r.json());
@@ -357,6 +378,11 @@ async function fetchLLMInstances() {
     const container = document.getElementById('llm-cards');
 
     container.innerHTML = servers.map(srv => {
+      if (srv.ok) {
+        _lastKnownLoaded[srv.name] = srv.loaded_models || [];
+      } else if (_lastKnownLoaded[srv.name] !== undefined) {
+        srv = {...srv, loaded_models: _lastKnownLoaded[srv.name], _stale: true};
+      }
       const statusBadge = srv.ok
         ? `<span class="badge bg-success">Online</span>`
         : `<span class="badge bg-danger">Offline</span>`;
@@ -366,14 +392,34 @@ async function fetchLLMInstances() {
       const latency = srv.latency_ms >= 0 ? `${srv.latency_ms}ms` : '–';
       const version = srv.version ? `v${escHtml(srv.version)}` : '';
 
+      // Recent tool-passthrough latency trend (last N real calls to this
+      // node, not a health-check ping) — see admin_ui/app.py's
+      // api_live_llm_instances docstring for why this is a "recently slow"
+      // indicator rather than a queue-depth signal (Ollama exposes none).
+      let recentLatencyBadge = '';
+      if (srv.recent_latency_ms_avg != null) {
+        const avgS = (srv.recent_latency_ms_avg / 1000).toFixed(1);
+        const cls = srv.recent_latency_ms_avg > 15000 ? 'bg-danger'
+                  : srv.recent_latency_ms_avg > 5000  ? 'bg-warning text-dark'
+                  : 'bg-success';
+        recentLatencyBadge = `<span class="badge ${cls} ms-1" title="Ø der letzten ${srv.recent_latency_samples} Tool-Calls (nicht Health-Check)">
+          <i class="bi bi-hourglass-split me-1"></i>${avgS}s Ø
+        </span>`;
+      }
+
       // Geladene Modelle (Ollama /api/ps)
       let loadedSection = '';
       if (srv.api_type === 'ollama') {
         const loaded = srv.loaded_models || [];
+        const staleNote = srv._stale
+          ? `<span class="badge bg-secondary ms-1" title="Health-Check fehlgeschlagen — zeigt den letzten bekannten Stand">
+               <i class="bi bi-clock-history me-1"></i>letzter bekannter Stand
+             </span>`
+          : '';
         if (loaded.length > 0) {
           loadedSection = `
             <div class="mt-3">
-              <div class="fw-semibold mb-2" style="font-size:.85rem">
+              <div class="fw-semibold mb-2" style="font-size:.85rem">${staleNote}
                 <i class="bi bi-lightning-charge-fill text-warning me-1"></i>Loaded models (${loaded.length})
               </div>
               <table class="table table-sm table-bordered mb-0 model-row">
@@ -397,7 +443,7 @@ async function fetchLLMInstances() {
               </table>
             </div>`;
         } else {
-          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>${_tlive.noModelIdle}</div>`;
+          loadedSection = `<div class="text-muted mt-2" style="font-size:.85rem"><i class="bi bi-moon me-1"></i>${_tlive.noModelIdle}${staleNote}</div>`;
         }
       }
 
@@ -478,6 +524,11 @@ async function fetchLLMInstances() {
                 <i class="bi bi-speedometer2 ms-2"></i>${latency}
                 <span class="badge bg-light text-dark border ms-1">Tier ${srv.tier}</span>
                 <span class="badge bg-light text-dark border">×${srv.cost_factor}</span>
+                ${recentLatencyBadge}
+                ${srv.api_type === 'ollama' ? `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 ms-2"
+                    title="Historische VRAM-Auslastung dieser Instanz anzeigen" onclick="openGpuHistory('${escHtml(srv.name)}')">
+                    <i class="bi bi-graph-up me-1"></i>Verlauf
+                  </button>` : ''}
               </div>
             </div>
             <div class="card-body">
@@ -608,10 +659,18 @@ async function fetchCompletedRequests() {
     document.getElementById('history-empty').classList.add('d-none');
     document.getElementById('history-table').classList.remove('d-none');
 
+    const _trustBadge = {
+      'PROCEED':                '<span class="badge bg-success" style="font-size:.6rem">PROCEED</span>',
+      'PROCEED_WITH_ASSUMPTION': '<span class="badge bg-warning text-dark" style="font-size:.6rem">ASSUMPTION</span>',
+      'BLOCK':                  '<span class="badge bg-danger" style="font-size:.6rem">BLOCK</span>',
+    };
     const rows = reqs.map(r => {
       const statusBadge = r.status === 'killed'
         ? `<span class="badge bg-danger" style="font-size:.65rem">killed</span>`
         : `<span class="badge bg-success" style="font-size:.65rem">completed</span>`;
+      const tvHtml = r.trust_verdict
+        ? (_trustBadge[r.trust_verdict] || `<span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.trust_verdict)}</span>`)
+        : '<span class="text-muted small">—</span>';
 
       // Dauer berechnen aus started_at und ended_at
       let dur = '–';
@@ -631,7 +690,15 @@ async function fetchCompletedRequests() {
         <td><span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.moe_mode || '–')}</span></td>
         <td><span class="badge ${(r.type||'')===('streaming')?'bg-primary':'bg-secondary'}" style="font-size:.6rem">${escHtml(r.type || '–')}</span></td>
         <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
+        <td>${tvHtml}</td>
         <td>${statusBadge}</td>
+        <td class="text-nowrap">
+          <button class="btn btn-xs btn-outline-primary py-0 px-1" style="font-size:.72rem"
+                    title="Pipeline-Diagramm (Replay)"
+                    onclick="openPipelineDiagram('${escHtml(r.chat_id||'')}', '/api/live/request-trace/')">
+              <i class="bi bi-diagram-3"></i>
+            </button>
+        </td>
       </tr>`;
     }).join('');
     document.getElementById('history-tbody').innerHTML = rows;
@@ -646,7 +713,7 @@ function exportHistory() {
     alert(_tlive.noExportData);
     return;
   }
-  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Status'];
+  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Trust', 'Status'];
   const rows = [headers];
   document.querySelectorAll('#history-tbody tr').forEach(tr => {
     const cells = [...tr.querySelectorAll('td')].map(td => {
@@ -711,9 +778,104 @@ document.getElementById('autoRefreshToggle').addEventListener('change', function
   if (this.checked) { startAutoRefresh(); } else { stopAutoRefresh(); }
 });
 
+// ── GPU VRAM history modal ──────────────────────────────────────────────────
+// Sampled server-side every 5 min by admin_ui's _gpu_history_poll_loop
+// (independent of this page being open) — see /api/live/gpu-history.
+let _gpuHistChart = null;
+
+async function openGpuHistory(nodeName) {
+  const modalEl = document.getElementById('gpuHistoryModal');
+  document.getElementById('gpuHistoryTitle').textContent = `VRAM-Verlauf — ${nodeName}`;
+  // eslint-disable-next-line no-undef
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+  await loadGpuHistory(nodeName, parseInt(document.getElementById('gpuHistHours').value, 10) || 24);
+  document.getElementById('gpuHistHours').onchange = () =>
+    loadGpuHistory(nodeName, parseInt(document.getElementById('gpuHistHours').value, 10) || 24);
+}
+
+async function loadGpuHistory(nodeName, hours) {
+  const canvas = document.getElementById('gpuHistChart');
+  const empty  = document.getElementById('gpuHistEmpty');
+  try {
+    const r = await fetch(`/api/live/gpu-history?node=${encodeURIComponent(nodeName)}&hours=${hours}`);
+    const data = await r.json();
+    const points = data.points || [];
+    if (!points.length) {
+      empty.classList.remove('d-none');
+      canvas.classList.add('d-none');
+      if (_gpuHistChart) { _gpuHistChart.destroy(); _gpuHistChart = null; }
+      return;
+    }
+    empty.classList.add('d-none');
+    canvas.classList.remove('d-none');
+    points.sort((a, b) => a.ts - b.ts);
+    const labels = points.map(p => new Date(p.ts * 1000).toLocaleString('de-DE',
+      { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+    const used  = points.map(p => p.vram_used_gb);
+    const total = points.map(p => p.vram_total_gb);
+
+    if (_gpuHistChart) _gpuHistChart.destroy();
+    _gpuHistChart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'VRAM genutzt (GB)', data: used,
+            borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)',
+            borderWidth: 1.5, pointRadius: points.length < 60 ? 2 : 0, tension: 0.2, fill: true,
+          },
+          {
+            label: 'VRAM gesamt (GB)', data: total,
+            borderColor: '#6ea8fe', backgroundColor: 'transparent',
+            borderWidth: 1, borderDash: [4, 3], pointRadius: 0, tension: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: true, labels: { color: '#adb5bd' } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, color: '#adb5bd' }, grid: { color: 'rgba(255,255,255,.05)' } },
+          y: { beginAtZero: true, ticks: { color: '#adb5bd' }, grid: { color: 'rgba(255,255,255,.05)' } },
+        },
+      },
+    });
+  } catch (e) {
+    console.warn('gpu-history fetch failed:', e);
+    empty.textContent = 'Fehler beim Laden.';
+    empty.classList.remove('d-none');
+    canvas.classList.add('d-none');
+  }
+}
+
 // Initial load and start refresh
 doRefresh();
 fetchCompletedRequests();
 startAutoRefresh();
 </script>
+
+<div class="modal fade" id="gpuHistoryModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title mb-0" id="gpuHistoryTitle"><i class="bi bi-graph-up me-2"></i>VRAM-Verlauf</h6>
+        <select id="gpuHistHours" class="form-select form-select-sm ms-auto me-2" style="width:auto">
+          <option value="6">6h</option>
+          <option value="24" selected>24h</option>
+          <option value="72">3 Tage</option>
+          <option value="168">7 Tage</option>
+        </select>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="gpuHistEmpty" class="text-center text-muted py-5 d-none">
+          <i class="bi bi-graph-up fs-2 d-block mb-2 opacity-25"></i>
+          Noch keine Verlaufsdaten — Sampling läuft alle 5 Minuten im Hintergrund.
+        </div>
+        <canvas id="gpuHistChart" height="120"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

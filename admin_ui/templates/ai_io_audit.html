@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}AI I/O Audit – MoE Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-0"><i class="bi bi-eye section-icon text-warning"></i>{{ t(request, 'page.ai_io_audit') }}</h5>
+    <small class="text-muted">{{ t(request, 'info.ai_io_audit_desc') }}</small>
+  </div>
+  <button class="btn btn-outline-secondary btn-sm" onclick="loadAudit()">
+    <i class="bi bi-arrow-clockwise me-1"></i>{{ t(request, 'btn.refresh') }}
+  </button>
+</div>
+
+{# Filters #}
+<div class="card border-0 bg-body-tertiary mb-3 p-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-sm-3">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.request_id') }}</label>
+      <input type="text" id="f-request-id" class="form-control form-control-sm" placeholder="request-id…"
+             onkeydown="if(event.key==='Enter') loadAudit()">
+    </div>
+    <div class="col-sm-3">
+      <label class="form-label small mb-1">Model</label>
+      <input type="text" id="f-model" class="form-control form-control-sm" placeholder="llama, qwen…"
+             onkeydown="if(event.key==='Enter') loadAudit()">
+    </div>
+    <div class="col-sm-2">
+      <label class="form-label small mb-1">{{ t(request, 'lbl.audit_status') }}</label>
+      <select id="f-status" class="form-select form-select-sm">
+        <option value="">All</option>
+        <option value="pending">pending</option>
+        <option value="completed">completed</option>
+        <option value="error">error</option>
+      </select>
+    </div>
+    <div class="col-sm-2">
+      <button class="btn btn-sm btn-primary w-100" onclick="loadAudit()">
+        <i class="bi bi-funnel me-1"></i>{{ t(request, 'btn.filter') }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="audit-table-container">
+  <div class="text-center text-muted py-5">
+    <div class="spinner-border spinner-border-sm" role="status"></div>
+    <span class="ms-2">Loading…</span>
+  </div>
+</div>
+
+{# Detail modal #}
+<div class="modal fade" id="auditModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-eye me-2 text-warning"></i>Audit Detail</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="audit-modal-body"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const _statusBadge = {
+  pending:   '<span class="badge bg-warning text-dark" style="font-size:.65rem">pending</span>',
+  completed: '<span class="badge bg-success"           style="font-size:.65rem">completed</span>',
+  error:     '<span class="badge bg-danger"            style="font-size:.65rem">error</span>',
+};
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function loadAudit() {
+  const requestId = document.getElementById('f-request-id').value.trim();
+  const model     = document.getElementById('f-model').value.trim();
+  const status    = document.getElementById('f-status').value;
+  const params = new URLSearchParams({ limit: 200 });
+  if (requestId) params.append('request_id', requestId);
+  if (model)     params.append('model', model);
+  if (status)    params.append('status', status);
+
+  document.getElementById('audit-table-container').innerHTML =
+    '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> Loading…</div>';
+  try {
+    const r = await fetch('/api/ai-io-audit?' + params.toString());
+    const data = await r.json();
+    renderTable(data.records || []);
+  } catch (e) {
+    document.getElementById('audit-table-container').innerHTML =
+      `<div class="alert alert-danger">Failed: ${escHtml(e)}</div>`;
+  }
+}
+
+function renderTable(records) {
+  const container = document.getElementById('audit-table-container');
+  if (!records.length) {
+    container.innerHTML = '<div class="alert alert-secondary">{{ t(request, "info.no_audit_entries") }}</div>';
+    return;
+  }
+  let html = `<div class="card border-0 shadow-sm"><div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-dark"><tr>
+        <th>{{ t(request, 'lbl.audit_status') }}</th>
+        <th>{{ t(request, 'lbl.stage') }}</th>
+        <th>Model</th>
+        <th>{{ t(request, 'lbl.request_id') }}</th>
+        <th>{{ t(request, 'lbl.prompt_tokens') }}</th>
+        <th>{{ t(request, 'lbl.completion_tokens') }}</th>
+        <th>{{ t(request, 'lbl.started_at') }}</th>
+      </tr></thead><tbody>`;
+  for (const r of records) {
+    const badge = _statusBadge[r.status] || `<span class="badge bg-secondary">${escHtml(r.status)}</span>`;
+    html += `<tr style="cursor:pointer" onclick="showDetail(${escHtml(JSON.stringify(r))})">
+      <td>${badge}</td>
+      <td><span class="badge bg-info text-dark" style="font-size:.65rem">${escHtml(r.stage)}</span></td>
+      <td class="font-monospace" style="font-size:.78rem">${escHtml(r.model)}</td>
+      <td class="font-monospace text-muted" style="font-size:.7rem">${escHtml((r.request_id||'').slice(-12))}</td>
+      <td class="text-end">${r.prompt_tokens ?? '—'}</td>
+      <td class="text-end">${r.completion_tokens ?? '—'}</td>
+      <td style="font-size:.75rem">${escHtml((r.started_at||'').replace('T',' ').slice(0,19))}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div></div>';
+  container.innerHTML = html;
+}
+
+function showDetail(record) {
+  const body = document.getElementById('audit-modal-body');
+  body.innerHTML = `
+    <div class="mb-2"><strong>Audit ID:</strong> <code>${escHtml(record.audit_id)}</code></div>
+    <div class="mb-2"><strong>Session:</strong> <code>${escHtml(record.session_id)}</code></div>
+    <div class="mb-2"><strong>Model:</strong> ${escHtml(record.model)} | <strong>Stage:</strong> ${escHtml(record.stage)}</div>
+    <div class="mb-2"><strong>Endpoint:</strong> <code>${escHtml(record.endpoint)}</code></div>
+    <hr>
+    <details open><summary class="fw-semibold mb-2">Request Body</summary>
+      <pre class="bg-body-tertiary p-2 rounded" style="font-size:.75rem;max-height:300px;overflow:auto">${escHtml(JSON.stringify(record.request_body, null, 2))}</pre>
+    </details>
+    <details><summary class="fw-semibold mb-2 mt-2">Response Body</summary>
+      <pre class="bg-body-tertiary p-2 rounded" style="font-size:.75rem;max-height:300px;overflow:auto">${escHtml(JSON.stringify(record.response_body, null, 2))}</pre>
+    </details>`;
+  new bootstrap.Modal(document.getElementById('auditModal')).show();
+}
+
+document.addEventListener('DOMContentLoaded', loadAudit);
+</script>
+{% endblock %}

@@ -12,6 +12,7 @@ Callers:
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -35,21 +36,36 @@ def _read_expert_templates() -> list:
     """
     now = time.monotonic()
     cache = _read_expert_templates._cache
-    if now - cache["ts"] < 30 and cache["data"] is not None:
+    if cache["data"] is not None:
+        # Stale-while-revalidate: serve the cached list immediately; the sync
+        # psycopg connect must never block the event loop on the request path.
+        if now - cache["ts"] >= 30 and not cache["refreshing"]:
+            cache["refreshing"] = True
+            threading.Thread(
+                target=_refresh_expert_templates_cache, daemon=True
+            ).start()
         return cache["data"]
-
-    data = _load_templates_from_db_sync()
-    if data is None:
-        data = _load_templates_from_env_file()
-    if data is None:
-        data = json.loads(os.getenv("EXPERT_TEMPLATES", "[]"))
-
-    cache["ts"] = now
-    cache["data"] = data
-    return data
+    # Cold start (first call, cache empty): load synchronously exactly once.
+    _refresh_expert_templates_cache()
+    return cache["data"] or []
 
 
-_read_expert_templates._cache: dict = {"ts": 0.0, "data": None}
+def _refresh_expert_templates_cache() -> None:
+    """Load templates from DB → .env → env var and update the cache."""
+    cache = _read_expert_templates._cache
+    try:
+        data = _load_templates_from_db_sync()
+        if data is None:
+            data = _load_templates_from_env_file()
+        if data is None:
+            data = json.loads(os.getenv("EXPERT_TEMPLATES", "[]"))
+        cache["data"] = data
+        cache["ts"] = time.monotonic()
+    finally:
+        cache["refreshing"] = False
+
+
+_read_expert_templates._cache: dict = {"ts": 0.0, "data": None, "refreshing": False}
 
 
 def _load_templates_from_db_sync() -> Optional[list]:

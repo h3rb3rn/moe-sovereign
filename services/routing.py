@@ -9,7 +9,10 @@ import json
 import logging
 from typing import Optional
 
-from config import URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG, INFERENCE_SERVERS_LIST
+from config import (
+    URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG, INFERENCE_SERVERS_LIST,
+    AGENT_CACHE_ENABLED, AGENT_GRAPHRAG_ENABLED, AGENT_INGEST_ENABLED,
+)
 from services.templates import _read_expert_templates
 
 logger = logging.getLogger("MOE-SOVEREIGN")
@@ -33,6 +36,7 @@ def _resolve_user_experts(
         tmpl_ids  = perms.get("expert_template", [])
         templates = _read_expert_templates()
         user_templates: dict = json.loads(user_templates_json or "{}")
+        user_conns: dict = json.loads(user_connections_json or "{}")
 
         def _find_tmpl(tid: str):
             if tid in user_templates:
@@ -85,17 +89,19 @@ def _resolve_user_experts(
                         forced, model_tier = False, 2
                     else:
                         forced, model_tier = False, 1
-                    ep   = (m.get("endpoint") or "").strip()
-                    url  = URL_MAP.get(ep) if ep else None
-                    if not url:
-                        _uc = json.loads(user_connections_json or "{}")
-                        if ep in _uc:
-                            url = _uc[ep]["url"]
+                    ep    = (m.get("endpoint") or "").strip()
+                    url   = URL_MAP.get(ep) if ep else None
+                    token = TOKEN_MAP.get(ep, "ollama") if ep else "ollama"
+                    if not url and ep in user_conns:
+                        # Private user connection: URL AND api_key come from the
+                        # connection — TOKEN_MAP does not know private endpoints.
+                        url   = user_conns[ep]["url"]
+                        token = user_conns[ep].get("api_key") or "ollama"
                     models_list.append({
                         "model":          m.get("model", ""),
                         "endpoint":       ep,
                         "url":            url,
-                        "token":          TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
+                        "token":          token,
                         "forced":         forced,
                         "_tier":          model_tier,
                         "_system_prompt": _sys_prompt,
@@ -104,13 +110,17 @@ def _resolve_user_experts(
                 result[cat] = models_list
             elif isinstance(cat_cfg, dict):
                 # Legacy format: {model, endpoint}
-                ep  = (cat_cfg.get("endpoint") or "").strip()
-                url = URL_MAP.get(ep) if ep else None
+                ep    = (cat_cfg.get("endpoint") or "").strip()
+                url   = URL_MAP.get(ep) if ep else None
+                token = TOKEN_MAP.get(ep, "ollama") if ep else "ollama"
+                if not url and ep in user_conns:
+                    url   = user_conns[ep]["url"]
+                    token = user_conns[ep].get("api_key") or "ollama"
                 result[cat] = [{
                     "model":          cat_cfg.get("model", ""),
                     "endpoint":       ep,
                     "url":            url,
-                    "token":          TOKEN_MAP.get(ep, "ollama") if ep else "ollama",
+                    "token":          token,
                     "forced":         True,
                     "_tier":          None,
                     "_system_prompt": _sys_prompt,
@@ -118,7 +128,52 @@ def _resolve_user_experts(
                 }]
         return result or None
     except Exception:
+        logger.exception("_resolve_user_experts failed — falling back to global experts")
         return None
+
+
+def _get_template_expert_catalog(template_id: str) -> dict:
+    """Return {category: [model_name, ...]} for every model configured in a
+    template — the "menu" of experts available to a request, independent of
+    any user/API-key permission context (unlike _resolve_user_experts, which
+    always needs a permissions_json to resolve against). Used by the live
+    pipeline diagram (admin_ui) to show which experts a request COULD have
+    used, alongside which ones the stage trace says it actually used.
+
+    Falls back to the global EXPERT_MODELS config when template_id is empty
+    or not found — matching the same fallback graph/expert.py itself uses
+    at runtime (state_.get("user_experts") or EXPERTS).
+    """
+    from config import EXPERTS as _GLOBAL_EXPERTS
+
+    def _flatten(experts_cfg: dict) -> dict:
+        catalog: dict = {}
+        for cat, cat_cfg in (experts_cfg or {}).items():
+            models: list = []
+            if isinstance(cat_cfg, dict) and "models" in cat_cfg:
+                models = [m.get("model", "") for m in cat_cfg.get("models", []) if m.get("model")]
+            elif isinstance(cat_cfg, dict):
+                # Legacy format: {model, endpoint}
+                if cat_cfg.get("model"):
+                    models = [cat_cfg["model"]]
+            elif isinstance(cat_cfg, list):
+                # Already-resolved EXPERTS-style list (global config / _resolve_user_experts output)
+                models = [m.get("model", "") for m in cat_cfg if isinstance(m, dict) and m.get("model")]
+            if models:
+                catalog[cat] = models
+        return catalog
+
+    if not template_id:
+        return _flatten(_GLOBAL_EXPERTS)
+    try:
+        templates = _read_expert_templates()
+        tmpl = next((t for t in templates if t.get("id") == template_id), None)
+        if not tmpl:
+            return _flatten(_GLOBAL_EXPERTS)
+        return _flatten(tmpl.get("experts", {}))
+    except Exception:
+        logger.exception("_get_template_expert_catalog failed for template_id=%s", template_id)
+        return _flatten(_GLOBAL_EXPERTS)
 
 
 def _resolve_template_prompts(
@@ -133,7 +188,8 @@ def _resolve_template_prompts(
         "planner_prompt": "", "judge_prompt": "",
         "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
         "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
-        "planner_num_ctx": 0, "judge_num_ctx": 0,
+        "tool_expert_model_override": "", "tool_expert_url_override": "", "tool_expert_token_override": "",
+        "planner_num_ctx": 0, "judge_num_ctx": 0, "tool_expert_num_ctx": 0,
         "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
         "enable_habe": False,
         "search_fallback_ddg": _WEB_SEARCH_FALLBACK_DDG,
@@ -147,6 +203,11 @@ def _resolve_template_prompts(
         "cross_session_scopes": ["private"], "cross_session_ttl_days": 0,
         "complexity_level": "",
         "causal_intervention": None,
+        # Augmented Tool Path (agentic clients) — mirrors the global AGENT_*_ENABLED
+        # defaults (off), overridable per expert template. See config.py.
+        "agent_cache": AGENT_CACHE_ENABLED,
+        "agent_graphrag": AGENT_GRAPHRAG_ENABLED,
+        "agent_ingest": AGENT_INGEST_ENABLED,
     }
     try:
         perms     = json.loads(permissions_json or "{}")
@@ -186,8 +247,9 @@ def _resolve_template_prompts(
                 return val[:at], val[at + 1:]
             return val or "", ""
 
-        judge_m,   judge_ep   = _split_model_ep(tmpl.get("judge_model", ""))
-        planner_m, planner_ep = _split_model_ep(tmpl.get("planner_model", ""))
+        judge_m,       judge_ep       = _split_model_ep(tmpl.get("judge_model", ""))
+        planner_m,     planner_ep     = _split_model_ep(tmpl.get("planner_model", ""))
+        tool_expert_m, tool_expert_ep = _split_model_ep(tmpl.get("tool_expert_model", ""))
 
         def _resolve_ep_url(ep: str) -> tuple:
             if ep in URL_MAP:
@@ -197,19 +259,24 @@ def _resolve_template_prompts(
                 return _uc[ep]["url"], _uc[ep].get("api_key") or "ollama"
             return "", "ollama"
 
-        judge_url,   judge_tok   = _resolve_ep_url(judge_ep)   if judge_ep   else ("", "ollama")
-        planner_url, planner_tok = _resolve_ep_url(planner_ep) if planner_ep else ("", "ollama")
+        judge_url,       judge_tok       = _resolve_ep_url(judge_ep)       if judge_ep       else ("", "ollama")
+        planner_url,     planner_tok     = _resolve_ep_url(planner_ep)     if planner_ep     else ("", "ollama")
+        tool_expert_url, tool_expert_tok = _resolve_ep_url(tool_expert_ep) if tool_expert_ep else ("", "ollama")
         return {
-            "planner_prompt":          tmpl.get("planner_prompt", ""),
-            "judge_prompt":            tmpl.get("judge_prompt", ""),
-            "judge_model_override":    judge_m,
-            "judge_url_override":      judge_url,
-            "judge_token_override":    judge_tok,
-            "planner_model_override":  planner_m,
-            "planner_url_override":    planner_url,
-            "planner_token_override":  planner_tok,
-            "planner_num_ctx":         int(tmpl.get("planner_num_ctx", 0)),
-            "judge_num_ctx":           int(tmpl.get("judge_num_ctx", 0)),
+            "planner_prompt":              tmpl.get("planner_prompt", ""),
+            "judge_prompt":                tmpl.get("judge_prompt", ""),
+            "judge_model_override":        judge_m,
+            "judge_url_override":          judge_url,
+            "judge_token_override":        judge_tok,
+            "planner_model_override":      planner_m,
+            "planner_url_override":        planner_url,
+            "planner_token_override":      planner_tok,
+            "tool_expert_model_override":  tool_expert_m,
+            "tool_expert_url_override":    tool_expert_url,
+            "tool_expert_token_override":  tool_expert_tok,
+            "planner_num_ctx":             int(tmpl.get("planner_num_ctx", 0)),
+            "judge_num_ctx":               int(tmpl.get("judge_num_ctx", 0)),
+            "tool_expert_num_ctx":         int(tmpl.get("tool_expert_num_ctx", 0)),
             "enable_cache":            tmpl.get("enable_cache", True),
             "enable_graphrag":         tmpl.get("enable_graphrag", True),
             "enable_web_research":     tmpl.get("enable_web_research", True),
@@ -229,8 +296,12 @@ def _resolve_template_prompts(
             "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days", 0)),
             "complexity_level":        tmpl.get("complexity_level", ""),
             "causal_intervention":     tmpl.get("causal_intervention"),
+            "agent_cache":             bool(tmpl.get("agent_cache", AGENT_CACHE_ENABLED)),
+            "agent_graphrag":          bool(tmpl.get("agent_graphrag", AGENT_GRAPHRAG_ENABLED)),
+            "agent_ingest":            bool(tmpl.get("agent_ingest", AGENT_INGEST_ENABLED)),
         }
     except Exception:
+        logger.exception("_resolve_template_prompts failed — returning empty prompt config")
         return empty
 
 
@@ -248,15 +319,19 @@ def _is_endpoint_error(exc: Exception) -> bool:
     returning a raw 500 to the client.
     """
     s = str(exc).lower()
+    # Model-loading failures from Ollama (corrupt/missing blob, GGUF read error).
+    # Matched narrowly: bare "blob"/"no such file or directory" also occur in
+    # unrelated error texts (e.g. tool output echoed into an exception message).
+    if ("blob" in s or "no such file or directory" in s) and (
+        "model" in s or "blobs/sha256" in s or "gguf" in s or "ollama" in s
+    ):
+        return True
     return any(k in s for k in (
         "401", "unauthorized", "403", "forbidden",
         "429", "rate limit", "quota exceeded",
         "authentication", "x-api-key",
         "402", "insufficient", "payment required",
-        # Model-loading failures from Ollama (corrupt/missing blob, GGUF read error)
         "unable to load model",
         "error loading model",
         "failed to load model",
-        "no such file or directory",
-        "blob",
     ))

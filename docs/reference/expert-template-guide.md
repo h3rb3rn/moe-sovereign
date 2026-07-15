@@ -24,6 +24,9 @@ templates shipped with the system.
 | `force_think` | bool | `false` | Forces the extended thinking mode for ALL experts, regardless of their individual `thinking_mode`. |
 | `history_max_turns` | int | `0` (global) | Maximum conversation turns injected into expert context. `0` = use global default. |
 | `graphrag_max_chars` | int | `0` (global) | Maximum characters from GraphRAG context injection. |
+| `agent_cache` | bool | `false` | **Augmented Tool Path.** When `true`, informational first-turn requests from agentic clients (OpenCode, Aider, Continue.dev — anything hitting `/v1/chat/completions` with a `tools` array) can be served from a dedicated agent cache instead of calling the LLM. See [Augmented Tool Path](#augmented-tool-path-agentic-clients) below. |
+| `agent_graphrag` | bool | `false` | **Augmented Tool Path.** Injects Neo4j knowledge-graph context into the tool model's system prompt on the first turn of an agentic session. |
+| `agent_ingest` | bool | `false` | **Augmented Tool Path.** Writes clean session final answers back into the agent cache and the knowledge graph. |
 
 ---
 
@@ -290,6 +293,134 @@ a dedicated **Tooling LLM** for function-calling alongside the MoE pipeline.
 | `expert_template_id` | Links to the Expert Template that handles content requests. The Tooling LLM handles structure; the MoE pipeline handles knowledge. |
 | `tool_max_tokens` | Max tokens for a single tool response. 8192 is sufficient for most file reads and bash outputs. |
 | `tool_choice` | `required` forces Claude Code to always call a tool rather than generating freeform text, which prevents hallucinated file paths. |
+| `agent_cache` | **Augmented Tool Path.** Same semantics as the Expert Template field of the same name, but for the Anthropic `/v1/messages` (Claude Code CLI) path. **Mutually exclusive with `tool_choice: "required"`** — a profile that forces tool use will never serve a cache hit, by design (see below). |
+| `agent_graphrag` | **Augmented Tool Path.** Injects GraphRAG context on the first turn of a Claude Code session. |
+| `agent_ingest` | **Augmented Tool Path.** Writes clean session final answers back into the agent cache and the knowledge graph. |
+
+---
+
+## Augmented Tool Path (Agentic Clients)
+
+Agentic coding tools — Claude Code CLI (`/v1/messages`), OpenCode, Aider,
+Continue.dev (`/v1/chat/completions`) — always send a `tools` array or
+`tool_result` turns. Because reliable function-calling requires a single,
+consistent model, the gateway has a dedicated **tool-calling fast path**
+(`_anthropic_tool_handler` / `_handle_tool_calls`) that bypasses the whole
+MoE pipeline — planner, parallel experts, judge synthesis — and forwards
+straight to the tool model. This is necessary for correct tool calling, but
+it means an agentic session gets **none** of the cache, GraphRAG, or
+knowledge-ingestion infrastructure that interactive (Open-WebUI) sessions
+get: every request costs a full inference, no matter how often the same
+question was already answered.
+
+The **Augmented Tool Path** is an opt-in enrichment layer that sits between
+the tool handler and the tool model, invisible to the client — streaming
+events, `stop_reason`/`finish_reason` semantics, and tool-call blocks are
+preserved byte-for-byte. It is controlled by the three fields documented
+above (`agent_cache`, `agent_graphrag`, `agent_ingest`), settable per CC
+profile (Admin UI → Profiles / User Portal → CC-Profile-Editor) or per
+Expert Template (Admin UI → Expert Templates / User Portal → Templates).
+All three default to `false` — enabling them is a deliberate per-profile
+opt-in, never a global switch.
+
+### What each flag does, and when
+
+| Flag | Fires on | Effect |
+|---|---|---|
+| `agent_graphrag` | The **first turn** of a session only (no `tool_result` yet in the message history) | Queries Neo4j (tenant-scoped to the authenticated user), injects the result into the tool model's system prompt, and caches it per-session so subsequent tool-loop turns re-use it without a second Neo4j round-trip. |
+| `agent_cache` | The first turn only, **and** only for a genuinely informational query (question form, no mutation verb like "fix"/"implement"/"ändere"), **and** only when the client does not force `tool_choice: "required"` | Looks up a confidence-gated cache entry (L0 Valkey exact-match, then L1 ChromaDB semantic match, scoped by `sha256(user_id\|workspace)`) and, on a hit, returns the cached answer via the exact same SSE/chunk format the client already parses — no LLM call, typically tens of milliseconds instead of several seconds. |
+| `agent_ingest` | Any turn that ends cleanly (`stop_reason`/`finish_reason` is a plain stop, no tool_use/tool_calls emitted, no stream error) | Writes the query/answer pair into the agent cache at confidence 0.6 (below the 0.85 serve threshold — a fresh answer is never immediately servable) and publishes it to the same Kafka ingestion topic the interactive pipeline uses. A background judge call then re-scores the answer; a high score promotes the confidence to 0.9, which is what actually unlocks a future cache hit. A low score flags the entry so it is never served. |
+
+### Operational implications
+
+- **A long agentic coding session mostly won't see cache/GraphRAG hits.**
+  Both `agent_cache` and `agent_graphrag` are gated to the *first* turn of a
+  session — by the time a Claude Code or OpenCode session is 50 tool calls
+  deep, that window has long passed. Ingestion, by contrast, fires on
+  *every* clean completion, so a session that produces several distinct
+  final answers (e.g. after each sub-task) writes back that many times.
+- **`tool_choice: "required"` silently disables `agent_cache`.** If a CC
+  profile forces tool use, the client's contract is "always return a tool
+  call" — serving a plain-text cache hit there would break the client's
+  expectations, so the gate refuses to fire. If you want cache-serving,
+  the profile's `Tool Choice` must be `auto`.
+- **Mutation tasks are never cached, by design.** `agent_cache` only
+  considers a turn "cacheable" if it reads as a question, not an
+  instruction — "What does this function do?" qualifies, "Fix the bug in
+  auth.py" never does. This is intentional: tool-use decisions depend on
+  live environment state that differs between sessions, so caching them
+  would silently serve stale actions.
+- **Latency budget is bounded and fails open.** The cache lookup is
+  time-boxed to 300 ms, the GraphRAG query to 2 s; both degrade to a plain
+  passthrough on timeout or any error rather than blocking the request.
+  Write-back runs entirely as a fire-and-forget background task — it never
+  adds latency to the response the client sees.
+- **Cache entries are scoped per user *and* workspace**, not just per user
+  — `sha256(user_id|workspace)`, where the workspace is parsed from the CC
+  environment's `Working directory:` line. An answer cached while working
+  in one repository can never leak into a different project, even for the
+  same user.
+- **The knowledge graph grows from agentic sessions, not just chat.**
+  `agent_ingest` feeds the same Kafka topic and `extract_and_ingest()` path
+  the interactive pipeline uses, complete with provenance and trust decay
+  — coding-session knowledge accumulates in the same graph that GraphRAG
+  later reads from, closing the loop between agentic tool use and the
+  sovereign knowledge base.
+- **Everything is off by default and fully backward compatible.** With all
+  three flags unset, the tool-calling fast path behaves exactly as before
+  — this is an additive layer, not a replacement for the existing
+  passthrough.
+
+### Premature-Stop Detection & Retry (always on, not an opt-in flag)
+
+Unlike the three flags above, this safety net is unconditional — it applies
+to every tool-calling request regardless of CC profile / Expert Template
+settings, because it guards against a structural protocol violation rather
+than adding an optional enrichment.
+
+Under `tool_choice: "auto"` with `tools` present, a valid completion must
+either answer in text or call a tool. Some tool-calling models (confirmed
+live: qwen3.6:35b) occasionally do neither correctly: they write a plain-
+text *announcement* of intent ("Let me now…", "Ich fixe das jetzt…") instead
+of the actual tool call, embed the tool call as literal text markup instead
+of the API's structured `tool_calls` field, or — the least detectable case
+— return completely empty content with no tool call at all. All three are
+protocol-valid `finish_reason=stop` completions from the client's point of
+view, so the agentic session just goes silent with no visible error.
+
+**Detection patterns are admin-editable, not hardcoded.** They live in
+Postgres (`admin_premature_stop_patterns`) and can be viewed, added, edited,
+or disabled from the Admin UI at `/patterns` — including a "test against
+sample text" tool to verify a new pattern before saving — without a code
+change or container rebuild. Changes take effect within ~60 seconds
+(in-process cache, stale-while-revalidate). A completely empty response is
+always treated as a failure regardless of pattern configuration, since no
+pattern can match an empty string.
+
+**On detection, one retry is attempted** against a different configured
+`tool_agent` model where the template defines one, or the same model with an
+appended corrective instruction otherwise. The retry preserves the primary
+model's warm context window (queries Ollama's `/api/ps` first, never
+requests a smaller `num_ctx` than what's already loaded) and always targets
+Ollama's native `/api/chat` endpoint rather than the OpenAI-compatible one —
+this requires normalizing the accumulated tool-call history into Ollama's
+wire format first (`function.arguments` as a parsed object, not the OpenAI
+JSON-string form), since sending it unconverted is rejected immediately.
+
+If the retry also fails, the client receives the original (broken) response
+— there is currently no second-level fallback beyond one retry.
+
+**Endings that match no known pattern are still recorded, not just lost.**
+A text-only ending that isn't caught above is persisted to
+`admin_unclassified_tool_endings` and judged asynchronously by an
+admin-configurable, self-hosted classifier LLM (Admin UI at
+`/classifier-config` inside `/tool-endings`, default `gemma4:12b@N04-RGTX` —
+deliberately another local Ollama instance rather than an external API, so
+in-progress source code never leaves the sovereign infrastructure just to be
+triage-judged). Review the queue at `/tool-endings`; promoting a real finding
+turns it into a permanent `admin_premature_stop_patterns` row with one
+click, so the same phrasing is caught deterministically — without a second
+LLM call — the next time it occurs. See `docs/ARCHITECTURE.md` §12.
 
 ---
 
