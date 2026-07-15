@@ -90,6 +90,29 @@ def _pick_baseline_expert(experts: dict) -> dict | None:
 async def _ollama_generate(url: str, token: str, model: str, prompt: str,
                            num_ctx: int = 32768, timeout: float = 300.0) -> tuple:
     base = url.rstrip("/").removesuffix("/v1")
+    # Never downgrade a warm model: llama-server can't resize a running
+    # instance's context, so requesting a smaller ctx than what's already
+    # loaded forces a full unload+reload (tens of seconds, disruptive to
+    # every other caller of that node). This probe is a fire-and-forget,
+    # sampled, non-critical call — it must never be the reason a shared
+    # expert model gets evicted/reloaded. Confirmed live: this exact path
+    # (default num_ctx=32768) was reloading an already-262144-loaded
+    # qwen3.6:35b on N04-RTX back down, immediately followed by the next
+    # real request reloading it back up.
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+            _ps_r = await _ps_cl.get(
+                f"{base}/api/ps", headers={"Authorization": f"Bearer {token}"},
+            )
+            for _loaded in _ps_r.json().get("models", []):
+                _lname = _loaded.get("name", "").split(":")[0]
+                _mname = model.split(":")[0]
+                _loaded_ctx = _loaded.get("context_length", 0)
+                if _lname == _mname and _loaded_ctx >= num_ctx:
+                    num_ctx = _loaded_ctx
+                    break
+    except Exception:
+        pass  # non-fatal — fall through with the originally requested ctx
     payload = {
         "model": model, "stream": False, "think": False,
         "messages": [{"role": "user", "content": prompt}],

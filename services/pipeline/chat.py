@@ -946,8 +946,35 @@ async def _handle_tool_calls(
         # server-configured OLLAMA_KEEP_ALIVE default (e.g. 24h) instead of
         # silently overriding it with a shorter app-level value.
     }
-    if num_ctx:
-        payload["options"] = {"num_ctx": num_ctx}
+    # Never downgrade a warm model — same defensive check as the retry
+    # fallback above and services/inference.py / graph/expert.py /
+    # services/quality_probe.py. Templates commonly leave tool_expert_num_ctx
+    # at 0 (confirmed live for moe-n04-rtx-qwen3.6:35b-256k), which used to
+    # mean "send no options.num_ctx at all" — Ollama then falls back to the
+    # model's Modelfile default instead of preserving whatever large context
+    # is already loaded, forcing a full reload on the very next tool-calling
+    # turn (observed: repeated unloads of qwen3.6:35b on N04-RTX during
+    # multi-turn agentic tool use, e.g. after a web-search tool result was
+    # appended and the model needed its already-loaded large context again).
+    _tc_ctx = num_ctx
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+            _tc_base = tool_base_url.rstrip("/").removesuffix("/v1")
+            _ps_r = await _ps_cl.get(
+                f"{_tc_base}/api/ps",
+                headers={"Authorization": f"Bearer {tool_token}"},
+            )
+            for _loaded in _ps_r.json().get("models", []):
+                _lname = _loaded.get("name", "").split(":")[0]
+                _ename = tool_model.split(":")[0]
+                _loaded_ctx = _loaded.get("context_length", 0)
+                if _lname == _ename and _loaded_ctx >= _tc_ctx:
+                    _tc_ctx = _loaded_ctx
+                    break
+    except Exception:
+        pass  # non-fatal — fall through to the configured/default num_ctx
+    if _tc_ctx:
+        payload["options"] = {"num_ctx": _tc_ctx}
     # Always pass tools so the model can call kanban_complete (or any other tool)
     # after synthesising tool results.
     if request.tools:
@@ -2616,6 +2643,18 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "planner_model_override": _tmpl_prompts["planner_model_override"],
          "planner_url_override":   _tmpl_prompts["planner_url_override"],
          "planner_token_override": _tmpl_prompts["planner_token_override"],
+         # Confirmed live: unlike the streaming branch above (stream_response(...,
+         # planner_num_ctx=..., judge_num_ctx=...)), this non-streaming ainvoke()
+         # dict never forwarded the template's context-window override at all —
+         # state.get("judge_num_ctx"/"planner_num_ctx") was always empty here, so
+         # _invoke_judge_with_retry/_invoke_planner_with_retry silently fell through
+         # to the global JUDGE_NUM_CTX/PLANNER_NUM_CTX env default or the static
+         # parameter-count heuristic, ignoring an explicit template override (e.g.
+         # a 262144 context_window template loading its model at 16384 instead).
+         # Every stream=False caller hit this — notably the Ontology Gap-Healer
+         # (scripts/gap_healer_templates.py always sends stream=False).
+         "planner_num_ctx": _tmpl_prompts.get("planner_num_ctx", 0),
+         "judge_num_ctx":   _tmpl_prompts.get("judge_num_ctx", 0),
          "template_name":  _tmpl_name,
          "template_id":    _tmpl_override or "",
          "causal_intervention": _tmpl_prompts.get("causal_intervention"),

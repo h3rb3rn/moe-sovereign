@@ -565,6 +565,36 @@ async def _invoke_judge_with_retry(
                 # Native Ollama /api/chat — respects options.num_ctx unlike /v1/chat/completions.
                 _ollama_base = _j_url_base.removesuffix("/v1")
                 _ctx = int(state.get("judge_num_ctx") or 0) or JUDGE_NUM_CTX or _static_ctx(_jm)
+                # Never downgrade a warm model: if Ollama already has this model loaded
+                # with a larger context window, reuse that window instead of forcing a
+                # reload — llama-server can't resize a running instance's context, so a
+                # smaller request for the SAME model triggers a full unload+reload cycle.
+                # Confirmed live: qwen3.6:35b on N04-RTX reloading every 5-40 minutes all
+                # day, alternating between an Augmented Tool Path session's large template
+                # context and this judge call's smaller JUDGE_NUM_CTX default — the exact
+                # same-model downgrade this check exists to prevent already protects the
+                # Augmented Tool Path (services/pipeline/anthropic.py,
+                # services/pipeline/chat.py's _retry_tool_agent_fallback) but was never
+                # applied to the judge/planner path that competes with it on the same node.
+                try:
+                    async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                        _ps_r = await _ps_cl.get(
+                            f"{_ollama_base}/api/ps",
+                            headers={"Authorization": f"Bearer {_jt}"},
+                        )
+                        for _loaded in _ps_r.json().get("models", []):
+                            _lname = _loaded.get("name", "").split(":")[0]
+                            _ename = _jm.split(":")[0]
+                            _loaded_ctx = _loaded.get("context_length", 0)
+                            if _lname == _ename and _loaded_ctx >= _ctx:
+                                logger.info(
+                                    "judge: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                                    _loaded_ctx, _ctx, _jm,
+                                )
+                                _ctx = _loaded_ctx
+                                break
+                except Exception:
+                    pass  # non-fatal — fall through to the configured num_ctx
                 _opts: dict = {}
                 if _ctx > 0:
                     _opts["num_ctx"] = _ctx
@@ -770,6 +800,30 @@ async def _invoke_planner_with_retry(
     if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
         _ollama_base = _p_url_base.removesuffix("/v1")
         _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        # Never downgrade a warm model — same reasoning and pattern as the judge
+        # branch above (_invoke_judge_with_retry) and the Augmented Tool Path
+        # (services/pipeline/anthropic.py). Checked before the eviction call
+        # below so reusing a warm larger-context load also correctly skips
+        # evicting competing models for VRAM this request doesn't actually need.
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {_pt}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = _pm.split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _ctx:
+                        logger.info(
+                            "planner: reusing warm model ctx=%d (requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _ctx, _pm,
+                        )
+                        _ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         if _ctx >= 65536:
             await _evict_competing_models(_ollama_base, _pm, ctx=_ctx)
         _opts: dict = {"num_predict": MAX_PLANNER_TOKENS}

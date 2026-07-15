@@ -273,6 +273,37 @@ async def expert_worker(state_: AgentState):
                 )
                 if _safe_ctx > 0 and _pinned_ctx > _safe_ctx:
                     _pinned_ctx = _safe_ctx
+                # Never downgrade a warm model: this pin's own stated purpose is
+                # avoiding reload-thrashing, but it assumed every large-model
+                # caller (CC-tool path included) warms up at JUDGE_NUM_CTX — no
+                # longer true once a template's own context_window (e.g. 262144)
+                # differs from the global default. Confirmed live: qwen3.6:35b on
+                # N04-RTX reloading from a 262144-ctx OpenCode session down to
+                # 32768 for an expert call minutes later, well before its 24h
+                # keep_alive — this exact pin was the cause, unconditionally
+                # capping down regardless of what was already loaded. Same
+                # check/pattern as _invoke_judge_with_retry / _invoke_planner_with_retry
+                # (services/inference.py) and the Augmented Tool Path.
+                if url:
+                    try:
+                        async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                            _ps_r = await _ps_cl.get(
+                                f"{url.rstrip('/').removesuffix('/v1')}/api/ps",
+                                headers={"Authorization": f"Bearer {token}"},
+                            )
+                            for _loaded in _ps_r.json().get("models", []):
+                                _lname = _loaded.get("name", "").split(":")[0]
+                                _ename = model_name.split(":")[0]
+                                _loaded_ctx = _loaded.get("context_length", 0)
+                                if _lname == _ename and _loaded_ctx >= _pinned_ctx:
+                                    logger.info(
+                                        "expert: reusing warm model ctx=%d (pin would have requested %d, no reload needed, model=%s)",
+                                        _loaded_ctx, _pinned_ctx, model_name,
+                                    )
+                                    _pinned_ctx = _loaded_ctx
+                                    break
+                    except Exception:
+                        pass  # non-fatal — fall through to the pinned ctx
                 if _pinned_ctx != _expert_ctx_window:
                     logger.info(
                         "expert: ctx pinned to min(resolved=%d, JUDGE_NUM_CTX=%d, safe=%d)=%d model=%s",

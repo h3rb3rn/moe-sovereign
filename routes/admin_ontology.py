@@ -17,8 +17,12 @@ from fastapi import APIRouter
 import state
 from services.healer import (
     _DEDICATED_HEALER_KEY,
+    _BLOCKED_SERVERS_KEY,
     _stream_dedicated_healer,
     _set_healer_status_dedicated,
+    _set_server_blocked,
+    _target_server_for_template,
+    _clear_orphaned_node_slots,
 )
 
 router = APIRouter()
@@ -75,6 +79,7 @@ async def start_dedicated_healer(body: dict = None):
     template = (body.get("template") or "").strip()
     if not template:
         return {"ok": False, "reason": "template_required"}
+    block_server = bool(body.get("block_server", False))
 
     if state._dedicated_healer_proc is not None and state._dedicated_healer_proc.returncode is None:
         return {"ok": False, "reason": "already_running"}
@@ -98,6 +103,12 @@ async def start_dedicated_healer(body: dict = None):
             await state.redis_client.delete(_DEDICATED_HEALER_KEY)
         except Exception:
             pass
+
+    # Defensive: a prior run that ended uncleanly (container crash, kill -9)
+    # may have left its per-node concurrency slot counter orphaned above the
+    # allowed cap — that would silently block every future call this fresh
+    # process makes. Confirmed not running above, so safe to reset.
+    await _clear_orphaned_node_slots(template)
 
     env = os.environ.copy()
     env["TEMPLATE_POOL"] = template
@@ -127,9 +138,18 @@ async def start_dedicated_healer(body: dict = None):
                 "pid": str(proc.pid), "started_at": str(time.time()),
                 "processed": "0", "written": "0", "failed": "0",
                 "stalled": "0", "auto_restart": "1",
+                "block_server": "1" if block_server else "0",
             })
         except Exception:
             pass
+
+    # The healer's own lifecycle (services/healer.py) owns the dynamic
+    # block/unblock decision from here on — it releases the node the moment
+    # the gap queue is empty and re-blocks it on every restart attempt.
+    # Block eagerly right away too, so the node isn't briefly available
+    # while the subprocess is still spinning up.
+    if block_server:
+        await _set_server_blocked(_target_server_for_template(template), True)
 
     first_line = None
     try:
@@ -216,9 +236,24 @@ async def stop_dedicated_healer():
                 "status": "stopped",
                 "template": template_name,
                 "auto_restart": "0",
+                "block_server": "0",
             })
         except Exception:
             pass
+
+    # Manual stop kills the process directly (terminate/SIGTERM) — its
+    # `finally: release_node_slot()` cleanup does not run, and since
+    # auto_restart is now "0" the standard restart path's own cleanup
+    # (services.healer._dedicated_healer_auto_restart_if_needed) won't run
+    # either. Clear explicitly so a stopped-then-restarted healer doesn't
+    # inherit an orphaned concurrency slot.
+    if template_name:
+        await _clear_orphaned_node_slots(template_name)
+
+    # Manual stop always releases the node, regardless of whether the
+    # subprocess's own exit-path already did so (idempotent SREM).
+    if template_name:
+        await _set_server_blocked(_target_server_for_template(template_name), False)
 
     return {"ok": True, "stopped": stopped}
 
@@ -248,6 +283,15 @@ async def get_dedicated_healer_status():
         age = round(time.time() - last_ts) if last_ts else None
         data["activity_age_seconds"] = str(age) if age is not None else ""
         data["stalled"] = data.get("stalled", "0")
+        target = _target_server_for_template(data.get("template", ""))
+        data["block_target"] = target
+        if target:
+            try:
+                data["server_blocked"] = "1" if await state.redis_client.sismember(
+                    _BLOCKED_SERVERS_KEY, target
+                ) else "0"
+            except Exception:
+                data["server_blocked"] = ""
         return dict(data)
     except Exception as e:
         return {"status": "unknown", "error": str(e)[:100]}
