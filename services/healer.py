@@ -386,13 +386,30 @@ async def _auto_resume_dedicated_healer() -> None:
     block_pref = data.get("block_server") == "1"
 
     # Confirm the previous PID is dead — if still alive, no restart needed.
+    # A bare os.kill(pid, 0) is not enough: PIDs reset on every container
+    # restart, so a low-numbered PID from the Redis hash (left over from
+    # before the restart) can coincidentally match some unrelated, short-
+    # lived process in the FRESH container's PID namespace — a false
+    # positive that makes auto-resume skip forever, since nothing will ever
+    # trigger a real exit event for a healer that never actually restarted.
+    # Confirmed live: this happened on first deploy after this comment was
+    # added, leaving the node stuck blocked with no healer running. Checking
+    # the process's actual cmdline is a cheap, reliable disambiguator.
     pid = int(data.get("pid", 0))
     if pid:
         try:
             os.kill(pid, 0)
-            logger.info("🔄 Dedicated healer PID %s still alive — skipping auto-resume", pid)
-            return
-        except OSError:
+            with open(f"/proc/{pid}/cmdline", "rb") as _f:
+                _cmdline = _f.read().decode(errors="replace")
+            if "gap_healer_templates.py" in _cmdline:
+                logger.info("🔄 Dedicated healer PID %s still alive — skipping auto-resume", pid)
+                return
+            logger.info(
+                "🔄 Dedicated healer PID %s belongs to a different process "
+                "(cmdline=%r) — PID reuse after restart, proceeding with auto-resume",
+                pid, _cmdline[:100],
+            )
+        except (OSError, FileNotFoundError):
             pass  # process dead; container was restarted
 
     # The previous process is confirmed dead (container restart) — any

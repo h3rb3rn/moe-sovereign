@@ -645,6 +645,7 @@ async def _handle_tool_calls(
     Returns a StreamingResponse (SSE) when request.stream is True, otherwise
     a plain dict. Callers must check the type and wrap accordingly.
     """
+    _handle_tool_calls_t0 = time.monotonic()
     messages = _build_tool_messages(request)
     if system_augment:
         _sys_idx = next((i for i, m in enumerate(messages) if m.get("role") == "system"), -1)
@@ -1135,11 +1136,35 @@ async def _handle_tool_calls(
                     _diag_saw_tc, _diag_chars, _diag_chunks,
                     sum(1 for m in messages if m.get("role") == "tool"),
                 )
-                for _ftc in finalize_stream_tool_calls(_file_tc_acc):
+                _finalized_tool_calls = finalize_stream_tool_calls(_file_tc_acc)
+                for _ftc in _finalized_tool_calls:
                     for _touch in extract_file_touches(_ftc["name"], _ftc["arguments"]):
                         asyncio.create_task(_record_file_touch(
                             chat_id, _touch["path"], _touch["action"], _touch["tool"],
                         ))
+                # Tool-eval structured log — mirrors services/pipeline/anthropic.py's
+                # call (_anthropic_tool_handler). Confirmed live: this OpenAI-format
+                # passthrough (Odysseus, OpenCode, any tools-array client) never wrote
+                # to tool_eval.jsonl at all despite importing _log_tool_eval, so a
+                # user whose tool-calling traffic goes entirely through this path saw
+                # zero entries in the Admin UI's "Tool Call Evaluation" page — the
+                # Anthropic/Claude-Code path was the only one actually logging.
+                if reason != "client-disconnected":
+                    _log_tool_eval({
+                        "ts":              datetime.utcnow().isoformat() + "Z",
+                        "chat_id":         chat_id,
+                        "model":           tool_model,
+                        "node":            tool_base_url,
+                        "input_type":      "text",
+                        "tools_available": len(request.tools or []),
+                        "output_type":     _diag_fr,
+                        "tools_called":    [t["name"] for t in _finalized_tool_calls],
+                        "tool_call_count": len(_finalized_tool_calls),
+                        "has_text":        bool(_diag_chars),
+                        "latency_s":       round(time.monotonic() - _t_stream_start, 3),
+                        "tool_choice_sent": request.tool_choice,
+                        "format_detected": "openai_tool_passthrough",
+                    })
                 # Only for turns that actually completed — a client-disconnect
                 # exit isn't a real "how long did the model take" sample.
                 if reason != "client-disconnected":
@@ -1521,6 +1546,30 @@ async def _handle_tool_calls(
             completion_tokens=_slow_usage.get("completion_tokens", 0),
             session_id=session_id,
         ))
+
+    # Tool-eval structured log for the non-streaming (slow) path — same gap
+    # as the fast/stream path's _log_and_finalize above: this passthrough
+    # proxy never wrote to tool_eval.jsonl at all.
+    _slow_choice = (upstream.get("choices") or [{}])[0]
+    _slow_msg = _slow_choice.get("message") or {}
+    _log_tool_eval({
+        "ts":              datetime.utcnow().isoformat() + "Z",
+        "chat_id":         chat_id,
+        "model":           tool_model,
+        "node":            tool_base_url,
+        "input_type":      "text",
+        "tools_available": len(request.tools or []),
+        "output_type":     _slow_choice.get("finish_reason"),
+        "tools_called":    [
+            (tc.get("function") or {}).get("name", "")
+            for tc in (_slow_msg.get("tool_calls") or [])
+        ],
+        "tool_call_count": len(_slow_msg.get("tool_calls") or []),
+        "has_text":        bool(_slow_msg.get("content")),
+        "latency_s":       round(time.monotonic() - _handle_tool_calls_t0, 3),
+        "tool_choice_sent": request.tool_choice,
+        "format_detected": "openai_tool_passthrough",
+    })
 
     if not request.stream:
         return upstream
