@@ -1271,6 +1271,7 @@ async def merger_node(state_: AgentState):
         _trust_state = {
             "trust_score":   _trust_score_result.score,
             "trust_verdict": _trust_score_result.verdict.value,
+            "trust_factors": _trust_score_result.factors,
         }
 
     return {
@@ -1380,8 +1381,15 @@ def _should_replan(state_: AgentState) -> str:
             return "planner"
 
     # ── 2. Self-Critique Loop (TASK-11) ───────────────────────────────────────
+    # Also covers BLOCK, not just PROCEED_WITH_ASSUMPTION: BLOCK does not
+    # currently suppress or alter the response anywhere in the pipeline (it
+    # only writes a decision-log entry — see services/trust_score.py) and, if
+    # left out here, would get LESS scrutiny than the middle bucket even
+    # though it's the worse-scoring case. Confirmed live 2026-07-16: a query
+    # with zero retrieved sources landed on BLOCK (score 0.05) and skipped
+    # both self-critique and the hallucination-risk critic check entirely.
     trust_verdict = (state_.get("trust_verdict") or "").upper()
-    if trust_verdict == "PROCEED_WITH_ASSUMPTION":
+    if trust_verdict in ("PROCEED_WITH_ASSUMPTION", "BLOCK"):
         sc_round = state_.get("self_critique_round") or 0
         sc_max   = state_.get("self_critique_max") or int(os.getenv("SELF_CRITIQUE_MAX_ROUNDS", "2"))
         if sc_round < sc_max:
@@ -1560,10 +1568,48 @@ async def self_critique_node(state_: AgentState):
     return {"self_critique_round": round_num}
 
 
+def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
+    """Decision-log entry for the critic_node's hallucination-risk trigger
+    (see critic_node docstring) — separate from the pre-existing
+    safety-critical fact-check path, which isn't logged as a distinct
+    decision type."""
+    try:
+        from services.decision_log import log_decision, DecisionType
+        log_decision(
+            DecisionType.HALLUCINATION_CHECK,
+            state_.get("response_id", ""),
+            rationale=(
+                f"Trust-Score stayed PROCEED_WITH_ASSUMPTION — claim check "
+                f"against retrieved sources {'found and corrected unsupported claims' if corrected else 'found no unsupported claims'}"
+            ),
+            metadata={
+                "corrected": corrected,
+                "trust_score": state_.get("trust_score"),
+                "factors": (state_.get("trust_factors") or {}),
+            },
+        )
+    except Exception as _e:
+        logger.debug("Hallucination-check decision log failed: %s", _e)
+
+
 async def critic_node(state_: AgentState):
     """
-    Fact-check for safety-critical domains (medical_consult, legal_advisor).
-    Checks the merger answer for factual errors and returns a corrected version if needed.
+    Fact-check pass over the merger answer. Two independent triggers:
+
+      1. Safety-critical category (medical_consult, legal_advisor) — always
+         checked, using the judge's own knowledge (original behaviour).
+      2. Hallucination-risk check: Trust-Score verdict is still
+         PROCEED_WITH_ASSUMPTION or BLOCK by the time the router reaches
+         "critic" (i.e. after self-critique rounds ran their course and
+         coverage is still thin, or unsupported-claims_penalty is doing the
+         pulling — see services/trust_score.py). BLOCK is included
+         deliberately: it doesn't suppress or alter the response anywhere
+         else in the pipeline today (only logged — see trust_score.py), so
+         excluding it here would mean the worst-scoring responses get LESS
+         scrutiny than the middle bucket. This check is grounded against the
+         actual retrieved sources (graph_context, web_research, mcp_result),
+         not just the judge's own recollection, since an ungrounded judge can
+         hallucinate its own "corrections" just as easily as the experts did.
     """
     if state_.get("cache_hit"):
         return {"final_response": state_.get("final_response", "")}
@@ -1574,32 +1620,73 @@ async def critic_node(state_: AgentState):
     plan      = state_.get("plan", [])
     plan_cats = {t.get("category", "") for t in plan if isinstance(t, dict)}
     active    = plan_cats & _SAFETY_CRITICAL_CATS
-    if not active:
+
+    trust_verdict       = (state_.get("trust_verdict") or "").upper()
+    hallucination_risk  = trust_verdict in ("PROCEED_WITH_ASSUMPTION", "BLOCK")
+
+    if not active and not hallucination_risk:
         return {"final_response": state_.get("final_response", "")}
 
     final_response = state_.get("final_response", "")
     if not final_response or len(final_response) < 100:
         return {"final_response": final_response}
 
-    logger.info(f"--- [NODE] CRITIC (fact-check: {active}) ---")
-    await _report(f"🔎 Critic: fact-check for {', '.join(sorted(active))}...")
+    _trigger = f"fact-check: {active}" if active else f"hallucination-risk (trust={trust_verdict})"
+    logger.info(f"--- [NODE] CRITIC ({_trigger}) ---")
+    await _report(f"🔎 Critic: {_trigger}...")
     await _record_stage(state_.get("response_id", ""), "critic", "started")
 
-    critic_prompt = (
-        f"You are a critical reviewer for {', '.join(sorted(active))} answers.\n"
-        "Check the following answer for factual errors, dangerous statements or misleading information.\n\n"
-        f"REQUEST: {state_['input']}\n\n"
-        f"ANSWER TO CHECK:\n{final_response}\n\n"
-        "RESPOND IN ONE OF EXACTLY TWO WAYS — no other format is acceptable:\n\n"
-        "1. If the answer is factually correct and safe:\n"
-        "   Respond with exactly the single word: CONFIRMED\n\n"
-        "2. If the answer contains factual errors or dangerous content:\n"
-        "   Write the fully corrected answer DIRECTLY — as if you were answering the user's request yourself.\n"
-        "   Do NOT begin with any preamble, error analysis, or meta-commentary such as "
-        "'Factual errors were found' or 'The answer contains mistakes'.\n"
-        "   Start immediately with the corrected content.\n"
-        "   You may append a brief [Correction-Note: ...] at the very end only.\n"
-    )
+    if active:
+        critic_prompt = (
+            f"You are a critical reviewer for {', '.join(sorted(active))} answers.\n"
+            "Check the following answer for factual errors, dangerous statements or misleading information.\n\n"
+            f"REQUEST: {state_['input']}\n\n"
+            f"ANSWER TO CHECK:\n{final_response}\n\n"
+            "RESPOND IN ONE OF EXACTLY TWO WAYS — no other format is acceptable:\n\n"
+            "1. If the answer is factually correct and safe:\n"
+            "   Respond with exactly the single word: CONFIRMED\n\n"
+            "2. If the answer contains factual errors or dangerous content:\n"
+            "   Write the fully corrected answer DIRECTLY — as if you were answering the user's request yourself.\n"
+            "   Do NOT begin with any preamble, error analysis, or meta-commentary such as "
+            "'Factual errors were found' or 'The answer contains mistakes'.\n"
+            "   Start immediately with the corrected content.\n"
+            "   You may append a brief [Correction-Note: ...] at the very end only.\n"
+        )
+    else:
+        # Source-grounded claim verification — the judge gets the same raw
+        # retrieval evidence the experts had, so it verifies claims against
+        # real evidence instead of substituting its own (also-fallible)
+        # knowledge. Sources truncated to keep the prompt bounded; a missing
+        # source pool is still useful signal (an answer with specific claims
+        # but zero retrieved evidence is exactly the case worth catching).
+        graph_ctx = (state_.get("graph_context") or "")[:3000]
+        web_ctx   = (state_.get("web_research") or "")[:3000]
+        mcp_ctx   = (state_.get("mcp_result") or "")[:2000]
+        sources = "\n---\n".join(s for s in (graph_ctx, web_ctx, mcp_ctx) if s.strip()) \
+            or "(no retrieved sources available for this answer)"
+        critic_prompt = (
+            "You are verifying an answer for unsupported claims. This response's "
+            f"Trust-Score is still low (verdict={trust_verdict}) even after a "
+            "self-critique pass, meaning parts of it may not be well grounded "
+            "in evidence.\n\n"
+            f"REQUEST: {state_['input']}\n\n"
+            f"RETRIEVED SOURCES (the only evidence available for this answer):\n{sources}\n\n"
+            f"ANSWER TO CHECK:\n{final_response}\n\n"
+            "Check every specific factual claim (numbers, dates, names, statistics) "
+            "in the answer against the retrieved sources above. General knowledge "
+            "not covered by the sources is fine to leave as-is — only flag claims "
+            "that are specific AND contradicted by, or absent from, the sources "
+            "when the answer presents them as sourced facts.\n\n"
+            "RESPOND IN ONE OF EXACTLY TWO WAYS — no other format is acceptable:\n\n"
+            "1. If every specific sourced claim is supported by the sources:\n"
+            "   Respond with exactly the single word: CONFIRMED\n\n"
+            "2. If the answer contains claims not supported by the sources:\n"
+            "   Write the fully corrected answer DIRECTLY — as if you were answering "
+            "the user's request yourself, removing or hedging the unsupported claims.\n"
+            "   Do NOT begin with any preamble or meta-commentary.\n"
+            "   Start immediately with the corrected content.\n"
+            "   You may append a brief [Correction-Note: ...] at the very end only.\n"
+        )
 
     await _report(f"🔎 Critic-Prompt:\n{critic_prompt}")
     try:
@@ -1618,11 +1705,15 @@ async def critic_node(state_: AgentState):
             await _report("✅ Critic: answer confirmed correct")
             await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
+            if hallucination_risk and not active:
+                _log_hallucination_check(state_, corrected=False)
             return {"final_response": final_response, **usage}
 
         await _report(f"⚠️ Critic: answer corrected ({len(critic_out)} chars)")
         await _record_stage(state_.get("response_id", ""), "critic", "corrected")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
+        if hallucination_risk and not active:
+            _log_hallucination_check(state_, corrected=True)
         return {"final_response": critic_out, **usage}
     except Exception as e:
         logger.warning(f"Critic node error: {e}")

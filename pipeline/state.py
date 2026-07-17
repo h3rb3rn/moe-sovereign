@@ -161,6 +161,7 @@ class AgentState(TypedDict):
     # ── 15. Trust-Score & quality gates ──────────────────────────────────────
     trust_score: float                  # Computed quality score [0.0–1.0] after expert round
     trust_verdict: str                  # PROCEED | PROCEED_WITH_ASSUMPTION | BLOCK
+    trust_factors: dict                 # Per-factor breakdown (source_count, expert_count, conflict_penalty, cross_reference_coverage, unsupported_claims_penalty)
     self_critique_round: int            # Current self-critique iteration (0 = first pass)
     self_critique_max: int              # Max self-critique rounds (from SELF_CRITIQUE_MAX_ROUNDS env)
     constitution_violations: list       # [{rule_id, on_violation, detail}] from constitution enforcement
