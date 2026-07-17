@@ -88,6 +88,15 @@ PROM_TOOL_FORMAT_ERRORS = Counter('moe_tool_call_format_errors_total',  'Malform
 PROM_TOOL_CALL_SUCCESS  = Counter('moe_tool_call_success_total',        'Successful tool call responses',       ['node', 'model'])
 
 # ---------------------------------------------------------------------------
+# MCP precision-tool access classification (visibility only, no enforcement)
+# ---------------------------------------------------------------------------
+
+PROM_MCP_TOOL_ACCESS = Counter(
+    'moe_mcp_tool_access_total', 'MCP precision-tool calls by access classification and verdict',
+    ['tool', 'access_kind', 'verdict'],
+)
+
+# ---------------------------------------------------------------------------
 # RL flywheel, context window, memory
 # ---------------------------------------------------------------------------
 

@@ -39,6 +39,7 @@ from metrics import (
     PROM_CORRECTIONS_INJECTED, PROM_CORRECTIONS_STORED,
     PROM_JUDGE_REFINED, PROM_EXPERT_FAILURES, PROM_SYNTHESIS_CREATED,
     PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
+    PROM_MCP_TOOL_ACCESS,
 )
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
@@ -109,6 +110,20 @@ async def mcp_node(state_: AgentState):
     # Per-User MCP-Tool Permission-Check
     allowed_mcp = state_.get("user_permissions", {}).get("mcp_tool")
     if allowed_mcp is not None and "*" not in allowed_mcp:
+        _denied_tasks = [t for t in precision_tasks if t.get("mcp_tool") not in allowed_mcp]
+        for _dt in _denied_tasks:
+            _dtool = _dt.get("mcp_tool")
+            _dak = state.MCP_TOOL_SCHEMAS.get(_dtool, {}).get("access_kind", "read")
+            try:
+                from services.decision_log import log_decision, DecisionType
+                log_decision(
+                    DecisionType.MCP_TOOL_ACCESS, request_id=state_.get("response_id", ""),
+                    rationale=f"MCP tool '{_dtool}' not in user_permissions.mcp_tool allowlist",
+                    metadata={"tool_name": _dtool, "access_kind": _dak, "verdict": "deny", "reason": "user_permissions"},
+                )
+                PROM_MCP_TOOL_ACCESS.labels(tool=_dtool, access_kind=_dak, verdict="deny").inc()
+            except Exception as _dle:
+                logger.debug(f"decision log emit failed for {_dtool}: {_dle}")
         precision_tasks = [t for t in precision_tasks if t.get("mcp_tool") in allowed_mcp]
         if not precision_tasks:
             logger.info("⛔ MCP tools not enabled for this user")
@@ -156,6 +171,17 @@ async def mcp_node(state_: AgentState):
             except Exception as _pve:
                 logger.debug(f"MCP pre-validation fix failed for {tool}: {_pve}")
         await _report(f"⚙️ MCP-Call: {tool}\nArgs: {json.dumps(args, ensure_ascii=False, indent=2)}")
+        _access_kind = _schema.get("access_kind", "read")
+        try:
+            from services.decision_log import log_decision, DecisionType
+            log_decision(
+                DecisionType.MCP_TOOL_ACCESS, request_id=state_.get("response_id", ""),
+                rationale=f"MCP tool '{tool}' dispatched",
+                metadata={"tool_name": tool, "access_kind": _access_kind, "verdict": "allow"},
+            )
+            PROM_MCP_TOOL_ACCESS.labels(tool=tool, access_kind=_access_kind, verdict="allow").inc()
+        except Exception as _dle:
+            logger.debug(f"decision log emit failed for {tool}: {_dle}")
         _mcp_t0 = time.monotonic()
         try:
             resp = await client.post(f"{MCP_URL}/invoke", json={"tool": tool, "args": args})
@@ -165,6 +191,17 @@ async def mcp_node(state_: AgentState):
             if "error" in data:
                 err_str = data['error']
                 await _report(f"⚙️ MCP error [{tool}]: {err_str}")
+                try:
+                    from services.decision_log import log_decision, DecisionType
+                    _derr_reason = "server_disabled" if data.get("reason") == "disabled" else "server_error"
+                    log_decision(
+                        DecisionType.MCP_TOOL_ACCESS, request_id=state_.get("response_id", ""),
+                        rationale=f"MCP tool '{tool}' rejected by server: {err_str}",
+                        metadata={"tool_name": tool, "access_kind": _access_kind, "verdict": "deny", "reason": _derr_reason},
+                    )
+                    PROM_MCP_TOOL_ACCESS.labels(tool=tool, access_kind=_access_kind, verdict="deny").inc()
+                except Exception as _dle:
+                    logger.debug(f"decision log emit failed for {tool}: {_dle}")
                 _log_tool_eval({
                     "ts": _ts_now(), "source": "mcp_node",
                     "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),

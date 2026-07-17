@@ -38,6 +38,7 @@ class DecisionType(str, Enum):
     HALLUCINATION_CHECK     = "HALLUCINATION_CHECK"
     BOUNDARY_VIOLATION      = "BOUNDARY_VIOLATION"
     SCOPE_VIOLATION         = "SCOPE_VIOLATION"
+    MCP_TOOL_ACCESS         = "MCP_TOOL_ACCESS"
 
 
 def log_decision(

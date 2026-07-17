@@ -770,6 +770,7 @@ async def _load_mcp_tool_descriptions():
                 state.MCP_TOOL_SCHEMAS[t["name"]] = {
                     "required": t.get("required_args", t.get("required", [])),
                     "args": t.get("args", t.get("parameters", {})),
+                    "access_kind": t.get("access_kind", "read"),  # telemetry only, see graph/tool_nodes.py
                 }
             state.MCP_TOOLS_DESCRIPTION = "\n".join(general_lines)
             state.AGENTIC_CODE_TOOLS_DESCRIPTION = "\n".join(agentic_lines)
