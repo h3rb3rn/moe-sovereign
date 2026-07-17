@@ -1,0 +1,22 @@
+# systemd timer — runs the held-out reference set regression test every
+# night at 03:30 local time, offset from ontology-gap-healer.timer (02:00)
+# to avoid GPU contention between the two nightly background jobs.
+#
+# Install: sudo cp reference-set-regression.{service,timer} /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now reference-set-regression.timer
+#
+# Check status: systemctl list-timers reference-set-regression.timer
+# Manual run:   sudo systemctl start reference-set-regression.service
+# Logs:         journalctl -u reference-set-regression -f
+
+[Unit]
+Description=Nightly held-out reference set regression test for MoE Sovereign
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -2591,6 +2591,17 @@ async def _anthropic_reasoning_handler(
         _reasoning_node_name = CLAUDE_CODE_REASONING_ENDPOINT or "unknown"
         _reasoning_timeout = float(_server_info(_reasoning_node_name).get("timeout", EXPERT_TIMEOUT))
         logger.info(f"🧠 Reasoning: Override {reasoning_model} @ {CLAUDE_CODE_REASONING_ENDPOINT}")
+    elif session.tool_model and session.tool_api_type == "ollama" and session.tool_url:
+        # Reuse the already-loaded tool model for reasoning turns.
+        # With OLLAMA_MAX_LOADED_MODELS=1, switching to a separate reasoning expert
+        # evicts the tool model and causes ~120 s cold-reload cycles on every
+        # tool↔reasoning turn boundary.
+        reasoning_model      = session.tool_model
+        reasoning_url        = session.tool_url
+        reasoning_token      = session.tool_token or "ollama"
+        _reasoning_node_name = session.tool_endpoint or "unknown"
+        _reasoning_timeout   = float(_server_info(_reasoning_node_name).get("timeout", EXPERT_TIMEOUT))
+        logger.info("🧠 Reasoning: reusing loaded tool model %s @ %s (avoids eviction)", reasoning_model, _reasoning_node_name)
     else:
         reasoning_experts = EXPERTS.get("reasoning", [])
         if reasoning_experts:
@@ -2909,6 +2920,10 @@ async def _anthropic_moe_handler(
                             query=user_input, pipeline_answer=content,
                             experts=session.experts, planner_cfg=session.planner_cfg,
                             request_id=chat_id, user_id=user_id,
+                            pipeline_tokens=out_tok,
+                            graph_context=data.get("graph_context", ""),
+                            web_research=data.get("web_research", ""),
+                            mcp_result=data.get("mcp_result", ""),
                         ))
                     except Exception:
                         pass
@@ -2967,6 +2982,10 @@ async def _anthropic_moe_handler(
             query=user_input, pipeline_answer=content,
             experts=session.experts, planner_cfg=session.planner_cfg,
             request_id=chat_id, user_id=user_id,
+            pipeline_tokens=_c_tok,
+            graph_context=result.get("graph_context", ""),
+            web_research=result.get("web_research", ""),
+            mcp_result=result.get("mcp_result", ""),
         ))
     except Exception:
         pass

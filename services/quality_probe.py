@@ -39,6 +39,18 @@ CREATE TABLE IF NOT EXISTS pipeline_quality_log (
 );
 """
 
+# Additive schema migration for columns introduced after the table already
+# existed in production — CREATE TABLE IF NOT EXISTS above won't add columns
+# to an existing table, so this runs alongside it on every insert (no-op
+# after the first run, same idempotency principle as the rest of this file).
+_MIGRATE_SQL = """
+ALTER TABLE pipeline_quality_log ADD COLUMN IF NOT EXISTS baseline_cost_eur DOUBLE PRECISION;
+ALTER TABLE pipeline_quality_log ADD COLUMN IF NOT EXISTS pipeline_cost_eur DOUBLE PRECISION;
+ALTER TABLE pipeline_quality_log ADD COLUMN IF NOT EXISTS pipeline_tokens_est INT;
+ALTER TABLE pipeline_quality_log ADD COLUMN IF NOT EXISTS pipeline_tokens_source TEXT;
+ALTER TABLE pipeline_quality_log ADD COLUMN IF NOT EXISTS unsupported_claims_ratio DOUBLE PRECISION;
+"""
+
 _JUDGE_PROMPT = """You are a strict evaluator. Two answers (A and B) to the same user request follow.
 Decide which answer is better on correctness, completeness and usefulness.
 Respond ONLY with one word: A, B, or TIE.
@@ -61,6 +73,7 @@ async def _db_insert(row: dict) -> None:
         async with await psycopg.AsyncConnection.connect(MOE_USERDB_URL) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(_TABLE_SQL)
+                await cur.execute(_MIGRATE_SQL)
                 cols = ",".join(row.keys())
                 ph = ",".join(["%s"] * len(row))
                 await cur.execute(
@@ -130,7 +143,9 @@ async def _ollama_generate(url: str, token: str, model: str, prompt: str,
 
 async def run_probe(query: str, pipeline_answer: str, experts: dict,
                     planner_cfg: dict, request_id: str, user_id: str,
-                    template_id: str = "") -> None:
+                    template_id: str = "", pipeline_tokens: int = 0,
+                    graph_context: str = "", web_research: str = "",
+                    mcp_result: str = "") -> None:
     """Fire-and-forget entry point. Call via asyncio.create_task()."""
     try:
         if os.getenv("MOE_QUALITY_PROBE", "0") != "1":
@@ -144,9 +159,10 @@ async def run_probe(query: str, pipeline_answer: str, experts: dict,
         if not exp:
             return
         t0 = time.monotonic()
+        _baseline_ctx = int(exp.get("context_window") or 32768)
         baseline, base_tok = await _ollama_generate(
             exp["url"], exp.get("token", "ollama"), exp["model"], query,
-            num_ctx=int(exp.get("context_window") or 32768),
+            num_ctx=_baseline_ctx,
         )
         if not baseline.strip():
             return
@@ -156,9 +172,23 @@ async def run_probe(query: str, pipeline_answer: str, experts: dict,
         judge_model = (planner_cfg or {}).get("judge_model_override") or exp["model"]
         judge_url   = (planner_cfg or {}).get("judge_url_override") or exp["url"]
         judge_tok   = (planner_cfg or {}).get("judge_token_override") or exp.get("token", "ollama")
+        # Explicitly reuse the baseline call's ctx rather than falling back to
+        # _ollama_generate's hardcoded 32768 default. Confirmed live: when no
+        # judge_model_override is set (the common case), judge_model/judge_url
+        # are the SAME model+node the baseline call just used — but the
+        # in-function /api/ps reuse-check can race the baseline call's own
+        # (possibly still in-progress) load, so this judge call landed on a
+        # fresh 32768 load moments after the baseline call had already loaded
+        # the same model at 262144, forcing an avoidable reload cycle on
+        # qwen3.6:35b@N04-RTX. Only fall back to the model's own configured
+        # context_window when the judge targets a genuinely different model/
+        # node (an actual override).
+        _judge_ctx = _baseline_ctx if judge_model == exp["model"] and judge_url == exp["url"] \
+            else int((planner_cfg or {}).get("judge_context_window") or 32768)
         verdict_raw, judge_tokens = await _ollama_generate(
             judge_url, judge_tok, judge_model,
             _JUDGE_PROMPT.format(query=query[:4000], a=a[:6000], b=b[:6000]),
+            num_ctx=_judge_ctx,
         )
         v = verdict_raw.strip().upper()[:3]
         if v.startswith("A"):
@@ -169,6 +199,22 @@ async def run_probe(query: str, pipeline_answer: str, experts: dict,
             winner = "tie"
         else:
             winner = "error"
+
+        # Cost estimate (synthetic — MoE Sovereign has no real per-model $
+        # pricing table; local experts are self-hosted Ollama, so this is a
+        # rough compute-cost proxy using the same flat rate already shown to
+        # users in admin_ui/templates/users.html, not a real API price).
+        _price = float(os.getenv("TOKEN_PRICE_EUR", "0.00002"))
+        _ptok, _psrc = (pipeline_tokens, "exact") if pipeline_tokens else (len(pipeline_answer) // 4, "estimated")
+        baseline_cost_eur = round(base_tok * _price, 6)
+        pipeline_cost_eur = round(_ptok * _price, 6)
+
+        # Objective claim check as a supplement to the blind LLM judge verdict
+        # above (does not alter winner/judge_raw, only adds a second signal).
+        from services.trust_score import _unsupported_claim_ratio
+        _combined_sources = "\n".join([graph_context, web_research, mcp_result])
+        unsupported_ratio = _unsupported_claim_ratio(pipeline_answer, _combined_sources)
+
         await _db_insert({
             "id": uuid.uuid4().hex, "request_id": request_id, "user_id": user_id,
             "template_id": template_id, "query_preview": query[:300],
@@ -177,6 +223,9 @@ async def run_probe(query: str, pipeline_answer: str, experts: dict,
             "baseline_answer_chars": len(baseline), "winner": winner,
             "judge_raw": verdict_raw[:200], "baseline_tokens": base_tok,
             "judge_tokens": judge_tokens,
+            "baseline_cost_eur": baseline_cost_eur, "pipeline_cost_eur": pipeline_cost_eur,
+            "pipeline_tokens_est": _ptok, "pipeline_tokens_source": _psrc,
+            "unsupported_claims_ratio": unsupported_ratio,
         })
         logger.info(
             "quality_probe: winner=%s baseline=%s dur=%.0fs (request %s)",

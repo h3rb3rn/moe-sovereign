@@ -1,0 +1,29 @@
+# systemd service for the held-out reference set regression test
+# Install: sudo cp reference-set-regression.{service,timer} /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable --now reference-set-regression.timer
+
+[Unit]
+Description=MoE Sovereign — Held-out Reference Set Regression Test
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/moe-sovereign
+EnvironmentFile=/opt/moe-sovereign/.env
+ExecStart=/bin/bash -c 'source /opt/moe-sovereign/.env 2>/dev/null; /usr/bin/docker exec -w /app -e MOE_API_KEY="$${MOE_API_KEY}" langgraph-orchestrator python3 -m scripts.reference_set_regression'
+# The script runs INSIDE the orchestrator container so it has network
+# access to the inference nodes and moe_userdb. The .env provides MOE_API_KEY.
+# Invoked as a module (-m) rather than a direct file path so that /app is on
+# sys.path and the script's `from services...`/`from config...` imports
+# resolve (a direct `python3 /app/scripts/x.py` invocation only puts
+# /app/scripts on sys.path, not /app).
+TimeoutStartSec=3600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=reference-set-regression
+
+[Install]
+WantedBy=multi-user.target
