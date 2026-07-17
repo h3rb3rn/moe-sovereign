@@ -453,6 +453,8 @@
   "metric.ontology_entities": "Ontology Entities",
   "metric.planner_patterns": "Planner Patterns",
   "metric.ontology_gaps": "Ontology Gaps",
+  "metric.ontology_gaps_noise_suffix": "pending (below classification threshold)",
+  "metric.ontology_gaps_noise_hint": "Shows only gaps with enough independent mentions to be classification-eligible. The extra count is still-open candidates that haven't cleared that threshold yet (mostly extraction noise: generic words, programming keywords).",
   "tip.factor": "Cost multiplier for token budget (1.0 = no surcharge)",
   "tip.tier": "",
   "tip.timeout": "API timeout per server in seconds (empty = global timeout)",

@@ -3764,6 +3764,66 @@ _TOOL_DESCRIPTIONS = {
     "pm_search_tasks": "Full-text search across tasks/issues in the configured PM system. Returns JSON array with id, title, state, url.",
 }
 
+# ─── ACCESS-KIND CLASSIFICATION (visibility only — see graph/tool_nodes.py) ──
+# Categorizes each tool by real-world side effect, not by name:
+#   read    — reads data/state, or pure local computation with no side effect
+#   search  — outbound network call to an external/public service (egress-relevant,
+#             non-deterministic content from an uncontrolled third party)
+#   write   — creates/mutates persistent state (local or in a configured backend)
+#   execute — runs arbitrary/interpreted code
+# Used purely for telemetry (services/decision_log.py DecisionType.MCP_TOOL_ACCESS +
+# metrics.py PROM_MCP_TOOL_ACCESS) — does NOT gate or block any tool call.
+_DEFAULT_ACCESS_KIND = "read"
+
+_TOOL_ACCESS_KIND: Dict[str, str] = {
+    # Math/utility — local computation only
+    "calculate": "read", "solve_equation": "read", "date_diff": "read",
+    "date_add": "read", "day_of_week": "read", "unit_convert": "read",
+    "statistics_calc": "read", "hash_text": "read", "base64_codec": "read",
+    "regex_extract": "read", "subnet_calc": "read", "text_analyze": "read",
+    "prime_factorize": "read", "gcd_lcm": "read", "json_query": "read",
+    "roman_numeral": "read",
+    # Legal — internal DB lookups
+    "legal_search_laws": "read", "legal_get_law_overview": "read",
+    "legal_get_paragraph": "read", "legal_fulltext_search": "read",
+    # Graph — Neo4j
+    "graph_query": "read", "graph_ingest": "write", "graph_provenance": "read",
+    # Code navigation
+    "repo_map": "read", "read_file_chunked": "read", "lsp_query": "read",
+    "generate_file": "write", "parse_attachment": "read", "graph_analyze": "read",
+    "file_upload": "write", "file_download_url": "read",
+    # External data sources — outbound network calls
+    "fetch_pdf_text": "search", "github_get_issue": "search",
+    "wikipedia_get_section": "search", "web_search_domain": "search",
+    "youtube_transcript": "search", "github_search_issues": "search",
+    "github_issue_events": "search", "pubchem_compound_search": "search",
+    "pubchem_advanced_search": "search", "orcid_works_count": "search",
+    "semantic_scholar_search": "search", "wikidata_search": "search",
+    "wikidata_sparql": "search", "pubmed_search": "search",
+    "duckduckgo_search": "search", "web_browser": "search",
+    "wayback_fetch": "search", "crossref_lookup": "search",
+    "openalex_search": "search",
+    # Code execution
+    "python_sandbox": "execute",
+    # Chess — chess_analyze_position calls the external Lichess cloud-eval API;
+    # chess_legal_moves is local python-chess computation
+    "chess_analyze_position": "search", "chess_legal_moves": "read",
+    # Starfleet infra tools — local/internal status reads
+    "node_status": "read", "active_requests": "read",
+    "mission_context_get": "read", "watchdog_alerts": "read",
+    "search_context": "read",
+    # PM Connector — configured/trusted backend, not open web search
+    "pm_create_task": "write", "pm_list_tasks": "read",
+    "pm_update_task": "write", "pm_search_tasks": "read",
+}
+
+for _tn in _TOOL_DESCRIPTIONS:
+    if _tn not in _TOOL_ACCESS_KIND:
+        logger.warning(
+            "mcp_server: tool '%s' has no _TOOL_ACCESS_KIND entry — "
+            "defaulting to '%s' for telemetry classification", _tn, _DEFAULT_ACCESS_KIND,
+        )
+
 # ─── DISABLED TOOLS PERSISTENCE ───────────────────────────────────────────────
 # Note: Disabling only applies to the REST /invoke path (which LangGraph
 # uses). The MCP SSE endpoint /mcp (for Claude Desktop) uses FastMCP's
@@ -3878,6 +3938,7 @@ def list_tools():
             "inputSchema": schema,                    # Open WebUI Tool Server format
             "args":        schema["properties"],      # pipeline MCP_TOOL_SCHEMAS compat
             "required_args": schema["required"],      # pipeline pre-call validation
+            "access_kind": _TOOL_ACCESS_KIND.get(name, _DEFAULT_ACCESS_KIND),  # telemetry only
         })
     return {"tools": tools}
 
@@ -3904,7 +3965,7 @@ async def invoke_tool(req: InvokeRequest):
         return {"error": f"Unknown tool: '{req.tool}'. Available: {list(_TOOL_REGISTRY.keys())}"}
     with _disabled_tools_lock:
         if req.tool in _disabled_tools:
-            return {"error": f"Tool '{req.tool}' is disabled."}
+            return {"error": f"Tool '{req.tool}' is disabled.", "reason": "disabled"}
     try:
         import inspect
         func = _TOOL_REGISTRY[req.tool]

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict
@@ -33,7 +34,57 @@ _DEFAULT_WEIGHTS: Dict[str, float] = {
     "expert_count":              0.25,   # Non-empty expert results
     "conflict_penalty":          0.20,   # Deducted per unresolved paraconsistent conflict
     "cross_reference_coverage":  0.20,   # Fraction of plan tasks with non-empty expert result
+    # Hallucination proxy, Stage 1 (cheap/deterministic): fraction of specific-
+    # looking claims (numbers, proper nouns) in the expert output that don't
+    # appear anywhere in the retrieved sources. Deliberately noisy — paraphrasing,
+    # unit conversion and calculated values all look "unsupported" under literal
+    # substring matching — so this starts at a low weight relative to the other
+    # factors. Tune via TRUST_SCORE_WEIGHTS_JSON after observing real traffic
+    # rather than assuming this default is right.
+    "unsupported_claims_penalty": 0.10,
 }
+
+# Cheap, no-LLM extraction of specific/verifiable-looking tokens: multi-digit
+# numbers and capitalized proper-noun-like phrases (1-3 words). NOT the same
+# extractor as graph_rag/manager.py's _extract_terms() — that one is built for
+# loosely matching GraphRAG retrieval queries (false positives there are
+# harmless) and is too noisy to repurpose here; see the ontology gap-healer's
+# MIN_GAP_SCORE fix (scripts/gap_healer_templates.py) for a concrete case where
+# reusing it for a different purpose caused problems.
+_CHECKABLE_NUMBER_RE      = re.compile(r"\b\d[\d.,]{1,}\b")
+_CHECKABLE_PROPER_NOUN_RE = re.compile(r"\b[A-ZÄÖÜ][a-zäöüß]{2,}(?:\s+[A-ZÄÖÜ][a-zäöüß]{2,}){0,2}\b")
+_MAX_CHECKABLE_CLAIMS = 30
+
+
+def _extract_checkable_claims(text: str) -> set:
+    """Extract candidate specific claims from text. False positives are
+    expected and acceptable — this only nudges trust_score via a low-weight
+    factor, it never hard-blocks by itself."""
+    if not text:
+        return set()
+    numbers = _CHECKABLE_NUMBER_RE.findall(text)
+    nouns   = _CHECKABLE_PROPER_NOUN_RE.findall(text)
+    claims  = {c.strip() for c in (numbers + nouns) if len(c.strip()) > 2}
+    return set(list(claims)[:_MAX_CHECKABLE_CLAIMS])
+
+
+def _unsupported_claim_ratio(response_text: str, source_text: str) -> float:
+    """Fraction of checkable claims in response_text absent from source_text.
+
+    Returns 0.0 (no penalty) when there's nothing to check — no source
+    material retrieved at all, or the text makes no specific-looking claims.
+    A high ratio suggests ungrounded specifics (a hallucination proxy); a
+    non-zero ratio on an otherwise-fine answer is expected noise, not a bug —
+    see the factor's default weight above.
+    """
+    if not response_text or not source_text:
+        return 0.0
+    claims = _extract_checkable_claims(response_text)
+    if not claims:
+        return 0.0
+    source_lower = source_text.lower()
+    unsupported = sum(1 for c in claims if c.lower() not in source_lower)
+    return unsupported / len(claims)
 
 _THRESHOLD_PROCEED      = float(os.getenv("TRUST_SCORE_PROCEED",      "0.65"))
 _THRESHOLD_ASSUMPTION   = float(os.getenv("TRUST_SCORE_ASSUMPTION",   "0.30"))
@@ -113,11 +164,19 @@ def compute_trust_score(state_: dict) -> TrustScore:
     covered    = min(len(non_empty_experts), plan_count)
     cross_ref_norm = covered / plan_count
 
+    # ── Factor 5: unsupported_claims_penalty (hallucination proxy, Stage 1) ────
+    combined_expert_text = " ".join(non_empty_experts)
+    combined_source_text = "\n".join([
+        graph_context, web_research, state_.get("mcp_result") or "",
+    ])
+    unsupported_ratio = _unsupported_claim_ratio(combined_expert_text, combined_source_text)
+
     factors = {
         "source_count":              source_count_norm,
         "expert_count":              expert_count_norm,
         "conflict_penalty":          conflict_penalty_norm,
         "cross_reference_coverage":  cross_ref_norm,
+        "unsupported_claims_penalty": unsupported_ratio,
     }
 
     raw_score = (
@@ -125,6 +184,7 @@ def compute_trust_score(state_: dict) -> TrustScore:
         + weights["expert_count"]           * expert_count_norm
         - weights["conflict_penalty"]       * conflict_penalty_norm
         + weights["cross_reference_coverage"] * cross_ref_norm
+        - weights["unsupported_claims_penalty"] * unsupported_ratio
     )
     score = max(0.0, min(1.0, raw_score))
 
@@ -160,6 +220,8 @@ def compute_trust_score(state_: dict) -> TrustScore:
         reason_parts.append(f"between {_THRESHOLD_ASSUMPTION}–{_THRESHOLD_PROCEED}")
     if unresolved_conflicts:
         reason_parts.append(f"{unresolved_conflicts} unresolved conflict(s)")
+    if unsupported_ratio > 0.3:
+        reason_parts.append(f"{unsupported_ratio:.0%} of claims unsupported by sources")
 
     return TrustScore(
         score=score,

@@ -20,9 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import List
 
 logger = logging.getLogger("moe.web_search")
+
+# Neither SearxSearchWrapper nor the DDG client take an explicit timeout, and
+# both run in a worker thread via asyncio.to_thread — a degraded/unreachable
+# backend can otherwise block the calling pipeline indefinitely (confirmed
+# live: a 502-ing SearXNG instance hung an entire request for 6+ minutes
+# instead of falling through to the DDG fallback below).
+_SEARCH_TIMEOUT_S = float(os.getenv("WEB_SEARCH_TIMEOUT_S", "12"))
 
 # Domain reliability scores for source ranking (higher = more trustworthy).
 # Suffix-style entries like '.gov' match any sub-domain of that TLD.
@@ -105,7 +113,7 @@ async def _ddg_search_with_citations(query: str) -> str:
             return list(ddgs.text(q, max_results=5))
 
     try:
-        raw = await asyncio.to_thread(_sync_ddg, query)
+        raw = await asyncio.wait_for(asyncio.to_thread(_sync_ddg, query), timeout=_SEARCH_TIMEOUT_S)
         if not raw:
             return ""
         raw = sorted(raw, key=lambda r: _domain_score(r.get("href", "")), reverse=True)
@@ -115,6 +123,9 @@ async def _ddg_search_with_citations(query: str) -> str:
         return result
     except ImportError:
         logger.warning("DuckDuckGo fallback unavailable — install: pip install duckduckgo-search")
+        return ""
+    except asyncio.TimeoutError:
+        logger.warning("DDG fallback timed out after %.0fs for query '%s'", _SEARCH_TIMEOUT_S, query[:60])
         return ""
     except Exception as e:
         logger.warning("DDG fallback failed (%s)", e)
@@ -146,7 +157,9 @@ async def _web_search_with_citations(
 
     if search is not None:
         try:
-            raw_results = await asyncio.to_thread(search.results, query, num_results=5)
+            raw_results = await asyncio.wait_for(
+                asyncio.to_thread(search.results, query, num_results=5), timeout=_SEARCH_TIMEOUT_S
+            )
             if raw_results:
                 raw_results = sorted(
                     raw_results[:5],
@@ -156,9 +169,15 @@ async def _web_search_with_citations(
                 searxng_result = _format_results(raw_results)
             if not searxng_result:
                 # Last-resort: use search.run() which returns plain text
-                fallback_text = await asyncio.to_thread(search.run, query)
+                fallback_text = await asyncio.wait_for(
+                    asyncio.to_thread(search.run, query), timeout=_SEARCH_TIMEOUT_S
+                )
                 if fallback_text:
                     searxng_result = fallback_text
+        except asyncio.TimeoutError:
+            logger.warning(
+                "SearXNG search timed out after %.0fs — will try DDG fallback if enabled", _SEARCH_TIMEOUT_S
+            )
         except Exception as e:
             logger.warning("SearXNG search failed (%s) — will try DDG fallback if enabled", e)
 

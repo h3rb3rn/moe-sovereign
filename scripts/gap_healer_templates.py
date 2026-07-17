@@ -65,7 +65,22 @@ GAP_ZSET_KEY = "moe:ontology_gaps"
 BATCH_SIZE     = int(os.environ.get("BATCH_SIZE",      "20"))
 CONCURRENCY    = int(os.environ.get("CONCURRENCY",      "4"))   # global ceiling
 MIN_CONFIDENCE = float(os.environ.get("MIN_CONFIDENCE", "0.5"))
+# A term entering moe:ontology_gaps starts at score 1 (single mention, via
+# main.py's zincrby) and needs a second independent mention to reach 2 —
+# see _pop_gaps for why this specifically filters out the one-off-noise
+# case that dominates the queue in practice.
+MIN_GAP_SCORE  = float(os.environ.get("MIN_GAP_SCORE",  "2"))
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "1000"))
+# Dedicated (non-once) mode: how long to sleep between polls when the queue
+# has nothing eligible right now. Previously the process exited entirely on
+# an empty poll, relying on services/healer.py's 30s auto-restart to spawn a
+# fresh one — from the Admin UI this looked like the healer "wouldn't stay
+# running": status flapped to "stopped" for ~29 of every 30 seconds, even
+# though it was, mechanically, restarting on schedule. Idling in-process
+# instead keeps status="running" continuously, matching what "Dauerlauf"
+# should actually look like, and avoids re-spawning a whole interpreter +
+# Neo4j/Redis connection every 30s just to find nothing to do.
+IDLE_POLL_INTERVAL_S = int(os.environ.get("IDLE_POLL_INTERVAL_S", "30"))
 RUN_ONCE       = "--once" in sys.argv
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "600"))
 
@@ -320,7 +335,29 @@ async def _get_avg_duration(redis_cli, template: str) -> float:
 async def _pop_gaps(redis_cli, count: int) -> list[tuple[str, float]]:
     """Atomically pop up to `count` highest-priority gaps from the ZSet.
 
-    Returns list of (term, original_score) tuples.
+    Returns list of (term, original_score) tuples, excluding anything below
+    MIN_GAP_SCORE — those are put straight back at their original score
+    (unpenalised, since they were never actually attempted) rather than
+    classified.
+
+    _extract_terms() (graph_rag/manager.py) that feeds this queue is a cheap
+    regex heuristic built for loosely matching GraphRAG *retrieval* queries
+    (false positives there are harmless — they just fail to retrieve
+    anything). Repurposed as-is for *new entity* detection, it also catches
+    plain capitalised/4+-letter words that are not named entities at all —
+    confirmed live: "SELECT", "Session", "Secret", "Run", "Report",
+    "Problem" all entered the queue this way. Each mismatch this raw doesn't
+    just fail once — process_gap() re-enqueues every unresolved gap (by
+    design, so real entities the LLM is unsure about get retried), so
+    one-off noise cycles forever, permanently occupying batch slots that
+    could go to gaps genuinely worth an LLM call.
+    zincrby increments a term's score by 1 on every independent mention
+    across pipeline responses (main.py), so a real, recurring entity
+    naturally accumulates score over time while a one-off noise word stays
+    at 1. Gating eligibility on MIN_GAP_SCORE means noise never burns an
+    attempt at all — it just sits in the queue (90-day TTL) until either it
+    is mentioned again enough to clear the bar, or it expires.
+
     On failure (no Redis), returns empty list — caller falls back to fetch_gaps().
     """
     if redis_cli is None:
@@ -330,7 +367,15 @@ async def _pop_gaps(redis_cli, count: int) -> list[tuple[str, float]]:
         items = await redis_cli.zpopmax(GAP_ZSET_KEY, count)
         if not items:
             return []
-        return [(item[0], item[1]) for item in items]
+        eligible, deferred = [], {}
+        for term, score in items:
+            if score >= MIN_GAP_SCORE:
+                eligible.append((term, score))
+            else:
+                deferred[term] = score
+        if deferred:
+            await redis_cli.zadd(GAP_ZSET_KEY, deferred)
+        return eligible
     except Exception as e:
         print(f"  [!] ZPOPMAX failed: {e}", flush=True)
         return []
@@ -696,8 +741,19 @@ async def main() -> int:
             # Atomically claim a batch from the ZSet
             gaps = await _pop_gaps(redis_cli, BATCH_SIZE)
             if not gaps:
-                print(f"\n[{time.strftime('%H:%M:%S')}] No more gaps. Done.", flush=True)
-                break
+                if RUN_ONCE:
+                    print(f"\n[{time.strftime('%H:%M:%S')}] No more gaps. Done.", flush=True)
+                    break
+                # Dedicated mode: stay alive and idle in-process rather than
+                # exiting — see IDLE_POLL_INTERVAL_S above. The literal
+                # substring "No more gaps" is still emitted so
+                # services/healer.py's idle-unblock detector (which greps
+                # stdout for it) keeps working unchanged.
+                print(f"\n[{time.strftime('%H:%M:%S')}] No more gaps eligible right now — "
+                      f"idling {IDLE_POLL_INTERVAL_S}s before next poll.", flush=True)
+                iteration -= 1  # idle polls don't count against MAX_ITERATIONS
+                await asyncio.sleep(IDLE_POLL_INTERVAL_S)
+                continue
 
             print(f"\n[{time.strftime('%H:%M:%S')}] Iteration {iteration}: "
                   f"claimed {len(gaps)} gaps via ZPOPMAX", flush=True)

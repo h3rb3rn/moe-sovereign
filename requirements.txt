@@ -25,6 +25,7 @@ neo4j>=5.0.0
 beautifulsoup4
 httpx
 aiohttp
+ddgs  # DuckDuckGo fallback for web_search.py when SearXNG is unavailable/degraded
 
 # --- Kafka ---
 aiokafka>=0.11.0

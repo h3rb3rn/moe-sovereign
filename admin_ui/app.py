@@ -2325,6 +2325,35 @@ async def api_get_advice():
     return load_advice_rules()
 
 
+@app.get("/api/advice/categories", dependencies=[Depends(require_login)])
+async def api_get_advice_categories():
+    """Distinct expert categories across every admin + user template, for the
+    Advice Rules 'Enforce Category' picker. The 5 categories previously
+    hardcoded in the create-rule form (precision_tools/research/general/
+    code_reviewer/legal_advisor) don't reflect what's actually routable —
+    confirmed live: 38 distinct categories exist across real templates today
+    (mail_classify, devops_sre, security_analyst, ...), all valid routing
+    targets per feature #46 (User-Template Expert Category Routing), none
+    of them selectable here before this endpoint existed."""
+    cats: set[str] = set()
+    for tmpl in load_expert_templates():
+        experts = tmpl.get("experts") or {}
+        if isinstance(experts, dict):
+            cats.update(k for k in experts.keys() if k)
+    try:
+        for row in await db.list_all_user_templates():
+            try:
+                cfg = json.loads(row.get("config_json") or "{}")
+            except Exception:
+                continue
+            experts = cfg.get("experts") or {}
+            if isinstance(experts, dict):
+                cats.update(k for k in experts.keys() if k)
+    except Exception as exc:
+        logger.warning("advice categories: failed to read user templates: %s", exc)
+    return sorted(cats)
+
+
 @app.post("/api/advice", dependencies=[Depends(require_login)])
 async def api_create_advice(request: Request):
     from services.advice_store import add_advice_rule
@@ -2332,7 +2361,10 @@ async def api_create_advice(request: Request):
     rule_text = body.get("rule", "").strip()
     if not rule_text:
         raise HTTPException(status_code=400, detail="Rule text is required")
-        
+
+    _extractors = body.get("parameter_extractors") or {}
+    if not isinstance(_extractors, dict):
+        _extractors = {}
     new_rule = add_advice_rule(
         rule_text=rule_text,
         category_scope=body.get("category_scope", "all").strip(),
@@ -2340,7 +2372,12 @@ async def api_create_advice(request: Request):
         category=body.get("category", "").strip(),
         mcp_tool=body.get("mcp_tool", "").strip(),
         default_task_description=body.get("default_task_description", "").strip(),
-        enabled=body.get("enabled", True)
+        enabled=body.get("enabled", True),
+        parameter_extractors={
+            str(k).strip(): str(v).strip()
+            for k, v in _extractors.items()
+            if str(k).strip() and str(v).strip()
+        },
     )
     return {"ok": True, "rule": new_rule}
 
@@ -3036,6 +3073,7 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
         _prom_query(f'sum by (outcome) (increase(moe_judge_refinement_total{_W}))'),  # 25
         _prom_query(f'sum by (model, reason) (increase(moe_expert_failures_total{_W}))'),  # 26
         _prom_query(f'histogram_quantile(0.50, rate(moe_thompson_sample_bucket[1h]))'),  # 27
+        _prom_query('moe_ontology_gaps_eligible_total'),  # 28
     )
 
     def _extract_vec(data: dict) -> list:
@@ -3070,6 +3108,7 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
             "ontology_entities":   _scalar(results[16]),
             "planner_patterns":    _scalar(results[17]),
             "ontology_gaps":       _scalar(results[18]),
+            "ontology_gaps_eligible": _scalar(results[28]),
         },
         "self_eval_buckets":    _extract_vec(results[19]),
         "feedback_buckets":     _extract_vec(results[20]),

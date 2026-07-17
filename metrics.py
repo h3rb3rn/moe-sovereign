@@ -71,6 +71,7 @@ PROM_SERVER_VRAM_BYTES       = Gauge('moe_inference_server_vram_bytes',        '
 PROM_SERVER_MODEL_VRAM_BYTES = Gauge('moe_inference_server_model_vram_bytes',  'VRAM bytes used by a specific loaded model', ['server', 'model'])
 PROM_PLANNER_PATS            = Gauge('moe_planner_patterns_total',             'Successful planner patterns')
 PROM_ONTOLOGY_GAPS           = Gauge('moe_ontology_gaps_total',                'Ontology gap terms')
+PROM_ONTOLOGY_GAPS_ELIGIBLE  = Gauge('moe_ontology_gaps_eligible_total',       'Ontology gap terms at/above the healer classification-eligibility score threshold (MIN_GAP_SCORE) — excludes one-off extraction noise (SQL keywords, generic words) that will never be attempted')
 PROM_ONTOLOGY_ENTS           = Gauge('moe_ontology_entities_total',            'Ontology entities (static)')
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,15 @@ PROM_TOOL_CALL_DURATION = Histogram(
 PROM_TOOL_TIMEOUTS      = Counter('moe_tool_call_timeout_total',        'Timeout errors in tool model calls',   ['node', 'model'])
 PROM_TOOL_FORMAT_ERRORS = Counter('moe_tool_call_format_errors_total',  'Malformed tool call responses',        ['node', 'model', 'format'])
 PROM_TOOL_CALL_SUCCESS  = Counter('moe_tool_call_success_total',        'Successful tool call responses',       ['node', 'model'])
+
+# ---------------------------------------------------------------------------
+# MCP precision-tool access classification (visibility only, no enforcement)
+# ---------------------------------------------------------------------------
+
+PROM_MCP_TOOL_ACCESS = Counter(
+    'moe_mcp_tool_access_total', 'MCP precision-tool calls by access classification and verdict',
+    ['tool', 'access_kind', 'verdict'],
+)
 
 # ---------------------------------------------------------------------------
 # RL flywheel, context window, memory

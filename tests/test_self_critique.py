@@ -48,9 +48,21 @@ def test_no_self_critique_on_proceed():
     assert _should_replan(state) == "critic"
 
 
-def test_no_self_critique_on_block():
+def test_self_critique_also_triggers_on_block():
+    # BLOCK does not suppress or alter the response anywhere in the pipeline
+    # today (services/trust_score.py's BLOCK verdict is logged only) — if it
+    # skipped self-critique too, the worst-scoring responses would get LESS
+    # scrutiny than the PROCEED_WITH_ASSUMPTION middle bucket. Changed
+    # 2026-07-16 alongside the hallucination-risk critic check for the same
+    # reason (graph/synthesis.py::critic_node).
     from graph.synthesis import _should_replan
     state = _state(trust_verdict="BLOCK", self_critique_round=0, self_critique_max=2)
+    assert _should_replan(state) == "self_critique"
+
+
+def test_no_self_critique_on_block_when_rounds_exhausted():
+    from graph.synthesis import _should_replan
+    state = _state(trust_verdict="BLOCK", self_critique_round=2, self_critique_max=2)
     assert _should_replan(state) == "critic"
 
 

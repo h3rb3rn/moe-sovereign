@@ -117,3 +117,24 @@ class TestWebSearchWithCitations:
 
         result = _run(run())
         assert "[HIGH]" in result
+
+    def test_hanging_searxng_times_out_instead_of_blocking_forever(self, monkeypatch):
+        """A degraded SearXNG that never returns must not hang the pipeline
+        indefinitely — confirmed live: a 502-ing instance blocked a real
+        request for 6+ minutes before this timeout was added."""
+        import time
+        import web_search as ws
+        monkeypatch.setattr(ws, "_SEARCH_TIMEOUT_S", 0.05)
+
+        mock_search = MagicMock()
+        mock_search.results = MagicMock(side_effect=lambda *a, **kw: time.sleep(1.0) or [])
+        mock_search.run = MagicMock(return_value="")
+
+        async def run():
+            return await _web_search_with_citations("test query", search=mock_search, ddg_fallback=False)
+
+        t0 = time.monotonic()
+        result = _run(run())
+        elapsed = time.monotonic() - t0
+        assert result == ""
+        assert elapsed < 1.0, f"expected fast timeout, took {elapsed:.2f}s"

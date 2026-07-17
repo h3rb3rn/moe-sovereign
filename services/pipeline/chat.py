@@ -2733,7 +2733,13 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _cache_hit_flag = bool(result.get("cache_hit", False))
     PROM_REQUESTS.labels(mode=mode, cache_hit=str(_cache_hit_flag).lower(),
                          user_id=(user_id or "anon")).inc()
-    PROM_RESPONSE_TIME.labels(mode=mode).observe(time.monotonic() - _t_start)
+    _elapsed_ms = round((time.monotonic() - _t_start) * 1000)
+    PROM_RESPONSE_TIME.labels(mode=mode).observe(_elapsed_ms / 1000)
+    if _resolved_tmpl_id.startswith("moe-dyn-"):
+        from admin_ui.database import update_dynamic_template_feedback_metrics
+        asyncio.create_task(update_dynamic_template_feedback_metrics(
+            _resolved_tmpl_id, _elapsed_ms, p_tok + c_tok
+        ))
     if user_id != "anon":
         asyncio.create_task(_log_usage_to_db(
             user_id=user_id, api_key_id=api_key_id, request_id=chat_id,

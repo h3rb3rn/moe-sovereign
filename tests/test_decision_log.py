@@ -69,3 +69,22 @@ def test_metadata_included(tmp_path, monkeypatch):
 
     assert entry["rule_id"] == "no_external_egress"
     assert entry["score"] == 0.0
+
+
+def test_mcp_tool_access_metadata(tmp_path, monkeypatch):
+    log_path = str(tmp_path / "mcp_access.jsonl")
+    import services.decision_log as dl
+    monkeypatch.setattr(dl, "_FALLBACK_LOG_PATH", log_path)
+
+    log_decision(
+        DecisionType.MCP_TOOL_ACCESS, "req-7",
+        rationale="MCP tool 'calculate' dispatched",
+        metadata={"tool_name": "calculate", "access_kind": "read", "verdict": "allow"},
+    )
+
+    with open(log_path) as f:
+        entry = json.loads(f.read().strip())
+
+    assert entry["tool_name"] == "calculate"
+    assert entry["access_kind"] == "read"
+    assert entry["verdict"] == "allow"

@@ -1,6 +1,9 @@
 """Tests for services/trust_score.py (TASK-10)."""
 import pytest
-from services.trust_score import TrustVerdict, compute_trust_score
+from services.trust_score import (
+    TrustVerdict, compute_trust_score,
+    _extract_checkable_claims, _unsupported_claim_ratio,
+)
 
 
 def _state(**kwargs):
@@ -84,3 +87,68 @@ def test_score_clipped_to_zero_one():
         graph_context=" ".join(f"[NEO4J:entity_{i}]" for i in range(20)),
     ))
     assert 0.0 <= ts.score <= 1.0
+
+
+# ── Hallucination proxy: unsupported_claims_penalty ──────────────────────────
+
+def test_extract_checkable_claims_finds_numbers_and_proper_nouns():
+    claims = _extract_checkable_claims(
+        "Construction of the Eiffel Tower finished in 1889, reaching 330 meters."
+    )
+    assert "330" in claims
+    assert "1889" in claims
+    assert any("Eiffel Tower" in c for c in claims)
+
+
+def test_extract_checkable_claims_empty_for_no_text():
+    assert _extract_checkable_claims("") == set()
+    assert _extract_checkable_claims("the quick brown fox") == set()  # no caps/numbers
+
+
+def test_unsupported_claim_ratio_zero_when_no_source():
+    # No source material to check against → can't penalise, ratio is 0.0
+    assert _unsupported_claim_ratio("The Eiffel Tower is 330 meters tall.", "") == 0.0
+
+
+def test_unsupported_claim_ratio_zero_when_claims_covered():
+    ratio = _unsupported_claim_ratio(
+        "The Eiffel Tower is 330 meters tall.",
+        "Source: The Eiffel Tower stands 330 meters tall in Paris.",
+    )
+    assert ratio == 0.0
+
+
+def test_unsupported_claim_ratio_high_when_claims_absent():
+    ratio = _unsupported_claim_ratio(
+        "The Eiffel Tower is 330 meters tall.",
+        "Source: unrelated content about database indexing strategies.",
+    )
+    assert ratio == 1.0
+
+
+def test_unsupported_claims_penalty_factor_present():
+    ts = compute_trust_score(_state(
+        expert_results=["[CODE / m]: def foo(): pass"],
+        plan=[{"task": "t"}],
+        web_research="https://docs.python.org",
+    ))
+    assert "unsupported_claims_penalty" in ts.factors
+
+
+def test_unsupported_claims_lower_score_than_grounded_claims():
+    # Same expert-count/source-count/coverage shape, only the claim-vs-source
+    # overlap differs — isolates the new factor's effect on the final score.
+    grounded = compute_trust_score(_state(
+        expert_results=["[RESEARCH / m]: Berlin has 3800000 residents."],
+        plan=[{"task": "t1"}],
+        web_research="https://stats.example.com",
+        graph_context="Berlin population figures: 3800000 residents recorded.",
+    ))
+    ungrounded = compute_trust_score(_state(
+        expert_results=["[RESEARCH / m]: Berlin has 3800000 residents."],
+        plan=[{"task": "t1"}],
+        web_research="https://stats.example.com",
+        graph_context="unrelated content about database indexing strategies.",
+    ))
+    assert ungrounded.factors["unsupported_claims_penalty"] > grounded.factors["unsupported_claims_penalty"]
+    assert ungrounded.score < grounded.score
