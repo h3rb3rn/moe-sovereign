@@ -143,11 +143,20 @@ async def _stream_dedicated_healer(
         elif "✗" in text:
             stats["failed"] += 1
         await _set_healer_status_dedicated(last_activity_ts=str(time.time()), **stats)
-        # Idle signal: the healer's gap queue is empty and the subprocess is
-        # about to exit cleanly — release the node for regular routing right
-        # away instead of waiting for the process to actually terminate.
+        # Idle signal: the healer's gap queue is empty. Since scripts/
+        # gap_healer_templates.py now idles in-process instead of exiting
+        # (see IDLE_POLL_INTERVAL_S there), this can fire many times across
+        # a single process's lifetime, not just once before exit — release
+        # the node each time so idle windows are never left blocked.
         if block_pref and target_server and "No more gaps" in text:
             await _set_server_blocked(target_server, False)
+        # Resume signal: mirrors the eager block-on-spawn logic in
+        # start_dedicated_healer/_dedicated_healer_auto_restart_if_needed/
+        # _auto_resume_dedicated_healer, but for the in-process idle→active
+        # transition those don't cover (no new process is spawned when an
+        # already-idling healer finds new eligible gaps).
+        if block_pref and target_server and "claimed" in text and "gaps via ZPOPMAX" in text:
+            await _set_server_blocked(target_server, True)
 
     try:
         if first_line:

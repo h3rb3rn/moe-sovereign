@@ -47,6 +47,9 @@
         <i class="bi {{ icon }} fs-4 text-{{ color }} mb-1 d-block"></i>
         <div class="fs-4 fw-bold" id="gauge-{{ key }}">–</div>
         <div class="text-muted" style="font-size:.75rem">{{ label }}</div>
+        {% if key == "ontology_gaps" %}
+        <div class="text-muted" style="font-size:.68rem" id="gauge-ontology_gaps_noise_hint" title="{{ t(request, 'metric.ontology_gaps_noise_hint') }}"></div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -332,6 +335,7 @@ const _tmon = {
   tokenRemaining:  "{{ t(request, 'table.quota') }}",
   lastUpdate:      "{{ t(request, 'lbl.last_update') }}",
   error:           "{{ t(request, 'js.load_error') }}",
+  ontologyGapsNoiseSuffix: "{{ t(request, 'metric.ontology_gaps_noise_suffix') }}",
 };
 
 // ─── Color palette ─────────────────────────────────────────────────────────
@@ -528,7 +532,19 @@ async function loadMetrics() {
     document.getElementById('gauge-graph_relations').textContent  = fmt(sys.graph_relations);
     document.getElementById('gauge-ontology_entities').textContent= fmt(sys.ontology_entities);
     document.getElementById('gauge-planner_patterns').textContent = fmt(sys.planner_patterns);
-    document.getElementById('gauge-ontology_gaps').textContent    = fmt(sys.ontology_gaps);
+    // Headline number is gaps actually eligible for classification (score
+    // >= MIN_GAP_SCORE) — the total (sys.ontology_gaps) is dominated by
+    // one-off extraction noise (SQL keywords, generic words) that will
+    // never be attempted, and showing it as the primary count made the
+    // gauge look permanently "stuck" at a large, misleading number.
+    const gapsEligible = sys.ontology_gaps_eligible ?? sys.ontology_gaps;
+    const gapsTotal     = sys.ontology_gaps ?? 0;
+    const gapsNoise     = Math.max(0, gapsTotal - gapsEligible);
+    document.getElementById('gauge-ontology_gaps').textContent = fmt(gapsEligible);
+    const _noiseHint = document.getElementById('gauge-ontology_gaps_noise_hint');
+    if (_noiseHint) {
+      _noiseHint.textContent = gapsNoise > 0 ? `+${fmt(gapsNoise)} ${_tmon.ontologyGapsNoiseSuffix}` : '';
+    }
 
     // Token-Chart
     const tokModels = d.tokens_by_model || [];

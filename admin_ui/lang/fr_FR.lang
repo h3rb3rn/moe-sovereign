@@ -453,6 +453,8 @@
   "metric.ontology_entities": "Entités d'ontologie",
   "metric.planner_patterns": "Modèles du planificateur",
   "metric.ontology_gaps": "Lacunes d'ontologie",
+  "metric.ontology_gaps_noise_suffix": "en attente (sous le seuil de classification)",
+  "metric.ontology_gaps_noise_hint": "N'affiche que les lacunes ayant assez de mentions indépendantes pour être éligibles à la classification. Le nombre supplémentaire correspond aux candidats encore ouverts n'ayant pas atteint ce seuil (généralement du bruit d'extraction : mots génériques, mots-clés de programmation).",
   "tip.factor": "Multiplicateur de coût pour le budget (1.0 = pas de majoration)",
   "tip.tier": "",
   "tip.timeout": "Délai API par serveur en secondes",

@@ -340,7 +340,7 @@ from metrics import (
     PROM_LINTING_CONFLICTS, PROM_LINTING_DECAY, PROM_QUARANTINE_ADDED,
     PROM_ACTIVE_REQUESTS, PROM_SERVER_UP, PROM_SERVER_MODELS,
     PROM_SERVER_LOADED_MODELS, PROM_SERVER_VRAM_BYTES, PROM_SERVER_MODEL_VRAM_BYTES,
-    PROM_PLANNER_PATS, PROM_ONTOLOGY_GAPS, PROM_ONTOLOGY_ENTS,
+    PROM_PLANNER_PATS, PROM_ONTOLOGY_GAPS, PROM_ONTOLOGY_GAPS_ELIGIBLE, PROM_ONTOLOGY_ENTS,
     PROM_TOOL_CALL_DURATION, PROM_TOOL_TIMEOUTS, PROM_TOOL_FORMAT_ERRORS,
     PROM_TOOL_CALL_SUCCESS,
     PROM_HISTORY_COMPRESSED, PROM_HISTORY_UNLIMITED,
@@ -904,6 +904,17 @@ async def _gauge_updater_loop():
                 try:
                     PROM_PLANNER_PATS.set(await state.redis_client.zcard("moe:planner_success"))
                     PROM_ONTOLOGY_GAPS.set(await state.redis_client.zcard("moe:ontology_gaps"))
+                    # Same threshold as scripts/gap_healer_templates.py's MIN_GAP_SCORE —
+                    # below it, a gap has never accumulated enough independent mentions
+                    # to be worth an LLM classification attempt (one-off extraction
+                    # noise: SQL keywords, generic words — see _pop_gaps there for why).
+                    # Surfaced separately so the Admin UI's headline gap count doesn't
+                    # look permanently stuck at a large number that's mostly unresolvable
+                    # noise sitting inert, while still keeping the true total available.
+                    _min_gap_score = float(os.environ.get("MIN_GAP_SCORE", "2"))
+                    PROM_ONTOLOGY_GAPS_ELIGIBLE.set(
+                        await state.redis_client.zcount("moe:ontology_gaps", _min_gap_score, "+inf")
+                    )
                     active_keys = await state.redis_client.keys("moe:active:*")
                     PROM_ACTIVE_REQUESTS.set(len(active_keys))
                 except Exception as _e:

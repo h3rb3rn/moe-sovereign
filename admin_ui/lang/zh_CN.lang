@@ -453,6 +453,8 @@
   "metric.ontology_entities": "本体实体",
   "metric.planner_patterns": "规划器模式",
   "metric.ontology_gaps": "本体缺口",
+  "metric.ontology_gaps_noise_suffix": "等待中（低于分类阈值）",
+  "metric.ontology_gaps_noise_hint": "只显示已获得足够独立提及次数、可进行分类的缺口。额外数字是尚未达到该阈值的待处理候选项（通常是提取噪声，如通用词或编程关键字）。",
   "tip.factor": "令牌预算的费用乘数（1.0 = 无加价）",
   "tip.tier": "",
   "tip.timeout": "每个服务器的API超时（秒）",

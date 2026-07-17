@@ -3036,6 +3036,7 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
         _prom_query(f'sum by (outcome) (increase(moe_judge_refinement_total{_W}))'),  # 25
         _prom_query(f'sum by (model, reason) (increase(moe_expert_failures_total{_W}))'),  # 26
         _prom_query(f'histogram_quantile(0.50, rate(moe_thompson_sample_bucket[1h]))'),  # 27
+        _prom_query('moe_ontology_gaps_eligible_total'),  # 28
     )
 
     def _extract_vec(data: dict) -> list:
@@ -3070,6 +3071,7 @@ async def api_monitoring(request: Request, _=Depends(require_login)):
             "ontology_entities":   _scalar(results[16]),
             "planner_patterns":    _scalar(results[17]),
             "ontology_gaps":       _scalar(results[18]),
+            "ontology_gaps_eligible": _scalar(results[28]),
         },
         "self_eval_buckets":    _extract_vec(results[19]),
         "feedback_buckets":     _extract_vec(results[20]),

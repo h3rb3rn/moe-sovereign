@@ -453,6 +453,8 @@
   "metric.ontology_entities": "Ontologie-Entities",
   "metric.planner_patterns": "Planner-Muster",
   "metric.ontology_gaps": "Ontologie-Lücken",
+  "metric.ontology_gaps_noise_suffix": "wartend (unter Klassifizierungs-Schwelle)",
+  "metric.ontology_gaps_noise_hint": "Zeigt nur Lücken, die genug unabhängige Erwähnungen haben, um klassifiziert zu werden. Die Zusatzzahl sind noch offene Kandidaten, die diese Schwelle noch nicht erreicht haben (meist Extraktions-Rauschen wie generische Wörter oder Programmier-Keywords).",
   "tip.factor": "Kostenmultiplikator für Token-Budget (1.0 = kein Aufschlag)",
   "tip.tier": "",
   "tip.timeout": "API-Timeout pro Server in Sekunden (leer = globaler Timeout)",
