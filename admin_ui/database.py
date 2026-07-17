@@ -2861,6 +2861,21 @@ async def log_dynamic_template_feedback(
             )
 
 
+async def update_dynamic_template_feedback_metrics(
+    template_id: str, latency_ms: int, tokens_used: int
+) -> None:
+    """Fills in latency_ms and tokens_used on the seed row created by log_dynamic_template_feedback.
+    Only updates if the row still has NULL metrics (i.e. first real inference after template creation)."""
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE dynamic_template_feedback_log "
+                "SET latency_ms=%s, tokens_used=%s "
+                "WHERE template_id=%s AND latency_ms IS NULL",
+                (latency_ms, tokens_used, template_id),
+            )
+
+
 async def update_dynamic_template_feedback_rating(template_id: str, rating: int) -> bool:
     async with _get_pool().connection() as conn:
         async with conn.cursor() as cur:
