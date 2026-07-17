@@ -176,6 +176,7 @@ services:
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
       - ./services:/app/services:ro
+      - ./data:/app/data:rw
       - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
       - ./models:/app/models:ro
       - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:ro
@@ -392,6 +393,7 @@ services:
       - ./.env:/app/.env:rw
       - ./.moe-services.json:/app/.moe-services.json:ro
       - ./services:/app/services:ro
+      - ./data:/app/data:rw
       - ./admin_ui/app.py:/app/app.py:ro
       - ./admin_ui/database.py:/app/database.py:ro
       - ./admin_ui/templates:/app/templates:ro
