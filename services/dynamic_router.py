@@ -14,7 +14,7 @@ from chromadb.utils import embedding_functions
 
 import state
 from admin_ui.database import _get_pool, log_dynamic_template_feedback
-from config import MOE_USERDB_URL, URL_MAP, API_TYPE_MAP, TOKEN_MAP, INFERENCE_SERVERS_LIST, EXPERT_TIER_BOUNDARY_B
+from config import MOE_USERDB_URL, URL_MAP, API_TYPE_MAP, TOKEN_MAP, INFERENCE_SERVERS_LIST, EXPERT_TIER_BOUNDARY_B, PLANNER_NUM_CTX, JUDGE_NUM_CTX, PLANNER_MODEL as _PLANNER_MODEL_ENV, JUDGE_MODEL as _JUDGE_MODEL_ENV
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -929,18 +929,42 @@ async def get_dynamic_template(
             family = (meta.get("family") or "").lower()
             planner_meta_choices.append((m, param_size, family))
 
-        # 1. Select Planner: prioritize largest available models for complex task planning
+        # VRAM budget: largest single-node VRAM available; models exceeding ~70% are excluded as planner/judge
+        # to leave room for KV-cache and concurrent models.
+        _max_vram = max((s.get("vram_gb", 0) for s in INFERENCE_SERVERS_LIST if s.get("enabled", True)), default=48)
+        _vram_limit_b = _max_vram * 0.7 / 0.6  # param threshold: Q4 ≈ 0.6 GB/B params
+
+        # 1. Select Planner: honour PLANNER_MODEL env var when available, otherwise pick
+        #    the largest VRAM-safe model with strong reasoning capabilities.
         planner_meta_choices.sort(key=lambda x: x[1], reverse=True)  # Sort by param_size descending
-        best_planners = [
-            m for m, size, fam in planner_meta_choices
-            if size >= 30.0 or fam in ("qwen", "llama", "deepseek")
-        ]
-        planner_model = best_planners[0]["model_id"] if best_planners else planner_meta_choices[0][0]["model_id"]
-        
-        # 2. Select Judge: select the absolute largest and most capable model for quality synthesis
+        if _PLANNER_MODEL_ENV:
+            _env_base = _PLANNER_MODEL_ENV.split(":")[0]
+            _pinned = next(
+                (m for m, _s, _f in planner_meta_choices if m["model_id"].split(":")[0] == _env_base),
+                None,
+            )
+            planner_model = _pinned["model_id"] if _pinned else _PLANNER_MODEL_ENV
+        else:
+            best_planners = [
+                m for m, size, fam in planner_meta_choices
+                if size <= _vram_limit_b and (size >= 30.0 or fam in ("qwen", "llama", "deepseek"))
+            ]
+            planner_model = best_planners[0]["model_id"] if best_planners else planner_meta_choices[0][0]["model_id"]
+
+        # 2. Select Judge: honour JUDGE_MODEL env var when available, otherwise pick
+        #    the largest VRAM-safe model for quality synthesis.
         judge_meta_choices = list(planner_meta_choices)
         judge_meta_choices.sort(key=lambda x: x[1], reverse=True)  # Sort by param_size descending
-        judge_model = judge_meta_choices[0][0]["model_id"]
+        if _JUDGE_MODEL_ENV:
+            _env_base = _JUDGE_MODEL_ENV.split(":")[0]
+            _pinned = next(
+                (m for m, _s, _f in judge_meta_choices if m["model_id"].split(":")[0] == _env_base),
+                None,
+            )
+            judge_model = _pinned["model_id"] if _pinned else _JUDGE_MODEL_ENV
+        else:
+            vram_safe_judges = [m for m, size, _f in judge_meta_choices if size <= _vram_limit_b]
+            judge_model = vram_safe_judges[0]["model_id"] if vram_safe_judges else judge_meta_choices[0][0]["model_id"]
 
         # Compile expert models configurations
         experts_config = {}
@@ -995,7 +1019,11 @@ async def get_dynamic_template(
 
         # Build complete dynamic template configuration
         planner_ctx = model_metadata.get(planner_model, {}).get("context_window", 0) or 0
+        if PLANNER_NUM_CTX > 0:
+            planner_ctx = min(planner_ctx, PLANNER_NUM_CTX) if planner_ctx > 0 else PLANNER_NUM_CTX
         judge_ctx = model_metadata.get(judge_model, {}).get("context_window", 0) or 0
+        if JUDGE_NUM_CTX > 0:
+            judge_ctx = min(judge_ctx, JUDGE_NUM_CTX) if judge_ctx > 0 else JUDGE_NUM_CTX
         
         # Context-aware system prompts for planner and judge resolved dynamically
         planner_prompt = resolved_prompts.get("planner_prompt")

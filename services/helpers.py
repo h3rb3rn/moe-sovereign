@@ -43,14 +43,16 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 
 # ─── TOOL-EVAL LOGGING ───────────────────────────────────────────────────────
-# Rotating JSONL — one record per tool handler call.
-os.makedirs("/app/logs", exist_ok=True)
+# Rotating JSONL — one record per tool handler call.  The path is configurable
+# so imports/tests outside the container do not require a writable /app mount.
+_tool_eval_log_path = os.getenv("TOOL_EVAL_LOG_PATH", "/app/logs/tool_eval.jsonl")
+os.makedirs(os.path.dirname(_tool_eval_log_path) or ".", exist_ok=True)
 _tool_eval_logger = logging.getLogger("tool-eval")
 _tool_eval_logger.setLevel(logging.INFO)
 _tool_eval_logger.propagate = False
 if not _tool_eval_logger.handlers:
     _teh = _log_handlers.RotatingFileHandler(
-        "/app/logs/tool_eval.jsonl", maxBytes=50 * 1024 * 1024, backupCount=5, encoding="utf-8"
+        _tool_eval_log_path, maxBytes=50 * 1024 * 1024, backupCount=5, encoding="utf-8"
     )
     _teh.setFormatter(logging.Formatter("%(message)s"))
     _tool_eval_logger.addHandler(_teh)

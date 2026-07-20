@@ -3,16 +3,16 @@
 !!! info "Auto-generated"
     This page is updated every 15 minutes by the `moe-docs-sync` service.
 
-*Last updated: **2026-07-15 21:30***
+*Last updated: **2026-07-20 00:10***
 
 ## Metrics
 
 | Metric | Value |
 |--------|-------|
-| Neo4j Entities | 16015 |
-| Neo4j Relations | 16805 |
-| ChromaDB Documents | 3418 |
-| Total Requests | 1 |
+| Neo4j Entities | 16589 |
+| Neo4j Relations | 17513 |
+| ChromaDB Documents | 3487 |
+| Total Requests | ? |
 
 ## Docker Containers
 

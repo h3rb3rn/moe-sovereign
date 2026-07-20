@@ -98,11 +98,17 @@ Current logic:  planner.py:490-558 — 500+ lines prompt construction → LLM �
                 Remaining:  moderate + complex → always LLM call
 ```
 
-**Replacement:** granite4.1:3b fine-tuned as structured JSON planner.
+**Replacement:** phi4:14b fine-tuned as structured JSON planner.
 
+- **Model selection rationale:** phi4:14b is the only sub-35B model that achieves `planner_ok=true`
+  in the MoE Sovereign benchmark *without any fine-tuning* (latency 36.1s, benchmark 2026-07).
+  After SFT on 200K high-quality planner pairs it is expected to significantly outperform
+  granite4.1:3b post-SFT in routing precision and task-description quality.
+  granite4.1:3b remains as ultra-lightweight ablation and fallback for severely
+  resource-constrained deployments (≤4 GB RAM).
 - Learned task: `(Query, ExpertCategories, ToolDesc) → [{task, category, mcp_tool?, search_query?}]`
-- GGUF Q4_K_M → **15–25 tok/s** on x86_64 with AVX2 (llama.cpp)
-- At ~50–100 planner output tokens: **200–500ms** CPU inference vs. 2–5s remote GPU
+- GGUF Q4_K_M → **~10 tok/s** on x86_64 with AVX2 (llama.cpp); ~25 tok/s with AVX-512 BF16
+- At ~50–100 planner output tokens: **500–1000ms** CPU inference vs. 2–5s remote GPU
 
 ### 2e. `_infer_tier` + `_select_node` → XGBoost Ranker
 
@@ -129,7 +135,7 @@ trains 70B models in float16 without offloading.
 |---|---|---|---|
 | Query → Complexity labels | Llama-3.3-70B batch inference on MI250X | 500K pairs | 600 h |
 | Query → Expert-category labels | Llama-3.3-70B + existing template definitions | 300K pairs | 400 h |
-| (Query, Plan-JSON, Judge-Score) triples | Qwen3.6:35b as teacher, GAIA as gold standard | 200K triples | 800 h |
+| (Query, Plan-JSON, Judge-Score) triples | **Llama-3.1-405B** as primary teacher (Q4_K_M on 1 node, 10/10 quality), Qwen3-235B-A22B as fallback (9/10, faster) | 200K triples | **350 h** |
 | (State, Action, Reward) for RL | Replay benchmark logs with simulated judge reward | 500K transitions | 200 h |
 | DPO preference pairs (planner) | Two plans per query → judge ranks, builds preferred/rejected | 100K pairs | 500 h |
 
@@ -142,29 +148,35 @@ pattern from templates). GAIA-2023-Validation held out as untouched test set.
 - **Routing classifier (semantic router):** `paraphrase-multilingual-MiniLM-L12-v2`, Triplet Loss, batch=512 → **300 GPU-h**
 - **Reward model (for Phase 5):** DeBERTa-v3-large fine-tuned on (Plan, GAIA-Correct: bool) → **300 GPU-h**
 
-### Phase 3 — Planner SFT + DPO (Months 2–4, **9,000 GPU-h**)
+### Phase 3 — Planner SFT + DPO (Months 2–4, **8,000 GPU-h**)
 
 ```
-Base model:    granite4.1:3b (best benchmark performance in 3B segment)
+Base model:    phi4:14b (only sub-35B model with proven planner_ok=true without fine-tuning;
+               benchmark 2026-07: planner_ok=true, latency=36.1s base / expected <1s post-SFT)
 Context:       4096 tokens (planner prompt ~2000–3000 tokens + output ~200 tokens)
-Batch size:    128 (bfloat16, gradient checkpointing)
+Batch size:    64 (bfloat16, gradient checkpointing, ZeRO-3)
 
 SFT Phase 1 (teacher forcing on planner outputs):
-  Dataset:     200K (Prompt, JSON-Plan) pairs from Qwen3.6:35b / Ornith:35b teacher
-  3 epochs, lr=2e-4, cosine schedule, AdamW
-  Budget:      3,000 GPU-h
+  Dataset:     200K (Prompt, JSON-Plan) pairs from Llama-3.1-405B teacher
+               (Q4_K_M on 1 LUMI-G node, ~300 GPU-h accounted in Phase 1)
+               Hard-reject filter: arithmetic→precision_tools, §-query pattern,
+               research-before-code — all violations auto-rejected before training
+  3 epochs, lr=1e-4, cosine schedule with warmup, AdamW
+  Budget:      4,500 GPU-h
 
 DPO Phase 2 (Direct Preference Optimization):
   Dataset:     100K (Prompt, Preferred-Plan, Rejected-Plan) triples
+               Rejected = plans that failed hard_reject filter (Phase 1 generation)
   β=0.1, lr=5e-5, 2 epochs
-  Budget:      2,000 GPU-h
+  Budget:      2,200 GPU-h
 
-Ablations (model sizes, hyperparameters, data quality):
-  SmolLM2-3B as alternative  → 2,000 GPU-h
-  Qwen3-4B as upper bound    → 2,000 GPU-h
+Ablations (model sizes, data quality):
+  granite4.1:3b as ultra-lightweight ablation (CPU ≤4 GB RAM target) →   800 GPU-h
+  granite4.1:8b as intermediate ablation                               →   500 GPU-h
 ```
 
-**Target metric:** GAIA plan quality score ≥90% of 35B teacher at 1/20 inference cost.
+**Target metric:** GAIA plan quality score ≥95% of Llama-3.1-405B teacher at <1/50 inference cost.
+phi4:14b CPU fallback target: complete plan in <1s on Xeon Skylake (AVX-512 BF16).
 
 ### Phase 4 — Offline RL Routing Policy (Months 4–5, **3,500 GPU-h**)
 
@@ -182,7 +194,7 @@ Budget:     2,000 GPU-h (Transformer) + 1,500 GPU-h (ablations, online eval on G
 
 ```
 Reward model from Phase 2 (DeBERTa-v3-large) as reward signal
-PPO on granite4.1:3b (best model from Phase 3)
+PPO on phi4:14b (best model from Phase 3)
   KL-penalty: β=0.05 (conservative, prevents reward hacking)
   1 epoch, 50K queries from GAIA + own benchmark queries
 Budget: 2,200 GPU-h
@@ -192,12 +204,14 @@ Budget: 2,200 GPU-h
 
 | Phase | Content | GPU-Hours |
 |---|---|---|
-| 1 | Data synthesis (frontier batch inference) | 2,500 |
+| 1 | Data synthesis (Llama-3.1-405B + other frontier batch inference) | 2,350 |
 | 2 | Encoder/classifier + reward model | 800 |
-| 3 | Planner SFT + DPO + ablations | 9,000 |
+| 3 | Planner SFT phi4:14b + DPO + ablations | 8,000 |
 | 4 | Offline RL routing policy | 3,500 |
-| 5 | Planner RLHF | 2,200 |
-| **Total** | | **18,000 h** ✓ |
+| 5 | Planner RLHF (PPO on phi4:14b) | 2,200 |
+| *(consumed)* | Judge-v3 training (completed 2026-07) | 437 |
+| **Total** | | **17,287 h of 18,000 h** ✓ |
+| **Puffer** | | **~713 h (4 %)** |
 
 ---
 
@@ -208,8 +222,9 @@ inference accelerator.
 
 | Model | Format | Quantization | Compile Flags | CPU Latency | Size |
 |---|---|---|---|---|---|
-| Planner granite4.1:3b | **GGUF** | **Q4_K_M** (4.3 bit/weight) | `llama.cpp: -DLLAMA_AVX512=ON -DLLAMA_AVX512_BF16=ON` | 15–25 tok/s (Xeon Skylake) | **~2.0 GB** |
-| Planner (alternative) | ONNX | INT8 Dynamic Quant via ORT | `ort.SessionOptions: enable_mem_pattern=True` | 20–40 tok/s (ORT optimized) | ~800 MB |
+| **Planner phi4:14b** | **GGUF** | **Q4_K_M** (4.3 bit/weight) | `llama.cpp: -DLLAMA_AVX512=ON -DLLAMA_AVX512_BF16=ON` | **~25 tok/s** (Xeon w/ AVX-512 BF16) | **~8.0 GB** |
+| Planner phi4:14b (GPU) | GGUF | Q4_K_M | llama.cpp CUDA/ROCm backend | ~200 tok/s | ~8.0 GB |
+| Planner granite4.1:3b (fallback) | GGUF | Q4_K_M | same flags | 15–25 tok/s | ~2.0 GB |
 | Complexity classifier | **ONNX** | **INT8 Dynamic** (22M params) | ORT 1.18+ CPUExecutionProvider, AVX2 | **3–6 ms** | ~22 MB |
 | Semantic router embedding | **ONNX** | **FP16** | ORT with `graph_optimization_level=ORT_ENABLE_ALL` | **8–12 ms** | ~44 MB |
 | RL routing policy MLP | ONNX | FP32 (trivial, <1M params) | Standard ORT | **<1 ms** | <5 MB |
@@ -376,7 +391,7 @@ Top-1 system prompt per category → composite template
 ```
 Prompt
   ↓
-granite4.1:3b fine-tuned → JSON template (fully structured)
+phi4:14b fine-tuned → JSON template (fully structured)
   ↓
 Validation (known categories, model endpoints via config)
   ↓
@@ -384,7 +399,7 @@ Composite template
 ```
 
 - Model generates contextually refined system prompts instead of generic category defaults
-- Latency: **200–500ms** (GGUF Q4_K_M on CPU) — bypassed by cache when query repeated
+- Latency: **500–1000ms** (GGUF Q4_K_M on CPU) — bypassed by cache when query repeated
 - **Key value-add**: Prompt "Explain Docker for a beginner" → `_system_prompt: "Explain step-by-step, use analogies, avoid jargon"` vs. "Optimize our Docker Compose security" → `_system_prompt: "Senior Security Engineer, focus on non-root user, read-only filesystems, secret management"`
 
 #### Tier 3 — Hierarchical Synthesizer (maximum quality)
@@ -453,8 +468,8 @@ with the respective preferred vs. rejected system prompt.
 |---|---|
 | Data synthesis (300K template pairs via frontier LLM) | 800 GPU-h |
 | DPO pair generation (100K pairs, judge-scored) | 600 GPU-h |
-| SFT granite4.1:3b on template generation | 1,500 GPU-h |
-| DPO fine-tuning | 800 GPU-h |
+| SFT phi4:14b on template generation | 2,500 GPU-h |
+| DPO fine-tuning | 1,000 GPU-h |
 | Ablations (category count, prompt length, retrieval vs. generation) | 500 GPU-h |
 | **Total** | **~4,200 GPU-h** |
 
@@ -480,9 +495,10 @@ Planner:      "WHAT" and "IN WHAT ORDER" (which subtasks, which tools)
 ```
 
 A distilled planner (Phase 3) and a synthesizer can share the same base checkpoint
-`granite4.1:3b` — different LoRA adapters for different tasks. This reduces the VRAM
-footprint in production deployment: one model, two adapters, sequentially loaded in
-<50ms via llama.cpp hot-swap.
+`phi4:14b` — different LoRA adapters for different tasks. This reduces the VRAM
+footprint in production deployment: one model (~8 GB Q4), two adapters, sequentially
+loaded in <50ms via llama.cpp hot-swap. `granite4.1:3b` (2 GB) remains available as
+ultra-lightweight fallback when RAM < 10 GB.
 
 ---
 

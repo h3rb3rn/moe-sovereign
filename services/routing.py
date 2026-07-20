@@ -18,6 +18,99 @@ from services.templates import _read_expert_templates
 logger = logging.getLogger("MOE-SOVEREIGN")
 
 
+def _resolve_template_selection(
+    permissions_json: str,
+    override_tmpl_id: Optional[str] = None,
+    user_templates_json: str = "{}",
+    admin_override: bool = False,
+) -> dict:
+    """Resolve an explicit/default template without confusing names with grants.
+
+    User templates are stored under an opaque ID but exposed to API clients by
+    their display name.  An admin template may legally have the same name.  An
+    authorized admin match wins; otherwise an owned match wins.  Merely knowing
+    an admin template's name never grants access to it.
+
+    The return value contains ``id``, ``template``, ``source`` and
+    ``authorized``.  ``template`` is ``None`` when nothing can be resolved.
+    """
+    try:
+        perms = json.loads(permissions_json or "{}")
+        allowed_ids = perms.get("expert_template", []) or []
+        templates = _read_expert_templates()
+        owned: dict = json.loads(user_templates_json or "{}")
+        requested = override_tmpl_id or ""
+
+        def _owned_match(value: str):
+            if value in owned:
+                return value, owned[value]
+            return next(
+                (
+                    (template_id, template)
+                    for template_id, template in owned.items()
+                    if template.get("name") == value
+                ),
+                (None, None),
+            )
+
+        def _admin_match(value: str):
+            template = next(
+                (
+                    t for t in templates
+                    if t.get("id") == value or t.get("name") == value
+                ),
+                None,
+            )
+            return (template.get("id"), template) if template else (None, None)
+
+        if requested:
+            admin_id, admin_template = _admin_match(requested)
+            owned_id, owned_template = _owned_match(requested)
+            if admin_template and (admin_override or admin_id in allowed_ids):
+                return {
+                    "id": admin_id, "template": admin_template,
+                    "source": "admin", "authorized": True,
+                }
+            if owned_template:
+                return {
+                    "id": owned_id, "template": owned_template,
+                    "source": "owned", "authorized": True,
+                }
+            if admin_template:
+                return {
+                    "id": admin_id, "template": admin_template,
+                    "source": "admin", "authorized": False,
+                }
+            return {
+                "id": None, "template": None,
+                "source": None, "authorized": False,
+            }
+
+        for template_id in allowed_ids:
+            admin_id, admin_template = _admin_match(template_id)
+            if admin_template:
+                return {
+                    "id": admin_id, "template": admin_template,
+                    "source": "admin", "authorized": True,
+                }
+            owned_id, owned_template = _owned_match(template_id)
+            if owned_template:
+                return {
+                    "id": owned_id, "template": owned_template,
+                    "source": "owned", "authorized": True,
+                }
+        return {
+            "id": None, "template": None,
+            "source": None, "authorized": False,
+        }
+    except Exception:
+        logger.exception("_resolve_template_selection failed")
+        return {
+            "id": None, "template": None,
+            "source": None, "authorized": False,
+        }
+
+
 def _resolve_user_experts(
     permissions_json: str,
     override_tmpl_id: Optional[str] = None,
@@ -32,45 +125,16 @@ def _resolve_user_experts(
     admin_override: if True, override_tmpl_id is loaded without permission check.
     """
     try:
-        perms     = json.loads(permissions_json or "{}")
-        tmpl_ids  = perms.get("expert_template", [])
-        templates = _read_expert_templates()
         user_templates: dict = json.loads(user_templates_json or "{}")
         user_conns: dict = json.loads(user_connections_json or "{}")
-
-        def _find_tmpl(tid: str):
-            if tid in user_templates:
-                return user_templates[tid]
-            return next(
-                (t for t in templates if t.get("id") == tid or t.get("name") == tid), None
-            )
-
-        def _tmpl_in_allowed(tid: str) -> bool:
-            if tid in tmpl_ids:
-                return True
-            t = _find_tmpl(tid)
-            return bool(t and t.get("id") in tmpl_ids)
-
-        if admin_override and override_tmpl_id:
-            tmpl = _find_tmpl(override_tmpl_id)
-        elif override_tmpl_id and override_tmpl_id in user_templates:
-            tmpl = user_templates[override_tmpl_id]
-        elif not tmpl_ids:
-            return None
-        elif override_tmpl_id and _tmpl_in_allowed(override_tmpl_id):
-            tmpl = _find_tmpl(override_tmpl_id)
-            if tmpl is None:
-                logger.warning(
-                    "Ghost template in _resolve_user_experts: %s in perms but not in DB/cache",
-                    override_tmpl_id,
-                )
-        else:
-            tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
-            if tmpl is None:
-                logger.warning(
-                    "Ghost templates: all permitted templates missing from DB: %s", tmpl_ids
-                )
-        if not tmpl:
+        selection = _resolve_template_selection(
+            permissions_json,
+            override_tmpl_id=override_tmpl_id,
+            user_templates_json=user_templates_json,
+            admin_override=admin_override,
+        )
+        tmpl = selection["template"] if selection["authorized"] else None
+        if tmpl is None:
             return None
 
         result: dict = {}
@@ -210,35 +274,14 @@ def _resolve_template_prompts(
         "agent_ingest": AGENT_INGEST_ENABLED,
     }
     try:
-        perms     = json.loads(permissions_json or "{}")
-        tmpl_ids  = perms.get("expert_template", [])
-        templates = _read_expert_templates()
-        user_templates: dict = json.loads(user_templates_json or "{}")
-
-        def _find_tmpl(tid: str):
-            if tid in user_templates:
-                return user_templates[tid]
-            return next(
-                (t for t in templates if t.get("id") == tid or t.get("name") == tid), None
-            )
-
-        def _tmpl_in_allowed(tid: str) -> bool:
-            if tid in tmpl_ids:
-                return True
-            t = _find_tmpl(tid)
-            return bool(t and t.get("id") in tmpl_ids)
-
-        if admin_override and override_tmpl_id:
-            tmpl = _find_tmpl(override_tmpl_id)
-        elif override_tmpl_id and override_tmpl_id in user_templates:
-            tmpl = user_templates[override_tmpl_id]
-        elif not tmpl_ids:
-            return empty
-        elif override_tmpl_id and _tmpl_in_allowed(override_tmpl_id):
-            tmpl = _find_tmpl(override_tmpl_id)
-        else:
-            tmpl = next((_find_tmpl(tid) for tid in tmpl_ids if _find_tmpl(tid)), None)
-        if not tmpl:
+        selection = _resolve_template_selection(
+            permissions_json,
+            override_tmpl_id=override_tmpl_id,
+            user_templates_json=user_templates_json,
+            admin_override=admin_override,
+        )
+        tmpl = selection["template"] if selection["authorized"] else None
+        if tmpl is None:
             return empty
 
         def _split_model_ep(val: str) -> tuple:
@@ -274,26 +317,26 @@ def _resolve_template_prompts(
             "tool_expert_model_override":  tool_expert_m,
             "tool_expert_url_override":    tool_expert_url,
             "tool_expert_token_override":  tool_expert_tok,
-            "planner_num_ctx":             int(tmpl.get("planner_num_ctx", 0)),
-            "judge_num_ctx":               int(tmpl.get("judge_num_ctx", 0)),
-            "tool_expert_num_ctx":         int(tmpl.get("tool_expert_num_ctx", 0)),
+            "planner_num_ctx":             int(tmpl.get("planner_num_ctx") or 0),
+            "judge_num_ctx":               int(tmpl.get("judge_num_ctx") or 0),
+            "tool_expert_num_ctx":         int(tmpl.get("tool_expert_num_ctx") or 0),
             "enable_cache":            tmpl.get("enable_cache", True),
             "enable_graphrag":         tmpl.get("enable_graphrag", True),
             "enable_web_research":     tmpl.get("enable_web_research", True),
             "enable_habe":             tmpl.get("enable_habe", False),
             "search_fallback_ddg":     tmpl.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG),
-            "graphrag_max_chars":      int(tmpl.get("graphrag_max_chars", 0)),
-            "history_max_turns":       int(tmpl.get("history_max_turns", 0)),
-            "history_max_chars":       int(tmpl.get("history_max_chars", 0)),
+            "graphrag_max_chars":      int(tmpl.get("graphrag_max_chars") or 0),
+            "history_max_turns":       int(tmpl.get("history_max_turns") or 0),
+            "history_max_chars":       int(tmpl.get("history_max_chars") or 0),
             "force_think":             bool(tmpl.get("force_think", False)),
-            "max_agentic_rounds":      int(tmpl.get("max_agentic_rounds", 0)),
+            "max_agentic_rounds":      int(tmpl.get("max_agentic_rounds") or 0),
             "enable_mission_context":  bool(tmpl.get("enable_mission_context", False)),
             "enable_semantic_memory":  bool(tmpl.get("enable_semantic_memory", False)),
-            "semantic_memory_n_results": int(tmpl.get("semantic_memory_n_results", 0)),
-            "semantic_memory_ttl_hours": int(tmpl.get("semantic_memory_ttl_hours", 0)),
+            "semantic_memory_n_results": int(tmpl.get("semantic_memory_n_results") or 0),
+            "semantic_memory_ttl_hours": int(tmpl.get("semantic_memory_ttl_hours") or 0),
             "enable_cross_session_memory": bool(tmpl.get("enable_cross_session_memory", False)),
             "cross_session_scopes":    list(tmpl.get("cross_session_scopes", ["private"])),
-            "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days", 0)),
+            "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days") or 0),
             "complexity_level":        tmpl.get("complexity_level", ""),
             "causal_intervention":     tmpl.get("causal_intervention"),
             "agent_cache":             bool(tmpl.get("agent_cache", AGENT_CACHE_ENABLED)),
