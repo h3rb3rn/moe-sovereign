@@ -230,7 +230,14 @@ def _kv_cache_gb_from_arch(arch: dict, ctx: int) -> float:
     Returns 0.0 when required fields are missing.
     """
     def _find(suffix: str) -> int:
-        return next((int(v) for k, v in arch.items() if k.endswith(suffix)), 0)
+        for key, value in arch.items():
+            if not key.endswith(suffix) or value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return 0
 
     block_count = _find(".block_count")
     kv_heads    = _find(".attention.head_count_kv")
@@ -800,6 +807,8 @@ async def _invoke_planner_with_retry(
     if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
         _ollama_base = _p_url_base.removesuffix("/v1")
         _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        if PLANNER_NUM_CTX > 0 and _ctx > PLANNER_NUM_CTX:
+            _ctx = PLANNER_NUM_CTX
         # Never downgrade a warm model — same reasoning and pattern as the judge
         # branch above (_invoke_judge_with_retry) and the Augmented Tool Path
         # (services/pipeline/anthropic.py). Checked before the eviction call

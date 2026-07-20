@@ -1850,6 +1850,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 config,
             )
         except Exception as e:
+            logger.exception(
+                "Orchestrator graph failed chat_id=%s model=%s",
+                chat_id,
+                model_name or model_id,
+            )
             result_box["error"] = e
         finally:
             await progress_q.put(None)  # Sentinel: Pipeline fertig
@@ -1911,6 +1916,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 await asyncio.sleep(0.01)
 
     _t_first_token: Optional[float] = None
+    content = ""
     if "error" in result_box:
         yield _chunk({"content": f"Error: {result_box['error']}"})
     else:

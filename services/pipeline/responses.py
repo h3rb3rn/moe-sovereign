@@ -59,7 +59,7 @@ from metrics import (
 from services.auth import _validate_api_key, _extract_api_key, _extract_session_id
 from services.kafka import _kafka_publish
 from services.routing import (
-    _resolve_user_experts, _resolve_template_prompts,
+    _resolve_template_selection, _resolve_user_experts, _resolve_template_prompts,
     _server_info, _is_endpoint_error,
 )
 from services.tracking import (
@@ -83,6 +83,15 @@ from services.inference import _select_node as _select_node_svc, _get_available_
 from services.skills import _build_skill_catalog
 
 logger = logging.getLogger("MOE-SOVEREIGN")
+
+
+class _ResponsesPipelineError(RuntimeError):
+    """A request error that can be represented as a Responses API failure."""
+
+    def __init__(self, message: str, code: str, status_code: int = 500):
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
 
 
 class _ResponsesRequest(BaseModel):
@@ -215,10 +224,16 @@ async def _invoke_pipeline_for_responses(
     raw_key = _extract_api_key(raw_request)
     user_ctx = await _validate_api_key(raw_key) if raw_key else {"error": "missing_key"}
     if "error" in user_ctx:
-        return "", 0, 0
+        raise _ResponsesPipelineError(
+            "Invalid or missing API key", "invalid_api_key", 401
+        )
 
     user_id = user_ctx.get("user_id", "anon")
     api_key_id = user_ctx.get("key_id", "")
+    try:
+        user_perms = json.loads(user_ctx.get("permissions_json", "{}") or "{}")
+    except Exception:
+        user_perms = {}
     chat_id = f"chatcmpl-{uuid.uuid4()}"
 
     # Separate system messages from conversation history
@@ -232,9 +247,34 @@ async def _invoke_pipeline_for_responses(
         user_input = last.get("content", "") if isinstance(last.get("content"), str) else ""
 
     mode = _MODEL_ID_TO_MODE.get(request.model, "default")
+    _tmpl_requested = (
+        request.model
+        if request.model and request.model != "moe-orchestrator"
+        else None
+    )
+    _selection = _resolve_template_selection(
+        user_ctx.get("permissions_json", ""),
+        override_tmpl_id=_tmpl_requested,
+        user_templates_json=user_ctx.get("user_templates_json", "{}"),
+        admin_override=False,
+    )
+    if _selection["template"] is not None and not _selection["authorized"]:
+        raise _ResponsesPipelineError(
+            f"Template '{request.model}' is not authorized for this API key",
+            "template_not_authorized",
+            403,
+        )
+    _tmpl_id = _selection["id"]
+    user_experts = _resolve_user_experts(
+        user_ctx.get("permissions_json", ""),
+        override_tmpl_id=_tmpl_id,
+        user_templates_json=user_ctx.get("user_templates_json", "{}"),
+        admin_override=False,
+        user_connections_json=user_ctx.get("user_connections_json", "{}"),
+    ) or {}
     _tp = _resolve_template_prompts(
         user_ctx.get("permissions_json", ""),
-        override_tmpl_id=request.model if request.model and request.model != "moe-orchestrator" else None,
+        override_tmpl_id=_tmpl_id,
         user_templates_json=user_ctx.get("user_templates_json", "{}"),
         admin_override=False,
         user_connections_json=user_ctx.get("user_connections_json", "{}"),
@@ -244,6 +284,19 @@ async def _invoke_pipeline_for_responses(
         if request.max_agentic_rounds is not None
         else _tp.get("max_agentic_rounds", 0)
     )
+
+    _client_ip = raw_request.client.host if raw_request.client else ""
+    asyncio.create_task(_register_active_request(
+        chat_id=chat_id, user_id=user_id, model=request.model,
+        moe_mode=mode, req_type="responses",
+        template_name=(
+            (_selection["template"] or {}).get("name")
+            or (_tmpl_id or "")
+        ),
+        resolved_tmpl_name=(_selection["template"] or {}).get("name", ""),
+        resolved_tmpl_id=_tmpl_id or "",
+        client_ip=_client_ip, api_key_id=api_key_id,
+    ))
 
     full_text = ""
     prompt_tokens = 0
@@ -259,6 +312,8 @@ async def _invoke_pipeline_for_responses(
             system_prompt=system_prompt,
             user_id=user_id,
             api_key_id=api_key_id,
+            user_permissions=user_perms,
+            user_experts=user_experts,
             planner_prompt=_tp.get("planner_prompt", ""),
             judge_prompt=_tp.get("judge_prompt", ""),
             judge_model_override=_tp.get("judge_model_override", ""),
@@ -306,8 +361,13 @@ async def _invoke_pipeline_for_responses(
             if not _in_think:
                 _text_parts.append(piece)
         full_text = "".join(_text_parts)
-    except Exception as _pe:
-        logger.warning("Responses API pipeline error: %s", _pe)
+    except Exception:
+        logger.exception(
+            "Responses API pipeline error model=%s template_id=%s",
+            request.model,
+            _tmpl_id,
+        )
+        raise
 
     return full_text, prompt_tokens, completion_tokens
 
@@ -338,6 +398,14 @@ async def _stream_responses_api(
         "response": {"id": response_id, "object": "response", "status": "in_progress",
                      "created_at": ts, "output": []},
     })
+    yield _ev("response.in_progress", {
+        "type": "response.in_progress",
+        "response": {
+            "id": response_id, "object": "response", "status": "in_progress",
+            "created_at": ts, "model": request.model, "output": [],
+            "error": None, "incomplete_details": None, "usage": None,
+        },
+    })
     yield _ev("response.output_item.added", {
         "type": "response.output_item.added",
         "output_index": 0,
@@ -351,16 +419,46 @@ async def _stream_responses_api(
         "part": {"type": "output_text", "text": ""},
     })
 
-    # Run pipeline as background task; send keepalives every 15 s while waiting
+    # Run pipeline as a background task.  Codex ignores bare SSE comments for
+    # its stream-idle timer, so emit a spec-defined in-progress event while a
+    # slow local model loads or reasons.
     pipeline_task = asyncio.create_task(
         _invoke_pipeline_for_responses(raw_request, request, messages)
     )
     while not pipeline_task.done():
         try:
-            await asyncio.wait_for(asyncio.shield(pipeline_task), timeout=15.0)
+            await asyncio.wait_for(asyncio.shield(pipeline_task), timeout=10.0)
         except asyncio.TimeoutError:
-            yield ": keep-alive\n\n"
-    full_text, prompt_tokens, completion_tokens = pipeline_task.result()
+            yield _ev("response.in_progress", {
+                "type": "response.in_progress",
+                "response": {
+                    "id": response_id, "object": "response",
+                    "status": "in_progress", "created_at": ts,
+                    "model": request.model, "output": [],
+                    "error": None, "incomplete_details": None, "usage": None,
+                },
+            })
+        except Exception:
+            # The task's exception is converted into a spec-shaped
+            # response.failed event below; do not let wait_for tear down SSE.
+            break
+    try:
+        full_text, prompt_tokens, completion_tokens = pipeline_task.result()
+    except Exception as exc:
+        code = getattr(exc, "code", "pipeline_error")
+        yield _ev("response.failed", {
+            "type": "response.failed",
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created_at": ts,
+                "status": "failed",
+                "model": request.model,
+                "output": [],
+                "error": {"code": code, "message": str(exc)},
+            },
+        })
+        return
 
     for i in range(0, max(len(full_text), 1), 50):
         piece = full_text[i:i + 50]
@@ -476,8 +574,13 @@ async def responses_api(raw_request: Request, request: _ResponsesRequest):
             },
         })
     except Exception as _ie:
-        logger.warning("Responses API non-streaming pipeline failed: %s", _ie)
+        logger.exception("Responses API non-streaming pipeline failed")
         await _ol_fail(_ol_run_id, job_name="responses_api", error=str(_ie))
-        return JSONResponse(status_code=500, content={"error": {"message": str(_ie)}})
-
-
+        return JSONResponse(
+            status_code=getattr(_ie, "status_code", 500),
+            content={"error": {
+                "message": str(_ie),
+                "type": "invalid_request_error",
+                "code": getattr(_ie, "code", "pipeline_error"),
+            }},
+        )

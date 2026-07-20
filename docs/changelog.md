@@ -8,6 +8,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-07-20 — Codex Responses Template Resolution and Stream Reliability
+
+> `impact: patch` · `breaking: no` · `domain: responses-api, template-routing, inference`
+
+### Fixed
+
+- **`/v1/responses` displayed an Expert Template without applying it.** Live monitoring copied
+  `request.model` into `template_name`, but the Responses path neither resolved the owned
+  template ID nor passed `user_experts` and `user_permissions` into the graph. Responses now
+  uses the same ownership-aware resolution rules as the other compatibility APIs and records
+  both requested and resolved template identity.
+- **Private/admin template name collisions.** A private template is now selected when a
+  same-named admin template exists but is not granted to the API key; an authorized admin
+  template retains precedence.
+- **Codex stream idle disconnects during slow local inference.** Bare SSE comments do not reset
+  Codex's stream-idle timer. The Responses endpoint now emits spec-defined
+  `response.in_progress` events and converts pipeline exceptions into `response.failed`.
+- **Planner crash on nullable Ollama architecture metadata.** KV-cache sizing no longer calls
+  `int(None)` when `/api/show` contains a null architecture field; it skips invalid matches and
+  continues to the next usable value.
+- **Nullable numeric template settings.** Optional portal fields persisted as JSON `null` now
+  resolve to zero instead of aborting prompt/template resolution.
+
+### Compatibility
+
+- Expert-template entries returned by `/v1/models` now expose both `context_length` and
+  `context_window` when the template defines a context size.
+- Added a validated local Codex model catalog for
+  `moe-n04-rtx-qwen3.6:35b-256k`, including its 262,144-token context window.
+
+### Added
+
+- **Guarded planner dataset generation for LUMI-G.** The new
+  `scripts/generate_planner_dataset.py` produces resumable chat and Alpaca SFT datasets,
+  retains rejected samples for later analysis, and stops or pauses generation when teacher
+  probes, rolling quality or API availability fall below configured thresholds.
+- **Reproducible SLURM launcher.** `scripts/lumi_generate_planner_dataset.sh` starts the
+  OpenAI-compatible vLLM teacher endpoint on one LUMI-G node, waits for readiness, runs the
+  generator and records job-specific outputs. Model, sample target and concurrency remain
+  explicit operator-controlled inputs.
+- Updated the EuroHPC training concept and system-status documentation to separate the
+  implemented dataset pipeline from validation work and later SLM training stages.
+
 ## 2026-07-13 — v2.9.0: Admin-Editable Premature-Stop Detection & Reliability-Weighted Routing
 
 > `impact: minor` · `breaking: no` · `domain: agent_enrichment, inference, tracking, pipeline/chat, admin_ui`

@@ -47,6 +47,7 @@ os.environ.setdefault("PLANNER_ENDPOINT", "")
 os.environ.setdefault("GRAPH_INGEST_ENDPOINT", "")
 # Redirect mcp_server's file-generation dir away from /app/generated (Docker-only path)
 os.environ.setdefault("MOE_GENERATED_DIR", "/tmp/moe-test-generated")
+os.environ.setdefault("TOOL_EVAL_LOG_PATH", "/tmp/moe-test-tool-eval.jsonl")
 
 # ── 2. Stub all external modules not installed in the test environment ────────
 

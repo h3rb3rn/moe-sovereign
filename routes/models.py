@@ -18,7 +18,49 @@ from config import (
     MODES, _model_display_name,
 )
 from services.auth import _extract_api_key, _validate_api_key
+from services.routing import _resolve_template_selection
 from services.templates import _read_expert_templates
+
+
+def _template_context_length(template: dict) -> Optional[int]:
+    """Return the largest explicitly configured context window in a template."""
+    windows: list[int] = []
+    for field in ("planner_num_ctx", "judge_num_ctx", "tool_expert_num_ctx"):
+        try:
+            value = int(template.get(field) or 0)
+            if value > 0:
+                windows.append(value)
+        except (TypeError, ValueError):
+            pass
+    for category in (template.get("experts") or {}).values():
+        if not isinstance(category, dict):
+            continue
+        try:
+            value = int(category.get("context_window") or 0)
+            if value > 0:
+                windows.append(value)
+        except (TypeError, ValueError):
+            pass
+    return max(windows) if windows else None
+
+
+def _template_model_entry(template_id: str, template: dict, created: int) -> dict:
+    model_id = template.get("name") or template_id
+    description = template.get("description") or model_id
+    entry = {
+        "id": model_id,
+        "object": "model",
+        "owned_by": "moe-sovereign",
+        "created": created,
+        "description": description,
+        "display_name": _model_display_name(model_id, description),
+    }
+    context_length = _template_context_length(template)
+    if context_length:
+        # Different OpenAI-compatible clients use either spelling.
+        entry["context_length"] = context_length
+        entry["context_window"] = context_length
+    return entry
 
 
 async def _context_window_for_model(model_id: str) -> Optional[int]:
@@ -89,32 +131,21 @@ async def get_model(model_id: str, raw_request: Request):
 
     _created = int(time.time())
 
-    # Check global expert templates.
-    for t in _read_expert_templates():
-        tid = t.get("name", t["id"])
-        if tid == model_id:
-            return {
-                "id": tid, "object": "model", "owned_by": "moe-sovereign",
-                "created": _created,
-                "description": t.get("description") or tid,
-                "display_name": _model_display_name(tid, t.get("description") or tid),
-            }
-
-    # Check user-specific templates (most model IDs like hermes-tool-agent live here).
-    try:
-        user_tmpls = json.loads(user_ctx.get("user_templates_json", "{}") or "{}")
-        for uid, cfg in user_tmpls.items():
-            tid = cfg.get("name", uid)
-            if tid == model_id:
-                desc = cfg.get("description") or tid
-                return {
-                    "id": tid, "object": "model", "owned_by": "moe-sovereign",
-                    "created": _created,
-                    "description": desc,
-                    "display_name": _model_display_name(tid, desc),
-                }
-    except Exception:
-        pass
+    selection = _resolve_template_selection(
+        user_ctx.get("permissions_json", "{}"),
+        override_tmpl_id=model_id,
+        user_templates_json=user_ctx.get("user_templates_json", "{}"),
+    )
+    if selection["template"] is not None and selection["authorized"]:
+        return _template_model_entry(
+            selection["id"], selection["template"], _created
+        )
+    if selection["template"] is not None:
+        return JSONResponse(status_code=403, content={"error": {
+            "message": f"Model '{model_id}' is not authorized for this API key",
+            "type": "permission_denied",
+            "code": "model_not_authorized",
+        }})
 
     # Check MODES (built-in moe-* template IDs).
     for cfg in MODES.values():
@@ -173,20 +204,10 @@ async def list_models(raw_request: Request):
     main_models = []
     if allowed_templates:
         all_templates = _read_expert_templates()
-        main_models.extend([
-            {
-                "id":           t.get("name", t["id"]),
-                "object":       "model",
-                "owned_by":     "moe-sovereign",
-                "created":      _model_created,
-                "description":  t.get("description") or t.get("name", t["id"]),
-                "display_name": _model_display_name(
-                    t.get("name", t["id"]),
-                    t.get("description") or t.get("name", t["id"]),
-                ),
-            }
+        main_models.extend(
+            _template_model_entry(t["id"], t, _model_created)
             for t in all_templates if t.get("id") in allowed_templates
-        ])
+        )
 
     _has_other_perms = bool(
         user_perms.get("model_endpoint") or user_perms.get("cc_profile")
@@ -213,16 +234,7 @@ async def list_models(raw_request: Request):
     except Exception:
         pass
     user_tmpl_models = [
-        {
-            "id":           cfg.get("name", uid),
-            "object":       "model",
-            "owned_by":     "moe-sovereign",
-            "created":      _model_created,
-            "description":  cfg.get("description") or cfg.get("name", uid),
-            "display_name": _model_display_name(
-                cfg.get("name", uid), cfg.get("description") or cfg.get("name", uid)
-            ),
-        }
+        _template_model_entry(uid, cfg, _model_created)
         for uid, cfg in _user_tmpls_m.items()
         if cfg.get("name", uid) not in existing_ids
     ]

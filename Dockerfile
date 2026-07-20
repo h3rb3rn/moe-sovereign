@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+    PIP_INDEX_URL=https://pypi.org/simple/
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential \

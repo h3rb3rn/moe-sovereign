@@ -133,6 +133,63 @@ def test_resolve_user_experts_invalid_json_returns_none():
     assert result is None
 
 
+def test_owned_template_name_wins_over_unauthorized_admin_collision():
+    """A same-named, ungranted admin template must not shadow an owned one."""
+    admin_template = {
+        "id": "admin-id",
+        "name": "shared-name",
+        "experts": {"coding": {"models": [{"model": "admin-model"}]}},
+    }
+    owned_template = {
+        "name": "shared-name",
+        "experts": {"coding": {"models": [{"model": "owned-model"}]}},
+    }
+    with patch(
+        "services.routing._read_expert_templates",
+        return_value=[admin_template],
+    ):
+        selection = _routing._resolve_template_selection(
+            json.dumps({"expert_template": []}),
+            override_tmpl_id="shared-name",
+            user_templates_json=json.dumps({"owned-id": owned_template}),
+        )
+        experts = _routing._resolve_user_experts(
+            json.dumps({"expert_template": []}),
+            override_tmpl_id="shared-name",
+            user_templates_json=json.dumps({"owned-id": owned_template}),
+        )
+
+    assert selection["id"] == "owned-id"
+    assert selection["source"] == "owned"
+    assert selection["authorized"] is True
+    assert experts["coding"][0]["model"] == "owned-model"
+
+
+def test_authorized_admin_template_wins_over_owned_name_collision():
+    admin_template = {
+        "id": "admin-id",
+        "name": "shared-name",
+        "experts": {"coding": {"models": [{"model": "admin-model"}]}},
+    }
+    owned_template = {
+        "name": "shared-name",
+        "experts": {"coding": {"models": [{"model": "owned-model"}]}},
+    }
+    with patch(
+        "services.routing._read_expert_templates",
+        return_value=[admin_template],
+    ):
+        selection = _routing._resolve_template_selection(
+            json.dumps({"expert_template": ["admin-id"]}),
+            override_tmpl_id="shared-name",
+            user_templates_json=json.dumps({"owned-id": owned_template}),
+        )
+
+    assert selection["id"] == "admin-id"
+    assert selection["source"] == "admin"
+    assert selection["authorized"] is True
+
+
 # ── _resolve_template_prompts: Augmented Tool Path toggles ────────────────────
 
 
@@ -166,6 +223,32 @@ def test_resolve_template_prompts_template_default_off_when_unset(fake_template,
     assert result["agent_cache"] is False
     assert result["agent_graphrag"] is False
     assert result["agent_ingest"] is False
+
+
+def test_resolve_template_prompts_accepts_nullable_numeric_fields():
+    """Portal JSON may persist optional numeric inputs as null."""
+    template = {
+        "id": "nullable-template",
+        "name": "nullable",
+        "experts": {},
+        "planner_num_ctx": None,
+        "judge_num_ctx": None,
+        "max_agentic_rounds": None,
+        "history_max_turns": None,
+    }
+    permissions = json.dumps({"expert_template": ["nullable-template"]})
+    with patch(
+        "services.routing._read_expert_templates",
+        return_value=[template],
+    ):
+        result = _routing._resolve_template_prompts(
+            permissions, override_tmpl_id="nullable-template"
+        )
+
+    assert result["planner_num_ctx"] == 0
+    assert result["judge_num_ctx"] == 0
+    assert result["max_agentic_rounds"] == 0
+    assert result["history_max_turns"] == 0
 
 
 # ── _select_node tests ────────────────────────────────────────────────────────

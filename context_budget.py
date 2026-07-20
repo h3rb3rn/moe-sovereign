@@ -142,6 +142,14 @@ _CLAUDE_CTX_TABLE: dict[str, int] = {
     "claude-3-opus":    200_000,
     "claude-3-sonnet":  200_000,
     "claude-3-haiku":   200_000,
+    # Qwen3 family (all generations) — 262k native context window.
+    # Name-based entry needed because the tag carries no k-suffix; the param-count
+    # heuristic would otherwise cap these at 32 768 (conservative VRAM estimate).
+    "qwen3":            262_144,
+    # sovereign-judge fine-tune of Qwen3-MoE — same native window
+    "sovereign-judge":  262_144,
+    # Granite 4.1 family — 128k native context window.
+    "granite4.1":       131_072,
 }
 
 
