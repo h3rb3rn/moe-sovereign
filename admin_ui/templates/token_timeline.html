@@ -2,7 +2,7 @@
 {% block title %}Token Timeline — MoE Admin{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
   <h5 class="mb-0 fw-bold">
     <i class="bi bi-diagram-2 me-2 text-info"></i>{{ t(request, 'nav.token_timeline') }}
   </h5>
@@ -22,28 +22,60 @@
 <!-- Stats bar -->
 <div class="row g-2 mb-3" id="stat-cards" style="display:none!important"></div>
 
-<!-- Legend -->
-<div id="legend" class="d-flex flex-wrap gap-2 mb-3 small"></div>
-
-<!-- Graph container -->
-<div class="card">
-  <div class="card-body p-2" style="overflow-x:auto">
-    <div id="graph-wrap" style="min-width:600px;position:relative">
-      <svg id="git-graph" style="width:100%;display:block;font-family:monospace"></svg>
-      <div id="tooltip" style="
-        position:absolute;pointer-events:none;display:none;
-        background:rgba(0,0,0,.82);color:#fff;font-size:12px;
-        padding:6px 10px;border-radius:6px;max-width:260px;line-height:1.5;z-index:10;
-      "></div>
+<!-- Chart card -->
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <span class="fw-semibold small text-muted">{{ t(request, 'lbl.tt_chart_title') }}</span>
+      <div id="legend" class="d-flex flex-wrap gap-2 small"></div>
+    </div>
+    <div style="overflow-x:auto">
+      <div id="chart-wrap" style="min-width:600px;position:relative">
+        <svg id="chart-svg" style="width:100%;display:block;font-family:monospace"></svg>
+        <div id="tooltip" style="
+          position:absolute;pointer-events:none;display:none;
+          background:rgba(0,0,0,.82);color:#fff;font-size:12px;
+          padding:6px 10px;border-radius:6px;max-width:280px;line-height:1.5;z-index:10;
+        "></div>
+      </div>
     </div>
   </div>
 </div>
 
-<p class="text-muted small mt-2 mb-0">
-  Node size ∝ log(tokens) &nbsp;·&nbsp;
-  Color ∝ expert template &nbsp;·&nbsp;
-  Sessions that don't overlap in time share a lane (git-style compact layout)
-</p>
+<!-- Session table -->
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+      <span class="fw-semibold small text-muted">{{ t(request, 'lbl.tt_table_title') }}</span>
+      <input id="session-search" type="text" class="form-control form-control-sm" style="width:auto;min-width:240px"
+             placeholder="{{ t(request, 'lbl.tt_search_placeholder') }}" oninput="onSearch()">
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0" style="font-size:13px">
+        <thead class="table-dark">
+          <tr>
+            <th role="button" data-key="start_ts">{{ t(request, 'lbl.tt_col_start') }} <i class="bi bi-arrow-down-up small"></i></th>
+            <th role="button" data-key="username">{{ t(request, 'lbl.tt_col_user') }}</th>
+            <th role="button" data-key="duration">{{ t(request, 'lbl.tt_col_duration') }}</th>
+            <th role="button" data-key="request_count" class="text-end">{{ t(request, 'lbl.tt_card_requests') }}</th>
+            <th role="button" data-key="total_tokens" class="text-end">{{ t(request, 'lbl.tt_tokens') }}</th>
+            <th>{{ t(request, 'lbl.tt_model') }}</th>
+          </tr>
+        </thead>
+        <tbody id="session-tbody"></tbody>
+      </table>
+    </div>
+    <div class="d-flex align-items-center justify-content-between mt-2">
+      <span class="text-muted small" id="page-info"></span>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-secondary" onclick="changePage(-1)"><i class="bi bi-chevron-left"></i></button>
+        <button class="btn btn-outline-secondary" onclick="changePage(1)"><i class="bi bi-chevron-right"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="text-muted small mt-2 mb-0" id="footnote"></p>
 {% endblock %}
 
 {% block scripts %}
@@ -53,28 +85,27 @@ const _LABELS = {
   session:  {{ t(request, 'lbl.tt_session') | tojson }},
   tokens:   {{ t(request, 'lbl.tt_tokens')  | tojson }},
   template: {{ t(request, 'lbl.tt_template')| tojson }},
+  model:    {{ t(request, 'lbl.tt_model')  | tojson }},
+  other:    {{ t(request, 'lbl.tt_other')  | tojson }},
+  cardSessions: {{ t(request, 'lbl.tt_card_sessions') | tojson }},
+  cardRequests: {{ t(request, 'lbl.tt_card_requests') | tojson }},
+  cardModels:   {{ t(request, 'lbl.tt_card_models')   | tojson }},
+  cardAvg:      {{ t(request, 'lbl.tt_card_avg')      | tojson }},
+  noMatch:  {{ t(request, 'lbl.tt_no_match') | tojson }},
+  ofWord:   {{ t(request, 'lbl.tt_of') | tojson }},
 };
+const _LOCALE = {de:'de-DE', en:'en-US', fr:'fr-FR', zh:'zh-CN'}[document.documentElement.lang] || 'de-DE';
 
-// ── Tableau-10 palette ────────────────────────────────────────────────────────
+// ── Tableau-10 palette (last slot reserved for "Other") ───────────────────────
 const PALETTE = [
   '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
-  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+  '#edc948','#b07aa1','#ff9da7','#9c755f',
 ];
+const OTHER_COLOR = '#bab0ac';
 
-// ── Lane assignment (greedy, like git graph) ──────────────────────────────────
-function assignLanes(sessions) {
-  // sessions must be sorted by start_ts ascending
-  const laneEnd = []; // laneEnd[i] = end_ts of last session in lane i (ms)
-  sessions.forEach(s => {
-    let lane = laneEnd.findIndex(e => e < s._start);
-    if (lane === -1) { lane = laneEnd.length; laneEnd.push(0); }
-    laneEnd[lane] = s._end;
-    s._lane = lane;
-  });
-  return laneEnd.length;
-}
+// ── Bucket width per window (ms) ───────────────────────────────────────────────
+const BUCKET_MS = { '1d': 3600e3, '7d': 6*3600e3, '30d': 86400e3, '90d': 3*86400e3 };
 
-// ── SVG helper ────────────────────────────────────────────────────────────────
 function el(tag, attrs = {}) {
   const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -82,19 +113,75 @@ function el(tag, attrs = {}) {
 }
 
 function fmtNum(n) {
-  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
+  return String(n);
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
-function render(data) {
-  const svg  = document.getElementById('git-graph');
+function fmtDuration(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}min`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h < 24) return rem ? `${h}h ${rem}min` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function positionTip(evt, containerId) {
+  const wrap = document.getElementById(containerId);
+  const rect = wrap.getBoundingClientRect();
   const tip  = document.getElementById('tooltip');
-  const wrap = document.getElementById('graph-wrap');
+  let tx = evt.clientX - rect.left + 14;
+  let ty = evt.clientY - rect.top  - 10;
+  if (tx + 290 > wrap.offsetWidth) tx = evt.clientX - rect.left - 290;
+  if (ty < 0) ty = 4;
+  tip.style.left = tx + 'px';
+  tip.style.top  = ty + 'px';
+}
+
+// ── Global state ───────────────────────────────────────────────────────────────
+let _lastData   = null;
+let _flatReqs   = [];
+let _sessions   = [];
+let _colorMap   = {};
+let _modelOrder = [];
+let _hidden     = new Set();
+let _sort       = { key: 'start_ts', dir: -1 };
+let _page       = 0;
+const PAGE_SIZE = 25;
+
+// ── Build model → color assignment (top 9 by tokens, rest -> "Other") ─────────
+function buildColorMap(reqs) {
+  const totals = {};
+  reqs.forEach(r => {
+    const m = r.model || _LABELS.other;
+    totals[m] = (totals[m] || 0) + r.total_tokens;
+  });
+  const ranked = Object.entries(totals).sort((a,b) => b[1]-a[1]).map(e => e[0]);
+  const top = ranked.slice(0, PALETTE.length);
+  const map = {};
+  top.forEach((m,i) => { map[m] = PALETTE[i]; });
+  ranked.slice(PALETTE.length).forEach(m => { map[m] = OTHER_COLOR; });
+  _modelOrder = top.concat(ranked.length > PALETTE.length ? [_LABELS.other] : []);
+  return map;
+}
+
+function modelKey(m) {
+  const raw = m || _LABELS.other;
+  return (_colorMap[raw] === OTHER_COLOR && _modelOrder.includes(_LABELS.other)) ? _LABELS.other : raw;
+}
+
+// ── Chart: stacked bars, tokens per time bucket, colored by model ─────────────
+function renderChart() {
+  const svg  = document.getElementById('chart-svg');
+  const tip  = document.getElementById('tooltip');
   svg.innerHTML = '';
   tip.style.display = 'none';
 
-  const sessions = (data.sessions || []).filter(s => s.requests && s.requests.length > 0);
-  if (sessions.length === 0) {
+  if (_flatReqs.length === 0) {
     svg.setAttribute('height', 60);
     const t = el('text', {x: 20, y: 36, fill: '#888', 'font-size': 14});
     t.textContent = _LABELS.noData;
@@ -102,170 +189,238 @@ function render(data) {
     return;
   }
 
-  // Parse timestamps
-  sessions.forEach(s => {
-    s.requests.forEach(r => { r._ts = new Date(r.ts).getTime(); });
-    s._start = Math.min(...s.requests.map(r => r._ts));
-    s._end   = Math.max(...s.requests.map(r => r._ts));
-  });
-  sessions.sort((a, b) => a._start - b._start);
+  const w = document.getElementById('window-select').value;
+  const bucketMs = BUCKET_MS[w] || 86400e3;
 
-  // Lane assignment
-  const numLanes = assignLanes(sessions);
+  const minTs = Math.min(..._flatReqs.map(r => r._ts));
+  const maxTs = Math.max(..._flatReqs.map(r => r._ts));
+  const firstBucket = Math.floor(minTs / bucketMs) * bucketMs;
+  const lastBucket   = Math.floor(maxTs / bucketMs) * bucketMs;
+  const numBuckets = Math.round((lastBucket - firstBucket) / bucketMs) + 1;
 
-  // Template → color mapping
-  const templateSet = [...new Set(sessions.flatMap(s => s.requests.map(r => r.template || '')))].filter(Boolean).sort();
-  const colorMap = {};
-  templateSet.forEach((t, i) => { colorMap[t] = PALETTE[i % PALETTE.length]; });
-
-  // Build legend
-  const legendEl = document.getElementById('legend');
-  legendEl.innerHTML = '';
-  templateSet.forEach(t => {
-    const chip = document.createElement('span');
-    chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
-      border-radius:12px;background:${colorMap[t]}22;border:1px solid ${colorMap[t]}88;cursor:pointer`;
-    chip.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${colorMap[t]};display:inline-block"></span>${t}`;
-    chip.onclick = () => toggleTemplate(t);
-    legendEl.appendChild(chip);
+  // bucketIdx -> model -> {tokens, requests}
+  const buckets = Array.from({length: numBuckets}, () => ({}));
+  _flatReqs.forEach(r => {
+    if (_hidden.has(modelKey(r.model))) return;
+    const idx = Math.floor((r._ts - firstBucket) / bucketMs);
+    const key = modelKey(r.model);
+    const b = buckets[idx];
+    if (!b[key]) b[key] = {tokens: 0, requests: 0};
+    b[key].tokens += r.total_tokens;
+    b[key].requests += 1;
   });
 
-  // Layout constants
-  const LANE_H   = 46;
-  const PAD_TOP  = 24;
-  const PAD_BOT  = 48;
-  const PAD_L    = 92;  // space for session labels
-  const PAD_R    = 20;
-  const SVG_W    = Math.max(svg.clientWidth || 900, 640);
-  const GRAPH_W  = SVG_W - PAD_L - PAD_R;
-  const SVG_H    = numLanes * LANE_H + PAD_TOP + PAD_BOT;
+  const maxStack = Math.max(1, ...buckets.map(b => Object.values(b).reduce((a,v) => a+v.tokens, 0)));
 
-  svg.setAttribute('viewBox', `0 0 ${SVG_W} ${SVG_H}`);
-  svg.setAttribute('height', SVG_H);
+  const PAD_TOP = 16, PAD_BOT = 40, PAD_L = 56, PAD_R = 16;
+  const SVG_W = Math.max(svg.clientWidth || 900, 640);
+  const CHART_H = 220;
+  const GRAPH_W = SVG_W - PAD_L - PAD_R;
+  const GRAPH_H = CHART_H - PAD_TOP - PAD_BOT;
+  svg.setAttribute('viewBox', `0 0 ${SVG_W} ${CHART_H}`);
+  svg.setAttribute('height', CHART_H);
 
-  // Time range
-  const allTs  = sessions.flatMap(s => s.requests.map(r => r._ts));
-  const minTs  = Math.min(...allTs);
-  const maxTs  = Math.max(...allTs);
-  const tRange = Math.max(maxTs - minTs, 1);
+  const barGap = 2;
+  const barW = Math.max(1, GRAPH_W / numBuckets - barGap);
 
-  const xFor   = ts  => PAD_L + ((ts - minTs) / tRange) * GRAPH_W;
-  const yFor   = lane => PAD_TOP + lane * LANE_H + LANE_H / 2;
-
-  // ── Grid lines (subtle) ──────────────────────────────────────────────────
-  const gridG = el('g', {opacity: '0.08'});
-  for (let i = 0; i <= numLanes; i++) {
-    const y = PAD_TOP + i * LANE_H;
-    gridG.appendChild(el('line', {x1: PAD_L, y1: y, x2: SVG_W - PAD_R, y2: y, stroke:'#666', 'stroke-width':'1'}));
+  // Y gridlines + labels (nice steps)
+  const yTicks = 4;
+  const gridG = el('g');
+  for (let i = 0; i <= yTicks; i++) {
+    const frac = i / yTicks;
+    const y = PAD_TOP + GRAPH_H * (1 - frac);
+    gridG.appendChild(el('line', {x1: PAD_L, y1: y, x2: SVG_W - PAD_R, y2: y, stroke:'#888', 'stroke-width':'1', opacity:'0.12'}));
+    const txt = el('text', {x: PAD_L - 8, y: y + 3, 'text-anchor':'end', 'font-size':'9', fill:'#888'});
+    txt.textContent = fmtNum(Math.round(maxStack * frac));
+    gridG.appendChild(txt);
   }
   svg.appendChild(gridG);
 
-  // ── Time axis ────────────────────────────────────────────────────────────
+  // Bars
+  buckets.forEach((b, i) => {
+    const x = PAD_L + i * (GRAPH_W / numBuckets) + barGap/2;
+    let yCursor = PAD_TOP + GRAPH_H;
+    const entries = Object.entries(b);
+    if (entries.length === 0) return;
+    const bucketStart = firstBucket + i * bucketMs;
+    entries.forEach(([modelName, v]) => {
+      const h = (v.tokens / maxStack) * GRAPH_H;
+      yCursor -= h;
+      const rect = el('rect', {
+        x, y: yCursor, width: barW, height: Math.max(h, 0.5),
+        fill: _colorMap[modelName] || OTHER_COLOR,
+        style: 'cursor:pointer',
+      });
+      rect.addEventListener('mouseenter', evt => {
+        const d0 = new Date(bucketStart), d1 = new Date(bucketStart + bucketMs);
+        tip.innerHTML =
+          `<b>${_LABELS.model}:</b> ${modelName}<br>` +
+          `<b>${_LABELS.tokens}:</b> ${fmtNum(v.tokens)}<br>` +
+          `<b>${_LABELS.cardRequests}:</b> ${v.requests}<br>` +
+          `${d0.toLocaleString(_LOCALE, {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'})}`;
+        tip.style.display = 'block';
+        positionTip(evt, 'chart-wrap');
+      });
+      rect.addEventListener('mousemove', evt => positionTip(evt, 'chart-wrap'));
+      rect.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+      svg.appendChild(rect);
+    });
+  });
+
+  // X axis ticks
   const axisG = el('g');
-  axisG.appendChild(el('line', {
-    x1: PAD_L, y1: SVG_H - PAD_BOT + 8, x2: SVG_W - PAD_R, y2: SVG_H - PAD_BOT + 8,
-    stroke: '#999', 'stroke-width': '1',
-  }));
-  const tickCount = Math.min(8, Math.floor(GRAPH_W / 90));
+  axisG.appendChild(el('line', {x1: PAD_L, y1: PAD_TOP+GRAPH_H, x2: SVG_W-PAD_R, y2: PAD_TOP+GRAPH_H, stroke:'#999', 'stroke-width':'1'}));
+  const tickCount = Math.min(8, numBuckets);
   for (let i = 0; i <= tickCount; i++) {
     const frac = i / tickCount;
-    const ts   = minTs + frac * tRange;
-    const x    = PAD_L + frac * GRAPH_W;
-    const d    = new Date(ts);
-    const lbl  = tRange < 86400000
-      ? d.toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'})
-      : d.toLocaleDateString('de-DE', {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-    axisG.appendChild(el('line', {x1:x, y1:SVG_H - PAD_BOT + 5, x2:x, y2:SVG_H - PAD_BOT + 12, stroke:'#999', 'stroke-width':'1'}));
-    const txt = el('text', {x, y: SVG_H - PAD_BOT + 24, 'text-anchor':'middle', 'font-size':'9', fill:'#888'});
+    const bIdx = Math.round(frac * (numBuckets - 1));
+    const ts = firstBucket + bIdx * bucketMs;
+    const x = PAD_L + (bIdx + 0.5) * (GRAPH_W / numBuckets);
+    const d = new Date(ts);
+    const showDate = (lastBucket - firstBucket) >= 86400e3;
+    const showTime = bucketMs < 86400e3;
+    const lbl = (showDate ? d.toLocaleDateString(_LOCALE, {month:'2-digit', day:'2-digit'}) : '') +
+                (showDate && showTime ? ' ' : '') +
+                (showTime ? d.toLocaleTimeString(_LOCALE, {hour:'2-digit', minute:'2-digit'}) : '');
+    axisG.appendChild(el('line', {x1:x, y1:PAD_TOP+GRAPH_H, x2:x, y2:PAD_TOP+GRAPH_H+5, stroke:'#999', 'stroke-width':'1'}));
+    const txt = el('text', {x, y: PAD_TOP+GRAPH_H+18, 'text-anchor':'middle', 'font-size':'9', fill:'#888'});
     txt.textContent = lbl;
     axisG.appendChild(txt);
   }
   svg.appendChild(axisG);
 
-  // ── Sessions ─────────────────────────────────────────────────────────────
-  const hidden = new Set(); // filtered templates
-  window._toggleTemplate = function(tpl) {
-    if (hidden.has(tpl)) hidden.delete(tpl); else hidden.add(tpl);
-    render(data);
-  };
-  window.toggleTemplate = window._toggleTemplate;
+  // Legend
+  const legendEl = document.getElementById('legend');
+  legendEl.innerHTML = '';
+  _modelOrder.forEach(m => {
+    const col = _colorMap[m] || OTHER_COLOR;
+    const chip = document.createElement('span');
+    const isHidden = _hidden.has(m);
+    chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:2px 8px;
+      border-radius:12px;background:${col}22;border:1px solid ${col}88;cursor:pointer;
+      opacity:${isHidden ? 0.4 : 1}`;
+    chip.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${col};display:inline-block"></span>${m}`;
+    chip.onclick = () => { if (_hidden.has(m)) _hidden.delete(m); else _hidden.add(m); renderChart(); };
+    legendEl.appendChild(chip);
+  });
+}
 
+// ── Session table ──────────────────────────────────────────────────────────────
+function sessionRows() {
+  const q = (document.getElementById('session-search').value || '').trim().toLowerCase();
+  let rows = _sessions.filter(s =>
+    !q || s.session_id.toLowerCase().includes(q) || (s.username||'').toLowerCase().includes(q) || (s.user_id||'').toLowerCase().includes(q)
+  );
+  rows.sort((a,b) => {
+    const k = _sort.key;
+    const va = k === 'duration' ? (a.end_ts - a.start_ts) : a[k];
+    const vb = k === 'duration' ? (b.end_ts - b.start_ts) : b[k];
+    if (va < vb) return -1 * _sort.dir;
+    if (va > vb) return  1 * _sort.dir;
+    return 0;
+  });
+  return rows;
+}
+
+function renderTable() {
+  const rows = sessionRows();
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  _page = Math.min(_page, totalPages - 1);
+  const pageRows = rows.slice(_page * PAGE_SIZE, (_page + 1) * PAGE_SIZE);
+
+  const tbody = document.getElementById('session-tbody');
+  if (pageRows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">${_LABELS.noMatch}</td></tr>`;
+  } else {
+    tbody.innerHTML = pageRows.map(s => {
+      const dur = fmtDuration(Math.max(0, s.end_ts - s.start_ts));
+      const col = _colorMap[s._primModel] || OTHER_COLOR;
+      return `<tr style="cursor:pointer" onclick="toggleDetail(this,'${s.session_id}')">
+        <td>${new Date(s.start_ts).toLocaleString(_LOCALE, {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'})}</td>
+        <td>${s.username || s.user_id || '—'}</td>
+        <td>${dur}</td>
+        <td class="text-end">${s.request_count}</td>
+        <td class="text-end">${fmtNum(s.total_tokens)}</td>
+        <td><span style="width:8px;height:8px;border-radius:50%;background:${col};display:inline-block;margin-right:5px"></span>${s._primModel}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.getElementById('page-info').textContent =
+    rows.length ? `${_page*PAGE_SIZE+1}–${Math.min((_page+1)*PAGE_SIZE, rows.length)} ${_LABELS.ofWord} ${rows.length}` : '';
+}
+
+window._detailCache = {};
+function toggleDetail(tr, sid) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('detail-row')) { next.remove(); return; }
+  const s = _sessions.find(x => x.session_id === sid);
+  if (!s) return;
+  const reqRows = s.requests.map(r => `
+    <tr>
+      <td class="ps-4 text-muted">${new Date(r._ts).toLocaleTimeString(_LOCALE, {hour:'2-digit', minute:'2-digit', second:'2-digit'})}</td>
+      <td>${r.model || '—'}</td>
+      <td>${r.template || '—'}</td>
+      <td class="text-end">${fmtNum(r.total_tokens)} <span class="text-muted">(↑${fmtNum(r.prompt_tokens)}/↓${fmtNum(r.completion_tokens)})</span></td>
+      <td>${Array.isArray(r.experts) && r.experts.length ? r.experts.join(', ') : '—'}</td>
+    </tr>`).join('');
+  const row = document.createElement('tr');
+  row.className = 'detail-row';
+  row.innerHTML = `<td colspan="6" class="bg-body-tertiary p-0">
+    <table class="table table-sm mb-0" style="font-size:12px">
+      <tbody>${reqRows}</tbody>
+    </table>
+  </td>`;
+  tr.after(row);
+}
+
+function onSearch() { _page = 0; renderTable(); }
+function changePage(delta) { _page += delta; renderTable(); }
+
+document.addEventListener('click', evt => {
+  const th = evt.target.closest('th[data-key]');
+  if (!th) return;
+  const key = th.dataset.key;
+  if (_sort.key === key) _sort.dir *= -1; else { _sort.key = key; _sort.dir = key === 'start_ts' ? -1 : -1; }
+  renderTable();
+});
+
+// ── Top-level render orchestration ────────────────────────────────────────────
+function render(data) {
+  const sessions = (data.sessions || []).filter(s => s.requests && s.requests.length > 0);
   sessions.forEach(s => {
-    const y   = yFor(s._lane);
-    const x0  = xFor(s._start);
-    const xN  = xFor(s._end);
-    const g   = el('g', {'data-sid': s.session_id});
-
-    // Primary template (most frequent in this session)
-    const tplCount = {};
-    s.requests.forEach(r => { if (r.template) tplCount[r.template] = (tplCount[r.template]||0)+1; });
-    const primTpl = Object.entries(tplCount).sort((a,b)=>b[1]-a[1])[0]?.[0] || '';
-    const lineColor = colorMap[primTpl] || '#9ab';
-
-    // Branch spine
-    g.appendChild(el('line', {
-      x1: x0, y1: y, x2: xN, y2: y,
-      stroke: lineColor, 'stroke-width': '2.5', opacity: '0.4', 'stroke-linecap': 'round',
-    }));
-
-    // Session label (trimmed session id)
-    const lbl = el('text', {
-      x: PAD_L - 8, y: y + 4, 'text-anchor':'end',
-      'font-size':'9', fill:'#777',
-    });
-    lbl.textContent = s.session_id.slice(-10);
-    g.appendChild(lbl);
-
-    // Request nodes
-    s.requests.forEach((r, idx) => {
-      const x        = xFor(r._ts);
-      const tpl      = r.template || '';
-      const col      = colorMap[tpl] || '#9ab';
-      const logTok   = Math.log10(Math.max(r.total_tokens, 1));
-      const nodeR    = Math.max(4, Math.min(13, logTok * 3.5));
-      const isHidden = hidden.has(tpl);
-
-      const circle = el('circle', {
-        cx: x, cy: y, r: nodeR,
-        fill: col, stroke: '#fff', 'stroke-width': '1.5',
-        opacity: isHidden ? '0.12' : '1',
-        style: 'cursor:pointer;transition:r .12s',
-        class: 'commit-node',
-      });
-
-      // Hover tooltip
-      circle.addEventListener('mouseenter', evt => {
-        const experts = Array.isArray(r.experts) ? r.experts.join(', ') : '';
-        tip.innerHTML =
-          `<b>${_LABELS.session}:</b> …${s.session_id.slice(-12)}<br>` +
-          `<b>${_LABELS.template}:</b> ${tpl || '—'}<br>` +
-          `<b>${_LABELS.tokens}:</b> ${fmtNum(r.total_tokens)} (↑${fmtNum(r.prompt_tokens)} / ↓${fmtNum(r.completion_tokens)})<br>` +
-          (experts ? `<b>Experts:</b> ${experts}<br>` : '') +
-          `<b>Time:</b> ${new Date(r._ts).toLocaleString('de-DE')}`;
-        tip.style.display = 'block';
-        positionTip(evt);
-      });
-      circle.addEventListener('mousemove', positionTip);
-      circle.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
-
-      g.appendChild(circle);
-    });
-
-    svg.appendChild(g);
+    s.requests.forEach(r => { r._ts = new Date(r.ts).getTime(); });
+    s.start_ts = Math.min(...s.requests.map(r => r._ts));
+    s.end_ts   = Math.max(...s.requests.map(r => r._ts));
+    const cnt = {};
+    s.requests.forEach(r => { const m = r.model || _LABELS.other; cnt[m] = (cnt[m]||0)+1; });
+    s._primModel = Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0]?.[0] || '—';
   });
 
-  // ── Stat cards ───────────────────────────────────────────────────────────
-  const totalTok  = sessions.reduce((a,s) => a + s.total_tokens, 0);
-  const totalReq  = sessions.reduce((a,s) => a + s.request_count, 0);
-  const cardData  = [
-    ['Sessions',  sessions.length],
-    ['Requests',  totalReq],
+  _sessions = sessions;
+  _flatReqs = sessions.flatMap(s => s.requests);
+  _colorMap = buildColorMap(_flatReqs);
+  _hidden = new Set();
+  _page = 0;
+
+  renderChart();
+  renderTable();
+
+  // Stat cards
+  const totalTok   = _flatReqs.reduce((a,r) => a + r.total_tokens, 0);
+  const totalReq   = _flatReqs.length;
+  const distinctModels = new Set(_flatReqs.map(r => r.model || _LABELS.other)).size;
+  const avgTok = totalReq ? Math.round(totalTok / totalReq) : 0;
+  const cardData = [
+    [_LABELS.cardSessions, sessions.length],
+    [_LABELS.cardRequests, totalReq],
     [_LABELS.tokens, fmtNum(totalTok)],
-    ['Templates', templateSet.length],
+    [_LABELS.cardModels, distinctModels],
+    [_LABELS.cardAvg, fmtNum(avgTok)],
   ];
   const cardRow = document.getElementById('stat-cards');
   cardRow.innerHTML = cardData.map(([l,v]) =>
-    `<div class="col-6 col-md-3 col-lg-2">
+    `<div class="col-6 col-md-4 col-lg-2">
       <div class="card h-100"><div class="card-body text-center py-2">
         <div class="text-muted" style="font-size:11px">${l}</div>
         <div class="fs-5 fw-bold">${v}</div>
@@ -273,44 +428,33 @@ function render(data) {
     </div>`
   ).join('');
   cardRow.style.removeProperty('display');
-}
 
-function positionTip(evt) {
-  const wrap = document.getElementById('graph-wrap');
-  const rect = wrap.getBoundingClientRect();
-  const tip  = document.getElementById('tooltip');
-  let tx = evt.clientX - rect.left + 14;
-  let ty = evt.clientY - rect.top  - 10;
-  // Keep within container
-  if (tx + 270 > wrap.offsetWidth) tx = evt.clientX - rect.left - 270;
-  if (ty < 0) ty = 4;
-  tip.style.left = tx + 'px';
-  tip.style.top  = ty + 'px';
+  const templates = [...new Set(_flatReqs.map(r => r.template).filter(Boolean))];
+  document.getElementById('footnote').textContent =
+    (templates.length ? `${_LABELS.template}: ${templates.join(', ')} · ` : '') +
+    'Node color = model · Bars = tokens per time bucket';
 }
 
 // ── Load data ─────────────────────────────────────────────────────────────────
-let _lastData = null;
-
 async function load() {
-  const w = document.getElementById('window-select').value;
-  document.getElementById('git-graph').innerHTML =
+  document.getElementById('chart-svg').innerHTML =
     '<text x="20" y="36" fill="#aaa" font-size="13">Loading…</text>';
   try {
+    const w = document.getElementById('window-select').value;
     const r = await fetch(`/api/statistics/token-timeline?window=${w}`);
     if (!r.ok) throw new Error(await r.text());
     _lastData = await r.json();
     render(_lastData);
   } catch(e) {
-    document.getElementById('git-graph').innerHTML =
+    document.getElementById('chart-svg').innerHTML =
       `<text x="20" y="36" fill="#c00" font-size="12">Error: ${e.message}</text>`;
   }
 }
 
-// Re-render on resize
 let _resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(_resizeTimer);
-  _resizeTimer = setTimeout(() => { if (_lastData) render(_lastData); }, 200);
+  _resizeTimer = setTimeout(() => { if (_lastData) renderChart(); }, 200);
 });
 
 load();
