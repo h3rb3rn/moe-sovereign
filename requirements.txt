@@ -35,7 +35,7 @@ prometheus_client>=0.21.0
 
 # --- OIDC/JWT ---
 PyJWT>=2.13.0
-cryptography>=48.0.1
+cryptography>=50.0.0
 
 # --- PDF generation (HTML→PDF via WeasyPrint) ---
 weasyprint>=62.0
