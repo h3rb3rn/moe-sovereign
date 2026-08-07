@@ -38,7 +38,6 @@ flowchart TD
     end
 
     subgraph Orchestrator["MoE Orchestrator (LangGraph)"]
-        direction TB
         Cache{"L0/L1 Cache<br/>Valkey + ChromaDB"}
         Planner["Planner<br/><i>phi4:14b</i>"]
         
@@ -49,7 +48,7 @@ flowchart TD
         end
 
         MCP["28 MCP Tools<br/><i>AST-Whitelist + PPTX</i>"]
-        Graph["Neo4j GraphRAG"]
+        GraphRAG["Neo4j GraphRAG"]
         Judge["Judge / Merger<br/><i>llama3.3:70b</i>"]
         GapCheck{"Gap Detector<br/><i>COMPLETE?</i>"}
         Replan["Agentic Re-Plan<br/><i>up to 3 rounds</i>"]
@@ -66,10 +65,14 @@ flowchart TD
     Clients -->|"/v1/chat/completions<br/>/v1/messages<br/>/v1/responses"| Cache
     Cache -->|Miss| Planner
     Cache -->|Hit| Response
-    Planner --> Experts
-    Experts --> MCP
-    MCP --> Graph
-    Graph --> Judge
+    Planner --> E1
+    Planner --> E2
+    Planner --> E3
+    E1 --> MCP
+    E2 --> MCP
+    E3 --> MCP
+    MCP --> GraphRAG
+    GraphRAG --> Judge
     Judge --> GapCheck
     GapCheck -->|"COMPLETE"| Response["Response"]
     GapCheck -->|"NEEDS_MORE_INFO"| Replan
