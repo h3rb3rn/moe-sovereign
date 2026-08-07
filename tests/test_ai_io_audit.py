@@ -9,8 +9,10 @@ from services.ai_io_audit import (
     complete_audit_entry,
     get_live_entries,
     AiIoAuditEntry,
+    aggregate_request_usage,
     _live_entries,
 )
+import state
 
 
 # ── sanitize_audit_payload ────────────────────────────────────────────────────
@@ -74,13 +76,13 @@ def test_create_audit_entry_adds_to_live():
     )
     assert entry.status == "pending"
     assert entry.request_body["api-key"] == "[redacted]"
-    assert "sess-1:req-1" in _live_entries
+    assert entry.audit_id in _live_entries
 
 
 @pytest.mark.asyncio
 async def test_complete_audit_entry_removes_from_live():
-    create_audit_entry("s", "r", "m", "ep", "st", {"x": 1})
-    audit_id = "s:r"
+    entry = create_audit_entry("s", "r", "m", "ep", "st", {"x": 1})
+    audit_id = entry.audit_id
 
     with patch("services.ai_io_audit._persist", new=AsyncMock()):
         await complete_audit_entry(
@@ -111,14 +113,75 @@ def test_get_live_entries_returns_pending():
 
 @pytest.mark.asyncio
 async def test_complete_redacts_response_body():
-    create_audit_entry("s", "r2", "m", "ep", "st", {})
+    entry = create_audit_entry("s", "r2", "m", "ep", "st", {})
     with patch("services.ai_io_audit._persist", new=AsyncMock()):
         await complete_audit_entry(
-            "s:r2",
+            entry.audit_id,
             response_body={"authorization": "secret-val", "content": "answer"},
             prompt_tokens=10,
             completion_tokens=5,
         )
     # Entry is gone from live — to check redaction we'd need to inspect _persist args,
     # but at minimum it should not raise and should have processed the response.
-    assert "s:r2" not in _live_entries
+    assert entry.audit_id not in _live_entries
+
+
+def test_multiple_calls_in_one_request_get_distinct_audit_ids():
+    planner = create_audit_entry("s", "r", "p", "ep", "planner", {})
+    expert = create_audit_entry("s", "r", "e", "ep", "expert", {})
+    judge = create_audit_entry("s", "r", "j", "ep", "judge", {})
+
+    assert len({planner.audit_id, expert.audit_id, judge.audit_id}) == 3
+    assert len(get_live_entries()) == 3
+
+
+def test_sanitize_langchain_like_message_object():
+    class Message:
+        type = "human"
+        content = "hello"
+
+    result = sanitize_audit_payload({"messages": [Message()]})
+    assert result["messages"] == [{"type": "human", "content": "hello"}]
+
+
+class _AggregateCursor:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def execute(self, _query, params):
+        assert params == ("req-timeout",)
+
+    async def fetchone(self):
+        return (16500, 8900, ["planner", "expert", "judge"])
+
+
+class _AggregateConnection:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def cursor(self):
+        return _AggregateCursor()
+
+
+class _AggregatePool:
+    def connection(self):
+        return _AggregateConnection()
+
+
+@pytest.mark.asyncio
+async def test_timeout_usage_aggregates_completed_stage_audits(monkeypatch):
+    monkeypatch.setattr(state, "_userdb_pool", _AggregatePool())
+
+    result = await aggregate_request_usage("req-timeout")
+
+    assert result == {
+        "prompt_tokens": 16500,
+        "completion_tokens": 8900,
+        "stages": ["planner", "expert", "judge"],
+    }

@@ -107,12 +107,3 @@ async def patch_context(patch: dict) -> dict:
     _save_raw(ctx)
     logger.info("mission_context: patched fields=%s", list(patch.keys()))
     return ctx
-
-
-async def append_decision(text: str) -> dict:
-    """Convenience helper: append one decision entry to recent_decisions."""
-    return await patch_context({
-        "recent_decisions": _load_raw().get("recent_decisions", []) + [
-            {"at": datetime.now(timezone.utc).isoformat(), "text": text}
-        ]
-    })

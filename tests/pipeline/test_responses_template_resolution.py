@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from services.pipeline.responses import (
+    _ResponsesPipelineError,
     _ResponsesRequest,
     _invoke_pipeline_for_responses,
     _stream_responses_api,
@@ -24,6 +25,17 @@ async def test_responses_passes_owned_template_experts_and_identity_to_graph():
     template = {
         "name": "moe-n04-rtx-qwen3.6:35b-256k",
         "planner_prompt": "owned planner",
+        "deliberation_policy": {
+            "activation": "required",
+            "mode": "micro",
+            "initial_agent_cap": 2,
+            "reserve_agents": 0,
+            "absolute_max_agents": 2,
+            "initial_round_cap": 1,
+            "reserve_rounds": 0,
+            "absolute_max_rounds": 1,
+            "max_model_calls": 3,
+        },
         "experts": {
             "coding": {
                 "context_window": 262144,
@@ -77,6 +89,45 @@ async def test_responses_passes_owned_template_experts_and_identity_to_graph():
     assert captured["user_permissions"] == {"expert_template": []}
     assert captured["user_experts"]["coding"][0]["model"] == "qwen3.6:35b"
     assert captured["planner_prompt"] == "owned planner"
+    assert captured["deliberation_policy"]["activation"] == "required"
+    assert captured["deliberation_policy"]["mode"] == "micro"
+
+
+@pytest.mark.asyncio
+async def test_responses_rejects_invalid_owned_template_policy_before_graph():
+    template = {
+        "name": "invalid-policy-template",
+        "experts": {},
+        "deliberation_policy": {"activation": "sometimes"},
+    }
+    user_ctx = {
+        "user_id": "user-1",
+        "key_id": "key-1",
+        "permissions_json": json.dumps({"expert_template": []}),
+        "user_templates_json": json.dumps({"owned-template-id": template}),
+        "user_connections_json": "{}",
+    }
+    request = _ResponsesRequest(
+        model=template["name"],
+        input="test",
+        stream=True,
+    )
+
+    with (
+        patch(
+            "services.pipeline.responses._validate_api_key",
+            new=AsyncMock(return_value=user_ctx),
+        ),
+        patch("services.pipeline.responses._read_expert_templates", return_value=[]),
+        patch("services.routing._read_expert_templates", return_value=[]),
+    ):
+        with pytest.raises(_ResponsesPipelineError) as exc_info:
+            await _invoke_pipeline_for_responses(
+                _request(), request, [{"role": "user", "content": "test"}]
+            )
+
+    assert exc_info.value.code == "deliberation_policy_invalid"
+    assert exc_info.value.status_code == 422
 
 
 @pytest.mark.asyncio

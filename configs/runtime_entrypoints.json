@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "description": "Callbacks invoked by frameworks or protocols rather than direct Python call sites.",
+  "entrypoints": [
+    {
+      "path": "admin_ui/app.py",
+      "qualname": "CsrfApiMiddleware.dispatch",
+      "kind": "starlette_middleware_callback",
+      "wiring_path": "admin_ui/app.py",
+      "wiring_marker": "app.add_middleware(CsrfApiMiddleware)"
+    },
+    {
+      "path": "admin_ui/app.py",
+      "qualname": "SecurityHeadersMiddleware.dispatch",
+      "kind": "starlette_middleware_callback",
+      "wiring_path": "admin_ui/app.py",
+      "wiring_marker": "app.add_middleware(SecurityHeadersMiddleware)"
+    },
+    {
+      "path": "services/middleware.py",
+      "qualname": "SecurityHeadersMiddleware.dispatch",
+      "kind": "starlette_middleware_callback",
+      "wiring_path": "main.py",
+      "wiring_marker": "app.add_middleware(_SecurityHeadersMiddleware)"
+    },
+    {
+      "path": "services/middleware.py",
+      "qualname": "BodySizeLimitMiddleware.dispatch",
+      "kind": "starlette_middleware_callback",
+      "wiring_path": "main.py",
+      "wiring_marker": "app.add_middleware(_BodySizeLimitMiddleware)"
+    },
+    {
+      "path": "services/middleware.py",
+      "qualname": "BodyCacheMiddleware.dispatch",
+      "kind": "starlette_middleware_callback",
+      "wiring_path": "main.py",
+      "wiring_marker": "app.add_middleware(_BodyCacheMiddleware)"
+    },
+    {
+      "path": "memory_retrieval.py",
+      "qualname": "HttpxOllamaEF.embed_query",
+      "kind": "chromadb_embedding_protocol",
+      "wiring_path": "services/context_index.py",
+      "wiring_marker": "HttpxOllamaEF(model_name=model_name, base_url=base_url)"
+    },
+    {
+      "path": "memory_retrieval.py",
+      "qualname": "HttpxOllamaEF.embed_documents",
+      "kind": "chromadb_embedding_protocol",
+      "wiring_path": "memory_retrieval.py",
+      "wiring_marker": "embedding_function=_get_ef()"
+    },
+    {
+      "path": "scripts/train_router_onnx.py",
+      "qualname": "SovereignRouterClassifier.forward",
+      "kind": "torch_module_callback",
+      "wiring_path": "scripts/train_router_onnx.py",
+      "wiring_marker": "model = SovereignRouterClassifier().to(device)"
+    },
+    {
+      "path": "scripts/train_planner_sft.py",
+      "qualname": "ETACallback.on_step_end",
+      "kind": "transformers_trainer_callback",
+      "wiring_path": "scripts/train_planner_sft.py",
+      "wiring_marker": "callbacks=[ETACallback(total_steps)]"
+    }
+  ]
+}

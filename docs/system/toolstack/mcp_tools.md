@@ -2,13 +2,18 @@
 
 ## What is the MCP Server?
 
-The MCP server (`mcp_server/server.py`) is a FastAPI service that exposes 16 deterministic computation tools behind a unified REST API. It implements the **Model Context Protocol (MCP)** and is also directly callable via `/invoke`.
+The MCP server (`mcp_server/server.py`) exposes a dynamic catalogue of
+deterministic computations and bounded infrastructure connectors behind a
+unified REST API. Clients must discover the deployed set through `GET /tools`,
+because tools can be added or administratively disabled. The service
+implements the **Model Context Protocol (MCP)** and is also directly callable
+via `/invoke`.
 
 ![MCP Tools Admin View](../../assets/screenshots/admin_mcp_tools.png)
 
 ## Why Precision Tools instead of LLM computation?
 
-**LLMs hallucinate on computations.** Even large models make errors in the 5–30% range with:
+**LLMs can hallucinate on computations.** Common error classes include:
 - Multi-digit arithmetic
 - Equations with parameters
 - Date and time differences
@@ -17,18 +22,65 @@ The MCP server (`mcp_server/server.py`) is a FastAPI service that exposes 16 det
 
 ...especially when the answer is embedded in natural language text.
 
-The MCP server solves this through **complete offloading** from the LLM path. The `mcp` node in the LangGraph pipeline calls the service and returns the exact result. The LLM only formats text around the guaranteed correct result.
+For a declared precision task, the `mcp` node calls the service and returns
+the deterministic result as execution evidence. An initial fail-closed intent
+guard also prevents explicit GCD, km/h-to-m/s and German/English weekday
+requests from silently becoming general LLM tasks. Other tool domains still
+depend on planner selection and must not be described as completely offloaded
+until they receive an equally typed intent contract.
+
+MCP transport alone does not make a fact deterministic. Local calculations
+can be reproducible from their input, while legal/public-data/search
+connectors depend on a source snapshot and retrieval time. The full boundary
+and prioritized gap analysis is in the
+[deterministic offloading evaluation](deterministic_offloading_evaluation_2026-07-31.md).
 
 **Pagination for code models** — Large code responses (e.g. AST analyses, regex extracts over long text) are paginated so code models with limited context windows are not overwhelmed.
 
-## Available Tools
+## Core computation tools
+
+The following table is the stable core, not an exhaustive registry. `GET
+/tools` is authoritative and includes each tool's JSON input schema, enabled
+state and access classification.
+
+The orchestrator loads only entries whose live `enabled` state is true. A
+successful reload replaces the executable schema catalogue as one set, so a
+removed or disabled tool cannot remain plannable through stale process state.
+If discovery fails, executable schemas are cleared and mandatory precision
+contracts fail closed; static fallback descriptions are not execution proof.
+
+### Versioned structured contracts
+
+`calendar_facts`, `gcd_lcm`, `unit_convert`, `time_facts`,
+`timezone_convert`, `decimal_finance`, `exact_probability` and
+`structured_validate` publish version 1.0.0 contracts. Their discovery
+entries include the complete input and output JSON Schemas, a canonical
+contract hash, determinism/source metadata, normalization, retry and cache
+policies, evidence-redaction rules and result-size limits. The current policy
+applies documented schema defaults, rejects unknown properties, does not
+permit argument mutation, performs one execution attempt, and bypasses answer
+caches until the cache reader can revalidate the complete evidence envelope.
+
+For these tools `/invoke` retains the legacy `result` field and adds
+`structured_result`. The new envelope binds `contract_id`, version and hash,
+normalized input, typed `facts`, determinism class, runtime source/version,
+warnings and a canonical result hash. Both server and orchestrator validate
+the schemas and hashes; malformed input, output, source metadata or hash data
+cannot become completed evidence. The final quality gate revalidates the same
+material before an API response may pass.
 
 | Tool | Library | Description |
 |---|---|---|
 | `calculate` | Python `ast` (safe eval) | Arithmetic without `eval()` — safe against injection |
 | `solve_equation` | SymPy | Algebraic equations with symbolic variables |
-| `date_diff` | python-dateutil | Difference between two dates |
+| `date_diff` | python-dateutil | Exact total days plus calendar years/months/days |
 | `date_add` | python-dateutil | Date + time delta |
+| `calendar_facts` | Python stdlib | Localized weekday and structured ISO calendar facts |
+| `time_facts` | zoneinfo + pinned tzdata | Offset, DST, fold and calendar facts for an explicit instant |
+| `timezone_convert` | zoneinfo + pinned tzdata | DST-safe conversion between explicit IANA time zones |
+| `decimal_finance` | decimal (stdlib) | Decimal-string finance operations with explicit scale and rounding |
+| `exact_probability` | fractions/math (stdlib) | Exact bounded rational probability and combinatorics |
+| `structured_validate` | locked safe parser set | Bounded JSON, YAML, XML and CSV parsing/validation without network resolution |
 | `day_of_week` | python-dateutil | Weekday for any date |
 | `unit_convert` | pint | SI units, imperial measures, energy, pressure |
 | `statistics_calc` | statistics (stdlib) | Mean, median, stdev, variance, mode |
@@ -63,11 +115,63 @@ Response:
 {"result": 4294967295}
 ```
 
+Versioned precision tools additionally return:
+
+```json
+{
+  "result": "GCD(391, 299) = 23  |  LCM(391, 299) = 5083",
+  "tool": "gcd_lcm",
+  "structured_result": {
+    "status": "completed",
+    "tool": "gcd_lcm",
+    "contract_id": "moe.precision.gcd_lcm",
+    "contract_version": "1.0.0",
+    "contract_hash": "<sha256>",
+    "input_normalized": {"a": 391, "b": 299, "operation": "both"},
+    "facts": {"a": 391, "b": 299, "operation": "both", "gcd": 23, "lcm": 5083},
+    "determinism": "input_only",
+    "source": {"kind": "python_stdlib", "name": "math", "version": "<python-version>", "as_of": null},
+    "warnings": [],
+    "result_hash": "<sha256>"
+  }
+}
+```
+
+Calendar example:
+
+```json
+{
+  "tool": "calendar_facts",
+  "args": {"date_str": "2026-07-29", "locale": "de"}
+}
+```
+
+The result is a stable JSON string containing `weekday_name`, `weekday_iso`,
+`iso_week`, `iso_week_year`, `day_of_year`, `days_in_month`,
+`is_leap_year`, `quarter` and related normalized fields. Relative dates are
+rejected because a reproducible answer needs an explicit clock and time zone.
+
+`time_facts` and `timezone_convert` likewise require explicit ISO values and
+IANA zone names. Naive local times that fall into a DST gap are rejected;
+ambiguous fold times require an explicit `fold` selection. The production
+image pins `tzdata==2026.3`, and the runtime version is part of the evidence.
+
+`decimal_finance` accepts canonical decimal strings rather than binary
+floats. Scale, rounding and currency are explicit inputs; exchange rates,
+tax law and jurisdictional rules are intentionally outside this input-only
+contract. `exact_probability` keeps `Fraction` as the exact result and emits
+a Decimal projection only when both scale and rounding were requested.
+
+`structured_validate` applies strict payload, schema, depth, node, row,
+column and field limits. YAML aliases/tags, XML DTD/entities/XInclude and JSON
+Schema references are rejected. Raw payload and schema contents are replaced
+with SHA-256 and byte-count records at evidence and telemetry boundaries.
+
 ### Additional endpoints
 
 ```bash
-GET /health      # {"status": "ok", "tools": [...16 tool names...]}
-GET /tools       # Full tool descriptions with argument schema
+GET /health      # Service status and currently registered tool names
+GET /tools       # Authoritative catalogue, enabled state and argument schemas
 GET /mcp/sse     # MCP SSE stream (for MCP-compatible clients)
 ```
 
@@ -96,9 +200,12 @@ async def roman_numeral(args: dict) -> dict:
 ```
 
 Afterwards:
-1. Register the function in the `TOOLS` dict
-2. Add a description in the `/tools` endpoint
-3. Add an entry to this documentation page
+1. Decorate/register the function with `@mcp.tool()`.
+2. Add it to `_TOOL_REGISTRY`, `_TOOL_DESCRIPTIONS` and
+   `_TOOL_ACCESS_KIND`; startup logging identifies missing classifications.
+3. Add focused tests for the direct function and the REST `/invoke` contract.
+4. Document stable public semantics here; do not duplicate the generated
+   schema listing.
 
 
 
@@ -161,14 +268,17 @@ GET /downloads/{filename}
 
 ```yaml
 # docker-compose.yml (excerpt)
-mcp_server:
-  build: ./mcp_server
+mcp-precision:
+  build:
+    context: .
+    dockerfile: mcp_server/Dockerfile
   ports:
-    - "8003:8003"
+    - "127.0.0.1:${MCP_HOST_PORT}:8003"
   environment:
     - NEO4J_URI=bolt://neo4j:7687
 ```
 
-**Port:** 8003  
-**Dockerfile:** `mcp_server/Dockerfile`  
-**Dependencies:** `mcp_server/requirements.txt` (SymPy, pint, python-dateutil, jedi)
+- **Port:** 8003
+- **Dockerfile:** `mcp_server/Dockerfile`
+- **Dependency intent:** `mcp_server/requirements.txt`
+- **Build authority:** `mcp_server/requirements.lock.txt` (exact transitive versions)

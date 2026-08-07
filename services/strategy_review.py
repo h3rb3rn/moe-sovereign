@@ -162,7 +162,7 @@ async def review_strategy(abstract: StrategyAbstract, reviewer_llm) -> StrategyF
         return StrategyFeedback()
 
 
-def build_reviewer_llm(state_: dict):
+async def build_reviewer_llm(state_: dict):
     """Construct the reviewer LLM from env config.
 
     Priority:
@@ -189,7 +189,7 @@ def build_reviewer_llm(state_: dict):
     # Default: local judge LLM (sovereign, no external call)
     from graph.synthesis import _get_judge_llm
     logger.info("strategy_review: using local judge as reviewer (sovereign default)")
-    return _get_judge_llm(state_)
+    return await _get_judge_llm(state_)
 
 
 def build_abstractor_llm(state_: dict):

@@ -43,7 +43,7 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
+    assign_gpu, _ollama_unload, _refine_expert_response,
     _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
@@ -81,23 +81,57 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 # AgentState import — defined in pipeline/state.py
 from pipeline.state import AgentState
+from services.deadline import (
+    RequestDeadlineExceeded,
+    remaining_timeout,
+    wait_for_budget,
+)
 
 
 async def research_node(state_: AgentState):
     if state_.get("cache_hit"):
         return {"web_research": ""}
+    plan = state_.get("plan", [])
+    research_tasks = [
+        t
+        for t in plan
+        if isinstance(t, dict) and t.get("category") == "research"
+    ]
+    if not research_tasks:
+        return {"web_research": ""}
+
+    _iteration = int(state_.get("agentic_iteration") or 0)
+
+    def _task_event(task: dict, status: str, reason: str = "") -> dict:
+        return {
+            "task_id": task.get("id", ""),
+            "category": "research",
+            "status": status,
+            "executor": "research",
+            "iteration": _iteration,
+            "reason": reason,
+        }
+
     # Template toggle: skip web research if disabled
     if not state_.get("enable_web_research", True):
         logger.info("Web research disabled by template toggle")
-        return {"web_research": ""}
+        return {
+            "web_research": "",
+            "task_events": [
+                _task_event(task, "skipped", "web_research_disabled")
+                for task in research_tasks
+            ],
+        }
     # Complexity routing: trivial requests skip research
     if state_.get("skip_research"):
         logger.info("⚡ Research node skipped (trivial/moderate routing)")
-        return {"web_research": ""}
-    plan = state_.get("plan", [])
-    research_tasks = [t for t in plan if isinstance(t, dict) and t.get("category") == "research"]
-    if not research_tasks:
-        return {"web_research": ""}
+        return {
+            "web_research": "",
+            "task_events": [
+                _task_event(task, "skipped", "complexity_routing")
+                for task in research_tasks
+            ],
+        }
 
     mode = state_.get("mode", "default")
     _is_agentic_replan = state_.get("agentic_iteration", 0) > 0 and state_.get("agentic_max_rounds", 0) > 0
@@ -153,7 +187,18 @@ async def research_node(state_: AgentState):
                 pass
 
         await _report(f"🌐 Web search [{idx+1}/{total}]: '{query[:60]}'...")
-        raw = await _web_search_with_citations(query, ddg_fallback=state_.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
+        raw = await wait_for_budget(
+            _web_search_with_citations(
+                query,
+                ddg_fallback=state_.get(
+                    "search_fallback_ddg",
+                    _WEB_SEARCH_FALLBACK_DDG,
+                ),
+            ),
+            state_,
+            30.0,
+            stage=f"research:{idx + 1}",
+        )
         # Quality classification drives both the result flag and the cache TTL.
         # Poor results (empty or < 500 chars) are only cached for 30 min to prevent
         # poisoning subsequent runs with stale, low-signal snippets.
@@ -179,7 +224,7 @@ async def research_node(state_: AgentState):
         await _report(f"🌐 Search [{idx+1}]: no result (SearXNG unreachable or empty)")
         return "", query, "empty"
 
-    if mode in ("research", "plan") or _is_agentic_replan:
+    if mode in ("research", "plan") or _is_agentic_replan or len(research_tasks) > 1:
         # Deep research mode OR agentic re-plan: run ALL tasks in parallel for maximum coverage.
         # In agentic re-plan we need every available search result to resolve the gap.
         logger.info(f"--- [NODE] WEB RESEARCH (MULTI — {len(research_tasks)} queries, agentic={_is_agentic_replan}) ---")
@@ -212,6 +257,15 @@ async def research_node(state_: AgentState):
             "web_research": combined,
             "attempted_queries": _prev_queries + new_query_records,
             "discovered_domains": _all_domains,
+            "task_events": [
+                _task_event(
+                    task,
+                    "completed" if raw else "failed",
+                    "" if raw else f"search_{quality}",
+                )
+                for task, (raw, _query, quality)
+                in zip(research_tasks, raw_results)
+            ],
         }
     else:
         # Standard single-search mode
@@ -228,6 +282,13 @@ async def research_node(state_: AgentState):
             "web_research": raw,
             "attempted_queries": _prev_queries + [{"query": q, "quality": quality}],
             "discovered_domains": _prev_domains + _new_domains,
+            "task_events": [
+                _task_event(
+                    research_tasks[0],
+                    "completed" if raw else "failed",
+                    "" if raw else f"search_{quality}",
+                )
+            ],
         }
 
 
@@ -369,7 +430,11 @@ def _rerank_graph_context(ctx: str, budget: int) -> str:
     return result
 
 
-async def _compress_graph_context_llm(ctx: str, budget: int) -> Optional[str]:
+async def _compress_graph_context_llm(
+    ctx: str,
+    budget: int,
+    state_: Optional[dict] = None,
+) -> Optional[str]:
     """Summarises graph context to fit within budget using a small local LLM.
 
     Returns compressed string on success, None on timeout/error (caller falls
@@ -387,20 +452,29 @@ async def _compress_graph_context_llm(ctx: str, budget: int) -> Optional[str]:
             "Prioritise high-confidence facts. Output plain text only — no JSON, no headers.\n\n"
             f"{ctx[:6000]}"
         )
+        _compress_timeout = remaining_timeout(
+            state_,
+            _GRAPH_COMPRESS_LLM_TIMEOUT,
+            stage="graph_compression",
+        )
         _compress_llm = ChatOpenAI(
             model=model,
             base_url=judge_llm.openai_api_base,
             api_key=judge_llm.openai_api_key,
-            timeout=_GRAPH_COMPRESS_LLM_TIMEOUT,
+            timeout=_compress_timeout,
         )
-        result = await asyncio.wait_for(
+        result = await wait_for_budget(
             _compress_llm.ainvoke(compress_prompt),
-            timeout=_GRAPH_COMPRESS_LLM_TIMEOUT + 0.5,
+            state_,
+            _compress_timeout,
+            stage="graph_compression",
         )
         compressed = result.content.strip()
         if compressed and len(compressed) <= budget * 1.1:
             return compressed
-    except (asyncio.TimeoutError, Exception) as e:
+    except RequestDeadlineExceeded:
+        raise
+    except Exception as e:
         logger.debug(f"Graph LLM compression skipped: {e}")
     return None
 
@@ -447,7 +521,18 @@ async def research_fallback_node(state_: AgentState):
         query = item["query"][:180]
         cat_s = item["category"]
         await _report(f"🌐 Fallback search [{cat_s}]: '{query[:60]}'...")
-        raw = await _web_search_with_citations(query, ddg_fallback=state_.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG))
+        raw = await wait_for_budget(
+            _web_search_with_citations(
+                query,
+                ddg_fallback=state_.get(
+                    "search_fallback_ddg",
+                    _WEB_SEARCH_FALLBACK_DDG,
+                ),
+            ),
+            state_,
+            30.0,
+            stage="research_fallback",
+        )
         if raw:
             await _report(f"🌐 [{cat_s}]: {len(raw)} chars fallback result")
             logger.info(f"🌐 Research Fallback [{cat_s}]: {len(raw)} chars")

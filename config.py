@@ -94,6 +94,21 @@ JUDGE_URL           = URL_MAP.get(JUDGE_ENDPOINT_NAME) if JUDGE_ENDPOINT_NAME el
 JUDGE_TOKEN         = TOKEN_MAP.get(JUDGE_ENDPOINT_NAME, "ollama") if JUDGE_ENDPOINT_NAME else "ollama"
 JUDGE_MODEL         = os.getenv("JUDGE_MODEL", "")
 
+# Global fallback for the Llama-Guard pre-filter (guard_node, graph/router_nodes.py),
+# overridable per-template via guardrail_model_override etc. (services/routing.py).
+GUARD_ENDPOINT_NAME = os.getenv("GUARD_ENDPOINT", "")
+GUARD_URL           = URL_MAP.get(GUARD_ENDPOINT_NAME) if GUARD_ENDPOINT_NAME else None
+GUARD_TOKEN         = TOKEN_MAP.get(GUARD_ENDPOINT_NAME, "ollama") if GUARD_ENDPOINT_NAME else "ollama"
+GUARD_MODEL         = os.getenv("GUARD_MODEL", "")
+# The guard shares finite Ollama capacity with planner/expert models. By default
+# it may therefore run only when already resident; a cold 8B model swap must not
+# consume most of the orchestration budget. Operators with dedicated guard
+# capacity can set GUARD_WARM_ONLY=false.
+GUARD_WARM_ONLY     = os.getenv("GUARD_WARM_ONLY", "true").lower() in ("1", "true", "yes")
+GUARD_PROBE_TIMEOUT = float(os.getenv("GUARD_PROBE_TIMEOUT", "2"))
+GUARD_TIMEOUT       = float(os.getenv("GUARD_TIMEOUT", "15"))
+GUARD_KEEP_ALIVE    = os.getenv("GUARD_KEEP_ALIVE", "30m")
+
 GRAPH_INGEST_MODEL    = os.getenv("GRAPH_INGEST_MODEL", "")
 _GRAPH_INGEST_EP_NAME = os.getenv("GRAPH_INGEST_ENDPOINT", "")
 GRAPH_INGEST_URL      = URL_MAP.get(_GRAPH_INGEST_EP_NAME) if _GRAPH_INGEST_EP_NAME else None
@@ -115,6 +130,18 @@ _PLANNER_BASE = (PLANNER_URL or "").rstrip("/").removesuffix("/v1")
 
 EXPERTS             = json.loads(os.getenv("EXPERT_MODELS", "{}"))
 MCP_URL             = os.getenv("MCP_URL", "http://mcp-precision:8003")
+PRECISION_DIRECT_RESPONSE_ENABLED = os.getenv(
+    "PRECISION_DIRECT_RESPONSE_ENABLED", "false"
+).lower() in ("1", "true", "yes")
+PRECISION_CACHE_POLICY = os.getenv("PRECISION_CACHE_POLICY", "bypass").strip().lower()
+if PRECISION_CACHE_POLICY not in {"bypass", "typed"}:
+    PRECISION_CACHE_POLICY = "bypass"
+PRECISION_CONTRACT_MODE = os.getenv("PRECISION_CONTRACT_MODE", "enforce").strip().lower()
+if PRECISION_CONTRACT_MODE not in {"shadow", "enforce"}:
+    PRECISION_CONTRACT_MODE = "shadow"
+MCP_STRUCTURED_RESULT_REQUIRED = os.getenv(
+    "MCP_STRUCTURED_RESULT_REQUIRED", "true"
+).strip().lower() in {"1", "true", "yes"}
 GRAPH_VIA_MCP       = os.getenv("GRAPH_VIA_MCP", "false").lower() in ("1", "true", "yes")
 MAX_GRAPH_CONTEXT_CHARS: int = int(os.getenv("MAX_GRAPH_CONTEXT_CHARS", "6000"))
 
@@ -229,6 +256,13 @@ KNOWLEDGE_BYPASS_ENABLED   = os.getenv("KNOWLEDGE_BYPASS_ENABLED", "true").lower
 
 # ── Judicial Mixture of Experts (J-MoE) ───────────────────────────────────────
 JMOE_DEBATE_ENABLED = os.getenv("JMOE_DEBATE_ENABLED", "true").lower() in ("1", "true", "yes")
+MOE_AUTO_DELIBERATION_ACTIVATION = os.getenv(
+    "MOE_AUTO_DELIBERATION_ACTIVATION", "adaptive"
+).strip().lower()
+if MOE_AUTO_DELIBERATION_ACTIVATION not in {"disabled", "adaptive", "required"}:
+    raise ValueError(
+        "MOE_AUTO_DELIBERATION_ACTIVATION must be disabled, adaptive, or required"
+    )
 KNOWLEDGE_BYPASS_THRESHOLD = float(os.getenv("KNOWLEDGE_BYPASS_THRESHOLD", "0.25"))
 KNOWLEDGE_BYPASS_MIN_CONF  = float(os.getenv("KNOWLEDGE_BYPASS_MIN_CONF",  "0.85"))
 KNOWLEDGE_BYPASS_TTL_DAYS  = int(os.getenv("KNOWLEDGE_BYPASS_TTL_DAYS",    "14"))
@@ -247,12 +281,10 @@ ROUTING_BANDIT_MIN_DATAPOINTS = int(os.getenv("ROUTING_BANDIT_MIN_DATAPOINTS", "
 ROUTING_BANDIT_COST_PRIOR     = float(os.getenv("ROUTING_BANDIT_COST_PRIOR",   "0.5"))
 ROUTING_BANDIT_CONTEXT_BANDS  = int(os.getenv("ROUTING_BANDIT_CONTEXT_BANDS",  "2"))
 
-# Trivial fast-path (opt-in, OFF by default): a genuinely trivial query that the
-# semantic router did not already route skips the planner LLM call and goes straight
-# to a single default-category expert. Saves one LLM call per trivial request, but
-# forces a default expert for unmatched trivial queries (a behavioural trade-off —
-# e.g. "2+2" would bypass the precision_tools path), so enable only after measuring.
-TRIVIAL_FAST_PATH_ENABLED  = os.getenv("TRIVIAL_FAST_PATH_ENABLED", "false").lower() in ("1", "true", "yes")
+# Trivial fast-path: a conservative eligibility gate in graph/planner.py excludes
+# calculations, legal/current/research/file/image and conversation-context work.
+# Only the remaining unambiguous one-shot requests skip the planner LLM.
+TRIVIAL_FAST_PATH_ENABLED  = os.getenv("TRIVIAL_FAST_PATH_ENABLED", "true").lower() in ("1", "true", "yes")
 TRIVIAL_FAST_PATH_CATEGORY = os.getenv("TRIVIAL_FAST_PATH_CATEGORY", "general")
 # When a trivial query is cost-tier-limited to T1 (force_tier1), still allow a
 # Tier-2 rescue if the T1 answer comes back low-confidence/empty. Medium/high T1
@@ -311,9 +343,13 @@ AGENT_INGEST_JUDGE        = os.getenv("AGENT_INGEST_JUDGE", "true").lower() in (
 # Timeouts & LLM call limits
 # =============================================================================
 
-JUDGE_TIMEOUT   = int(os.getenv("JUDGE_TIMEOUT",   "900"))
-EXPERT_TIMEOUT  = int(os.getenv("EXPERT_TIMEOUT",  "900"))
-PLANNER_TIMEOUT = int(os.getenv("PLANNER_TIMEOUT", "300"))
+JUDGE_TIMEOUT         = int(os.getenv("JUDGE_TIMEOUT",         "600"))
+EXPERT_TIMEOUT        = int(os.getenv("EXPERT_TIMEOUT",        "600"))
+PLANNER_TIMEOUT       = int(os.getenv("PLANNER_TIMEOUT",       "180"))
+# Hard ceiling for a non-streaming graph request. Individual model timeouts
+# remain useful diagnostics, but no combination of retries may keep a client
+# request alive indefinitely or leave it registered as active.
+ORCHESTRATION_TIMEOUT = int(os.getenv("ORCHESTRATION_TIMEOUT", "300"))
 
 JUDGE_REFINE_MAX_ROUNDS      = int(os.getenv("JUDGE_REFINE_MAX_ROUNDS",       "2"))
 JUDGE_REFINE_MIN_IMPROVEMENT = float(os.getenv("JUDGE_REFINE_MIN_IMPROVEMENT", "0.15"))
@@ -323,6 +359,21 @@ REASONING_MAX_TOKENS = int(os.getenv("REASONING_MAX_TOKENS", "16384"))
 
 PLANNER_RETRIES   = int(os.getenv("PLANNER_RETRIES",   "2"))
 PLANNER_MAX_TASKS = int(os.getenv("PLANNER_MAX_TASKS", "4"))
+# Structured planning needs the executable JSON plan, not a hidden reasoning
+# transcript that can consume the entire output budget before ``content`` is
+# emitted. Operators can opt back in for a planner model proven to benefit.
+PLANNER_THINKING_ENABLED = os.getenv(
+    "PLANNER_THINKING_ENABLED", "false"
+).lower() in ("1", "true", "yes")
+# Executor and judge calls need an answer inside their bounded output budget.
+# Reasoning-capable Ollama models expose hidden reasoning separately and can
+# otherwise consume the entire limit before emitting any ``content``.
+EXPERT_THINKING_ENABLED = os.getenv(
+    "EXPERT_THINKING_ENABLED", "false"
+).lower() in ("1", "true", "yes")
+JUDGE_THINKING_ENABLED = os.getenv(
+    "JUDGE_THINKING_ENABLED", "false"
+).lower() in ("1", "true", "yes")
 
 SSE_CHUNK_SIZE = int(os.getenv("SSE_CHUNK_SIZE", "50"))
 

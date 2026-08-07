@@ -12,6 +12,7 @@
     <small class="text-muted">Federated knowledge exchange with MoE Libris hubs. <em>Latin 'liber' = free &amp; book.</em></small>
   </div>
   <div>
+    <button class="btn btn-sm btn-outline-secondary" onclick="registerNode()"><i class="bi bi-person-check me-1"></i>Register</button>
     <button class="btn btn-sm btn-outline-primary" onclick="testConnection()"><i class="bi bi-plug me-1"></i>Test Connection</button>
     <button class="btn btn-sm btn-outline-success" onclick="triggerPull()"><i class="bi bi-cloud-download me-1"></i>Pull</button>
     <button class="btn btn-sm btn-outline-warning" onclick="triggerPush()"><i class="bi bi-cloud-upload me-1"></i>Push</button>
@@ -136,6 +137,7 @@
               <th>Created</th>
               <th>Sent</th>
               <th>Error</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -154,10 +156,15 @@
               <td class="small">{{ entry.created_at[:16] if entry.created_at else '' }}</td>
               <td class="small">{{ entry.sent_at[:16] if entry.sent_at else '—' }}</td>
               <td class="small text-danger">{{ entry.error[:50] if entry.error else '' }}</td>
+              <td>
+                {% if entry.status == 'pending' %}
+                <button class="btn btn-sm btn-outline-success" onclick="sendOutbox('{{ entry.id }}')">Send</button>
+                {% else %}—{% endif %}
+              </td>
             </tr>
             {% endfor %}
             {% if not outbox %}
-            <tr><td colspan="8" class="text-muted text-center small py-3">No outbox entries.</td></tr>
+            <tr><td colspan="9" class="text-muted text-center small py-3">No outbox entries.</td></tr>
             {% endif %}
           </tbody>
         </table>
@@ -246,6 +253,18 @@ async function testConnection() {
   else flash(`Connection failed: ${d.error || d.status}`, 'danger');
 }
 
+async function registerNode() {
+  flash('Registering node...', 'info');
+  const r = await fetch('/api/federation/register', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({}),
+  });
+  const d = await r.json();
+  if (d.ok) flash(`Registration submitted: ${d.status || d.detail || 'ok'}`);
+  else flash(`Registration failed: ${d.error || d.detail || 'unknown error'}`, 'danger');
+}
+
 async function triggerPush() {
   if (!confirm('Push knowledge to the Libris hub now?')) return;
   flash('Pushing...', 'info');
@@ -253,6 +272,17 @@ async function triggerPush() {
   const d = await r.json();
   if (d.ok || d.queued) flash(`Push complete: ${d.detail || JSON.stringify(d)}`);
   else flash(`Push failed: ${d.error || 'unknown error'}`, 'danger');
+}
+
+async function sendOutbox(entryId) {
+  if (!confirm('Approve and send this queued bundle?')) return;
+  const r = await fetch(`/api/federation/outbox/${entryId}/send`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+  });
+  const d = await r.json();
+  if (d.ok) { flash('Queued bundle sent.'); location.reload(); }
+  else flash(`Send failed: ${d.error || d.detail || 'unknown error'}`, 'danger');
 }
 
 async function triggerPull() {

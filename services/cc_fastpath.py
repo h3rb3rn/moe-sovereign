@@ -39,6 +39,46 @@ def _extract_text(body: dict) -> str:
     return "\n".join(parts)
 
 
+def _latest_user_text(body: dict) -> str:
+    """Return text from the current user turn, excluding conversation history."""
+    for message in reversed(body.get("messages", [])):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        return ""
+    return ""
+
+
+def requires_precision_pipeline(body: dict) -> bool:
+    """Whether this plain-text turn must use the evidence-bound MoE graph.
+
+    Native/tool profiles remain authoritative for actual client tool turns.
+    A plain-text deterministic request, however, must not be able to bypass
+    the precision contract merely because a Claude-Code profile is ``native``.
+    """
+    if body.get("tools"):
+        return False
+    for message in body.get("messages", []):
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in content
+        ):
+            return False
+
+    from services.pipeline.contracts import detect_required_precision_intents
+
+    return bool(detect_required_precision_intents(_latest_user_text(body)))
+
+
 def is_fastpath_request(body: dict) -> str:
     """Return the fast-path reason ('' = no fast path).
 
@@ -51,6 +91,11 @@ def is_fastpath_request(body: dict) -> str:
     if body.get("tools"):
         return ""
     text = _extract_text(body)
+    # A short precision request is not a generic convenience prompt. Routing
+    # it to the direct tool-model path would bypass the mandatory contract,
+    # typed MCP evidence and final binding used by the other API facades.
+    if requires_precision_pipeline(body):
+        return ""
     if _UTILITY_PATTERNS.search(text):
         return "utility"
     max_chars = int(os.getenv("CC_FASTPATH_MAX_CHARS", "600"))

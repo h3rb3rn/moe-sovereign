@@ -13,8 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import state
 from services.tracking import (
     _record_stage, _record_file_touch,
-    _touch_model_recently_used, _is_model_busy_elsewhere, _recent_use_key,
-    _RECENT_USE_GRACE_SECONDS,
     _pstop_key, _record_premature_stop_outcome, _get_premature_stop_rate,
     _PSTOP_MIN_SAMPLES,
 )
@@ -126,71 +124,6 @@ async def test_record_file_touch_never_raises_on_redis_error():
     mock_pipe.execute.side_effect = ConnectionError("redis down")
     with patch.object(state, "redis_client", mock_redis):
         await _record_file_touch("chat123", "/x.py", "read", "Read")
-
-
-# ── _touch_model_recently_used / _is_model_busy_elsewhere grace period ─────
-# Covers the gap between an agentic client's individual stateless HTTP turns
-# (no moe:active:* entry exists while the user reads/types the next message)
-# — confirmed live: an unrelated interactive-pipeline request unloaded a
-# model out from under an otherwise still-ongoing OpenCode session because
-# the in-flight-only check saw nothing "in use" during that gap.
-
-@pytest.mark.asyncio
-async def test_touch_model_recently_used_sets_key_with_grace_ttl():
-    mock_redis = MagicMock()
-    mock_redis.set = AsyncMock()
-    with patch.object(state, "redis_client", mock_redis):
-        await _touch_model_recently_used("qwen3.6:35b", "http://192.168.155.224:11434")
-
-    mock_redis.set.assert_awaited_once()
-    args, kwargs = mock_redis.set.call_args
-    assert args[0] == _recent_use_key("qwen3.6:35b", "http://192.168.155.224:11434")
-    assert kwargs.get("ex") == _RECENT_USE_GRACE_SECONDS
-
-
-@pytest.mark.asyncio
-async def test_touch_model_recently_used_noop_without_model_or_url():
-    mock_redis = MagicMock()
-    mock_redis.set = AsyncMock()
-    with patch.object(state, "redis_client", mock_redis):
-        await _touch_model_recently_used("", "http://x:11434")
-        await _touch_model_recently_used("qwen3.6:35b", "")
-    mock_redis.set.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_touch_model_recently_used_never_raises_on_redis_error():
-    mock_redis = MagicMock()
-    mock_redis.set = AsyncMock(side_effect=ConnectionError("redis down"))
-    with patch.object(state, "redis_client", mock_redis):
-        await _touch_model_recently_used("qwen3.6:35b", "http://x:11434")
-
-
-@pytest.mark.asyncio
-async def test_is_model_busy_elsewhere_true_when_recently_used_key_present():
-    mock_redis = MagicMock()
-    mock_redis.exists = AsyncMock(return_value=1)
-    with patch.object(state, "redis_client", mock_redis):
-        busy = await _is_model_busy_elsewhere("qwen3.6:35b", "http://192.168.155.224:11434")
-    assert busy is True
-    # Recently-used short-circuits before ever scanning moe:active:* — cheap
-    # and covers the exact gap this feature exists for.
-    mock_redis.scan_iter.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_is_model_busy_elsewhere_false_when_neither_recent_nor_active():
-    mock_redis = MagicMock()
-    mock_redis.exists = AsyncMock(return_value=0)
-
-    async def _empty_scan(_pattern):
-        return
-        yield  # pragma: no cover - makes this an async generator
-
-    mock_redis.scan_iter = _empty_scan
-    with patch.object(state, "redis_client", mock_redis):
-        busy = await _is_model_busy_elsewhere("qwen3.6:35b", "http://192.168.155.224:11434")
-    assert busy is False
 
 
 # ── _record_premature_stop_outcome / _get_premature_stop_rate — persists the

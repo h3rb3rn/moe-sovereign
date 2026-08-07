@@ -546,16 +546,6 @@ async def cleanup_template_refs(dry_run: bool = False) -> dict:
 # ─── Ontology healer trigger ─────────────────────────────────────────────────
 
 
-async def _set_run_status(redis_cli, **fields) -> None:
-    if redis_cli is None:
-        return
-    try:
-        await redis_cli.hset(ONTOLOGY_RUN_STATUS_KEY, mapping={k: str(v) for k, v in fields.items()})
-        await redis_cli.expire(ONTOLOGY_RUN_STATUS_KEY, 86400)
-    except Exception:
-        pass
-
-
 ORCH_URL = os.environ.get("ORCHESTRATOR_URL", "http://langgraph-orchestrator:8000")
 
 

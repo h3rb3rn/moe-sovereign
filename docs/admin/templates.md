@@ -13,6 +13,8 @@ An expert template defines:
 - Optional **system prompts** per category
 - An optional **planner LLM** for routing decisions
 - An optional **judge/merger LLM** for response synthesis
+- A versioned **deliberation policy** controlling adaptive agents, rounds,
+  hard model-call limits and fallback behavior
 
 ## Template Management (`/templates`)
 
@@ -71,6 +73,15 @@ Each expert category can specify a `context_window` value (in tokens). This fiel
 | Planner Prompt | System prompt for the planner LLM |
 | Judge/Merger LLM | Model for response synthesis (overrides global JUDGE_MODEL) |
 | Judge Prompt | System prompt for the judge LLM |
+
+### Adaptive deliberation
+
+The **Adaptive Deliberation** card can disable, adaptively select, or require a
+bounded micro/moderated debate. New templates default to disabled. Agent and
+round counts are caps rather than unconditional fan-out: the runtime derives an
+initial allocation and separate reserve from complexity, plan structure and
+the remaining request deadline. See [Adaptive Deliberation](../system/deliberation.md)
+for the exact policy, `moe-auto` behavior and compatibility rules.
 
 ### Standard Expert Categories
 

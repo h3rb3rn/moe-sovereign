@@ -1,5 +1,3 @@
-import sys
-import os
 import logging
 
 # Configure basic logging to see the classifier logs
@@ -20,19 +18,24 @@ test_queries = {
     "Docker subnetz cidr § 123 BGB": "moderate",
 }
 
-print("Running complexity integration tests...")
-passed = True
-for query, expected in test_queries.items():
-    res = estimate_complexity(query)
-    if res == expected:
-        print(f"✅ PASS: {query!r} -> {res}")
-    else:
-        print(f"❌ FAIL: {query!r} -> {res} (expected: {expected})")
-        passed = False
+def run_checks() -> bool:
+    """Run the manual smoke matrix without side effects during module import."""
+    print("Running complexity integration tests...")
+    passed = True
+    for query, expected in test_queries.items():
+        result = estimate_complexity(query)
+        if result == expected:
+            print(f"✅ PASS: {query!r} -> {result}")
+        else:
+            print(f"❌ FAIL: {query!r} -> {result} (expected: {expected})")
+            passed = False
+    print(
+        "🎉 All integration tests passed successfully!"
+        if passed
+        else "🚨 Some integration tests failed."
+    )
+    return passed
 
-if passed:
-    print("🎉 All integration tests passed successfully!")
-    sys.exit(0)
-else:
-    print("🚨 Some integration tests failed.")
-    sys.exit(1)
+
+if __name__ == "__main__":
+    raise SystemExit(0 if run_checks() else 1)

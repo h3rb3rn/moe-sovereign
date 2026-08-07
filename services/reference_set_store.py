@@ -28,14 +28,3 @@ def load_reference_set() -> list[dict]:
     except Exception as e:
         logger.error(f"ReferenceSet: Failed to load reference questions from {REFERENCE_SET_FILE}: {e}")
         return []
-
-
-def save_reference_set(items: list[dict]) -> None:
-    """Saves reference questions to the JSON file."""
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(REFERENCE_SET_FILE, "w", encoding="utf-8") as f:
-            json.dump(items, f, indent=2, ensure_ascii=False)
-        logger.info(f"ReferenceSet: Saved {len(items)} reference questions to {REFERENCE_SET_FILE}.")
-    except Exception as e:
-        logger.error(f"ReferenceSet: Failed to save reference questions to {REFERENCE_SET_FILE}: {e}")

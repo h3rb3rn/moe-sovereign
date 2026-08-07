@@ -116,18 +116,21 @@ async def test_confidence_adjustment_clamped():
 
 # ── Reviewer endpoint routing ─────────────────────────────────────────────────
 
-def test_reviewer_uses_judge_when_no_url(monkeypatch):
+@pytest.mark.asyncio
+async def test_reviewer_uses_judge_when_no_url(monkeypatch):
     monkeypatch.delenv("STRATEGY_REVIEWER_URL", raising=False)
     from services.strategy_review import build_reviewer_llm
 
     # _get_judge_llm is imported lazily inside the function from graph.synthesis
     with patch("graph.synthesis._get_judge_llm") as mock_judge:
         mock_judge.return_value = MagicMock()
-        build_reviewer_llm({})
+        result = await build_reviewer_llm({})
         mock_judge.assert_called_once()
+        assert result is mock_judge.return_value
 
 
-def test_reviewer_uses_custom_url(monkeypatch):
+@pytest.mark.asyncio
+async def test_reviewer_uses_custom_url(monkeypatch):
     monkeypatch.setenv("STRATEGY_REVIEWER_URL", "https://api.openai.com")
     monkeypatch.setenv("STRATEGY_REVIEWER_MODEL", "gpt-4o-mini")
     monkeypatch.setenv("STRATEGY_REVIEWER_TOKEN", "sk-test")
@@ -136,8 +139,9 @@ def test_reviewer_uses_custom_url(monkeypatch):
     # ChatOpenAI is imported lazily inside the function from langchain_openai
     with patch("langchain_openai.ChatOpenAI") as MockLLM:
         MockLLM.return_value = MagicMock()
-        build_reviewer_llm({})
+        result = await build_reviewer_llm({})
         MockLLM.assert_called_once()
+        assert result is MockLLM.return_value
         call_kwargs = MockLLM.call_args[1]
         assert "openai.com" in call_kwargs["base_url"]
         assert call_kwargs["model"] == "gpt-4o-mini"

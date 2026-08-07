@@ -112,7 +112,7 @@ singularity exec \
         --output_dir  "${OUTPUT_DIR}" \
         --epochs      3 \
         --batch_size  1 \
-        --max_seq_len 2048 \
+        --max_seq_len 8192 \
         --lora_r      16 \
         --lora_alpha  32
 

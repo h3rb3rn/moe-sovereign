@@ -6,9 +6,11 @@ from services.model_capabilities import (
     model_supports_json_schema,
     model_supports_json_object,
     model_supports_streaming,
-    model_hint_tokens,
     load_capabilities,
     _DEFAULT_CAPS,
+    apply_ollama_structured_capability,
+    enforce_streaming_capability,
+    openai_response_format,
 )
 
 
@@ -16,7 +18,6 @@ def test_default_fallback_for_unknown_model():
     caps = get_model_caps("some-totally-unknown-model:latest")
     assert caps["json_schema"] == _DEFAULT_CAPS["json_schema"]
     assert caps["stream"] == _DEFAULT_CAPS["stream"]
-    assert isinstance(caps["hints"], list)
 
 
 def test_known_model_overrides_default():
@@ -41,16 +42,6 @@ def test_stream_false_for_configured_model():
     assert model_supports_streaming("mistral:7b") is False
 
 
-def test_model_hint_tokens_non_empty():
-    hints = model_hint_tokens("qwen3.6:35b")
-    assert "schema+" in hints
-
-
-def test_model_hint_tokens_empty_for_unknown():
-    hints = model_hint_tokens("some-unknown-model:v99")
-    assert hints == []
-
-
 def test_no_key_error_on_caps_call():
     for model in ["", "unknown", "gpt-4o", "llama3.3-70b-ctx4k:latest", "qwen3:32b"]:
         caps = get_model_caps(model)
@@ -62,3 +53,32 @@ def test_load_capabilities_returns_dict():
     caps = load_capabilities()
     assert isinstance(caps, dict)
     assert "default" in caps or caps == {}
+
+
+def test_ollama_schema_is_applied_only_when_supported():
+    schema = {"type": "array", "items": {"type": "object"}}
+    supported = apply_ollama_structured_capability(
+        {"stream": True, "format": {"stale": True}},
+        "qwen3.6:35b",
+        schema,
+    )
+    unsupported = apply_ollama_structured_capability(
+        {"stream": True, "format": {"stale": True}},
+        "llama3.3-70b-ctx4k:latest",
+        schema,
+    )
+    assert supported["format"] == schema
+    assert "format" not in unsupported
+
+
+def test_streaming_request_is_forced_off_for_non_stream_model():
+    assert enforce_streaming_capability("mistral:7b", True) is False
+    assert enforce_streaming_capability("qwen3.6:35b", True) is True
+
+
+def test_openai_response_format_uses_json_schema_capability():
+    response_format = openai_response_format(
+        "qwen3.6:35b",
+        {"type": "object", "properties": {}},
+    )
+    assert response_format["type"] == "json_schema"

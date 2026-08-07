@@ -1,41 +1,41 @@
-# Backlog Index — MoE Sovereign (moe-infra)
+# Backlog Index — MoE Sovereign
 
-Purpose: canonical AI-readable index for current open initiatives, epics,
-stories, and implementation tasks.
+Owner: Platform Engineering
+Version: 2.0
+Last verified: 2026-07-30
 
-## Restore Rule
+This is the canonical index for intended work. It does not override tested
+runtime evidence or the normative project rules.
 
-Read this file first, then:
+## Restore order
 
-1. `current/current.md`
-2. matching level template under `templates/`
-3. `current/dependency-map.md`
-4. `current/roadmap.md`
-5. `current/stories.md`
-6. `current/implementation-tasks.md`
-7. `archive/archive.md` (completed work)
+1. `../../AGENTS.md`
+2. `../../PROJECT_COMPLIANCE.md`
+3. [Current backlog](current/current.md)
+4. [Dependency map](current/dependency-map.md)
+5. [Roadmap](current/roadmap.md)
+6. [Stories index](current/stories.md)
+7. [Implementation-task index](current/implementation-tasks.md)
+8. [Archive](archive/archive.md)
 
-## Authority
+Use the matching level template from
+[decomposition templates](templates/decomposition-templates.md) before
+refining an initiative, epic, story, or implementation task.
 
-1. `../../PROJECT_COMPLIANCE.md`
-2. this backlog index and `current/current.md`
-3. `../../docs/ai-memory/07-current-status-and-next-work.md`
-4. `../../AGENT_LASTENHEFT.md` (historical task board — resolved TASKs archived here)
-5. source files linked from relevant tasks
+## Evidence rules
 
-## Global Rules
+- Current implementation claims require a reachable production call path and
+  focused contract/integration evidence.
+- “Defined”, “importable”, or “unit-tested in isolation” is not an
+  end-to-end claim.
+- Required behavior comes from `PROJECT_COMPLIANCE.md`; current behavior that
+  violates it is a gap, not an implicit policy exception.
+- Completed work moves to the archive only after the applicable exit criteria
+  pass. Historical detail remains in `AGENT_LASTENHEFT.md`.
+- Update the dependency map and roadmap in the same change when scope,
+  dependency order, status, or proof gates change.
 
-- Active backlog work uses initiative, epic, story, and implementation-task levels.
-- Every level has its own sheet. Use templates under `templates/`.
-- Stories must be functional, testable, and clean.
-- No workaround stories, fallback stories, or compatibility-layer stories.
-- Refinement is complete only after checking: functional concept, related
-  backlog items, dependency order, and current code contracts.
-- Completed work moves to `archive/archive.md`, not the active backlog.
-- AGENT_LASTENHEFT.md TASK-1 through TASK-8 (all done 2026-06-12/16) are
-  the historical predecessor to this backlog — treat them as resolved archive.
+## Current initiatives
 
-## Current Initiatives
-
-- [I-1 Sovereign-14B SFT Pipeline](current/I-1-sovereign-sft/initiative.md)
-- [I-2 Pipeline Quality Gate Stack](current/I-2-pipeline-quality-gate/initiative.md)
+- [I-1 Sovereign SFT and dynamic prompts](current/I-1-sovereign-sft/initiative.md)
+- [I-2 Pipeline quality-gate stack](current/I-2-pipeline-quality-gate/initiative.md)

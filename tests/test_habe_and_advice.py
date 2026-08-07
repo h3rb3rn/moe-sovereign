@@ -93,6 +93,21 @@ def test_vocab_load_save(tmp_path):
     assert "test_key" in new_engine.vocab
     assert np.allclose(new_engine.vocab["test_key"], engine.vocab["test_key"])
 
+
+def test_habe_rebuild_writes_the_filename_consumed_by_graph_node(tmp_path):
+    from scripts.cron_habe_rebuild import write_habe_outputs
+
+    vector_path, vocab_path = write_habe_outputs(
+        [("quicksort", "implemented_in", "rust")],
+        str(tmp_path),
+    )
+
+    assert vector_path == os.path.join(tmp_path, "habe_vector.npy")
+    assert os.path.exists(vector_path)
+    assert not os.path.exists(os.path.join(tmp_path, "habe_vector.bin.npy"))
+    assert os.path.exists(vocab_path)
+    assert np.load(vector_path).shape == (2048,)
+
 # ─── Advice Taker tests ───────────────────────────────────────────────────────
 
 def test_advice_store():
@@ -176,68 +191,6 @@ def test_heuristics_auditor():
     assert "proposals" in data
     assert len(data["proposals"]) > 0
     assert data["proposals"][0]["parameter"] == "SOFT_CACHE_THRESHOLD"
-
-
-# ─── HABE 2.0 & Prefix Attention tests ───────────────────────────────────────
-
-def test_habe_2_0_hierarchical_graph():
-    """Verify that HABE 2.0 compiles and queries hierarchical graph structures."""
-    engine = HolographicBackgroundEngine(dimension=2048)
-    
-    # 1. Structure hierarchical tree data
-    tree_data = {
-        "node": "root_app",
-        "relation": "root_relation",
-        "children": [
-            {
-                "node": "db_service",
-                "relation": "has_subsystem",
-                "children": [
-                    {
-                        "node": "postgres_instance",
-                        "relation": "runs_on",
-                        "children": []
-                    }
-                ]
-            },
-            {
-                "node": "cache_service",
-                "relation": "has_subsystem",
-                "children": []
-            }
-        ]
-    }
-    
-    # 2. Compile hierarchical graph
-    hav = engine.compile_hierarchical_graph_to_vsa(tree_data)
-    assert hav.shape == (2048,)
-    assert not np.isnan(hav).any()
-    
-    # 3. Query the hierarchy
-    subsystems = engine.query_vsa_hierarchy(hav, "root_app", "has_subsystem")
-    assert len(subsystems) > 0
-    
-    # Verify similarity values. Note that root_app is filtered out.
-    nodes = [name for name, sim in subsystems if sim > 0.15]
-    assert "db_service" in nodes
-    assert "cache_service" in nodes
-    
-    # Retrieve db_service subgraph vector to query its child runs_on relation recursively
-    v_root = engine.get_or_create_vector("node:root_app")
-    v_rel = engine.get_or_create_vector("relation:has_subsystem")
-    query_key = engine.bind(v_root, v_rel)
-    db_subgraph_vec = engine.unbind(hav, query_key)
-    res_runs = engine.query_vsa_hierarchy(db_subgraph_vec, "db_service", "runs_on")
-    
-    assert len(res_runs) > 0
-    assert res_runs[0][0] == "postgres_instance"
-    assert res_runs[0][1] > 0.15
-    
-    # 4. Export virtual prefix embeddings
-    prefix_embeddings = engine.export_virtual_prefix_embeddings(hav)
-    assert len(prefix_embeddings) == 2048
-    assert isinstance(prefix_embeddings[0], float)
-    assert np.isclose(np.linalg.norm(prefix_embeddings), 1.0, atol=1e-4)
 
 
 # ─── Eurisko Heuristic Breeder tests ──────────────────────────────────────────
@@ -332,4 +285,3 @@ def test_advice_taker_regex_parameter_extraction():
         
     finally:
         delete_advice_rule(r["id"])
-

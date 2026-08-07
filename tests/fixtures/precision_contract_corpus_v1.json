@@ -1,0 +1,63 @@
+{
+  "corpus_id": "moe-precision-v1",
+  "version": "1.0.0",
+  "as_of": "2026-08-01",
+  "positive": [
+    {
+      "id": "finance-percentage-de",
+      "prompt": "Berechne 19 Prozent von 119.99 EUR mit Scale 2 und Rundung half_up.",
+      "tool": "decimal_finance",
+      "expected": ["22.80 EUR", "half_up"]
+    },
+    {
+      "id": "probability-binomial-de",
+      "prompt": "Berechne die Binomialwahrscheinlichkeit für n=10, k=3, p=1/2 als Dezimalzahl mit Scale 6 und Rundung half_even.",
+      "tool": "exact_probability",
+      "expected": ["15/128", "0.117188"]
+    },
+    {
+      "id": "structured-json-de",
+      "prompt": "Validiere dieses JSON: {\"age\": 42}",
+      "tool": "structured_validate",
+      "expected": ["JSON-Struktur ist gültig", "SHA-256"]
+    },
+    {
+      "id": "time-zone-de",
+      "prompt": "Bestimme die Zeitfakten für 2026-07-29T12:00:00Z in Europe/Berlin.",
+      "tool": "time_facts",
+      "expected": ["2026-07-29T14:00:00+02:00", "Mittwoch"]
+    }
+  ],
+  "mixed": [
+    {
+      "id": "finance-probability-code-review-de",
+      "prompt": "1. Berechne 19 Prozent von 119.99 EUR mit Scale 2 und Rundung half_up.\n2. Berechne die Binomialwahrscheinlichkeit für n=10, k=3, p=1/2 als Dezimalzahl mit Scale 6 und Rundung half_even.\n3. Prüfe diese SQLite-Zeile auf SQL-Injection und gib eine sichere parametrisierte cursor.execute-Ersatzzeile an: cursor.execute(\"SELECT * FROM students WHERE name = '\" + user_input + \"'\")",
+      "tools": ["decimal_finance", "exact_probability"],
+      "expected": ["22.80 EUR", "15/128", "cursor.execute", "user_input"]
+    }
+  ],
+  "negative": [
+    {
+      "id": "finance-missing-policy",
+      "prompt": "Berechne 19 Prozent von 119.99 EUR.",
+      "expected_intents": 0
+    },
+    {
+      "id": "probability-ambiguous-model",
+      "prompt": "Wie wahrscheinlich ist ein Erfolg?",
+      "expected_intents": 0
+    },
+    {
+      "id": "structured-repair-request",
+      "prompt": "Repariere dieses ungültige JSON: {a:1}",
+      "expected_intents": 0
+    }
+  ],
+  "adversarial_invoke": [
+    {"id": "decimal-float", "tool": "decimal_finance", "expected_error": "input_schema_invalid"},
+    {"id": "probability-cost", "tool": "exact_probability", "expected_error": "input_schema_invalid"},
+    {"id": "yaml-alias", "tool": "structured_validate", "expected_valid": false},
+    {"id": "xml-xxe", "tool": "structured_validate", "expected_valid": false},
+    {"id": "json-remote-ref", "tool": "structured_validate", "expected_valid": false}
+  ]
+}

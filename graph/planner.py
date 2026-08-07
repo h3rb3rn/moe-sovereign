@@ -46,7 +46,7 @@ from services.inference import (
     _select_node, _invoke_judge_with_retry,
     _invoke_planner_with_retry,
     _get_judge_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _refine_expert_response,
+    assign_gpu, _refine_expert_response,
     _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
@@ -67,12 +67,15 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.skills import _build_skill_catalog
+from services.trivial_fast_path import (
+    MATH_SIGNAL_PATTERN as _MATH_TEMP_PATTERN,
+    is_trivial_fast_path_eligible as _trivial_fast_path_eligible,
+)
 from prompts import (
     SYNTHESIS_PERSISTENCE_INSTRUCTION,
     PROVENANCE_INSTRUCTION,
     DEFAULT_PLANNER_ROLE,
 )
-from prompts import _ROUTE_PROTOTYPES, _RESEARCH_DETECT
 from parsing import (
     _oai_content_to_str, _anthropic_content_to_text,
     _extract_images, _extract_oai_images,
@@ -130,7 +133,7 @@ def _sanitize_plan(raw: list, fallback_input: str,
     expert fallbacks (with different models) cannot be triggered.
     """
     NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
-    _special = {"agentic_coder", "memory_recall"}
+    _special = {"agentic_coder", "memory_recall", "dynamic"}
     if user_expert_cats:
         # Template active: only allow template categories + non-expert types.
         # Global EXPERTS categories are excluded to prevent silent model substitution.
@@ -154,18 +157,24 @@ def _sanitize_plan(raw: list, fallback_input: str,
     if not result:
         logger.warning("⚠️ Planner: no valid task after sanitization — fallback")
         return [{"task": fallback_input, "category": "general"}]
-    if len(result) > PLANNER_MAX_TASKS:
-        logger.warning(f"⚠️ Planner: {len(result)} tasks → limited to {PLANNER_MAX_TASKS}")
-        result = result[:PLANNER_MAX_TASKS]
     return result
 
 
-_MATH_TEMP_PATTERN = re.compile(
-    r'\b(berechne?|berechnung|integral|ableitung|differentialgleichung|löse?|solve|'
-    r'calculate|calculation|subnet|cidr|bgp|ospf|hash|checksum|statistics|statistik|'
-    r'wie viel|how much|how many|wie viele|convert|umrechnen|prozent|percent)\b',
-    re.I,
-)
+def _compact_planner_role(role: str, max_chars: int) -> str:
+    """Bound user/template planner policy while preserving its start and end."""
+    text = (role or "").strip()
+    limit = max(1_000, int(max_chars))
+    if len(text) <= limit:
+        return text
+    head_len = int(limit * 0.7)
+    tail_len = limit - head_len
+    return (
+        text[:head_len].rstrip()
+        + "\n\n[... planner role compacted to runtime budget ...]\n\n"
+        + text[-tail_len:].lstrip()
+    )
+
+
 _CREATIVE_TEMP_PATTERN = re.compile(
     r'\b(entwirf|erstelle?|schreibe?|gestalte?|verfasse?|dichte?|erdichte?|'
     r'create|write|generate|design|compose|brainstorm|ideen|kreativ|story|poem|'
@@ -187,9 +196,147 @@ def _detect_query_temperature(query: str) -> float:
     return 0.20  # factual / neutral default
 
 
+def _build_agent_mode_plan(
+    state_: AgentState,
+    tool_schemas: dict,
+) -> tuple[list[dict], str]:
+    """Build the no-LLM agent plan without dropping precision contracts."""
+    from services.pipeline.contracts import (
+        _numbered_query_items,
+        recover_explicit_supported_plan,
+    )
+
+    required = [
+        item
+        for item in (state_.get("required_precision_intents") or [])
+        if isinstance(item, dict)
+    ]
+    if not required:
+        return [
+            {"task": state_["input"], "category": "code_reviewer"},
+            {"task": state_["input"], "category": "technical_support"},
+        ], "default_code_pair"
+
+    recovered, _ = recover_explicit_supported_plan(
+        state_.get("input", ""),
+        tool_schemas,
+        max_tasks=PLANNER_MAX_TASKS,
+    )
+    if recovered:
+        return recovered, "explicit_precision_recovery"
+
+    # Unknown non-precision work retains one bounded agent expert, while every
+    # frozen precision intent is still materialized exactly. This fallback may
+    # be synthesized only through the normal fail-closed binding path; the
+    # narrow hybrid composer additionally proves item-level task isolation.
+    numbered_items = _numbered_query_items(state_.get("input", ""))
+    precision_tasks: list[dict] = []
+    for intent in required:
+        source_item = intent.get("source_item")
+        instruction = state_.get("input", "")
+        if (
+            numbered_items
+            and isinstance(source_item, int)
+            and 0 <= source_item < len(numbered_items)
+        ):
+            instruction = numbered_items[source_item]
+        precision_tasks.append({
+            "task": instruction,
+            "category": "precision_tools",
+            "mcp_tool": intent.get("tool"),
+            "mcp_args": dict(intent.get("args") or {}),
+        })
+    return precision_tasks + [
+        {"task": state_["input"], "category": "code_reviewer"}
+    ], "precision_preserving_fallback"
+
+
 async def planner_node(state_: AgentState):
     # Lazy import to avoid circular: main imports from graph/nodes; this call happens at runtime.
     from main import _build_filtered_tool_desc
+    from services.boundary_check import check_boundary as _check_boundary
+    from services.pipeline.contracts import (
+        PlannerContractError as _PlannerContractError,
+        PlannerContractIssue as _PlannerContractIssue,
+        assign_stable_task_ids as _assign_stable_task_ids,
+        canonical_tool_catalog_hash as _canonical_tool_catalog_hash,
+        parse_plan as _parse_plan_contract,
+        recover_explicit_supported_plan as _recover_explicit_supported_plan,
+        repair_precision_task_contracts as _repair_precision_task_contracts,
+        validate_plan_or_raise as _validate_plan_or_raise,
+    )
+
+    _plan_iteration = int(state_.get("agentic_iteration") or 0)
+
+    def _request_tool_schemas() -> dict:
+        """Use the preflight snapshot for required tools within this request."""
+        schemas = dict(state.MCP_TOOL_SCHEMAS)
+        required = state_.get("required_precision_intents") or []
+        snapshots = state_.get("precision_contract_snapshot") or {}
+        for intent in required:
+            if not isinstance(intent, dict):
+                continue
+            tool = str(intent.get("tool") or "")
+            frozen = snapshots.get(tool)
+            if isinstance(frozen, dict):
+                schemas[tool] = frozen
+            elif tool:
+                # Unavailable at preflight must remain unavailable for the
+                # lifetime of the request even if a reload happens later.
+                schemas.pop(tool, None)
+        return schemas
+
+    _handoff_tool_schemas = _request_tool_schemas()
+
+    def _prepare_handoff_plan(tasks: list[dict]) -> tuple[list[dict], list[dict]]:
+        """Apply every mandatory planner handoff contract on every plan path."""
+        tasks, deterministic_repairs = _repair_precision_task_contracts(
+            tasks,
+            state_.get("input", ""),
+            _handoff_tool_schemas,
+        )
+        if deterministic_repairs:
+            logger.info(
+                "Planner precision contract normalized: %s",
+                json.dumps(deterministic_repairs, ensure_ascii=False),
+            )
+        prepared = _assign_stable_task_ids(tasks)
+        _validate_plan_or_raise(
+            prepared,
+            _handoff_tool_schemas,
+            max_tasks=PLANNER_MAX_TASKS,
+            input_query=state_.get("input", ""),
+        )
+        request_id = state_.get("response_id", "")
+        for index, task in enumerate(prepared):
+            violations = _check_boundary(
+                "planner_to_expert",
+                task,
+                request_id=request_id,
+            )
+            if violations:
+                raise _PlannerContractError(
+                    [
+                        _PlannerContractIssue(
+                            index,
+                            "boundary_violation",
+                            violation,
+                        )
+                        for violation in violations
+                    ]
+                )
+        planned_events = [
+            {
+                "task_id": task["id"],
+                "category": task["category"],
+                "status": "planned",
+                "executor": "planner",
+                "iteration": _plan_iteration,
+            }
+            for task in prepared
+        ]
+        return prepared, planned_events
+
     _output_skill = ""  # Initialize early to prevent UnboundLocalError
     # Cache hit: no LLM call needed
     if state_.get("cache_hit"):
@@ -198,7 +345,25 @@ async def planner_node(state_: AgentState):
     # Semantic pre-routing: direct expert path without LLM call
     if state_.get("direct_expert") and state_.get("plan"):
         logger.info(f"📋 Planner skipped (semantic router → '{state_['direct_expert']}')")
-        return {"plan": state_["plan"]}
+        from complexity_estimator import estimate_complexity
+        from services.cynefin import classify_cynefin
+        _direct_plan, _direct_events = _prepare_handoff_plan(
+            list(state_["plan"])
+        )
+        _early_complexity = (
+            state_.get("complexity_level")
+            or estimate_complexity(state_["input"])
+        )
+        return {
+            "plan": _direct_plan,
+            "task_events": _direct_events,
+            "complexity_level": _early_complexity,
+            "cynefin_domain": classify_cynefin({
+                **dict(state_),
+                "complexity_level": _early_complexity,
+                "plan": _direct_plan,
+            }).value,
+        }
 
     # Emit pending reports (e.g. skill resolution) from state
     for _pr in (state_.get("pending_reports") or []):
@@ -217,10 +382,19 @@ async def planner_node(state_: AgentState):
     _no_cache_flag  = state_.get("no_cache", False)
     # Include a short config fingerprint so the plan cache auto-invalidates when
     # the MCP tool set or planner prompt changes between deployments.
-    _cfg_fp = _hashlib.md5(
-        f"{len(state.MCP_TOOLS_DESCRIPTION)}:{(state_.get('planner_prompt') or '')[:80]}"
-        .encode()
-    ).hexdigest()[:6]
+    _tool_contract_fp = _canonical_tool_catalog_hash(_handoff_tool_schemas)
+    _cfg_fp = _hashlib.sha256(
+        json.dumps(
+            {
+                "contract_version": 5,
+                "tools": _tool_contract_fp,
+                "planner_prompt": state_.get("planner_prompt") or "",
+                "role_limit": os.getenv("PLANNER_ROLE_MAX_CHARS", "8000"),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()[:12]
     # Include chat_history presence in key: same query needs different plan
     # in conversation context (memory_recall) vs. standalone (research).
     _has_history = "h" if len(state_.get("chat_history") or []) >= 2 else "n"
@@ -230,10 +404,39 @@ async def planner_node(state_: AgentState):
             _cached_plan_raw = await state.redis_client.get(_plan_cache_key)
             if _cached_plan_raw:
                 _cached_plan = json.loads(_cached_plan_raw)
+                try:
+                    _cached_plan, _cached_events = _prepare_handoff_plan(
+                        _cached_plan
+                    )
+                except _PlannerContractError as _cache_contract_error:
+                    logger.warning(
+                        "Planner cache contract invalid — ignoring cached plan: %s",
+                        _cache_contract_error,
+                    )
+                    _cached_plan = None
+                if not _cached_plan:
+                    raise ValueError("cached planner contract is invalid")
+                from complexity_estimator import estimate_complexity
+                from services.cynefin import classify_cynefin
+                _cached_complexity = (
+                    state_.get("complexity_level")
+                    or estimate_complexity(state_["input"])
+                )
                 logger.info(f"📋 Planner cache hit (Valkey) — skipping LLM")
                 await _report("📋 Planner: plan loaded from Valkey cache")
                 await _record_stage(state_.get("response_id", ""), "planner", "cache_hit")
-                return {"plan": _cached_plan, "prompt_tokens": 0, "completion_tokens": 0}
+                return {
+                    "plan": _cached_plan,
+                    "task_events": _cached_events,
+                    "complexity_level": _cached_complexity,
+                    "cynefin_domain": classify_cynefin({
+                        **dict(state_),
+                        "complexity_level": _cached_complexity,
+                        "plan": _cached_plan,
+                    }).value,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                }
         except Exception as _pe:
             logger.debug(f"Planner cache read error: {_pe}")
 
@@ -252,27 +455,6 @@ async def planner_node(state_: AgentState):
         _complexity = "memory_recall"
         logger.info("🧠 Day-2 upgrade: %s→memory_recall (chat_history present)", _prev_complexity)
     _routing    = complexity_routing_hint(_complexity)
-
-    # ── Trivial fast-path (opt-in, OFF by default) ────────────────────────────
-    # A genuinely trivial query the semantic router did not already route skips
-    # the planner LLM call and goes straight to a single default-category expert,
-    # saving one LLM call. Behavioural trade-off (forces a default expert for
-    # unmatched trivial queries), hence gated — see config.TRIVIAL_FAST_PATH_*.
-    if (TRIVIAL_FAST_PATH_ENABLED
-            and _complexity == "trivial"
-            and not state_.get("direct_expert")
-            and not _is_agentic_replan):
-        _ft_cat = TRIVIAL_FAST_PATH_CATEGORY if TRIVIAL_FAST_PATH_CATEGORY in EXPERTS else next(iter(EXPERTS), "general")
-        logger.info("⚡ Trivial fast-path: planner LLM skipped → '%s'", _ft_cat)
-        await _report(f"⚡ Trivial fast-path → expert '{_ft_cat}' (planner skipped)")
-        await _record_stage(state_.get("response_id", ""), "planner", "fast_path", _ft_cat)
-        return {
-            "plan": [{"task": state_["input"], "category": _ft_cat}],
-            "direct_expert": _ft_cat,
-            "complexity_level": _complexity,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-        }
 
     # Multi-fact memory_recall: when the question asks for multiple facts
     # (contains conjunctions like "und X und Y" or multiple interrogatives),
@@ -307,9 +489,17 @@ async def planner_node(state_: AgentState):
         _query_temp = 0.0
     logger.info(f"🌡️ Temperature: {_query_temp} ({'explicit' if _explicit_temp is not None else 'adaptive'})")
     # ── Cynefin classification (TASK-15) ─────────────────────────────────────
-    try:
+    def _classify_cynefin_for(plan_: list) -> str:
+        """Classify with this invocation's new complexity and plan."""
         from services.cynefin import classify_cynefin
-        _cynefin_domain = classify_cynefin(state_).value
+        return classify_cynefin({
+            **dict(state_),
+            "complexity_level": _complexity,
+            "plan": plan_,
+        }).value
+
+    try:
+        _cynefin_domain = _classify_cynefin_for(state_.get("plan") or [])
     except Exception as _ce:
         logger.debug("Cynefin classification failed: %s", _ce)
         _cynefin_domain = ""
@@ -319,22 +509,71 @@ async def planner_node(state_: AgentState):
     _complexity_state_update = {
         "complexity_level":   _complexity,
         "skip_research":      _routing["skip_research"],
+        "skip_graph":         _routing["skip_graph"],
         "skip_thinking":      _routing["skip_thinking"],
         "cost_tier":          _cost_tier,
         "force_tier1":        _routing.get("force_tier1", False),
         "query_temperature":  _query_temp,
         "cynefin_domain":     _cynefin_domain,
     }
+    from services.request_snapshot import update_request_snapshot
+    update_request_snapshot(
+        state_.get("response_id", ""),
+        complexity_level=_complexity,
+        cynefin_domain=_cynefin_domain,
+    )
 
-    # Agent mode: force code_reviewer + technical_support directly, no LLM planner
-    if state_.get("mode") == "agent":
-        logger.info("📋 Agent mode: forcing code_reviewer + technical_support")
-        await _report("📋 Agent mode: code experts activated...")
+    # ── Trivial fast-path ──────────────────────────────────────────────────────
+    # Only conservative one-shot requests bypass the planner. Exact operations,
+    # current/research/legal/file work and conversation context retain it.  The
+    # complete routing-state update must be returned as well; otherwise the
+    # downstream graph would still execute GraphRAG/thinking despite this gate.
+    if (
+        TRIVIAL_FAST_PATH_ENABLED
+        and _trivial_fast_path_eligible(state_, _complexity)
+        and not state_.get("direct_expert")
+        and not _is_agentic_replan
+    ):
+        _ft_cat = (
+            TRIVIAL_FAST_PATH_CATEGORY
+            if TRIVIAL_FAST_PATH_CATEGORY in EXPERTS
+            else next(iter(EXPERTS), "general")
+        )
+        _fast_plan = [{"task": state_["input"], "category": _ft_cat}]
+        _fast_plan, _fast_events = _prepare_handoff_plan(_fast_plan)
+        logger.info("⚡ Trivial fast-path: planner LLM skipped → '%s'", _ft_cat)
+        await _report(f"⚡ Trivial fast-path → expert '{_ft_cat}' (planner skipped)")
+        await _record_stage(
+            state_.get("response_id", ""),
+            "planner",
+            "fast_path",
+            _ft_cat,
+        )
         return {
-            "plan": [
-                {"task": state_["input"], "category": "code_reviewer"},
-                {"task": state_["input"], "category": "technical_support"},
-            ],
+            **_complexity_state_update,
+            "plan": _fast_plan,
+            "task_events": _fast_events,
+            "direct_expert": _ft_cat,
+            "trivial_fast_path": True,
+            "cynefin_domain": _classify_cynefin_for(_fast_plan),
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
+    # Agent mode: deterministic handoff, no LLM planner. Mandatory precision
+    # contracts must survive this shortcut just as they do every LLM path.
+    if state_.get("mode") == "agent":
+        _agent_plan, _agent_plan_reason = _build_agent_mode_plan(
+            state_, _handoff_tool_schemas
+        )
+        logger.info("📋 Agent mode deterministic plan: %s", _agent_plan_reason)
+        await _report(f"📋 Agent mode: {_agent_plan_reason}")
+        _agent_plan, _agent_events = _prepare_handoff_plan(_agent_plan)
+        return {
+            **_complexity_state_update,
+            "cynefin_domain": _classify_cynefin_for(_agent_plan),
+            "plan": _agent_plan,
+            "task_events": _agent_events,
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
@@ -348,9 +587,16 @@ async def planner_node(state_: AgentState):
     if _complexity == "memory_recall" and "memory_recall" in _user_experts_map:
         logger.info("🧠 memory_recall fast-path: dedicated expert configured, LLM planner skipped")
         await _report("🧠 Memory Expert: Analysiere Konversationshistorie...")
+        _memory_plan, _memory_events = _prepare_handoff_plan(
+            [{"task": state_["input"], "category": "memory_recall"}]
+        )
         return {
             **_complexity_state_update,
-            "plan": [{"task": state_["input"], "category": "memory_recall"}],
+            "cynefin_domain": _classify_cynefin_for(
+                _memory_plan
+            ),
+            "plan": _memory_plan,
+            "task_events": _memory_events,
             "prompt_tokens": 0,
             "completion_tokens": 0,
         }
@@ -373,6 +619,10 @@ async def planner_node(state_: AgentState):
         or "agentic_coder" in _user_experts_for_cats
     ):
         expert_categories = expert_categories + ["agentic_coder"]
+    import os as _os
+    if _os.getenv("EXPERT_BUILDER_ENABLED", "true").lower() in ("true", "1", "yes"):
+        if "dynamic" not in expert_categories:
+            expert_categories = expert_categories + ["dynamic"]
 
     # Annotate images in planner input so routing triggers 'vision'
     # The marker must be exactly "[BILD-EINGABE vorhanden]" — as specified in the planner rule
@@ -434,6 +684,18 @@ async def planner_node(state_: AgentState):
     ) if _inject_agentic and state.AGENTIC_CODE_TOOLS_DESCRIPTION else ""
 
     _planner_role = (state_.get("planner_prompt") or "").strip() or DEFAULT_PLANNER_ROLE
+    _planner_role_limit = int(os.getenv("PLANNER_ROLE_MAX_CHARS", "8000"))
+    _original_planner_role_len = len(_planner_role)
+    _planner_role = _compact_planner_role(
+        _planner_role,
+        _planner_role_limit,
+    )
+    if len(_planner_role) < _original_planner_role_len:
+        logger.warning(
+            "Planner role compacted from %d to %d chars",
+            _original_planner_role_len,
+            len(_planner_role),
+        )
 
     # ── Tier-3 Context TOC: inject table-of-contents for indexed large contexts ──
     # When the session carries a 1M+ context indexed into ChromaDB, prepend a compact
@@ -570,8 +832,29 @@ async def planner_node(state_: AgentState):
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).
+Runtime configuration is authoritative for model assignment. Ignore any model
+names or node assignments embedded in a custom role prompt; select categories
+and tools only.
+TASK BUDGET: Aim for at most {_routing["max_tasks"]} executable tasks for this
+request and never exceed the absolute runtime maximum of {PLANNER_MAX_TASKS}.
+Combine compatible non-precision work when necessary, but never omit a
+separately requested outcome or remove/downgrade a required precision tool.
 
 VALID CATEGORIES FOR LLM EXPERTS: {expert_categories}
+
+DYNAMIC EXPERT — for highly specialised domains not covered by the categories above:
+Use "dynamic" when the task requires deep domain expertise in a field absent from the standard expert list
+(e.g. Immobilienwertermittlung, Chemische Prozessoptimierung, Notfallmedizin, Schiffbaurecht).
+REQUIRED additional fields: "domain" (human-readable domain name, German or English) and "task" (concrete subtask).
+Optional: "requires" (list of scoring-category hints, e.g. ["legal_advisor", "math"]).
+Optional: "privacy": "local_only" to restrict model selection to local-only endpoints.
+Optional: "no_search": true to suppress automatic inline web research for the domain.
+Example: {{"task": "Berechne den Verkehrswert eines Einfamilienhauses nach ImmoWertV", "category": "dynamic", "domain": "Immobilienwertermittlung", "requires": ["math"]}}
+Only use "dynamic" when NO existing category covers the domain adequately.
+RESEARCH + DYNAMIC: When the dynamic expert needs current information (prices, regulations, studies, standards),
+add a "research" task BEFORE the dynamic task so the expert receives fresh web context:
+[{{"task": "Aktuelle ImmoWertV Richtlinien und Sachwertfaktoren recherchieren", "category": "research", "search_query": "ImmoWertV 2024 Sachwertfaktoren aktuell"}},
+ {{"task": "Verkehrswert berechnen...", "category": "dynamic", "domain": "Immobilienwertermittlung", "requires": ["math"]}}]
 
 WEB RESEARCH — for current/external info OR for domain specifications in implementation tasks:
 {{"task": "task description", "category": "research", "search_query": "short optimized search term"}}
@@ -579,7 +862,7 @@ Use for: game rules · algorithm specifications · protocols/standards · anythi
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False)) if state_.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - unit_convert: unit conversions"}
+{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False)) if state_.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - calendar_facts: weekday and ISO calendar facts  - unit_convert: unit conversions"}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
@@ -639,24 +922,93 @@ JSON array:"""
     await _report(f"📋 Planner prompt ({len(prompt)} chars):\n{prompt}")
     total_usage: Dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
     plan: Optional[list] = None
+    _planned_task_events: list[dict] = []
+    _extracted_filters: Dict = {}
+    _structured_failure_state: dict = {}
     from parsing import _extract_usage, _extract_json
     from config import PLANNER_URL, PLANNER_MODEL, PLANNER_TOKEN
+    from services.structured_failure import (
+        RecoveryAction as _RecoveryAction,
+        build_failure as _build_failure,
+        resolve_retry_model as _resolve_retry_model,
+    )
 
-    for attempt in range(PLANNER_RETRIES):
-        res, _planner_fb = await _invoke_planner_with_retry(state_, prompt, temperature=_query_temp, attempt=attempt)
-        if _planner_fb:
-            await _report("⚠️ Planner: used local fallback (primary endpoint degraded)")
-        u = _extract_usage(res)
-        total_usage["prompt_tokens"]     += u["prompt_tokens"]
-        total_usage["completion_tokens"] += u["completion_tokens"]
+    _structured_max_retries = max(
+        0, int(os.getenv("STRUCTURED_FAILURE_MAX_RETRIES", "2"))
+    )
+    _structured_fallback_model = os.getenv(
+        "STRUCTURED_FAILURE_FALLBACK_MODEL", ""
+    ).strip()
+    # Initial attempt + configured same-model retries + one fallback attempt.
+    _structured_attempts = max(
+        2,
+        1 + _structured_max_retries + bool(_structured_fallback_model),
+    )
+
+    _retry_model_override = ""
+    _contract_repair_used = False
+    _contract_repair_hint = ""
+    for attempt in range(_structured_attempts):
+        _attempt_state = state_
+        _using_structured_fallback = bool(_retry_model_override)
+        if _retry_model_override:
+            _attempt_state = {
+                **dict(state_),
+                "planner_model_override": _retry_model_override,
+            }
+        res = None
         try:
-            # Strip markdown code fences that some models wrap around JSON
+            _attempt_prompt = prompt + _contract_repair_hint
+            res, _planner_fb = await _invoke_planner_with_retry(
+                _attempt_state,
+                _attempt_prompt,
+                temperature=_query_temp,
+                attempt=attempt,
+            )
+            if _planner_fb:
+                await _report(
+                    "⚠️ Planner: used local fallback (primary endpoint degraded)"
+                )
+            u = _extract_usage(res)
+            total_usage["prompt_tokens"] += u["prompt_tokens"]
+            total_usage["completion_tokens"] += u["completion_tokens"]
+
+            # Use the shared tolerant contract parser; it accepts an array or
+            # {"tasks": [...]} and preserves task-specific routing fields.
             _plan_text = res.content.strip()
-            _plan_text = re.sub(r'^```\w*\n?', '', _plan_text)
-            _plan_text = re.sub(r'\n?```$', '', _plan_text)
-            raw  = json.loads(re.search(r'\[.*\]', _plan_text, re.S).group())
+            _contract_plan = _parse_plan_contract(_plan_text)
+            if not _contract_plan.valid:
+                raw, _explicit_recovery_events = (
+                    _recover_explicit_supported_plan(
+                        state_["input"],
+                        _handoff_tool_schemas,
+                        max_tasks=PLANNER_MAX_TASKS,
+                    )
+                )
+                if raw:
+                    logger.warning(
+                        "Planner returned no executable tasks; recovered fully "
+                        "explicit supported task list: %s",
+                        json.dumps(
+                            _explicit_recovery_events,
+                            ensure_ascii=False,
+                        ),
+                    )
+                else:
+                    raise _PlannerContractError(
+                        [
+                            _PlannerContractIssue(
+                                -1,
+                                "invalid_json_plan",
+                                "planner response does not contain an executable JSON task array",
+                                "tasks",
+                            )
+                        ]
+                    )
+            else:
+                raw = [task.payload for task in _contract_plan.tasks]
+
             # Extract optional metadata_filters from first task before sanitizing
-            _extracted_filters: Dict = {}
             if raw and isinstance(raw[0], dict) and "metadata_filters" in raw[0]:
                 _extracted_filters = raw[0].pop("metadata_filters", {})
                 if not isinstance(_extracted_filters, dict):
@@ -675,7 +1027,10 @@ JSON array:"""
             _user_expert_cats = set((state_.get("user_experts") or {}).keys())
             from services.advice_store import enforce_advice_rules
             plan = _sanitize_plan(raw, state_["input"], _user_expert_cats)
-            plan = enforce_advice_rules(state_["input"], plan)
+            plan = enforce_advice_rules(
+                state_["input"], plan, _handoff_tool_schemas,
+            )
+            plan, _planned_task_events = _prepare_handoff_plan(plan)
             categories = [t.get("category", "?") for t in plan]
             logger.info(f"📋 Plan ({len(plan)} Tasks): {json.dumps(plan, ensure_ascii=False)}")
             await _report(f"📋 Plan: {len(plan)} Task(s) → {', '.join(categories)}")
@@ -689,15 +1044,104 @@ JSON array:"""
                 f"📋 Planner done — {total_usage['prompt_tokens']} prompt tok / "
                 f"{total_usage['completion_tokens']} completion tok"
             )
+            _structured_failure_state = {
+                "structured_failure": {},
+                "structured_failure_round": attempt,
+            }
             break
-        except Exception:
-            if attempt == 0:
-                logger.warning(f"Planner parse error (attempt 1) — retry. Output: {res.content[:200]!r}")
-                await _report("⚠️ Planner: JSON error — retrying...")
+        except Exception as exc:
+            _is_contract_failure = isinstance(exc, _PlannerContractError)
+            _raw_text = getattr(res, "content", "") or ""
+            _failure = _build_failure(
+                exc,
+                model=(
+                    _structured_fallback_model
+                    if _using_structured_fallback else
+                    (state_.get("planner_model_override") or PLANNER_MODEL)
+                ),
+                stage="planner",
+                fallback_model=_structured_fallback_model,
+                raw_text=_raw_text,
+                retry_round=attempt + 1,
+            )
+            _structured_failure_state = {
+                "structured_failure": _failure.as_dict(),
+                "structured_failure_round": attempt + 1,
+            }
+            _can_retry_contract = (
+                _is_contract_failure
+                and not _contract_repair_used
+                and attempt + 1 < _structured_attempts
+            )
+            _can_retry_other = (
+                not _is_contract_failure
+                and attempt + 1 < _structured_attempts
+            )
+            if _can_retry_contract or _can_retry_other:
+                if _is_contract_failure:
+                    _contract_repair_used = True
+                    _contract_repair_hint = exc.repair_instruction()
+                _next_action = (
+                    _RecoveryAction.RETRY_FALLBACK
+                    if _structured_fallback_model
+                    and attempt >= _structured_max_retries
+                    else _RecoveryAction.RETRY_SAME
+                )
+                _next_model = _resolve_retry_model(_failure, _next_action)
+                _retry_model_override = (
+                    _next_model
+                    if _next_model != (
+                        state_.get("planner_model_override") or PLANNER_MODEL
+                    )
+                    else ""
+                )
+                logger.warning(
+                    "Planner structured failure round %d/%d (%s) — retrying with %s",
+                    attempt + 1,
+                    _structured_attempts,
+                    _failure.failure_kind.value,
+                    _next_model,
+                )
+                await _report(
+                    "⚠️ Planner: contract invalid — one bounded repair"
+                    if _is_contract_failure
+                    else "⚠️ Planner: structured output invalid — retrying"
+                )
                 continue
-            logger.warning(f"Planner could not parse JSON — fallback. Output: {res.content[:200]!r}")
-            await _report("⚠️ Planner-Fallback: general")
-            plan = [{"task": state_["input"], "category": "general"}]
+
+            logger.error(
+                "Planner structured recovery exhausted after %d attempts: %s",
+                _structured_attempts,
+                exc,
+            )
+            await _report("⚠️ Planner-Fallback: general (recovery exhausted)")
+            try:
+                from services.cascade import (
+                    CascadeEvent,
+                    CascadeType,
+                    emit_cascade,
+                )
+                emit_cascade(
+                    CascadeEvent(
+                        CascadeType.SPEC_GAP,
+                        f"Planner structured output failed: {exc}",
+                        "retry with a schema-capable planner model",
+                    ),
+                    request_id=state_.get("response_id", ""),
+                )
+            except Exception as cascade_error:
+                logger.debug(
+                    "Planner structured failure cascade skipped: %s",
+                    cascade_error,
+                )
+            if _is_contract_failure:
+                # A malformed executable plan must not silently become a
+                # generic LLM task: that would make precision/research work
+                # disappear while returning an apparently successful answer.
+                raise
+            plan, _planned_task_events = _prepare_handoff_plan(
+                [{"id": "task-1", "task": state_["input"], "category": "general"}]
+            )
             _extracted_filters = {}
     # VRAM management is left entirely to Ollama's own automatic LRU eviction
     # (evicts the least-recently-used loaded model only when a newly
@@ -712,9 +1156,7 @@ JSON array:"""
     # _is_model_busy_elsewhere-gated proactive-unload logic if reintroducing
     # anything here for genuinely VRAM-constrained nodes.
     # ── Deterministic DoR checks ───────────────────────────────────────────────
-    # Validate each task before it is dispatched to an expert. Violations are
-    # logged as warnings; no task is blocked (fail-open) to preserve existing
-    # pipeline behaviour. Blocking can be enabled by filtering `plan` here.
+    # Validate each task before it is dispatched to an expert.
     try:
         from services.dor_check import check_dor as _check_dor, log_dor_result as _log_dor
         _req_id = state_.get("response_id", "")
@@ -723,13 +1165,32 @@ JSON array:"""
             _log_dor(_dor_task, _violations, task_index=_dor_idx, request_id=_req_id)
     except Exception as _dor_e:
         logger.debug("DoR check skipped: %s", _dor_e)
-    # ── Boundary contract check (Planner→Expert stage boundary) ───────────────
+    # A successful replan resolves the open failure events that triggered it.
+    if _is_agentic_replan and plan:
+        try:
+            from services.cascade import resolve_open_cascades
+            resolve_open_cascades(state_.get("response_id", ""))
+        except Exception as _resolve_error:
+            logger.debug("Cascade resolution after replan failed: %s", _resolve_error)
+
     try:
-        from services.boundary_check import check_boundary as _check_boundary
-        for _bc_task in (plan or []):
-            _check_boundary("planner_to_expert", _bc_task)
-    except Exception as _bc_e:
-        logger.debug("Boundary check skipped: %s", _bc_e)
+        _complexity_state_update["cynefin_domain"] = _classify_cynefin_for(plan or [])
+    except Exception as _ce:
+        logger.debug("Final planner Cynefin classification failed: %s", _ce)
+    update_request_snapshot(
+        state_.get("response_id", ""),
+        complexity_level=_complexity_state_update.get("complexity_level"),
+        cynefin_domain=_complexity_state_update.get("cynefin_domain"),
+        expert_domains=",".join(
+            sorted(
+                {
+                    str(task.get("category") or "")
+                    for task in (plan or [])
+                    if isinstance(task, dict) and task.get("category")
+                }
+            )
+        ),
+    )
 
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
@@ -737,8 +1198,10 @@ JSON array:"""
     if _extracted_filters:
         logger.info(f"📋 Planner metadata_filters: {_extracted_filters}")
     _skill_state = {"output_skill_body": _output_skill} if _output_skill else {}
-    return {"plan": plan, "metadata_filters": _extracted_filters,
-            **total_usage, **_complexity_state_update, **_skill_state, **_agentic_state_reset}
+    return {"plan": plan, "task_events": _planned_task_events,
+            "metadata_filters": _extracted_filters,
+            **total_usage, **_complexity_state_update, **_skill_state,
+            **_agentic_state_reset, **_structured_failure_state}
 
 
 def _topological_levels(tasks: list[tuple[int, dict]]) -> list[list[tuple[int, dict]]]:

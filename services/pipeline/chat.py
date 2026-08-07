@@ -24,7 +24,7 @@ from config import (
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL, CLAUDE_CODE_TOOL_ENDPOINT,
     CLAUDE_CODE_MODE, CLAUDE_CODE_REASONING_MODEL, CLAUDE_CODE_REASONING_ENDPOINT,
     _CLAUDE_CODE_TOOL_URL, _CLAUDE_CODE_TOOL_TOKEN, _CLAUDE_CODE_REASONING_URL,
-    JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
+    JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT, ORCHESTRATION_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
     PLANNER_MODEL, PLANNER_URL, PLANNER_TOKEN,
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
@@ -48,6 +48,8 @@ from config import (
     _GRAPH_COMPRESS_THRESHOLD_FACTOR, _GRAPH_COMPRESS_LLM_MODEL, _GRAPH_COMPRESS_LLM_TIMEOUT,
     CC_CONTEXT_INDEX_ENABLED,
     AGENT_GRAPHRAG_MAX_CHARS, AGENT_GRAPHRAG_TIMEOUT_S,
+    TRIVIAL_FAST_PATH_ENABLED,
+    MOE_AUTO_DELIBERATION_ACTIVATION,
 )
 from context_budget import graphrag_budget_chars
 from services.agent_enrichment import (
@@ -83,7 +85,6 @@ from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
     _check_ip_rate_limit, _record_stage, _patch_active_request_backend,
-    _touch_model_recently_used,
     _record_file_touch, _record_node_latency,
     _record_premature_stop_outcome,
 )
@@ -101,8 +102,16 @@ from services.helpers import (
     current_chat_id,
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
-from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc
+from services.inference import (
+    _audit_complete,
+    _audit_create,
+    _get_available_models as _get_available_models_svc,
+    _select_node as _select_node_svc,
+)
 from services.skills import _build_skill_catalog, _resolve_skill_secure, _detect_file_skill
+from services.trivial_fast_path import is_moe_auto_preflight_eligible
+from services.pipeline.contracts import detect_required_precision_intents
+from services.deliberation.contracts import DeliberationPolicyError
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 # Pydantic request models (defined here — used by chat_completions and routes)
@@ -1583,6 +1592,17 @@ async def _handle_tool_calls(
 
 
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
+    # The non-streaming orchestration timeout is an end-to-end request budget,
+    # including auth, template resolution and dynamic routing before LangGraph.
+    _request_started = time.monotonic()
+    try:
+        _client_max_output_tokens = int(
+            request.max_tokens or request.max_completion_tokens or 0
+        )
+    except (TypeError, ValueError):
+        _client_max_output_tokens = 0
+    if _client_max_output_tokens < 0:
+        _client_max_output_tokens = 0
     from main import stream_response, _is_openwebui_internal, _handle_internal_direct, _stream_native_llm
     async def _ol_start(*a, **kw): return None   # lineage owned by moe-codex
     async def _ol_complete(*a, **kw): pass
@@ -1646,6 +1666,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     user_id      = user_ctx.get("user_id", "anon")
     api_key_id   = user_ctx.get("key_id", "")
     user_perms   = json.loads(user_ctx.get("permissions_json", "{}"))
+    # Resolved once per request (permission flag > key flag > global env) and
+    # frozen onto AgentState — every outbound LLM call the graph makes for this
+    # request must respect it, not just dynamic-router template compilation.
+    from services.sovereignty import resolve_local_only
+    local_only = resolve_local_only(user_perms, user_ctx)
 
     # Template names and MoE mode IDs take precedence over native endpoints.
     # Wildcard permissions (*@node) would otherwise intercept template names and
@@ -1849,8 +1874,55 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _key_dynamic_routing = user_ctx.get("dynamic_routing") == "1"
     _is_moe_auto = request.model == "moe-auto"
     _native_model_selected = _req_node_hint is not None and not _is_moe_auto
+    _moe_auto_trivial_preflight = False
+    if _is_moe_auto and TRIVIAL_FAST_PATH_ENABLED:
+        from complexity_estimator import estimate_complexity
+
+        _user_positions = [
+            index for index, message in enumerate(request.messages)
+            if message.role == "user"
+        ]
+        _last_user_position = _user_positions[-1] if _user_positions else -1
+        _last_user_message = (
+            request.messages[_last_user_position]
+            if _last_user_position >= 0
+            else None
+        )
+        _preflight_prompt = (
+            _oai_content_to_str(_last_user_message.content)
+            if _last_user_message
+            else ""
+        )
+        _has_conversation_history = any(
+            message.role in ("user", "assistant", "tool")
+            for message in request.messages[:_last_user_position]
+        )
+        _has_multimodal_content = any(
+            message.role == "user" and not isinstance(message.content, str)
+            for message in request.messages
+        )
+        _request_system_prompt = "\n".join(
+            _oai_content_to_str(message.content)
+            for message in request.messages
+            if message.role == "system"
+        )
+        _moe_auto_trivial_preflight = is_moe_auto_preflight_eligible(
+            _preflight_prompt,
+            estimate_complexity(_preflight_prompt),
+            mode=mode,
+            has_history=_has_conversation_history,
+            has_multimodal=_has_multimodal_content,
+            system_prompt=_request_system_prompt,
+            tools=request.tools,
+            files=request.files,
+        )
+        if _moe_auto_trivial_preflight:
+            logger.info(
+                "⚡ moe-auto trivial preflight: dynamic template compilation skipped"
+            )
     if (
         not _native_model_selected
+        and not _moe_auto_trivial_preflight
         and (
             os.getenv("DYNAMIC_ROUTER_ENABLED", "false").lower() in ("1", "true", "yes")
             or _key_dynamic_routing
@@ -1865,18 +1937,17 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
             # ── Constraint resolution (priority: permission > key-flag > global env-var) ──
             _moe_modes_granted = set(user_perms.get("moe_mode", []))
-            # local_only: permission flag > key flag > global env
-            _perm_local_only     = "moe-auto:local-only"      in _moe_modes_granted
-            _key_local_only      = user_ctx.get("local_only_routing") == "1"
-            local_only = (
-                _perm_local_only
-                or _key_local_only
-                or os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
-            )
+            # local_only is resolved once for the whole request above (via
+            # resolve_local_only) and reused here unchanged.
             # global_only: restrict router to global admin connections only
             _perm_global_only = "moe-auto:global-only" in _moe_modes_granted
             # user_conns_only: restrict router to user-created private connections only
             _perm_user_conns_only = "moe-auto:user-conns-only" in _moe_modes_granted
+            _auto_deliberation_activation = MOE_AUTO_DELIBERATION_ACTIVATION
+            if "moe-auto:no-deliberation" in _moe_modes_granted:
+                _auto_deliberation_activation = "disabled"
+            elif "moe-auto:deliberation-required" in _moe_modes_granted:
+                _auto_deliberation_activation = "required"
 
             _user_conns_for_router: dict = {}
             if not _perm_global_only:
@@ -1894,6 +1965,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 user_connections=_user_conns_for_router,
                 global_only=_perm_global_only,
                 user_conns_only=_perm_user_conns_only,
+                deliberation_activation=_auto_deliberation_activation,
             )
             if dynamic_tmpl:
                 try:
@@ -1931,14 +2003,41 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "code": "template_not_authorized",
             }})
     _user_conns_json = user_ctx.get("user_connections_json", "{}")
-    user_experts  = _resolve_user_experts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
-                                           user_templates_json=_user_tmpls_json,
-                                           admin_override=False,
-                                           user_connections_json=_user_conns_json) or {}
-    _tmpl_prompts = _resolve_template_prompts(user_ctx.get("permissions_json", ""), override_tmpl_id=_tmpl_override,
-                                               user_templates_json=_user_tmpls_json,
-                                               admin_override=False,
-                                               user_connections_json=_user_conns_json)
+    try:
+        if _moe_auto_trivial_preflight:
+            # An absent override normally selects the first template granted to the
+            # API key.  That implicit default would repopulate ``user_experts`` and
+            # negate the preflight which deliberately skipped dynamic compilation.
+            # Resolve against empty permissions so the graph receives the global,
+            # context-free defaults expected by its trivial fast-path contract.
+            user_experts = {}
+            _tmpl_prompts = _resolve_template_prompts(
+                "{}",
+                user_templates_json="{}",
+                user_connections_json=_user_conns_json,
+            )
+        else:
+            user_experts = _resolve_user_experts(
+                user_ctx.get("permissions_json", ""),
+                override_tmpl_id=_tmpl_override,
+                user_templates_json=_user_tmpls_json,
+                admin_override=False,
+                user_connections_json=_user_conns_json,
+            ) or {}
+            _tmpl_prompts = _resolve_template_prompts(
+                user_ctx.get("permissions_json", ""),
+                override_tmpl_id=_tmpl_override,
+                user_templates_json=_user_tmpls_json,
+                admin_override=False,
+                user_connections_json=_user_conns_json,
+            )
+    except DeliberationPolicyError as exc:
+        logger.warning("Rejected invalid deliberation policy for template=%s", _tmpl_override or "default")
+        return JSONResponse(status_code=422, content={"error": {
+            "message": str(exc),
+            "type": "invalid_template",
+            "code": "deliberation_policy_invalid",
+        }})
     # Ghost-template detection: template in permissions but absent from DB and not user-owned
     if _tmpl_override and not user_experts and not user_perms.get("expert_template") == []:
         _ghost_check = next((t for t in _all_tmpls if t.get("id") == _tmpl_override), None)
@@ -2069,7 +2168,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _req_type  = "streaming" if request.stream else "batch"
     _req_type  = "native"    if _native_endpoint else _req_type
     _client_ip = raw_request.client.host if raw_request.client else ""
-    asyncio.create_task(_register_active_request(
+    # Await registration so every subsequent error/return path can reliably
+    # remove the exact entry; fire-and-forget registration races used to
+    # recreate keys after a fast failure had already deregistered them.
+    await _register_active_request(
         chat_id=chat_id, user_id=user_id, model=_req_model_base,
         moe_mode=("native" if _native_endpoint else mode),
         req_type=_req_type, template_name=_tmpl_name, client_ip=_client_ip,
@@ -2078,7 +2180,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         api_key_id=api_key_id,
         resolved_tmpl_name=_resolved_tmpl_name,
         resolved_tmpl_id=_resolved_tmpl_id,
-    ))
+    )
 
     # Conversation history: only user/assistant messages (no system messages)
     # Multimodal content is extracted as text (history for MoE pipeline is text-only)
@@ -2118,7 +2220,35 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
 
     # Native LLM: forward directly to endpoint, no MoE pipeline
     if _native_endpoint:
+        # Sovereignty guard: this "native model@node" passthrough dispatches
+        # directly via httpx, entirely outside the app_graph pipeline (see
+        # _stream_native_llm below and the non-streaming httpx call further
+        # down) — the local_only enforcement wired into graph/expert.py and
+        # services/inference.py does not cover it. Checked once here, before
+        # either the streaming or non-streaming branch can reach the network.
+        from services.sovereignty import assert_egress_allowed, EgressDenied
+        try:
+            assert_egress_allowed(_native_endpoint["url"], local_only)
+        except EgressDenied as _native_egress_exc:
+            return JSONResponse(status_code=403, content={"error": {
+                "message": str(_native_egress_exc),
+                "type": "permission_error",
+                "code": "local_only_violation",
+            }})
+        _native_started = time.monotonic()
         _native_is_user_conn = bool(_native_endpoint.get("_user_conn"))
+        if request.stream:
+            from services.model_capabilities import (
+                enforce_streaming_capability,
+            )
+            if not enforce_streaming_capability(
+                _native_endpoint["model"], True
+            ):
+                logger.info(
+                    "Model %s does not support streaming; forcing stream=false",
+                    _native_endpoint["model"],
+                )
+                request.stream = False
         # Per-key Ollama num_ctx override — 0 means use the model's Modelfile default.
         _native_num_ctx = int(user_ctx.get("native_num_ctx") or 0)
         if request.stream:
@@ -2258,14 +2388,38 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _ns_payload["options"] = _ns_opts
             if _ns_has_tools:
                 _ns_payload["tools"] = request.tools
-            async with httpx.AsyncClient(timeout=300) as _hc:
-                _nr = await _hc.post(
-                    _ns_base + "/api/chat",
-                    headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
-                    json=_ns_payload,
+            _native_audit = _audit_create(
+                session_id or "",
+                chat_id,
+                _native_endpoint["model"],
+                _ns_base + "/api/chat",
+                "native_direct",
+                _ns_payload,
+            )
+            try:
+                async with httpx.AsyncClient(timeout=300) as _hc:
+                    _nr = await _hc.post(
+                        _ns_base + "/api/chat",
+                        headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
+                        json=_ns_payload,
+                    )
+                _nr.raise_for_status()
+                _rdata = _nr.json()
+                await _audit_complete(
+                    _native_audit,
+                    _rdata,
+                    _rdata.get("prompt_eval_count"),
+                    _rdata.get("eval_count"),
                 )
-            _nr.raise_for_status()
-            _rdata = _nr.json()
+            except Exception as _native_exc:
+                await _audit_complete(
+                    _native_audit,
+                    {"error": str(_native_exc)},
+                    None,
+                    None,
+                    "error",
+                )
+                raise
             # Convert native Ollama response to OpenAI format
             _rmsg = _rdata.get("message", {})
             _tool_calls_native = _rmsg.get("tool_calls") or []
@@ -2325,24 +2479,58 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 _pval = getattr(request, _pname, None)
                 if _pval is not None:
                     _ns_oai_params[_pname] = _pval
-            async with httpx.AsyncClient(timeout=300) as _hc:
-                _nr = await _hc.post(
-                    _native_endpoint["url"].rstrip("/") + "/chat/completions",
-                    headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
-                    json={"model": _native_endpoint["model"],
-                          "messages": _ns_msgs,
-                          "stream": False,
-                          **_ns_oai_params,
-                          **_non_stream_extra},
+            _native_oai_payload = {
+                "model": _native_endpoint["model"],
+                "messages": _ns_msgs,
+                "stream": False,
+                **_ns_oai_params,
+                **_non_stream_extra,
+            }
+            _native_oai_url = (
+                _native_endpoint["url"].rstrip("/") + "/chat/completions"
+            )
+            _native_audit = _audit_create(
+                session_id or "",
+                chat_id,
+                _native_endpoint["model"],
+                _native_oai_url,
+                "native_direct",
+                _native_oai_payload,
+            )
+            try:
+                async with httpx.AsyncClient(timeout=300) as _hc:
+                    _nr = await _hc.post(
+                        _native_oai_url,
+                        headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
+                        json=_native_oai_payload,
+                    )
+                _nr.raise_for_status()
+                _nj = _nr.json()
+                _native_usage = _nj.get("usage") or {}
+                await _audit_complete(
+                    _native_audit,
+                    _nj,
+                    _native_usage.get("prompt_tokens"),
+                    _native_usage.get("completion_tokens"),
                 )
-            _nr.raise_for_status()
-            _nj = _nr.json()
+            except Exception as _native_exc:
+                await _audit_complete(
+                    _native_audit,
+                    {"error": str(_native_exc)},
+                    None,
+                    None,
+                    "error",
+                )
+                raise
         _nu = _nj.get("usage", {})
+        _native_latency_ms = round(
+            (time.monotonic() - _native_started) * 1000
+        )
         if user_id != "anon":
             asyncio.create_task(_log_usage_to_db(user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
                 model=request.model, moe_mode="native",
                 prompt_tokens=_nu.get("prompt_tokens", 0), completion_tokens=_nu.get("completion_tokens", 0),
-                session_id=session_id))
+                session_id=session_id, latency_ms=_native_latency_ms))
             # User-owned connections are billed by the user's own provider — exclude from MoE budget.
             if not _native_is_user_conn:
                 asyncio.create_task(_increment_user_budget(user_id, _nu.get("total_tokens", 0), prompt_tokens=_nu.get("prompt_tokens", 0), completion_tokens=_nu.get("completion_tokens", 0)))
@@ -2394,6 +2582,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             request.messages, request.tools, api="openai",
             user_id=user_id, system_text=_agent_sys_text if isinstance(_agent_sys_text, str) else "",
         )
+        _agent_precision_required = bool(
+            detect_required_precision_intents(_agent_turn.query)
+        )
 
         # ── Augmented Tool Path: cache-read hook (opt-in, off by default) ──
         # Only served on the initial task turn for a genuinely informational
@@ -2404,6 +2595,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             _tmpl_prompts.get("agent_cache") and _agent_turn.kind == "initial_task"
             and _agent_turn.cacheable
             and request.tool_choice in (None, "auto")
+            and not _agent_precision_required
         ):
             _agent_cache_hit = await agent_cache_lookup(
                 _agent_turn.query, _agent_turn.scope,
@@ -2432,6 +2624,13 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                         media_type="text/event-stream", headers=_agent_hit_headers,
                     )
                 return JSONResponse(content=_agent_hit_completion, headers=_agent_hit_headers)
+        elif _tmpl_prompts.get("agent_cache") and _agent_precision_required:
+            await _record_stage(
+                chat_id,
+                "agent_cache",
+                "bypassed",
+                "required_precision_intent",
+            )
 
         if _tmpl_prompts.get("agent_graphrag") and state.graph_manager is not None and _agent_turn.query:
             _agent_sess_ctx_key = f"cc:graphctx:{session_id}" if session_id else ""
@@ -2520,19 +2719,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 f"tools={len(request.tools or [])} tool_msgs={sum(1 for m in request.messages if getattr(m,'role','')=='tool')} "
                 f"content_model={_content_model or 'none'}"
             )
-            # The initial _register_active_request() call (near the top of this
-            # function) can't know backend_model/backend_host yet — the tool_expert/
-            # judge model+endpoint are only resolved here. Without this patch,
-            # graph/planner.py's and graph/expert.py's proactive VRAM-unload can't
-            # see this session as "using" the model and may evict it out from
-            # under a live multi-turn OpenCode/Claude-Code session.
+            # The initial registration cannot know the resolved tool backend;
+            # expose it in live monitoring once selection is complete.
             asyncio.create_task(_patch_active_request_backend(chat_id, _tc_model, _tc_url))
-            # Covers the gap BETWEEN this agentic client's individual HTTP
-            # turns (each is stateless — no moe:active:* entry exists while
-            # the user is reading/typing the next message) — see
-            # _RECENT_USE_GRACE_SECONDS in services/tracking.py for why the
-            # in-flight check above isn't sufficient on its own.
-            asyncio.create_task(_touch_model_recently_used(_tc_model, _tc_url))
             _t_tc = time.monotonic()
             _tc_num_ctx = (
                 _tmpl_prompts.get("tool_expert_num_ctx") or 0
@@ -2628,6 +2817,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                             planner_token_override=_tmpl_prompts["planner_token_override"],
                             planner_num_ctx=_tmpl_prompts.get("planner_num_ctx", 0),
                             judge_num_ctx=_tmpl_prompts.get("judge_num_ctx", 0),
+                            guardrail_prompt=_tmpl_prompts.get("guardrail_prompt", ""),
+                            guardrail_model_override=_tmpl_prompts.get("guardrail_model_override", ""),
+                            guardrail_url_override=_tmpl_prompts.get("guardrail_url_override", ""),
+                            guardrail_token_override=_tmpl_prompts.get("guardrail_token_override", ""),
+                            guardrail_num_ctx=_tmpl_prompts.get("guardrail_num_ctx", 0),
                             model_name=request.model,
                             pending_reports=_pending_reports,
                             images=_user_images,
@@ -2637,7 +2831,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                                 if request.max_agentic_rounds is not None
                                 else _tmpl_prompts.get("max_agentic_rounds", 0)
                             ),
-                            no_cache=request.no_cache)
+                            deliberation_policy=_tmpl_prompts.get("deliberation_policy", {}),
+                            no_cache=request.no_cache,
+                            client_max_output_tokens=_client_max_output_tokens,
+                            local_only=local_only)
 
         async def _lineage_wrapped_stream():
             """Wrap the upstream generator so COMPLETE/FAIL fires when streaming ends."""
@@ -2659,27 +2856,42 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         )
     if state.app_graph is None:
         logger.warning("APP-GRAPH-NONE: state id=%d, app_graph=%s", id(state), state.app_graph)
+        await _deregister_active_request(
+            chat_id, {"status": "failed", "error_code": "graph_not_ready"}
+        )
         return JSONResponse(status_code=503, content={"error": {"message": "Orchestrator graph not ready — retry in a few seconds", "type": "service_unavailable", "code": "graph_not_ready"}})
-    _t_start = time.monotonic()
-    result = await state.app_graph.ainvoke(
+    _t_start = _request_started
+    _remaining_timeout = max(
+        0.001,
+        ORCHESTRATION_TIMEOUT - (time.monotonic() - _request_started),
+    )
+    try:
+        result = await asyncio.wait_for(state.app_graph.ainvoke(
         {"input": user_input, "response_id": chat_id, "mode": mode,
          "user_id": user_id, "api_key_id": api_key_id,
+         "request_deadline_monotonic": _request_started + ORCHESTRATION_TIMEOUT,
+         "client_max_output_tokens": _client_max_output_tokens,
          "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
          "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
          "chat_history": history, "reasoning_trace": "", "system_prompt": system_prompt,
          "images": _user_images,
          "user_permissions": user_perms, "user_experts": user_experts,
+         "local_only_routing": local_only,
          # Prepend personal namespace so user-created knowledge is private by default.
          # graph_tenant permissions add team/tenant namespaces on top.
          "tenant_ids": ([f"user:{user_id}"] if user_id and user_id != "anon" else [])
                        + [t for t in user_perms.get("graph_tenant", [])
                           if t != f"user:{user_id}"],
          "provenance_sources": [],
+         "retrieved_graph_chunks": [],
          "output_skill_body": "",
          "enable_cache": _tmpl_prompts.get("enable_cache", True),
          "enable_graphrag": _tmpl_prompts.get("enable_graphrag", True),
          "enable_web_research": _tmpl_prompts.get("enable_web_research", True),
          "complexity_level": _tmpl_prompts.get("complexity_level", ""),
+         "deliberation_policy": _tmpl_prompts.get("deliberation_policy", {}),
+         "deliberation_capacity": {},
+         "deliberation_events": [],
          "search_fallback_ddg": _tmpl_prompts.get("search_fallback_ddg", _WEB_SEARCH_FALLBACK_DDG),
          "graphrag_max_chars": _tmpl_prompts.get("graphrag_max_chars", 0),
          "history_max_turns": _tmpl_prompts.get("history_max_turns", 0),
@@ -2704,6 +2916,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          # (scripts/gap_healer_templates.py always sends stream=False).
          "planner_num_ctx": _tmpl_prompts.get("planner_num_ctx", 0),
          "judge_num_ctx":   _tmpl_prompts.get("judge_num_ctx", 0),
+         "guardrail_prompt":         _tmpl_prompts.get("guardrail_prompt", ""),
+         "guardrail_model_override": _tmpl_prompts.get("guardrail_model_override", ""),
+         "guardrail_url_override":   _tmpl_prompts.get("guardrail_url_override", ""),
+         "guardrail_token_override": _tmpl_prompts.get("guardrail_token_override", ""),
+         "guardrail_num_ctx":        _tmpl_prompts.get("guardrail_num_ctx", 0),
          "template_name":  _tmpl_name,
          "template_id":    _tmpl_override or "",
          "causal_intervention": _tmpl_prompts.get("causal_intervention"),
@@ -2715,6 +2932,25 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          "attempted_queries": [],
          "search_strategy_hint": "",
          "conflict_registry": [],
+         "task_events": [],
+         "mcp_evidence": [],
+         "required_precision_intents": [],
+         "precision_contract_snapshot": {},
+         "precision_contract_hash": "",
+         "precision_catalog_hash": "",
+         "precision_cache_bypassed": False,
+         "precision_direct": False,
+         "precision_fact_slots": [],
+         "precision_prompt_projection": "",
+         "precision_rendered_response": "",
+         "precision_binding_status": "not_required",
+         "precision_binding_errors": [],
+         "precision_binding_hash": "",
+         "precision_bound_response_hash": "",
+         "precision_hybrid_composed": False,
+         "precision_hybrid_expert_body": "",
+         "precision_hybrid_expert_task": "",
+         "precision_hybrid_expert_confidence": "",
          "vector_confidence": 0.5,
          "graph_confidence": 0.5,
          "fuzzy_routing_scores": {},
@@ -2722,9 +2958,122 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
          # Pass explicit temperature into state so planner, judge and experts
          # can honour it. None means "use query-adaptive detection".
          "query_temperature": request.temperature,
+         "trust_score": 0.0,
+         "trust_verdict": "",
+         "trust_factors": {},
+         "self_critique_round": 0,
+         "self_critique_max": int(os.getenv("SELF_CRITIQUE_MAX_ROUNDS", "2")),
+         "constitution_violations": [],
+         "cynefin_domain": "",
+         "hitl_gate_id": "",
+         "hitl_gate_reason": "",
+         "quality_blocked": False,
+         "quality_block_reason": "",
+         "candidate_status": "normal",
+         "candidate_reason": "",
+         "quality_gate_status": "",
+         "response_commit_context": {},
+         "response_commit_status": "not_started",
+         "response_commit_key": "",
+         "response_commit_sinks": {},
+         "response_commit_errors": [],
          },
         {"configurable": {"thread_id": str(uuid.uuid4())}},
-    )
+        ), timeout=_remaining_timeout)
+    except asyncio.TimeoutError:
+        _elapsed_ms = round((time.monotonic() - _t_start) * 1000)
+        from services.ai_io_audit import aggregate_request_usage
+        from services.request_snapshot import consume_request_snapshot
+        _partial_usage = await aggregate_request_usage(chat_id)
+        _progress = consume_request_snapshot(chat_id)
+        logger.error(
+            "Orchestration timeout request=%s after %ss",
+            chat_id, ORCHESTRATION_TIMEOUT,
+        )
+        await _deregister_active_request(
+            chat_id,
+            {
+                "status": "timeout",
+                "error_code": "orchestration_timeout",
+                "latency_ms": _elapsed_ms,
+                **_progress,
+            },
+        )
+        if user_id != "anon":
+            await _log_usage_to_db(
+                user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+                model=MODES.get(mode, MODES["default"])["model_id"],
+                moe_mode=mode,
+                prompt_tokens=_partial_usage["prompt_tokens"],
+                completion_tokens=_partial_usage["completion_tokens"],
+                status="timeout", session_id=session_id,
+                latency_ms=_elapsed_ms,
+                complexity_level=_progress.get("complexity_level", ""),
+                expert_domains=_progress.get("expert_domains", ""),
+                trust_score=_progress.get("trust_score"),
+                trust_verdict=_progress.get("trust_verdict"),
+                cynefin_domain=_progress.get("cynefin_domain"),
+            )
+        await _ol_fail(
+            _ol_run_id, job_name="chat_completion",
+            error=f"orchestration timeout after {ORCHESTRATION_TIMEOUT}s",
+        )
+        return JSONResponse(
+            status_code=504,
+            content={"error": {
+                "message": (
+                    "The orchestrated request exceeded its configured "
+                    f"{ORCHESTRATION_TIMEOUT}s execution limit."
+                ),
+                "type": "timeout_error",
+                "code": "orchestration_timeout",
+                "request_id": chat_id,
+            }},
+        )
+    except Exception as exc:
+        _elapsed_ms = round((time.monotonic() - _t_start) * 1000)
+        from services.ai_io_audit import aggregate_request_usage
+        from services.request_snapshot import consume_request_snapshot
+        _partial_usage = await aggregate_request_usage(chat_id)
+        _progress = consume_request_snapshot(chat_id)
+        logger.exception("Orchestration failed request=%s", chat_id)
+        await _deregister_active_request(
+            chat_id,
+            {
+                "status": "failed",
+                "error_code": "orchestration_failed",
+                "error": str(exc)[:500],
+                "latency_ms": _elapsed_ms,
+                **_progress,
+            },
+        )
+        if user_id != "anon":
+            await _log_usage_to_db(
+                user_id=user_id, api_key_id=api_key_id, request_id=chat_id,
+                model=MODES.get(mode, MODES["default"])["model_id"],
+                moe_mode=mode,
+                prompt_tokens=_partial_usage["prompt_tokens"],
+                completion_tokens=_partial_usage["completion_tokens"],
+                status="error", session_id=session_id,
+                latency_ms=_elapsed_ms,
+                complexity_level=_progress.get("complexity_level", ""),
+                expert_domains=_progress.get("expert_domains", ""),
+                trust_score=_progress.get("trust_score"),
+                trust_verdict=_progress.get("trust_verdict"),
+                cynefin_domain=_progress.get("cynefin_domain"),
+            )
+        await _ol_fail(_ol_run_id, job_name="chat_completion", error=str(exc))
+        return JSONResponse(
+            status_code=500,
+            content={"error": {
+                "message": "The orchestration pipeline failed.",
+                "type": "server_error",
+                "code": "orchestration_failed",
+                "request_id": chat_id,
+            }},
+        )
+    from services.request_snapshot import clear_request_snapshot
+    clear_request_snapshot(chat_id)
     p_tok = result.get("prompt_tokens",     0)
     c_tok = result.get("completion_tokens", 0)
     # Prometheus: the streaming path records these in its finalizer; the
@@ -2746,7 +3095,24 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             model=MODES.get(mode, MODES["default"])["model_id"],
             moe_mode=mode, prompt_tokens=p_tok, completion_tokens=c_tok,
             session_id=session_id,
+            latency_ms=_elapsed_ms,
+            complexity_level=result.get("complexity_level", ""),
+            expert_domains=",".join(sorted({
+                t.get("category", "")
+                for t in (result.get("plan") or [])
+                if isinstance(t, dict) and t.get("category")
+            })),
+            cache_hit=bool(result.get("cache_hit", False)),
+            agentic_rounds=int(result.get("agentic_iteration") or 0),
             dynamic_tmpl_id=_resolved_tmpl_id if _resolved_tmpl_id.startswith("moe-dyn-") else "",
+            trust_score=result.get("trust_score"),
+            trust_verdict=result.get("trust_verdict"),
+            cynefin_domain=result.get("cynefin_domain"),
+            self_critique_round=int(result.get("self_critique_round") or 0),
+            cascade_type=result.get("cascade_type"),
+            structured_failure_round=int(
+                result.get("structured_failure_round") or 0
+            ),
         ))
         _uc_p = result.get("user_conn_prompt_tokens", 0)
         _uc_c = result.get("user_conn_completion_tokens", 0)
@@ -2771,7 +3137,56 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             cache_hit=bool(result.get("cache_hit", False)),
             agentic_rounds=int(result.get("agentic_round", 0)),
         ))
-    asyncio.create_task(_deregister_active_request(chat_id))
+    from services.deliberation.runtime import summarize_deliberation_telemetry
+    await _deregister_active_request(
+        chat_id,
+        summarize_deliberation_telemetry(
+            result.get("deliberation_capacity"),
+            result.get("deliberation_events"),
+        ),
+    )
+    _gate_id = result.get("hitl_gate_id") or ""
+    if _gate_id:
+        _moe_resp_headers.update({
+            "X-MoE-Gate-Id": _gate_id,
+            "X-MoE-Quality": "pending",
+        })
+        await _ol_complete(
+            _ol_run_id, job_name="chat_completion",
+            outputs=[dataset_response(chat_id)],
+        )
+        return JSONResponse(
+            status_code=202,
+            headers=_moe_resp_headers,
+            content={
+                "id": chat_id,
+                "object": "moe.hitl_gate",
+                "status": "pending_human_approval",
+                "gate_id": _gate_id,
+                "reason": result.get("hitl_gate_reason", ""),
+            },
+        )
+    if result.get("quality_blocked"):
+        _moe_resp_headers["X-MoE-Quality"] = "blocked"
+        await _ol_fail(
+            _ol_run_id, job_name="chat_completion",
+            error=result.get("quality_block_reason", "quality_blocked"),
+        )
+        return JSONResponse(
+            status_code=422,
+            headers=_moe_resp_headers,
+            content={"error": {
+                "message": "The response was withheld by the quality gate.",
+                "type": "quality_blocked",
+                "code": result.get("quality_block_reason", "quality_blocked"),
+                "request_id": chat_id,
+            }},
+        )
+    if result.get("candidate_status") == "degraded":
+        _moe_resp_headers["X-MoE-Quality"] = "degraded"
+        _moe_resp_headers["X-MoE-Candidate-Reason"] = (
+            result.get("candidate_reason") or "budget"
+        )[:120]
     resp = {
         "id":      chat_id,
         "object":  "chat.completion",
@@ -2788,6 +3203,11 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
     _prov = result.get("provenance_sources")
     if _prov:
         resp["metadata"] = {"sources": _prov}
+    if result.get("candidate_status") == "degraded":
+        resp.setdefault("metadata", {})["candidate"] = {
+            "status": "degraded",
+            "reason": result.get("candidate_reason", ""),
+        }
     await _ol_complete(_ol_run_id, job_name="chat_completion",
                        outputs=[dataset_response(chat_id)])
     if _moe_resp_headers:

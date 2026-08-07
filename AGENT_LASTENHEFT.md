@@ -1556,6 +1556,1734 @@ No further action needed on these three items.
 
 ---
 
+### TASK-35: End-to-End-Vollständigkeit, Live-Code-Kohärenz und Aktivierung halbfertiger Funktionen
+
+- **Status:** done (2026-07-28, Codex CLI; Restrestrisiken unten dokumentiert)
+- **Owner:** Codex CLI
+- **Depends on:** TASK-10, TASK-13 bis TASK-16, TASK-29 bis TASK-31
+- **Context:** Ein Code-, Test- und Live-System-Audit am 2026-07-26/27 hat
+  mehrere Funktionen gefunden, die zwar als `done` dokumentiert oder als
+  Modul vorhanden sind, aber im produktiven Ausführungspfad fehlen, nur
+  teilweise aufgerufen werden oder wegen eines inkohärenten Container-
+  Dateistands nicht funktionieren. Der Audit umfasste statische
+  Call-Site-Prüfung, 596 gesammelte Tests, isolierte Testbatches,
+  Live-Container, Postgres/Valkey/Neo4j/Chroma/Kafka, MCP-Werkzeuge und einen
+  echten `moe-auto`-Request. 445 eindeutig gezählte Tests liefen grün; ein
+  vollständiger Lauf wird zusätzlich durch nicht beendete Test-Worker in
+  Agent-Enrichment/JMoE und einen fehlschlagenden Web-Search-Fallback
+  verhindert.
+- **Verifizierte Befunde (Priorität P0 bis P2):**
+  1. **P0 — inkohärenter Produktivcode:** `langgraph-app` mountet nur
+     `./services` aus dem Host, während `graph/`, `main.py` und
+     `tool_injector.py` aus einem älteren Image stammen. Dadurch importiert
+     das aktuelle `services/helpers.py` die im Container fehlende Funktion
+     `inject_tools_explicit`. Der Live-E2E-Request
+     `chatcmpl-fd99a5cf-c133-42a1-81de-e37579081eff` lief zunächst rund
+     12,5 Minuten durch einen fachlich falschen Planner-Plan und brach dann
+     mit `ImportError` ab. Der Request blieb in Valkey als aktiv markiert
+     und erzeugte keinen vollständigen `usage_log`-Datensatz.
+  2. **P0 — HITL nicht im Datenpfad und unsicher:** `create_gate()` hat
+     keinen Produktionsaufrufer; die Chat-Pipeline liefert weder HTTP 202
+     noch `x-moe-gate-id`. Die Gate-Routen verlassen sich auf nicht gesetzte
+     `request.state.user_id/role`: ein Owner-loses Gate war ohne
+     Authentifizierung freigebbar, während der System-Key ein fremdes Gate
+     nicht freigeben konnte.
+  3. **P0 — Boundary/Cascade nur scheinbar aktiv:** Boundary-Verletzungen
+     werden erkannt, aber `_emit_cascade()` persistiert/emittiert kein
+     Cascade-Event. Der Planner protokolliert Verletzungen und führt
+     ungültige Tasks trotzdem aus. `classify_gap()` wird benutzt,
+     `emit_cascade()`, `resolve_cascade()` und `list_open_cascades()` sind
+     im realen Graphpfad nicht vollständig verbunden. Produktionsdaten:
+     null Cascade-Zeilen und keine Cascade-Keys.
+  4. **P0 — Trust-`BLOCK` blockiert nicht:** Der Graph protokolliert das
+     Verdict, unterdrückt oder ersetzt die Antwort jedoch ausdrücklich
+     nicht. Damit ist das zentrale Abnahmekriterium aus TASK-10 nicht
+     erfüllt.
+  5. **P1 — Structured Failure nicht integriert:** Das vollständige Modul
+     aus TASK-30 ist vorhanden, wird aber weder vom Planner noch vom Judge
+     importiert. Automatische Retries, Fallback-Modell und abschließende
+     `SPEC_GAP`-Cascade finden nicht statt; in der Produktion ist
+     `structured_failure_round > 0` null.
+  6. **P1 — Cynefin wird mit veraltetem State berechnet:** Der Planner
+     klassifiziert vor Rückgabe des gerade ermittelten
+     `complexity_level`/Plans. Auf der ersten Runde sieht Cynefin deshalb
+     typischerweise Default- oder Altwerte; ein späteres Trust-`BLOCK` kann
+     die Erstklassifikation nicht zu `CHAOTIC` machen.
+  7. **P1 — AI-I/O-Audit nur für Judge:** Von allen Modellaufrufen wird nur
+     der native Ollama-Judge instrumentiert. Die Live-Tabelle enthält 112
+     Einträge ausschließlich mit Stage `judge`; das Kriterium „jeder
+     LLM-Call“ aus TASK-29 ist nicht erfüllt.
+  8. **P1 — Modell-Capabilities nur geloggt:** Die Capability-Matrix wird am
+     Judge gelesen, aber `json_schema`/`json_object` und `stream=False`
+     werden nicht durchgängig auf Requests angewendet. Die Hilfsfunktionen
+     für Streaming und JSON-Schema haben keinen produktiven Aufrufer.
+  9. **P1 — Garage/MCP-Dateiupload defekt:** Der S3-Client übergibt die
+     konfigurierte Garage-Region nicht. Garage antwortet deshalb mit
+     `AuthorizationHeaderMalformed` (`us-east-1` statt konfigurierter
+     Region). Der MCP-Aufruf liefert zwar HTTP 200, trägt aber nur den
+     Authentifizierungsfehler im Tool-Ergebnis; der Garage-Healthcheck ist
+     deaktiviert.
+  10. **P1 — HABE-Artefaktpfade widersprechen sich:** Der Rebuild schreibt
+      wegen `np.save("habe_vector.bin", ...)` tatsächlich
+      `habe_vector.bin.npy`, der Laufzeitknoten erwartet
+      `habe_vector.npy`. Ein 942-MB-Vokabular liegt vor, aber kein Artefakt
+      am erwarteten Pfad; ein Scheduler fehlt.
+  11. **P1 — Retrieval-/Lernwartung nicht verdrahtet:**
+      `record_attribution()` hat keinen Produktionsaufrufer,
+      Graph-Decay besitzt nur einen Host-Cron-Kommentar, und Eurisko ist
+      trotz Dokumentation als automatischer Hintergrundprozess nur über
+      einen manuellen Admin-Endpunkt erreichbar.
+  12. **P1 — Request-Timeout/Fehlerbereinigung unvollständig:** Der
+      Planner-Timeout steht standardmäßig auf 300 Sekunden, der
+      Non-Streaming-Graph hat keinen hinreichenden Gesamt-Timeout und räumt
+      bei Ausnahmen die Active-Request-Registrierung nicht zuverlässig auf.
+  13. **P2 — Healthcheck zu oberflächlich:** `/health` gibt immer
+      `{"status":"ok"}` zurück, ohne Postgres, Valkey, Graph-Store oder
+      Modell-Backend zu prüfen.
+  14. **P2 — Web-Search-Fallback/Testlauf instabil:** Der isolierte
+      Fallback-Test wartet zweimal etwa zwölf Sekunden und erhält statt des
+      erwarteten Fallback-Ergebnisses eine leere Liste. Einige
+      Agent-Enrichment-/JMoE-Tests beenden ihre Executor/Event-Loop-Worker
+      nach `PASSED` nicht, wodurch der Gesamtlauf hängt.
+  15. **P2 — Decision-Log-Warnung:** Ohne laufenden Event Loop wird die
+      Kafka-Coroutine erzeugt, aber nicht awaited; das produziert
+      `RuntimeWarning` und kann einen beabsichtigten Publish verlieren.
+  16. **P2 — dokumentierte und ungenutzte Funktionen:** Bestätigte
+      Produktionslücken bestehen u. a. für
+      `pipeline.contracts.parse_plan/parse_verdict`,
+      `dynamic_router.classify_active_experts`,
+      `inference._invoke_council_expert`,
+      `parsing._parse_expert_gaps`,
+      `logic_types.lukasiewicz_tnorm` und `node_load.least_loaded`.
+      Zusätzlich ist die Graph-/MCP-Dokumentation gegenüber dem realen
+      Graph (Strategy Review, Self-Critique, Conflict Resolution) und den
+      58 live registrierten MCP-Tools veraltet.
+- **Ausführungsplan (in dieser Reihenfolge; vor Codeänderungen
+  niedergeschrieben):**
+  1. Container-Quellstand vereinheitlichen, Importpfade absichern,
+     Planner-/Gesamt-Timeouts begrenzen und Active-Request-Cleanup in einen
+     garantierten Fehlerpfad legen.
+  2. Trust-Block und HITL-Gate bis zum HTTP-Vertrag durchverdrahten;
+     Gate-Routen an die echte API-Key-Authentifizierung und Owner/Admin-
+     Autorisierung anbinden.
+  3. Boundary-Verletzungen als echte Cascades persistieren, ungültige Tasks
+     vor Expert-Aufrufen stoppen sowie Cascade-Auflösung und Stuck-Logging
+     in den Replan-/Synthesis-Pfad integrieren.
+  4. Structured-Failure-Recovery an Planner- und Judge-Parsing anbinden und
+     Cynefin erst auf dem aktualisierten State sowie nach Trust-Änderungen
+     klassifizieren.
+  5. AI-I/O-Audit und Modell-Capability-Enforcement in die zentralen
+     Inference-Pfade heben, sodass Planner, Experts und Judge dieselben
+     Regeln erhalten.
+  6. Garage-Region/Health, HABE-Artefaktvertrag und kontrollierte
+     Wartungsjobs für HABE, Attribution, Graph-Decay und Eurisko reparieren.
+  7. Readiness-Checks, Web-Search-Fallback, Decision-Log-Async-Pfad und
+     hängende Testressourcen korrigieren. Bewusst tote oder ersetzte
+     Funktionen entweder an einen belegbaren Produktionspfad anbinden oder
+     entfernen/deprecaten; keine künstlichen Aufrufe nur zur
+     Call-Site-Erzeugung.
+  8. Unit-/Integrations-/Contract-Tests ergänzen, technische Dokumentation
+     auf den belegten Istzustand bringen und die bisherigen
+     `done`-Resolution-Notes dort sichtbar korrigieren, wo die
+     Abnahmekriterien nicht erfüllt waren.
+  9. Betroffene Images neu bauen und reproduzierbar deployen. Danach
+     Container-Imports, Dependency-Readiness, Gate-/Cascade-/Garage-
+     Contracts und einen echten `moe-auto`-End-to-End-Request prüfen.
+  10. Diese Task mit exakten Testzahlen, verbleibenden Risiken und bewusst
+      zurückgestellten Punkten abschließen; bestätigte dauerhafte Ergebnisse
+      in SessionMesh festhalten.
+- **Acceptance criteria:**
+  - Container- und Host-Code stammen nach Deployment aus demselben
+    Worktree-Snapshot; ein automatisierter Import-Symboltest findet keine
+    Host/Container-Abweichung.
+  - Ein kurzer `moe-auto`-Request endet innerhalb des konfigurierten
+    Gesamt-Timeouts mit Antwort oder strukturiertem Fehler, wird immer aus
+    der Active-Request-Liste entfernt und im Audit/Usage-Pfad abgeschlossen.
+  - Trust-`BLOCK` liefert keinen ungekennzeichneten finalen Inhalt.
+    Gate-pflichtige Requests liefern HTTP 202 + Gate-ID; anonyme/fremde
+    Freigabe ist 401/403, Owner/Admin/System-Freigabe funktioniert.
+  - Boundary-Verletzung verhindert den Expert-Call und erzeugt eine offene
+    Cascade; erfolgreicher Replan löst sie, Stuck protokolliert offene IDs.
+  - Planner- und Judge-Parsefehler nutzen begrenzte Structured-Recovery;
+    Cynefin sieht aktuelle Complexity-/Trust-Werte.
+  - Audit enthält mindestens Planner-, Expert- und Judge-Stages; Capability-
+    Flags verändern nachweislich den ausgehenden Request.
+  - Garage-Dateiupload und HABE-Load verwenden die konfigurierten,
+    identischen Verträge; `/ready` wird bei Ausfall einer
+    Pflichtabhängigkeit unready.
+  - Der vollständige automatisierte Testlauf beendet sich selbstständig;
+    verbleibende externe Modell-/Netzabhängigkeiten sind getrennt markiert.
+  - Dokumentation nennt keine Funktion als produktiv, wenn der zugehörige
+    Live-/Contract-Test fehlt.
+- **Resolution notes (2026-07-28, Codex CLI):**
+  - **Plan vollständig abgearbeitet:** Die zehn vor der Implementierung
+    notierten Schritte wurden in der angegebenen Reihenfolge umgesetzt. Der
+    Orchestrator wird jetzt als kohärentes Image ohne partiellen
+    `services/`-Quellmount betrieben; Gesamtbudget, Timeout-Fehlervertrag,
+    Usage-Logging und Active-Request-Cleanup liegen im realen
+    Non-Streaming-Pfad. Trust/HITL, Boundary/Cascade, Structured Recovery,
+    aktuelles Cynefin, Capability-Enforcement und das finale Quality Gate
+    sind an Graph und HTTP-Transport angeschlossen.
+  - **Keine künstlichen Call-Sites:** Die zuvor belegten toten Funktionen
+    wurden entweder fachlich angebunden oder entfernt. Produktiv angebunden
+    sind insbesondere `parse_plan`, `_parse_expert_gaps`,
+    `lukasiewicz_tnorm`, der modellabhängige Retry-Resolver, Retrieval-
+    Attribution und Node-Load-Tracking. Entfernt wurden unter anderem
+    `parse_verdict`, `classify_active_experts`, `_invoke_council_expert`,
+    `least_loaded`, redundante Cascade-/Pipeline-Wrapper und nicht
+    implementierte HABE-Hierarchie-/Virtual-Prefix-Methoden.
+  - **Trust/HITL live:** Das Quality Gate leert bei `BLOCK` den Inhalt; eine
+    erforderliche, aber nicht speicherbare Freigabe blockiert ebenfalls.
+    Ein realer Gate-Durchlauf im neu gebauten Container ergab anonym
+    `401`, mit Systemidentität `GET 200`, `approve 200` und anschließend
+    Status `approved`. Fremdnutzer-/Owner-Regeln sind zusätzlich durch
+    Contract-Tests abgedeckt. Non-Streaming liefert für ein Gate `202` plus
+    `X-MoE-Gate-Id`; blockierte Antworten liefern `422`. Streaming sendet
+    nur das Gate-/Block-Kontrollereignis, nicht den Antwortentwurf.
+  - **Boundary/Cascade/Structured/Cynefin:** Planner-Vertragsverletzungen
+    verhindern den Expert-Dispatch und erzeugen echte offene Cascades.
+    Replan/Synthesis lösen sie oder protokollieren verbliebene IDs.
+    Planner- und Synthesis-Parsing verwenden begrenzte strukturierte
+    Wiederholungen und konfigurierte Fallback-Modelle. Cynefin wird nach
+    aktueller Complexity und nochmals nach dem finalen Trust-Verdict
+    berechnet.
+  - **AI-I/O-Audit und Capabilities:** Planner, Expert, Judge,
+    Background-Judge, lokaler GGUF-Planner und Guard teilen jetzt einen
+    vollständigen Audit-Lifecycle. Ein Request-Timeout schließt den Eintrag
+    auch bei `asyncio.CancelledError` als `error`, ohne die Cancellation zu
+    verschlucken. Der Container-/Postgres-Nachweis lieferte auf dem finalen
+    Image `guard/error/task35-guard-audit-final`; zusätzlich lieferte der
+    Abbruchtest `expert/error/task35-cancel-audit-live`. Die bestehende
+    Tabelle enthielt außerdem 90 abgeschlossene und 24 fehlerhafte
+    Judge-Aufrufe sowie sechs Planner-Fehler.
+    JSON-/Streaming-Fähigkeiten und maximale
+    Planner-/Judge-/Expert-Ausgaben verändern bzw. begrenzen nun den
+    tatsächlich ausgehenden Request.
+  - **Speicher und Lernwartung:** Der Garage-Client verwendet die
+    konfigurierte Region; ein echter MCP-`file_upload` war erfolgreich und
+    Garage ist `healthy`. MCP meldet 58/58 aktivierte Tools einschließlich
+    `file_upload`. HABE schreibt und lädt einheitlich
+    `models/habe_vector.npy`, atomar und fail-safe. Der laufende
+    Maintenance-Scheduler holte 15.855 Neo4j-Tripel, band sie in 20.206
+    Vokabulareinträge ein, schrieb das erwartete Artefakt und beendete den
+    HABE-Job in 67,986 s mit Exit 0. Graph-Decay lief als Dry-Run mit Exit 0;
+    Eurisko bleibt bewusst opt-in. Synthesis ruft Retrieval-Attribution
+    nach tatsächlich gelieferten Graph-Chunks auf.
+  - **Readiness und Async-Ressourcen:** `/ready` prüft den kompilierten
+    Graphen, Valkey und Nutzerdatenbank als Pflichtabhängigkeiten sowie
+    Neo4j, MCP und Chroma als optionale Checks. Web-Fallback,
+    Agent-Enrichment und Decision-Log benutzen begrenzte, sauber
+    abgeschlossene Async-Pfade; der vollständige Testprozess hängt nicht
+    mehr.
+  - **Statische Erreichbarkeitsprüfung:** Der letzte alias-aware AST-/Call-
+    Site-Lauf über 162 Runtime-/Ops-Python-Dateien untersuchte 1.908
+    Definitionen und ließ 33 Nullreferenz-Kandidaten übrig. Diese Restmenge
+    wurde nicht durch Scheinaufrufe „grün“ gemacht. Sie besteht aus
+    Framework-/Protokoll-Callbacks (`dispatch` fünfmal, `forward`,
+    `on_step_end`, `embed_query`, `embed_documents`), eigenständig
+    aufrufbaren Skript-/Service-Schnittstellen sowie derzeit nicht intern
+    belegten Admin-/Federation-APIs:
+    `_prom_range`, `_get_global_server_names`, `log_usage`,
+    `get_admin_template`, `delete_admin_template`,
+    `get_federation_policy`, `create_outbox`, `get_outbox`,
+    `update_outbox`, `get_tenant`, `_set_run_status`, `handshake`,
+    `get_manual_domains`, `push_knowledge`, `pull_knowledge`,
+    `append_decision`, `assert_proven`, `_get_avg_duration`,
+    `fetch_local_models`, `format_prompt`, `retrieve`,
+    `save_reference_set`, `is_enabled` und `set_feature_enabled`.
+    Wegen dynamischer Framework-Aufrufe bzw. möglicher externer API-Nutzung
+    ist „keine statische Referenz“ kein sicherer Löschbeweis. Diese
+    Funktionen werden daher ausdrücklich **nicht als produktiv
+    end-to-end-verifiziert** behauptet; eine Entfernung benötigt zuerst
+    Zugriffstelemetrie bzw. eine API-Deprecation.
+  - **Automatisierte Abnahme:** `python3 -m pytest -q` beendet sich mit
+    **619 passed in 4.10s**. Zusätzlich bestanden Compileall, der separate
+    Komplexitäts-Integrationstest (5/5), `docker compose config --quiet`
+    (nur erwartete, nicht zu TASK-35 gehörende leere Authentik-Variablen)
+    und `git diff --check` unter Ausschluss der bereits vorher
+    whitespace-behafteten Nutzerdatei
+    `eurohpc_lumi_activity_report.md`.
+  - **Deployment und Live-Abnahme:** `langgraph-orchestrator` läuft
+    `healthy` auf Image
+    `sha256:4d7841d2724877ce6005bc95b6288f6e137493aec2127a3a7292c790231c2070`.
+    SHA-256 von `main.py`, `tool_injector.py`,
+    `services/hitl_gate.py`, `services/inference.py`,
+    `services/pipeline/chat.py` und
+    `graph/router_nodes.py` stimmen zwischen Host und Container überein.
+    `/ready` meldet alle sechs Prüfungen positiv. MCP, Garage,
+    Maintenance, Neo4j, Valkey, Postgres und Chroma liefen bei der
+    Abschlussprüfung ebenfalls `healthy`.
+  - **Echter `moe-auto`-Request:** Der finale Non-Streaming-Lauf
+    `chatcmpl-ec1126c0-0df6-4338-8752-426014013a75` endete nach
+    **300,122 s** mit strukturiertem HTTP 504
+    (`timeout_error`, `orchestration_timeout`, Request-ID im Fehlerobjekt).
+    Der Active-Key war danach entfernt; `usage_log` enthielt Status
+    `timeout`, Modell `moe-auto`, 300.001 ms und null Completion-Tokens.
+    Damit ist der Fehler-/Cleanup-Vertrag erfüllt, nicht jedoch ein
+    erfolgreicher Antwortnachweis unter der beobachteten Last.
+  - **Verbleibende, offen ausgewiesene Betriebsrisiken:** Der konfigurierte
+    Guard belegte beim echten E2E 120 s lang ein stark ausgelastetes lokales
+    Backend und lief dann gemäß bewusster Policy fail-open; dem Planner
+    verblieb im 300-s-Gesamtbudget nicht genug Kapazität. Gleichzeitig
+    liefen weitere Qwen-3.6-Anfragen auf den Inferenzknoten. Das ist kein
+    unbeschränkter Code-Hänger mehr, aber ein reales Capacity-/SLO-Problem:
+    Vor einer Erfolgs-SLO-Abnahme sind Guard-/Planner-Reservierung,
+    kürzerer Guard-Timeout oder ein dauerhaft warmes separates
+    Guard-Backend nötig. Graph-Decay meldet außerdem erwartete Neo4j-
+    Hinweise, solange ältere Chunks noch keine `last_hit`-/Attributions-
+    Properties besitzen. Die 33 statisch nicht belegten öffentlichen oder
+    dynamischen Schnittstellen bleiben bis zu Telemetrie/Deprecation als
+    gesonderte Inventarliste bestehen. Ein Clean-Build hat außerdem gezeigt,
+    dass mehrere Python-Abhängigkeiten in `requirements.txt` nur mit offenen
+    Mindestversionen spezifiziert sind. Das finale Image ist gesund und
+    importierbar, aber bitgenaue Reproduzierbarkeit erfordert künftig eine
+    gepflegte Constraints-/Lock-Datei und einen separaten
+    Dependency-Upgrade-Testlauf.
+
+---
+
+### TASK-36: Restbaustellen schließen und Wirksamkeit unter realer Inferenzlast nachweisen
+
+- **Status:** done (2026-07-29, Codex CLI)
+- **Owner:** Codex CLI
+- **Depends on:** TASK-35
+- **Context:** TASK-35 hat den Orchestrator funktional kohärent gemacht, bei
+  der Live-Abnahme aber drei bewusst offene Restklassen ausgewiesen:
+  (1) Der Guard belegte ein gemeinsam genutztes Ollama-Backend bis zu 120 s
+  und ließ dem Planner im 300-s-Gesamtbudget keine verlässlich nutzbare
+  Kapazität; der reale `moe-auto`-Request endete deshalb korrekt bereinigt,
+  aber ohne Antwort. (2) Das Image wurde aus offenen Mindestversionen gebaut,
+  obwohl eine veraltete Lock-Datei im Repository lag und vom Dockerfile nicht
+  verwendet wurde. (3) 33 statische Nullreferenz-Kandidaten blieben
+  absichtlich ungeklärt. Eine erneute lokale Prüfung am 2026-07-29 bestätigte,
+  dass Guard und Planner auf demselben Host laufen und weder
+  `llama-guard3:8b` noch `qwen3-planner:q4km` warm geladen waren. Das
+  produktive Image selbst ist weiterhin healthy und `/ready` positiv.
+- **Vor Implementierung verifizierte Einordnung der Restkandidaten:**
+  - **Dynamische Verträge, keine tote Implementierung:** fünf
+    ASGI-`dispatch`-Methoden, Chroma-`embed_query`/`embed_documents`,
+    Torch-`forward` und der als Trainer-Callback registrierte
+    `on_step_end`. Diese werden durch Frameworks oder Protokolle anhand
+    ihres Namens aufgerufen und brauchen einen expliziten, getesteten
+    Runtime-Entry-Point-Vertrag statt künstlicher Python-Call-Sites.
+  - **Öffentliche/HTTP-/CLI-Einstiegspunkte:** Federation `push_knowledge`
+    und `pull_knowledge` werden über die Admin-HTTP-Routen fachlich
+    ausgeführt; Federation-Clientmethoden wie `handshake` sind öffentliche
+    Protokolloperationen. Die Reference-Set-Datei wird durch das
+    Regressionsskript gelesen und darf als betreiberverwaltetes Artefakt
+    weiterhin extern geschrieben werden. Solche Schnittstellen werden
+    als öffentliches Contract-Inventar geprüft, nicht nur anhand interner
+    Namensreferenzen bewertet.
+  - **Echte tote Duplikate/Legacy-Helfer:** `_prom_range`,
+    `_get_global_server_names`, `log_usage`, `get_admin_template`,
+    `delete_admin_template`, `_set_run_status`, `fetch_local_models`,
+    `format_prompt` und der redundante `context_index.retrieve`-Wrapper
+    besitzen aktuelle, bereits verdrahtete Ersatzpfade. Diese werden nach
+    erneutem Referenzcheck entfernt.
+  - **Echte Halbverdrahtungen:** `routes/admin_rlsf.py` importiert
+    `is_enabled`, prüft den Schalter vor dem Start aber nicht;
+    `set_feature_enabled` besitzt keinen Orchestrator-Schreibendpunkt;
+    das Gap-Healer-Timing wird geschrieben, aber nicht gelesen;
+    `ConstructiveProof.assert_proven` wird als aktiv dokumentiert, ohne an
+    einer Entscheidungsgrenze verwendet zu werden. Diese Pfade werden
+    entweder funktional geschlossen oder in Dokumentation und Code
+    eindeutig als nicht produktiv entfernt/abgestuft.
+- **Ausführungsplan (vor der ersten Codeänderung niedergeschrieben):**
+  1. Den Guard-Aufruf kapazitätsschonend machen: kurzer, begrenzter
+     Warmzustands-Probe auf Ollama `/api/ps`, standardmäßig nur einen bereits
+     geladenen Guard aufrufen, Cold-Miss/Providerfehler als explizites
+     `fail_open` auditieren und den Guard-Timeout auf ein SLO-taugliches
+     Budget begrenzen.
+  2. Den bestehenden trivialen Planner-Fast-Path standardmäßig aktivieren,
+     aber durch eine konservative Eligibility-Regel vor Rechen-, Rechts-,
+     Aktualitäts-, Recherche-, Datei-/Bild- und fortgesetzten Chat-Aufgaben
+     schützen. Dadurch darf nur ein eindeutig einfacher Prompt direkt an
+     den warmen General-Expert gehen.
+  3. Die Nullreferenz-Restmenge schließen: bestätigte Legacy-Duplikate
+     entfernen, den RLSF-Schalter tatsächlich erzwingen, Feature-Toggles
+     über einen authentifizierten Orchestrator-Endpunkt verdrahten,
+     write-only Gap-Timing entfernen und dynamische/öffentliche
+     Einstiegspunkte in einem importierbaren Contract-Manifest registrieren.
+     Nicht ausgeführte Intuitionistik darf nicht länger als aktive
+     Executor-Garantie dokumentiert sein.
+  4. Die aktuelle, funktionierende Container-Umgebung als vollständig
+     versionsgepinnten Lock-Satz festschreiben, das Dockerfile ausschließlich
+     daraus installieren lassen und das Python-Basisimage per Digest binden.
+     `pip check` und Importtests bleiben Teil der Image-Abnahme.
+  5. Unit-/Contracttests für Guard-Warm/Cold/Error/Cancellation,
+     Fast-Path-Zulässigkeit, RLSF-/Feature-Schalter und Runtime-Entry-Points
+     ergänzen; anschließend gesamten Pytest-Lauf, Compileall,
+     `git diff --check`, Compose-Konfiguration und einen statischen
+     Referenzlauf ausführen.
+  6. Ein sauberes Image aus dem festgeschriebenen Dependency-Satz bauen,
+     deployen und Host-/Container-Quellen sowie `/ready` verifizieren.
+     Danach mindestens einen echten kurzen `moe-auto`-Request messen. Die
+     Wirksamkeit gilt nur als belegt, wenn der Guard den kalten 8B-Swap
+     vermeidet, der Request innerhalb des Budgets eine Antwort liefert,
+     Active-Request-Cleanup/Usage/Audit abgeschlossen sind und
+     sicherheits- oder werkzeugrelevante Prompts den Fast-Path nicht nehmen.
+  7. Exakte Messwerte, Testzahlen, Image-ID und etwaige verbleibende externe
+     Kapazitätsrisiken hier und im Agent-Status dokumentieren; bestätigte
+     dauerhafte Entscheidungen/Aufgaben in SessionMesh festhalten.
+- **Acceptance criteria:**
+  - Ein kalter Guard führt zu keinem Guard-Modell-POST und benötigt nur das
+    begrenzte Probe-Budget; Audit und Graph-Stage kennzeichnen den Zustand
+    als `fail_open`, nicht fälschlich als bestanden. Ein warmer Guard bleibt
+    voll funktionsfähig; Cancellation wird weitergereicht und auditiert.
+  - Ein einfacher, deterministisch unkritischer Prompt umgeht den Planner;
+    Rechen-, Rechts-, aktuelle/recherchebedürftige, Datei-/Bild- und
+    Mehrturn-Prompts tun dies nachweislich nicht.
+  - Jeder verbleibende statische Nullreferenz-Kandidat ist entweder entfernt,
+    fachlich aufgerufen oder als getesteter dynamischer/öffentlicher
+    Einstiegspunkt inventarisiert. Ein deaktivierter RLSF-Loop lässt sich
+    nicht über den Trigger starten; bekannte Starfleet-Features sind über
+    einen abgesicherten Schreibpfad schaltbar.
+  - Docker installiert einen vollständigen, exakten Lock-Satz auf einem
+    digest-gepinnten Basisimage; `pip check`, Compile-/Importprüfung und
+    gesamter Testlauf sind grün.
+  - Das neue Live-Image ist healthy und `/ready` positiv. Ein realer kurzer
+    `moe-auto`-Request liefert innerhalb des Gesamtbudgets eine Antwort
+    (nicht nur einen strukturierten Timeout), hinterlässt keinen Active-Key
+    und besitzt abgeschlossene Usage-/AI-I/O-Auditdaten.
+
+- **Umgesetzte Auflösung:**
+  - Der Guard besitzt jetzt einen kurzen `/api/ps`-Warmzustands-Probe,
+    `GUARD_WARM_ONLY=true` als sicheren Betriebsstandard, ein eigenes
+    15-s-Budget und explizite `fail_open`-/Fehler-/Cancellation-Audits. Ein
+    kalter `llama-guard3:8b` wird im normalen Pfad nicht mehr in das mit
+    Experten geteilte Backend geladen.
+  - Eine gemeinsame, konservative Eligibility-Regel in
+    `services/trivial_fast_path.py` steuert sowohl den HTTP-Preflight als
+    auch den Planner-Fast-Path. Sie sperrt unter anderem Rechen-, Rechts-,
+    Recherche-, Aktualitäts-, Datei-/Bild-, Tool-, Systemprompt-,
+    Mehrturn- und explizite Expertenaufgaben. Nur ein entsprechend
+    markierter Pfad darf das einzelne Expertenergebnis direkt übernehmen.
+    Quality Gate und Constitution Enforcement bleiben dabei aktiv; ein
+    Konflikt hebt die Fast-Path-Vertrauensfreigabe auf.
+  - Der Fast-Path propagiert die tatsächlichen Skip-/Tier-/Cynefin-Signale
+    bis zur Synthese. Refinement, Thinking und Judge werden bei dem
+    verifizierten Einzelexperten nicht mehr versehentlich nachgestartet.
+    Der resultierende Trust-Score wird auch im direkten Rückgabepfad
+    vollständig in Usage und Antwortzustand geschrieben.
+  - Bestätigte Legacy-Duplikate wurden entfernt. RLSF erzwingt seinen
+    Feature-Schalter nun auf Route-, Service- und CLI-Ebene.
+    Starfleet-Featureänderungen besitzen einen authentifizierten
+    Schreibendpunkt. Federation-Handshake, manueller Outbox-Push,
+    periodischer Auto-Push und Admin-UI sind fachlich verdrahtet.
+    Schreib-only Gap-Timing wurde entfernt und die nicht produktiv
+    ausgeführte Intuitionistik eindeutig als Forschung statt
+    Executor-Garantie dokumentiert.
+  - Die zuvor 33 offenen dynamischen/öffentlichen Kandidaten sind jetzt
+    entweder gelöscht, an einen realen Aufrufpfad angebunden oder als
+    Framework-, HTTP-, CLI- bzw. Betreibervertrag in
+    `configs/runtime_entrypoints.json` erfasst. Contract- und
+    Reachability-Tests prüfen, dass Manifest und importierbarer Runtime-Code
+    nicht auseinanderlaufen.
+  - `requirements.lock.txt` enthält den vollständigen exakten Satz von 148
+    Anwendungsabhängigkeiten. Das Dockerfile installiert ausschließlich
+    diesen Satz und bindet das Python-Basisimage per Digest.
+
+- **Wirksamkeitsnachweis und Abnahme:**
+  - Vollständiger finaler Testlauf: **669 passed in 3,46 s**. Die gezielten
+    Guard-/Fast-Path-/Trust-Tests liefen zusätzlich mit **49 passed**.
+    `py_compile`/`compileall`, Compose-Konfiguration, Diff-Check,
+    Runtime-Entry-Point- und Dependency-Lock-Prüfung sind grün.
+  - Das finale Image
+    `sha256:286a5752e829e3dff0366f4faa3791f20a7d603bfd3546feef34d33c7e4e53f9`
+    ist healthy; `/ready` meldet Graph, Valkey, User-DB, Neo4j, MCP und
+    Chroma positiv. `pip check` meldet keine defekten Anforderungen; 148
+    Lock-Einträge stimmen exakt mit der Laufzeit überein, neben den drei
+    erwarteten Bootstrap-Paketen `pip`, `setuptools` und `wheel`.
+  - Derselbe echte, cachefreie `moe-auto`-Prompt
+    „Antworte ausschließlich mit: OK“ lief vor der Korrektur in
+    **300,108 s** in den Gesamt-Timeout. Der finale Lauf
+    `chatcmpl-c71fab5f-518b-42fd-a64c-3b3f4d6a3663` antwortete mit HTTP 200
+    und exakt `OK` in **10,27 s** warm beziehungsweise **10 224 ms** laut
+    persistierter Usage. Das ist eine Reduktion um rund **96,6 %** bzw.
+    der **29,2-fache Durchsatz** für diesen reproduzierten Probe-Request.
+    Ein kalter Expert-Start wurde separat erfolgreich in **149,464 s**
+    abgeschlossen und blieb ebenfalls unter dem 300-s-Budget.
+  - Die Live-Stagefolge war
+    `guard fail_open_not_warm → planner fast_path → fuzzy_router →
+    expert → merger verified_single_expert → quality_gate passed`.
+    Es gab keinen Planner-, Judge-, Thinking- oder Self-Critique-
+    Inferenzaufruf und keinen Guard-Modell-POST. Der Active-Key war nach
+    Abschluss entfernt. Usage enthält `status=ok`,
+    `complexity_level=trivial`, `cynefin_domain=CLEAR`,
+    `trust_score=0.65`, `trust_verdict=PROCEED` und
+    `self_critique_round=0`; die Guard- und Experten-AI-I/O-Audits sind
+    abgeschlossen.
+  - Als bewusst verbleibende Betriebsoptimierung braucht ein kalter
+    35B-Experte weiterhin rund 149 s Lade-/Antwortzeit. Das ist kein
+    Funktions- oder SLO-Blocker für das aktuelle 300-s-Budget, sollte aber
+    durch ein passendes dauerhaft warmes Tier-1-Modell reduziert werden.
+    Bestehende nicht-blockierende Hinweise betreffen außerdem das
+    selbstsignierte NiFi-Zertifikat, nicht gesetzte optionale
+    Authentik-Compose-Variablen und eine Upstream-Deprecation aus
+    `langchain-community`; sie beeinflussten die Abnahme nicht.
+
+### TASK-37: Native Qwen3.6 gegen horndev-Expert-Template end-to-end vergleichen
+
+- **Priority:** high
+- **Owner:** Codex CLI
+- **Status:** done (Benchmark und Ursachenanalyse; Optimierungen in TASK-38)
+- **Scope:** Realer, cachefreier Vergleich von
+  `qwen3.6:35b@N04-RTX` und dem privaten horndev-Template
+  `moe-n04-rtx-qwen3.6:35b-256k` über dieselbe OpenAI-kompatible API,
+  einschließlich Ground-Truth-Prüfung, Stage-/Audit-Auswertung und
+  Nachweis, welche konfigurierten Implementierungen tatsächlich liefen.
+- **Sicherer Testzugang:**
+  - Der vorhandene Benchmark-Schlüssel gehört technisch dem Benutzer
+    `philipp` und war für das private horndev-Template korrekt nicht
+    autorisiert. Ein gleichnamiges Admin-Template ist eine andere, nahezu
+    leere Konfiguration und wurde nicht ersatzweise getestet.
+  - Nach ausdrücklicher Benutzerfreigabe wurde ein kurzlebiger,
+    horndev-gebundener Benchmark-Schlüssel erzeugt, in Valkey
+    synchronisiert und ausschließlich in einer Datei mit Modus `0600`
+    unter `/tmp` gehalten. Nach dem Test wurde er in der User-DB
+    widerrufen, der Cache invalidiert, der Benutzer neu synchronisiert und
+    die Datei sicher gelöscht. Ein abschließender API-Probeaufruf erhielt
+    erwartungsgemäß HTTP 401; der Schlüssel ist in der DB inaktiv.
+  - Für den Kaltstart-Test betrug der Client-Timeout 3600 s. Der
+    Orchestrierungs-Timeout wurde temporär von 300 auf 900 s
+    verdreifacht. Nach dem Test wurde der produktive Wert 300 s
+    wiederhergestellt und der Container neu erzeugt.
+- **Identischer Testprompt:**
+  - Vier unabhängig prüfbare Teilaufgaben: ggT von 391 und 299, exakte
+    Umrechnung von 72 km/h in m/s, deutscher Wochentag für den
+    29.07.2026 und SQL-Injection-Prüfung samt parametrisierter
+    `cursor.execute`-Ersatzzeile.
+  - Ausgabevorgabe: ausschließlich ein JSON-Objekt mit sechs exakt
+    benannten Feldern und kurzen Prüfnachweisen; `temperature=0`,
+    `max_tokens=1200`, `no_cache=true`.
+  - Unabhängig mit Python-Standardbibliothek bestätigte Ground Truth:
+    `gcd=23`, `speed_m_s=20`, `weekday_de="Mittwoch"` sowie
+    SQL-Injection durch String-Konkatenation und eine parametrisierte
+    SQLite-Abfrage.
+- **Natives Ergebnis:**
+  - Request `chatcmpl-688e5a11-117f-4d41-b041-67c32ff59c0b`: HTTP 200
+    nach 14,062 s, syntaktisch gültiges JSON.
+  - Nur 2 von 4 fachlichen Teilaufgaben waren korrekt. Geschwindigkeit und
+    SQL-Prüfung stimmten; `gcd=29` statt 23 und `Freitag` statt
+    `Mittwoch` waren falsch.
+  - Der ausgegebene ggT-Nachweis war zusätzlich halluziniert:
+    `391 = 29 * 17` und `299 = 29 * 13` sind beide falsch. Die verlangte
+    Selbstverifikation verhinderte die Fehler somit nicht.
+  - Usage wurde mit 195 Prompt-, 254 Completion- und 449 Gesamttokens
+    persistiert. Für den nativen Pfad fehlen jedoch `latency_ms` und ein
+    AI-I/O-Auditdatensatz.
+- **Expert-Template-Ergebnis:**
+  - Request `chatcmpl-98bdbd74-988c-4c10-8c56-0c6c84a9769f`: öffentlich
+    HTTP 504 nach 900,017 s. Das Template lieferte daher trotz höherer
+    interner Fachqualität kein nutzbares API-Ergebnis.
+  - Der interne Thinking-Kandidat enthielt alle vier korrekten Antworten
+    (`23`, `20`, `Mittwoch`, SQL-Injection samt parametrisierter Abfrage).
+    Er wurde aber nicht ausgeliefert: Der Trust-Score von 0,035 blockierte
+    die erste Synthese; ein zweiter Judge-/Merger-Aufruf wurde beim
+    Erreichen des Gesamtbudgets abgebrochen.
+  - Gemessene AI-I/O-Dauer entlang des kritischen Pfads:
+    Guard-Warmprobe 0,016 s, nativer Planner-Fehlversuch 180,015 s,
+    Planner-Fallback 289,887 s, Code-Reviewer 70,841 s, Thinking-Judge
+    260,267 s und abgebrochener zweiter Judge 96,577 s. Allein der Planner
+    verbrauchte damit etwa 470 s beziehungsweise mehr als 52 % des
+    verdreifachten Gesamtbudgets.
+  - Der Planner-Fallback verbrauchte 16.490 Eingabetokens und
+    308 Ausgabetokens; Code-Reviewer 1.060/2.867 und Thinking-Judge
+    472/5.726. Trotz dieser belegten internen Nutzung enthält die
+    persistierte Timeout-Usage 0 Tokens und keine Complexity-, Trust-,
+    Cynefin- oder Expert-Domain-Werte.
+- **Tatsächlich ausgeführte Implementierungen:**
+  - Ausgeführt wurden private Template-Auflösung, Guard-Warmprobe
+    (`fail_open_not_warm` ohne Modellinferenz), L0/L1-Cacheprüfung,
+    heuristische Complexity- und Cynefin-Klassifikation, Planner samt
+    Fallback, Definition-of-Ready-Prüfung, Fuzzy Router, GraphRAG,
+    Code-Reviewer-Expert, Thinking-Judge, Trust-Score und der Beginn der
+    Merger-/Judge-Schleife. Active-Request-Cleanup und einzelne
+    AI-I/O-Audits wurden korrekt abgeschlossen.
+  - Nicht ausgeführt wurden die drei geplanten MCP-Präzisionswerkzeuge.
+    Der Planner erzeugte für ggT, Einheitenumrechnung und Datum jeweils
+    `precision_tools` ohne `mcp_tool` und `mcp_args`. Definition of Ready
+    protokollierte dies nur als Fehler. Der MCP-Knoten akzeptiert allein
+    Tasks mit `mcp_tool`, während der Expert-Knoten
+    `precision_tools` ausschließt; alle drei Teilaufgaben verschwanden
+    dadurch still aus der Ausführung.
+  - Die übrigen konfigurierten Experten, Web Research,
+    Self-Critique, Quality Gate, Constitution Enforcement, Antwort-Cache-
+    Schreibpfad und finale Wissensaufnahme liefen nicht. Web Research und
+    Agent-Tool-Erweiterungen waren für diesen Prompt beziehungsweise einen
+    normalen Chat ohne Client-Tools nicht erforderlich; die finalen
+    Qualitätsschritte wurden dagegen ausschließlich durch den Timeout
+    verhindert.
+  - `no_cache=true` überspringt im aktuellen Router nur L0, führt aber
+    dennoch eine Chroma-L1-Abfrage aus. Ein Treffer würde nicht verwendet,
+    die teure Abfrage findet jedoch trotzdem statt.
+  - GraphRAG lieferte 666 Zeichen, die der interne Judge selbst als
+    irrelevant einstufte. Trotzdem setzte dieser Kontext `aux_context`,
+    beeinflusste den Gate-Pfad und lieferte keine verwertbare Provenienz.
+- **Konfigurations- und Produktbefunde:**
+  - Alle acht vermeintlich unterschiedlichen Experten des Templates
+    verwenden dasselbe `qwen3.6:35b@N04-RTX` mit 262.144 Kontexttokens;
+    sie unterscheiden sich nur durch Systemprompts. Das ist Policy-,
+    nicht Modelldiversität.
+  - Planner- und Judge-Prompt nennen für Mathematik noch
+    `phi4:14b@N04-RGTX` und für Creative Writing
+    `qwen3.6:35b-spec@N04-RTX`, obwohl beide Rollen tatsächlich das
+    normale Qwen-Modell nutzen. Diese Prompt-/Konfigurationsdrift kann
+    falsche Routingannahmen erzeugen.
+  - Der kurze 195-Token-Request erhielt auf Planner-Ebene einen
+    262k-Kontext und 16.490 Eingabetokens. Zudem begrenzte das
+    Client-`max_tokens=1200` die internen Ausgaben nicht; Expert und Judge
+    erzeugten 2.867 beziehungsweise 5.726 Tokens.
+  - Gleichnamige Templates existieren für horndev, Commander1024 und als
+    Admin-Template. Die API autorisiert korrekt per Template-ID, die
+    gleichnamige Anzeige ohne explizites Sharing-/Grant-Modell erschwert
+    jedoch Betrieb und Benchmarking.
+  - Nach dem Timeout war auf N04 kein Modell mehr resident. Planner,
+    Expert und Judge mit großen Kontexten konkurrieren seriell um dieselbe
+    GPU und verursachen Kaltstart-/Swap-Risiko.
+- **Vergleichsurteil:**
+  - Native Ausführung gewinnt Verfügbarkeit und Laufzeit (HTTP 200 in
+    14,062 s), scheitert aber an elementarer Faktengenauigkeit und
+    halluziniert ihren eigenen Prüfnachweis.
+  - Das Expert-Template gewinnt nur bei der internen Kandidatenqualität
+    (4/4 korrekt), verliert end-to-end aber vollständig, weil nach
+    900,017 s kein Ergebnis an den Client ausgeliefert wurde. Das ist
+    deshalb noch kein wirksamer Qualitätsgewinn für den API-Nutzer.
+  - Der Test belegt, dass „definiert“ nicht „verwendet“ bedeutet:
+    Insbesondere Precision/MCP, mehrere Experten und die finalen
+    Qualitätsschritte waren im relevanten Request nicht durchgängig
+    erreichbar.
+- **Abnahme und Wiederherstellung:**
+  - Der temporäre horndev-Schlüssel ist widerrufen und aus `/tmp`
+    entfernt; das Secret wurde weder in Repository-Dateien noch in diesem
+    Lastenheft persistiert.
+  - `ORCHESTRATION_TIMEOUT=300` ist wieder aktiv.
+    `langgraph-orchestrator` ist healthy; `/ready` meldet
+    Orchestration Graph, Valkey, User-DB, Neo4j, MCP Precision und Chroma
+    positiv. Der Active-Request des Timeout-Laufs ist entfernt und alle
+    begonnenen AI-I/O-Audits sind terminal.
+
+### TASK-38: Expert-Template-Pfad korrekt, budgetiert und beobachtbar machen
+
+- **Priority:** critical
+- **Owner:** Codex CLI
+- **Status:** done (2026-07-31, Codex CLI; Restoptimierungen unten)
+- **Goal:** Die im TASK-37 reproduzierten Ausführungslücken so schließen,
+  dass ein kurzer, deterministisch prüfbarer Mehrfachprompt innerhalb des
+  normalen 300-s-Budgets ein vollständiges, belegtes Ergebnis liefert.
+- **Vor Umsetzung niedergeschriebener Auflösungsplan:**
+  1. **P0 – Precision-Tasks reparieren:** Planner-Vertrag um erforderliche
+     `mcp_tool`-/`mcp_args`-Felder und Schema-Validierung ergänzen.
+     Fehlende Felder müssen genau einen begrenzten Repair-/Replan-Versuch
+     auslösen; danach expliziter strukturierter Fehler oder bewusster
+     Expert-Fallback statt stillem Task-Verlust. Reachability- und
+     Integrationstest für gemischte Precision-/Expert-Pläne ergänzen.
+  2. **P0 – ein Gesamtbudget durchreichen:** Eine monotone Deadline und
+     Restbudget an Planner, Fallback, Expert, Thinking und Merger
+     propagieren. Native- und kompatible Planner-Pfade dürfen nicht jeweils
+     ein neues Vollbudget erhalten; SDK-Retries müssen im selben Budget
+     liegen. Stufenbudgets und Mindestrestzeit vor Folgestufen erzwingen.
+  3. **P0 – korrekten Kandidaten retten:** Thinking und Merger entweder in
+     einem Judge-Aufruf konsolidieren oder einen bereits validierten
+     Thinking-Kandidaten bei auslaufendem Merger-Budget als klar markiertes
+     degradiertes Ergebnis ausgeben. Ein zweiter Judge darf nicht
+     ungebremst denselben teuren Pfad wiederholen.
+  4. **P0 – Trust/Provenienz korrigieren:** MCP-Ergebnisse als
+     nachvollziehbare Quellen in den Trust-Score übernehmen,
+     deterministische Rechnachweise strukturiert prüfen und irrelevanten
+     GraphRAG-Kontext nicht als hilfreiche Quelle beziehungsweise
+     `aux_context` werten.
+  5. **P1 – Token und Kontext begrenzen:** Kurze Requests mit
+     16k-/32k-Kontext planen; 262k nur nach belegtem Bedarf aktivieren.
+     Client- und Template-Ausgabebudgets bis Expert/Judge propagieren,
+     Planner-Prompt komprimieren und doppelte/stale Expertentabellen
+     entfernen.
+  6. **P1 – unnötige Arbeit überspringen:** Bei `no_cache=true` vor der
+     L1-Abfrage zurückkehren. GraphRAG nur oberhalb einer
+     Relevanz-/Provenienzschwelle einspeisen. Thinking bei vollständigen,
+     deterministisch validierten Precision-Ergebnissen und einem engen
+     Code-Review nicht obligatorisch nachstarten.
+  7. **P1 – Inferenzrollen entkoppeln:** Kleines, dauerhaft warmes
+     Planner-Modell einsetzen und Judge/Planner nach Möglichkeit auf
+     separate Kapazität legen. Expertendiversität entweder real herstellen
+     oder irreführende Modellnamen und Rollenversprechen entfernen.
+  8. **P2 – Identität und Telemetrie härten:** Template-Namen
+     benutzerübergreifend eindeutig anzeigen und ein explizites
+     Sharing-/Grant-Modell vorsehen. Native Latenz und AI-I/O-Audit
+     erfassen; Timeout-Usage aus abgeschlossenen Stage-Audits mit realen
+     Tokens, Complexity, Cynefin, Trust und Domains aggregieren.
+  9. **Validierung:** Den identischen TASK-37-Prompt kalt und warm je
+     mindestens dreimal gegen native und Template ausführen. Abnahme:
+     4/4 korrekte Felder, ausgeführte und auditierte Precision-Tools,
+     gültiges JSON, kein still verlorener Task, keine zweite unbudgetierte
+     Judge-Schleife, terminaler Cleanup, vollständige Usage-/Auditdaten und
+     Template-P95 unter 300 s. Zusätzlich Fehlerpfade für ungültigen
+     Planner-Plan, MCP-Ausfall und knappe Restdeadline testen.
+- **Ausführungsrefinement (vor Implementierungsbeginn 2026-07-31):**
+  1. **Gate A – Baseline/Scope:** Dirty Worktree, aktiven TASK-9-Lease,
+     Branch/HEAD, fehlenden Upstream, laufendes Image, RestartCount und
+     `/ready` sichern. Keine Trainingsdatei aus TASK-9 verändern.
+  2. **Gate B – Pflichtverträge:** COMP-01 zuerst schließen. Pflicht-
+     Boundary-Konfiguration und Prüfung scheitern geschlossen; optionale
+     Cascade-/Exporterfehler dürfen die lokale Blockentscheidung nicht
+     aufheben.
+  3. **Gate C – Task-Vollständigkeit:** Typisierten Precision-Vertrag,
+     Registry-Schema-Prüfung, genau einen begrenzten Repair und ein
+     terminales Task-Ledger einführen. Für jeden geplanten Task muss
+     `executed`, `fallback`, `rejected` oder `failed` belegt sein.
+  4. **Gate D – Budget/Kandidaten:** Eine monotone Deadline durch API,
+     Planner, Repair/Fallback, MCP, Experten, Thinking, Judge und
+     Self-Critique reichen. Vor jeder teuren Folgestufe Mindestrestzeit
+     prüfen und nur schema-/toolvalidierte Kandidaten explizit degradiert
+     retten.
+  5. **Gate E – Qualität/Kosten:** Trust nach Evidenz- und Aufgabentyp
+     differenzieren, irrelevantes GraphRAG abweisen, `no_cache` vollständig
+     respektieren und interne Context-/Tokenbudgets begrenzen.
+  6. **Gate F – Beobachtbarkeit:** Stage-Audits bei Timeout aggregieren,
+     native und orchestrierte Pfade vergleichbar instrumentieren und
+     Templates mit Owner/ID eindeutig ausweisen.
+  7. **Gate G – Abnahme/Deployment:** Erst gezielte negative Tests, dann
+     vollständige Regression, Image-Build/Recreate, Readiness und reale
+     kalt/warme E2E-Matrix. Kein Push/Publish; Rollback-Image bleibt
+     `sha256:286a5752e829e3dff0366f4faa3791f20a7d603bfd3546feef34d33c7e4e53f9`.
+- **Resolution notes (2026-07-31, Codex CLI):**
+  - **Pflichtverträge und Task-Vollständigkeit:** Boundary-Verträge werden
+    beim Start zwingend geladen und über `/ready` als kritischer Check
+    ausgewiesen. Planner-Pläne erhalten stabile Task-IDs, werden gegen den
+    live entdeckten MCP-Katalog validiert und dürfen die Laufzeitgrenze
+    nicht mehr durch stilles Abschneiden umgehen. Ein terminales
+    Task-Ledger und das Quality Gate verhindern, dass geplante Tasks ohne
+    `executed`, `fallback`, `rejected` oder `failed` verschwinden.
+  - **Precision-Reparatur:** Fehlende `mcp_tool`-/`mcp_args`-Felder lösen
+    einen begrenzten Schema-Repair aus. Zusätzlich existiert eine eng
+    begrenzte deterministische Normalisierung für explizite ggT-,
+    `km/h→m/s`- und Wochentagsaufgaben. Liefert ein Planner für eine
+    vollständig nummerierte Liste gar keinen Plan, wird nur dann
+    rekonstruiert, wenn *jede* Teilaufgabe eindeutig einem dieser
+    Precision-Verträge oder einer expliziten
+    `cursor.execute`-SQL-Injection-Prüfung entspricht. Unbekannte,
+    lückenhaft nummerierte oder übergroße Pläne bleiben fail-closed.
+  - **Eine Deadline:** Eine absolute monotone Deadline läuft jetzt durch
+    Guard, Planner, Repair/Fallback, Experten, MCP, GraphRAG, Recherche,
+    Thinking, Judge, Self-Critique und Synthese. Retry-Wartezeiten werden
+    gegen das Restbudget begrenzt. Bei knapper Synthesezeit darf nur ein
+    vollständiger, nicht sicherheitskritischer Executor-Kandidat explizit
+    als degradiert ausgeliefert werden.
+  - **Qualität, Cache und Budgets:** Trust ist task- und evidenzabhängig;
+    MCP-Präzisionsprovenienz wird positiv gewertet, kreative Aufgaben
+    benötigen keine erfundenen Faktquellen und irrelevanter Graphkontext
+    zählt nicht pauschal als Quelle. `no_cache=true` überspringt L0 und L1.
+    Kontextfenster werden adaptiv gewählt, das Client-Ausgabelimit wird an
+    interne Stufen weitergereicht und redundantes Thinking wird bei
+    vollständiger deterministischer Evidenz plus höchstens einer
+    Nicht-Precision-Aufgabe übersprungen.
+  - **Thinking-only-Lücke geschlossen:** Planner, Experten und Judge
+    arbeiten in ihren strukturierten/budgetierten Verträgen standardmäßig
+    mit `think:false`. Zuvor verbrauchten Expert und Judge jeweils das
+    vollständige 1.200-Token-Limit ausschließlich im separaten
+    Ollama-`thinking`-Feld und lieferten leeren `content`. Eine leere
+    Expertenantwort wird jetzt explizit als Fehler verbucht und niemals
+    mehr als erledigter Task gezählt.
+  - **Inferenzrollen für das private horndev-Template:** Planner wurde von
+    `qwen3.6:35b@N04-RTX` mit 262k Kontext auf den dedizierten
+    `qwen3-planner:q4km@N04-RGTX` mit 32k Kontext verschoben. Der
+    ursprünglich separate Sovereign-Judge verursachte auf der einzigen
+    N04-RTX-Kapazität einen zweiten 35B-Modellwechsel und wiederholte
+    Timeouts; der Merger nutzt deshalb für dieses konkrete
+    Single-GPU-Template das bereits warme `qwen3.6:35b@N04-RTX` mit 32k.
+    Das beseitigt den Swap, ersetzt aber unabhängige Modelldiversität durch
+    Tool-Evidenz, Policy-Trennung und Self-Critique.
+  - **Telemetry:** Native Requests besitzen nun Latenz und AI-I/O-Audit.
+    Timeout-/Fehlerantworten übernehmen Stage-Usage und einen
+    nicht-inhaltlichen Request-Snapshot. Der native Judge-Adapter reicht
+    Usage-Metadaten weiter; die Synthese sichert sie vor der
+    Content-Bereinigung. Im finalen Lauf stimmte die API-Usage
+    **exakt** mit dem AI-I/O-Audit überein:
+    `19.888/1.589` Prompt-/Completion-Tokens, davon Planner
+    `13.432/7`, Expert `1.119/119` und drei budgetierte Judge-Aufrufe
+    zusammen `5.337/1.463`.
+  - **Reproduzierbarer E2E-Harness:** `scripts/validate_task38_e2e.py`
+    erstellt einen kurzlebigen horndev-Key ausschließlich im Speicher,
+    führt denselben Ground-Truth-Prompt wahlweise nativ, als Template oder
+    gegen beide Pfade aus und widerruft/invalidiert den Key in `finally`.
+    Alle sieben temporären Keys aus den Reparaturläufen sowie die späteren
+    Abschlusskeys sind in der DB inaktiv; kein zugehöriger
+    `user:apikey:*`-Cacheeintrag blieb zurück.
+  - **Finaler Qualitätsvergleich auf demselben Deployment:**
+    Native `qwen3.6:35b@N04-RTX` lieferte 3/3 HTTP 200 und valides
+    Sechs-Felder-JSON, aber 0/3 vollständig korrekte Antworten:
+    `weekday_de` war in jedem Lauf falsch. Latenzen:
+    **139,749 s kalt**, danach **3,610 s** und **3,555 s** warm; Usage je
+    `233/100` Tokens. Das Template lieferte beim erfolgreichen Kaltlauf
+    **157,472 s** und bei vier Warm-Läufen **40,788–50,576 s**; alle
+    **5/5** Antworten waren HTTP 200, schemaexakt und bestanden
+    **7/7** Ground-Truth-Checks.
+  - **Tatsächliche Stage-Nutzung im finalen Template-Lauf:**
+    `guard fail_open_not_warm → cache bypass → planner →
+    precision_tools×3 + code_reviewer → gcd_lcm + unit_convert +
+    day_of_week → GraphRAG → qwen3.6 code_reviewer → thinking skipped →
+    merger → self_critique → merger → quality_gate passed`.
+    Nicht benötigte Web-, Creative-, Long-Context- und Client-Tool-Pfade
+    wurden korrekt nicht ausgeführt.
+  - **Abnahme:** Vollständiger Lauf **714 passed in 4,00 s**;
+    `py_compile` der geänderten Kernmodule grün. Finales Image
+    `sha256:5f3e0eeda248b8743df3ebed5950125f57d0c9852e71d0ddab720bfa022e3040`
+    läuft `healthy`, `RestartCount=0`. `/ready` meldet
+    Boundary-Verträge, Graph, Valkey und User-DB kritisch positiv sowie
+    Neo4j, MCP Precision und Chroma positiv.
+  - **Bewusst verbleibende Optimierungen:** Der dedizierte Planner liefert
+    für diesen Prompt weiterhin `{}`; die enge deterministische Recovery
+    stellt die Ausführung her, breite unbekannte Aufgaben scheitern
+    dagegen korrekt geschlossen. Sein Prompt ist mit 13.432 Tokens noch
+    zu groß. Ein erfolgreicher Warm-Lauf startet trotz `Trust=PROCEED`
+    Self-Critique und einen zweiten Merger, sodass drei Judge-Aufrufe
+    entstehen. GraphRAG lieferte 325 Zeichen ohne belegten Nutzen. Der
+    kalte 35B-Start bleibt mit rund 140–157 s teuer. Guard-Warm-only,
+    heuristische Complexity, unabhängige Judge-Diversität,
+    templateübergreifende Identität/Grants und die drei geforderten
+    unabhängigen kalten Template-Wiederholungen bleiben Betriebs-/
+    Qualitäts-Follow-ups.
+  - Kein Commit, Push, PR oder Publish ausgeführt. Der vorhandene
+    Multi-Agent-Dirty-Worktree wurde erhalten; der finale Git-Status zählt
+    170 Einträge und besitzt weiterhin keinen Upstream.
+
+### TASK-39: Agent Rules 2.0 und prüfbare Governance
+
+- **Priority:** high
+- **Owner:** Codex CLI
+- **Status:** done (2026-07-30, Codex CLI)
+- **Goal:** Die Agentenanweisungen auf einen kurzen, eindeutigen und
+  automatisiert prüfbaren Stand bringen, fehlende Authority-Dokumente
+  ergänzen und belegte Implementierungsstände von Planungsständen trennen.
+- **Scope:** Ausschließlich Governance-, Backlog-, Dokumentations- und
+  Prüfdateien. Keine Runtime-, Deployment- oder Modelländerung.
+- **Vor Umsetzung niedergeschriebener Auflösungsplan:**
+  1. `AGENTS.md` als kompakte, tool-unabhängige Single Source of Truth mit
+     Authority-Reihenfolge, Autonomiematrix, Sicherheitsgrenzen,
+     Deadline-/Retry-Regeln, Worktree-Leases und Definition of Done
+     restrukturieren.
+  2. `CLAUDE.md` auf den Import von `AGENTS.md` und wenige
+     Claude-spezifische Hinweise reduzieren; path-spezifische Regeln für
+     Security, Python, Tests und Deployment unter `.claude/rules/`
+     auslagern.
+  3. Die bislang nur referenzierten Pflichtquellen
+     `PROJECT_COMPLIANCE.md`, `docs/backlog/current/dependency-map.md` und
+     `docs/backlog/current/roadmap.md` mit Owner, Version und
+     Verifikationsdatum erstellen.
+  4. Eine explizite Fail-open-/Fail-closed-Matrix, Schutz gegen
+     Prompt-Injection und unvertrauenswürdige Toolausgaben,
+     Autorisierungsgrenzen sowie Regeln gegen das Persistieren interner
+     Gedankengänge dokumentieren.
+  5. Den belegten I-2-Implementierungsstand gegen Code, Tests und
+     TASK-35/36 korrigieren; offene E-2.3-/E-2.5-Anteile und TASK-38
+     weiterhin klar als offen ausweisen.
+  6. Eine deterministische Governance-Prüfung samt CI-Workflow und
+     generiertem Runtime-Entry-Point-Katalog ergänzen. Abnahme über
+     Check-Modus, Markdown-/MkDocs-Build und Diff-Prüfung.
+- **Acceptance criteria:**
+  - Alle als verpflichtend referenzierten Governance-Dateien existieren und
+    ihre internen Pfade sind auflösbar.
+  - `CLAUDE.md` importiert `AGENTS.md`; dauerhafte Regeln werden nicht
+    widersprüchlich dupliziert.
+  - Fail-closed gilt explizit für Authentifizierung, Autorisierung,
+    Mandantengrenzen, `local_only`, Schema-/Boundary-Pflichtfelder,
+    erforderliche HITL-Gates und Integritätsprüfungen. Optionale
+    Enrichment-/Observability-Pfade sind bewusst als fail-open oder
+    degraded gekennzeichnet.
+  - Governance-CI erkennt fehlende Pflichtdateien, ungültige lokale Links,
+    veraltete generierte Kataloge und verbotene direkte GitHub-main-Pushes
+    im dokumentierten Workflow.
+  - Backlog-Status behauptet keine fehlende Implementierung für bereits
+    durch Tests und TASK-35/36 belegte Funktionen und keine Fertigstellung
+    für unbewiesene Multi-Tenant-/Checkpointing-Funktionen.
+  - Keine Runtime-Datei, kein Container und keine produktive Konfiguration
+    wird für diese Aufgabe verändert.
+- **Resolution notes (2026-07-30, Codex CLI):**
+  - `AGENTS.md` ist jetzt die tool-unabhängige Regelquelle mit
+    Authority-/Restore-Reihenfolge, Vier-Stunden-Lease als
+    Stalenzerkennung, isolierten Worktrees, Autonomiematrix,
+    Prompt-/Tool-Trust, Secret-/Reasoning-Regeln, einer durchgereichten
+    monotonen Deadline, idempotenten Retries, Test-/Build-Reihenfolge und
+    einer evidenzbasierten Definition of Done.
+  - `CLAUDE.md` importiert `@AGENTS.md`; Security-, Python-, Test- und
+    Deployment-Regeln liegen path-spezifisch unter `.claude/rules/`.
+    Direkte Pushes auf `main` bleiben verboten; Commit, Push, PR, Publish
+    und Deployment benötigen weiterhin den beauftragten externen
+    Zustandswechsel.
+  - `PROJECT_COMPLIANCE.md` definiert die normative
+    Fail-open-/Fail-closed-Matrix. Auth, Autorisierung, Tenant,
+    `local_only`, Pflichtverträge, Integrität, Policy-Block und
+    erforderliche HITL-Gates scheitern geschlossen. Caches und optionale
+    Enrichment-/Exporterpfade dürfen nur explizit degradiert ausfallen.
+    Vier belegte Istabweichungen sind als COMP-01 bis COMP-04 erfasst.
+  - Die fehlenden Backlog-Pflichtdateien Dependency Map, Roadmap, Stories
+    und Implementation-Task-Index wurden ergänzt. Zusätzlich wurde der
+    defekte I-1-Link durch ein Statusblatt ersetzt. I-2 und die fünf Epics
+    unterscheiden jetzt `Planned`, `Partial`, `Implemented` und
+    `Validated`; Handover wird nicht mehr mit Task-Checkpointing/
+    Artefakt-Registry und User-Scoping nicht mehr mit vollständiger
+    Multi-Tenant-Isolation gleichgesetzt.
+  - `scripts/check_governance.py --check` validiert 27 Pflichtdateien,
+    Metadaten, lokale Links, Policy-Marker, direkte-main-Push-Kommandos,
+    projektbezogene Secret-Muster und neun deklarierte Runtime-Entry-Points
+    samt echter Wiring-Marker. Der daraus deterministisch erzeugte Katalog
+    liegt unter `docs/generated/runtime-entrypoints.md`; der neue
+    GitHub-Workflow `.github/workflows/governance.yml` führt denselben
+    Check für relevante Pushes und Pull Requests aus.
+  - **Abnahme:** Governance-Check grün (`27` Dateien, `9` Entry-Points),
+    `python3 -m py_compile scripts/check_governance.py` grün,
+    `python3 -m pytest -q` **669 passed in 6.11s**,
+    `mkdocs build --strict` Exit 0 und fokussiertes `git diff --check`
+    grün. MkDocs meldet ausschließlich informative bestehende
+    Nicht-Nav-Seiten/Anchor-Hinweise und den Material-2.0-Hinweis.
+  - Keine Runtime-/Deployment-/Modellkonfiguration wurde für TASK-39
+    geändert, kein Container neu gebaut oder gestartet und kein
+    Whitepaper-Update ausgelöst. Kein Commit/Push/Deployment ausgeführt;
+    der fremde Dirty-Worktree wurde erhalten. TASK-38 bleibt separat
+    kritisch und `pending`.
+
+---
+
+### TASK-40: Deterministische Kalenderfakten und MCP-Offloading-Inventur
+
+- **Priority:** high
+- **Owner:** Codex CLI
+- **Status:** done (2026-07-31, Codex CLI)
+- **Goal:** Wochentage und kalenderbezogene Aussagen über einen strikt
+  validierten, maschinenlesbaren MCP-Vertrag beantworten und systematisch
+  festhalten, welche weiteren fehleranfälligen LLM-Aufgaben deterministisch
+  berechnet oder gegen versionierte Daten geprüft werden sollten.
+- **Scope:** `mcp_server/server.py`, Precision-Routing und dessen Tests,
+  Planner-Toolkatalog, MCP-Dokumentation, ein separates Evaluationsdokument
+  sowie lokaler Build/Recreate von `mcp-precision`. Keine Credential-,
+  Datenbank-, Modell-, Template- oder externe Deployment-Änderung.
+- **Vor Umsetzung niedergeschriebener Ausführungsplan:**
+  1. **Baseline und Verträge:** Dirty Worktree, aktiven TASK-9-Lease,
+     Branch/HEAD, laufenden MCP-Katalog und vorhandene Datumstools sichern.
+     Den neuen Vertrag so abgrenzen, dass `day_of_week` für bestehende
+     Aufrufer erhalten bleibt und relative Angaben wie „heute“ ohne explizite
+     Zeitzone nicht geraten werden.
+  2. **Kalender-Tool:** `calendar_facts(date_str, locale)` als reine lokale
+     Berechnung implementieren. Nur striktes ISO-Datum und eine kleine,
+     dokumentierte Locale-Allowlist akzeptieren. Als deterministisches JSON
+     mindestens kanonisches Datum, lokalisierten Wochentag, ISO-Wochentag,
+     ISO-Kalenderwoche samt ISO-Wochenjahr, Tag im Jahr, Quartal,
+     Monatslänge, Schaltjahr und Wochenende zurückgeben.
+  3. **Registry und Erreichbarkeit:** Das Tool in FastMCP, REST-Registry,
+     Beschreibung, Access-Kind, Planner-Gruppen, Fallback-Katalog und
+     Precision-Defaults eintragen. Die enge, fail-closed Planner-Recovery für
+     explizite Wochentagsfragen auf den neuen live entdeckten Vertrag
+     umstellen; unbekannte/ungültige Datumsformen bleiben abgewiesen.
+  4. **Gezielte Tests:** Schaltjahr, ungültiges Datum, ungültige Locale,
+     deutsch/englische Bezeichnungen, Monatsgrenze und ISO-Wochenjahrgrenze
+     direkt testen. Zusätzlich Registry-/Schema-Vollständigkeit sowie
+     Repair- und Empty-Plan-Recovery mit `calendar_facts` belegen.
+  5. **Offloading-Evaluation:** Bestehende Tools gegen weitere
+     Halluzinationsklassen inventarisieren. Kandidaten nach rein
+     deterministisch, deterministisch mit versioniertem Datensatz und nicht
+     sinnvoll deterministisch trennen; Priorität, benötigten Vertrag,
+     Datenquelle/Versionierung, Sicherheitsgrenze und vorhandene Abdeckung
+     dokumentieren. Bestehende semantische Schwächen wie approximative
+     Kalenderzerlegung ausdrücklich als GAP markieren.
+  6. **Validierung und lokaler Rollout:** Syntax/fokussierte Tests,
+     Governance-Check und vollständige relevante Tests ausführen. Danach nur
+     `mcp-precision` bauen und recreaten, `/health`, `/tools` und `/invoke`
+     für Normal-, Grenz- und Fehlerfälle prüfen. Den Orchestrator nur dann
+     recreaten, wenn der neue Planner-Katalog ohne Neustart nicht geladen
+     werden kann; vorher aktive Requests prüfen. Rollback ist das vorherige
+     MCP-Image.
+  7. **Abschlussnachweise:** Reale Image-ID, Health/RestartCount,
+     Tool-Schema/-Invocation, Testzahlen, bekannte Grenzen und priorisierte
+     Folgearbeiten in Lastenheft, Statuslog und SessionMesh festhalten. Kein
+     Commit, Push, PR oder Publish.
+- **Acceptance criteria:**
+  - `calendar_facts` ist über `/tools` mit korrektem Schema sichtbar und über
+    `/invoke` erfolgreich sowie für ungültige Eingaben kontrolliert
+    ausführbar.
+  - Der Output ist parsebares, stabiles JSON und besteht belegte Grenzfälle
+    für Schaltjahr, Monatslänge und ISO-Wochenjahr.
+  - Explizite deutsche und englische Wochentagsanfragen werden vom
+    deterministischen Recovery-Pfad auf `calendar_facts` geroutet; der alte
+    `day_of_week`-Aufruf bleibt kompatibel.
+  - Registry, Description, Access-Kind und Planner-Katalog driften nicht
+    auseinander; fokussierte und vollständige Tests sind grün.
+  - Ein separates Markdown-Dokument priorisiert weitere MCP-Kandidaten und
+    unterscheidet lokale Berechnung klar von zeitabhängigen Fakten, die nur
+    mit autoritativer, versionierter Datenquelle zuverlässig sind.
+  - Der recreatete MCP-Container ist healthy, RestartCount 0 und der
+    tatsächlich laufende Vertrag wurde live aufgerufen.
+- **Resolution notes (2026-07-31, Codex CLI):**
+  - **Neuer Vertrag:** `calendar_facts(date_str, locale="de")` liefert
+    stabiles JSON mit kanonischem Datum, lokalisierten Wochen-/Monatsnamen,
+    ISO-Wochentag, ISO-Woche und separatem ISO-Wochenjahr, Tag im Jahr,
+    Quartal, Monats-/Jahreslänge sowie Schaltjahr-/Wochenendstatus. Nur
+    striktes `YYYY-MM-DD` und `de`/`en` sind erlaubt; relative Angaben werden
+    ohne explizite Uhr-/Zeitzonenquelle abgewiesen. `day_of_week` bleibt als
+    kompatibler Wrapper erhalten.
+  - **Erreichbarkeit:** FastMCP, REST-Registry, Description, Access-Kind,
+    Core-/Fallback-Katalog und Dynamic-Router-Defaults sind synchronisiert.
+    Die deutsche/englische Precision-Reparatur sowie Empty-Plan-Recovery
+    dispatchen den live entdeckten `calendar_facts`-Vertrag. Der zuvor
+    referenzierte, aber nicht existente Default `format_number` wurde entfernt;
+    neue Tests verhindern Registry-/Router-Drift.
+  - **Benachbarte Datums-/Evidenzfehler:** `date_diff` zerlegt Abstände nicht
+    mehr pauschal mit 365/30, sondern meldet exakte Gesamttage plus echte
+    `relativedelta`-Kalenderdifferenz. `Error:`-/`Fehler:`-, bracketed Error-
+    und JSON-Error-Ergebnisse dürfen nicht mehr als erfolgreiche
+    Precision-Evidenz in Working Memory gelangen.
+  - **Build-Failure-Path:** Der erste MCP-Neubau zog wegen
+    `mcp[cli]>=1.0.0` das inkompatible MCP 2.0 ohne
+    `mcp.server.fastmcp`; der Container restartete und der Orchestrator lud
+    korrekt nur seinen Fallback-Katalog. Ursache behoben durch
+    digest-gepinntes Python-Basisimage und exakten transitiven Lock mit dem
+    nachweislich kompatiblen MCP 1.28.1; `pip check` grün. Finales MCP-Image:
+    `sha256:94e99b8f7480c353631f28594cc294c1c219a364e858f91615fdf906f19360e6`.
+  - **Live-Abnahme:** `/tools` liefert 59 katalogisierte Schemata;
+    `calendar_facts` besitzt `date_str` required, Locale-Default `de` und
+    `access_kind=read`. `/invoke` bestand Schaltjahr `2024-02-29`, deutsche
+    und englische Namen, ISO-Grenze `2021-01-01 → Woche 53/ISO-Jahr 2020`,
+    ungültiges Datum/Locale, Legacy-Wochentag und exakte Datumsspanne. Der
+    Orchestrator lud alle 59 Tools und bewies beide Sprach-Recoveries im
+    laufenden Container.
+  - **Regression/Betrieb:** Governance-Check grün (27 Pflichtdateien, neun
+    Entry-Points), `mkdocs build --strict` Exit 0 und vollständige Regression
+    **737 passed in 4,67 s**. Orchestrator-Image
+    `sha256:3ea4d1822c2857cd9b74b82bbfbb9a9878e049ed9f406bbd871eec222c65946f`
+    sowie MCP laufen `healthy`, jeweils RestartCount 0; `/ready` ist in allen
+    kritischen und optionalen Checks positiv.
+  - **Priorisierte Rest-GAPs:** Höchste Priorität hat ein Precision-Intent-
+    Guard, weil bestehende Tools bei falscher LLM-Kategorisierung weiterhin
+    nicht greifen. Danach folgen typisierte Zeitzonen-/DST-Verträge,
+    Decimal-Finanzmathematik, exakte Wahrscheinlichkeiten und strukturierte
+    Schema-Validierung. Version-/Business-Calendar-/Identifier-/Statistik-/
+    Geo-/Tokenizer-Verträge sind P1. Mutable Fakten benötigen stets
+    autoritative Quelle, Version/`as_of` und Provenienz; MCP-Transport allein
+    macht sie nicht deterministisch. Vollständige Bewertung:
+    `docs/system/toolstack/deterministic_offloading_evaluation_2026-07-31.md`.
+  - Die bekannten Compose-Warnungen zu fehlenden Authentik-Variablen blieben
+    unverändert. Kein Credential, Datenbestand, Modell oder Template geändert;
+    kein Commit, Push, PR oder Publish ausgeführt. Der Dirty Worktree ist kein
+    releasefähiges Artefakt.
+
+---
+
+### TASK-41: Fail-closed Precision-Intent-Guard
+
+- **Priority:** critical
+- **Owner:** Codex CLI
+- **Status:** done (2026-08-01, Codex CLI)
+- **Goal:** Explizit erkennbare, eindeutig parametrisierbare
+  Präzisionsanfragen dürfen nicht als reine LLM-Aufgabe ausgeführt werden,
+  wenn der Planner sie falsch kategorisiert, entfernt oder nur teilweise in
+  den Ausführungsplan übernimmt. Der Planvertrag muss diese Herabstufung vor
+  dem Dispatch erkennen und geschlossen scheitern beziehungsweise genau
+  einmal über den bestehenden begrenzten Contract-Repair-Pfad korrigieren.
+- **Scope:** `services/pipeline/contracts.py`, der gemeinsame Planner-Handoff
+  in `graph/planner.py`, der live geladene MCP-Schemakatalog in `main.py`,
+  fokussierte Contract-/Planner-/Katalogtests sowie die deterministische
+  Offloading-Dokumentation. Keine neuen fachlichen MCP-Tools, keine
+  Credential-, Datenbank-, Modell-, Template- oder externe
+  Deployment-Änderung.
+- **Vor Umsetzung niedergeschriebener Ausführungsplan:**
+  1. **Baseline und Schutzbereich:** Branch/HEAD, Dirty Worktree, fremde
+     Status-Leases, laufende Images und `/ready` sichern. Bestehende
+     Precision-Recovery, alle `_prepare_handoff_plan`-Aufrufer,
+     Planner-Cache/Fallback und Trivial-Fast-Path lokal verifizieren.
+  2. **Enger Intent-Vertrag:** Ausschließlich bereits eindeutig unterstützte
+     und vollständig aus dem Prompt parametrisierbare Verträge erkennen:
+     `gcd_lcm`, `unit_convert` für km/h nach m/s sowie `calendar_facts` für
+     explizite deutsche/englische Wochentagsfragen. In Fließtext wird nur ein
+     vollständiger Einzelintent geprüft; bei sauber nummerierten Listen wird
+     jeder Eintrag isoliert geprüft. Erwähnungen ohne Operationssignal,
+     unvollständige Parameter und ungültige Datumswerte dürfen keinen
+     Toolaufruf erfinden.
+  3. **Planabgleich:** Für jeden erkannten Intent muss vor dem Dispatch eine
+     `precision_tools`-Aufgabe mit demselben live entdeckten Tool und
+     semantisch gleichen Pflichtargumenten existieren. Eine abweichende oder
+     fehlende Aufgabe erzeugt einen strukturierten
+     `precision_intent_downgraded`-Contract-Fehler. Der bestehende eine
+     begrenzte Repair-Versuch bleibt der einzige LLM-Reparaturpfad; nach
+     Erschöpfung wird kein `general`-Fallback erlaubt.
+  4. **Katalogintegrität:** Der Orchestrator darf nur aktuell als `enabled`
+     gemeldete MCP-Tools planen. Den Schemakatalog bei erfolgreichem Reload
+     atomar ersetzen, damit deaktivierte oder entfernte Tools nicht als
+     veraltete Präzisionsverträge erhalten bleiben. Ist ein benötigtes Tool
+     nicht verfügbar, darf der Guard keinen scheinbar ausführbaren Vertrag
+     konstruieren.
+  5. **Gezielte Tests:** Positive deutsche/englische Einzelintents,
+     nummerierte Mixed-Pläne, richtige und falsche Argumente, Planner-
+     Downgrade, falsches Tool, unbekanntes/deaktiviertes Tool, Erwähnungen
+     ohne Rechenabsicht, ungültige/mehrdeutige Eingaben, Cache-/Fast-Path-
+     Anschluss und begrenzte Repair-Instruktion abdecken. Bestehende
+     Recovery- und Precision-Tests müssen ohne Semantikregression bestehen.
+  6. **Validierung und lokaler Rollout:** Syntax, fokussierte Tests,
+     vollständige Regression, Governance und MkDocs strict ausführen. Danach
+     nur den Orchestrator neu bauen/recreaten, sofern aktive Requests dies
+     sicher erlauben; `/ready`, Image-ID, RestartCount und live geladene
+     Toolzahl prüfen. Im laufenden Container mindestens einen korrekt
+     akzeptierten sowie einen absichtlich degradierten Plan gegen den echten
+     Schemakatalog validieren.
+  7. **Wirksamkeitsnachweis und Abschluss:** Belegen, dass ein korrekter
+     Precision-Plan passiert, ein `general`-Downgrade vor Dispatch blockiert
+     wird und nicht-deterministische Prompts unverändert zulässig bleiben.
+     Messwerte, Grenzen und Folgearbeiten in Lastenheft, Statuslog und
+     SessionMesh festhalten. Kein Commit, Push, PR oder Publish.
+- **Acceptance criteria:**
+  - Jeder eng erkannte und im aktiven MCP-Katalog vorhandene
+    Präzisionsintent besitzt vor Dispatch eine passende Toolaufgabe samt
+    korrekter Pflichtargumente; andernfalls entsteht ein strukturierter,
+    fail-closed Contract-Fehler.
+  - Einzelne deterministic Teilaufgaben können in Mixed-/nummerierten
+    Prompts nicht durch allgemeine Expert-Aufgaben ersetzt oder weggelassen
+    werden.
+  - Prosa-Erwähnungen, unvollständige/ungültige Eingaben und nicht
+    allowlistete Operationsformen erzeugen weder False-Positive-Blockaden
+    noch erfundene Toolargumente.
+  - Deaktivierte oder bei einem erfolgreichen Reload entfernte Tools fehlen
+    im Planner-Schemakatalog; bestehende Tools bleiben vollständig
+    beschrieben.
+  - Fokussierte und vollständige Tests, Governance und MkDocs strict sind
+    grün. Der recreatete Orchestrator ist healthy, RestartCount 0 und die
+    drei Wirksamkeitsfälle sind im laufenden Codepfad belegt.
+- **Resolution notes (2026-08-01, Codex CLI):**
+  - **Zentraler Guard:** `detect_required_precision_intents` erkennt nur
+    vollständig parametrisierbare direkte GGT-, km/h→m/s- und deutsche/
+    englische Wochentagsanfragen. Nicht nummerierter Text muss genau einen
+    Intent enthalten; bei lückenlos nummerierten Listen wird jeder Eintrag
+    isoliert geprüft. Code-Erstellungsaufträge, beiläufige Beispiele,
+    ungültige Daten, lückenhafte Nummerierung und mehrdeutige Mehrfachintents
+    bleiben bewusst außerhalb der Allowlist.
+  - **Fail-closed Planvertrag:** Der gemeinsame `_prepare_handoff_plan` prüft
+    jetzt zusätzlich Eingabeintent, aktives Tool, Kategorie und semantische
+    Argumente. Fehlende/falsche Aufgaben erzeugen
+    `precision_intent_downgraded`, fehlende aktive Tools
+    `required_precision_tool_unavailable`. Der normale Planner erhält genau
+    den bestehenden begrenzten Contract-Repair; nach Erschöpfung ist kein
+    `general`-Fallback zulässig. Cache-Fingerprint Version 4 invalidiert alte
+    Pläne; Kalender/GGT-Signale umgehen den Trivial-Fast-Path nicht mehr.
+  - **Katalogintegrität:** `_load_mcp_tool_descriptions` übernimmt nur live
+    `enabled` gemeldete Einträge, baut Schemas/Beschreibungen zunächst lokal
+    und ersetzt den Runtime-Katalog anschließend vollständig. Erfolgreiche
+    Reloads entfernen deaktivierte/gelöschte Tools; Discovery-Fehler löschen
+    ausführbare alte Schemas. Statische Fallback-Beschreibungen sind dadurch
+    kein Ausführbarkeitsbeleg.
+  - **Tests/Dokumentation:** 98 fokussierte Contract-, Fast-Path- und
+    Katalogtests sowie die vollständige Regression **756 passed in 4,95 s**
+    sind grün. Governance validiert 27 Pflichtdateien und neun Entry-Points;
+    `mkdocs build --strict`, Compileall, Compose-Config, `pip check` und
+    fokussiertes `git diff --check` bestanden. Die Offloading-Evaluation ist
+    auf Version 1.1 aktualisiert und weist DET-01 korrekt als enge Phase A aus;
+    eine unbelegte 5–30-%-Fehlerrate und die zu breite Behauptung vollständigen
+    Offloadings wurden aus der MCP-Dokumentation entfernt.
+  - **Live-Wirksamkeit:** Orchestrator-Image
+    `sha256:f4751f7c8090a8c1a1b673e26f4d8687cc983e5f66a17956a6e81000fbda2a51`
+    läuft healthy mit RestartCount 0; `/health` und `/ready` sind positiv.
+    Der Startup lud 59/59 aktive Tools. Im laufenden Container passierte ein
+    korrekter `calendar_facts`-Plan mit `planned`-Ledger-Ereignis;
+    `general`-Downgrade und falsches Datum wurden jeweils vor Dispatch mit
+    `precision_intent_downgraded` blockiert; eine beiläufige Datumsnennung
+    blieb als `general` zulässig. Vier Runtime-Dateien stimmen per SHA-256
+    zwischen Host und Container überein; kein Active Request blieb zurück.
+  - **Grenze/Folgearbeit:** DET-01 schützt derzeit absichtlich nur drei
+    bewiesene Extraktoren. Weitere Arithmetic-/Unit-/Hash-/Statistik-/CIDR-
+    und Schema-Intents dürfen erst nach typisierten, adversarial getesteten
+    Argumentextraktoren aufgenommen werden. Zeitzone/DST,
+    Decimal-Finanzmathematik, exakte Wahrscheinlichkeit und strukturierte
+    Validierung bleiben die nächsten P0-Verträge. Das unveränderte MCP-Image
+    bleibt healthy; die bekannten Authentik-Compose-Warnungen bestehen.
+  - Vor dem Recreate waren null aktive Requests vorhanden. Kein Commit, Push,
+    PR oder Publish, keine Credential-, Daten-, Modell- oder
+    Template-Änderung; der 176 Einträge umfassende Dirty Worktree bleibt kein
+    releasefähiges Artefakt.
+
+---
+
+### TASK-42 bis TASK-50: Precision Evidence Binding und deterministische MCP-Plattform
+
+- **Priority:** critical / P0
+- **Owner:** Codex CLI für TASK-42 bis TASK-50
+- **Status:** TASK-42 bis TASK-50 done (2026-08-02, Codex CLI)
+- **Goal:** Einen verpflichtenden Precision-Intent von der Erkennung vor jedem
+  Antwortcache über unveränderlichen Contract-Snapshot, normalisierte
+  Argumente, schema-validen MCP-Aufruf und typisierte Evidenz bis zur final
+  gebundenen API-Antwort und erst anschließendem idempotenten Learning-/Cache-
+  Commit lückenlos beweisbar machen. Auf diesem Fundament werden Zeit/
+  Zeitzone, Decimal-Finanzmathematik, exakte Wahrscheinlichkeit und sichere
+  strukturierte Validierung als neue P0-Verträge integriert.
+- **Lokal verifizierte GAPs vor Planung:**
+  - **Cache-Bypass:** L0/L1 werden in `graph/router_nodes.py` vor dem Planner
+    ausgewertet; ein Treffer gelangt direkt zum Merger. Damit kann ein alter
+    oder falscher Cache TASK-41 vollständig umgehen.
+  - **Argumentdrift:** `graph/tool_nodes.py` prüft vor Invoke im Wesentlichen
+    Required-Felder. Nach einem Fehler kann der Judge neue Argumente erzeugen,
+    ohne sie erneut an den ursprünglichen Intent-/Planvertrag zu binden.
+  - **Untypisierte Evidenz:** `/tools` beschreibt kein Outputschema, Contract-
+    Version oder Determinismus-/Source-Modell; `/invoke` liefert heterogenen
+    Freitext. Evidence und Working Memory kürzen Darstellungen und besitzen
+    keine durchgängigen Input-/Result-/Contract-Hashes.
+  - **Faktmutation:** Der Merger erhält MCP-Ergebnisse als freien Text; Merger
+    und nachgelagerter Critic können korrekte Toolwerte vor der finalen Ausgabe
+    verändern. Das Quality Gate prüft Taskabschluss, aber noch keine bindende
+    Deckung zwischen finaler Aussage und Evidence.
+  - **Pre-Gate-Persistenz:** Antwortcache, Chroma/Kafka, Episode und Learning-
+    Pfade können bereits im Merger-Zweig schreiben, bevor Critic und finales
+    Quality Gate abgeschlossen sind. Eine später blockierte Antwort kann damit
+    wiederverwendbaren Zustand verunreinigen.
+  - **Contract-Drift/Observability:** Der Planner-Cache-Fingerprint bildet
+    nicht das vollständige Schema ab; Pfadmetriken für Cache-Bypass, Schema-
+    Fehler, Evidence-Binding und LLM-Escape fehlen.
+- **Vor Umsetzung niedergeschriebener Integrationsplan:**
+  1. **TASK-42 — Precision-Preflight und Cache-Containment:** Preflight direkt
+     nach Guard und vor L0/L1 einfügen; für Pflichtintents Legacy-Response-
+     Cache umgehen; immutable Sollintents/Argumente/Contract-Hash im State
+     halten; Planner-Cache vollständig fingerprinten; Judge-Argumentdrift für
+     Pflichtverträge sperren; Intent→Task→Terminalevent→Evidence im Quality
+     Gate fail closed korrelieren.
+  2. **TASK-43 — Versionierte MCP-Verträge:** MCP-Discovery um vollständige
+     Input-/Output-JSON-Schemas, Contract-Version, Determinismusklasse,
+     Source-/`as_of`-Policy, Limits und Hash erweitern. `/invoke` bleibt über
+     `result` kompatibel und ergänzt `structured_result`; beide Seiten prüfen
+     Ein- und Ausgabe vollständig. Zunächst `gcd_lcm`, `unit_convert` und
+     `calendar_facts` migrieren.
+  3. **TASK-44 — Evidenzgebundene Synthese:** Vollständig abgedeckte reine
+     Precision-Anfragen nach Auth/Deadline/Ledger über MCP und einen
+     deterministischen Locale-Renderer ohne Modellknoten ausgeben. In Mixed-
+     Antworten opaque Fact-Slots nutzen und erst nach Conflict/Critic aus
+     typisierter Evidenz binden; fehlende oder kontextfalsche Slots blockieren.
+  4. **TASK-45 — Quality-atomare Persistenz:** Wiederverwendbare Cache-,
+     Memory-, Kafka-, Episode- und Learning-Writes in einen idempotenten
+     `response_commit` hinter den erfolgreichen Quality-Pass verschieben.
+     Audit-/Task-Ledger bleiben sofort verfügbar; Block/Pending/Reject
+     committed nichts Semantisches, HITL-Approve genau einmal.
+  5. **TASK-46 — Zeit/Zeitzone/DST:** Explizite ISO-Instants und IANA-Zonen,
+     DST-Fold/-Gap, gepinnte Zeitzonendaten sowie source-/`as_of`-gebundene
+     Clock-Aussagen. Kein Raten bei naiver oder mehrdeutiger Lokalzeit.
+  6. **TASK-47 — Decimal-Finanzmathematik:** Dezimalstrings, Währung, Scale
+     und Rundungsmodus explizit; niemals Binary-Float. Input-only-Arithmetik
+     strikt von versionierungs-/jurisdiktionspflichtigen Steuer-, Kurs- und
+     Rechtsregeln trennen.
+  7. **TASK-48 — Exakte Wahrscheinlichkeit:** Begrenzte rationale
+     Wahrscheinlichkeits-/Kombinatorikoperationen mit `Fraction` als
+     Wahrheitswert und Decimal nur als explizit gerundete Projektion; Kosten-
+     und Bitlängengrenzen vor Ausführung.
+  8. **TASK-49 — Strukturierte Validierung:** JSON/YAML/XML/CSV mit sicheren
+     Parsern, vollständigen Größen-/Tiefe-/Entity-/Laufzeitgrenzen und ohne
+     Remote-Refs, DTD/XXE, unsafe YAML oder Inhaltsausführung validieren.
+  9. **TASK-50 — Telemetrie und Rollout-Proof:** Niedrig-kardinale Metriken für
+     Intent, Route, Cache-Bypass, Schema, Drift, Binding, Escape und Commit;
+     neue Verträge einzeln Shadow→Enforce schalten. Versionierten Cold-/Warm-
+     Benchmark gegen native und orchestrierte API mit dreifachem Timeout,
+     Fehler-/Manipulationsmatrix, Source-to-Image-Nachweis und praktischem
+     Rollback ausführen.
+- **Reihenfolge/Abhängigkeiten:** TASK-42 → TASK-43 → TASK-44 → TASK-45.
+  TASK-46 bis TASK-49 beginnen erst auf dem typisierten Vertragsfundament und
+  werden einzeln im Shadow-Modus abgenommen; TASK-50 ist das gemeinsame
+  Enforce- und Abschlussgate. TASK-44/45 dürfen wegen gemeinsamer Änderungen
+  an Graph-Topologie und `graph/synthesis.py` nicht parallel implementiert
+  werden.
+- **Gesamtabnahme:**
+  - Null LLM-only-Erfolge im fest versionierten Pflicht-Precision-Korpus und
+    null Cache-Hits vor Precision-Preflight.
+  - 100 Prozent exakte finale Fakten in der adversarialen Merger-/Critic-
+    Mutationsmatrix; jeder Pflichtfakt korreliert mit Contract-, Input-, Task-
+    und Result-Hash.
+  - Reine Precision-Anfragen zeigen im Audit null Planner-/Expert-/Judge-/
+    Merger-/Critic-Modellaufrufe.
+  - Null wiederverwendbare semantische Writes vor erfolgreichem finalen Gate;
+    Pass/Block/Pending/Reject/Approve und Resume sind idempotent bewiesen.
+  - Alle negativen Ein-/Ausgabeschema-, Permission-, Deadline-, Katalogreload-
+    und Parser-Sicherheitsfälle liefern typisierte Fehler statt geratenen
+    Ersatzwerten.
+  - Vollständige Regression, Governance, MkDocs strict, Dependency-/Compose-
+    Checks, Cold-/Warm-E2E über Chat-, Template- und Responses-Fassade sowie
+    healthy/restart-0 Container sind reproduzierbar dokumentiert.
+- **Rollout/Rollback:** Zentraler Shadow/Enforce-Modus, anfänglicher Precision-
+  Cache-Bypass, separat schaltbare Direct Response und Structured-Required-
+  Migration. Bei jedem Gate müssen letztes verifiziertes Image und Flags einen
+  praktischen Rollback ermöglichen; obsolete Legacy-Zweige/Flags werden nach
+  stabiler Abnahme entfernt.
+- **Planartefakte:** Story, Zielarchitektur, GAP-/Risiko-/Testmatrix und alle
+  ausführbaren Task-Sheets liegen unter
+  `docs/backlog/current/I-2-pipeline-quality-gate/E-2.1-deterministic-signals/S-2.1.1-precision-evidence-binding/`.
+- In diesem Planungsschritt wurden keine Runtime-Datei, kein Container, kein
+  Credential, Datenbestand, Modell oder Expert Template verändert und kein
+  Commit, Push, PR oder Publish ausgeführt. Der vorbestehende Dirty Worktree
+  bleibt erhalten.
+- **TASK-42 Resolution notes (2026-08-01, Codex CLI):**
+  - Ein eigener `precision_preflight` liegt jetzt zwischen Guard und Cache und
+    friert Pflichtintents, normalisierte Sollargumente, vollständige aktive
+    Schemas sowie Contract-/Kataloghash ein. `cache_lookup_node` besitzt einen
+    zusätzlichen direkten Schutz: erkannte Precision-Anfragen umgehen L0, L1,
+    Knowledge-Bypass und Soft Examples; Agent-Caches der OpenAI-/Anthropic-
+    Toolpfade werden ebenfalls nicht bedient.
+  - Planner-Cache Version 5 hasht den vollständigen Katalog statt nur Toolname
+    und Required-Felder. Planner/Recovery nutzen für Pflichttools den Request-
+    Snapshot; ein zunächst fehlendes Tool wird nicht durch einen späteren
+    Reload still ausführbar.
+  - Der MCP-Worker validiert vor Invoke das vollständige entdeckte JSON-Schema
+    einschließlich Typen und Zusatzfeldern, normalisiert nur dokumentierte
+    Defaults und korreliert Evidence über Contract-/Input-Hash. Katalogdrift
+    blockiert vor Invoke; nach Serverfehlern sind Judge-generierte Argumente
+    für Pflichtverträge verboten. Optionale Retries bleiben schema-validiert.
+  - Das finale Quality Gate rekonstruiert die erkannte Pflichtmenge und prüft
+    bijektiv Intent→Plan-Task→genau eine erfolgreiche Evidence. Fehlender
+    Preflight, Contract-/Argument-/Hash-Drift und fehlende/duplizierte Evidence
+    liefern stabile fail-closed Gründe.
+  - Fokussierte Graph-/Contract-/Cache-/Worker-/Quality-Tests **140 passed**;
+    vollständige Regression **766 passed in 4,30 s**. Governance 27/9,
+    MkDocs strict, Compileall, Compose-Config, `pip check` und Diff-Check sind
+    grün.
+  - Live-Image
+    `sha256:d5f76d7d40eabbb5cb3c2151f2e788b3b1c5f26bc747b5e3a73a703f28aaeedc`
+    läuft healthy mit RestartCount 0 und 59/59 aktiven Tools. Ein absichtlich
+    falscher realer L0-Eintrag wurde umgangen, `gcd_lcm` ergab 23 mit
+    Contract-/Input-Hash, Quality passierte und blockierte anschließend eine
+    manipulierte Evidence mit `precision_evidence_mismatch`.
+  - Vor dem Recreate waren null aktive Requests vorhanden; der temporäre
+    falsche Cacheeintrag wurde gelöscht. Bekannte Authentik-Warnungen bleiben
+    unverändert. Kein Credential, Datenbestand, Modell oder Expert Template
+    geändert und kein Commit, Push, PR oder Publish ausgeführt.
+- **TASK-43 Resolution notes (2026-08-01, Codex CLI):**
+  - `calendar_facts`, `gcd_lcm` und `unit_convert` veröffentlichen jetzt
+    vollständige versionierte Ein-/Ausgabeschemas, kanonische Contract-Hashes,
+    Determinismus-/Source-Metadaten sowie Normalisierungs-, Retry-, Cache- und
+    Größenpolicies. `/invoke` behält `result` und ergänzt typisierte Fakten,
+    normalisierten Input, Runtime-Source, Warnungen und Result-Hash.
+  - MCP und Orchestrator validieren Input, Output, Contract, Source und Hash
+    fail closed; Evidence bleibt innerhalb des 65.536-Zeichen-Limits
+    vollständig. Der Katalog wird erst nach vollständiger Validierung als Set
+    ersetzt, In-Flight-Snapshots erkennen Drift, und das finale Gate blockiert
+    manipulierte strukturierte Fakten.
+  - Fokussiert **118 passed**, vollständig **772 passed in 4,24 s**;
+    Compileall, Governance 27/9, MkDocs strict, Compose-Config und `pip check`
+    in beiden Images sind grün. Die Live-Negativmatrix prüfte Required, Typ,
+    Enum, Range, Zusatzfelder, leere und inkompatible Einheiten.
+  - MCP-Image
+    `sha256:f2e172d23b0c745c85c3d6bf37495ae2d95d9d403c42ad5508708c59a637676c`
+    und Orchestrator-Image
+    `sha256:919022098988d3fd198af20c8b6b8c5a5a7912c9bb7bbfce5a606506541a6956`
+    laufen healthy/restart-0 mit 59/59 Tools. Live-GGT 23 passierte; eine
+    Änderung auf 29 blockierte als `precision_evidence_mismatch`. Vor dem
+    Recreate waren null aktive Requests vorhanden; keine Credentials, Modelle,
+    Templates, Commits, Pushes, PRs oder Publikationen wurden verändert.
+- **TASK-44 Resolution notes (2026-08-01, Codex CLI):**
+  - Vollständig abgedeckte Präzisionsanfragen laufen nach Auth und Guard direkt
+    über MCP, typisierten Locale-Renderer, Evidence-Binding und Quality Gate.
+    Planner, Experten, Thinking, Merger, Konfliktauflösung und Critic werden
+    auf diesem Pfad nicht aufgerufen.
+  - Gemischte Antworten erhalten wertfreie opaque Fact-Slots. Nach dem letzten
+    Modellknoten bindet ein deterministischer Knoten jeden isolierten Slot an
+    aktuelle typisierte Evidence; fehlende, duplizierte, vertauschte,
+    unbekannte oder kontextumhüllte Marker blockieren fail closed.
+  - Chat-, Responses- und Anthropic-Fassade lieferten live denselben GGT-Satz
+    mit null Modell-Tokens. Ein `native` Claude-Code-Profil kann einen reinen
+    Pflicht-Precision-Turn nicht mehr am gemeinsamen Graph vorbeileiten;
+    echte Tool-/Tool-Result-Turns bleiben unverändert.
+  - Ein nummerierter Mixed-Live-Request führte `gcd_lcm` und einen
+    `qwen3.6:35b`-Code-Review-Experten aus. Der Fact-Slot blieb durch Merger,
+    zwei Self-Critique-Runden und Critic isoliert, wurde danach korrekt
+    gebunden und erst anschließend vom unabhängigen HITL-Gate auf `pending`
+    gesetzt.
+  - Fokussiert **29 passed**, vollständig **787 passed in 4,59 s**. Das aktive
+    Orchestrator-Image
+    `sha256:19f01440fcea67c0d35a976414a883012e63154d0caa1a20ad2ec7c0b7ae9656`
+    läuft healthy/restart-0. Temporäre `horndev`-Keys wurden widerrufen und
+    archiviert; Test-Traces und der ausschließlich für den Proof erzeugte
+    Pending-Gate wurden entfernt. Kein Commit, Push, PR oder Publish.
+- **TASK-45 Resolution notes (2026-08-01, Codex CLI):**
+  - Der Graph besitzt jetzt eine explizite Commit-Grenze:
+    `quality_gate(pass) -> response_commit -> END`. Block/Pending/Reject enden
+    ohne wiederverwendbaren Write; HITL-Approve committed den eingefrorenen
+    Draft und seine Hashbindung vor Freigabe.
+  - Der idempotente Commit-Key bindet Request-, Response-, Contract-, Binding-
+    und Evidence-Hash. Ein Valkey-Journal hält den Status aller zehn Sinks und
+    wiederholt bei Resume nur fehlgeschlagene Sinks. Response- und Binding-
+    Hash werden vor jedem ersten Write erneut geprüft; ungebundene Precision-
+    Antworten blockieren.
+  - Alle wiederverwendbaren Cache-, Metadata-, Kafka-, Episode-, Correction-,
+    Attribution-, Routing-/Policy-Learning- und Evaluation-Pfade wurden aus
+    dem Merger hinter das finale Gate verschoben. Operatives Audit und
+    Task-Ledger bleiben sofort sichtbar.
+  - Precision-Cache bleibt produktiv auf `bypass`, weil der bestehende Reader
+    den zwar versionierten Key, aber noch keinen vollständigen Evidence-
+    Umschlag revalidieren kann. Damit wird kein nur halb integrierter Cachepfad
+    aktiviert.
+  - Vollständige Regression **797 passed in 4,25 s**. Live lieferte Request
+    `chatcmpl-5de9de32-2a34-428f-acda-ee2f0098b44a` fünf deterministische
+    Fakten in 2,543 s und null Modell-Tokens; Trace: Binding `bound`, Gate
+    `passed`, Commit `complete`, alle zehn realen Sink-Journale `done`.
+  - Image
+    `sha256:4abd1ef59f145cf0641c3624dcdf1b948f57f176870b9413e250e4c5f3b94262`
+    läuft healthy/restart-0 mit `PRECISION_CACHE_POLICY=bypass`. Der temporäre
+    `horndev`-Key wurde widerrufen, invalidiert und archiviert. Kein Commit,
+    Push, PR oder Publish.
+- **TASK-46 Resolution notes (2026-08-02, Codex CLI):**
+  - `time_facts` und `timezone_convert` verlangen explizite ISO-Werte und
+    IANA-Zonen, behandeln DST-Gaps fail closed und verlangen bei mehrdeutigen
+    Fold-Zeiten die explizite Auswahl. `tzdata==2026.3` ist im Runtime-Image
+    gepinnt und wird mit den typisierten Fakten belegt.
+  - Deutsche/englische reine und gemischte Intents durchlaufen denselben
+    Contract-Snapshot-, Evidence-Binding- und Quality-Pfad. Der Anthropic-
+    Mixed-Proof `msg_ba9443376ced4b9d96cbb19f` belegte Preflight → MCP →
+    Expert → Hybrid/Critic → Bind → Quality → sechs erfolgreiche Commits.
+- **TASK-47 Resolution notes (2026-08-02, Codex CLI):**
+  - `decimal_finance` nutzt ausschließlich kanonische Decimal-Strings mit
+    expliziter Scale, Rundung und ISO-4217-Währung. Addieren, Subtrahieren,
+    Multiplizieren, Dividieren, Prozent-, einfache und Zinseszinsrechnung sind
+    typisiert; Float, Division durch null, unpassende Operanden und Grenzen
+    werden abgewiesen.
+  - Wechselkurse, Steuerrecht und jurisdiktionsabhängige Rundungsregeln sind
+    bewusst kein Bestandteil des input-only Vertrags und dürfen nicht aus dem
+    Modell ergänzt werden.
+- **TASK-48 Resolution notes (2026-08-02, Codex CLI):**
+  - `exact_probability` implementiert Bruch, Kombination, Permutation und
+    Binomialwahrscheinlichkeit auf Integer-/`Fraction`-Basis. Eine Decimal-
+    Projektion entsteht nur mit expliziter Scale und Rundung; `n`, Kosten und
+    Resultat-Bitlänge sind vor bzw. während der Ausführung begrenzt.
+  - Reine API-Antworten werden ohne LLM-Token aus typisierter Evidenz
+    gerendert; übergroße Zustandsräume und nicht-kanonische Zahlen blockieren
+    als Contract-/Toolfehler statt auf generierten Code auszuweichen.
+- **TASK-49 Resolution notes (2026-08-02, Codex CLI):**
+  - `structured_validate` validiert begrenztes JSON, YAML, XML und CSV mit
+    sicheren, exakt gelockten Parsern. YAML-Aliase/-Tags, XML DTD/Entities/
+    XInclude und JSON-Schema-`$ref` werden ohne Netzwerk- oder Dateizugriff
+    abgewiesen; CSV verlangt einen expliziten Dialekt.
+  - Der Rollout fand eine reale Inhaltsleckage über `input_normalized`, Logs,
+    Telemetrie und Working Keys. Die zentrale Evidence-Policy ersetzt
+    `payload` und `schema_json` an allen operativen Grenzen durch SHA-256 und
+    UTF-8-Bytezahl; die bösartige Live-Matrix bestätigte null Secret-Echos.
+- **TASK-50 Resolution notes (2026-08-02, Codex CLI):**
+  - `PRECISION_CONTRACT_MODE=shadow|enforce`, Direct-Response-, Structured-
+    Required- und Cache-Flags erlauben getrennten Rollout/Rollback. Niedrig-
+    kardinale Metriken erfassen Contract, Stage, Outcome und Mode ohne Prompt,
+    Rohargumente oder Hashes als Labels.
+  - Das versionierte Korpus `moe-precision-v1` passierte nach einem gefundenen
+    und behobenen AdviceTaker-Fehler **13/13** API-Fälle. Alle zwölf reinen
+    Chat-/Responses-/Anthropic-Anfragen nutzten null Modell-Tokens; der
+    gemischte Request führte genau zwei MCP-Verträge und einen abgegrenzten
+    Code-Review-Experten aus und passierte Binding sowie Quality Gate.
+  - Beim identischen Decimal-Prompt lieferte native `qwen3.6:35b` auf N04-RTX
+    kalt/warm in 151,918/21,323 s den korrekten Wert, die evidence-bound Direct
+    Route in 0,174/0,163 s zusätzlich mit Scale-/Rundungsnachweis. Stichprobe
+    n=1; daraus folgt keine allgemeine Performance- oder Qualitätsaussage.
+  - Vollständige Regression **908 passed in 5,04 s**, Governance 27/9,
+    MkDocs strict, Compose-Config, Diff-Check und `pip check` beider Images sind
+    grün. Aktive Images: MCP
+    `sha256:7e28eeab4a5b05e56eb713cfbab834a6c9dc4ebfea9ae3594eb0f46c77c5564a`,
+    Orchestrator
+    `sha256:4320ca67eaaeaf5168d4c4c251427f99305e04bfbdbf1e60e3b4368f2e8d402f`;
+    beide healthy/restart-0. Flag- und vorheriger Image-Rollback wurden real
+    ausgeführt, anschließend wurde das finale Image erfolgreich restauriert.
+  - Temporäre `horndev`-Benchmark-Keys sind widerrufen, invalidiert und
+    archiviert (kombinierter Audit TASK-46/50: elf Datensätze, null aktiv,
+    null unarchiviert). Methodik, Request-IDs und Grenzen stehen in
+    `docs/system/toolstack/precision_rollout_benchmark_2026-08-02.md`. Kein
+    Commit, Push, PR oder Publish.
+
+### TASK-51: Native adaptive deliberation workflow
+
+- **Owner:** Codex CLI
+- **Status:** completed (2026-08-07)
+- **Depends on:** TASK-38, TASK-42 through TASK-50
+- **Goal:** Integrate the proven sovereign-debate-engine behavior as a
+  versioned MoE Sovereign deliberation policy without duplicating its auth,
+  persistence, retrieval, or inference infrastructure. Expert templates must
+  explicitly disable, adaptively enable, or require deliberation. Agent and
+  round capacity must derive from frozen complexity/Cynefin/plan signals and
+  expose separately budgeted reserve capacity.
+- **Owned scope:** `services/deliberation/`, template resolution in
+  `services/routing.py`, dynamic `moe-auto` template compilation in
+  `services/dynamic_router.py`, the expert execution integration in
+  `graph/expert.py`, required state/config fields, focused tests, and TASK-51
+  documentation. Existing TASK-9 training scripts and unrelated dirty
+  worktree files are excluded.
+- **Required behavior:**
+  1. Version and strictly validate `deliberation_policy`; invalid required
+     policy fails closed and is never silently ignored.
+  2. Support `disabled`, `adaptive`, and `required` activation plus `micro`,
+     `moderated`, and `auto` modes.
+  3. Compute initial/reserve agents and rounds deterministically from current
+     pipeline signals, template limits, and the remaining request budget.
+  4. Do not require a new planner-model output contract for the first release;
+     `moe-auto` compiles and snapshots the policy outside the planner LLM.
+  5. Preserve the existing standard path when deliberation is disabled or not
+     selected, and retain the bounded legacy micro-debate semantics through
+     the new policy layer.
+  6. Account for every deliberation model call and respect the single request
+     deadline, cancellation, `local_only`, endpoint, and template boundaries.
+  7. Cover negative policy/schema cases, early convergence, reserve
+     activation, hard budget exhaustion, and `CHAOTIC`/Trust-BLOCK behavior.
+- **Acceptance:** focused contract and integration tests plus the complete
+  relevant test suite pass; configuration/docs are synchronized; no deploy,
+  migration, credential, commit, push, or publication occurs without separate
+  authorization.
+- **Resolution (2026-08-07):** Implemented the versioned strict policy,
+  deterministic capacity and reserve planner, request-wide model-call and
+  deadline accounting, bounded micro and moderated execution, convergence and
+  fallback behavior, conflict/quality/commit integration, safe telemetry, and
+  Admin/User controls for static and dynamic templates. Missing policy on
+  existing templates retains the former bounded micro semantics; newly created
+  templates default to disabled, while `moe-auto` compiles an adaptive policy
+  outside the planner LLM and supports explicit per-user disable/require
+  modifiers. The planner output contract and current LUMI-G training dataset
+  therefore do not require retraining for this release.
+- **Validation (2026-08-07):** Complete repository regression `937 passed`;
+  compile, template/translation/JavaScript parsing, strict MkDocs build,
+  governance check (27 required files / 9 runtime entrypoints), Compose config,
+  scoped diff check, and the updated whitepaper PDF build passed. Fresh
+  `moe-infra-moe-admin` (`sha256:16354741...`) and
+  `moe-sovereign-orchestrator:local` (`sha256:d767d971...`) images built
+  successfully; isolated container imports validated the new policy and expert
+  graph. No running service was recreated and no live model benchmark was
+  performed, so production effectiveness remains deployment-dependent.
+
+---
+
+### TASK-52: Local image/audio generation as versioned MCP tools (ComfyUI + Kokoro-FastAPI on N04-RGTX)
+
+- **Owner:** Claude Code
+- **Status:** pending (GAP analysis and implementation plan written 2026-08-07; no code changed)
+- **Depends on:** TASK-42 through TASK-45 (versioned MCP contract schema, `determinism`
+  field, evidence-binding boundary — this task adds a new tool category on top of that
+  framework, not a parallel one)
+- **Context:** Operator wants OpenAI-API-parity image generation
+  (`/v1/images/generations`) and audio generation (`/v1/audio/speech`) available as
+  local, self-hosted capabilities, dedicated to the `N04-RGTX` GPU grouping so the
+  `N04-RTX` node (primary expert-LLM instance) is not disturbed.
+- **Verified hardware constraints (2026-08-07, do not re-derive from vendor marketing
+  numbers — these were checked against current CUDA/PyTorch minimums):**
+  1. `N04-RGTX`'s GTX 1060 (Pascal, compute capability 6.1) **cannot run any
+     PyTorch-based generative model** — current PyTorch wheels require CC ≥ 7.5, and
+     cuDNN 9.12 dropped CC 6.1 support outright. This is the same class of dead end as
+     the Tesla M10 (`N11-M10`, already `enabled: false`) and is not a VRAM problem, it
+     cannot be worked around by picking a smaller model. Exclude it from GPU scheduling
+     for this task; its only remaining use is as a CPU-mode Kokoro fallback, which is
+     explicitly **out of scope** for this task (do not build it speculatively).
+  2. `N04-RGTX`'s RTX 2060 (12 GB, Turing, CC 7.5) sits exactly at the current PyTorch
+     minimum — usable, no safety margin below it. Re-verify against the PyTorch/CUDA
+     version actually pinned in the container before assuming this still holds at
+     implementation time (this class of minimum has moved twice in one research pass
+     during scoping — do not treat it as permanently fixed).
+  3. Neither this RTX 2060 (Turing) nor `N04-RTX`'s RTX 3060s (Ampere) have native FP8
+     tensor cores (FP8 hardware acceleration starts at Ada Lovelace/Hopper). An
+     "fp8-quantized" FLUX checkpoint will still load and run here, but only via
+     weight-only quantization (fp8 storage, fp16 compute, Marlin-kernel style) — expect
+     generation latency well above numbers benchmarked on Ada-class cards; do not copy
+     vendor/community benchmark numbers into docs or capacity planning without
+     re-measuring on this specific card.
+  4. `N04-RTX`, `N04-RGTX`, and `N04-TESLA` share **one physical host**
+     (`192.168.155.224`, distinguished only by Ollama port `11434`/`11435`/`11436` in
+     `INFERENCE_SERVERS`) — `N11-M10` is a separate host. Before writing any Compose
+     `device_ids`/`NVIDIA_VISIBLE_DEVICES` pinning, run `nvidia-smi -L` on
+     `192.168.155.224` and explicitly map which physical GPU index is the RTX 2060
+     belonging to the `N04-RGTX` grouping, as opposed to the two RTX 3060s / two other
+     RTX 2060s already claimed by `N04-RTX`'s Ollama instance. Do not guess an index —
+     a wrong pin would either starve the primary LLM instance of a GPU it currently owns
+     or silently run the new services on the (non-functional) GTX 1060.
+- **Architecture decision (rationale, not open for silent re-litigation without a
+  documented reason):**
+  - Expose generation as **new MCP tool contracts** (`generate_image`,
+    `generate_speech`) inside the existing `mcp-precision` service
+    (`mcp_server/server.py`), not as a new graph node (unlike `guard_node`, this is not
+    a pre-planner short-circuit check — it is a capability the Planner decides to
+    invoke, which is exactly what the MCP tool-catalog/contract mechanism already
+    exists for) and not as new sibling REST endpoints (would duplicate auth, rate
+    limiting, and template resolution that the existing pipeline already provides).
+  - `mcp-precision` itself stays thin: both new tool handlers are HTTP proxies to two
+    new, separate backend containers (`comfyui`, `kokoro-tts`) over the internal Docker
+    network. Do not vendor ComfyUI's or Kokoro's Python dependencies into
+    `mcp-precision`'s image — those are heavy, GPU-bound, and architecturally
+    unrelated to the deterministic precision tools already living there.
+  - New `determinism` contract value: **`generative_model`**. This is a deliberate,
+    explicit new trust class, distinct from `input_only`/`source_versioned`/
+    `library_pinned`: generative output is a statistical sample, not a verifiable fact.
+    Tools with `determinism: generative_model` **must never** enter the precision
+    evidence-binding fast path built in TASK-42/44 (no Planner/Judge/Critic bypass) —
+    their output always passes through the normal expert-result → Merger → Critic path,
+    same trust treatment as any LLM expert call.
+- **Template integration (pattern reuse, mirrors `guardrail_*`):**
+  Add per-template override fields, resolved through
+  `services/routing.py::_resolve_template_prompts()` exactly like
+  `guardrail_model_override`/`guardrail_url_override`/`guardrail_token_override`
+  (`services/routing.py`, `graph/router_nodes.py` import block, `admin_ui/app.py`'s four
+  CRUD spots for `admin_expert_templates`):
+  `image_generation_model_override`, `image_generation_url_override`,
+  `image_generation_token_override`, `audio_generation_model_override`,
+  `audio_generation_url_override`, `audio_generation_token_override`. Unset → falls back
+  to new `IMAGE_GEN_URL`/`AUDIO_GEN_URL` config defaults (`config.py`, same
+  `GUARD_URL`/`GUARD_MODEL` fallback pattern). New templates default these fields
+  unset/disabled — this is an opt-in capability (GPU cost, new attack surface), not a
+  default-on one, matching TASK-51's default-disabled precedent for a new template
+  capability.
+- **Response handling (verify against current envelope before implementing, do not
+  assume):** Generated assets must not be inlined as base64 into MCP tool results or
+  carried as text through Merger/Critic — store to a shared volume, return a short
+  reference (id/URL) as the tool result. Confirm during implementation whether
+  `services/pipeline/chat.py`'s response envelope already supports a multipart
+  `image_url`-style content part (used elsewhere for vision input) that the final
+  response can reuse for output, or whether this is a net-new addition — this was not
+  verified during scoping and must not be assumed either way.
+- **Explicit non-goals / follow-ups (do not silently build or silently skip):**
+  1. Content moderation of *generated* image/audio content is **not** covered by the
+     existing `guard_node`/Llama Guard 3 pipeline (text-only). Either enable a
+     generation-side safety checker (e.g. the standard Diffusers `safety_checker`
+     module for ComfyUI/SDXL/FLUX) as a required part of this task's acceptance
+     criteria, or explicitly document the gap and get operator sign-off before
+     deployment — do not ship without one of these two outcomes.
+  2. GTX 1060 CPU-mode Kokoro fallback: explicitly out of scope (see hardware
+     constraint 1) — track as a separate follow-up only if there is a concrete need.
+  3. `N04-TESLA`'s actual GPU generation is unverified (name is ambiguous, see hardware
+     constraint 4) — do not assume it is usable or unusable for a future scale-out of
+     this task without checking `nvidia-smi` output first.
+- **Instructions:**
+  1. `nvidia-smi -L` on `192.168.155.224`; record the exact device index mapping for
+     `N04-RGTX`'s RTX 2060 in this task's resolution notes before writing any Compose
+     GPU pinning.
+  2. Add `comfyui` and `kokoro-tts` services to `docker-compose.yml`, both pinned via
+     `device_ids` to the verified RTX 2060 index only. Use a community-maintained
+     low-VRAM/FP8-capable ComfyUI image (e.g. `frefrik/comfyui-flux`) and
+     `ghcr.io/remsky/kokoro-fastapi-gpu`; pin both to a specific tag/digest, not
+     `:latest`, and record the digest in the resolution notes.
+  3. Add `generate_image`/`generate_speech` tool contracts to
+     `mcp_server/server.py._TOOL_CONTRACTS`, `determinism: "generative_model"`,
+     `source_policy` describing the backend container + pinned model version, full
+     input/output JSON schemas (output = asset reference, not inline bytes).
+  4. `config.py`: `IMAGE_GEN_URL`, `IMAGE_GEN_MODEL`, `AUDIO_GEN_URL`,
+     `AUDIO_GEN_MODEL`, `IMAGE_GEN_TOKEN`, `AUDIO_GEN_TOKEN` defaults.
+  5. `services/routing.py::_resolve_template_prompts()` + `admin_ui/app.py` (four CRUD
+     spots): add the six new override fields, matching the `guardrail_*` pattern
+     exactly.
+  6. Decide and implement asset storage + response-envelope handling (see "Response
+     handling" above) — verify first, do not assume.
+  7. Implement the safety-checker decision from non-goal 1 (enable it, or get explicit
+     documented sign-off for shipping without it).
+  8. Tests: contract/schema tests for both tools against a mocked backend (deterministic
+     CI, no live GPU/image-content assertions); a live smoke test against the real
+     `comfyui`/`kokoro-tts` containers is a separate, manually-run verification step, not
+     part of the automated suite.
+- **Acceptance criteria:**
+  - `nvidia-smi -L` mapping recorded; Compose GPU pinning matches it exactly (no
+    contention with `N04-RTX`'s existing Ollama instance, no accidental pin to the
+    non-functional GTX 1060).
+  - Both tools discoverable via the existing MCP catalog with a complete, schema-valid
+    contract; `determinism: "generative_model"` confirmed to be excluded from the
+    precision evidence-binding fast path (negative test: a generative-tool result must
+    not satisfy `precision_evidence_mismatch`-style binding checks).
+  - Template override fields resolve end-to-end (template with an override reaches the
+    tool call; template without one falls back to the configured default).
+  - Safety-checker decision explicitly resolved (enabled and tested, or explicitly
+    signed off as a documented gap) — not silently absent.
+  - Full relevant test suite passes; governance/MkDocs/Compose-config checks pass; no
+    running service recreated, no commit/push/PR/publish, without separate
+    authorization.
+
+---
+
+### TASK-53: Wire `local_only_routing` end-to-end into the graph pipeline + egress guard
+
+- **Owner:** Claude Code
+- **Status:** done (code + tests; live rebuild/recreate pending — see Resolution notes)
+- **Depends on:** none (independent compliance fix); touches files also touched by
+  TASK-51 (`graph/expert.py`) — verified no active lease overlap at start.
+- **Trigger:** Live incident during TASK-51's "temporary deliberation validation
+  rerun" (2026-08-07, 20:55 UTC+2): the moderated-debate feature dispatched ~17 real
+  requests to paid OpenRouter frontier models (`gpt-5.4-pro`, `gpt-5.5-pro`,
+  `claude-opus-4.7-fast`, ...) using the live system key, during what was intended to
+  be a local-model validation run (some calls hit `402 Payment Required`, draining
+  OpenRouter balance). Root-caused via read-only container-log + code investigation
+  (see `agent_status/claude-code.md` TASK-53 `starting` entry for full chain).
+- **Root cause (broader than the triggering symptom):**
+  1. `local_only_routing` (per-API-key compliance flag, correctly read from `user_ctx`
+     in `services/pipeline/chat.py`) was computed only transiently for the
+     `get_dynamic_template(...)` call and never written onto `AgentState`. All three
+     graph-invocation entry points (`main.py::stream_response`,
+     `services/pipeline/chat.py`, `services/pipeline/anthropic.py::
+     _anthropic_moe_handler`) never set it. `graph/expert.py:916`'s
+     `state_.get("local_only_routing")` read was therefore always `False` in
+     production — dead code disguised as a working guard.
+  2. `services/sovereignty.py::assert_egress_allowed()` — an existing, correctly
+     designed fail-closed egress guard ("BLOCKED egress ... configuration mistakes
+     must fail loudly, not leak silently") — was wired into exactly one call site
+     (`_anthropic_tool_handler`/`_anthropic_reasoning_handler`'s single
+     `session.tool_url`, via the check in `anthropic_messages`). The full
+     planner/expert/judge/debate graph pipeline (all three entry points, the code path
+     that handles the large majority of traffic including every `moe-auto` request)
+     had zero egress enforcement before any outbound LLM call.
+  3. `graph/expert.py::run_moderated_request()` (TASK-51's debate-panel candidate
+     selection) and `run_task()`'s static single-expert path both build candidate
+     lists directly from `effective_experts`/`EXPERTS` with no local/cloud filtering —
+     unlike `services/dynamic_router.py::_score_and_allocate_model`'s "Compliance
+     Gate", which only runs for the `dynamic` category via `services/expert_builder.py`.
+- **Fix (end-to-end propagation + fail-closed enforcement at actual dispatch, not a
+  candidate-list patch at the TASK-51 call site alone):**
+  1. `pipeline/state.py` — new declared field `local_only_routing: bool`.
+  2. `services/sovereignty.py::assert_egress_allowed` — signature decoupled from the
+     `user_ctx` dict shape: `(url: str, local_only: bool)`.
+  3. `local_only` computed unconditionally (permission flag `moe-auto:local-only` >
+     API-key flag > global `LOCAL_ONLY_COMPLIANCE` env), independent of whether
+     dynamic-router template compilation runs, in all three entry points, and written
+     onto the invoked state dict.
+  4. Egress guard called at the actual network-dispatch boundary:
+     `graph/expert.py::run_single()` (covers both the static single-expert path and
+     the TASK-51 debate-turn path, since `run_moderated_request` dispatches turns via
+     `run_single`) and `services/inference.py::_invoke_judge_with_retry` (covers both
+     the regular judge stage and the debate moderator, plus the planner equivalent).
+     `EgressDenied` is translated into the existing per-expert error-result shape
+     (`[{model} ERROR]: ...`), not an unhandled exception.
+  5. Defense-in-depth: `run_task`'s and `run_moderated_request`'s candidate lists are
+     additionally filtered by `_is_local_url(URL_MAP.get(endpoint, endpoint))` when
+     `local_only_routing` is set — resolving the symbolic node name through `URL_MAP`
+     first, not the raw `endpoint` string, because `_is_local_url` treats any dot-free
+     unresolved name as local and the TASK-51 incident's exact candidates
+     (`endpoint="openrouterai"`) are dot-free symbolic names. This filter is
+     best-effort only (it approximates single-endpoint resolution, not `_select_node`'s
+     full floating/multi-node logic); `run_single()`'s guard is the actual guarantee.
+  6. A fourth, previously-undiscovered dispatch path found only during live
+     verification (not reachable by the unit tests above, which only exercise
+     `expert_worker`): `services/pipeline/chat.py`'s `model@node` "native direct"
+     passthrough (`_native_endpoint`, used by Open WebUI's native-model picker and any
+     `model@node`-style request matching a `model_endpoint` permission) dispatches via
+     raw `httpx`/`_stream_native_llm()` entirely outside `app_graph` — none of the
+     graph-side fixes above cover it. Guarded separately at the top of chat.py's
+     `if _native_endpoint:` block (before both its streaming and non-streaming
+     branches), reusing the same `local_only` value resolved once per request.
+- **Acceptance criteria — all met, evidence below:**
+  - Full regression suite green (952 passed, up from the TASK-51-era baseline of 938 —
+    13 new tests: `tests/test_sovereignty.py` (11) + two dispatch-level tests added to
+    `tests/test_jmoe_debate_judge.py`). `python3 -m compileall`, `git diff --check`, and
+    `python3 scripts/check_governance.py --check` (27/9) all green on the changed files.
+  - `langgraph-app` rebuilt twice (once per fix iteration — see next bullet) and
+    recreated; healthy both times, `/ready` fully positive
+    (`orchestration_graph`/`boundary_contracts`/`valkey`/`user_database` all
+    `ok:true, critical:true`).
+  - **Live verification exposed and then confirmed a fix for a fourth dispatch path**
+    that none of the unit tests could reach (they only exercise `expert_worker`): using
+    the pre-existing `local_only_routing=true` "Benchmark" key
+    (`moe-sk-0261cddfe...`, already present in `api_keys` — no credential was created
+    or modified), a live `POST /v1/chat/completions` with
+    `model=openai/gpt-4o-mini@openrouterai` (the exact TASK-51 incident shape) **still
+    reached the real OpenRouter API and returned a real completion** after the first
+    build — root-caused live to `services/pipeline/chat.py`'s `_native_endpoint`
+    "native model@node" passthrough, which dispatches via raw `httpx`/
+    `_stream_native_llm()` entirely outside `app_graph` (see item 6 in the Fix list).
+    Guarded, rebuilt, recreated; the identical request then returned
+    `403 {"code":"local_only_violation","message":"local_only routing: endpoint
+    'openrouter.ai' is not a local/allowlisted host"}` with the container log showing
+    `sovereignty: BLOCKED egress to openrouter.ai (local_only key)` and **no**
+    `POST .../openrouter.ai/...` request.
+  - **No-regression proof** (same key, same live container): a full `model=moe-auto`
+    request (`chatcmpl-27d664f2...`) — exercising planner → complexity routing →
+    expert dispatch → judge/merger, i.e. the graph path — completed normally in
+    133s (cold qwen3.6:35b load), returned the correct content, and the container log
+    confirms every request in that run stayed on `http://192.168.155.224:11434`
+    (local N04-RTX Ollama). `local_only_routing` blocks non-local egress without
+    degrading legitimate local routing.
+  - No migration, credential, or schema change. No unrelated-scope edits; the
+    pre-existing dirty worktree was preserved (verified via `git status`/`git diff
+    --check` scoped to the files touched by this task).
+
+---
+
 ## 4. Suggested Tool Assignments
 
 - **Claude Code CLI** (this session, has live shell + Docker access on

@@ -3,7 +3,7 @@
 # Single artifact for Docker, Podman (rootless), Kubernetes, OpenShift, LXC.
 
 # ---------- Stage 1: builder ----------
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,13 +18,14 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY requirements.txt .
+COPY requirements.lock.txt .
 
 # Install into an isolated prefix we can copy into the runtime stage.
-RUN pip install --prefix=/install -r requirements.txt
+RUN pip install --prefix=/install -r requirements.lock.txt \
+ && PYTHONPATH=/install/lib/python3.11/site-packages python -m pip check
 
 # ---------- Stage 2: runtime ----------
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS runtime
 
 # OCI image labels (Harbor/Quay scanners and k8s tooling look these up).
 LABEL org.opencontainers.image.title="moe-sovereign-orchestrator" \

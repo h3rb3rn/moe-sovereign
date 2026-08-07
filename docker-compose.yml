@@ -111,6 +111,7 @@ services:
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
+    image: moe-sovereign-orchestrator:local
     build:
       context: .
       dockerfile: Dockerfile
@@ -149,6 +150,13 @@ services:
       - CHROMA_HOST=chromadb-vector
       - CHROMA_PORT=8000
       - MCP_URL=http://mcp-precision:8003
+      - PRECISION_DIRECT_RESPONSE_ENABLED=${PRECISION_DIRECT_RESPONSE_ENABLED:-true}
+      # Exact precision answers are evidence-bound but the current read path
+      # cannot yet reconstruct and revalidate their typed evidence envelope.
+      # Keep response caching disabled until that reader contract exists.
+      - PRECISION_CACHE_POLICY=${PRECISION_CACHE_POLICY:-bypass}
+      - PRECISION_CONTRACT_MODE=${PRECISION_CONTRACT_MODE:-enforce}
+      - MCP_STRUCTURED_RESULT_REQUIRED=${MCP_STRUCTURED_RESULT_REQUIRED:-true}
       - NEO4J_URI=${NEO4J_URI}
       - NEO4J_USER=neo4j
       - CONVERSATION_LOG_DIR=/app/logs/users
@@ -175,7 +183,10 @@ services:
       - ${MOE_DATA_ROOT}/chroma-onnx-cache:/app/.cache/chroma
       - ./.env:/app/.env:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:ro
-      - ./services:/app/services:ro
+      # Application Python sources are copied as one coherent snapshot by the
+      # image build. Never bind-mount only one package: mixing current
+      # services/ with stale graph/, main.py or tool_injector.py caused live
+      # import failures after otherwise successful planning.
       - ./data:/app/data:rw
       - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
       - ./models:/app/models:ro
@@ -194,6 +205,46 @@ services:
         condition: service_started
       moe-embed:
         condition: service_healthy
+
+  # Safe periodic learning/maintenance jobs. HABE publishes atomically;
+  # graph decay is dry-run unless an operator explicitly enables deletion;
+  # Eurisko template mutation is opt-in because it changes active policies.
+  moe-maintenance:
+    image: moe-sovereign-orchestrator:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: moe-maintenance
+    restart: unless-stopped
+    command: ["python", "-u", "scripts/maintenance_scheduler.py"]
+    env_file:
+      - .env
+    environment:
+      - MOE_USERDB_URL=postgresql://moe_admin:${MOE_USERDB_PASSWORD:?missing — run scripts/install.sh (Linux) or scripts/bootstrap-macos.sh (macOS) first}@terra_checkpoints:5432/moe_userdb
+      - HABE_SCHEDULER_ENABLED=${HABE_SCHEDULER_ENABLED:-1}
+      - HABE_REBUILD_INTERVAL_SECONDS=${HABE_REBUILD_INTERVAL_SECONDS:-86400}
+      - GRAPH_DECAY_SCHEDULER_ENABLED=${GRAPH_DECAY_SCHEDULER_ENABLED:-1}
+      - GRAPH_DECAY_INTERVAL_SECONDS=${GRAPH_DECAY_INTERVAL_SECONDS:-86400}
+      - GRAPH_DECAY_APPLY=${GRAPH_DECAY_APPLY:-0}
+      - EURISKO_SCHEDULER_ENABLED=${EURISKO_SCHEDULER_ENABLED:-0}
+      - EURISKO_INTERVAL_SECONDS=${EURISKO_INTERVAL_SECONDS:-21600}
+      - MAINTENANCE_INITIAL_DELAY_SECONDS=${MAINTENANCE_INITIAL_DELAY_SECONDS:-30}
+      - MAINTENANCE_STATUS_FILE=/app/logs/maintenance-status.json
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./models:/app/models:rw
+      - ./data:/app/data:rw
+      - ${MOE_DATA_ROOT}/agent-logs:/app/logs:rw
+    depends_on:
+      terra_checkpoints:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,os,time; p='/app/logs/maintenance-status.json'; d=json.load(open(p)); raise SystemExit(0 if time.time()-d['heartbeat'] < 120 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   # --- Postgres (LangGraph checkpoints via AsyncPostgresSaver) ---
   # Dedicated instance — keeps checkpoint data isolated from authentik-postgresql.
@@ -635,7 +686,7 @@ services:
     healthcheck:
       # Garage image is distroless (no shell/wget). Binary lives at /garage (not in PATH).
       # `garage status` exits 0 when the node is operational.
-      disable: true
+      test: ["CMD", "/garage", "status"]
       interval: 30s
       timeout: 5s
       retries: 3

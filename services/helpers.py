@@ -152,17 +152,75 @@ def _conf_format_for_mode(mode: str) -> str:
     return _CONF_FORMAT_DEFAULT
 
 
+def _inject_skills_into_prompt(base: str, skill_names: list) -> str:
+    """Append a compact skill-availability note to an expert system prompt.
+
+    Reads each skill's description line from the frontmatter only (≤100 chars),
+    so the injected block stays small. Skills whose files cannot be found are
+    silently skipped — callers must not assume every name resolves.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+    _DESC_RE = _re.compile(r"description:\s*(.+?)(?:\n|$)")
+    _SKILLS_DIR = _Path("/app/skills")
+    lines: list[str] = []
+    for name in (skill_names or []):
+        for d in (_SKILLS_DIR, _SKILLS_DIR / "community"):
+            candidate = d / f"{name}.md"
+            if candidate.exists():
+                try:
+                    header = candidate.read_text(encoding="utf-8")[:500]
+                    m = _DESC_RE.search(header)
+                    desc = m.group(1).strip()[:100] if m else ""
+                    lines.append(f"• /{name}" + (f": {desc}" if desc else ""))
+                except OSError:
+                    pass
+                break
+    if not lines:
+        return base
+    block = (
+        "\nAvailable Output Skills (add output_skill field to your response when applicable):\n"
+        + "\n".join(lines)
+    )
+    if "Available Output Skills" in base:
+        return base
+    return base + block
+
+
 def _get_expert_prompt(cat: str, user_experts: Optional[dict] = None) -> str:
     """Returns the system prompt for a category.
+
     Priority: Template system prompt > Custom (Admin UI) > Default > general fallback.
-    Tool injection: appends context-dependent tool definitions to the prompt.
+    Tool injection: explicit MCP tool list from template > category-based default.
+    Skill injection: per-expert skill list from template (description-only, not full body).
     """
-    from tool_injector import inject_tools
+    import tool_injector as _tool_injector
     from prompts import DEFAULT_EXPERT_PROMPTS
+    inject_tools = _tool_injector.inject_tools
+    inject_tools_explicit = getattr(_tool_injector, "inject_tools_explicit", None)
     if user_experts:
         cat_models = user_experts.get(cat, [])
         if cat_models and cat_models[0].get("_system_prompt"):
-            return inject_tools(cat_models[0]["_system_prompt"], cat)
+            base = cat_models[0]["_system_prompt"]
+            mcp_tools = cat_models[0].get("_mcp_tools") or []
+            skills    = cat_models[0].get("_skills") or []
+            # Explicit tool list from dynamic template overrides category heuristic
+            if mcp_tools:
+                if inject_tools_explicit is None:
+                    # A coherent image always provides this symbol. Retain a
+                    # fail-safe for rolling upgrades so source skew cannot
+                    # crash a request after a costly planner run.
+                    logger.error(
+                        "tool_injector lacks inject_tools_explicit; "
+                        "skipping explicit tool injection"
+                    )
+                else:
+                    base = inject_tools_explicit(base, mcp_tools)
+            else:
+                base = inject_tools(base, cat)
+            if skills:
+                base = _inject_skills_into_prompt(base, skills)
+            return base
     base = (_CUSTOM_EXPERT_PROMPTS.get(cat)
             or DEFAULT_EXPERT_PROMPTS.get(cat)
             or DEFAULT_EXPERT_PROMPTS["general"])

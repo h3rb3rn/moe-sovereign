@@ -3,7 +3,7 @@
 **Grant:** EHPC-DEV-2026D06-XXX | 4.500 Node-Stunden · 18.000 GPU-Stunden · AMD MI250X · 6 Monate  
 **Projekt-Team:** hornphil / project_465003058  
 **Berichtszeitraum:** 2026-06-11 – laufend  
-**Letztes Update:** 2026-07-10
+**Letztes Update:** 2026-07-24
 
 ---
 
@@ -16,12 +16,12 @@
 
 | Ressource | Zugeteilt | Verbraucht (aktuell) | Laufend (est.) | Verbleibend |
 |-----------|-----------|----------------------|----------------|-------------|
-| Node-Stunden | 4.500 | **64,94 h** | ~2 h (2 Jobs) | ~4.433 h |
-| GPU-Stunden (AMD MI250X GCDs) | 18.000 | **483,70 h** | ~16 h (Training) | ~17.500 h |
-| Scratch-Speicher | 2 TB | **~78 GB** | +laufende Shards | ~1.922 GB |
-| Laufzeit | 6 Monate | 29 Tage | — | ~5,0 Monate |
+| Node-Stunden | 4.500 | **76,22 h** | ~2 h (2 Jobs) | ~4.422 h |
+| GPU-Stunden (AMD MI250X GCDs) | 18.000 | **571,12 h** | ~16 h (Training) | ~17.413 h |
+| Scratch-Speicher | 2 TB | **~126 GB** | +laufende Shards | ~1.874 GB |
+| Laufzeit | 6 Monate | 43 Tage | — | ~4,5 Monate |
 
-> **Stand:** 2026-07-10 20:00 UTC · Verbrauch ≈ 2,69% des GPU-Budgets
+> **Stand:** 2026-07-24 18:00 UTC · Verbrauch ≈ 3,17% des GPU-Budgets
 
 ---
 
@@ -78,10 +78,17 @@
 | 19826018 | sovereign-judge-merge (Aborted)| standard-g| ❌ | 0s | **0** | 0 | 0 | **200 GB** |
 | 19826216 | judge-lora-large (Qwen3.6 v3) | standard-g| 🔄 | laufend | **8** | ~0,80 | 0,100 | **200 GB** |
 | 19826217 | sovereign-judge-merge | standard-g| 🔄 | pending | **0** | 0 | 0 | **200 GB** |
+| 20177965 | qwen3\_sft\_merged (FAILED, falscher Modellname) | small-g | ❌ | 16s | **8** | 0,036 | 0,004 | **480 GB** |
+| 20188267 | qwen3\_sft\_merged (FAILED, fehlende DeepSpeed-Config) | small-g | ❌ | 5min 53s | **8** | 0,784 | 0,098 | **480 GB** |
+| **20190726** | **qwen3\_sft\_merged (Planner-SFT v1) ✓²** | small-g | ✅ | **10h 49min 29s** | **8** | **86,598** | **10,825** | **480 GB** |
+| 20206978 | planner\_lora\_merge (CPU BF16) | small-g | ✅ | 2min 46s | **0** | 0 | 0,046 | **60 GB** |
+| 20208202 | planner\_gguf\_upload (GGUF+Quant+HF-Upload) | small-g | ✅ | 18min 8s | **0** | 0 | 0,302 | **80 GB** |
 
 > ¹ Job 19534326 endete mit OOM im Merge-Schritt (nach erfolgreichem Training). LoRA-Adapter wurde vollständig gespeichert.
+> ² Job 20190726 lief formal erfolgreich durch (kein Abbruch, `train_loss` konvergierte), erzeugte jedoch aufgrund eines
+> `max_seq_len`-Konfigurationsfehlers keinen wirksamen Fine-Tune — siehe Aktivität 10 für die vollständige Analyse.
 
-### Ressourcensumme (Stand 2026-07-10 23:10 UTC)
+### Ressourcensumme (Stand 2026-07-24 18:00 UTC)
 
 | Kategorie | GPU-Stunden | Node-Stunden | Anteil am Budget |
 |-----------|-------------|--------------|------------------|
@@ -100,8 +107,11 @@
 | Judge Training Debugging v2 (FAILED) | 8,960 | 1,120 | 0,050% |
 | Judge Training QLoRA v2 (TIMEOUT) | 96,030 | 12,004 | 0,534% |
 | Judge Training DeepSpeed v3 (laufend) | ~0,800 | ~0,100 | 0,004% |
-| **Gesamt (aktuell)** | **489,45** | **65,66** | **2,719%** |
-| **Gesamt inkl. laufender Jobs (est.)** | ~505 | ~68 | ~2,81% |
+| Planner-SFT v1 Fehlversuche (Akt. 10, FAILED) | 0,820 | 0,102 | 0,005% |
+| Planner-SFT v1 (Akt. 10, COMPLETED, `max_seq_len`-Bug) | 86,598 | 10,825 | 0,481% |
+| Planner-LoRA-Merge + GGUF-Upload (Akt. 10) | 0 | 0,348 | 0,002% |
+| **Gesamt (aktuell)** | **576,86** | **77,04** | **3,205%** |
+| **Gesamt inkl. laufender Jobs (est.)** | ~593 | ~79 | ~3,29% |
 
 ### Projizierter Gesamtverbrauch (alle Phasen, 5 Monate)
 
@@ -121,12 +131,15 @@
 | Reserve (5%) | ~908 | **17.192** |
 | **Budget gesamt** | **18.000** | — |
 
-### Scratch-Speicherverbrauch (Stand 2026-07-10)
+### Scratch-Speicherverbrauch (Stand 2026-07-24)
 
 | Pfad | Inhalt | Größe |
 |------|--------|-------|
 | `hf_cache/models--Qwen--Qwen2.5-32B-Instruct/` | Basis-Modell (17 Shards) | **62 GB** |
 | `lumi-multitorch-latest.sif` | Singularity Container Image (Local Copy) | **14 GB** |
+| `qwen3_planner_gguf/` | Planner GGUF F16 + Q8\_0 + Q4\_K\_M (Akt. 10) | **29 GB** |
+| `qwen3_planner_sft_20190726/` | Planner-SFT-Checkpoints + LoRA-Adapter (Akt. 10) | **16 GB** |
+| `planner_merged_20190726/` | Planner CPU-BF16-Merge (Akt. 10) | **3,2 GB** |
 | `models/sovereign-judge-32b-lora-v2/` | Checkpoints + LoRA-Adapter + Merged | **~1,8 GB** |
 | `data/routellm_train.jsonl` | 109k RouteLLM-Seeds | **277 MB** |
 | `data/all-MiniLM-L6-v2/` | Embedding-Modell-Cache | **175 MB** |
@@ -134,7 +147,7 @@
 | `data/paraconsistent_training_data.jsonl` | 140 Samples (v1) | **356 KB** |
 | `data/synthetic_router_dataset*.json` | Router-Datensatz-Entwürfe | **596 KB** |
 | `models/sovereign_router.onnx(.data)` | ONNX Router-Modell | **544 KB** |
-| **Gesamt** | | **~78 GB** |
+| **Gesamt** | | **~126 GB** |
 
 ---
 
@@ -431,6 +444,115 @@ Das v2-Training nutzt das aus Aktivität 8 generierte ~90k-Sample-Datensatz und 
 
 #### Erwartetes Ergebnis
 `sovereign-judge-32b-lora-v2` — Stark verbessertes Judge-Modell mit robuster Generalisierung über alle Wissensdomänen.
+
+---
+
+### Aktivität 10: Planner-SFT (Qwen3-8B) — Pipeline erfolgreich, Fine-Tune wirkungslos
+**Datum:** 2026-07-23–2026-07-24  
+**Job-IDs:** 20177965 (FAILED), 20188267 (FAILED), **20190726 (COMPLETED)**, 20206978 (Merge), 20208202 (GGUF+Upload)  
+**Partition:** `small-g`  
+**Status:** ⚠️ Pipeline technisch erfolgreich, Trainingsergebnis unwirksam (Root Cause identifiziert, Re-Training vorbereitet)  
+**Laufzeit (Haupt-Trainingsjob 20190726):** 10h 49min 29s  
+**Ressourcen:** 1 Node · 8 GCDs (MI250X) · 480 GB Mem
+
+#### Begründung
+Nachtrainiertes `Qwen3-8B` als lokal deploybares Planner-Modell (Zielrolle:
+JSON-Aufgabenzerlegung für den MoE-Orchestrator) auf Basis eines
+259\,829-Beispiele-Datensatzes (405B-Teacher-generiert, `dynamic`-Kategorie
+für Nischen-Fachdomänen ergänzt). Nach zwei fehlgeschlagenen Vorläufen
+(20177965: nicht-existenter Modellname `Qwen/Qwen3-8B-Instruct-2507` —
+Qwen3 führt seit dieser Generation keinen `-Instruct`-Suffix mehr;
+20188267: fehlende `deepspeed_zero2_qwen3.json` auf LUMI-Scratch) lief
+Job 20190726 vollständig durch: 3 Epochen, DeepSpeed ZeRO-2, LoRA r=16/α=32,
+`train_loss` konvergierend. Anschließend CPU-BF16-LoRA-Merge (20206978,
+2min 46s), GGUF-Konvertierung + Q8\_0/Q4\_K\_M-Quantisierung + HuggingFace-Upload
+(20208202, 18min 8s), sowie Ollama-Import auf dem produktiven N04-RGTX-Endpunkt.
+
+#### Ergebnis
+✅ **Formal erfolgreicher Trainingslauf, Modell deploybar:**
+`h3rb3rn/qwen3-planner-sft` (BF16) + `h3rb3rn/qwen3-planner-sft-GGUF`
+(Q8\_0/Q4\_K\_M), lokal registriert als `qwen3-planner:q4km`. Ein
+anschließender Rollentauglichkeitstest über den produktiven
+MoE-Orchestrator (Benchmark-API-Key, ausschließlich lokale LLMs) bestand
+ohne auffällige Befunde: valides JSON, plausible Kategorien.
+
+❌ **Root-Cause-Analyse der Trainingslogs (nachträglich, veranlasst durch
+eine unabhängige Kontextfenster-Prüfung) ergab: Der Fine-Tune hatte
+strukturell keine Wirkung.** Zwei unabhängige Ursachen:
+
+**(1) Sequenzlängen-Truncation verschluckt das Trainingsziel.**
+Der Trainingslauf protokollierte beim Start:
+```
+Token length p50=2647 p95=3607 p99=3628 (max_seq=1536)
+WARNING: p99 (3628) > max_seq_len (1536) — 100% of samples will be truncated!
+```
+`max_seq_len=1536` wurde von einem früheren, kürzeren Prompt-Format
+übernommen und beim Wachstum des Systemprompts nicht angepasst. Eine
+Tokenisierung dreier zufälliger Trainingsbeispiele mit dem realen
+`Qwen3-8B`-Tokenizer bestätigte: Der Systemprompt allein benötigt bereits
+$\approx$2\,500–2\,515 Token (mehr als das 1,6-fache von `max_seq_len`),
+die Ziel-JSON-Antwort beginnt erst bei Token-Position $\approx$2\,522–2\,547 —
+weit außerhalb des Trainingsfensters. Der Tokenizer nutzt
+`truncation_side="right"` (kein Override in `tokenizer_config.json`), die
+Chat-Template-Reihenfolge ist System→User→Assistant, und das Trainingsscript
+setzt kein Completion-Only-Loss-Masking (kein `DataCollatorForCompletionOnlyLM`,
+kein `response_template`) — die Loss läuft über die gesamte Sequenz.
+Konsequenz: Bei praktisch allen 259\,829 Beispielen lag die Ziel-Antwort
+nie im Loss-Fenster. Trainiert wurde de facto Next-Token-Prediction auf
+den ersten 1536 Token von nur fünf nahezu identischen
+Systemprompt-Varianten — der Loss sinkt dabei zuverlässig (das Modell
+lernt schnell, einen ihm bereits vollständig vorliegenden Text
+vorherzusagen), ohne dass ein Fehler auftritt. Der Trainingslauf sieht
+im Log erfolgreich aus, ist es aber nicht.
+
+**(2) Prompt-Taxonomie-Drift zwischen Trainingsdatensatz und Produktiv-Templates.**
+Unabhängig von der Truncation: Der beim Datensatz-Generator verwendete
+Systemprompt (16 Kategorien inkl.\ `research`, `dynamic`) unterscheidet
+sich strukturell und inhaltlich vom tatsächlich zur Inferenzzeit
+verwendeten, datenbankgetriebenen Produktiv-Template (`web_researcher`
+statt `research`, neue Kategorie `memory_recall` unbekannt im Training,
+keine `dynamic`-Kategorie). Selbst ein korrekt trainiertes Modell würde
+diese Taxonomie-Differenz nicht überbrücken.
+
+Die im Rollentauglichkeitstest beobachtete korrekte JSON-Ausgabe stammt
+vermutlich vollständig aus der Zero-Shot-Instruction-Following-Fähigkeit
+des unveränderten `Qwen3-8B`-Basismodells, nicht aus dem SFT.
+
+#### Erkenntnisse & Lerneffekte
+1. **`p99`-Tokenlänge vor Jobstart explizit gegen `max_seq_len` verifizieren** —
+   nicht nur auf die automatisch geloggte `WARNING`-Zeile verlassen; bei
+   mehrstündigen HPC-Jobs mit umfangreichem Log-Output geht eine einzelne
+   Warnzeile leicht unter, insbesondere wenn der Job "erfolgreich" durchläuft.
+2. **`truncation_side="right"` + wachsender Systemprompt + kein
+   Completion-Only-Masking ist eine stille Kombination** — kein Fehler,
+   keine Abbruchmeldung, aber das Trainingsziel verschwindet aus dem
+   Loss-Fenster. Der sinkende Loss täuscht Konvergenz vor.
+3. **"Trainings-Prompt = Serving-Prompt" ist eine Design-Annahme, kein
+   garantiertes Invariant** — sobald Produktiv-Templates unabhängig vom
+   Datensatz-Generator weiterentwickelt werden (datenbankgetriebene
+   Admin-UI-Overrides), muss ein expliziter Taxonomie-Abgleich Teil jedes
+   Retraining-Prozesses sein.
+4. **Ein "sauberer" Benchmark-Durchlauf beweist nicht, dass das SFT gewirkt
+   hat** — die Fähigkeit des Basismodells zur Zero-Shot-Instruction-Following
+   kann ein wirkungsloses Fine-Tuning vollständig maskieren. Root-Cause-Analyse
+   der Trainingslogs (nicht nur der Inferenz-Outputs) ist notwendig, um SFT-Wirksamkeit
+   zu verifizieren.
+
+#### Fix (vorbereitet, Re-Training ausstehend)
+`max_seq_len` auf 4096 Token angehoben (deckt `p99=3628` mit $\approx$470 Token
+Puffer, bleibt weit unter dem nativen 40\,960-Token-Kontextfenster von
+`Qwen3-8B`). Kanonisierung auf einen Systemprompt als Quelle der Wahrheit
+vor dem nächsten Trainingslauf. Re-Training nutzt denselben, bereits
+vorliegenden Datensatz — keine erneute 405B-Teacher-Generierung
+erforderlich, nur ein erneuter SFT-Lauf (~11h GCD-Zeit, vergleichbar mit
+Job 20190726).
+
+#### Verwendungszweck
+Wissenschaftlich wertvoller Negativbefund zur Charakterisierung von
+SFT-Fallstricken bei wachsenden strukturierten Systemprompts (Tool-Kataloge,
+Kategorie-Taxonomien) auf Sequenzlängen-limitierten Trainingskonfigurationen.
+Dient als Grundlage für einen Preflight-Check (`p99` vs.\ `max_seq_len`)
+in zukünftigen SFT-Pipelines dieses Projekts.
 
 ---
 

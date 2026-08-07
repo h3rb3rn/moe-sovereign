@@ -26,6 +26,38 @@ The page auto-refreshes every 60 seconds.
 
 ---
 
+## Learning and Graph Maintenance Service
+
+The `moe-maintenance` container runs learning-support jobs separately from
+the request-serving orchestrator. Each job executes in a subprocess with a
+timeout; scheduler heartbeat, exit code, duration and output tail are written
+to `/app/logs/maintenance-status.json`.
+
+| Job | Production default | Effect and safety rule |
+|---|---|---|
+| HABE rebuild | enabled, daily | Atomically rebuilds `habe_vector.npy` and `habe_vocab.json` from Neo4j. A failed/empty fetch preserves the last valid snapshot. |
+| Graph decay | enabled, daily, dry-run | Computes stale relationship candidates. Deletion requires the explicit `GRAPH_DECAY_APPLY=1` opt-in. |
+| Eurisko optimizer | disabled | Mutates and versions active routing templates from validated feedback. Enable only after an observed one-shot run and operator approval. |
+
+Relevant variables:
+
+```dotenv
+MAINTENANCE_INITIAL_DELAY_SECONDS=30
+HABE_SCHEDULER_ENABLED=1
+HABE_REBUILD_INTERVAL_SECONDS=86400
+GRAPH_DECAY_SCHEDULER_ENABLED=1
+GRAPH_DECAY_INTERVAL_SECONDS=86400
+GRAPH_DECAY_APPLY=0
+EURISKO_SCHEDULER_ENABLED=0
+EURISKO_INTERVAL_SECONDS=21600
+```
+
+This scheduler operationalizes the learning loop; it does not update model
+weights autonomously. Eurisko and graph deletion remain explicit,
+auditable policy changes.
+
+---
+
 ## Cleanup Jobs
 
 ### Docker Prune

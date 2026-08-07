@@ -62,6 +62,7 @@ from services.routing import (
     _resolve_template_selection, _resolve_user_experts, _resolve_template_prompts,
     _server_info, _is_endpoint_error,
 )
+from services.deliberation.contracts import DeliberationPolicyError
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
@@ -175,40 +176,6 @@ def _responses_input_to_messages(inp: Any, instructions: Optional[str]) -> list:
     return messages
 
 
-def _chat_completion_to_responses(chat_resp: dict, response_id: str) -> dict:
-    """Convert a Chat Completions response dict to Responses API format."""
-    choice = (chat_resp.get("choices") or [{}])[0]
-    message = choice.get("message", {})
-    content_text = message.get("content", "") or ""
-    finish = choice.get("finish_reason", "stop")
-    status = "completed" if finish in ("stop", "length", None) else "incomplete"
-    usage = chat_resp.get("usage", {})
-    ts = int(time.time())
-    return {
-        "id": response_id,
-        "object": "response",
-        "created_at": ts,
-        "status": status,
-        "model": chat_resp.get("model", ""),
-        "output": [
-            {
-                "id": f"msg_{response_id}",
-                "type": "message",
-                "role": "assistant",
-                "content": [
-                    {"type": "output_text", "text": content_text, "annotations": []}
-                ],
-            }
-        ],
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
-            "output_tokens_details": {"reasoning_tokens": 0},
-        },
-    }
-
-
 async def _invoke_pipeline_for_responses(
     raw_request: Request,
     request: "_ResponsesRequest",
@@ -234,6 +201,8 @@ async def _invoke_pipeline_for_responses(
         user_perms = json.loads(user_ctx.get("permissions_json", "{}") or "{}")
     except Exception:
         user_perms = {}
+    from services.sovereignty import resolve_local_only
+    local_only = resolve_local_only(user_perms, user_ctx)
     chat_id = f"chatcmpl-{uuid.uuid4()}"
 
     # Separate system messages from conversation history
@@ -272,13 +241,18 @@ async def _invoke_pipeline_for_responses(
         admin_override=False,
         user_connections_json=user_ctx.get("user_connections_json", "{}"),
     ) or {}
-    _tp = _resolve_template_prompts(
-        user_ctx.get("permissions_json", ""),
-        override_tmpl_id=_tmpl_id,
-        user_templates_json=user_ctx.get("user_templates_json", "{}"),
-        admin_override=False,
-        user_connections_json=user_ctx.get("user_connections_json", "{}"),
-    )
+    try:
+        _tp = _resolve_template_prompts(
+            user_ctx.get("permissions_json", ""),
+            override_tmpl_id=_tmpl_id,
+            user_templates_json=user_ctx.get("user_templates_json", "{}"),
+            admin_override=False,
+            user_connections_json=user_ctx.get("user_connections_json", "{}"),
+        )
+    except DeliberationPolicyError as exc:
+        raise _ResponsesPipelineError(
+            str(exc), "deliberation_policy_invalid", 422
+        ) from exc
     _max_rounds = (
         request.max_agentic_rounds
         if request.max_agentic_rounds is not None
@@ -324,10 +298,18 @@ async def _invoke_pipeline_for_responses(
             planner_token_override=_tp.get("planner_token_override", ""),
             planner_num_ctx=_tp.get("planner_num_ctx", 0),
             judge_num_ctx=_tp.get("judge_num_ctx", 0),
+            guardrail_prompt=_tp.get("guardrail_prompt", ""),
+            guardrail_model_override=_tp.get("guardrail_model_override", ""),
+            guardrail_url_override=_tp.get("guardrail_url_override", ""),
+            guardrail_token_override=_tp.get("guardrail_token_override", ""),
+            guardrail_num_ctx=_tp.get("guardrail_num_ctx", 0),
             model_name=request.model,
             session_id=_extract_session_id(raw_request),
             max_agentic_rounds=_max_rounds,
+            deliberation_policy=_tp.get("deliberation_policy", {}),
+            client_max_output_tokens=max(0, int(request.max_output_tokens or 0)),
             no_cache=request.no_cache,
+            local_only=local_only,
         ):
             if not isinstance(sse_line, str) or not sse_line.startswith("data:"):
                 continue

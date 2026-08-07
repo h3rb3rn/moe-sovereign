@@ -50,7 +50,7 @@ async def strategy_review_node(state_):
         )
 
         abstractor_llm = build_abstractor_llm(state_)
-        reviewer_llm   = build_reviewer_llm(state_)
+        reviewer_llm   = await build_reviewer_llm(state_)
 
         # Step 1: local abstractor reads content, produces abstract
         abstract = await abstract_solution(expert_results, plan, input_query, abstractor_llm)

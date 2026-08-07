@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 scripts/generate_planner_dataset.py
-Production-quality planner SFT dataset generator for phi4:14b fine-tuning.
+Production-quality planner SFT dataset generator for Qwen3-8B-Instruct-2507 fine-tuning.
 
-Target model : phi4:14b  (Microsoft Phi-4, 14B dense, Q4_K_M ≈ 8 GB GGUF)
-               Only sub-35B model with planner_ok=true WITHOUT fine-tuning
-               (benchmark 2026-07, latency 36.1 s base).
+Target model : Qwen3-8B-Instruct-2507  (Qwen3 8B dense, Apache 2.0, Q4_K_M ≈ 5 GB GGUF)
+               Chosen over phi-4:14B after phi-4 SFT showed loss collapse at step 75
+               regardless of LR (2e-4 and 5e-5) due to near-zero dataset entropy.
+               Qwen3-8B has confirmed ROCm/MI250X + TRL/DeepSpeed ZeRO-3 support.
                granite4.1:3b remains as ultra-lightweight ablation (2 GB, 25 tok/s CPU).
 
 Teacher model: meta-llama/Meta-Llama-3.1-405B-Instruct  (Llama-3.1-405B, 10/10 quality)
@@ -38,8 +39,16 @@ Usage — LUMI full run (200K, Llama-3.1-405B via vLLM):
         --teacher meta-llama/Meta-Llama-3.1-405B-Instruct \\
         --concurrency 48 --target 200000 --augment-factor 400
 
+Dataset entropy fixes vs. original run (job 20022782 / phi-4 overfitting):
+  1. System prompt rotates across 5 semantic variants → breaks identical-prefix memorisation
+  2. ~15% negative samples (--neg-fraction 0.15) in multi-turn correction format
+  3. Negative samples teach the model to recognise and fix the 3 hard routing mistakes:
+       - arithmetic routed to LLM category instead of precision_tools
+       - §-query routed directly to legal_advisor (skipping legal_get_paragraph)
+       - domain-specific code routed directly to code_reviewer (skipping research)
+
 Outputs:
-  <output-dir>/planner_chat.jsonl      Chat format (primary — SFT with Axolotl/unsloth)
+  <output-dir>/planner_chat.jsonl      Chat format (primary — SFT with TRL SFTTrainer)
   <output-dir>/planner_alpaca.jsonl    Alpaca format (secondary)
   <output-dir>/checkpoint.json         Resumable progress state
   <output-dir>/rejected.jsonl          Quality-failed samples (for DPO rejected-pool)
@@ -313,6 +322,15 @@ LLM EXPERT CATEGORIES
 "reasoning"          Logic puzzles, argumentation, deductive reasoning
 "vision"             Image/photo/diagram/PDF analysis — ONLY with [IMAGE INPUT present]
 "agentic_coder"      Multi-file software projects requiring iterative development
+"dynamic"            On-demand specialist expert for niche domains NOT covered by the
+                     categories above (e.g. building physics, geotechnics, GMP/pharma,
+                     maritime law, forestry, control engineering, environmental law).
+                     REQUIRED field: "domain" — a concise domain label in the language
+                     of the query (e.g. "Immobilienwertermittlung", "Geotechnik").
+                     Optional: "requires": ["math"] for domain-specific capability hints.
+                     Optional: "no_search": true to suppress inline web search.
+                     Use RESEARCH+DYNAMIC for queries needing current standards/norms.
+                     NEVER use "dynamic" for domains already covered above.
 
 SPECIAL CATEGORIES (non-LLM, structural):
 "research"          Web search. REQUIRED field: "search_query" (short, optimised)
@@ -398,6 +416,28 @@ RESEARCH-BEFORE-CODE (for domain-specific implementations):
             scoring: 1 line=100, 2=300, 3=500, 4=800 (Tetris); gravity increases
             per level", "category": "code_reviewer"}]
 
+DYNAMIC EXPERT RULE (MANDATORY for niche domains):
+  When a query requires expertise in a domain NOT listed above — such as building
+  physics, geotechnics, GMP/pharma regulation, maritime law, drone regulation,
+  forestry law, control engineering, environmental law, real-estate valuation,
+  occupational health & safety standards, or any other highly specialised field —
+  ALWAYS use "dynamic" with a "domain" field. NEVER use "science", "legal_advisor",
+  or "technical_support" as a substitute for a domain-specific niche expert.
+  WRONG: [{"task": "Heizwärmebedarf berechnen", "category": "science"}]
+  WRONG: [{"task": "GMP-Anforderungen für Biologika", "category": "legal_advisor"}]
+  WRONG: [{"task": "Hydraulischen Grundbruch erklären", "category": "technical_support"}]
+  RIGHT: [{"task": "Heizwärmebedarf nach GEG § 18 berechnen und Dämmstärke bestimmen",
+            "category": "dynamic", "domain": "Bauphysik/GEG"}]
+  RIGHT: [{"task": "GMP-Anforderungen Biologika EU 2001/83/EG erläutern",
+            "category": "dynamic", "domain": "Pharmakologie/GMP"}]
+  RIGHT: [{"task": "Hydraulischen Grundbruch und Sicherheitsnachweis DIN 4093 erklären",
+            "category": "dynamic", "domain": "Geotechnik"}]
+  For niche domains needing current standards, precede with a research task:
+  RIGHT: [{"task": "Aktuelle Trinkwassernormen TrinkwV recherchieren",
+            "category": "research", "search_query": "TrinkwV 2023 Grenzwerte aktuell"},
+           {"task": "Neue Grenzwerte TrinkwV 2023 erläutern",
+            "category": "dynamic", "domain": "Wasserwirtschaft/Trinkwasser"}]
+
 TASK QUALITY:
   - 1–4 tasks. Simple requests → exactly 1 task. Never over-engineer.
   - No vague tasks ("handle this", "process the request").
@@ -450,15 +490,67 @@ Request: "Schreibe ein Haiku über den Herbst."
 [{"task": "Schreibe ein Haiku (5-7-5 Silben) über den Herbst",
   "category": "creative_writer"}]
 
+Request: "Wie berechne ich den Verkehrswert eines Hauses nach dem Sachwertverfahren?"
+[{"task": "Verkehrswertermittlung nach Sachwertverfahren gemäß ImmoWertV erklären und berechnen",
+  "category": "dynamic",
+  "domain": "Immobilienwertermittlung"}]
+
+Request: "Was sind aktuell gültige GMP-Anforderungen für Biologika nach EU 2001/83/EG?"
+[{"task": "Aktuelle GMP-Normen für Biologika EU 2001/83/EG recherchieren",
+  "category": "research",
+  "search_query": "GMP requirements biologics EU directive 2001/83/EC current 2025"},
+ {"task": "GMP-Anforderungen für die Herstellung von Biologika nach EU-Richtlinie 2001/83/EG erläutern",
+  "category": "dynamic",
+  "domain": "Pharmakologie/GMP",
+  "requires": ["research"]}]
+
+Request: "Erkläre hydraulischen Grundbruch und den Sicherheitsnachweis nach DIN 4093."
+[{"task": "Hydraulischen Grundbruch erklären und Sicherheitsnachweis nach DIN 4093 berechnen",
+  "category": "dynamic",
+  "domain": "Geotechnik"}]
+
 ──────────────────────────────────────────────────────────────────
 """
+
+# ── System prompt variants ─────────────────────────────────────────────────────
+# Five semantically equivalent framings of the same planner role.
+# Rotating them across samples prevents the model from memorising the fixed
+# prefix (root cause of phi-4 loss collapse at step 75 in jobs 20081793/20077549).
+# The tool catalog, routing rules, and examples are identical in every variant.
+_PROMPT_SUFFIX = PLANNER_SYSTEM_PROMPT[PLANNER_SYSTEM_PROMPT.index("MANDATORY:"):]
+
+PLANNER_SYSTEM_PROMPT_VARIANTS: list[str] = [
+    # Variant A — original orchestrator framing
+    PLANNER_SYSTEM_PROMPT,
+    # Variant B — functional/directive framing
+    "MoE Sovereign planner. Decompose the incoming request into 1–4 subtasks "
+    "for routing to specialist experts or precision tools.\n\n" + _PROMPT_SUFFIX,
+    # Variant C — pipeline-layer framing
+    "You are the planning layer of the MoE Sovereign pipeline. Analyse the user "
+    "request and emit a routing plan: 1–4 subtasks, each assigned to a specialist "
+    "expert or precision tool.\n\n" + _PROMPT_SUFFIX,
+    # Variant D — minimal task framing
+    "Task: decompose the user request into 1–4 subtasks. Route each to the correct "
+    "expert or precision tool in the MoE Sovereign pipeline.\n\n" + _PROMPT_SUFFIX,
+    # Variant E — agent framing
+    "As the MoE Sovereign orchestrator, your only output is a routing plan. Break "
+    "down the user's request into 1–4 focused subtasks, each dispatched to the right "
+    "specialist or precision tool.\n\n" + _PROMPT_SUFFIX,
+]
+
+
+def _pick_system_prompt(rng: random.Random | None = None) -> str:
+    """Return a randomly selected system prompt variant."""
+    r = rng or random
+    return r.choice(PLANNER_SYSTEM_PROMPT_VARIANTS)
+
 
 # ── Valid categories ────────────────────────────────────────────────────────────
 VALID_CATEGORIES = {
     "general", "technical_support", "code_reviewer", "math",
     "data_analyst", "science", "creative_writer", "medical_consult",
     "legal_advisor", "translation", "reasoning", "vision", "agentic_coder",
-    "research", "precision_tools",
+    "research", "precision_tools", "dynamic",
 }
 
 # ── Seed queries organized by scenario type ────────────────────────────────────
@@ -787,6 +879,39 @@ _SEEDS_BY_TYPE: dict[str, list[str]] = {
         "Was ist Idempotenz und warum ist sie bei APIs wichtig?",
         "Wie funktioniert JWT-Authentifizierung?",
     ],
+    "dynamic": [
+        # Immobilien / Bauwesen
+        "Wie berechne ich den Verkehrswert eines Einfamilienhauses nach dem Sachwertverfahren gemäß ImmoWertV?",
+        "Berechne den Heizwärmebedarf eines Altbaus nach GEG § 18 und bestimme die nötige Dämmstärke.",
+        "Erkläre den Unterschied zwischen zivilrechtlicher Baulast und öffentlich-rechtlicher Baulast.",
+        "Welche Anforderungen stellt DIN 4109 an den Schallschutz zwischen Wohneinheiten?",
+        # Elektrotechnik / Regelungstechnik
+        "Wie funktioniert Impedanzanpassung in der Hochfrequenztechnik und welche Auswirkung hat Fehlanpassung?",
+        "Erkläre die Kaskadenregelung in der Prozessautomatisierung mit konkretem PID-Beispiel.",
+        "Was ist der Unterschied zwischen Gleichstrom-Motorsteuerung per PWM und Frequenzumrichter?",
+        # Geotechnik / Grundbau
+        "Was versteht man unter hydraulischem Grundbruch und wie berechnet man den Sicherheitsnachweis?",
+        "Erkläre die Klassifikation von Böden nach KA5 (Bodenkundliche Kartieranleitung) und was Bodenart sL bedeutet.",
+        # Pharmakologie / GMP
+        "Welche GMP-Anforderungen gelten für die Herstellung von Biologika nach EU-Richtlinie 2001/83/EG?",
+        "Was sind die Zulassungsvoraussetzungen für ein Pflanzenschutzmittel nach VO (EG) 1107/2009?",
+        # Umwelt / Wasserwirtschaft
+        "Welche Grenzwerte und Verfahrensschritte schreibt die EU-WRRL für Gewässer vor, die verfehlt werden?",
+        "Erkläre die Auswirkungen von Phosphor-Eutrophierung auf Seenökologie und mögliche Sanierungsmaßnahmen.",
+        # Seeschifffahrt / Luftrecht
+        "Erkläre die wichtigsten Pflichten eines Schiffseigners nach SOLAS Kapitel III und MARPOL Anlage VI.",
+        "Welche Anforderungen stellt die EU-Drohnenverordnung (UAS-DVO) an kommerzielle Betreiber in der Kategorie 'spezifisch'?",
+        # Forstwirtschaft
+        "Erkläre die forstliche Betriebsplanung nach BWaldG § 11 und was ein Forsteinrichtungswerk enthält.",
+        # Steuerrecht (speziell, nicht allg. legal_advisor)
+        "Wie wird die Grunderwerbsteuer beim Kauf einer GmbH-Beteiligung mit Grundstücken (Share Deal) berechnet?",
+        # Notfallmedizin (spezifischer als medical_consult)
+        "Erkläre das ABCDE-Schema der Notaufnahme und wann eine präklinische Intubation indiziert ist.",
+        # Gewerblicher Rechtsschutz
+        "Was ist der Unterschied zwischen Markenrecht nach MarkenG und Designrecht nach DesignG bei Produktkopien?",
+        # Multi-Step: research vor dynamic
+        "Was sind die aktuell gültigen Trinkwassernormen nach TrinkwV 2023 und welche Parameter wurden verschärft?",
+    ],
 }
 
 # Build flat SEED_QUERIES list
@@ -928,7 +1053,14 @@ def score_plan(query: str, plan: object) -> tuple[int, list[str], bool]:
     else:
         score += 1
 
-    # 7. Research-before-code: domain-specific implementation must have research first
+    # 7. dynamic tasks must have a non-empty 'domain' field
+    for t in plan:
+        if isinstance(t, dict) and t.get("category") == "dynamic":
+            if not t.get("domain", "").strip():
+                score -= 1
+                issues.append("dynamic task missing 'domain' field")
+
+    # 8. Research-before-code: domain-specific implementation must have research first
     if _IMPL_DOMAIN_RE.search(query):
         cats = [t.get("category") for t in plan if isinstance(t, dict)]
         if "research" in cats and "code_reviewer" in cats:
@@ -1036,6 +1168,7 @@ async def process_query(
     model: str,
     query: str,
     min_score: int = 5,
+    system_prompt: str | None = None,
 ) -> tuple[dict | None, bool]:
     """Generate and validate one (query → plan) pair.
 
@@ -1044,8 +1177,9 @@ async def process_query(
     is_api_error=False → LLM responded (good or bad plan) → feed QualityMonitor
     """
     t0 = time.monotonic()
+    prompt = system_prompt or PLANNER_SYSTEM_PROMPT
     messages = [
-        {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+        {"role": "system", "content": prompt},
         {"role": "user",   "content": f"{query}\n\nJSON array:"},
     ]
     raw = await _api_chat(client, api_url, model, messages, temperature=0.2, max_tokens=512)
@@ -1061,11 +1195,12 @@ async def process_query(
     latency_s = round(time.monotonic() - t0, 2)
 
     sample = {
-        "query":     query,
-        "plan_json": plan_str,
-        "score":     score,
-        "issues":    issues,
-        "latency_s": latency_s,
+        "query":         query,
+        "plan_json":     plan_str,
+        "score":         score,
+        "issues":        issues,
+        "latency_s":     latency_s,
+        "system_prompt": prompt,
     }
     if hard_reject or score < min_score:
         sample["rejected"] = True
@@ -1112,21 +1247,91 @@ def save_checkpoint(path: Path, state: dict) -> None:
 
 # ── Output helpers ──────────────────────────────────────────────────────────────
 
-def to_chat_sample(query: str, plan_json: str) -> dict:
+def to_chat_sample(query: str, plan_json: str, system_prompt: str | None = None) -> dict:
     return {
         "messages": [
-            {"role": "system",    "content": PLANNER_SYSTEM_PROMPT},
+            {"role": "system",    "content": system_prompt or PLANNER_SYSTEM_PROMPT},
             {"role": "user",      "content": query},
             {"role": "assistant", "content": plan_json},
         ]
     }
 
 
-def to_alpaca_sample(query: str, plan_json: str) -> dict:
+def to_alpaca_sample(query: str, plan_json: str, system_prompt: str | None = None) -> dict:
     return {
-        "instruction": PLANNER_SYSTEM_PROMPT,
+        "instruction": system_prompt or PLANNER_SYSTEM_PROMPT,
         "input":       query,
         "output":      plan_json,
+    }
+
+
+# ── Negative example helpers ────────────────────────────────────────────────────
+
+def _make_wrong_plan(query: str, correct_plan: list) -> list | None:
+    """Create a plausibly wrong plan by violating a routing rule deterministically.
+
+    Three error patterns (matching the three hard routing rules):
+      - arithmetic/tool query → swap precision_tools for a LLM category
+      - §-query → drop legal_get_paragraph, route directly to legal_advisor
+      - domain-specific code → drop research, keep only code_reviewer
+    Returns None when no violation applies (query doesn't match any trap pattern).
+    """
+    import copy
+    wrong = copy.deepcopy(correct_plan)
+
+    if _ARITHMETIC_RE.search(query):
+        for task in wrong:
+            if isinstance(task, dict) and task.get("category") == "precision_tools":
+                task["category"] = "technical_support"
+                task.pop("mcp_tool", None)
+                task.pop("mcp_args", None)
+        return wrong
+
+    if _LEGAL_PARA_RE.search(query):
+        filtered = [
+            t for t in wrong
+            if not (isinstance(t, dict) and t.get("mcp_tool") == "legal_get_paragraph")
+        ]
+        if filtered and len(filtered) < len(wrong):
+            return filtered if filtered else None
+
+    if _IMPL_DOMAIN_RE.search(query):
+        filtered = [
+            t for t in wrong
+            if not (isinstance(t, dict) and t.get("category") == "research")
+        ]
+        if filtered and len(filtered) < len(wrong):
+            return filtered if filtered else None
+
+    return None
+
+
+def to_negative_chat_sample(
+    query: str,
+    wrong_plan: list,
+    correct_plan_json: str,
+    system_prompt: str | None = None,
+) -> dict:
+    """Multi-turn correction sample: wrong plan → review request → correct plan.
+
+    The model learns to recognise the three critical routing mistakes and fix them.
+    Format: system | user(query) | assistant(wrong) | user(review prompt) | assistant(correct)
+    """
+    wrong_json = json.dumps(wrong_plan, ensure_ascii=False)
+    review_prompt = (
+        "Review the plan above. Check every task against the mandatory routing rules "
+        "(PRECISION-FIRST, LEGAL §-PATTERN, RESEARCH-BEFORE-CODE). "
+        "If a rule is violated, output the corrected JSON array. "
+        "If the plan is already correct, output it unchanged."
+    )
+    return {
+        "messages": [
+            {"role": "system",    "content": system_prompt or PLANNER_SYSTEM_PROMPT},
+            {"role": "user",      "content": query},
+            {"role": "assistant", "content": wrong_json},
+            {"role": "user",      "content": review_prompt},
+            {"role": "assistant", "content": correct_plan_json},
+        ]
     }
 
 
@@ -1165,6 +1370,10 @@ async def main_async() -> None:
         help="Minimum quality score (0-7) to accept a sample"
     )
     parser.add_argument(
+        "--neg-fraction", type=float, default=0.15,
+        help="Fraction of accepted samples to also emit as negative correction samples (default 0.15)"
+    )
+    parser.add_argument(
         "--seed", type=int, default=42,
         help="Random seed for reproducibility"
     )
@@ -1193,10 +1402,34 @@ async def main_async() -> None:
         "--circuit-breaker-reset", type=float, default=60.0,
         help="Seconds before circuit half-opens after tripping"
     )
+    parser.add_argument(
+        "--seed-categories", nargs="+", default=None,
+        metavar="CAT",
+        help="Restrict seed pool to these categories only (e.g. --seed-categories dynamic)"
+    )
     args = parser.parse_args()
 
     logging.getLogger().setLevel(args.log_level)
     random.seed(args.seed)
+
+    # Optionally restrict the seed pool to specific categories
+    if args.seed_categories:
+        unknown = set(args.seed_categories) - set(_SEEDS_BY_TYPE.keys())
+        if unknown:
+            logger.warning("Unknown seed categories (ignored): %s", unknown)
+        filtered: list[str] = []
+        for cat in args.seed_categories:
+            filtered.extend(_SEEDS_BY_TYPE.get(cat, []))
+        if not filtered:
+            logger.error("--seed-categories produced an empty seed pool. Aborting.")
+            sys.exit(1)
+        SEED_QUERIES.clear()
+        SEED_QUERIES.extend(filtered)
+        random.shuffle(SEED_QUERIES)
+        logger.info(
+            "Seed pool restricted to %s: %d seeds",
+            args.seed_categories, len(SEED_QUERIES),
+        )
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1337,11 +1570,16 @@ async def main_async() -> None:
                 logger.warning("CircuitBreaker open — waiting %.0fs before retry …", wait)
                 await asyncio.sleep(max(wait, 1.0))
 
+            # Pick a random system prompt variant for this sample
+            chosen_prompt = _pick_system_prompt()
+
             async with sem:
                 if generated >= args.target or quality_monitor.emergency_stop:
                     return
                 sample, is_api_error = await process_query(
-                    client, args.api_url, teacher, query, min_score=args.min_score
+                    client, args.api_url, teacher, query,
+                    min_score=args.min_score,
+                    system_prompt=chosen_prompt,
                 )
 
             # Feed circuit breaker
@@ -1375,13 +1613,29 @@ async def main_async() -> None:
 
                 # Accepted sample
                 quality_monitor.record(True)
-                chat_s   = to_chat_sample(sample["query"], sample["plan_json"])
-                alpaca_s = to_alpaca_sample(sample["query"], sample["plan_json"])
+                sp = sample.get("system_prompt") or chosen_prompt
+                chat_s   = to_chat_sample(sample["query"], sample["plan_json"], sp)
+                alpaca_s = to_alpaca_sample(sample["query"], sample["plan_json"], sp)
 
                 with open(chat_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(chat_s, ensure_ascii=False) + "\n")
                 with open(alpaca_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(alpaca_s, ensure_ascii=False) + "\n")
+
+                # Negative correction sample (--neg-fraction of accepted samples)
+                if args.neg_fraction > 0 and random.random() < args.neg_fraction:
+                    try:
+                        correct_plan = json.loads(sample["plan_json"])
+                        wrong_plan = _make_wrong_plan(sample["query"], correct_plan)
+                        if wrong_plan is not None:
+                            neg_prompt = _pick_system_prompt()
+                            neg_s = to_negative_chat_sample(
+                                sample["query"], wrong_plan, sample["plan_json"], neg_prompt
+                            )
+                            with open(chat_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(neg_s, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass  # never block accepted-sample flow on negative generation
 
                 generated += 1
 

@@ -118,3 +118,48 @@ def inject_tools(base_prompt: str, category: str) -> str:
     if "Available Tools:" in base_prompt:
         return base_prompt
     return base_prompt + block
+
+
+# ── Explicit MCP tool injection (for dynamic expert templates) ────────────────
+
+def build_tool_block_for_names(
+    tool_names: list[str],
+    tool_dict: "dict[str, str] | None" = None,
+) -> str:
+    """Build a compact tool block from an explicit list of MCP tool names.
+
+    Looks up descriptions from tool_dict (or state._MCP_TOOLS_DICT at call time).
+    Returns '' when tool_names is empty.
+    """
+    if not tool_names:
+        return ""
+    if tool_dict is None:
+        try:
+            import state as _state  # lazy — avoids circular import at module load
+            tool_dict = _state._MCP_TOOLS_DICT or {}
+        except Exception:
+            tool_dict = {}
+    lines: list[str] = []
+    for name in tool_names:
+        raw_desc = (tool_dict.get(name) or "").split("\n")[0][:120].strip()
+        lines.append(f"• {name}" + (f": {raw_desc}" if raw_desc else ""))
+    if not lines:
+        return ""
+    return (
+        "\nAvailable MCP Tools (use results from context directly — never recalculate):\n"
+        + "\n".join(lines)
+        + "\nIf an MCP result for any of these tools is present in context: adopt it exactly."
+    )
+
+
+def inject_tools_explicit(
+    base_prompt: str,
+    tool_names: list[str],
+    tool_dict: "dict[str, str] | None" = None,
+) -> str:
+    """Inject an explicit MCP tool list into base_prompt. Idempotent."""
+    if not tool_names:
+        return base_prompt
+    if "Available MCP Tools" in base_prompt or "Available Tools:" in base_prompt:
+        return base_prompt
+    return base_prompt + build_tool_block_for_names(tool_names, tool_dict)

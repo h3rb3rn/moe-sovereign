@@ -27,6 +27,11 @@ _FEATURE_DEFAULTS: dict[str, bool] = {
 _TRUTHY = frozenset(("1", "true", "yes"))
 
 
+def feature_names() -> frozenset[str]:
+    """Return the supported public feature-toggle names."""
+    return frozenset(_FEATURE_DEFAULTS)
+
+
 async def is_feature_enabled(
     name: str,
     redis_client=None,

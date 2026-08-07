@@ -179,6 +179,7 @@
               <th>{{ t(request, 'table.mode') }}</th>
               <th>{{ t(request, 'table.type') }}</th>
               <th>API-Key</th>
+              <th>{{ t(request, 'deliberation.title') }}</th>
               <th>{{ t(request, 'lbl.trust_verdict') }}</th>
               <th>{{ t(request, 'table.status') }}</th>
               <th></th>
@@ -671,6 +672,11 @@ async function fetchCompletedRequests() {
       const tvHtml = r.trust_verdict
         ? (_trustBadge[r.trust_verdict] || `<span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.trust_verdict)}</span>`)
         : '<span class="text-muted small">—</span>';
+      const deliberationHtml = r.deliberation_active
+        ? `<span class="badge bg-primary" style="font-size:.6rem">${escHtml(r.deliberation_mode || 'active')} · ${Number(r.deliberation_model_calls || 0)} calls</span>`
+        : (r.deliberation_reason
+            ? `<span class="badge bg-light text-muted border" style="font-size:.6rem" title="${escHtml(r.deliberation_reason)}">off</span>`
+            : '<span class="text-muted small">—</span>');
 
       // Dauer berechnen aus started_at und ended_at
       let dur = '–';
@@ -690,6 +696,7 @@ async function fetchCompletedRequests() {
         <td><span class="badge bg-secondary" style="font-size:.6rem">${escHtml(r.moe_mode || '–')}</span></td>
         <td><span class="badge ${(r.type||'')===('streaming')?'bg-primary':'bg-secondary'}" style="font-size:.6rem">${escHtml(r.type || '–')}</span></td>
         <td>${r.key_label ? `<span class="badge bg-light text-dark border" style="font-size:.65rem;font-family:monospace" title="${escHtml(r.key_prefix||'')}...">${escHtml(r.key_label)}</span>` : (r.key_prefix ? `<code style="font-size:.7rem;color:#6c757d">…${escHtml(r.key_prefix.slice(-6))}</code>` : '<span class="text-muted">–</span>')}</td>
+        <td title="${escHtml(r.deliberation_stop_reason || '')}">${deliberationHtml}</td>
         <td>${tvHtml}</td>
         <td>${statusBadge}</td>
         <td class="text-nowrap">
@@ -713,7 +720,7 @@ function exportHistory() {
     alert(_tlive.noExportData);
     return;
   }
-  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Trust', 'Status'];
+  const headers = ['Started', 'Ended', 'Duration', 'User', 'Model', 'Mode', 'Type', 'API-Key', 'Deliberation', 'Trust', 'Status'];
   const rows = [headers];
   document.querySelectorAll('#history-tbody tr').forEach(tr => {
     const cells = [...tr.querySelectorAll('td')].map(td => {

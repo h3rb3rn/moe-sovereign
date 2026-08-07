@@ -65,7 +65,9 @@ def _run(coro):
 
 class TestWebSearchWithCitations:
     def test_none_search_returns_empty(self):
-        result = _run(_web_search_with_citations("test query", search=None))
+        result = _run(_web_search_with_citations(
+            "test query", search=None, ddg_fallback=False,
+        ))
         assert result == ""
 
     def test_results_sorted_by_reliability(self):
@@ -101,10 +103,29 @@ class TestWebSearchWithCitations:
         mock_search.run = MagicMock(side_effect=Exception("also failed"))
 
         async def run():
-            return await _web_search_with_citations("test query", search=mock_search)
+            return await _web_search_with_citations(
+                "test query", search=mock_search, ddg_fallback=False,
+            )
 
         result = _run(run())
         assert result == ""
+
+    def test_empty_primary_uses_ddg_fallback(self):
+        mock_search = MagicMock()
+        mock_search.results.return_value = []
+        mock_search.run.return_value = ""
+
+        async def run():
+            with patch(
+                "web_search._ddg_search_with_citations",
+                new=AsyncMock(return_value="[1] fallback\n\nSources:\n[1] source"),
+            ):
+                return await _web_search_with_citations(
+                    "test query", search=mock_search, ddg_fallback=True,
+                )
+
+        result = _run(run())
+        assert result.startswith("[DDG-FALLBACK]")
 
     def test_citations_include_reliability_label(self):
         mock_search = MagicMock()

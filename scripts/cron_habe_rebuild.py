@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
 import numpy as np
 
 # Adjust path to find services
@@ -50,22 +51,64 @@ async def fetch_neo4j_triples() -> list[tuple[str, str, str]]:
         logger.error("Failed to fetch triples from Neo4j: %s", e)
     return triples
 
-async def main():
+def write_habe_outputs(
+    triples: list[tuple[str, str, str]],
+    models_dir: str,
+) -> tuple[str, str]:
+    """Compile and atomically publish the vector/vocabulary pair."""
+    os.makedirs(models_dir, exist_ok=True)
+
+    # The reader in graph/tool_nodes.py expects this exact filename. ``np.save``
+    # appends ".npy" when the target lacks it, which previously produced the
+    # unreachable file ``habe_vector.bin.npy``.
+    vector_path = os.path.join(models_dir, "habe_vector.npy")
+    vocab_path = os.path.join(models_dir, "habe_vocab.json")
+
+    engine = HolographicBackgroundEngine(dimension=2048)
+
+    if engine.load_vocab(vocab_path):
+        logger.info("Loaded existing vocabulary to preserve vector semantics.")
+    else:
+        logger.info("No existing vocabulary found. Initializing new mapping.")
+
+    hav = engine.compile_graph_to_vsa(triples)
+
+    vector_fd, vector_tmp = tempfile.mkstemp(
+        prefix=".habe_vector-", suffix=".npy", dir=models_dir
+    )
+    os.close(vector_fd)
+    vocab_fd, vocab_tmp = tempfile.mkstemp(
+        prefix=".habe_vocab-", suffix=".json", dir=models_dir
+    )
+    os.close(vocab_fd)
+    try:
+        np.save(vector_tmp, hav)
+        engine.save_vocab(vocab_tmp)
+        os.replace(vector_tmp, vector_path)
+        os.replace(vocab_tmp, vocab_path)
+    finally:
+        for tmp_path in (vector_tmp, vocab_tmp):
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    logger.info("Saved Holographic Ambient Vector (HAV) to %s.", vector_path)
+    logger.info("Successfully finished HABE rebuild process.")
+    return vector_path, vocab_path
+
+
+async def main() -> bool:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
-    models_dir = os.path.join(repo_root, "models")
-    os.makedirs(models_dir, exist_ok=True)
-    
-    vector_path = os.path.join(models_dir, "habe_vector.bin")
-    vocab_path = os.path.join(models_dir, "habe_vocab.json")
-    
-    # 1. Fetch graph triples
+    models_dir = os.getenv("HABE_MODELS_DIR", os.path.join(repo_root, "models"))
+
     triples = await fetch_neo4j_triples()
-    
-    # 2. Fallback to basic sample triples if database is empty/offline
-    # (keeps system functional for testing/bootstrapping)
     if not triples:
-        logger.info("No triples retrieved. Bootstrapping with fallback default ontology triples...")
+        if os.getenv("HABE_ALLOW_BOOTSTRAP", "0") != "1":
+            logger.error(
+                "No Neo4j triples retrieved; preserving the last valid HABE "
+                "snapshot. Set HABE_ALLOW_BOOTSTRAP=1 only for development."
+            )
+            return False
+        logger.warning("Bootstrapping HABE with development ontology triples.")
         triples = [
             ("Model", "optimized_on", "Node04-RTX"),
             ("Tesla-K80", "reserved_for", "Float64-Scientific"),
@@ -73,29 +116,13 @@ async def main():
             ("HABE", "compiles_to", "VSA-Vector"),
             ("Dreyfus", "argued", "Background-Knowledge"),
         ]
-        
-    # 3. Compile VSA Holographic Ambient Vector
-    engine = HolographicBackgroundEngine(dimension=2048)
-    
-    # Try to load existing vocabulary first to maintain concept mapping consistency
-    if engine.load_vocab(vocab_path):
-        logger.info("Loaded existing vocabulary to preserve vector semantics.")
-    else:
-        logger.info("No existing vocabulary found. Initializing new mapping.")
-        
-    # Compile
-    hav = engine.compile_graph_to_vsa(triples)
-    
-    # 4. Save results
+
     try:
-        # Save VSA vector as a binary file
-        np.save(vector_path, hav)
-        logger.info("Saved Holographic Ambient Vector (HAV) to %s.", vector_path)
-        # Save vocabulary mapping
-        engine.save_vocab(vocab_path)
-        logger.info("Successfully finished HABE rebuild process.")
-    except Exception as e:
-        logger.critical("Failed to save HABE outputs: %s", e)
+        write_habe_outputs(triples, models_dir)
+        return True
+    except Exception as exc:
+        logger.critical("Failed to save HABE outputs: %s", exc)
+        return False
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(0 if asyncio.run(main()) else 2)

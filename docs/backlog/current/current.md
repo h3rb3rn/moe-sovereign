@@ -1,86 +1,36 @@
-# Current Backlog Decomposition — MoE Sovereign (moe-infra)
+# Current Backlog — MoE Sovereign
 
-Purpose: single entry point for all active work.
+Owner: Platform Engineering
+Version: 2.1
+Last verified: 2026-08-01
 
-## Active Initiatives
+## Status vocabulary
 
-| ID | Name | Status | Epics |
+| Status | Meaning |
+|---|---|
+| Planned | Accepted intent; no implementation claim |
+| Partial | Some reachable implementation exists, but the epic proof package or exit criteria are incomplete |
+| Implemented | Production call path and focused contract tests exist |
+| Validated | Stated behavior was also exercised end-to-end in the named environment/version |
+| Blocked | Progress requires an external state change or explicit decision |
+
+## Active initiatives
+
+| ID | Initiative | Status | Current proof/gap |
 |---|---|---|---|
-| I-1 | Sovereign-14B SFT Pipeline & Dynamic System Prompts | Open | E-1.1, E-1.2, E-1.3 |
-| I-2 | Pipeline Quality Gate Stack | Open | E-2.1, E-2.2, E-2.3, E-2.4, E-2.5 |
+| I-1 | [Sovereign SFT and dynamic prompts](I-1-sovereign-sft/initiative.md) | Partial | Dynamic prompt/template generation is implemented; the complete trained Sovereign controller artifact is not validated |
+| I-2 | [Pipeline quality-gate stack](I-2-pipeline-quality-gate/initiative.md) | Partial | Core quality controls are reachable; boundary failure semantics, complex-template E2E, checkpoint/artifact, and full tenancy remain open |
 
-## Initiative Details
+## I-2 epic status
 
-### I-1: Sovereign-14B SFT Pipeline & Dynamic System Prompts
-
-**Strategic goal:** Train a specialized Sovereign-14B orchestrator model on
-LUMI-G that dynamically generates prompt-specific system prompts for planner,
-judge, and expert LLMs, replacing static template prompts with task-adapted
-instructions.
-
-**Epics:**
-
-| ID | Name | Status | Depends on |
+| ID | Epic | Status | Evidence boundary |
 |---|---|---|---|
-| E-1.1 | Dynamic System Prompt Generation | Open | none |
-| E-1.2 | SFT Dataset Generation with Full Template JSON | Open | E-1.1 (partial) |
-| E-1.3 | LUMI-G Training Run & ONNX Export | Open | E-1.2 |
+| E-2.1 | [Deterministic pipeline signals](I-2-pipeline-quality-gate/E-2.1-deterministic-signals/epic.md) | Partial | Boundary, decision, scope, cascade and narrow intent guard exist; COMP-01 and end-to-end precision evidence binding remain |
+| E-2.2 | [Trust score and correction loop](I-2-pipeline-quality-gate/E-2.2-trust-score-self-critique/epic.md) | Partial | Trust/HITL are live-tested; complex-template completion and provenance are TASK-38 gaps |
+| E-2.3 | [Context continuity and crash resilience](I-2-pipeline-quality-gate/E-2.3-context-resilience/epic.md) | Partial | Handover exists; resumable task checkpoints and artifact registry do not |
+| E-2.4 | [Adaptive complexity control](I-2-pipeline-quality-gate/E-2.4-complexity-classification/epic.md) | Partial | Cynefin classification is integrated; supervised pre-dispatch contract is not proven |
+| E-2.5 | [Multi-tenant data isolation](I-2-pipeline-quality-gate/E-2.5-multi-tenant/epic.md) | Planned | User-scoped fields are preparatory, not proof of fail-closed storage isolation |
 
-**Source:** `AGENT_LASTENHEFT.md` TASK-7 (pending, unassigned).
-
----
-
-### I-2: Pipeline Quality Gate Stack
-
-**Strategic goal:** Deterministisch messbare Antwortqualität, vollständige
-Compliance-Auditierbarkeit und strukturelle Resilienz in der
-Planner→Experts→Judge-Pipeline. Baut auf feat/sovereign-typed-cascades-dor-constitution auf.
-
-**Epics:**
-
-| ID | Name | Status | Depends on |
-|---|---|---|---|
-| E-2.1 | Deterministische Pipeline-Signale | Open | none |
-| E-2.2 | Trust-Score & Selbstkorrektur-Loop | Open | E-2.1 |
-| E-2.3 | Kontext-Kontinuität & Crash-Resilienz | Open | E-2.1 |
-| E-2.4 | Adaptive Komplexitätssteuerung (Cynefin) | Open | E-2.2 |
-| E-2.5 | Multi-Tenant Data Isolation | Open | E-2.1 |
-
-**Source:** adSCAILE Wiki-Analyse (2026-06-30), lokal unter
-`/opt/deployment/adSCAILE_Framework/adSCAILE_shared_tools/adscaile_wiki-main/wiki/`.
-
-## Dependency Map
-
-```
-E-1.1 (system prompt generator in dynamic_router.py)
-  └── E-1.2 (dataset_generator.py produces full template JSON)
-        └── E-1.3 (LUMI-G SLURM training + ONNX export → sovereign_router.onnx)
-
-E-2.1 (Boundary Contracts, Decision Log, Scope Guard, Cascade Resolution)
-  ├── E-2.2 (Trust-Score, Self-Critique, Human-Gate)
-  │     └── E-2.4 (Cynefin Complexity Classification)
-  ├── E-2.3 (Handover, Task Checkpointing, Artefakt-Registry)
-  └── E-2.5 (Multi-Tenant Isolation)
-```
-
-## Roadmap
-
-**I-1:**
-1. E-1.1: Implement system prompt generator → verify via in-container E2E
-2. E-1.2: Extend dataset generation → generate new dataset (665+ prompts)
-3. E-1.3: Renew LUMI-G SSH cert → submit SLURM job → copy ONNX back → rebuild
-
-**I-2 (empfohlene Reihenfolge nach Aufwand/Nutzen):**
-1. E-2.1: Boundary Contracts + Decision Log + Scope Guard + Cascade Resolution (gering, sofort)
-2. E-2.2: Trust-Score + Self-Critique + Human-Gate (mittel)
-3. E-2.3: Handover + Checkpointing + Artefakt-Registry (mittel, parallel zu E-2.2 möglich)
-4. E-2.4: Cynefin Complexity Classification (mittel, nach E-2.2)
-5. E-2.5: Multi-Tenant Isolation (hoch, letzter Schritt)
-
-## Stories Index
-
-*(Populate when epic-level refinement is complete)*
-
-## Implementation Tasks Index
-
-*(Populate when story-level refinement is complete)*
+See the [roadmap](roadmap.md), [dependency map](dependency-map.md), and
+[system assessment](../../system/systembewertung_2026-07-30.md) for
+priorities and operational evidence.

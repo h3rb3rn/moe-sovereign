@@ -12,7 +12,10 @@ Douglas Lenats System **Eurisko** (1983) führte das Konzept der **heuristischen
 Statische Routing-Vorlagen (z. B. feste VRAM-Schwellenwerte, fixe Zuweisungen oder feste Context-Budgets) degradieren bei sich ändernden Systemlasten oder neuen Modellen.
 
 ### Umsetzung in MoE Sovereign
-Der Eurisko Heuristic Breeder in MoE Sovereign optimiert die Gating- und Routing-Templates vollautomatisch im Hintergrund:
+Der Eurisko Heuristic Breeder kann Gating- und Routing-Templates anhand
+bestätigten Feedbacks optimieren. Weil ein Lauf aktive Routing-Policies
+versioniert und ersetzen kann, ist der periodische Scheduler in der
+Produktionskonfiguration bewusst **standardmäßig deaktiviert**:
 1.  **Heuristik-Pool:** Heuristiken werden als ausführbare Mutationsobjekte mit Gewichten verwaltet.
 2.  **Feeback-Kopplung:** Die Gewichte passen sich basierend auf dem realen Benutzer-Feedback (`user_rating`) an.
 3.  **Selbst-Zucht (Crossover):** Bei hoher Performance werden neue Heuristiken durch Kombination erfolgreicher Eltern-Heuristiken erzeugt und dem Pool hinzugefügt.
@@ -45,7 +48,8 @@ Diese neue Heuristik (`bred_A_and_B`) führt nacheinander die Mutationen beider 
 
 ## 3. Architektur & Datenfluss
 
-Der Breeder läuft asynchron als Hintergrundprozess oder periodischer Cronjob:
+Der Breeder läuft als isolierter, zeitlich begrenzter Subprozess des
+`moe-maintenance`-Dienstes oder als explizit gestarteter Einmallauf:
 
 ```
                   [PostgreSQL: dynamic_template_feedback_log]
@@ -107,10 +111,28 @@ Die gelernten Gewichte und erzeugten Zucht-Heuristiken werden serialisiert in `/
 ### 4.2. Manueller Testaufruf
 Du kannst die Optimierungs-Schleife jederzeit manuell anstoßen:
 ```bash
-sudo docker exec -it langgraph-orchestrator python3 scripts/eurisko_template_optimizer.py
+docker compose run --rm --no-deps moe-maintenance \
+  python3 scripts/eurisko_template_optimizer.py
 ```
 
-### 4.3. Test-Suite ausführen
+Der Prozess initialisiert die Datenbank explizit, schreibt neue
+Template-Versionen und inaktiviert gegebenenfalls die Vorgänger. Vor einem
+manuellen Lauf müssen daher Datenbank-Backup, Feedbackqualität und erwartete
+Mutationen geprüft werden.
+
+### 4.3. Kontrollierter Scheduler
+
+```dotenv
+EURISKO_SCHEDULER_ENABLED=0
+EURISKO_INTERVAL_SECONDS=21600
+EURISKO_TIMEOUT_SECONDS=1800
+```
+
+Der Scheduler protokolliert Exit-Code, Laufzeit und das Ende der Ausgabe in
+`/app/logs/maintenance-status.json`. Erst nach einem beobachteten Einmallauf
+und fachlicher Freigabe sollte `EURISKO_SCHEDULER_ENABLED=1` gesetzt werden.
+
+### 4.4. Test-Suite ausführen
 Das evolutionäre System ist über `tests/test_habe_and_advice.py` vollautomatisch unit-getestet.
 ```bash
 python3 -m pytest tests/test_habe_and_advice.py -k "eurisko"

@@ -28,6 +28,10 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 import database as db
+from deliberation_policy import (
+    legacy_deliberation_policy as _legacy_deliberation_policy,
+    validate_deliberation_policy as _validate_deliberation_policy,
+)
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -319,6 +323,25 @@ async def _budget_alert_loop() -> None:
         await _check_budget_alerts()
 
 
+async def _federation_auto_push_loop() -> None:
+    """Execute the persisted federation auto-push policy at its configured interval."""
+    await asyncio.sleep(60)
+    while True:
+        interval = 3600
+        try:
+            config = await db.get_federation_config()
+            interval = max(300, min(86400, int(config.get("sync_interval_seconds") or 3600)))
+            if config.get("enabled") and config.get("auto_push_enabled"):
+                result = await api_federation_push(include_manual=False)
+                if isinstance(result, JSONResponse) and result.status_code >= 400:
+                    logger.warning("Federation auto-push returned HTTP %s", result.status_code)
+                else:
+                    logger.info("Federation auto-push completed")
+        except Exception as exc:
+            logger.warning("Federation auto-push failed: %s", exc)
+        await asyncio.sleep(interval)
+
+
 # ── GPU VRAM history (cumulative per-instance usage over time) ─────────────
 # api_live_llm_instances() already polls each Ollama node's hardware/GPU
 # stats, but only live, on-demand, while the dashboard happens to be open —
@@ -384,6 +407,7 @@ async def lifespan(app: FastAPI):
     # Migrate expert templates from .env to database (one-time) and populate cache
     await refresh_expert_templates_cache()
     asyncio.create_task(_budget_alert_loop())
+    asyncio.create_task(_federation_auto_push_loop())
     # Push current public URLs to Authentik's OAuth2 provider on startup.
     # Non-blocking: runs as a background task so a slow/unreachable Authentik
     # never delays moe-admin from coming up.
@@ -2419,6 +2443,12 @@ async def api_eurisko_optimize():
 
 # ─── Expert Template Routes ───────────────────────────────────────────────────
 
+def _validated_template_deliberation_policy(raw) -> dict:
+    try:
+        return _validate_deliberation_policy(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
 @app.get("/templates", response_class=HTMLResponse)
 async def expert_templates_page(request: Request, _=Depends(require_login)):
     config = read_env()
@@ -2477,6 +2507,11 @@ async def api_create_expert_template(request: Request):
         # _resolve_template_prompts). Falls back to judge_model when empty.
         "tool_expert_model":       body.get("tool_expert_model", "").strip(),
         "tool_expert_num_ctx":     body.get("tool_expert_num_ctx", 0),
+        # guardrail_* — Llama Guard pre-filter (graph/router_nodes.py guard_node),
+        # runs before the planner. Falls back to global GUARD_MODEL when empty.
+        "guardrail_prompt":        body.get("guardrail_prompt", "").strip(),
+        "guardrail_model":         body.get("guardrail_model", "").strip(),
+        "guardrail_num_ctx":       body.get("guardrail_num_ctx", 0),
         "experts":                 body.get("experts", {}),
         "enable_cache":            body.get("enable_cache", True),
         "enable_graphrag":         body.get("enable_graphrag", True),
@@ -2491,6 +2526,9 @@ async def api_create_expert_template(request: Request):
         "agent_cache":             body.get("agent_cache", False),
         "agent_graphrag":          body.get("agent_graphrag", False),
         "agent_ingest":            body.get("agent_ingest", False),
+        "deliberation_policy":     _validated_template_deliberation_policy(
+            body.get("deliberation_policy")
+        ),
     }
     templates.append(tmpl)
     save_expert_templates(templates)
@@ -2515,6 +2553,9 @@ async def api_export_expert_templates(ids: str = ""):
             "judge_num_ctx":           t.get("judge_num_ctx", 0),
             "tool_expert_model":       t.get("tool_expert_model", ""),
             "tool_expert_num_ctx":     t.get("tool_expert_num_ctx", 0),
+            "guardrail_prompt":        t.get("guardrail_prompt", ""),
+            "guardrail_model":         t.get("guardrail_model", ""),
+            "guardrail_num_ctx":       t.get("guardrail_num_ctx", 0),
             "experts":                 t.get("experts", {}),
             "enable_cache":            t.get("enable_cache", True),
             "enable_graphrag":         t.get("enable_graphrag", True),
@@ -2529,6 +2570,11 @@ async def api_export_expert_templates(ids: str = ""):
             "agent_cache":             t.get("agent_cache", False),
             "agent_graphrag":          t.get("agent_graphrag", False),
             "agent_ingest":            t.get("agent_ingest", False),
+            "deliberation_policy":     (
+                _validated_template_deliberation_policy(t.get("deliberation_policy"))
+                if "deliberation_policy" in t
+                else _legacy_deliberation_policy()
+            ),
         }
         for t in templates
     ]
@@ -2595,6 +2641,9 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "judge_num_ctx":           item.get("judge_num_ctx", 0),
             "tool_expert_model":       (item.get("tool_expert_model") or "").strip(),
             "tool_expert_num_ctx":     item.get("tool_expert_num_ctx", 0),
+            "guardrail_prompt":        (item.get("guardrail_prompt") or "").strip(),
+            "guardrail_model":         (item.get("guardrail_model") or "").strip(),
+            "guardrail_num_ctx":       item.get("guardrail_num_ctx", 0),
             "experts":                 item.get("experts") or {},
             "enable_cache":            item.get("enable_cache", True),
             "enable_graphrag":         item.get("enable_graphrag", True),
@@ -2609,6 +2658,11 @@ async def api_import_expert_templates(request: Request, mode: str = "merge"):
             "agent_cache":             item.get("agent_cache", False),
             "agent_graphrag":          item.get("agent_graphrag", False),
             "agent_ingest":            item.get("agent_ingest", False),
+            "deliberation_policy":     (
+                _validated_template_deliberation_policy(item.get("deliberation_policy"))
+                if "deliberation_policy" in item
+                else _legacy_deliberation_policy()
+            ),
         })
         existing_names.add(name)
         imported += 1
@@ -2635,6 +2689,9 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["planner_num_ctx"]        = body.get("planner_num_ctx",       t.get("planner_num_ctx", 0))
             t["tool_expert_model"]      = body.get("tool_expert_model",     t.get("tool_expert_model", "")).strip()
             t["tool_expert_num_ctx"]    = body.get("tool_expert_num_ctx",   t.get("tool_expert_num_ctx", 0))
+            t["guardrail_prompt"]       = body.get("guardrail_prompt",      t.get("guardrail_prompt", "")).strip()
+            t["guardrail_model"]        = body.get("guardrail_model",       t.get("guardrail_model", "")).strip()
+            t["guardrail_num_ctx"]      = body.get("guardrail_num_ctx",     t.get("guardrail_num_ctx", 0))
             t["experts"]                = body.get("experts",               t.get("experts", {}))
             t["enable_cache"]           = body.get("enable_cache",          t.get("enable_cache", True))
             t["enable_graphrag"]        = body.get("enable_graphrag",       t.get("enable_graphrag", True))
@@ -2649,6 +2706,10 @@ async def api_update_expert_template(tmpl_id: str, request: Request):
             t["agent_cache"]            = body.get("agent_cache",           t.get("agent_cache", False))
             t["agent_graphrag"]         = body.get("agent_graphrag",        t.get("agent_graphrag", False))
             t["agent_ingest"]           = body.get("agent_ingest",          t.get("agent_ingest", False))
+            if "deliberation_policy" in body:
+                t["deliberation_policy"] = _validated_template_deliberation_policy(
+                    body.get("deliberation_policy")
+                )
             save_expert_templates(templates)
             return {"ok": True}
     raise HTTPException(status_code=404, detail="Template not found")
@@ -2998,19 +3059,6 @@ async def _prom_query(q: str) -> dict:
             return r.json().get("data", {})
     except Exception as e:
         logger.warning(f"Prometheus query failed [{q}]: {e}")
-        return {}
-
-
-async def _prom_range(q: str, start: str, end: str, step: str = "5m") -> dict:
-    """Range query against the Prometheus API for historical data."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{PROMETHEUS_URL}/api/v1/query_range",
-                                 params={"query": q, "start": start, "end": end, "step": step})
-            r.raise_for_status()
-            return r.json().get("data", {})
-    except Exception as e:
-        logger.warning(f"Prometheus range query failed: {e}")
         return {}
 
 
@@ -4970,13 +5018,17 @@ async def api_federation_config():
 @app.post("/api/federation/config", dependencies=[Depends(require_login)])
 async def api_save_federation_config(request: Request):
     body = await request.json()
+    sync_interval = max(
+        300,
+        min(86400, int(body.get("sync_interval_seconds", 3600))),
+    )
     await db.save_federation_config({
         "enabled": bool(body.get("enabled", False)),
         "hub_url": (body.get("hub_url") or "").strip(),
         "hub_api_key": (body.get("hub_api_key") or "").strip(),
         "node_id": (body.get("node_id") or "").strip(),
         "node_name": (body.get("node_name") or "").strip(),
-        "sync_interval_seconds": int(body.get("sync_interval_seconds", 3600)),
+        "sync_interval_seconds": sync_interval,
         "auto_push_enabled": bool(body.get("auto_push_enabled", False)),
     })
     return {"ok": True}
@@ -4991,6 +5043,8 @@ async def api_federation_policies():
 async def api_save_federation_policy(request: Request):
     body = await request.json()
     domain = (body.get("domain") or "").strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="domain is required")
     mode = body.get("mode", "blocked")
     if mode not in ("auto", "manual", "blocked"):
         raise HTTPException(status_code=400, detail="mode must be auto, manual, or blocked")
@@ -5017,10 +5071,13 @@ async def api_federation_outbox(status: str = ""):
 
 
 @app.post("/api/federation/push", dependencies=[Depends(require_login)])
-async def api_federation_push():
-    """Trigger a manual push to the configured Libris hub."""
+async def api_federation_push(include_manual: bool = True):
+    """Push auto domains and queue manual domains for explicit review."""
     from federation.client import LibrisClient, LibrisError
-    from federation.sync import push_knowledge
+    from federation.outbound_policy import (
+        filter_bundle_by_policy,
+        get_manual_domains,
+    )
 
     config = await db.get_federation_config()
     if not config.get("enabled") or not config.get("hub_url"):
@@ -5045,16 +5102,77 @@ async def api_federation_push():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to export knowledge: {e}")
 
-    from federation.outbound_policy import filter_bundle_by_policy
-    filtered = filter_bundle_by_policy(bundle, policies)
-    filtered.pop("_policy_summary", None)
-
+    auto_result = None
+    auto_policies = [policy for policy in policies if policy["mode"] == "auto"]
     try:
-        result = await client.push(filtered)
+        auto_bundle = filter_bundle_by_policy(bundle, auto_policies)
+        auto_summary = auto_bundle.pop("_policy_summary", {})
+        if auto_bundle.get("entities") or auto_bundle.get("relations"):
+            auto_result = await client.push(auto_bundle)
+        else:
+            auto_result = {"detail": "No auto-domain data passed policy filters"}
+
+        queued = []
+        policy_by_domain = {policy["domain"]: policy for policy in policies}
+        manual_domains = get_manual_domains(policies) if include_manual else []
+        for domain in manual_domains:
+            manual_bundle = filter_bundle_by_policy(
+                bundle,
+                [policy_by_domain[domain]],
+            )
+            manual_bundle.pop("_policy_summary", None)
+            entity_count = len(manual_bundle.get("entities") or [])
+            triple_count = len(manual_bundle.get("relations") or [])
+            if not entity_count and not triple_count:
+                continue
+            queued.append(await db.create_outbox_entry(
+                json.dumps(manual_bundle, ensure_ascii=False),
+                domain,
+                triple_count,
+                entity_count,
+            ))
         await db.update_federation_sync_timestamp("push")
-        return {"ok": True, **result}
+        return {
+            "ok": True,
+            "auto_result": auto_result,
+            "auto_summary": auto_summary,
+            "queued": queued,
+        }
     except LibrisError as e:
         return JSONResponse(status_code=502, content={"error": str(e)})
+
+
+@app.post("/api/federation/outbox/{entry_id}/send", dependencies=[Depends(require_login)])
+async def api_federation_outbox_send(entry_id: str):
+    """Approve and send one pending manual-policy bundle."""
+    from federation.client import LibrisClient, LibrisError
+
+    entry = await db.get_outbox_entry(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Outbox entry not found")
+    if entry.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Outbox entry is not pending")
+    policy = await db.get_federation_policy(entry["domain"])
+    if not policy or policy.get("mode") != "manual":
+        raise HTTPException(
+            status_code=409,
+            detail="Domain is no longer enabled for manual federation",
+        )
+    config = await db.get_federation_config()
+    if not config.get("enabled") or not config.get("hub_url"):
+        raise HTTPException(status_code=400, detail="Federation not enabled or no hub configured")
+    client = LibrisClient(
+        hub_url=config["hub_url"],
+        api_key=config["hub_api_key"],
+        node_id=config["node_id"],
+    )
+    try:
+        result = await client.push(json.loads(entry["bundle_json"]))
+        await db.update_outbox_status(entry_id, "sent")
+        return {"ok": True, "entry_id": entry_id, "result": result}
+    except LibrisError as exc:
+        await db.update_outbox_status(entry_id, "failed", str(exc))
+        return JSONResponse(status_code=502, content={"error": str(exc)})
 
 
 @app.post("/api/federation/pull", dependencies=[Depends(require_login)])
@@ -5097,6 +5215,40 @@ async def api_federation_pull():
         return JSONResponse(status_code=502, content={"error": f"Import failed: {e}"})
 
     await db.update_federation_sync_timestamp("pull")
+    return {"ok": True, **result}
+
+
+@app.post("/api/federation/register", dependencies=[Depends(require_login)])
+async def api_federation_register(request: Request):
+    """Initiate the documented Libris handshake with the configured hub."""
+    from federation.client import LibrisClient, LibrisError
+
+    body = await request.json()
+    config = await db.get_federation_config()
+    if not config.get("hub_url") or not config.get("node_id"):
+        raise HTTPException(status_code=400, detail="Hub URL and node ID are required")
+    policies = await db.list_federation_policies()
+    domains = [p["domain"] for p in policies if p["mode"] != "blocked"]
+    callback_url = (
+        (body.get("callback_url") or "").strip()
+        or str(request.base_url).rstrip("/")
+    )
+    client = LibrisClient(
+        hub_url=config["hub_url"],
+        api_key=config.get("hub_api_key", ""),
+        node_id=config["node_id"],
+    )
+    try:
+        result = await client.handshake(
+            name=config.get("node_name") or config["node_id"],
+            url=callback_url,
+            domains=domains,
+        )
+    except LibrisError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+    returned_key = result.get("hub_api_key") or result.get("api_key")
+    if returned_key:
+        await db.save_federation_config({**config, "hub_api_key": returned_key})
     return {"ok": True, **result}
 
 
@@ -5439,7 +5591,12 @@ async def api_resources():
         "expert_template": expert_tmpl_list,
         "cc_profile":      cc_profiles,
         "model_endpoint":  sorted(model_endpoints),
-        "moe_mode":        ["native", "moe_orchestrated", "moe_reasoning", "moe-auto", "moe-auto:local-only", "moe-auto:global-only", "moe-auto:user-conns-only"],
+        "moe_mode":        [
+            "native", "moe_orchestrated", "moe_reasoning", "moe-auto",
+            "moe-auto:local-only", "moe-auto:global-only",
+            "moe-auto:user-conns-only", "moe-auto:no-deliberation",
+            "moe-auto:deliberation-required",
+        ],
         "skill":           skill_items,
         "mcp_tool":        mcp_items,
         "feature":         feature_items,
@@ -5957,7 +6114,12 @@ async def user_api_live_my_requests(user_id: str = Depends(require_user_login)):
                                "duration_s", "key_label", "key_prefix")
     _safe_fields_completed = ("chat_id", "model", "moe_mode", "template_name",
                                "backend_model", "backend_host", "started_at",
-                               "ended_at", "status", "key_label")
+                               "ended_at", "status", "key_label",
+                               "deliberation_active", "deliberation_mode",
+                               "deliberation_reason", "deliberation_model_calls",
+                               "deliberation_stop_reason",
+                               "deliberation_reserve_agents_used",
+                               "deliberation_reserve_rounds_used")
     try:
         r = await db._get_redis()
 
@@ -6610,6 +6772,11 @@ async def user_api_copy_admin_template(
     # Create copy as user template — strip admin-controlled prompts
     _STRIP_TOP = {"id", "name", "description", "planner_prompt", "judge_prompt"}
     config = {k: v for k, v in source.items() if k not in _STRIP_TOP}
+    config["deliberation_policy"] = (
+        _validated_template_deliberation_policy(config.get("deliberation_policy"))
+        if "deliberation_policy" in config
+        else _legacy_deliberation_policy()
+    )
     if "experts" in config:
         config["experts"] = {
             cat: {k: v for k, v in cat_cfg.items() if k != "system_prompt"}
@@ -6629,6 +6796,9 @@ async def user_api_create_template(request: Request, user_id: str = Depends(requ
     name        = (body.get("name") or "").strip()
     description = (body.get("description") or "").strip()
     config      = body.get("config") or {}
+    config["deliberation_policy"] = _validated_template_deliberation_policy(
+        config.get("deliberation_policy")
+    )
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
     if name in await _user_name_set(user_id):
@@ -6651,6 +6821,11 @@ async def user_api_export_templates(ids: str = "", user_id: str = Depends(requir
             config = json.loads(t["config_json"])
         except Exception:
             config = {}
+        config["deliberation_policy"] = (
+            _validated_template_deliberation_policy(config.get("deliberation_policy"))
+            if "deliberation_policy" in config
+            else _legacy_deliberation_policy()
+        )
         items.append({
             "name":        t.get("name", ""),
             "description": t.get("description", ""),
@@ -6711,6 +6886,11 @@ async def user_api_import_templates(
         config = dict(item.get("config") or {
             k: v for k, v in item.items() if k not in _NON_CONFIG
         })
+        config["deliberation_policy"] = (
+            _validated_template_deliberation_policy(config.get("deliberation_policy"))
+            if "deliberation_policy" in config
+            else _legacy_deliberation_policy()
+        )
         await db.create_user_template(user_id, name, description, cost_factor, config)
         existing_names.add(name)
         imported += 1
@@ -6726,6 +6906,10 @@ async def user_api_update_template(tmpl_id: str, request: Request, user_id: str 
     name        = (body.get("name") or "").strip()
     description = (body.get("description") or "").strip()
     config      = body.get("config") or {}
+    if "deliberation_policy" in config:
+        config["deliberation_policy"] = _validated_template_deliberation_policy(
+            config.get("deliberation_policy")
+        )
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
     if name in await _user_name_set(user_id, "user_template", tmpl_id):
@@ -7227,6 +7411,33 @@ async def api_admin_user_content():
     return {"templates": templates, "cc_profiles": cc_profiles}
 
 
+@app.put("/api/admin/user-templates/{tmpl_id}", dependencies=[Depends(require_login)])
+async def api_admin_update_user_template(tmpl_id: str, request: Request):
+    body = await request.json()
+    patch: dict = {}
+    if "config" in body:
+        patch["config_json"] = body["config"]
+    if "name" in body:
+        patch["name"] = body["name"]
+    if "description" in body:
+        patch["description"] = body["description"]
+    if "cost_factor" in body:
+        patch["cost_factor"] = body["cost_factor"]
+    if not patch:
+        raise HTTPException(status_code=422, detail="Mindestens ein Feld erforderlich: config, name, description, cost_factor")
+    row = await db.admin_update_user_template(tmpl_id, patch)
+    if not row:
+        raise HTTPException(status_code=404, detail="Template not found")
+    await db.sync_user_to_redis(row["user_id"])
+    return {
+        "ok": True,
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "name": row["name"],
+        "updated_at": str(row.get("updated_at", "")),
+    }
+
+
 @app.patch("/api/admin/user-templates/{tmpl_id}/active", dependencies=[Depends(require_login)])
 async def api_admin_toggle_template(tmpl_id: str, request: Request):
     body = await request.json()
@@ -7308,16 +7519,6 @@ async def _require_connections_access(user_id: str) -> dict:
     if not (is_privileged or has_feature):
         raise HTTPException(status_code=403, detail="Role 'expert'/'admin' or feature 'connections' required")
     return user
-
-
-def _get_global_server_names() -> set:
-    """Return the set of global inference server names from the .env config."""
-    config = read_env()
-    try:
-        servers = _safe_json(config.get("INFERENCE_SERVERS", ""), [])
-    except Exception:
-        servers = []
-    return {s["name"] for s in servers if s.get("name")}
 
 
 @app.get("/user/connections", response_class=HTMLResponse)
@@ -9193,12 +9394,16 @@ async def api_create_tenant(request: Request):
 
 @app.delete("/api/tenants/{tenant_id}", dependencies=[Depends(require_login)])
 async def api_delete_tenant(tenant_id: str):
+    if not await db.get_tenant(tenant_id):
+        raise HTTPException(status_code=404, detail="Tenant not found")
     await db.delete_tenant(tenant_id)
     return {"ok": True, "tenant_id": tenant_id}
 
 
 @app.get("/api/tenants/{tenant_id}/members", dependencies=[Depends(require_login)])
 async def api_tenant_members(tenant_id: str):
+    if not await db.get_tenant(tenant_id):
+        raise HTTPException(status_code=404, detail="Tenant not found")
     members = await db.list_tenant_members(tenant_id)
     return {"tenant_id": tenant_id, "members": members, "total": len(members)}
 
@@ -9206,6 +9411,8 @@ async def api_tenant_members(tenant_id: str):
 @app.post("/api/tenants/{tenant_id}/members", dependencies=[Depends(require_login)])
 async def api_add_tenant_member(tenant_id: str, request: Request):
     """Adds a user or an entire team to a tenant."""
+    if not await db.get_tenant(tenant_id):
+        raise HTTPException(status_code=404, detail="Tenant not found")
     body = await request.json()
     user_id = body.get("user_id") or None
     team_id = body.get("team_id") or None
@@ -10230,7 +10437,7 @@ async def api_refresh_model_metadata():
 
 @app.post("/admin/features/{name}/toggle", dependencies=[Depends(require_admin)])
 async def toggle_starfleet_feature(name: str, request: Request):
-    """Toggle a Starfleet feature via Redis (no restart required for runtime-toggleable features)."""
+    """Proxy a validated feature toggle to the orchestrator."""
     known = set(_STARFLEET_FEATURES_DEFAULTS.keys())
     if name not in known:
         raise HTTPException(status_code=404, detail=f"Unknown feature '{name}'. Known: {sorted(known)}")
@@ -10238,16 +10445,20 @@ async def toggle_starfleet_feature(name: str, request: Request):
     enabled = bool(body.get("enabled", True))
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/starfleet/features")
-            current = r.json().get(name, {}).get("enabled", False) if r.status_code == 200 else None
-        import redis.asyncio as _aioredis
-        _redis_url = os.getenv("REDIS_URL", "redis://:@terra_cache:6379/0")
-        _rc = _aioredis.from_url(_redis_url, decode_responses=True)
-        await _rc.set(f"moe:features:{name}", "true" if enabled else "false")
-        await _rc.aclose()
-        return {"ok": True, "feature": name, "enabled": enabled, "previous": current, "source": "redis"}
+            system_key = os.environ.get("SYSTEM_API_KEY", "")
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/starfleet/features/{name}",
+                headers={"Authorization": f"Bearer {system_key}"},
+                json={"enabled": enabled},
+            )
+        if r.status_code >= 400:
+            detail = r.json().get("detail", r.text[:200])
+            raise HTTPException(status_code=r.status_code, detail=detail)
+        return r.json()
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 # ─── HITL Gates (TASK-24) ────────────────────────────────────────────────────
@@ -10392,4 +10603,3 @@ async def api_decision_log(
             return {"records": [], "total": 0}
     except Exception as e:
         return {"records": [], "total": 0, "error": str(e)}
-

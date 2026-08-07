@@ -76,6 +76,8 @@ async def check_and_emit_stuck(
 
     try:
         from services.decision_log import log_decision, DecisionType
+        from services.cascade import list_open_cascades
+        open_cascades = list_open_cascades(response_id)
         log_decision(
             DecisionType.STUCK_LOOP,
             response_id,
@@ -84,7 +86,12 @@ async def check_and_emit_stuck(
                 f"without resolving gap (cascade={payload['cascade_type']}): "
                 f"{(state_.get('agentic_gap') or '')[:200]}"
             ),
-            metadata={"iteration": iteration, "max_rounds": max_rounds, "cascade_type": payload["cascade_type"]},
+            metadata={
+                "iteration": iteration,
+                "max_rounds": max_rounds,
+                "cascade_type": payload["cascade_type"],
+                "open_cascades": open_cascades,
+            },
         )
     except Exception as e:
         logger.debug("retry_budget: decision_log emit failed: %s", e)

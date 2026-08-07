@@ -8,9 +8,12 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import httpx
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 import state
 from config import (
@@ -44,7 +47,7 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
+    assign_gpu, _ollama_unload, _refine_expert_response,
     _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
@@ -83,16 +86,148 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 from pipeline.state import AgentState
 from compliance_cag import get_compliance_context
 from episodic_memory import get_episode_hint
+from services.retrieval_attribution import graph_attribution_chunks
+from services.deadline import (
+    RequestDeadlineExceeded,
+    remaining_timeout,
+    wait_for_budget,
+)
+from services.pipeline.contracts import (
+    canonical_json_hash,
+    precision_evidence_input,
+    precision_args_match,
+    tool_schema_contract_hash,
+)
 
 
 def _validate_tool_result(result_str: str, tool: str) -> tuple[bool, str]:
     """Sanity-check MCP tool output before it enters working memory."""
     if not result_str or len(result_str.strip()) < 3:
         return False, "empty_result"
-    lower = result_str.lower()
-    if lower.startswith("[") and "error" in lower[:30]:
-        return False, "error_prefix"
+    stripped = result_str.lstrip()
+    lower = stripped.casefold()
+    if lower.startswith(("error:", "fehler:")) or (
+        lower.startswith("[")
+        and ("error" in lower[:80] or "fehler" in lower[:80])
+    ):
+        return False, "error_result"
+    if lower.startswith("{"):
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("error"):
+            return False, "error_result"
     return True, ""
+
+
+def _normalize_tool_args(args: dict, schema: dict) -> dict:
+    """Apply only explicit schema defaults; never infer missing values."""
+    normalized = dict(args)
+    properties = schema.get("args", {}) if isinstance(schema, dict) else {}
+    if isinstance(properties, dict):
+        for name, property_schema in properties.items():
+            if (
+                name not in normalized
+                and isinstance(property_schema, dict)
+                and "default" in property_schema
+            ):
+                normalized[name] = property_schema["default"]
+    return normalized
+
+
+def _validate_tool_args(args: Any, schema: Any) -> tuple[bool, str]:
+    """Validate all discovered JSON-Schema constraints before MCP invoke."""
+    if not isinstance(args, dict):
+        return False, "pre_call_schema_invalid:args:not_object"
+    if not isinstance(schema, dict):
+        return False, "pre_call_schema_invalid:schema:unavailable"
+    properties = schema.get("args", {})
+    required = schema.get("required", [])
+    if not isinstance(properties, dict) or not isinstance(required, (list, tuple)):
+        return False, "pre_call_schema_invalid:schema:malformed"
+    object_schema = {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+        "additionalProperties": bool(schema.get("additionalProperties", False)),
+    }
+    try:
+        Draft202012Validator.check_schema(object_schema)
+        errors = sorted(
+            Draft202012Validator(object_schema).iter_errors(args),
+            key=lambda item: (
+                tuple(str(part) for part in item.absolute_path),
+                item.message,
+            ),
+        )
+    except SchemaError:
+        return False, "pre_call_schema_invalid:schema:malformed"
+    if not errors:
+        return True, ""
+    first = errors[0]
+    path = ".".join(str(part) for part in first.absolute_path) or "args"
+    validator = str(first.validator or "invalid")
+    return False, f"pre_call_schema_invalid:{path}:{validator}"
+
+
+def _validate_structured_mcp_result(
+    data: Any,
+    schema: dict,
+    tool: str,
+    args: dict,
+) -> tuple[bool, str, dict]:
+    """Validate a migrated MCP result envelope and its typed facts."""
+    if not schema.get("structured_result_required"):
+        return True, "", {}
+    if not isinstance(data, dict) or not isinstance(data.get("structured_result"), dict):
+        return False, "structured_result_missing", {}
+    payload = data["structured_result"]
+    contract_hash = tool_schema_contract_hash(schema)
+    evidence_args = precision_evidence_input(args, schema)
+    fixed_fields = {
+        "status": "completed",
+        "tool": tool,
+        "contract_id": schema.get("contract_id"),
+        "contract_version": schema.get("contract_version"),
+        "contract_hash": contract_hash,
+        "input_normalized": evidence_args,
+        "determinism": schema.get("determinism"),
+    }
+    if any(payload.get(name) != expected for name, expected in fixed_fields.items()):
+        return False, "structured_result_contract_mismatch", payload
+    facts = payload.get("facts")
+    output_schema = schema.get("output_schema")
+    if not isinstance(output_schema, dict):
+        return False, "structured_result_output_schema_missing", payload
+    try:
+        Draft202012Validator.check_schema(output_schema)
+        errors = list(Draft202012Validator(output_schema).iter_errors(facts))
+    except SchemaError:
+        return False, "structured_result_output_schema_invalid", payload
+    if errors:
+        return False, "structured_result_facts_invalid", payload
+    source_metadata = payload.get("source")
+    if (
+        not isinstance(source_metadata, dict)
+        or not source_metadata.get("kind")
+        or not source_metadata.get("name")
+        or not source_metadata.get("version")
+    ):
+        return False, "structured_result_source_invalid", payload
+    warnings = payload.get("warnings")
+    if not isinstance(warnings, list):
+        return False, "structured_result_warnings_invalid", payload
+    expected_result_hash = canonical_json_hash(
+        {
+            "contract_hash": contract_hash,
+            "input_normalized": evidence_args,
+            "facts": facts,
+        }
+    )
+    if payload.get("result_hash") != expected_result_hash:
+        return False, "structured_result_hash_mismatch", payload
+    return True, "", payload
 
 
 async def mcp_node(state_: AgentState):
@@ -101,11 +236,16 @@ async def mcp_node(state_: AgentState):
         return {"mcp_result": ""}
 
     precision_tasks = [
-        t for t in state_.get("plan", [])
-        if isinstance(t, dict) and t.get("category") == "precision_tools" and t.get("mcp_tool")
+        t
+        for t in state_.get("plan", [])
+        if isinstance(t, dict) and t.get("category") == "precision_tools"
     ]
     if not precision_tasks:
         return {"mcp_result": ""}
+
+    _iteration = int(state_.get("agentic_iteration") or 0)
+    _denied_events: list[dict] = []
+    _denied_evidence: list[dict] = []
 
     # Per-User MCP-Tool Permission-Check
     allowed_mcp = state_.get("user_permissions", {}).get("mcp_tool")
@@ -113,6 +253,28 @@ async def mcp_node(state_: AgentState):
         _denied_tasks = [t for t in precision_tasks if t.get("mcp_tool") not in allowed_mcp]
         for _dt in _denied_tasks:
             _dtool = _dt.get("mcp_tool")
+            _denied_events.append(
+                {
+                    "task_id": _dt.get("id", ""),
+                    "category": "precision_tools",
+                    "status": "denied",
+                    "executor": "mcp",
+                    "iteration": _iteration,
+                    "reason": "user_permissions",
+                }
+            )
+            _denied_evidence.append(
+                {
+                    "task_id": _dt.get("id", ""),
+                    "tool": _dtool,
+                    "args": _dt.get("mcp_args", {}),
+                    "iteration": _iteration,
+                    "status": "denied",
+                    "result": "",
+                    "error": "user_permissions",
+                    "source": "mcp_precision",
+                }
+            )
             _dak = state.MCP_TOOL_SCHEMAS.get(_dtool, {}).get("access_kind", "read")
             try:
                 from services.decision_log import log_decision, DecisionType
@@ -127,7 +289,11 @@ async def mcp_node(state_: AgentState):
         precision_tasks = [t for t in precision_tasks if t.get("mcp_tool") in allowed_mcp]
         if not precision_tasks:
             logger.info("⛔ MCP tools not enabled for this user")
-            return {"mcp_result": ""}
+            return {
+                "mcp_result": "",
+                "task_events": _denied_events,
+                "mcp_evidence": _denied_evidence,
+            }
 
     tool_names = [t.get("mcp_tool") for t in precision_tasks]
     await _report(f"⚙️ MCP Precision Tools: {', '.join(tool_names)}")
@@ -138,39 +304,128 @@ async def mcp_node(state_: AgentState):
     _wm: dict = dict(state_.get("working_memory") or {})
     _log: list = list(state_.get("tool_calls_log") or [])
     _failures: list = list(state_.get("tool_failures") or [])
-    _ts_now = lambda: __import__('datetime').datetime.utcnow().isoformat() + "Z"
+    _ts_now = lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    async def call_tool(client: httpx.AsyncClient, task: dict) -> str:
+    async def call_tool(client: httpx.AsyncClient, task: dict) -> dict:
         tool = task.get("mcp_tool")
-        args = task.get("mcp_args", {})
+        args = dict(task.get("mcp_args") or {})
         desc = task.get("task", tool)
+        safe_desc = (
+            f"{tool} (sensitive input redacted)"
+            if tool == "structured_validate"
+            else desc
+        )
+        task_id = task.get("id", "")
+        required_intents = [
+            intent
+            for intent in (state_.get("required_precision_intents") or [])
+            if isinstance(intent, dict) and intent.get("tool") == tool
+        ]
+        mandatory_contract = bool(required_intents)
+        contract_hash = ""
+
+        def _outcome(
+            status: str,
+            text: str,
+            *,
+            used_args: dict,
+            result: str = "",
+            error: str = "",
+            structured_result: dict | None = None,
+        ) -> dict:
+            structured = structured_result or {}
+            return {
+                "text": text,
+                "event": {
+                    "task_id": task_id,
+                    "category": "precision_tools",
+                    "status": status,
+                    "executor": "mcp",
+                    "iteration": _iteration,
+                    "reason": error[:200],
+                },
+                "evidence": {
+                    "task_id": task_id,
+                    "tool": tool,
+                    "args": used_args,
+                    "iteration": _iteration,
+                    "status": status,
+                    "result": result[:65536],
+                    "error": error[:500],
+                    "source": "mcp_precision",
+                    "contract_hash": contract_hash,
+                    "input_hash": canonical_json_hash(used_args),
+                    "contract_id": structured.get("contract_id", _schema.get("contract_id", "") if isinstance(_schema, dict) else ""),
+                    "contract_version": structured.get("contract_version", _schema.get("contract_version", "") if isinstance(_schema, dict) else ""),
+                    "facts": structured.get("facts"),
+                    "result_hash": structured.get("result_hash", ""),
+                    "determinism": structured.get("determinism", _schema.get("determinism", "") if isinstance(_schema, dict) else ""),
+                    "source_metadata": structured.get("source"),
+                    "warnings": structured.get("warnings", []),
+                },
+            }
+
         # Fix common planner argument-naming mismatches so MCP tools don't
         # reject the call and fall back to LLM hallucination.
         if tool == "calculate" and "operation" in args and "expression" not in args:
             args["expression"] = args.pop("operation")
         if tool == "calculate" and "formula" in args and "expression" not in args:
             args["expression"] = args.pop("formula")
-        # Pre-call schema validation — catch missing required args before HTTP round-trip
+        # Mandatory contracts use the immutable preflight snapshot. A live
+        # catalog change between preflight and dispatch is a hard error, not an
+        # invitation to silently run a different contract.
         _schema = state.MCP_TOOL_SCHEMAS.get(tool, {})
-        _missing = [f for f in _schema.get("required", []) if f not in args]
-        if _missing:
-            logger.info(f"🔧 MCP pre-validation: {tool} missing {_missing} — asking judge to fix")
-            _pre_fix_prompt = (
-                f"The MCP tool '{tool}' requires these arguments: {_schema.get('required', [])}\n"
-                f"Current args (missing {_missing}): {json.dumps(args)}\n"
-                f"Task context: {desc}\n"
-                f"Return ONLY a corrected JSON object with all required args filled. No explanation."
+        if mandatory_contract:
+            _snapshot = (state_.get("precision_contract_snapshot") or {}).get(tool)
+            _expected_hashes = {
+                str(intent.get("schema_hash") or "") for intent in required_intents
+            }
+            _live_hash = tool_schema_contract_hash(_schema)
+            _snapshot_hash = tool_schema_contract_hash(_snapshot)
+            contract_hash = _snapshot_hash
+            if (
+                not isinstance(_snapshot, dict)
+                or not _snapshot_hash
+                or _snapshot_hash not in _expected_hashes
+                or _live_hash != _snapshot_hash
+            ):
+                error = "precision_contract_changed"
+                logger.error("MCP mandatory contract drift for %s", tool)
+                return _outcome(
+                    "failed",
+                    f"[{safe_desc}] MCP contract error: {error}",
+                    used_args=args,
+                    error=error,
+                )
+            _schema = _snapshot
+        elif isinstance(_schema, dict):
+            contract_hash = tool_schema_contract_hash(_schema)
+
+        args = _normalize_tool_args(args, _schema)
+        valid_args, args_error = _validate_tool_args(args, _schema)
+        if not valid_args:
+            error = args_error
+            logger.error("MCP contract drift for %s: %s", tool, error)
+            return _outcome(
+                "failed",
+                f"[{safe_desc}] MCP contract error: {error}",
+                used_args=args,
+                error=error,
             )
-            try:
-                from parsing import _extract_json
-                _pre_fix_res = await _invoke_judge_with_retry(state_, _pre_fix_prompt, max_retries=1, temperature=0.05)
-                _fixed = _extract_json(_pre_fix_res.content or "")
-                if isinstance(_fixed, dict) and all(f in _fixed for f in _missing):
-                    args = _fixed
-                    logger.info(f"🔧 MCP pre-validation: args corrected for {tool}")
-            except Exception as _pve:
-                logger.debug(f"MCP pre-validation fix failed for {tool}: {_pve}")
-        await _report(f"⚙️ MCP-Call: {tool}\nArgs: {json.dumps(args, ensure_ascii=False, indent=2)}")
+        if mandatory_contract and not any(
+            precision_args_match(args, intent.get("args") or {}, _schema)
+            for intent in required_intents
+        ):
+            error = "precision_evidence_mismatch"
+            logger.error("MCP mandatory args differ from preflight for %s", tool)
+            return _outcome(
+                "failed",
+                f"[{safe_desc}] MCP contract error: {error}",
+                used_args=args,
+                error=error,
+            )
+        audit_args = precision_evidence_input(args, _schema)
+        await _report(f"⚙️ MCP-Call: {tool}\nArgs: {json.dumps(audit_args, ensure_ascii=False, indent=2)}")
         _access_kind = _schema.get("access_kind", "read")
         try:
             from services.decision_log import log_decision, DecisionType
@@ -205,14 +460,25 @@ async def mcp_node(state_: AgentState):
                 _log_tool_eval({
                     "ts": _ts_now(), "source": "mcp_node",
                     "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),
-                    "tool": tool, "args": args, "task": desc, "result": None,
+                    "tool": tool, "args": audit_args, "task": safe_desc, "result": None,
                     "error": err_str, "latency_s": _mcp_dt,
                     "caller": "orchestrator_pipeline", "template": state_.get("template_name", ""),
                 })
-                _entry = {"tool": tool, "args": args, "result": None, "status": "error", "error": err_str, "ts": _ts_now()}
+                _entry = {"tool": tool, "args": audit_args, "result": None, "status": "error", "error": err_str, "ts": _ts_now()}
                 _log.append(_entry)
                 _failures.append(_entry)
-                # Attempt arg-correction retry via judge LLM
+                # Mandatory precision arguments are immutable after preflight.
+                # A model may never reinterpret them after a server failure.
+                if mandatory_contract or (_schema.get("evidence_policy") or {}).get("redact_input_fields"):
+                    return _outcome(
+                        "failed",
+                        f"[{safe_desc}] Error: {err_str}",
+                        used_args=args,
+                        error="mandatory_precision_retry_forbidden",
+                    )
+
+                # Optional/non-mandatory tools retain one bounded correction
+                # attempt, but corrected args must satisfy the full schema.
                 fix_prompt = (
                     f"The MCP tool '{tool}' returned an error: {err_str}\n"
                     f"Original args: {json.dumps(args)}\n"
@@ -224,6 +490,13 @@ async def mcp_node(state_: AgentState):
                     corrected_args = _extract_json(fix_res.content or "")
                     if not isinstance(corrected_args, dict):
                         raise ValueError("judge returned non-dict JSON")
+                    corrected_args = _normalize_tool_args(corrected_args, _schema)
+                    corrected_valid, corrected_error = _validate_tool_args(
+                        corrected_args,
+                        _schema,
+                    )
+                    if not corrected_valid:
+                        raise ValueError(corrected_error)
                     logger.info(f"🔄 MCP retry [{tool}] with corrected args: {corrected_args}")
                     resp2 = await client.post(f"{MCP_URL}/invoke", json={"tool": tool, "args": corrected_args})
                     resp2.raise_for_status()
@@ -231,34 +504,85 @@ async def mcp_node(state_: AgentState):
                     if "error" not in data2:
                         result_str2 = data2.get("result", "")
                         await _report(f"⚙️ MCP retry OK [{tool}]:\n{result_str2}")
-                        valid, _ = _validate_tool_result(result_str2, tool)
+                        valid, validation_reason = _validate_tool_result(result_str2, tool)
+                        if len(str(result_str2)) > int((_schema.get("limits") or {}).get("max_result_chars", 65536)):
+                            valid = False
+                            validation_reason = "tool_result_too_large"
+                        structured_valid, structured_reason, structured_result = (
+                            _validate_structured_mcp_result(
+                                data2,
+                                _schema,
+                                tool,
+                                corrected_args,
+                            )
+                        )
+                        valid = valid and structured_valid
+                        if not structured_valid:
+                            validation_reason = structured_reason
                         if valid:
-                            wm_key = f"{tool}:{json.dumps(corrected_args)[:60]}"
+                            corrected_audit_args = precision_evidence_input(corrected_args, _schema)
+                            wm_key = f"{tool}:{json.dumps(corrected_audit_args)[:60]}"
                             _wm[wm_key] = {"value": result_str2[:500], "source": "mcp_node", "confidence": 0.8, "ts": _ts_now()}
-                        _log.append({"tool": tool, "args": corrected_args, "result": result_str2[:200], "status": "ok_retry", "ts": _ts_now()})
-                        return f"[{desc}] {result_str2}"
+                        _log.append({"tool": tool, "args": precision_evidence_input(corrected_args, _schema), "result": result_str2[:200], "status": "ok_retry", "ts": _ts_now()})
+                        if valid:
+                            return _outcome(
+                                "completed",
+                                f"[{safe_desc}] {result_str2}",
+                                used_args=corrected_args,
+                                result=result_str2,
+                                structured_result=structured_result,
+                            )
+                        return _outcome(
+                            "failed",
+                            f"[{safe_desc}] Invalid MCP result",
+                            used_args=corrected_args,
+                            result=result_str2,
+                            error=validation_reason or "invalid_tool_result",
+                            structured_result=structured_result,
+                        )
                 except Exception as retry_exc:
                     logger.debug(f"MCP arg-correction retry failed for {tool}: {retry_exc}")
-                return f"[{desc}] Error: {err_str}"
+                return _outcome(
+                    "failed",
+                    f"[{safe_desc}] Error: {err_str}",
+                    used_args=args,
+                    error=err_str,
+                )
             result_str = data.get('result', '')
             await _report(f"⚙️ MCP result [{tool}]:\n{result_str}")
-            logger.info(f"🔧 MCP: [{desc}] {result_str[:120]}")
+            logger.info(f"🔧 MCP: [{safe_desc}] {result_str[:120]}")
             _log_tool_eval({
                 "ts": _ts_now(), "source": "mcp_node",
                 "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),
-                "tool": tool, "args": args, "task": desc, "result": result_str[:500],
+                "tool": tool, "args": audit_args, "task": safe_desc, "result": result_str[:500],
                 "error": None, "latency_s": _mcp_dt,
                 "caller": "orchestrator_pipeline", "template": state_.get("template_name", ""),
             })
-            _log.append({"tool": tool, "args": args, "result": result_str[:200], "status": "ok", "ts": _ts_now()})
+            _log.append({"tool": tool, "args": audit_args, "result": result_str[:200], "status": "ok", "ts": _ts_now()})
             # Write validated results to working memory
             valid, reason = _validate_tool_result(result_str, tool)
+            if len(str(result_str)) > int((_schema.get("limits") or {}).get("max_result_chars", 65536)):
+                valid = False
+                reason = "tool_result_too_large"
+            structured_valid, structured_reason, structured_result = (
+                _validate_structured_mcp_result(data, _schema, tool, args)
+            )
+            valid = valid and structured_valid
+            if not structured_valid:
+                reason = structured_reason
             if valid:
-                wm_key = f"{tool}:{json.dumps(args)[:60]}"
+                wm_key = f"{tool}:{json.dumps(audit_args)[:60]}"
                 _wm[wm_key] = {"value": result_str[:500], "source": "mcp_node", "confidence": 0.9, "ts": _ts_now()}
             else:
                 logger.debug(f"MCP result for {tool} failed validation: {reason}")
-            return f"[{desc}] {result_str}"
+            return _outcome(
+                "completed" if valid else "failed",
+                f"[{safe_desc}] {result_str}",
+                used_args=args,
+                result=result_str,
+                error="" if valid else reason,
+                structured_result=structured_result,
+            )
         except Exception as e:
             _mcp_dt = round(time.monotonic() - _mcp_t0, 3)
             logger.error(f"MCP Tool '{tool}' failed: {e}")
@@ -266,19 +590,41 @@ async def mcp_node(state_: AgentState):
             _log_tool_eval({
                 "ts": _ts_now(), "source": "mcp_node",
                 "chat_id": state_.get("chat_id", ""), "user_id": state_.get("user_id", ""),
-                "tool": tool, "args": args, "task": desc, "result": None,
+                "tool": tool, "args": precision_evidence_input(args, _schema), "task": safe_desc, "result": None,
                 "error": str(e)[:300], "latency_s": _mcp_dt,
                 "caller": "orchestrator_pipeline", "template": state_.get("template_name", ""),
             })
-            _entry = {"tool": tool, "args": args, "result": None, "status": "exception", "error": str(e)[:200], "ts": _ts_now()}
+            _entry = {"tool": tool, "args": precision_evidence_input(args, _schema), "result": None, "status": "exception", "error": str(e)[:200], "ts": _ts_now()}
             _log.append(_entry)
             _failures.append(_entry)
-            return f"[{desc}] MCP error: {e}"
+            return _outcome(
+                "failed",
+                f"[{safe_desc}] MCP error: {e}",
+                used_args=args,
+                error=str(e),
+            )
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    _mcp_timeout = remaining_timeout(state_, 30.0, stage="mcp")
+    async with httpx.AsyncClient(timeout=_mcp_timeout) as client:
         results = await asyncio.gather(*[call_tool(client, t) for t in precision_tasks])
+    from services.precision_telemetry import record_precision_event
+    precision_mode = str(state_.get("precision_contract_mode") or "enforce")
+    for task, result in zip(precision_tasks, results):
+        tool_name = str(task.get("mcp_tool") or "")
+        outcome = "completed" if result.get("event", {}).get("status") == "completed" else "failed"
+        reason = str(result.get("event", {}).get("reason") or "")
+        stage = (
+            "input_schema" if "schema_invalid" in reason and "output" not in reason
+            else "output_schema" if "output_schema" in reason or "structured_result" in reason
+            else "contract" if "contract" in reason
+            else "tool"
+        )
+        event_outcome = "drift" if "changed" in reason else outcome
+        record_precision_event(
+            stage, event_outcome, tool=tool_name, mode=precision_mode,
+        )
 
-    combined = "\n".join(results)
+    combined = "\n".join(result["text"] for result in results)
     await _report(f"⚙️ MCP: {len(results)} result(s) received")
     await _record_stage(state_.get("response_id", ""), "mcp", "done")
     logger.info(f"🔧 MCP: {combined[:300]}")
@@ -289,6 +635,10 @@ async def mcp_node(state_: AgentState):
         "working_memory": _wm,
         "tool_calls_log": _log,
         "tool_failures": _failures,
+        "task_events": _denied_events + [result["event"] for result in results],
+        "mcp_evidence": _denied_evidence + [
+            result["evidence"] for result in results
+        ],
     }
 
 
@@ -298,17 +648,17 @@ async def graph_rag_node(state_: AgentState):
     otherwise direct access to graph_manager (fallback, backwards compatible).
     """
     if state_.get("cache_hit"):
-        return {"graph_context": ""}
+        return {"graph_context": "", "retrieved_graph_chunks": []}
     # Template toggle: skip GraphRAG if disabled
     if not state_.get("enable_graphrag", True):
         logger.info("GraphRAG disabled by template toggle")
-        return {"graph_context": ""}
+        return {"graph_context": "", "retrieved_graph_chunks": []}
     # Complexity routing: skip for trivial requests (complexity_estimator sets skip_graph)
     if state_.get("skip_graph"):
         logger.info("⚡ GraphRAG skipped (complexity routing: trivial/skip_graph)")
-        return {"graph_context": ""}
+        return {"graph_context": "", "retrieved_graph_chunks": []}
     if not GRAPH_VIA_MCP and state.graph_manager is None:
-        return {"graph_context": ""}
+        return {"graph_context": "", "retrieved_graph_chunks": []}
     plan = state_.get("plan", [])
     categories = [t.get("category", "") for t in plan if isinstance(t, dict)]
 
@@ -321,7 +671,7 @@ async def graph_rag_node(state_: AgentState):
         logger.info("⚡ GraphRAG skipped (public-fact query — internal graph not relevant)")
         await _report("⚡ GraphRAG: skipped (external research query)")
         await _record_stage(state_.get("response_id", ""), "graph_rag", "skipped")
-        return {"graph_context": ""}
+        return {"graph_context": "", "retrieved_graph_chunks": []}
 
     # GraphRAG-Cache (Valkey, TTL=3600s)
     import hashlib as _hashlib
@@ -334,7 +684,10 @@ async def graph_rag_node(state_: AgentState):
                 logger.info(f"🔗 GraphRAG cache hit (Valkey) — {len(_cached_ctx_str)} chars")
                 await _report(f"🔗 GraphRAG: context from Valkey cache ({len(_cached_ctx_str)} chars)")
                 await _record_stage(state_.get("response_id", ""), "graph_rag", "cache_hit")
-                return {"graph_context": _cached_ctx_str}
+                return {
+                    "graph_context": _cached_ctx_str,
+                    "retrieved_graph_chunks": graph_attribution_chunks(_cached_ctx_str),
+                }
         except Exception as _ge:
             logger.debug(f"GraphRAG cache read error: {_ge}")
 
@@ -347,14 +700,21 @@ async def graph_rag_node(state_: AgentState):
         await _report(f"📋 CAG: static compliance context ({len(_cag_ctx)} chars, Neo4j skipped)")
         if state.redis_client is not None:
             asyncio.create_task(state.redis_client.setex(_graph_cache_key, 3600, _cag_ctx))
-        return {"graph_context": _cag_ctx}
+        return {"graph_context": _cag_ctx, "retrieved_graph_chunks": []}
 
     # Episode hint: retrieve routing context from similar past tasks.
     # Appended to graph_context so the judge can use past strategies as signal.
     _ep_task_type = categories[0] if categories else "general"
     if state.graph_manager is not None:
-        _ep_hint = await get_episode_hint(
-            state.graph_manager.driver, state_["input"], _ep_task_type
+        _ep_hint = await wait_for_budget(
+            get_episode_hint(
+                state.graph_manager.driver,
+                state_["input"],
+                _ep_task_type,
+            ),
+            state_,
+            5.0,
+            stage="episode_hint",
         )
     else:
         _ep_hint = ""
@@ -364,7 +724,12 @@ async def graph_rag_node(state_: AgentState):
     try:
         if GRAPH_VIA_MCP:
             # Flange: MCP server as graph-as-a-tool (accessible to external agents)
-            async with httpx.AsyncClient(timeout=15.0) as _client:
+            _graph_timeout = remaining_timeout(
+                state_,
+                15.0,
+                stage="graph_rag_mcp",
+            )
+            async with httpx.AsyncClient(timeout=_graph_timeout) as _client:
                 _resp = await _client.post(
                     f"{MCP_URL}/invoke",
                     json={"tool": "graph_query", "args": {"query": state_["input"], "categories": categories}},
@@ -374,8 +739,15 @@ async def graph_rag_node(state_: AgentState):
         else:
             # Direct access (default, backwards compatible)
             _tenant_ids = state_.get("tenant_ids", [])
-            ctx = await state.graph_manager.query_context(
-                state_["input"], categories, tenant_ids=_tenant_ids or None,
+            ctx = await wait_for_budget(
+                state.graph_manager.query_context(
+                    state_["input"],
+                    categories,
+                    tenant_ids=_tenant_ids or None,
+                ),
+                state_,
+                15.0,
+                stage="graph_rag",
             )
 
         if ctx:
@@ -398,6 +770,11 @@ async def graph_rag_node(state_: AgentState):
             ctx = _ep_hint
             await _report("🔗 GraphRAG: no matching context found")
             await _record_stage(state_.get("response_id", ""), "graph_rag", "miss")
+
+        # Capture the exact Neo4j entity lines before optional Chroma/HABE
+        # modulation changes the context. This makes the attribution loop
+        # identifiable and safe to persist after synthesis.
+        _retrieved_graph_chunks = graph_attribution_chunks(ctx)
 
         # Domain-filtered ChromaDB retrieval using planner-extracted metadata_filters
         _meta_filters = state_.get("metadata_filters") or {}
@@ -543,24 +920,46 @@ async def graph_rag_node(state_: AgentState):
             except Exception as _habe_exc:
                 logger.warning(f"HABE background retrieval and modulation failed: {_habe_exc}")
 
-        return {"graph_context": ctx, "graphrag_entities": _entity_meta}
+        return {
+            "graph_context": ctx,
+            "graphrag_entities": _entity_meta,
+            "retrieved_graph_chunks": _retrieved_graph_chunks,
+        }
+    except RequestDeadlineExceeded:
+        raise
     except Exception as e:
         logger.warning(f"GraphRAG query_context error: {e}")
-        return {"graph_context": ""}
+        return {"graph_context": "", "retrieved_graph_chunks": []}
 
 
 async def math_node_wrapper(state_: AgentState):
     if state_.get("cache_hit"):
         return {"math_result": ""}
     plan = state_.get("plan", [])
-    has_math = any(t.get("category") == "math" for t in plan if isinstance(t, dict))
-    has_precision = any(t.get("category") == "precision_tools" for t in plan if isinstance(t, dict))
-    # Skip if no math task or precision_tools already covers the math
-    if not has_math or has_precision:
+    math_tasks = [
+        t
+        for t in plan
+        if isinstance(t, dict) and t.get("category") == "math"
+    ]
+    if not math_tasks:
         return {"math_result": ""}
     logger.debug("--- [NODE] MATH CALCULATION ---")
     await _report("🧮 Math module (SymPy)...")
     from math_node import math_node
     result = await math_node(state_)
     await _report("🧮 Math computation complete")
-    return {"math_result": result["math_result"]}
+    math_result = result.get("math_result", "")
+    return {
+        "math_result": math_result,
+        "task_events": [
+            {
+                "task_id": task.get("id", ""),
+                "category": "math",
+                "status": "completed" if math_result else "failed",
+                "executor": "math",
+                "iteration": int(state_.get("agentic_iteration") or 0),
+                "reason": "" if math_result else "empty_math_result",
+            }
+            for task in math_tasks
+        ],
+    }

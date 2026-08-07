@@ -54,6 +54,7 @@ REQUIRED_ROUTES = [
     ("get",    "/api/watchdog/config"),
     ("post",   "/api/watchdog/config"),
     ("get",    "/api/starfleet/features"),
+    ("put",    "/api/starfleet/features/{name}"),
     ("get",    "/api/mission-context"),
     ("post",   "/api/mission-context"),
     ("patch",  "/api/mission-context"),

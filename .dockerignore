@@ -4,6 +4,9 @@
 !.env.sample
 !.env.template
 .git
+.claude
+.agents
+.codex
 __pycache__
 *.pyc
 *.pyo
@@ -11,9 +14,15 @@ __pycache__
 .vscode
 .idea
 tmp_install
+train_venv
 data/
+models/
+logs/
+checkpoint-archives/
 benchmarks/results/
 site/
+skills-upstream/
+legacy_root_modules/
 *.db
 *.sqlite
 *.log

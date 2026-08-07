@@ -47,7 +47,7 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
+    assign_gpu, _ollama_unload, _refine_expert_response,
     _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
 )
 from services.routing import (
@@ -118,6 +118,7 @@ def _judge_ctx_budget(state_num_ctx: int = 0) -> dict:
 
 # Cross-module: graph context compression helpers live in graph.research
 from graph.research import _rerank_graph_context, _compress_graph_context_llm
+from services.deadline import RequestDeadlineExceeded, remaining_timeout
 from episodic_memory import log_episode
 
 
@@ -136,6 +137,22 @@ async def merger_node(state_: AgentState):
                                        "_schemaURL": "moe-sovereign://templateName",
                                        "name": state_.get("template_name", "default")}},
     )
+
+    # Guard block: fixed refusal, no LLM call, no expert/judge pipeline involved
+    if state_.get("guard_blocked"):
+        logger.info("--- [NODE] MERGER (guard blocked, direct return) ---")
+        await _report("🛡️ Merger: request blocked by safety filter")
+        await _record_stage(state_.get("response_id", ""), "merger", "guard_shortcut")
+        asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
+            "response_id":   state_.get("response_id", ""),
+            "input":         state_["input"][:300],
+            "guard_blocked": True,
+            "guard_reason":  state_.get("guard_reason", ""),
+            "ts":            datetime.now().isoformat(),
+        }))
+        await _ol_complete(_ol_merger_run, job_name="merger_node",
+                           outputs=[dataset_response(state_.get("response_id", "guard"))])
+        return {"final_response": state_.get("guard_response", "")}
 
     # Cache hit: direct answer, no LLM call needed
     if state_.get("cache_hit"):
@@ -172,18 +189,30 @@ async def merger_node(state_: AgentState):
         await _report(f"⚖️ Paraconsistent conflicts detected: {', '.join(_cats)}")
 
     # ── Boundary contract check (Expert→Judge stage boundary) ─────────────────
-    try:
-        from services.boundary_check import check_boundary as _check_boundary
-        for _bc_r in expert_results:
-            if _bc_r:
-                _check_boundary("expert_to_judge", {"content": _bc_r, "category": _expert_category(_bc_r)})
-    except Exception as _bc_e:
-        logger.debug("Expert→Judge boundary check skipped: %s", _bc_e)
+    # This is a mandatory correctness boundary. Exporters remain best-effort,
+    # but a missing/invalid contract must never turn validation into a no-op.
+    from services.boundary_check import check_boundary as _check_boundary
+    _boundary_valid_results = []
+    for _bc_r in expert_results:
+        if _bc_r and not _check_boundary(
+            "expert_to_judge",
+            {"content": _bc_r, "category": _expert_category(_bc_r)},
+            request_id=state_.get("response_id", ""),
+        ):
+            _boundary_valid_results.append(_bc_r)
+    expert_results = _boundary_valid_results
 
     web              = state_.get("web_research")      or ""
     cached           = state_.get("cached_facts")      or ""
     math_res         = state_.get("math_result")       or ""
-    mcp_res          = state_.get("mcp_result")        or ""
+    # Mandatory precision values are never exposed to a mutating LLM as free
+    # text. The post-worker slot node replaces them with opaque markers that
+    # only the deterministic post-critic binder may expand.
+    mcp_res          = (
+        state_.get("precision_prompt_projection") or ""
+        if state_.get("required_precision_intents")
+        else state_.get("mcp_result") or ""
+    )
     graph_ctx        = state_.get("graph_context")     or ""
     reasoning        = state_.get("reasoning_trace")   or ""
     strategy_feedback = state_.get("strategy_feedback") or ""
@@ -213,6 +242,38 @@ async def merger_node(state_: AgentState):
     except Exception as _ts_e:
         logger.debug("Trust-Score skipped: %s", _ts_e)
 
+    _trust_state = {}
+    if _trust_score_result is not None:
+        _trust_state = {
+            "trust_score": _trust_score_result.score,
+            "trust_verdict": _trust_score_result.verdict.value,
+            "trust_factors": _trust_score_result.factors,
+        }
+        from services.request_snapshot import update_request_snapshot
+        update_request_snapshot(
+            state_.get("response_id", ""),
+            trust_score=_trust_score_result.score,
+            trust_verdict=_trust_score_result.verdict.value,
+        )
+
+    def _enforce_direct_response(response: str) -> tuple[str, list[dict]]:
+        """Apply the same Constitution contract used by synthesized responses."""
+        try:
+            from services.constitution import enforce as _constitution_enforce
+
+            enforced, violations = _constitution_enforce(response, dict(state_))
+            return enforced, [
+                {
+                    "rule_id": violation.rule_id,
+                    "on_violation": violation.on_violation,
+                    "detail": violation.detail,
+                }
+                for violation in violations
+            ]
+        except Exception as exc:
+            logger.debug("Direct-response Constitution enforcement skipped: %s", exc)
+            return response, []
+
     # ── 3B: Confidence analysis (normal + ensemble results) ────────────────
     low_conf_critical = [
         r for r in (expert_results + ensemble_results)
@@ -228,12 +289,36 @@ async def merger_node(state_: AgentState):
     # Categories the judge had to step in on — collected for the judge-aware
     # Thompson reward signal recorded after the loop (see below).
     _judge_refined_cats: set = set()
+    _deferred_corrections: list[dict] = list(
+        (state_.get("response_commit_context") or {}).get("corrections") or []
+    )
     # Cost-gate the refinement loop: simple queries get at most one round. Each
     # round costs 1 judge call + N expert re-invocations, so capping trivial/
     # moderate requests to a single pass saves LLM calls on the cheap paths
     # without hurting complex multi-task answers (which keep the full budget).
     _max_refine = JUDGE_REFINE_MAX_ROUNDS
-    if state_.get("complexity_level") in ("trivial", "moderate"):
+    _is_trivial_direct = (
+        state_.get("complexity_level") == "trivial"
+        and bool(state_.get("trivial_fast_path"))
+    )
+    if (
+        _is_trivial_direct
+        and not expert_results
+        and len(ensemble_results) == 1
+    ):
+        # A category with one ``forced`` model is emitted by expert_node with
+        # an [ENSEMBLE:…] wrapper even though only one model actually ran.
+        # For the verified trivial path this is still one answer, not a debate
+        # requiring synthesis. Preserve multi-result ensembles unchanged.
+        expert_results = [ensemble_results[0]]
+        ensemble_results = []
+    if _is_trivial_direct:
+        # The planner already proved this is a context-free one-shot request.
+        # Very short valid answers (for example "OK") intentionally fail the
+        # generic 40-character confidence heuristic; escalating those through a
+        # judge and expert retry defeats the latency-safe trivial contract.
+        _max_refine = 0
+    elif state_.get("complexity_level") in ("trivial", "moderate"):
         _max_refine = min(1, JUDGE_REFINE_MAX_ROUNDS)
     if _max_refine > 0 and expert_results:
         for _refine_round in range(_max_refine):
@@ -297,108 +382,24 @@ async def merger_node(state_: AgentState):
                     any_improvement = True
                     PROM_JUDGE_REFINED.labels(outcome="improved").inc()
                     if CORRECTION_MEMORY_ENABLED and state.graph_manager is not None:
-                        from graph_rag.corrections import store_correction as _store_correction
-                        PROM_CORRECTIONS_STORED.labels(source="judge_refinement").inc()
-                        asyncio.create_task(_store_correction(
-                            state.graph_manager.driver if hasattr(state.graph_manager, 'driver') else None,
-                            prompt=state_.get("input", "")[:500],
-                            wrong=old_result[:500],
-                            correct=refined[:500],
-                            category=_cat,
-                            source_model=state_.get("judge_model_override") or "",
-                            correction_source="judge_refinement",
-                            tenant_id=",".join(state_.get("tenant_ids", [])),
-                        ))
+                        _deferred_corrections.append({
+                            "prompt": state_.get("input", "")[:500],
+                            "wrong": old_result[:500],
+                            "correct": refined[:500],
+                            "category": _cat,
+                            "source_model": state_.get("judge_model_override") or "",
+                            "correction_source": "judge_refinement",
+                            "tenant_id": ",".join(state_.get("tenant_ids", [])),
+                        })
             expert_results = new_expert_results
             if not any_improvement:
                 await _report(f"⏹️ Refinement stopped: no significant improvement "
                               f"(< {JUDGE_REFINE_MIN_IMPROVEMENT:.0%})")
                 break
 
-    # ── Expert performance signal (judge-aware Thompson reward) ───────────────
-    # Reward güte, not self-confidence: an expert whose category the judge had to
-    # refine underperformed (negative); an untouched high-confidence answer is
-    # accepted (positive). Model identity comes from expert_models_used
-    # ("model::category"). Zero extra LLM calls — reuses the refinement verdict.
-    # When refinement is disabled (_judge_refined_cats empty), this degrades
-    # gracefully to the previous self-confidence behaviour.
-    try:
-        _rank = {"low": 0, "medium": 1, "high": 2}
-        _cat_best_conf: dict = {}
-        for _r in expert_results:
-            _c = _expert_category(_r)
-            _conf = _parse_expert_confidence(_r)
-            if _conf and _rank.get(_conf, 0) > _rank.get(_cat_best_conf.get(_c, "low"), -1):
-                _cat_best_conf[_c] = _conf
-        for _mc in (state_.get("expert_models_used") or []):
-            if "::" not in _mc:
-                continue
-            _model, _cat = _mc.split("::", 1)
-            if _cat in _judge_refined_cats:
-                asyncio.create_task(_record_expert_outcome(_model, _cat, positive=False))
-            elif _cat_best_conf.get(_cat) == "high":
-                asyncio.create_task(_record_expert_outcome(_model, _cat, positive=True))
-            elif _cat_best_conf.get(_cat) == "low":
-                asyncio.create_task(_record_expert_outcome(_model, _cat, positive=False))
-            # medium / unknown → neutral, no counter increment
-    except Exception as _re:
-        logger.debug(f"Expert reward signal skipped: {_re}")
-
-    # ── Routing-gate reward (F5): did the retrieval decisions pay off? ────────
-    # Teaches the contextual bandit in fuzzy_router_node. Proxies, noisy but
-    # directionally correct over many requests:
-    #   research → an expert capability-disclaimer ("cannot access the web")
-    #              means research was needed, so skipping it failed.
-    #   graphrag → a category the judge had to refine signals weak grounding.
-    # Recorded only when fuzzy_router actually set a context (i.e. not on cache
-    # hit, where the pipeline short-circuits before routing).
-    try:
-        _rb_ctx = state_.get("routing_bandit_context") or ""
-        if "|||" in _rb_ctx:
-            from services.routing_bandit import record as _rb_record
-            _research_ctx, _graph_ctx = _rb_ctx.split("|||", 1)
-            _joined = " ".join(r for r in expert_results if r)
-            _research_ok = not bool(re.search(
-                r"(?i)cannot access|no web|don't have (?:internet|web|access)|unable to (?:browse|access)",
-                _joined,
-            ))
-            _graph_ok = (len(_judge_refined_cats) == 0)
-            asyncio.create_task(_rb_record(
-                "research", _research_ctx, not state_.get("skip_research", False), _research_ok))
-            asyncio.create_task(_rb_record(
-                "graphrag", _graph_ctx, bool(state_.get("enable_graphrag", True)), _graph_ok))
-    except Exception as _rbe:
-        logger.debug(f"Routing-bandit reward skipped: {_rbe}")
-
-    # ── Policy training log ────────────────────────────────────────────────────
-    # Persist a (State, Action, Reward) tuple for offline training of the
-    # MoE Meta-Policy. Non-blocking — never delays the response.
-    try:
-        from services.policy_log import log_policy_event as _log_policy
-        _conf_map = {
-            _expert_category(r): _parse_expert_confidence(r)
-            for r in expert_results if r
-        }
-        _t_start = state_.get("_merger_t0") or time.monotonic()
-        asyncio.create_task(_log_policy(
-            chat_id=state_.get("response_id", ""),
-            query=state_.get("input", ""),
-            complexity=state_.get("complexity_level", "unknown"),
-            plan_categories=[t.get("category", "") for t in (state_.get("plan") or [])],
-            experts_called=state_.get("expert_models_used") or [],
-            confidence_map=_conf_map,
-            judge_refined_cats=_judge_refined_cats,
-            refinement_rounds=_refine_round + 1 if _judge_refined_cats else 0,
-            fast_path=False,
-            cache_hit=bool(state_.get("cache_hit")),
-            web_research_used=bool(state_.get("web_research")),
-            graphrag_used=bool(state_.get("graph_context")),
-            template_id=state_.get("template_name", ""),
-            latency_s=time.monotonic() - _t_start,
-            tier_escalations=state_.get("tier_escalations", 0),
-        ))
-    except Exception as _ple:
-        logger.debug("policy_log skipped: %s", _ple)
+    # Expert rewards, retrieval-bandit rewards and policy-training records are
+    # semantic learning signals. response_commit derives them from the frozen
+    # state only after a final quality pass or HITL approval.
 
     await _report("🔀 Merger synthesizing final response...")
 
@@ -511,7 +512,11 @@ async def merger_node(state_: AgentState):
             threshold = _effective_limit * _GRAPH_COMPRESS_THRESHOLD_FACTOR
             if _graph_raw_chars > threshold and _GRAPH_COMPRESS_LLM_MODEL:
                 # Very large context: attempt LLM-based semantic compression first
-                _compressed = await _compress_graph_context_llm(_gctx, _effective_limit)
+                _compressed = await _compress_graph_context_llm(
+                    _gctx,
+                    _effective_limit,
+                    dict(state_),
+                )
                 if _compressed:
                     _gctx = _compressed
                     _compression_method = "llm"
@@ -668,6 +673,25 @@ async def merger_node(state_: AgentState):
     # Optimize final prompt token consumption without content loss by removing filler words
     from context_budget import prune_filler_words
     prompt = prune_filler_words(prompt)
+    if state_.get("precision_prompt_projection"):
+        # Repeat the value-free contract at the final instruction position.
+        # In live mixed-path tests some judge models followed a later response
+        # directive but omitted a marker that appeared only in the evidence
+        # section.  The model still never sees the underlying value; the
+        # deterministic post-critic binder remains the sole value authority.
+        prompt += (
+            "\n\nFINAL NON-NEGOTIABLE PRECISION OUTPUT CONTRACT:\n"
+            "Copy every [[MOE_PRECISION:...]] marker from VERIFIED PRECISION "
+            "FACT SLOTS byte-for-byte exactly once and in listed order into "
+            "the final answer. Put each marker alone on its own line without "
+            "prefix, suffix, numbering or punctuation. Do not spell out, infer, "
+            "translate, alter or omit any represented value. Do not add a "
+            "second summary, heading value, date, time, number or unit for a "
+            "labelled precision item anywhere else in the answer; such a "
+            "duplicate claim invalidates the whole response. A deterministic "
+            "binder will replace the complete marker line after all model "
+            "processing."
+        )
 
     # Check if prompt length exceeds allowed input characters (danger of squeezing output room)
     if _merger_ctx > 0:
@@ -706,79 +730,119 @@ async def merger_node(state_: AgentState):
         _plan_cats_early[0] if _plan_cats_early else "general",
     )
 
+    # A bounded mixed request does not need a mutating merger pass when every
+    # precision item is already represented by an opaque evidence slot and the
+    # sole remaining item has one high-confidence expert result.  Compose the
+    # two channels structurally; the deterministic binder still runs only after
+    # the scoped critic and remains the sole authority that reveals fact values.
+    if (
+        state_.get("precision_prompt_projection")
+        and not ensemble_results
+        and not web
+        and not math_res
+        and not graph_ctx
+        and not reasoning
+        and not state_.get("output_skill_body")
+    ):
+        from services.precision_response import compose_mixed_precision_candidate
+
+        _hybrid = compose_mixed_precision_candidate(dict(state_), expert_results)
+        if _hybrid:
+            _hybrid_response, _hybrid_body, _hybrid_task = _hybrid
+            _hybrid_response, _hybrid_violations = _enforce_direct_response(
+                _hybrid_response
+            )
+            logger.info(
+                "⚙️ Precision hybrid composer: %d slot(s) + one scoped expert",
+                len(state_.get("precision_fact_slots") or []),
+            )
+            await _report("⚙️ Precision hybrid response composed without merger mutation")
+            await _record_stage(
+                state_.get("response_id", ""),
+                "merger",
+                "precision_hybrid",
+                "one_scoped_expert",
+            )
+            await _ol_complete(
+                _ol_merger_run,
+                job_name="merger_node",
+                outputs=[dataset_response(state_.get("response_id", "precision-hybrid"))],
+            )
+            return {
+                "final_response": _hybrid_response,
+                "precision_hybrid_composed": True,
+                "precision_hybrid_expert_body": _hybrid_body,
+                "precision_hybrid_expert_task": _hybrid_task,
+                "precision_hybrid_expert_confidence": (
+                    _parse_expert_confidence(expert_results[0])
+                ),
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "constitution_violations": _hybrid_violations,
+                "response_commit_context": {
+                    "fast_path": True,
+                    "precision_hybrid": True,
+                    "judge_refined_cats": sorted(_judge_refined_cats),
+                    "corrections": _deferred_corrections,
+                },
+                **_trust_state,
+            }
+
     # ── Fast path: single high-confidence expert, no additional context ─────────
-    _single_expert_modes = ("default", "concise")
+    _single_expert_modes = ("default", "concise", "auto")
+    logger.info(
+        "⚡ Direct-response gate: trivial_fast=%s experts=%d ensemble=%d "
+        "aux_context=%s mode=%s",
+        _is_trivial_direct,
+        len(expert_results),
+        len(ensemble_results),
+        bool(web or mcp_res or math_res or graph_ctx),
+        mode,
+    )
     if (len(expert_results) == 1
             and not ensemble_results
             and not web and not mcp_res and not math_res and not graph_ctx
-            and _parse_expert_confidence(expert_results[0]) == "high"
+            and (
+                _parse_expert_confidence(expert_results[0]) == "high"
+                or _is_trivial_direct
+            )
             and mode in _single_expert_modes):
         _raw_fp = re.sub(r'^\[[^\]]+\]:\s*', '', expert_results[0])
         _details_m = re.search(r'DETAILS:\n?(.*)', _raw_fp, re.DOTALL)
         fast_resp = _details_m.group(1).strip() if _details_m else _raw_fp.strip()
-        logger.info(f"⚡ Fast-Path: single high-confidence expert → direct response ({len(fast_resp)} chars)")
-        await _report(f"⚡ Fast-Path: single high-confidence expert ({len(fast_resp)} chars)")
-        if len(fast_resp) > CACHE_MIN_RESPONSE_LEN and not state_.get("no_cache", False):
-            # Deterministic ID (SHA-256 of content) prevents duplicate entries under
-            # concurrent writes — upsert is idempotent if same response races twice.
-            # Skipped when no_cache=True to avoid polluting the vector store.
-            _fp_cid = hashlib.sha256(fast_resp.encode()).hexdigest()[:32]
-            await asyncio.to_thread(
-                state.cache_collection.upsert,
-                ids=[_fp_cid],
-                documents=[fast_resp],
-                metadatas=[{"ts": datetime.now().isoformat(), "input": state_["input"][:200], "flagged": False, "expert_domain": _expert_domain}],
-            )
-            # L0: Write to query-hash cache for instant hits on identical queries
-            if not state_.get("no_cache") and state.redis_client:
-                try:
-                    import hashlib as _hl
-                    _q_norm = re.sub(r'\s+', ' ', state_["input"].lower().strip().rstrip('?!.,;'))
-                    _q_hash = _hl.sha256(_q_norm.encode()).hexdigest()[:24]
-                    asyncio.create_task(state.redis_client.setex(f"moe:qcache:{_q_hash}", 1800, fast_resp))
-                except Exception:
-                    pass
-            asyncio.create_task(_store_response_metadata(
-                state_.get("response_id", ""), state_["input"],
-                state_.get("expert_models_used", []), _fp_cid,
-                plan=state_.get("plan", []), cost_tier=state_.get("cost_tier", ""),
-                template_id=state_.get("template_id", ""),
-                causal_intervention=state_.get("causal_intervention")))
-            asyncio.create_task(_self_evaluate(
-                state_.get("response_id", ""), state_["input"], fast_resp, _fp_cid,
-                template_name=state_.get("template_name", ""),
-                complexity=state_.get("complexity_level", ""),
-            ))
+        fast_resp, _fast_constitution_violations = _enforce_direct_response(
+            fast_resp
+        )
+        logger.info(
+            "⚡ Fast-Path: verified single expert → direct response (%d chars)",
+            len(fast_resp),
+        )
+        await _report(
+            f"⚡ Fast-Path: verified single expert ({len(fast_resp)} chars)"
+        )
+        await _record_stage(
+            state_.get("response_id", ""),
+            "merger",
+            "fast_path",
+            "verified_single_expert",
+        )
+        # Semantic writes are deferred to response_commit after quality pass.
         asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
             "response_id": state_.get("response_id", ""),
             "input":       state_["input"][:300],
             "fast_path":   True,
             "ts":          datetime.now().isoformat(),
         }))
-        try:
-            from services.policy_log import log_policy_event as _log_policy_fp
-            asyncio.create_task(_log_policy_fp(
-                chat_id=state_.get("response_id", ""),
-                query=state_.get("input", ""),
-                complexity=state_.get("complexity_level", "unknown"),
-                plan_categories=[t.get("category", "") for t in (state_.get("plan") or [])],
-                experts_called=state_.get("expert_models_used") or [],
-                confidence_map={_expert_category(expert_results[0]): "high"},
-                judge_refined_cats=set(),
-                refinement_rounds=0,
-                fast_path=True,
-                cache_hit=False,
-                web_research_used=False,
-                graphrag_used=False,
-                template_id=state_.get("template_name", ""),
-                latency_s=0.0,
-                tier_escalations=0,
-            ))
-        except Exception as _ple:
-            logger.debug("policy_log fast-path skipped: %s", _ple)
         await _ol_complete(_ol_merger_run, job_name="merger_node",
                            outputs=[dataset_response(state_.get("response_id", "fast"))])
-        return {"final_response": fast_resp, "prompt_tokens": 0, "completion_tokens": 0}
+        return {
+            "final_response": fast_resp,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "constitution_violations": _fast_constitution_violations,
+            "response_commit_context": {"fast_path": True},
+            **_trust_state,
+        }
 
     # Judge gate: when all expert answers agree (or only one exists) and no
     # auxiliary context needs merging, the judge call adds tokens without
@@ -793,19 +857,228 @@ async def merger_node(state_: AgentState):
             _g_det = re.search(r'DETAILS:\n?(.*)', _g_raw, re.DOTALL)
             _g_resp = (_g_det.group(1).strip() if _g_det else _g_raw.strip())
             if _g_resp:
+                _g_resp, _gate_constitution_violations = (
+                    _enforce_direct_response(_g_resp)
+                )
                 logger.info("⚡ judge_gate: skipping merger judge (%s)", _g_reason)
                 await _report(f"⚡ Judge-Gate: {_g_reason} — Merger-Judge übersprungen")
-                return {"final_response": _g_resp, "prompt_tokens": 0, "completion_tokens": 0}
+                return {
+                    "final_response": _g_resp,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "constitution_violations": _gate_constitution_violations,
+                    "response_commit_context": {
+                        "fast_path": True,
+                        "judge_refined_cats": sorted(_judge_refined_cats),
+                        "corrections": _deferred_corrections,
+                    },
+                    **_trust_state,
+                }
+
+    def _validated_degraded_candidate(reason: str) -> Optional[dict]:
+        """Return a transparent executor-output fallback only for a complete plan."""
+        from services.quality_gate import incomplete_plan_tasks
+
+        if incomplete_plan_tasks(dict(state_)):
+            return None
+        plan_categories = {
+            str(task.get("category") or "")
+            for task in (state_.get("plan") or [])
+            if isinstance(task, dict)
+        }
+        if plan_categories & {"medical_consult", "legal_advisor"}:
+            return None
+
+        candidate_parts = [
+            part.strip()
+            for part in (
+                mcp_res,
+                math_res,
+                web,
+                "\n\n".join(expert_results + ensemble_results),
+            )
+            if part and part.strip()
+        ]
+        if not candidate_parts:
+            return None
+        candidate = (
+            "[Degraded result: synthesis budget exhausted; verified executor "
+            "outputs are shown without an additional merger pass.]\n\n"
+            + "\n\n".join(candidate_parts)
+        )
+        candidate, violations = _enforce_direct_response(candidate)
+        if any(
+            str(v.get("on_violation") or "").lower() == "block"
+            for v in violations
+        ):
+            return None
+        return {
+            "final_response": candidate,
+            "candidate_status": "degraded",
+            "candidate_reason": reason,
+            "constitution_violations": violations,
+            "response_commit_context": {
+                "fast_path": False,
+                "judge_refined_cats": sorted(_judge_refined_cats),
+                "corrections": _deferred_corrections,
+            },
+            **_trust_state,
+        }
+
+    _minimum_merger_budget = float(
+        os.getenv("MIN_MERGER_REMAINING_SECONDS", "90")
+    )
+    _remaining_for_merger = remaining_timeout(
+        state_,
+        10**9,
+        stage="merger_budget_gate",
+        reserve_seconds=0.0,
+    )
+    if _remaining_for_merger < _minimum_merger_budget:
+        _degraded = _validated_degraded_candidate(
+            "insufficient_merger_budget"
+        )
+        if _degraded:
+            logger.warning(
+                "Merger skipped with %.1fs remaining (< %.1fs); "
+                "returning validated degraded candidate",
+                _remaining_for_merger,
+                _minimum_merger_budget,
+            )
+            await _record_stage(
+                state_.get("response_id", ""),
+                "merger",
+                "degraded_candidate",
+                f"remaining={_remaining_for_merger:.1f}s",
+            )
+            return _degraded
+        raise RequestDeadlineExceeded(
+            "merger: insufficient budget and no valid degraded candidate"
+        )
 
     await _report(f"🔀 Merger prompt ({len(prompt)} chars):\n{prompt}")
-    try:
-        res = await _invoke_judge_with_retry(state_, prompt, temperature=state_.get("query_temperature"))
-    except Exception as e:
-        logger.error(f"❌ Merger Judge LLM error: {e}")
+    from services.structured_failure import (
+        RecoveryAction as _RecoveryAction,
+        build_failure as _build_failure,
+        resolve_retry_model as _resolve_retry_model,
+    )
+    _merger_structured_state: dict = {}
+    _structured_max_retries = max(
+        0, int(os.getenv("STRUCTURED_FAILURE_MAX_RETRIES", "2"))
+    )
+    _structured_fallback_model = os.getenv(
+        "STRUCTURED_FAILURE_FALLBACK_MODEL", ""
+    ).strip()
+    _structured_attempts = (
+        1 + _structured_max_retries + bool(_structured_fallback_model)
+    )
+    res = None
+    _last_judge_error: Optional[Exception] = None
+    _retry_model_override = ""
+    for _sf_attempt in range(_structured_attempts):
+        _attempt_state = state_
+        _using_fallback = bool(_retry_model_override)
+        if _retry_model_override:
+            _attempt_state = {
+                **dict(state_),
+                "judge_model_override": _retry_model_override,
+            }
+        try:
+            res = await _invoke_judge_with_retry(
+                _attempt_state,
+                prompt,
+                max_retries=1,
+                temperature=state_.get("query_temperature"),
+            )
+            break
+        except RequestDeadlineExceeded:
+            _degraded = _validated_degraded_candidate(
+                "merger_deadline_exceeded"
+            )
+            if _degraded:
+                await _record_stage(
+                    state_.get("response_id", ""),
+                    "merger",
+                    "degraded_candidate",
+                    "judge deadline exceeded",
+                )
+                return _degraded
+            raise
+        except Exception as exc:
+            _last_judge_error = exc
+            failure = _build_failure(
+                exc,
+                model=(
+                    _structured_fallback_model if _using_fallback
+                    else (state_.get("judge_model_override") or JUDGE_MODEL)
+                ),
+                stage="synthesis",
+                fallback_model=_structured_fallback_model,
+                retry_round=_sf_attempt + 1,
+            )
+            _merger_structured_state = {
+                "structured_failure": failure.as_dict(),
+                "structured_failure_round": _sf_attempt + 1,
+            }
+            if _sf_attempt + 1 < _structured_attempts:
+                _next_action = (
+                    _RecoveryAction.RETRY_FALLBACK
+                    if _structured_fallback_model
+                    and _sf_attempt >= _structured_max_retries
+                    else _RecoveryAction.RETRY_SAME
+                )
+                _next_model = _resolve_retry_model(failure, _next_action)
+                _retry_model_override = (
+                    _next_model
+                    if _next_model != (
+                        state_.get("judge_model_override") or JUDGE_MODEL
+                    )
+                    else ""
+                )
+                logger.warning(
+                    "Merger transport recovery round %d/%d (%s), next model=%s",
+                    _sf_attempt + 1,
+                    _structured_attempts,
+                    failure.failure_kind.value,
+                    _next_model,
+                )
+
+    if res is None:
+        e = _last_judge_error or RuntimeError("judge returned no result")
+        logger.error("❌ Merger Judge LLM recovery exhausted: %s", e)
         await _report(f"❌ Merger: Judge LLM unreachable ({e})")
         fallback = "\n\n".join(s for s in sections[1:] if s)  # raw sections as emergency response
         await _ol_fail(_ol_merger_run, job_name="merger_node", error=str(e))
-        return {"final_response": fallback or "Error: Merger could not generate a response."}
+        try:
+            from services.cascade import (
+                CascadeEvent,
+                CascadeType,
+                emit_cascade,
+            )
+            emit_cascade(
+                CascadeEvent(
+                    CascadeType.SPEC_GAP,
+                    f"Judge structured recovery failed: {e}",
+                    "retry with a schema-capable judge model",
+                ),
+                request_id=state_.get("response_id", ""),
+            )
+        except Exception as cascade_error:
+            logger.debug("Judge failure cascade skipped: %s", cascade_error)
+        return {
+            "final_response": fallback or "Error: Merger could not generate a response.",
+            "response_commit_context": {
+                "fast_path": False,
+                "judge_refined_cats": sorted(_judge_refined_cats),
+                "corrections": _deferred_corrections,
+            },
+            **_merger_structured_state,
+        }
+    # Capture usage before wrapping the cleaned response. The previous wrapper
+    # retained only ``content`` and silently discarded the native Ollama
+    # ``usage_metadata``, so successful API responses under-reported every
+    # merger/judge token.
+    merger_usage = _extract_usage(res)
     # Strip thinking traces before using judge output. Thinking-mode judges
     # (qwen3.6:35b) emit <think>…</think> blocks that must not appear in the
     # final response or pollute confidence checks and SYNTH parsing.
@@ -815,7 +1088,6 @@ async def merger_node(state_: AgentState):
         def __init__(self, s): self.content = s
     res = _StrResult(_judge_raw)
     await _report(f"🔀 Merger response ({len(res.content)} chars):\n{res.content}")
-    merger_usage = _extract_usage(res)
     _uid = state_.get("user_id", "anon")
     PROM_TOKENS.labels(model=JUDGE_MODEL, token_type="prompt",      node="merger", user_id=_uid).inc(merger_usage.get("prompt_tokens", 0))
     PROM_TOKENS.labels(model=JUDGE_MODEL, token_type="completion",  node="merger", user_id=_uid).inc(merger_usage.get("completion_tokens", 0))
@@ -829,7 +1101,16 @@ async def merger_node(state_: AgentState):
                or (expert_results[0] if expert_results else None)
         fallback = best or "No answer available — please try again."
         await _ol_fail(_ol_merger_run, job_name="merger_node", error="judge_empty_or_error")
-        return {"final_response": fallback, **merger_usage}
+        return {
+            "final_response": fallback,
+            "response_commit_context": {
+                "fast_path": False,
+                "judge_refined_cats": sorted(_judge_refined_cats),
+                "corrections": _deferred_corrections,
+            },
+            **merger_usage,
+            **_merger_structured_state,
+        }
     await _report(f"✅ Response complete ({len(res.content)} chars)")
     await _record_stage(state_.get("response_id", ""), "merger", "done")
 
@@ -841,8 +1122,87 @@ async def merger_node(state_: AgentState):
     if _synth_match:
         try:
             _synthesis_payload = json.loads(_synth_match.group(1).strip())
-        except (json.JSONDecodeError, ValueError):
-            pass
+        except (json.JSONDecodeError, ValueError) as initial_parse_error:
+            # The answer body remains usable, but the persistent synthesis
+            # record has a strict JSON contract. Repair it with bounded retries
+            # and checkpoint every failure round.
+            _invalid_synthesis = _synth_match.group(1).strip()
+            _repair_error: Exception = initial_parse_error
+            _repair_attempts = _structured_max_retries + bool(
+                _structured_fallback_model
+            )
+            for _repair_round in range(_repair_attempts):
+                _repair_fallback = (
+                    bool(_structured_fallback_model)
+                    and _repair_round >= _structured_max_retries
+                )
+                _repair_state = state_
+                if _repair_fallback:
+                    _repair_state = {
+                        **dict(state_),
+                        "judge_model_override": _structured_fallback_model,
+                    }
+                failure = _build_failure(
+                    _repair_error,
+                    model=(
+                        _structured_fallback_model if _repair_fallback
+                        else (state_.get("judge_model_override") or JUDGE_MODEL)
+                    ),
+                    stage="synthesis_insight",
+                    fallback_model=_structured_fallback_model,
+                    raw_text=_invalid_synthesis,
+                    retry_round=_repair_round + 1,
+                )
+                _merger_structured_state = {
+                    "structured_failure": failure.as_dict(),
+                    "structured_failure_round": _repair_round + 1,
+                }
+                try:
+                    repair_res = await _invoke_judge_with_retry(
+                        _repair_state,
+                        (
+                            "Repair the following malformed JSON. Return only "
+                            "one valid JSON object, without markdown or prose:\n"
+                            f"{_invalid_synthesis[:1600]}"
+                        ),
+                        max_retries=1,
+                        temperature=0.0,
+                    )
+                    repaired_text = re.sub(
+                        r"^```(?:json)?\s*|\s*```$",
+                        "",
+                        (repair_res.content or "").strip(),
+                        flags=re.IGNORECASE,
+                    )
+                    _synthesis_payload = json.loads(repaired_text)
+                    _merger_structured_state = {
+                        "structured_failure": {},
+                        "structured_failure_round": _repair_round + 1,
+                    }
+                    break
+                except Exception as repair_error:
+                    _repair_error = repair_error
+
+            if _synthesis_payload is None:
+                try:
+                    from services.cascade import (
+                        CascadeEvent,
+                        CascadeType,
+                        emit_cascade,
+                    )
+                    emit_cascade(
+                        CascadeEvent(
+                            CascadeType.SPEC_GAP,
+                            f"Synthesis insight JSON invalid: {_repair_error}",
+                            "repair or omit the structured synthesis block",
+                        ),
+                        request_id=state_.get("response_id", ""),
+                    )
+                except Exception as cascade_error:
+                    logger.debug(
+                        "Synthesis parse cascade skipped: %s",
+                        cascade_error,
+                    )
         res_content_clean = _SYNTH_RE.sub("", res.content).rstrip()
     else:
         res_content_clean = res.content
@@ -924,122 +1284,18 @@ async def merger_node(state_: AgentState):
             res_content_clean = _best_expert.strip()
             logger.warning("⚠️ Merger output empty after strip — using best non-leak expert result as fallback")
 
-    _no_cache_write = state_.get("no_cache", False)
-    if len(res_content_clean) > CACHE_MIN_RESPONSE_LEN and not _no_cache_write:
-        # Deterministic ID (SHA-256 of content) prevents duplicate entries under
-        # concurrent writes — upsert is idempotent if same response races twice.
-        # Skipped when no_cache=True: unique benchmark/research queries would only
-        # pollute the vector store with entries that are never read again.
-        chroma_doc_id = hashlib.sha256(res_content_clean.encode()).hexdigest()[:32]
-        # Mean expert confidence — stored so the knowledge-bypass read path can
-        # gate on answer quality (see cache_lookup_node). Also reused for the
-        # GraphRAG ingest below.
-        _conf_map = {"high": 0.9, "medium": 0.6, "low": 0.3}
-        _expert_confs = [
-            _conf_map.get(_parse_expert_confidence(r), 0.5)
-            for r in state_.get("expert_results", [])
-        ]
-        _ingest_confidence = (sum(_expert_confs) / len(_expert_confs)) if _expert_confs else 0.5
-        await asyncio.to_thread(
-            state.cache_collection.upsert,
-            ids=[chroma_doc_id],
-            documents=[res_content_clean],
-            metadatas=[{"ts": datetime.now().isoformat(), "input": state_["input"][:200], "flagged": False, "expert_domain": _expert_domain, "confidence": round(_ingest_confidence, 3)}],
-        )
-        # L0: Write to query-hash cache (30 min TTL)
-        if not state_.get("no_cache") and state.redis_client:
-            try:
-                import hashlib as _hl
-                _q_norm = re.sub(r'\s+', ' ', state_["input"].lower().strip().rstrip('?!.,;'))
-                _q_hash = _hl.sha256(_q_norm.encode()).hexdigest()[:24]
-                asyncio.create_task(state.redis_client.setex(f"moe:qcache:{_q_hash}", 1800, res_content_clean))
-            except Exception:
-                pass
-        # Save response metadata for feedback tracking in Valkey (non-blocking)
-        asyncio.create_task(
-            _store_response_metadata(
-                state_.get("response_id", ""),
-                state_["input"],
-                state_.get("expert_models_used", []),
-                chroma_doc_id,
-                plan=state_.get("plan", []),
-                cost_tier=state_.get("cost_tier", ""),
-                template_id=state_.get("template_id", ""),
-                causal_intervention=state_.get("causal_intervention"),
-            )
-        )
-        # Self-evaluation via judge LLM (async, fire-and-forget — no latency overhead)
-        asyncio.create_task(_self_evaluate(
-            state_.get("response_id", ""), state_["input"], res_content_clean, chroma_doc_id,
-            template_name=state_.get("template_name", ""),
-            complexity=state_.get("complexity_level", ""),
-        ))
-        # Routing telemetry → PostgreSQL (async, fire-and-forget)
-        import telemetry as _telemetry
-        asyncio.create_task(_telemetry.record_routing_decision(
-            state._userdb_pool, state_.get("response_id", ""), state_,
-            wall_clock_ms=int((time.time() - state_.get("_start_time", time.time())) * 1000),
-        ))
-        # Episodic memory: log this task completion for future routing hints.
-        # Park et al. (2023): Generative Agents — store experience, recall on similar tasks.
-        if state.graph_manager is not None:
-            asyncio.create_task(
-                log_episode(state.graph_manager.driver, dict(state_))
-            )
-        # Request-Audit-Log → Kafka moe.requests
-        asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
-            "response_id":        state_.get("response_id", ""),
-            "input":              state_["input"][:300],
-            "answer":             res_content_clean[:500],
-            "expert_models_used": state_.get("expert_models_used", []),
-            "cache_hit":          False,
-            "ts":                 datetime.now().isoformat(),
-        }))
-        # GraphRAG Ingest → Kafka moe.ingest (consumer processes asynchronously)
-        # Reuse the domain already computed above for ChromaDB metadata
-        ingest_domain = _expert_domain
-        # Dominant model from expert_models_used as provenance source
-        _used_models = state_.get("expert_models_used", [])
-        _ingest_model = _used_models[0] if _used_models else JUDGE_MODEL
-        # _ingest_confidence already computed above (reused for the cache metadata).
-        # Classify knowledge type: procedural if answer implies action→location requirements.
-        _proc_markers = {
-            "requires", "must", "necessary", "prerequisite", "needed",
-            "location", "on-site", "on premises", "physically", "necessitates",
-        }
-        _knowledge_type = (
-            "procedural"
-            if any(kw in res_content_clean for kw in _proc_markers)
-            else "factual"
-        )
-        _tenant_ids = state_.get("tenant_ids", [])
-        # Use personal namespace as ingest target so knowledge starts private.
-        # The first element is always user:{id} when a real user is logged in.
-        _ingest_tenant_id = _tenant_ids[0] if _tenant_ids else None
-        asyncio.create_task(_kafka_publish(KAFKA_TOPIC_INGEST, {
-            "response_id":      state_.get("response_id", ""),
-            "input":            state_["input"],
-            "answer":           res_content_clean,
-            "domain":           ingest_domain,
-            "source_expert":    ingest_domain,   # expert category for domain-isolated memory
-            "source_model":     _ingest_model,
-            "template_name":    state_.get("template_name", ""),
-            "confidence":       round(_ingest_confidence, 2),
-            "knowledge_type":   _knowledge_type,
-            "synthesis_insight": _synthesis_payload,  # None if no synthesis was generated
-            "tenant_id":        _ingest_tenant_id,
-        }))
-
-        # Self-Correction Loop (OBJ 3): Numerical discrepancies → few-shot examples
-        from self_correction import process_merger_output as _sc_process
-        asyncio.create_task(_sc_process(
-            query=state_["input"],
-            expert_results=state_.get("expert_results") or [],
-            final_response=res_content_clean,
-            plan=state_.get("plan") or [],
-            redis_client=state.redis_client,
-            state_data=dict(state_),
-        ))
+    # Reusable response, knowledge, episode and self-correction writes are
+    # deferred to response_commit. Operational request audit remains immediate
+    # and deliberately stores a candidate hash rather than reusable answer text.
+    asyncio.create_task(_kafka_publish(KAFKA_TOPIC_REQUESTS, {
+        "response_id":        state_.get("response_id", ""),
+        "input":              state_["input"][:300],
+        "candidate_hash":     hashlib.sha256(res_content_clean.encode()).hexdigest(),
+        "expert_models_used": state_.get("expert_models_used", []),
+        "cache_hit":          False,
+        "quality_pending":    True,
+        "ts":                 datetime.now().isoformat(),
+    }))
 
     # ── Agentic gap detection: assess if another iteration is needed ─────────
     _agentic_max  = state_.get("max_agentic_rounds") or 0
@@ -1048,6 +1304,15 @@ async def merger_node(state_: AgentState):
     _agentic_history = list(state_.get("agentic_history") or [])
     _agentic_extra: dict = {}
     _strategy_hint = ""
+    from parsing import _parse_expert_gaps
+    _declared_gaps: list[str] = []
+    _declared_referrals: list[str] = []
+    for _expert_result in state_.get("expert_results") or []:
+        _gap, _referral = _parse_expert_gaps(_expert_result)
+        if _gap:
+            _declared_gaps.append(_gap)
+        if _referral:
+            _declared_referrals.append(_referral)
 
     if _agentic_max > 0 and _agentic_iter < _agentic_max:
         # Early exit: if a file was generated (SKILL_TRIGGER / download link), the answer is complete.
@@ -1124,6 +1389,10 @@ async def merger_node(state_: AgentState):
                     "determine if the answer is complete and what specific data is still missing.\n\n"
                     f"ORIGINAL QUESTION:\n{state_['input'][:_jb['gap_question']]}\n\n"
                     f"CURRENT ANSWER:\n{res_content_clean[:_jb['gap_answer']]}\n\n"
+                    f"EXPERT-DECLARED GAPS:\n"
+                    f"{'; '.join(dict.fromkeys(_declared_gaps)) or 'none'}\n\n"
+                    f"EXPERT REFERRALS:\n"
+                    f"{'; '.join(dict.fromkeys(_declared_referrals)) or 'none'}\n\n"
                     "IMPORTANT: If the answer contains phrases like 'I cannot access', 'no web browsing', "
                     "'I don't have internet access' — this is INCOMPLETE regardless of other content.\n\n"
                     "Reply ONLY in this exact format (no extra text):\n"
@@ -1162,8 +1431,18 @@ async def merger_node(state_: AgentState):
         # knows *why* it is re-planning, not just *that* it should.
         _cascade_event = None
         try:
-            from services.cascade import classify_gap as _classify_gap
+            from services.cascade import (
+                CascadeType,
+                classify_gap as _classify_gap,
+                emit_cascade as _emit_cascade,
+                resolve_open_cascades as _resolve_open_cascades,
+            )
             _cascade_event = _classify_gap(_agentic_gap, _strategy_hint)
+            _request_id = state_.get("response_id", "")
+            if _cascade_event.cascade_type == CascadeType.COMPLETE:
+                _resolve_open_cascades(_request_id)
+            else:
+                _emit_cascade(_cascade_event, request_id=_request_id)
             if _cascade_event.replan_strategy and not _strategy_hint:
                 _strategy_hint = _cascade_event.replan_strategy
             logger.info(
@@ -1243,7 +1522,10 @@ async def merger_node(state_: AgentState):
             "working_memory":       _wm_merged,
             "search_strategy_hint": _strategy_hint,
             "agentic_iteration":    _next_iter,
-            "cascade_type":         _cascade_event.cascade_type if _cascade_event else "CONTEXT_GAP",
+            "cascade_type":         (
+                _cascade_event.cascade_type.value
+                if _cascade_event else "CONTEXT_GAP"
+            ),
             "stuck":                _is_stuck,
         }
 
@@ -1266,14 +1548,6 @@ async def merger_node(state_: AgentState):
     await _ol_complete(_ol_merger_run, job_name="merger_node",
                        outputs=[dataset_response(state_.get("response_id", "synthesis"))])
 
-    _trust_state = {}
-    if _trust_score_result is not None:
-        _trust_state = {
-            "trust_score":   _trust_score_result.score,
-            "trust_verdict": _trust_score_result.verdict.value,
-            "trust_factors": _trust_score_result.factors,
-        }
-
     return {
         "final_response":         res_content_clean,
         "provenance_sources":     _provenance_sources,
@@ -1282,9 +1556,16 @@ async def merger_node(state_: AgentState):
             {"rule_id": v.rule_id, "on_violation": v.on_violation, "detail": v.detail}
             for v in _constitution_violations
         ],
+        "response_commit_context": {
+            "fast_path": False,
+            "judge_refined_cats": sorted(_judge_refined_cats),
+            "corrections": _deferred_corrections,
+            "synthesis_insight": _synthesis_payload,
+        },
         **merger_usage,
         **_agentic_extra,
         **_trust_state,
+        **_merger_structured_state,
     }
 
 
@@ -1312,6 +1593,44 @@ async def thinking_node(state_: AgentState):
 
     plan           = state_.get("plan", [])
     expert_results = state_.get("expert_results") or []
+
+    # Completed precision evidence plus at most one bounded non-precision task
+    # already contains the facts the merger needs. A separate thinking-model
+    # pass would duplicate synthesis and consume the budget needed for the
+    # actual client-facing answer.
+    _precision_tasks = [
+        task
+        for task in plan
+        if isinstance(task, dict) and task.get("category") == "precision_tools"
+    ]
+    _non_precision_tasks = [
+        task
+        for task in plan
+        if isinstance(task, dict) and task.get("category") != "precision_tools"
+    ]
+    _completed_precision_ids = {
+        str(item.get("task_id") or "")
+        for item in (state_.get("mcp_evidence") or [])
+        if isinstance(item, dict) and item.get("status") == "completed"
+    }
+    if (
+        _precision_tasks
+        and len(_non_precision_tasks) <= 1
+        and all(
+            str(task.get("id") or "") in _completed_precision_ids
+            for task in _precision_tasks
+        )
+    ):
+        logger.info(
+            "⚡ Thinking skipped: complete deterministic evidence and <=1 "
+            "non-precision task"
+        )
+        await _record_stage(
+            state_.get("response_id", ""),
+            "thinking",
+            "skipped_deterministic",
+        )
+        return {"reasoning_trace": ""}
 
     has_low_conf = any(_parse_expert_confidence(r) == "low" for r in expert_results)
     # Genuine complexity: sequential task chains (depends_on) or multi-domain expert divergence.
@@ -1379,6 +1698,12 @@ def _should_replan(state_: AgentState) -> str:
         if _gap and _gap.upper() != "COMPLETE" and _gap.lower() not in ("none", ""):
             logger.info(f"🔄 Agentic router: iteration {_iter}/{_max}, gap='{_gap[:60]}'")
             return "planner"
+
+    # A precision-hybrid candidate has already isolated its sole model-authored
+    # part. Send it directly to the scoped critic; a generic self-critique sees
+    # the complete request and can reintroduce an unbound precision answer.
+    if state_.get("precision_hybrid_composed"):
+        return "critic"
 
     # ── 2. Self-Critique Loop (TASK-11) ───────────────────────────────────────
     # Also covers BLOCK, not just PROCEED_WITH_ASSUMPTION: BLOCK does not
@@ -1611,7 +1936,7 @@ async def critic_node(state_: AgentState):
          not just the judge's own recollection, since an ungrounded judge can
          hallucinate its own "corrections" just as easily as the experts did.
     """
-    if state_.get("cache_hit"):
+    if state_.get("cache_hit") or state_.get("guard_blocked"):
         return {"final_response": state_.get("final_response", "")}
 
     _SAFETY_CRITICAL_CATS = {"medical_consult", "legal_advisor"}
@@ -1623,6 +1948,84 @@ async def critic_node(state_: AgentState):
 
     trust_verdict       = (state_.get("trust_verdict") or "").upper()
     hallucination_risk  = trust_verdict in ("PROCEED_WITH_ASSUMPTION", "BLOCK")
+
+    # Precision-hybrid responses isolate the only model-authored fragment from
+    # the deterministic markers.  If trust requires review, show the critic
+    # only that fragment and its own task contract.  Giving it the complete
+    # request would let it independently recalculate a precision item despite
+    # never having access to the typed evidence behind the marker.
+    if state_.get("precision_hybrid_composed") and not active:
+        final_response = str(state_.get("final_response") or "")
+        expert_body = str(state_.get("precision_hybrid_expert_body") or "")
+        expert_task = str(state_.get("precision_hybrid_expert_task") or "")
+        hybrid_confidence = str(
+            state_.get("precision_hybrid_expert_confidence") or ""
+        ).lower()
+        if not hallucination_risk and hybrid_confidence == "high":
+            return {"final_response": final_response}
+        if (
+            not final_response
+            or not expert_body
+            or final_response.count(expert_body) != 1
+            or not expert_task
+        ):
+            logger.error("Precision hybrid critic boundary is incomplete")
+            return {
+                "final_response": "",
+                "precision_binding_status": "failed",
+                "precision_binding_errors": ["precision_hybrid_critic_boundary"],
+            }
+        logger.info("--- [NODE] CRITIC (scoped precision hybrid) ---")
+        await _report("🔎 Critic: scoped review of the non-precision expert result")
+        await _record_stage(
+            state_.get("response_id", ""),
+            "critic",
+            "started",
+            "precision_hybrid_scoped",
+        )
+        scoped_prompt = (
+            "You are verifying one isolated expert answer. Review only the task "
+            "and answer below. They are the complete scope: do not infer, add, "
+            "summarize or answer any other task from a broader request.\n\n"
+            f"TASK:\n{expert_task}\n\n"
+            f"ANSWER TO CHECK:\n{expert_body}\n\n"
+            "Reply with exactly CONFIRMED if the answer is correct and safe. "
+            "Otherwise reply only with the fully corrected answer to this task, "
+            "without preamble, confidence metadata, dates, times, unit conversions "
+            "or unrelated numeric calculations."
+        )
+        try:
+            res = await _invoke_judge_with_retry(state_, scoped_prompt)
+            usage = _extract_usage(res)
+            critic_out = (res.content or "").strip()
+            if not critic_out or critic_out.startswith("[Judge unavailable"):
+                logger.warning(
+                    "Precision hybrid critic unavailable — preserving expert body"
+                )
+                return {"final_response": final_response}
+            if critic_out.upper() == "CONFIRMED":
+                await _record_stage(
+                    state_.get("response_id", ""),
+                    "critic",
+                    "confirmed",
+                    "precision_hybrid_scoped",
+                )
+                return {"final_response": final_response, **usage}
+            corrected = final_response.replace(expert_body, critic_out, 1)
+            await _record_stage(
+                state_.get("response_id", ""),
+                "critic",
+                "corrected",
+                "precision_hybrid_scoped",
+            )
+            return {
+                "final_response": corrected,
+                "precision_hybrid_expert_body": critic_out,
+                **usage,
+            }
+        except Exception as exc:
+            logger.warning("Precision hybrid critic failed: %s", exc)
+            return {"final_response": final_response}
 
     if not active and not hallucination_risk:
         return {"final_response": state_.get("final_response", "")}
@@ -1661,7 +2064,11 @@ async def critic_node(state_: AgentState):
         # but zero retrieved evidence is exactly the case worth catching).
         graph_ctx = (state_.get("graph_context") or "")[:3000]
         web_ctx   = (state_.get("web_research") or "")[:3000]
-        mcp_ctx   = (state_.get("mcp_result") or "")[:2000]
+        mcp_ctx   = (
+            (state_.get("precision_prompt_projection") or "")
+            if state_.get("required_precision_intents")
+            else (state_.get("mcp_result") or "")
+        )[:2000]
         sources = "\n---\n".join(s for s in (graph_ctx, web_ctx, mcp_ctx) if s.strip()) \
             or "(no retrieved sources available for this answer)"
         critic_prompt = (
@@ -1686,6 +2093,18 @@ async def critic_node(state_: AgentState):
             "   Do NOT begin with any preamble or meta-commentary.\n"
             "   Start immediately with the corrected content.\n"
             "   You may append a brief [Correction-Note: ...] at the very end only.\n"
+        )
+    if state_.get("precision_prompt_projection"):
+        critic_prompt += (
+            "\nMANDATORY PRECISION OUTPUT CONTRACT: Preserve every "
+            "[[MOE_PRECISION:...]] marker present in the answer or VERIFIED "
+            "PRECISION FACT SLOTS byte-for-byte exactly once and in listed "
+            "order. Put each marker alone on its own line without any prefix, "
+            "suffix, numbering or punctuation. Never infer or write the "
+            "represented value yourself and never add a second date, time, "
+            "number, unit or summary value for that precision item elsewhere. "
+            "If you rewrite the answer, include "
+            "all markers unchanged.\n"
         )
 
     await _report(f"🔎 Critic-Prompt:\n{critic_prompt}")
@@ -1718,3 +2137,122 @@ async def critic_node(state_: AgentState):
     except Exception as e:
         logger.warning(f"Critic node error: {e}")
         return {"final_response": final_response}
+
+
+async def quality_gate_node(state_: AgentState):
+    """Apply the final, non-bypassable quality/HITL decision.
+
+    Trust is calculated in ``merger_node`` so self-critique can improve the
+    evidence before this node runs. Keeping the enforcement after ``critic``
+    ensures neither a corrected answer nor a later graph edge can accidentally
+    bypass a BLOCK verdict.
+    """
+    request_id = state_.get("response_id", "")
+    final_response = state_.get("final_response", "")
+    required_precision = [
+        item for item in state_.get("required_precision_intents") or []
+        if isinstance(item, dict)
+    ]
+
+    def _record_precision_quality(outcome: str) -> None:
+        if not required_precision:
+            return
+        from services.precision_telemetry import record_precision_event
+        record_precision_event(
+            "quality", outcome,
+            tool=(
+                str(required_precision[0].get("tool") or "")
+                if len(required_precision) == 1 else "multi"
+            ),
+            mode=str(state_.get("precision_contract_mode") or "enforce"),
+        )
+
+    # Cynefin must see the final trust verdict. The planner-time classification
+    # cannot produce CHAOTIC because trust does not exist yet at that point.
+    try:
+        from services.quality_gate import evaluate_quality_gate
+        decision = evaluate_quality_gate(dict(state_))
+    except Exception as exc:
+        logger.exception("Final quality-gate evaluation failed: %s", exc)
+        await _record_stage(request_id, "quality_gate", "evaluation_failed")
+        _record_precision_quality("failed")
+        return {
+            "final_response": "",
+            "quality_blocked": True,
+            "quality_block_reason": "quality_gate_evaluation_failed",
+            "quality_gate_status": "blocked",
+        }
+
+    if decision.action == "block":
+        await _record_stage(request_id, "quality_gate", "blocked")
+        _record_precision_quality("blocked")
+        if required_precision and str(decision.reason).startswith("precision_"):
+            from services.precision_telemetry import record_precision_event
+            record_precision_event(
+                "escape", "blocked",
+                tool=(
+                    str(required_precision[0].get("tool") or "")
+                    if len(required_precision) == 1 else "multi"
+                ),
+                mode=str(state_.get("precision_contract_mode") or "enforce"),
+            )
+        return {
+            "final_response": "",
+            "quality_blocked": True,
+            "quality_block_reason": decision.reason,
+            "cynefin_domain": decision.cynefin_domain,
+            "quality_gate_status": "blocked",
+        }
+
+    if decision.action == "pass":
+        await _record_stage(request_id, "quality_gate", "passed")
+        _record_precision_quality("passed")
+        return {
+            "quality_blocked": False,
+            "cynefin_domain": decision.cynefin_domain,
+            "quality_gate_status": "passed",
+        }
+
+    reason = decision.reason
+    try:
+        from services.hitl_gate import create_gate
+        from services.response_commit import build_response_commit_payload
+        gate_id = await asyncio.to_thread(
+            create_gate,
+            request_id,
+            reason,
+            final_response,
+            user_id=state_.get("user_id", ""),
+            commit_payload=build_response_commit_payload(
+                dict(state_), final_response=final_response
+            ),
+        )
+    except Exception as exc:
+        logger.warning("HITL gate creation failed: %s", exc)
+        gate_id = None
+
+    if not gate_id:
+        # A required human gate may never fail open by releasing the draft.
+        await _record_stage(request_id, "quality_gate", "storage_unavailable")
+        _record_precision_quality("blocked")
+        return {
+            "final_response": "",
+            "quality_blocked": True,
+            "quality_block_reason": "hitl_gate_unavailable",
+            "hitl_gate_reason": reason,
+            "cynefin_domain": decision.cynefin_domain,
+            "quality_gate_status": "blocked",
+        }
+
+    await _record_stage(request_id, "quality_gate", "pending", gate_id)
+    _record_precision_quality("pending")
+    return {
+        # The draft remains only in the gate store; downstream HTTP/SSE code
+        # cannot accidentally expose it before approval.
+        "final_response": "",
+        "hitl_gate_id": gate_id,
+        "hitl_gate_reason": reason,
+        "quality_blocked": False,
+        "cynefin_domain": decision.cynefin_domain,
+        "quality_gate_status": "pending",
+    }

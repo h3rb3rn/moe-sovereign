@@ -44,6 +44,118 @@ def _make_ps_response(model_names: list) -> MagicMock:
     return resp
 
 
+def _make_tools_response(tools: list[dict]) -> MagicMock:
+    response = MagicMock()
+    response.json.return_value = {"tools": tools}
+    return response
+
+
+@pytest.mark.asyncio
+async def test_mcp_catalog_reload_removes_disabled_and_stale_tools():
+    original_schemas = dict(main.state.MCP_TOOL_SCHEMAS)
+    original_descriptions = dict(main.state._MCP_TOOLS_DICT)
+    original_text = main.state.MCP_TOOLS_DESCRIPTION
+    original_agentic_text = main.state.AGENTIC_CODE_TOOLS_DESCRIPTION
+    main.state.MCP_TOOL_SCHEMAS.clear()
+    main.state.MCP_TOOL_SCHEMAS["stale_tool"] = {"required": []}
+    main.state._MCP_TOOLS_DICT.clear()
+    main.state._MCP_TOOLS_DICT["stale_tool"] = "stale"
+    response = _make_tools_response(
+        [
+            {
+                "name": "calendar_facts",
+                "description": "Calendar facts",
+                "enabled": True,
+                "required_args": ["date_str"],
+                "args": {"date_str": {"type": "string"}},
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"date_str": {"type": "string"}},
+                    "required": ["date_str"],
+                    "additionalProperties": False,
+                },
+                "outputSchema": {"type": "object"},
+                "contract_id": "moe.precision.calendar_facts",
+                "contract_version": "1.0.0",
+                "contract_hash": "contract-hash",
+                "determinism": "input_only",
+                "source_policy": {"kind": "python_stdlib"},
+                "structured_result": True,
+                "access_kind": "read",
+            },
+            {
+                "name": "disabled_tool",
+                "description": "Must not be planned",
+                "enabled": False,
+                "required_args": [],
+                "args": {},
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                "outputSchema": {"type": "string"},
+            },
+        ]
+    )
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.get.return_value = response
+
+    try:
+        with patch("main.httpx.AsyncClient", return_value=client):
+            await main._load_mcp_tool_descriptions()
+
+        assert set(main.state.MCP_TOOL_SCHEMAS) == {"calendar_facts"}
+        assert main.state.MCP_TOOL_SCHEMAS["calendar_facts"]["contract_hash"] == "contract-hash"
+        assert main.state.MCP_TOOL_SCHEMAS["calendar_facts"]["structured_result_required"] is True
+        assert set(main.state._MCP_TOOLS_DICT) == {"calendar_facts"}
+        assert "disabled_tool" not in main.state.MCP_TOOLS_DESCRIPTION
+        assert "stale_tool" not in main.state.MCP_TOOLS_DESCRIPTION
+    finally:
+        main.state.MCP_TOOL_SCHEMAS.clear()
+        main.state.MCP_TOOL_SCHEMAS.update(original_schemas)
+        main.state._MCP_TOOLS_DICT.clear()
+        main.state._MCP_TOOLS_DICT.update(original_descriptions)
+        main.state.MCP_TOOLS_DESCRIPTION = original_text
+        main.state.AGENTIC_CODE_TOOLS_DESCRIPTION = original_agentic_text
+
+
+@pytest.mark.asyncio
+async def test_mcp_catalog_failure_clears_stale_executable_schemas():
+    original_schemas = dict(main.state.MCP_TOOL_SCHEMAS)
+    original_descriptions = dict(main.state._MCP_TOOLS_DICT)
+    original_text = main.state.MCP_TOOLS_DESCRIPTION
+    original_agentic_text = main.state.AGENTIC_CODE_TOOLS_DESCRIPTION
+    main.state.MCP_TOOL_SCHEMAS.clear()
+    main.state.MCP_TOOL_SCHEMAS["stale_tool"] = {"required": []}
+    main.state._MCP_TOOLS_DICT.clear()
+    main.state._MCP_TOOLS_DICT["stale_tool"] = "stale"
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.get.side_effect = OSError("MCP unavailable")
+
+    try:
+        with patch("main.httpx.AsyncClient", return_value=client):
+            await main._load_mcp_tool_descriptions()
+
+        assert main.state.MCP_TOOL_SCHEMAS == {}
+        assert main.state._MCP_TOOLS_DICT == {}
+        # Static prompt hints may remain, but no stale schema can make them
+        # pass the executable planner contract.
+        assert "stale_tool" not in main.state.AGENTIC_CODE_TOOLS_DESCRIPTION
+    finally:
+        main.state.MCP_TOOL_SCHEMAS.clear()
+        main.state.MCP_TOOL_SCHEMAS.update(original_schemas)
+        main.state._MCP_TOOLS_DICT.clear()
+        main.state._MCP_TOOLS_DICT.update(original_descriptions)
+        main.state.MCP_TOOLS_DESCRIPTION = original_text
+        main.state.AGENTIC_CODE_TOOLS_DESCRIPTION = original_agentic_text
+
+
 # ── assign_gpu tests ──────────────────────────────────────────────────────────
 
 
@@ -110,12 +222,54 @@ def test_resolve_user_experts_always_role(fake_template, fake_perms_with_templat
     assert always_model.get("_tier") is None  # always = no tier priority needed
 
 
+def test_resolve_user_experts_propagates_explicit_thinking_mode(
+    fake_template,
+    fake_perms_with_template,
+):
+    fake_template[0]["experts"]["research"]["thinking_mode"] = True
+    with patch("services.routing._read_expert_templates", return_value=fake_template):
+        result = _routing._resolve_user_experts(fake_perms_with_template)
+
+    assert result is not None
+    assert all(model["thinking_mode"] is True for model in result["research"])
+    assert all(model["thinking_mode"] is False for model in result["coding"])
+
+
 def test_resolve_user_experts_no_template_returns_none(fake_perms_no_template):
     """When no template is assigned, the function returns None (global EXPERTS used)."""
     with patch("services.routing._read_expert_templates", return_value=[]):
         result = _routing._resolve_user_experts(fake_perms_no_template)
 
     assert result is None
+
+
+def test_resolve_template_prompts_propagates_explicit_disabled_deliberation(
+    fake_template,
+    fake_perms_with_template,
+):
+    templates = json.loads(json.dumps(fake_template))
+    templates[0]["deliberation_policy"] = {
+        "schema_version": "1.0",
+        "activation": "disabled",
+    }
+    with patch("services.routing._read_expert_templates", return_value=templates):
+        result = _routing._resolve_template_prompts(fake_perms_with_template)
+
+    assert result["deliberation_policy"]["activation"] == "disabled"
+    assert result["deliberation_policy"]["schema_version"] == "1.0"
+
+
+def test_resolve_template_prompts_rejects_invalid_deliberation_policy(
+    fake_template,
+    fake_perms_with_template,
+):
+    templates = json.loads(json.dumps(fake_template))
+    templates[0]["deliberation_policy"] = {
+        "activation": "sometimes",
+    }
+    with patch("services.routing._read_expert_templates", return_value=templates):
+        with pytest.raises(ValueError, match="invalid deliberation_policy"):
+            _routing._resolve_template_prompts(fake_perms_with_template)
 
 
 def test_resolve_user_experts_missing_template_id_returns_none(fake_template):
