@@ -13,7 +13,7 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from admin_ui.database import _get_pool
+from admin_ui.database import _get_pool, init_db
 from services.dynamic_router import _template_collection, _get_cluster_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [Eurisko] %(message)s")
@@ -227,8 +227,16 @@ async def mutate_template(config: dict, breeder: HeuristicBreeder) -> Tuple[dict
 
 async def run_optimization_loop():
     logger.info("Starting self-referential Eurisko template optimization loop...")
-    pool = _get_pool()
-    if not pool:
+    try:
+        # This script runs in its own maintenance process. The previous
+        # implementation only worked when imported into a process that had
+        # already initialised the Admin UI pool.
+        await init_db()
+        pool = _get_pool()
+    except Exception as exc:
+        logger.error("Postgres pool not available: %s", exc)
+        return
+    if pool is None:
         logger.error("Postgres pool not available.")
         return
         

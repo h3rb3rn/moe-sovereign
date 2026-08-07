@@ -22,9 +22,9 @@ Field groups (in declaration order):
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Dict, List, TypedDict, Optional
+from typing import Annotated, Any, Dict, List, TypedDict, Optional
 
-from pipeline.logic_types import ConflictEntry, ConstructiveProof  # noqa: F401
+from pipeline.logic_types import ConflictEntry  # noqa: F401
 
 
 class AgentState(TypedDict):
@@ -35,17 +35,36 @@ class AgentState(TypedDict):
     user_id: str                        # Authenticated user identifier, or "anon"
     api_key_id: str                     # API key ID written to usage_log
     session_id: str                     # Client session identifier (used for Tier-3 context index and Tier-2 memory)
+    request_deadline_monotonic: float   # Absolute time.monotonic() deadline shared by every stage
+    client_max_output_tokens: int       # Positive OpenAI max_tokens/max_completion_tokens budget, 0=unset
     system_prompt: str                  # System message from client (e.g. coding-agent file context)
     behavioral_directives: str          # CC profile system_prefix — injected as mandatory instructions into all nodes
     template_name: str                  # User-facing template name; empty for native/mode requests
     user_permissions: dict              # Deserialized permissions_json from Valkey
     user_experts: dict                  # Per-template expert config resolved from template
     tenant_ids: List[str]               # Graph tenant IDs for RBAC-scoped Neo4j queries
+    local_only_routing: bool            # True = every outbound LLM call this request makes must
+                                         # target a private/allowlisted host (services/sovereignty.py
+                                         # enforces this at dispatch); resolved once per request from
+                                         # permission flag > API-key flag > global env, TASK-53
 
     # ── 2. Planning & routing ─────────────────────────────────────────────────
-    plan: List[Dict[str, str]]          # [{task, category, mcp_tool?, mcp_args?, search_query?, metadata_filters?}]
+    plan: List[Dict[str, Any]]          # [{id, task, category, mcp_tool?, mcp_args?, search_query?, metadata_filters?}]
+    task_events: Annotated[list, operator.add]  # Append-only execution ledger events for planned tasks
+    required_precision_intents: List[Dict[str, Any]]  # Pre-cache mandatory tool/argument contracts
+    precision_shadow_intents: List[Dict[str, Any]]  # Detected contracts observed but not enforced
+    precision_contract_mode: str      # shadow|enforce rollout mode frozen per request
+    precision_contract_snapshot: Dict[str, Any]  # Immutable active schemas for required tools
+    precision_contract_hash: str        # Hash over required contract IDs/schema hashes
+    precision_catalog_hash: str         # Full discovered MCP schema catalog hash at preflight
+    precision_cache_bypassed: bool      # Legacy response cache skipped for mandatory precision
+    precision_direct: bool              # Entire request is covered by direct deterministic contracts
     complexity_level: str               # "trivial"|"moderate"|"complex" — set by planner
+    deliberation_policy: dict            # Frozen DeliberationPolicyV1 template snapshot
+    deliberation_capacity: dict          # Deterministic initial/reserve capacity decision
+    deliberation_events: Annotated[list, operator.add]  # Bounded audit events from debate execution
     direct_expert: str                  # If set by semantic router, planner LLM is bypassed
+    trivial_fast_path: bool             # Conservative one-shot path selected by planner
     pending_reports: List[str]          # Progress messages collected before pipeline starts streaming
     metadata_filters: Dict              # Optional domain filters from planner for scoped ChromaDB retrieval
 
@@ -57,9 +76,25 @@ class AgentState(TypedDict):
     web_research: str                   # Formatted citations from SearXNG (research_node)
     cached_facts: str                   # L1 ChromaDB soft-cache hit content
     cache_hit: bool                     # True = L0 Redis exact match; pipeline short-circuits to merger
+    guard_blocked: bool                 # True = Llama Guard flagged the input; pipeline short-circuits to merger
+    guard_reason: str                   # Llama Guard hazard category (e.g. "S9") when guard_blocked
+    guard_response: str                 # Fixed refusal message returned as final_response when guard_blocked
     math_result: str                    # SymPy calculation output (math_node)
     mcp_result: str                     # Precision tool results (mcp_node)
+    mcp_evidence: Annotated[list, operator.add]  # Structured tool provenance/results keyed by task_id
+    precision_fact_slots: List[Dict[str, Any]]  # Ordered opaque slot→typed evidence bindings
+    precision_prompt_projection: str    # Value-free slot projection for merger and critic
+    precision_rendered_response: str    # Direct deterministic response before binding
+    precision_binding_status: str       # not_required|prepared|rendered|bound|failed
+    precision_binding_errors: List[str] # Stable fail-closed binding errors
+    precision_binding_hash: str         # Hash over slot/evidence/render mappings
+    precision_bound_response_hash: str  # Hash sealing the post-mutation response
+    precision_hybrid_composed: bool     # Mixed candidate composed without an LLM seeing typed facts
+    precision_hybrid_expert_body: str   # Non-precision body isolated for a scoped critic pass
+    precision_hybrid_expert_task: str   # Non-precision task contract shown to the scoped critic
+    precision_hybrid_expert_confidence: str  # high|medium; medium forces scoped review
     graph_context: str                  # Neo4j retrieved context, possibly compressed (graph_rag_node)
+    retrieved_graph_chunks: List[Dict]  # Identifiable Neo4j entities actually injected into synthesis
     final_response: str                 # Merger's synthesised answer (overwritten by critic if edited)
     reasoning_trace: str                # Chain-of-thought from thinking_node
     soft_cache_examples: str           # Few-shot similar Q&A pairs injected into planner/merger context
@@ -169,6 +204,17 @@ class AgentState(TypedDict):
     # ── 16. Cynefin & HITL Gate ──────────────────────────────────────────────
     cynefin_domain: str                 # CLEAR | COMPLICATED | COMPLEX | CHAOTIC (TASK-15)
     hitl_gate_id: str                   # Gate ID if HITL freeze is active (TASK-14)
+    hitl_gate_reason: str               # Human-readable reason returned with the 202 control response
+    quality_blocked: bool               # True when no answer may leave the pipeline
+    quality_block_reason: str           # Stable reason for the HTTP/SSE control response
+    candidate_status: str               # normal|degraded|unavailable
+    candidate_reason: str               # Why a validated degraded candidate was selected
+    quality_gate_status: str            # passed|blocked|pending; sole commit router authority
+    response_commit_context: dict       # Deferred synthesis/learning inputs, never written pre-gate
+    response_commit_status: str         # complete|partial|reused|skipped|blocked
+    response_commit_key: str            # Request/response/contract/evidence idempotency key
+    response_commit_sinks: dict          # Per-sink journal state
+    response_commit_errors: list         # Bounded sink error codes
 
     # ── 17. Strategy Review (TASK-22) ────────────────────────────────────────
     strategy_feedback: str              # Structural feedback from strategy reviewer (content-free)

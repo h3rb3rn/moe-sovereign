@@ -70,3 +70,4 @@ skills/community/.skillssh_audits.json
 # VSA HABE local models
 models/habe_vocab.json
 models/habe_vector.bin.npy
+models/habe_vector.npy

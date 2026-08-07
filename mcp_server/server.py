@@ -7,10 +7,13 @@ Arithmetic, dates, units, statistics, hashing, regex, networking, and more.
 import ast
 import asyncio
 import base64
+import calendar
+import csv
 import hashlib
 import inspect
 import io
 import ipaddress
+import importlib.metadata
 import json
 import logging
 import math
@@ -18,16 +21,40 @@ import operator as op_module
 import os
 import re
 import statistics as stats_module
+import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from decimal import (
+    ROUND_CEILING,
+    ROUND_DOWN,
+    ROUND_FLOOR,
+    ROUND_HALF_DOWN,
+    ROUND_HALF_EVEN,
+    ROUND_HALF_UP,
+    ROUND_UP,
+    Context,
+    Decimal,
+    InvalidOperation,
+    localcontext,
+)
+from fractions import Fraction
+from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, get_args, get_origin
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
+import yaml
+try:
+    from defusedxml import ElementTree as DefusedElementTree
+except ImportError:  # Host-only test fallback; the production lock pins defusedxml.
+    DefusedElementTree = ET
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 import sympy as sp
 import uvicorn
 from fastapi import FastAPI
@@ -172,22 +199,22 @@ def solve_equation(equation: str, variable: str = "x") -> str:
 def date_diff(date1: str, date2: str) -> str:
     """
     Calculates the exact difference between two dates.
-    Format: YYYY-MM-DD. Returns days, years, months, days.
+    Format: YYYY-MM-DD. Returns exact total days and a calendar delta.
     Example: date_diff('1990-05-15', '2026-03-29')
     """
     try:
+        from dateutil.relativedelta import relativedelta
+
         d1 = datetime.strptime(date1.strip(), "%Y-%m-%d").date()
         d2 = datetime.strptime(date2.strip(), "%Y-%m-%d").date()
-        diff = abs((d2 - d1).days)
-        years = diff // 365
-        remaining = diff % 365
-        months = remaining // 30
-        days = remaining % 30
         earlier, later = (d1, d2) if d1 <= d2 else (d2, d1)
+        diff = (later - earlier).days
+        calendar_delta = relativedelta(later, earlier)
         return (
             f"From {earlier} to {later}: "
             f"{diff} days total "
-            f"(≈ {years} years, {months} months, {days} days)"
+            f"({calendar_delta.years} years, {calendar_delta.months} months, "
+            f"{calendar_delta.days} days calendar delta)"
         )
     except Exception as e:
         return f"Error: {e}"
@@ -213,6 +240,717 @@ def date_add(base_date: str, days: int = 0, months: int = 0, years: int = 0) -> 
         return f"Error: {e}"
 
 
+_CALENDAR_NAMES = {
+    "de": {
+        "weekdays": (
+            "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag",
+            "Samstag", "Sonntag",
+        ),
+        "months": (
+            "Januar", "Februar", "März", "April", "Mai", "Juni",
+            "Juli", "August", "September", "Oktober", "November", "Dezember",
+        ),
+    },
+    "en": {
+        "weekdays": (
+            "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+            "Saturday", "Sunday",
+        ),
+        "months": (
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December",
+        ),
+    },
+}
+
+_PINNED_TZDATA_VERSION = "2026.3"
+_TIME_YEAR_MIN = 1900
+_TIME_YEAR_MAX = 2100
+_ISO_INSTANT_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$"
+)
+_ISO_LOCAL_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
+_IANA_ZONE_PATTERN = re.compile(
+    r"^[A-Za-z][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+)*$"
+)
+
+
+def _tzdata_version() -> str:
+    """Return the packaged IANA database version used by the container."""
+    try:
+        return importlib.metadata.version("tzdata")
+    except importlib.metadata.PackageNotFoundError:
+        # Source-only unit tests may run without the MCP dependency set. The
+        # production image is fail-closed below and pins the package in its
+        # lock file; this marker makes a system-database fallback visible.
+        return "system-unpinned"
+
+
+def _load_zone(name: str) -> ZoneInfo:
+    """Load an IANA zone from the pinned Python package, not the host OS."""
+    if not isinstance(name, str) or not _IANA_ZONE_PATTERN.fullmatch(name):
+        raise ValueError("timezone must be a valid IANA zone name")
+    version = _tzdata_version()
+    if version != "system-unpinned":
+        if version != _PINNED_TZDATA_VERSION:
+            raise RuntimeError(
+                f"tzdata_version_mismatch:{version}:{_PINNED_TZDATA_VERSION}"
+            )
+        try:
+            resource = resources.files("tzdata.zoneinfo").joinpath(*name.split("/"))
+            with resource.open("rb") as handle:
+                return ZoneInfo.from_file(handle, key=name)
+        except (FileNotFoundError, ModuleNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown IANA timezone: {name}") from exc
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"unknown IANA timezone: {name}") from exc
+
+
+def _parse_explicit_instant(value: str) -> datetime:
+    raw = value.strip() if isinstance(value, str) else ""
+    if not _ISO_INSTANT_PATTERN.fullmatch(raw):
+        raise ValueError(
+            "instant must be ISO-8601 with seconds and an explicit Z/UTC offset"
+        )
+    try:
+        parsed = datetime.fromisoformat(raw[:-1] + "+00:00" if raw.endswith("Z") else raw)
+    except ValueError as exc:
+        raise ValueError("instant must be a valid ISO-8601 instant") from exc
+    if parsed.utcoffset() is None:
+        raise ValueError("instant must include an explicit Z/UTC offset")
+    if not _TIME_YEAR_MIN <= parsed.year <= _TIME_YEAR_MAX:
+        raise ValueError(f"instant year must be {_TIME_YEAR_MIN}..{_TIME_YEAR_MAX}")
+    return parsed
+
+
+def _parse_local_datetime(value: str) -> datetime:
+    raw = value.strip() if isinstance(value, str) else ""
+    if not _ISO_LOCAL_PATTERN.fullmatch(raw):
+        raise ValueError(
+            "local_datetime must be a naive ISO local time with seconds"
+        )
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError("local_datetime must be a valid ISO local time") from exc
+    if not _TIME_YEAR_MIN <= parsed.year <= _TIME_YEAR_MAX:
+        raise ValueError(
+            f"local_datetime year must be {_TIME_YEAR_MIN}..{_TIME_YEAR_MAX}"
+        )
+    return parsed
+
+
+def _iso_seconds(value: datetime) -> str:
+    return value.isoformat(timespec="seconds")
+
+
+def _offset_text(value: datetime) -> str:
+    offset = value.utcoffset()
+    if offset is None:
+        raise ValueError("timezone offset unavailable")
+    total = int(offset.total_seconds())
+    sign = "+" if total >= 0 else "-"
+    hours, remainder = divmod(abs(total), 3600)
+    minutes = remainder // 60
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def _is_dst(value: datetime) -> bool:
+    delta = value.dst()
+    return bool(delta and delta != timedelta(0))
+
+
+def _localized_time_facts(value: datetime, locale: str) -> Dict[str, Any]:
+    locale_code = locale.strip().casefold() if isinstance(locale, str) else ""
+    if locale_code not in _CALENDAR_NAMES:
+        raise ValueError("locale must be one of: de, en")
+    iso = value.date().isocalendar()
+    return {
+        "date": value.date().isoformat(),
+        "time": value.time().isoformat(timespec="seconds"),
+        "weekday_iso": iso.weekday,
+        "weekday_name": _CALENDAR_NAMES[locale_code]["weekdays"][value.weekday()],
+        "iso_week": iso.week,
+        "iso_week_year": iso.year,
+        "locale": locale_code,
+    }
+
+
+def _calendar_facts_payload(date_str: str, locale: str) -> Dict[str, Any]:
+    """Build exact proleptic-Gregorian calendar facts for a strict ISO date."""
+    raw_date = date_str.strip() if isinstance(date_str, str) else ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_date):
+        raise ValueError("date_str must be a valid ISO date in YYYY-MM-DD format")
+
+    locale_code = locale.strip().casefold() if isinstance(locale, str) else ""
+    if locale_code not in _CALENDAR_NAMES:
+        raise ValueError("locale must be one of: de, en")
+
+    try:
+        parsed = datetime.strptime(raw_date, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("date_str must be a valid ISO date in YYYY-MM-DD format") from exc
+
+    iso = parsed.isocalendar()
+    leap_year = calendar.isleap(parsed.year)
+    names = _CALENDAR_NAMES[locale_code]
+    return {
+        "calendar_system": "proleptic_gregorian",
+        "date": parsed.isoformat(),
+        "day": parsed.day,
+        "day_of_year": parsed.timetuple().tm_yday,
+        "days_in_month": calendar.monthrange(parsed.year, parsed.month)[1],
+        "days_in_year": 366 if leap_year else 365,
+        "is_leap_year": leap_year,
+        "is_weekend": iso.weekday >= 6,
+        "iso_week": iso.week,
+        "iso_week_year": iso.year,
+        "locale": locale_code,
+        "month": parsed.month,
+        "month_name": names["months"][parsed.month - 1],
+        "quarter": ((parsed.month - 1) // 3) + 1,
+        "weekday_iso": iso.weekday,
+        "weekday_name": names["weekdays"][parsed.weekday()],
+        "year": parsed.year,
+    }
+
+
+@mcp.tool()
+def calendar_facts(date_str: str, locale: str = "de") -> str:
+    """Return deterministic calendar facts as stable JSON.
+
+    ``date_str`` must be an absolute ISO date (YYYY-MM-DD); relative inputs
+    such as "today" are deliberately rejected because their answer depends on
+    a caller-supplied clock and time zone. ``locale`` is ``de`` or ``en`` and
+    affects only the weekday and month names.
+
+    The result includes the canonical date, localized weekday/month names,
+    ISO weekday, ISO week and ISO week-year, day of year, month/year lengths,
+    quarter, leap-year status and weekend status.
+    """
+    payload = _calendar_facts_payload(date_str, locale)
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+@mcp.tool()
+def time_facts(instant: str, timezone_name: str = "UTC", locale: str = "de") -> str:
+    """Return deterministic timezone facts for an explicit ISO-8601 instant.
+
+    ``instant`` must include ``Z`` or a numeric UTC offset. ``timezone_name``
+    must be an IANA identifier such as ``Europe/Berlin``. Relative clock terms
+    such as "now" are deliberately unsupported.
+    """
+    parsed = _parse_explicit_instant(instant)
+    zone = _load_zone(timezone_name)
+    utc_value = parsed.astimezone(timezone.utc)
+    local_value = utc_value.astimezone(zone)
+    offset = local_value.utcoffset()
+    facts = {
+        "input_instant": _iso_seconds(parsed),
+        "utc_instant": _iso_seconds(utc_value),
+        "as_of": _iso_seconds(utc_value),
+        "timezone": timezone_name,
+        "local_datetime": _iso_seconds(local_value),
+        "utc_offset": _offset_text(local_value),
+        "utc_offset_seconds": int(offset.total_seconds()) if offset else 0,
+        "timezone_abbreviation": local_value.tzname() or "",
+        "is_dst": _is_dst(local_value),
+        "fold": int(local_value.fold),
+        "tzdata_version": _tzdata_version(),
+        **_localized_time_facts(local_value, locale),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _valid_local_candidates(local_value: datetime, zone: ZoneInfo) -> Dict[int, datetime]:
+    """Return fold-indexed candidates that survive an exact UTC round trip."""
+    candidates: Dict[int, datetime] = {}
+    for fold in (0, 1):
+        aware = local_value.replace(tzinfo=zone, fold=fold)
+        round_trip = aware.astimezone(timezone.utc).astimezone(zone)
+        if (
+            round_trip.replace(tzinfo=None) == local_value
+            and int(round_trip.fold) == fold
+        ):
+            candidates[fold] = aware
+    return candidates
+
+
+@mcp.tool()
+def timezone_convert(
+    local_datetime: str,
+    from_timezone: str,
+    to_timezone: str,
+    fold: Optional[int] = None,
+    locale: str = "de",
+) -> str:
+    """Convert a naive local ISO time between explicit IANA zones.
+
+    A repeated DST-fold time requires ``fold=0`` or ``fold=1``. A local time
+    in a spring-forward gap is rejected. The function never silently chooses
+    a side of an ambiguity and never infers a zone from a geographic place.
+    """
+    local_value = _parse_local_datetime(local_datetime)
+    source_zone = _load_zone(from_timezone)
+    target_zone = _load_zone(to_timezone)
+    candidates = _valid_local_candidates(local_value, source_zone)
+    if not candidates:
+        raise ValueError("nonexistent_local_time_gap")
+    ambiguous = len(candidates) == 2 and (
+        candidates[0].utcoffset() != candidates[1].utcoffset()
+    )
+    if ambiguous and fold is None:
+        raise ValueError("ambiguous_local_time_fold_required")
+    if fold is not None and fold not in (0, 1):
+        raise ValueError("fold must be 0, 1, or null")
+    selected_fold = int(fold) if ambiguous else 0
+    if selected_fold not in candidates:
+        raise ValueError("fold_not_valid_for_local_time")
+    source_value = candidates[selected_fold]
+    utc_value = source_value.astimezone(timezone.utc)
+    target_value = utc_value.astimezone(target_zone)
+    facts = {
+        "input_local_datetime": local_datetime,
+        "from_timezone": from_timezone,
+        "to_timezone": to_timezone,
+        "fold": selected_fold,
+        "ambiguous": ambiguous,
+        "source_datetime": _iso_seconds(source_value),
+        "source_utc_offset": _offset_text(source_value),
+        "source_is_dst": _is_dst(source_value),
+        "utc_instant": _iso_seconds(utc_value),
+        "as_of": _iso_seconds(utc_value),
+        "target_datetime": _iso_seconds(target_value),
+        "target_utc_offset": _offset_text(target_value),
+        "target_is_dst": _is_dst(target_value),
+        "target_fold": int(target_value.fold),
+        "locale": locale.strip().casefold(),
+        "tzdata_version": _tzdata_version(),
+    }
+    # Validate locale through the same fixed table used by other time tools.
+    _localized_time_facts(target_value, facts["locale"])
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_DECIMAL_INPUT_PATTERN = re.compile(r"^-?(?:0|[1-9]\d{0,47})(?:\.\d{1,24})?$")
+_DECIMAL_ROUNDING = {
+    "half_even": ROUND_HALF_EVEN,
+    "half_up": ROUND_HALF_UP,
+    "half_down": ROUND_HALF_DOWN,
+    "down": ROUND_DOWN,
+    "up": ROUND_UP,
+    "floor": ROUND_FLOOR,
+    "ceiling": ROUND_CEILING,
+}
+_DECIMAL_CONTEXT_PRECISION = 128
+
+
+def _contract_decimal(value: str, field: str) -> Decimal:
+    """Parse a bounded canonical decimal string without touching a float."""
+    if not isinstance(value, str) or not _DECIMAL_INPUT_PATTERN.fullmatch(value):
+        raise ValueError(f"{field}_must_be_canonical_decimal_string")
+    parsed = Decimal(value)
+    if not parsed.is_finite():
+        raise ValueError(f"{field}_must_be_finite")
+    return parsed
+
+
+def _decimal_string(value: Decimal) -> str:
+    rendered = format(value, "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return "0" if rendered in {"", "-0"} else rendered
+
+
+@mcp.tool()
+def decimal_finance(
+    operation: str,
+    operands: List[str],
+    currency: str,
+    scale: int,
+    rounding: str,
+) -> str:
+    """Perform bounded financial arithmetic with explicit Decimal semantics.
+
+    ``operands`` has an operation-specific positional contract:
+    add/subtract/multiply/divide=[left,right], percentage=[base,percent],
+    simple_interest=[principal,annual_percent,years], and
+    compound_interest=[principal,annual_percent,years,compounds_per_year].
+    This tool contains no tax, exchange-rate, jurisdiction or legal rules.
+    """
+    allowed = {
+        "add", "subtract", "multiply", "divide", "percentage",
+        "simple_interest", "compound_interest",
+    }
+    if operation not in allowed:
+        raise ValueError("unsupported_decimal_finance_operation")
+    if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
+        raise ValueError("currency_must_be_iso_4217_alpha3")
+    if isinstance(scale, bool) or not isinstance(scale, int) or not 0 <= scale <= 12:
+        raise ValueError("scale_out_of_range")
+    if rounding not in _DECIMAL_ROUNDING:
+        raise ValueError("unsupported_rounding_mode")
+    expected_count = {
+        "add": 2, "subtract": 2, "multiply": 2, "divide": 2,
+        "percentage": 2, "simple_interest": 3, "compound_interest": 4,
+    }[operation]
+    if not isinstance(operands, list) or len(operands) != expected_count:
+        raise ValueError(f"{operation}_requires_{expected_count}_operands")
+    values = [_contract_decimal(value, f"operands[{index}]") for index, value in enumerate(operands)]
+    quantum = Decimal(1).scaleb(-scale)
+    context = Context(prec=_DECIMAL_CONTEXT_PRECISION, Emin=-999, Emax=999)
+    with localcontext(context):
+        if operation == "add":
+            calculated = values[0] + values[1]
+        elif operation == "subtract":
+            calculated = values[0] - values[1]
+        elif operation == "multiply":
+            calculated = values[0] * values[1]
+        elif operation == "divide":
+            if values[1] == 0:
+                raise ValueError("division_by_zero")
+            calculated = values[0] / values[1]
+        elif operation == "percentage":
+            calculated = values[0] * values[1] / Decimal(100)
+        elif operation == "simple_interest":
+            if values[2] < 0:
+                raise ValueError("years_must_be_non_negative")
+            calculated = values[0] * (Decimal(1) + values[1] * values[2] / Decimal(100))
+        else:
+            years = values[2]
+            compounds = values[3]
+            if years != years.to_integral_value() or not 0 <= years <= 1000:
+                raise ValueError("years_must_be_integer_0_to_1000")
+            if compounds != compounds.to_integral_value() or not 1 <= compounds <= 365:
+                raise ValueError("compounds_per_year_must_be_integer_1_to_365")
+            exponent = int(years) * int(compounds)
+            if exponent > 10000:
+                raise ValueError("compound_iteration_limit_exceeded")
+            base = Decimal(1) + values[1] / (Decimal(100) * compounds)
+            if base < 0:
+                raise ValueError("compound_base_must_be_non_negative")
+            calculated = values[0] * (base ** exponent)
+        if not calculated.is_finite() or abs(calculated.adjusted()) > 256:
+            raise ValueError("decimal_result_magnitude_exceeded")
+        try:
+            quantized = calculated.quantize(quantum, rounding=_DECIMAL_ROUNDING[rounding])
+        except InvalidOperation as exc:
+            raise ValueError("decimal_quantization_failed") from exc
+    facts = {
+        "operation": operation,
+        "operands": list(operands),
+        "currency": currency,
+        "scale": scale,
+        "rounding": rounding,
+        "calculation_precision": _DECIMAL_CONTEXT_PRECISION,
+        "calculation_value": _decimal_string(calculated),
+        "result": format(quantized, f".{scale}f"),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_PROBABILITY_MAX_N = 4096
+_PROBABILITY_MAX_RESULT_BITS = 65536
+
+
+def _probability_project(value: Fraction, scale: Optional[int], rounding: Optional[str]) -> Optional[str]:
+    if scale is None and rounding is None:
+        return None
+    if scale is None or rounding is None:
+        raise ValueError("decimal_scale_and_rounding_must_be_supplied_together")
+    if isinstance(scale, bool) or not isinstance(scale, int) or not 0 <= scale <= 18:
+        raise ValueError("decimal_scale_out_of_range")
+    if rounding not in _DECIMAL_ROUNDING:
+        raise ValueError("unsupported_rounding_mode")
+    with localcontext(Context(prec=_DECIMAL_CONTEXT_PRECISION, Emin=-999, Emax=999)):
+        projected = Decimal(value.numerator) / Decimal(value.denominator)
+        projected = projected.quantize(
+            Decimal(1).scaleb(-scale), rounding=_DECIMAL_ROUNDING[rounding]
+        )
+    return format(projected, f".{scale}f")
+
+
+@mcp.tool()
+def exact_probability(
+    operation: str,
+    n: Optional[int] = None,
+    k: Optional[int] = None,
+    numerator: Optional[int] = None,
+    denominator: Optional[int] = None,
+    decimal_scale: Optional[int] = None,
+    rounding: Optional[str] = None,
+) -> str:
+    """Return exact bounded combinatorics/probability facts using Fraction.
+
+    Supported operations are ``fraction``, ``combination``, ``permutation``
+    and ``binomial_probability``. For binomial probability ``numerator`` and
+    ``denominator`` define the exact Bernoulli probability p.
+    """
+    if operation not in {"fraction", "combination", "permutation", "binomial_probability"}:
+        raise ValueError("unsupported_probability_operation")
+    for field_name, value in (("n", n), ("k", k), ("numerator", numerator), ("denominator", denominator)):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError(f"{field_name}_must_be_integer")
+    if operation == "fraction":
+        if numerator is None or denominator is None:
+            raise ValueError("fraction_requires_numerator_and_denominator")
+        if denominator == 0:
+            raise ValueError("denominator_must_not_be_zero")
+        exact = Fraction(numerator, denominator)
+    else:
+        if n is None or k is None:
+            raise ValueError(f"{operation}_requires_n_and_k")
+        if not 0 <= n <= _PROBABILITY_MAX_N:
+            raise ValueError("n_out_of_range")
+        if not 0 <= k <= n:
+            raise ValueError("k_must_be_between_zero_and_n")
+        if operation == "combination":
+            exact = Fraction(math.comb(n, k), 1)
+        elif operation == "permutation":
+            exact = Fraction(math.perm(n, k), 1)
+        else:
+            if numerator is None or denominator is None or denominator <= 0:
+                raise ValueError("binomial_requires_positive_probability_denominator")
+            probability = Fraction(numerator, denominator)
+            if not 0 <= probability <= 1:
+                raise ValueError("probability_must_be_between_zero_and_one")
+            estimated_bits = max(1, denominator.bit_length()) * n + n
+            if estimated_bits > _PROBABILITY_MAX_RESULT_BITS:
+                raise ValueError("probability_cost_limit_exceeded")
+            exact = (
+                Fraction(math.comb(n, k), 1)
+                * probability ** k
+                * (1 - probability) ** (n - k)
+            )
+    if max(abs(exact.numerator).bit_length(), exact.denominator.bit_length()) > _PROBABILITY_MAX_RESULT_BITS:
+        raise ValueError("probability_result_bit_limit_exceeded")
+    facts = {
+        "operation": operation,
+        "n": n,
+        "k": k,
+        "probability_numerator": numerator,
+        "probability_denominator": denominator,
+        "result_numerator": exact.numerator,
+        "result_denominator": exact.denominator,
+        "fraction": f"{exact.numerator}/{exact.denominator}",
+        "decimal_scale": decimal_scale,
+        "rounding": rounding,
+        "decimal": _probability_project(exact, decimal_scale, rounding),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_STRUCTURED_MAX_PAYLOAD_BYTES = 65536
+_STRUCTURED_MAX_SCHEMA_BYTES = 32768
+_STRUCTURED_MAX_DEPTH = 64
+_STRUCTURED_MAX_NODES = 10000
+_STRUCTURED_MAX_CSV_ROWS = 1000
+_STRUCTURED_MAX_CSV_COLUMNS = 100
+_STRUCTURED_MAX_FIELD_CHARS = 8192
+
+
+def _bounded_tree(value: Any) -> tuple[int, int]:
+    """Return depth/node count and reject recursive/oversized parsed trees."""
+    stack = [(value, 1)]
+    nodes = 0
+    max_depth = 0
+    seen: set[int] = set()
+    while stack:
+        current, depth = stack.pop()
+        nodes += 1
+        max_depth = max(max_depth, depth)
+        if nodes > _STRUCTURED_MAX_NODES:
+            raise ValueError("structured_node_limit_exceeded")
+        if depth > _STRUCTURED_MAX_DEPTH:
+            raise ValueError("structured_depth_limit_exceeded")
+        if isinstance(current, dict):
+            object_id = id(current)
+            if object_id in seen:
+                raise ValueError("structured_cycle_or_alias_rejected")
+            seen.add(object_id)
+            stack.extend((item, depth + 1) for pair in current.items() for item in pair)
+        elif isinstance(current, (list, tuple)):
+            object_id = id(current)
+            if object_id in seen:
+                raise ValueError("structured_cycle_or_alias_rejected")
+            seen.add(object_id)
+            stack.extend((item, depth + 1) for item in current)
+    return max_depth, nodes
+
+
+def _schema_contains_ref(value: Any) -> bool:
+    if isinstance(value, dict):
+        return "$ref" in value or any(_schema_contains_ref(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_schema_contains_ref(item) for item in value)
+    return False
+
+
+def _validation_error(code: str, message: str, line: Optional[int] = None, column: Optional[int] = None, path: str = "") -> Dict[str, Any]:
+    return {"code": code, "message": message[:300], "line": line, "column": column, "path": path[:300]}
+
+
+@mcp.tool()
+def structured_validate(
+    format_name: str,
+    payload: str,
+    schema_json: Optional[str] = None,
+    csv_dialect: Optional[str] = None,
+) -> str:
+    """Safely parse JSON/YAML/XML/CSV and optionally validate JSON Schema.
+
+    The function never resolves remote references, DTDs, entities or
+    XIncludes, never evaluates YAML tags or CSV formulas, and returns only
+    hashes/diagnostics rather than echoing the supplied payload.
+    """
+    if format_name not in {"json", "yaml", "xml", "csv"}:
+        raise ValueError("unsupported_structured_format")
+    if not isinstance(payload, str):
+        raise ValueError("payload_must_be_string")
+    payload_bytes = payload.encode("utf-8")
+    if len(payload_bytes) > _STRUCTURED_MAX_PAYLOAD_BYTES:
+        raise ValueError("structured_payload_size_limit_exceeded")
+    if schema_json is not None and format_name != "json":
+        raise ValueError("schema_json_is_supported_only_for_json")
+    errors: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+    details: Dict[str, Any] = {}
+    parsed: Any = None
+
+    if format_name == "json":
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            errors.append(_validation_error("json_parse_error", exc.msg, exc.lineno, exc.colno))
+        if not errors:
+            depth, nodes = _bounded_tree(parsed)
+            details.update({"depth": depth, "nodes": nodes})
+        if schema_json is not None:
+            if len(schema_json.encode("utf-8")) > _STRUCTURED_MAX_SCHEMA_BYTES:
+                raise ValueError("structured_schema_size_limit_exceeded")
+            try:
+                schema = json.loads(schema_json)
+                if not isinstance(schema, dict):
+                    raise ValueError("schema_root_must_be_object")
+                if _schema_contains_ref(schema):
+                    raise ValueError("schema_ref_not_allowed")
+                Draft202012Validator.check_schema(schema)
+                if not errors:
+                    for item in sorted(
+                        Draft202012Validator(schema).iter_errors(parsed),
+                        key=lambda error: (tuple(str(part) for part in error.absolute_path), error.message),
+                    )[:50]:
+                        errors.append(_validation_error(
+                            "json_schema_error", item.message,
+                            path="/" + "/".join(str(part) for part in item.absolute_path),
+                        ))
+            except json.JSONDecodeError as exc:
+                errors.append(_validation_error("schema_parse_error", exc.msg, exc.lineno, exc.colno))
+            except SchemaError as exc:
+                errors.append(_validation_error("schema_invalid", exc.message))
+            except ValueError as exc:
+                errors.append(_validation_error(str(exc), str(exc)))
+
+    elif format_name == "yaml":
+        try:
+            tokens = list(yaml.scan(payload))
+            if any(token.__class__.__name__ in {"AliasToken", "AnchorToken", "TagToken"} for token in tokens):
+                raise ValueError("yaml_alias_anchor_or_tag_rejected")
+            parsed = yaml.safe_load(payload)
+            depth, nodes = _bounded_tree(parsed)
+            details.update({"depth": depth, "nodes": nodes})
+        except yaml.YAMLError as exc:
+            mark = getattr(exc, "problem_mark", None)
+            errors.append(_validation_error(
+                "yaml_parse_error", str(getattr(exc, "problem", None) or exc),
+                getattr(mark, "line", -1) + 1 if mark else None,
+                getattr(mark, "column", -1) + 1 if mark else None,
+            ))
+        except ValueError as exc:
+            errors.append(_validation_error(str(exc), str(exc)))
+
+    elif format_name == "xml":
+        lowered_payload = payload.casefold()
+        if any(token in lowered_payload for token in ("<!doctype", "<!entity", "<xi:include", "xinclude")):
+            errors.append(_validation_error("xml_forbidden_construct", "DTD, entities and XInclude are disabled"))
+        else:
+            try:
+                parsed = DefusedElementTree.fromstring(payload)
+                stack = [(parsed, 1)]
+                nodes = 0
+                depth = 0
+                while stack:
+                    element, level = stack.pop()
+                    nodes += 1
+                    depth = max(depth, level)
+                    if nodes > _STRUCTURED_MAX_NODES:
+                        raise ValueError("structured_node_limit_exceeded")
+                    if depth > _STRUCTURED_MAX_DEPTH:
+                        raise ValueError("structured_depth_limit_exceeded")
+                    stack.extend((child, level + 1) for child in list(element))
+                details.update({"depth": depth, "nodes": nodes})
+            except Exception as exc:
+                errors.append(_validation_error("xml_parse_error", str(exc)))
+
+    else:
+        dialects = {"comma": ",", "semicolon": ";", "tab": "\t", "pipe": "|"}
+        if csv_dialect not in dialects:
+            raise ValueError("csv_dialect_must_be_explicit")
+        try:
+            reader = csv.reader(
+                io.StringIO(payload, newline=""),
+                delimiter=dialects[csv_dialect],
+                strict=True,
+            )
+            expected_columns: Optional[int] = None
+            row_count = 0
+            formula_count = 0
+            for row_count, row in enumerate(reader, 1):
+                if row_count > _STRUCTURED_MAX_CSV_ROWS:
+                    raise ValueError("csv_row_limit_exceeded")
+                if len(row) > _STRUCTURED_MAX_CSV_COLUMNS:
+                    raise ValueError("csv_column_limit_exceeded")
+                if any(len(field) > _STRUCTURED_MAX_FIELD_CHARS for field in row):
+                    raise ValueError("csv_field_size_limit_exceeded")
+                if expected_columns is None:
+                    expected_columns = len(row)
+                elif len(row) != expected_columns:
+                    errors.append(_validation_error(
+                        "csv_column_count_mismatch",
+                        f"row has {len(row)} columns; expected {expected_columns}",
+                        line=row_count,
+                    ))
+                formula_count += sum(
+                    field.lstrip().startswith(("=", "+", "-", "@")) for field in row
+                )
+            details.update({"rows": row_count, "columns": expected_columns or 0})
+            if formula_count:
+                warnings.append({"code": "csv_formula_prefix", "count": formula_count})
+        except csv.Error as exc:
+            errors.append(_validation_error("csv_parse_error", str(exc), line=getattr(reader, "line_num", None)))
+        except ValueError as exc:
+            errors.append(_validation_error(str(exc), str(exc)))
+
+    schema_hash = hashlib.sha256(schema_json.encode("utf-8")).hexdigest() if schema_json is not None else None
+    facts = {
+        "valid": not errors,
+        "format": format_name,
+        "payload_hash": hashlib.sha256(payload_bytes).hexdigest(),
+        "schema_hash": schema_hash,
+        "errors": errors[:50],
+        "warnings": warnings[:50],
+        "details": details,
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 @mcp.tool()
 def day_of_week(date_str: str) -> str:
     """
@@ -221,12 +959,11 @@ def day_of_week(date_str: str) -> str:
     Example: day_of_week('2026-12-25')
     """
     try:
-        d = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
-        days_en = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        iso = d.isocalendar()
+        facts = _calendar_facts_payload(date_str, "en")
         return (
-            f"{date_str} is a {days_en[d.weekday()]} "
-            f"(CW {iso[1]}, day {d.timetuple().tm_yday} of year {d.year})"
+            f"{facts['date']} is a {facts['weekday_name']} "
+            f"(CW {facts['iso_week']}, day {facts['day_of_year']} "
+            f"of year {facts['year']})"
         )
     except Exception as e:
         return f"Error: {e}"
@@ -1238,7 +1975,18 @@ def _minio_client():
         return None
     try:
         from minio import Minio
-        return Minio(endpoint, access_key=access, secret_key=secret, secure=False)
+        # Garage signs requests for its configured region ("garage" in the
+        # production config). MinIO's SDK otherwise defaults to us-east-1,
+        # causing valid uploads and pre-signed downloads to fail signature
+        # validation against Garage.
+        region = os.getenv("MINIO_REGION", os.getenv("GARAGE_REGION", "garage"))
+        return Minio(
+            endpoint,
+            access_key=access,
+            secret_key=secret,
+            secure=False,
+            region=region,
+        )
     except Exception:
         return None
 
@@ -3635,6 +4383,12 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "solve_equation": solve_equation,
     "date_diff": date_diff,
     "date_add": date_add,
+    "calendar_facts": calendar_facts,
+    "time_facts": time_facts,
+    "timezone_convert": timezone_convert,
+    "decimal_finance": decimal_finance,
+    "exact_probability": exact_probability,
+    "structured_validate": structured_validate,
     "day_of_week": day_of_week,
     "unit_convert": unit_convert,
     "statistics_calc": statistics_calc,
@@ -3705,6 +4459,12 @@ _TOOL_DESCRIPTIONS = {
     "solve_equation": "Solve algebraic equations (SymPy)",
     "date_diff": "Exact difference between two dates",
     "date_add": "Date addition/subtraction (days, months, years)",
+    "calendar_facts": "Deterministic localized weekday and ISO calendar facts as JSON",
+    "time_facts": "Explicit-instant IANA timezone, offset, DST and ISO calendar facts",
+    "timezone_convert": "DST-safe conversion between explicit IANA timezones",
+    "decimal_finance": "Decimal-string finance arithmetic with explicit currency, scale and rounding",
+    "exact_probability": "Exact bounded rational probability and combinatorics with optional Decimal projection",
+    "structured_validate": "Network-free bounded JSON, YAML, XML and CSV parser/validator",
     "day_of_week": "Weekday, calendar week, day of year for a date",
     "unit_convert": "Physical unit conversion (km/h→m/s, °F→°C, etc.)",
     "statistics_calc": "Statistical measures for data sets (mean, median, stdev, etc.)",
@@ -3778,7 +4538,11 @@ _DEFAULT_ACCESS_KIND = "read"
 _TOOL_ACCESS_KIND: Dict[str, str] = {
     # Math/utility — local computation only
     "calculate": "read", "solve_equation": "read", "date_diff": "read",
-    "date_add": "read", "day_of_week": "read", "unit_convert": "read",
+    "date_add": "read", "calendar_facts": "read", "time_facts": "read",
+    "timezone_convert": "read", "decimal_finance": "read",
+    "exact_probability": "read", "structured_validate": "read",
+    "day_of_week": "read",
+    "unit_convert": "read",
     "statistics_calc": "read", "hash_text": "read", "base64_codec": "read",
     "regex_extract": "read", "subnet_calc": "read", "text_analyze": "read",
     "prime_factorize": "read", "gcd_lcm": "read", "json_query": "read",
@@ -3816,6 +4580,614 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "pm_create_task": "write", "pm_list_tasks": "read",
     "pm_update_task": "write", "pm_search_tasks": "read",
 }
+
+
+_CALENDAR_FACTS_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "calendar_system": {"type": "string", "const": "proleptic_gregorian"},
+        "date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+        "day": {"type": "integer", "minimum": 1, "maximum": 31},
+        "day_of_year": {"type": "integer", "minimum": 1, "maximum": 366},
+        "days_in_month": {"type": "integer", "minimum": 28, "maximum": 31},
+        "days_in_year": {"type": "integer", "enum": [365, 366]},
+        "is_leap_year": {"type": "boolean"},
+        "is_weekend": {"type": "boolean"},
+        "iso_week": {"type": "integer", "minimum": 1, "maximum": 53},
+        "iso_week_year": {"type": "integer"},
+        "locale": {"type": "string", "enum": ["de", "en"]},
+        "month": {"type": "integer", "minimum": 1, "maximum": 12},
+        "month_name": {"type": "string", "minLength": 1},
+        "quarter": {"type": "integer", "minimum": 1, "maximum": 4},
+        "weekday_iso": {"type": "integer", "minimum": 1, "maximum": 7},
+        "weekday_name": {"type": "string", "minLength": 1},
+        "year": {"type": "integer"},
+    },
+    "required": [
+        "calendar_system", "date", "day", "day_of_year", "days_in_month",
+        "days_in_year", "is_leap_year", "is_weekend", "iso_week",
+        "iso_week_year", "locale", "month", "month_name", "quarter",
+        "weekday_iso", "weekday_name", "year",
+    ],
+    "additionalProperties": False,
+}
+
+_TIME_FACTS_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "input_instant": {"type": "string", "minLength": 20, "maxLength": 32},
+        "utc_instant": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$"},
+        "as_of": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$"},
+        "timezone": {"type": "string", "minLength": 1, "maxLength": 128},
+        "local_datetime": {"type": "string", "minLength": 20, "maxLength": 32},
+        "utc_offset": {"type": "string", "pattern": r"^[+-]\d{2}:\d{2}$"},
+        "utc_offset_seconds": {"type": "integer", "minimum": -86400, "maximum": 86400},
+        "timezone_abbreviation": {"type": "string", "maxLength": 32},
+        "is_dst": {"type": "boolean"},
+        "fold": {"type": "integer", "enum": [0, 1]},
+        "tzdata_version": {"type": "string", "minLength": 1, "maxLength": 32},
+        "date": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+        "time": {"type": "string", "pattern": r"^\d{2}:\d{2}:\d{2}$"},
+        "weekday_iso": {"type": "integer", "minimum": 1, "maximum": 7},
+        "weekday_name": {"type": "string", "minLength": 1},
+        "iso_week": {"type": "integer", "minimum": 1, "maximum": 53},
+        "iso_week_year": {"type": "integer", "minimum": _TIME_YEAR_MIN - 1, "maximum": _TIME_YEAR_MAX + 1},
+        "locale": {"type": "string", "enum": ["de", "en"]},
+    },
+    "required": [
+        "input_instant", "utc_instant", "as_of", "timezone",
+        "local_datetime", "utc_offset", "utc_offset_seconds",
+        "timezone_abbreviation", "is_dst", "fold", "tzdata_version",
+        "date", "time", "weekday_iso", "weekday_name", "iso_week",
+        "iso_week_year", "locale",
+    ],
+    "additionalProperties": False,
+}
+
+_TIMEZONE_CONVERT_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "input_local_datetime": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$"},
+        "from_timezone": {"type": "string", "minLength": 1, "maxLength": 128},
+        "to_timezone": {"type": "string", "minLength": 1, "maxLength": 128},
+        "fold": {"type": "integer", "enum": [0, 1]},
+        "ambiguous": {"type": "boolean"},
+        "source_datetime": {"type": "string", "minLength": 20, "maxLength": 32},
+        "source_utc_offset": {"type": "string", "pattern": r"^[+-]\d{2}:\d{2}$"},
+        "source_is_dst": {"type": "boolean"},
+        "utc_instant": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$"},
+        "as_of": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$"},
+        "target_datetime": {"type": "string", "minLength": 20, "maxLength": 32},
+        "target_utc_offset": {"type": "string", "pattern": r"^[+-]\d{2}:\d{2}$"},
+        "target_is_dst": {"type": "boolean"},
+        "target_fold": {"type": "integer", "enum": [0, 1]},
+        "locale": {"type": "string", "enum": ["de", "en"]},
+        "tzdata_version": {"type": "string", "minLength": 1, "maxLength": 32},
+    },
+    "required": [
+        "input_local_datetime", "from_timezone", "to_timezone", "fold",
+        "ambiguous", "source_datetime", "source_utc_offset",
+        "source_is_dst", "utc_instant", "as_of", "target_datetime",
+        "target_utc_offset", "target_is_dst", "target_fold", "locale",
+        "tzdata_version",
+    ],
+    "additionalProperties": False,
+}
+
+_DECIMAL_STRING_SCHEMA: Dict[str, Any] = {
+    "type": "string",
+    "pattern": r"^-?(?:0|[1-9]\d{0,47})(?:\.\d{1,24})?$",
+    "maxLength": 74,
+}
+_ROUNDING_SCHEMA: Dict[str, Any] = {
+    "type": "string",
+    "enum": sorted(_DECIMAL_ROUNDING),
+}
+_DECIMAL_FINANCE_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "operation": {
+            "type": "string",
+            "enum": [
+                "add", "subtract", "multiply", "divide", "percentage",
+                "simple_interest", "compound_interest",
+            ],
+        },
+        "operands": {
+            "type": "array", "items": _DECIMAL_STRING_SCHEMA,
+            "minItems": 2, "maxItems": 4,
+        },
+        "currency": {"type": "string", "pattern": r"^[A-Z]{3}$"},
+        "scale": {"type": "integer", "minimum": 0, "maximum": 12},
+        "rounding": _ROUNDING_SCHEMA,
+        "calculation_precision": {"type": "integer", "const": _DECIMAL_CONTEXT_PRECISION},
+        "calculation_value": {"type": "string", "minLength": 1, "maxLength": 400},
+        "result": {"type": "string", "pattern": r"^-?\d+(?:\.\d+)?$", "maxLength": 400},
+    },
+    "required": [
+        "operation", "operands", "currency", "scale", "rounding",
+        "calculation_precision", "calculation_value", "result",
+    ],
+    "additionalProperties": False,
+}
+
+_EXACT_PROBABILITY_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "operation": {
+            "type": "string",
+            "enum": ["fraction", "combination", "permutation", "binomial_probability"],
+        },
+        "n": {"type": ["integer", "null"], "minimum": 0, "maximum": _PROBABILITY_MAX_N},
+        "k": {"type": ["integer", "null"], "minimum": 0, "maximum": _PROBABILITY_MAX_N},
+        "probability_numerator": {"type": ["integer", "null"]},
+        "probability_denominator": {"type": ["integer", "null"]},
+        "result_numerator": {"type": "integer"},
+        "result_denominator": {"type": "integer", "minimum": 1},
+        "fraction": {"type": "string", "pattern": r"^-?\d+/\d+$"},
+        "decimal_scale": {"type": ["integer", "null"], "minimum": 0, "maximum": 18},
+        "rounding": {"type": ["string", "null"], "enum": [*sorted(_DECIMAL_ROUNDING), None]},
+        "decimal": {"type": ["string", "null"], "pattern": r"^-?\d+(?:\.\d+)?$"},
+    },
+    "required": [
+        "operation", "n", "k", "probability_numerator",
+        "probability_denominator", "result_numerator", "result_denominator",
+        "fraction", "decimal_scale", "rounding", "decimal",
+    ],
+    "additionalProperties": False,
+}
+
+_VALIDATION_DIAGNOSTIC_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 300},
+        "message": {"type": "string", "maxLength": 300},
+        "line": {"type": ["integer", "null"], "minimum": 1},
+        "column": {"type": ["integer", "null"], "minimum": 1},
+        "path": {"type": "string", "maxLength": 300},
+    },
+    "required": ["code", "message", "line", "column", "path"],
+    "additionalProperties": False,
+}
+_STRUCTURED_VALIDATE_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "valid": {"type": "boolean"},
+        "format": {"type": "string", "enum": ["json", "yaml", "xml", "csv"]},
+        "payload_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "schema_hash": {"type": ["string", "null"], "pattern": r"^[0-9a-f]{64}$"},
+        "errors": {"type": "array", "items": _VALIDATION_DIAGNOSTIC_SCHEMA, "maxItems": 50},
+        "warnings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "enum": ["csv_formula_prefix"]},
+                    "count": {"type": "integer", "minimum": 1},
+                },
+                "required": ["code", "count"],
+                "additionalProperties": False,
+            },
+            "maxItems": 50,
+        },
+        "details": {
+            "type": "object",
+            "properties": {
+                "depth": {"type": "integer", "minimum": 0, "maximum": _STRUCTURED_MAX_DEPTH},
+                "nodes": {"type": "integer", "minimum": 0, "maximum": _STRUCTURED_MAX_NODES},
+                "rows": {"type": "integer", "minimum": 0, "maximum": _STRUCTURED_MAX_CSV_ROWS},
+                "columns": {"type": "integer", "minimum": 0, "maximum": _STRUCTURED_MAX_CSV_COLUMNS},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["valid", "format", "payload_hash", "schema_hash", "errors", "warnings", "details"],
+    "additionalProperties": False,
+}
+
+
+_TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
+    "calendar_facts": {
+        "contract_id": "moe.precision.calendar_facts",
+        "contract_version": "1.0.0",
+        "determinism": "input_only",
+        "source_policy": {"kind": "python_stdlib", "name": "datetime-calendar"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date_str": {
+                    "type": "string",
+                    "pattern": r"^\d{4}-\d{2}-\d{2}$",
+                },
+                "locale": {"type": "string", "enum": ["de", "en"], "default": "de"},
+            },
+            "required": ["date_str"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _CALENDAR_FACTS_OUTPUT_SCHEMA,
+    },
+    "time_facts": {
+        "contract_id": "moe.precision.time_facts",
+        "contract_version": "1.0.0",
+        "determinism": "source_versioned",
+        "source_policy": {
+            "kind": "python_tzdata",
+            "name": "tzdata",
+            "version": _PINNED_TZDATA_VERSION,
+            "clock": "caller_supplied_instant",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "instant": {
+                    "type": "string",
+                    "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$",
+                },
+                "timezone_name": {
+                    "type": "string",
+                    "pattern": r"^[A-Za-z][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+)*$",
+                    "maxLength": 128,
+                    "default": "UTC",
+                },
+                "locale": {"type": "string", "enum": ["de", "en"], "default": "de"},
+            },
+            "required": ["instant"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _TIME_FACTS_OUTPUT_SCHEMA,
+        "limits": {"max_result_chars": 8192, "year_min": _TIME_YEAR_MIN, "year_max": _TIME_YEAR_MAX},
+    },
+    "timezone_convert": {
+        "contract_id": "moe.precision.timezone_convert",
+        "contract_version": "1.0.0",
+        "determinism": "source_versioned",
+        "source_policy": {
+            "kind": "python_tzdata",
+            "name": "tzdata",
+            "version": _PINNED_TZDATA_VERSION,
+            "clock": "explicit_local_datetime",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "local_datetime": {
+                    "type": "string",
+                    "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$",
+                },
+                "from_timezone": {
+                    "type": "string",
+                    "pattern": r"^[A-Za-z][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+)*$",
+                    "maxLength": 128,
+                },
+                "to_timezone": {
+                    "type": "string",
+                    "pattern": r"^[A-Za-z][A-Za-z0-9._+-]*(?:/[A-Za-z0-9._+-]+)*$",
+                    "maxLength": 128,
+                },
+                "fold": {"type": ["integer", "null"], "enum": [0, 1, None], "default": None},
+                "locale": {"type": "string", "enum": ["de", "en"], "default": "de"},
+            },
+            "required": ["local_datetime", "from_timezone", "to_timezone"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _TIMEZONE_CONVERT_OUTPUT_SCHEMA,
+        "limits": {"max_result_chars": 8192, "year_min": _TIME_YEAR_MIN, "year_max": _TIME_YEAR_MAX},
+    },
+    "decimal_finance": {
+        "contract_id": "moe.precision.decimal_finance",
+        "contract_version": "1.0.0",
+        "determinism": "input_only",
+        "source_policy": {"kind": "python_stdlib", "name": "decimal"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": [
+                        "add", "subtract", "multiply", "divide", "percentage",
+                        "simple_interest", "compound_interest",
+                    ],
+                },
+                "operands": {
+                    "type": "array", "items": _DECIMAL_STRING_SCHEMA,
+                    "minItems": 2, "maxItems": 4,
+                },
+                "currency": {"type": "string", "pattern": r"^[A-Z]{3}$"},
+                "scale": {"type": "integer", "minimum": 0, "maximum": 12},
+                "rounding": _ROUNDING_SCHEMA,
+            },
+            "required": ["operation", "operands", "currency", "scale", "rounding"],
+            "additionalProperties": False,
+            "allOf": [
+                {
+                    "if": {"properties": {"operation": {"enum": ["add", "subtract", "multiply", "divide", "percentage"]}}},
+                    "then": {"properties": {"operands": {"minItems": 2, "maxItems": 2}}},
+                },
+                {
+                    "if": {"properties": {"operation": {"const": "simple_interest"}}},
+                    "then": {"properties": {"operands": {"minItems": 3, "maxItems": 3}}},
+                },
+                {
+                    "if": {"properties": {"operation": {"const": "compound_interest"}}},
+                    "then": {"properties": {"operands": {"minItems": 4, "maxItems": 4}}},
+                },
+            ],
+        },
+        "outputSchema": _DECIMAL_FINANCE_OUTPUT_SCHEMA,
+        "limits": {"max_result_chars": 16384, "context_precision": _DECIMAL_CONTEXT_PRECISION, "max_scale": 12},
+    },
+    "exact_probability": {
+        "contract_id": "moe.precision.exact_probability",
+        "contract_version": "1.0.0",
+        "determinism": "input_only",
+        "source_policy": {"kind": "python_stdlib", "name": "fractions-math-decimal"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operation": {"type": "string", "enum": ["fraction", "combination", "permutation", "binomial_probability"]},
+                "n": {"type": ["integer", "null"], "minimum": 0, "maximum": _PROBABILITY_MAX_N, "default": None},
+                "k": {"type": ["integer", "null"], "minimum": 0, "maximum": _PROBABILITY_MAX_N, "default": None},
+                "numerator": {"type": ["integer", "null"], "default": None},
+                "denominator": {"type": ["integer", "null"], "default": None},
+                "decimal_scale": {"type": ["integer", "null"], "minimum": 0, "maximum": 18, "default": None},
+                "rounding": {"type": ["string", "null"], "enum": [*sorted(_DECIMAL_ROUNDING), None], "default": None},
+            },
+            "required": ["operation"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _EXACT_PROBABILITY_OUTPUT_SCHEMA,
+        "limits": {"max_result_chars": 65536, "max_n": _PROBABILITY_MAX_N, "max_result_bits": _PROBABILITY_MAX_RESULT_BITS},
+    },
+    "structured_validate": {
+        "contract_id": "moe.precision.structured_validate",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "locked_parser_set", "name": "jsonschema-pyyaml-defusedxml-csv"},
+        "evidence_policy": {
+            "redact_input_fields": ["payload", "schema_json"],
+            "replacement": "sha256_and_utf8_bytes",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format_name": {"type": "string", "enum": ["json", "yaml", "xml", "csv"]},
+                "payload": {"type": "string", "maxLength": _STRUCTURED_MAX_PAYLOAD_BYTES},
+                "schema_json": {"type": ["string", "null"], "maxLength": _STRUCTURED_MAX_SCHEMA_BYTES, "default": None},
+                "csv_dialect": {"type": ["string", "null"], "enum": ["comma", "semicolon", "tab", "pipe", None], "default": None},
+            },
+            "required": ["format_name", "payload"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _STRUCTURED_VALIDATE_OUTPUT_SCHEMA,
+        "limits": {
+            "max_result_chars": 32768,
+            "max_payload_bytes": _STRUCTURED_MAX_PAYLOAD_BYTES,
+            "max_schema_bytes": _STRUCTURED_MAX_SCHEMA_BYTES,
+            "max_depth": _STRUCTURED_MAX_DEPTH,
+            "max_nodes": _STRUCTURED_MAX_NODES,
+            "max_csv_rows": _STRUCTURED_MAX_CSV_ROWS,
+            "max_csv_columns": _STRUCTURED_MAX_CSV_COLUMNS,
+        },
+    },
+    "gcd_lcm": {
+        "contract_id": "moe.precision.gcd_lcm",
+        "contract_version": "1.0.0",
+        "determinism": "input_only",
+        "source_policy": {"kind": "python_stdlib", "name": "math"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer", "minimum": -10**18, "maximum": 10**18},
+                "b": {"type": "integer", "minimum": -10**18, "maximum": 10**18},
+                "operation": {
+                    "type": "string",
+                    "enum": ["gcd", "lcm", "both"],
+                    "default": "both",
+                },
+            },
+            "required": ["a", "b"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "integer"},
+                "operation": {"type": "string", "enum": ["gcd", "lcm", "both"]},
+                "gcd": {"type": "integer", "minimum": 0},
+                "lcm": {"type": "integer", "minimum": 0},
+            },
+            "required": ["a", "b", "operation", "gcd", "lcm"],
+            "additionalProperties": False,
+        },
+    },
+    "unit_convert": {
+        "contract_id": "moe.precision.unit_convert",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "python_library", "name": "Pint"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number"},
+                "from_unit": {"type": "string", "minLength": 1, "maxLength": 64},
+                "to_unit": {"type": "string", "minLength": 1, "maxLength": 64},
+            },
+            "required": ["value", "from_unit", "to_unit"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number"},
+                "from_unit": {"type": "string"},
+                "converted_value": {"type": "number"},
+                "to_unit": {"type": "string"},
+                "rendered": {"type": "string"},
+            },
+            "required": ["value", "from_unit", "converted_value", "to_unit", "rendered"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+_STRUCTURED_CONTRACT_POLICIES: Dict[str, Any] = {
+    "normalization_policy": {
+        "apply_schema_defaults": True,
+        "reject_unknown_properties": True,
+    },
+    # A mandatory precision call is immutable after preflight. Transport
+    # retries may repeat the exact same call at a higher layer, but neither
+    # this service nor an LLM may repair or reinterpret its arguments.
+    "retry_policy": {
+        "max_attempts": 1,
+        "argument_mutation": False,
+    },
+    # TASK-43 keeps answer caches bypassed. TASK-45 may introduce a typed,
+    # post-quality cache whose key binds this contract hash and normalized
+    # input; publishing that future policy here would be misleading.
+    "cache_policy": {
+        "mode": "bypass",
+    },
+}
+
+for _contract in _TOOL_CONTRACTS.values():
+    for _policy_name, _policy_value in _STRUCTURED_CONTRACT_POLICIES.items():
+        _contract.setdefault(_policy_name, dict(_policy_value))
+
+
+def _canonical_hash(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _contract_hash(name: str, contract: Dict[str, Any]) -> str:
+    return _canonical_hash(
+        {
+            "tool": name,
+            "contract_id": contract["contract_id"],
+            "contract_version": contract["contract_version"],
+            "determinism": contract["determinism"],
+            "source_policy": contract["source_policy"],
+            "inputSchema": contract["inputSchema"],
+            "outputSchema": contract["outputSchema"],
+            "normalization_policy": contract["normalization_policy"],
+            "retry_policy": contract["retry_policy"],
+            "cache_policy": contract["cache_policy"],
+            "evidence_policy": contract.get("evidence_policy", {}),
+            "limits": contract.get("limits", {"max_result_chars": 65536}),
+        }
+    )
+
+
+def _evidence_input(args: Dict[str, Any], contract: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the contract-defined non-sensitive input projection."""
+    projected = dict(args)
+    policy = contract.get("evidence_policy") or {}
+    for field in policy.get("redact_input_fields") or []:
+        value = projected.get(field)
+        if isinstance(value, str):
+            encoded = value.encode("utf-8")
+            projected[field] = {
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+                "utf8_bytes": len(encoded),
+            }
+    return projected
+
+
+def _runtime_source(
+    name: str,
+    contract: Dict[str, Any],
+    facts: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    policy = contract["source_policy"]
+    version = sys.version.split()[0]
+    if policy.get("name") == "Pint":
+        version = importlib.metadata.version("Pint")
+    elif policy.get("name") == "tzdata":
+        version = _tzdata_version()
+    elif policy.get("name") == "jsonschema-pyyaml-defusedxml-csv":
+        versions = []
+        for package in ("jsonschema", "PyYAML", "defusedxml"):
+            try:
+                versions.append(f"{package}={importlib.metadata.version(package)}")
+            except importlib.metadata.PackageNotFoundError:
+                versions.append(f"{package}=unavailable-host-fallback")
+        version = ";".join(versions) + f";python-csv={sys.version.split()[0]}"
+    return {
+        "kind": policy["kind"],
+        "name": policy["name"],
+        "version": version,
+        "as_of": (facts or {}).get("as_of"),
+    }
+
+
+def _normalize_input(args: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(args)
+    for name, prop in schema.get("properties", {}).items():
+        if name not in normalized and isinstance(prop, dict) and "default" in prop:
+            normalized[name] = prop["default"]
+    return normalized
+
+
+def _schema_error(value: Any, schema: Dict[str, Any]) -> str:
+    try:
+        Draft202012Validator.check_schema(schema)
+        errors = sorted(
+            Draft202012Validator(schema).iter_errors(value),
+            key=lambda item: (
+                tuple(str(part) for part in item.absolute_path),
+                item.message,
+            ),
+        )
+    except SchemaError:
+        return "schema_malformed"
+    if not errors:
+        return ""
+    first = errors[0]
+    path = ".".join(str(part) for part in first.absolute_path) or "value"
+    return f"{path}:{first.validator or 'invalid'}"
+
+
+def _structured_facts(name: str, args: Dict[str, Any], result: str) -> Dict[str, Any]:
+    if name in {
+        "calendar_facts", "time_facts", "timezone_convert",
+        "decimal_finance", "exact_probability", "structured_validate",
+    }:
+        facts = json.loads(result)
+        if not isinstance(facts, dict):
+            raise ValueError(f"{name} did not return an object")
+        return facts
+    if name == "gcd_lcm":
+        a = int(args["a"])
+        b = int(args["b"])
+        gcd_value = math.gcd(abs(a), abs(b))
+        return {
+            "a": a,
+            "b": b,
+            "operation": str(args["operation"]),
+            "gcd": gcd_value,
+            "lcm": abs(a * b) // gcd_value if gcd_value else 0,
+        }
+    if name == "unit_convert":
+        from pint import UnitRegistry
+        value = args["value"]
+        converted = (value * UnitRegistry()(args["from_unit"])).to(args["to_unit"])
+        return {
+            "value": value,
+            "from_unit": args["from_unit"],
+            "converted_value": float(converted.magnitude),
+            "to_unit": args["to_unit"],
+            "rendered": result,
+        }
+    raise ValueError(f"No structured result builder for {name}")
 
 for _tn in _TOOL_DESCRIPTIONS:
     if _tn not in _TOOL_ACCESS_KIND:
@@ -3896,6 +5268,49 @@ _PY_TO_JSON_TYPE: Dict[Any, str] = {
 }
 
 
+def _annotation_schema(annotation: Any, default: Any) -> Dict[str, Any]:
+    """Translate the small set of runtime annotations used by MCP tools."""
+    if annotation in (inspect.Parameter.empty, Any):
+        schema: Dict[str, Any] = {}
+    else:
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        if origin in (list, List):
+            schema = {"type": "array"}
+        elif origin in (dict, Dict):
+            schema = {"type": "object"}
+        elif origin is Literal:
+            values = list(args)
+            json_types = sorted({_PY_TO_JSON_TYPE.get(type(value), "string") for value in values})
+            schema = {
+                "type": json_types[0] if len(json_types) == 1 else json_types,
+                "enum": values,
+            }
+        elif origin is Union:
+            json_types = []
+            for member in args:
+                if member is type(None):
+                    json_types.append("null")
+                else:
+                    member_origin = get_origin(member)
+                    if member_origin in (list, List):
+                        json_types.append("array")
+                    elif member_origin in (dict, Dict):
+                        json_types.append("object")
+                    else:
+                        json_types.append(_PY_TO_JSON_TYPE.get(member, "string"))
+            schema = {"type": list(dict.fromkeys(json_types))}
+        else:
+            schema = {"type": _PY_TO_JSON_TYPE.get(annotation, "string")}
+    if default is None:
+        raw_type = schema.get("type")
+        if isinstance(raw_type, str):
+            schema["type"] = [raw_type, "null"]
+        elif isinstance(raw_type, list) and "null" not in raw_type:
+            schema["type"] = [*raw_type, "null"]
+    return schema
+
+
 def _input_schema(func) -> Dict[str, Any]:
     """Derive a JSON-Schema-compatible inputSchema from a Python function signature.
 
@@ -3910,9 +5325,10 @@ def _input_schema(func) -> Dict[str, Any]:
         for pname, param in sig.parameters.items():
             if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
                 continue
-            ann = param.annotation
-            json_type = _PY_TO_JSON_TYPE.get(ann, "string")
-            prop: Dict[str, Any] = {"type": json_type}
+            prop = _annotation_schema(
+                param.annotation,
+                None if param.default is None else inspect.Parameter.empty,
+            )
             if param.default is not inspect.Parameter.empty:
                 prop["default"] = param.default
             else:
@@ -3920,17 +5336,36 @@ def _input_schema(func) -> Dict[str, Any]:
             props[pname] = prop
     except (ValueError, TypeError):
         pass
-    return {"type": "object", "properties": props, "required": required}
+    return {
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": False,
+    }
 
 
-@rest_app.get("/tools")
-def list_tools():
+def build_tools_catalog() -> Dict[str, Any]:
+    """Build the REST discovery document independently of FastAPI wiring."""
     with _disabled_tools_lock:
         disabled = set(_disabled_tools)
     tools = []
     for name, desc in _TOOL_DESCRIPTIONS.items():
         func = _TOOL_REGISTRY.get(name)
-        schema = _input_schema(func) if func else {"type": "object", "properties": {}}
+        contract = _TOOL_CONTRACTS.get(name)
+        schema = (
+            contract["inputSchema"]
+            if contract
+            else _input_schema(func) if func else {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            }
+        )
+        output_schema = (
+            contract["outputSchema"] if contract else {"type": "string"}
+        )
+        contract_hash = _contract_hash(name, contract) if contract else ""
         tools.append({
             "name":        name,
             "description": desc,
@@ -3939,8 +5374,25 @@ def list_tools():
             "args":        schema["properties"],      # pipeline MCP_TOOL_SCHEMAS compat
             "required_args": schema["required"],      # pipeline pre-call validation
             "access_kind": _TOOL_ACCESS_KIND.get(name, _DEFAULT_ACCESS_KIND),  # telemetry only
+            "outputSchema": output_schema,
+            "contract_id": contract["contract_id"] if contract else f"legacy.{name}",
+            "contract_version": contract["contract_version"] if contract else "0.0.0",
+            "contract_hash": contract_hash,
+            "determinism": contract["determinism"] if contract else "unclassified",
+            "source_policy": contract["source_policy"] if contract else {"kind": "unclassified"},
+            "structured_result": bool(contract),
+            "normalization_policy": contract.get("normalization_policy", {}) if contract else {},
+            "retry_policy": contract.get("retry_policy", {}) if contract else {},
+            "cache_policy": contract.get("cache_policy", {"mode": "legacy"}) if contract else {"mode": "legacy"},
+            "limits": contract.get("limits", {"max_result_chars": 65536}) if contract else {"max_result_chars": 65536},
+            "evidence_policy": contract.get("evidence_policy", {}) if contract else {},
         })
     return {"tools": tools}
+
+
+@rest_app.get("/tools")
+def list_tools():
+    return build_tools_catalog()
 
 
 @rest_app.post("/tools/{name}/toggle")
@@ -3959,25 +5411,104 @@ def toggle_tool(name: str):
     return {"ok": True, "name": name, "enabled": now_enabled}
 
 
-@rest_app.post("/invoke")
-async def invoke_tool(req: InvokeRequest):
+async def execute_tool(req: InvokeRequest) -> Dict[str, Any]:
+    """Execute one REST tool contract independently of FastAPI wiring."""
     if req.tool not in _TOOL_REGISTRY:
-        return {"error": f"Unknown tool: '{req.tool}'. Available: {list(_TOOL_REGISTRY.keys())}"}
+        return {
+            "error": f"Unknown tool: '{req.tool}'. Available: {list(_TOOL_REGISTRY.keys())}",
+            "error_code": "unknown_tool",
+            "tool": req.tool,
+        }
     with _disabled_tools_lock:
         if req.tool in _disabled_tools:
-            return {"error": f"Tool '{req.tool}' is disabled.", "reason": "disabled"}
+            return {
+                "error": f"Tool '{req.tool}' is disabled.",
+                "error_code": "tool_disabled",
+                "reason": "disabled",
+                "tool": req.tool,
+            }
     try:
         import inspect
         func = _TOOL_REGISTRY[req.tool]
+        contract = _TOOL_CONTRACTS.get(req.tool)
+        input_schema = contract["inputSchema"] if contract else _input_schema(func)
+        normalized_args = _normalize_input(req.args, input_schema)
+        input_error = _schema_error(normalized_args, input_schema)
+        if input_error:
+            return {
+                "error": f"Input schema validation failed for '{req.tool}': {input_error}",
+                "error_code": "input_schema_invalid",
+                "tool": req.tool,
+            }
         if inspect.iscoroutinefunction(func):
-            result = await func(**req.args)
+            result = await func(**normalized_args)
         else:
-            result = func(**req.args)
-        return {"result": result, "tool": req.tool}
+            result = func(**normalized_args)
+        max_result_chars = int(
+            (contract or {}).get("limits", {}).get("max_result_chars", 65536)
+        )
+        if len(str(result)) > max_result_chars:
+            return {
+                "error": f"Result for '{req.tool}' exceeds the contract size limit",
+                "error_code": "tool_result_too_large",
+                "tool": req.tool,
+            }
+        response: Dict[str, Any] = {"result": result, "tool": req.tool}
+        if contract:
+            if not isinstance(result, str) or result.casefold().startswith(("error:", "fehler:")):
+                return {
+                    "error": f"Structured tool '{req.tool}' returned an error result",
+                    "error_code": "tool_result_error",
+                    "tool": req.tool,
+                }
+            facts = _structured_facts(req.tool, normalized_args, result)
+            output_error = _schema_error(facts, contract["outputSchema"])
+            if output_error:
+                return {
+                    "error": f"Output schema validation failed for '{req.tool}': {output_error}",
+                    "error_code": "output_schema_invalid",
+                    "tool": req.tool,
+                }
+            contract_hash = _contract_hash(req.tool, contract)
+            evidence_input = _evidence_input(normalized_args, contract)
+            result_hash = _canonical_hash(
+                {
+                    "contract_hash": contract_hash,
+                    "input_normalized": evidence_input,
+                    "facts": facts,
+                }
+            )
+            response["structured_result"] = {
+                "status": "completed",
+                "tool": req.tool,
+                "contract_id": contract["contract_id"],
+                "contract_version": contract["contract_version"],
+                "contract_hash": contract_hash,
+                "input_normalized": evidence_input,
+                "facts": facts,
+                "determinism": contract["determinism"],
+                "source": _runtime_source(req.tool, contract, facts),
+                "warnings": [],
+                "result_hash": result_hash,
+            }
+        return response
     except TypeError as e:
-        return {"error": f"Wrong arguments for '{req.tool}': {e}"}
+        return {
+            "error": f"Wrong arguments for '{req.tool}': {e}",
+            "error_code": "wrong_arguments",
+            "tool": req.tool,
+        }
     except Exception as e:
-        return {"error": f"Error in '{req.tool}': {e}"}
+        return {
+            "error": f"Error in '{req.tool}': {e}",
+            "error_code": "tool_execution_error",
+            "tool": req.tool,
+        }
+
+
+@rest_app.post("/invoke")
+async def invoke_tool(req: InvokeRequest):
+    return await execute_tool(req)
 
 
 # Mount MCP SSE app at /mcp (for Claude Desktop, MCP clients, etc.)

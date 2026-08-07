@@ -1212,46 +1212,6 @@ async def set_api_key_native_num_ctx(key_id: str, user_id: str, num_ctx: int) ->
     return ok
 
 
-# ─── Usage Log ────────────────────────────────────────────────────────────────
-
-async def log_usage(user_id: str, api_key_id: Optional[str], request_id: str,
-                    model: str, moe_mode: str, prompt_tokens: int,
-                    completion_tokens: int, status: str = "ok",
-                    session_id: Optional[str] = None,
-                    latency_ms: Optional[int] = None,
-                    complexity_level: Optional[str] = None,
-                    expert_domains: Optional[str] = None,
-                    cache_hit: bool = False,
-                    agentic_rounds: int = 0,
-                    dynamic_tmpl_id: Optional[str] = None,
-                    trust_score: Optional[float] = None,
-                    trust_verdict: Optional[str] = None,
-                    cynefin_domain: Optional[str] = None,
-                    self_critique_round: int = 0,
-                    cascade_type: Optional[str] = None,
-                    structured_failure_round: int = 0) -> None:
-    async with _get_pool().connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "INSERT INTO usage_log (id,user_id,api_key_id,request_id,model,moe_mode,"
-                "prompt_tokens,completion_tokens,total_tokens,status,requested_at,"
-                "session_id,latency_ms,complexity_level,expert_domains,cache_hit,"
-                "agentic_rounds,dynamic_tmpl_id,"
-                "trust_score,trust_verdict,cynefin_domain,self_critique_round,cascade_type,"
-                "structured_failure_round) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (new_id(), user_id, api_key_id, request_id, model, moe_mode,
-                 prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
-                 status, now_iso(),
-                 session_id, latency_ms, complexity_level, expert_domains, cache_hit,
-                 agentic_rounds, dynamic_tmpl_id,
-                 trust_score, trust_verdict or None, cynefin_domain or None,
-                 self_critique_round, cascade_type or None,
-                 structured_failure_round),
-            )
-
-
 async def update_usage_note(usage_id: str, user_id: str, note: str) -> bool:
     """Sets or clears the note for a usage entry (only if it belongs to the user)."""
     async with _get_pool().connection() as conn:
@@ -1516,6 +1476,34 @@ async def list_all_user_cc_profiles() -> list:
                 "JOIN users u ON ucp.user_id = u.id ORDER BY ucp.created_at DESC"
             )
             return await cur.fetchall()
+
+
+async def admin_update_user_template(tmpl_id: str, patch: dict) -> Optional[dict]:
+    """Admin: aktualisiert name/description/cost_factor/config_json eines User-Templates
+    ohne user_id-Filter.  Nur übergebene Felder werden überschrieben.
+    Gibt das aktualisierte Row-Dict zurück, oder None wenn nicht gefunden."""
+    allowed = {"name", "description", "cost_factor", "config_json"}
+    updates = {k: v for k, v in patch.items() if k in allowed}
+    if not updates:
+        async with _get_pool().connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT * FROM user_expert_templates WHERE id=%s", (tmpl_id,))
+                return await cur.fetchone()
+    if "config_json" in updates and isinstance(updates["config_json"], dict):
+        updates["config_json"] = json.dumps(updates["config_json"], ensure_ascii=False)
+    updates["updated_at"] = now_iso()
+    set_clause = ", ".join(f"{k}=%s" for k in updates)
+    values = list(updates.values()) + [tmpl_id]
+    async with _get_pool().connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"UPDATE user_expert_templates SET {set_clause} WHERE id=%s",
+                values,
+            )
+            if cur.rowcount == 0:
+                return None
+            await cur.execute("SELECT * FROM user_expert_templates WHERE id=%s", (tmpl_id,))
+            return await cur.fetchone()
 
 
 async def set_user_template_active(tmpl_id: str, is_active: bool) -> Optional[dict]:
@@ -2084,25 +2072,6 @@ async def delete_dynamic_template(tmpl_id: str) -> bool:
             return cur.rowcount > 0
 
 
-async def get_admin_template(tmpl_id: str) -> Optional[dict]:
-    """Get a single admin expert template by ID."""
-    async with _pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT id, name, description, config_json, is_active "
-                "FROM admin_expert_templates WHERE id = %s", (tmpl_id,)
-            )
-            row = await cur.fetchone()
-    if not row:
-        return None
-    tmpl = json.loads(row["config_json"])
-    tmpl["id"] = row["id"]
-    tmpl["name"] = row["name"]
-    tmpl["description"] = row["description"]
-    tmpl["is_active"] = row["is_active"]
-    return tmpl
-
-
 async def upsert_admin_template(tmpl: dict) -> dict:
     """Insert or update an admin expert template in the database."""
     tmpl_id = tmpl.get("id", f"tmpl-{secrets.token_hex(4)}")
@@ -2130,18 +2099,6 @@ async def upsert_admin_template(tmpl: dict) -> dict:
 
     tmpl["id"] = tmpl_id
     return tmpl
-
-
-async def delete_admin_template(tmpl_id: str) -> bool:
-    """Delete an admin expert template from the database."""
-    async with _pool.connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "DELETE FROM admin_expert_templates WHERE id = %s", (tmpl_id,)
-            )
-            deleted = cur.rowcount > 0
-        await conn.commit()
-    return deleted
 
 
 async def save_all_admin_templates(templates: list[dict]) -> None:
@@ -2884,4 +2841,3 @@ async def update_dynamic_template_feedback_rating(template_id: str, rating: int)
                 (rating, template_id),
             )
             return cur.rowcount > 0
-

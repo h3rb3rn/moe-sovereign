@@ -3,16 +3,20 @@
 # SLURM job: vLLM teacher server + planner dataset generator on LUMI-G
 #
 # Target model : phi4:14b  (fine-tuning target, not run here — see lumi_sft_phi4.sh)
-# Teacher model: Llama-3.1-405B (primary, 10/10 quality, Q4_K_M ≈ 223 GB / 1 LUMI-G node)
-#                Qwen3-235B-A22B fallback (9/10, 130 GB Q4)
+# Teacher model: Qwen/Qwen2.5-72B-Instruct  (primary, 72B dense, 8-9/10 quality, 144 GB BF16)
+#                Fits on 1 LUMI-G node: TP=8 → 18 GB/GPU, 46 GB KV-cache per GCD.
+#                Llama-3.x models require HF license approval at:
+#                  https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct
+#                  https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct
+#                Fallback: Qwen/Qwen2.5-32B-Instruct (already cached, smaller)
 #
 # Usage:
 #   sbatch lumi_generate_planner_dataset.sh
-#   MODEL=Qwen/Qwen3-235B-A22B-Instruct sbatch lumi_generate_planner_dataset.sh
+#   MODEL=Qwen/Qwen2.5-32B-Instruct sbatch lumi_generate_planner_dataset.sh
 #
-# Estimated runtimes (200K samples, 1 LUMI-G node):
-#   Llama-3.1-405B  : ~20-24h  (≈302 GPU-h)
-#   Qwen3-235B-A22B : ~12-16h  (≈160 GPU-h, MoE = fewer active params)
+# Estimated runtimes (200K samples, 1 LUMI-G node, TP=8):
+#   Qwen2.5-72B : ~6-10h  (≈48-80 GPU-h)
+#   Qwen2.5-32B : ~3-5h   (≈24-40 GPU-h, already cached)
 
 #SBATCH --job-name=planner_dataset
 #SBATCH --account=project_465003058
@@ -22,26 +26,27 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=56
 #SBATCH --mem=480G
-#SBATCH --time=26:00:00
+#SBATCH --time=20:00:00
 #SBATCH --output=/scratch/project_465003058/hornphil/logs/planner_dataset_%j.out
 #SBATCH --error=/scratch/project_465003058/hornphil/logs/planner_dataset_%j.err
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-# Primary: Llama-3.1-405B (10/10 quality, Q4_K_M ≈ 223 GB, TP=8 full node)
-# Fallback: MODEL=Qwen/Qwen3-235B-A22B-Instruct sbatch ...
+# Primary: Qwen2.5-72B (72B dense, accessible, 144 GB BF16, TP=8 on 1 LUMI-G node)
+# Fallback: MODEL=Qwen/Qwen2.5-32B-Instruct sbatch ...  (already cached)
 MODEL="${MODEL:-meta-llama/Meta-Llama-3.1-405B-Instruct}"
 TARGET="${TARGET:-200000}"
 CONCURRENCY="${CONCURRENCY:-48}"
+HF_CACHE="/scratch/project_465003058/hornphil/hf_cache"
 OUTPUT_DIR="/scratch/project_465003058/hornphil/planner_dataset_${SLURM_JOB_ID}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="/scratch/project_465003058/hornphil/scripts"
 VLLM_PORT=8080
 VLLM_API="http://localhost:${VLLM_PORT}/v1"
 
 # Model → HF ID map (allows short aliases when overriding MODEL)
 declare -A MODEL_HF_MAP=(
-    ["llama405b"]="meta-llama/Meta-Llama-3.1-405B-Instruct"
-    ["qwen235b"]="Qwen/Qwen3-235B-A22B-Instruct"
-    ["qwen3.5:122b"]="Qwen/Qwen3.5-72B-Instruct"
+    ["llama33-70b"]="meta-llama/Llama-3.3-70B-Instruct"
+    ["qwen72b"]="Qwen/Qwen2.5-72B-Instruct"
+    ["qwen32b"]="Qwen/Qwen2.5-32B-Instruct"
 )
 HF_MODEL="${MODEL_HF_MAP[$MODEL]:-$MODEL}"
 
@@ -65,27 +70,40 @@ module load rocm/5.7.1
 # ── Container / Python environment ───────────────────────────────────────────
 # Assumes the lumi-multitorch container is available with vLLM installed.
 # If not: pip install vllm httpx in a virtual environment first.
-CONTAINER="/appl/local/containers/sif-images/lumi-pytorch-rocm-6.2.4-python-3.12-pytorch-v2.5.1-dockerhash-58438f9e.sif"
+CONTAINER="/scratch/project_465003058/hornphil/lumi-multitorch-latest.sif"
 
 if [ ! -f "$CONTAINER" ]; then
-    echo "Container not found: $CONTAINER — using system Python"
-    PYTHON="python3"
-    VLLM_CMD="python3 -m vllm.entrypoints.openai.api_server"
+    echo "ERROR: Container not found: $CONTAINER"
+    echo "Expected lumi-multitorch-latest.sif in hornphil scratch directory."
+    exit 1
+fi
+
+HF_TOKEN="$(cat ~/.cache/huggingface/token 2>/dev/null)"
+SING_OPTS="--bind /scratch/project_465003058:/scratch/project_465003058 --env HF_HOME=$HF_CACHE --env HUGGING_FACE_HUB_TOKEN=$HF_TOKEN"
+
+PYTHON="singularity exec $SING_OPTS $CONTAINER python3"
+VLLM_CMD="singularity exec $SING_OPTS $CONTAINER python3 -m vllm.entrypoints.openai.api_server"
+
+# Resolve local HF snapshot path to avoid re-downloading gated models
+MODEL_DIR="$HF_CACHE/models--$(echo $HF_MODEL | tr '/' '--')"
+SNAP_PATH="$(ls -d $MODEL_DIR/snapshots/*/  2>/dev/null | head -1)"
+if [ -n "$SNAP_PATH" ] && [ -d "$SNAP_PATH" ]; then
+    VLLM_MODEL="${SNAP_PATH%/}"
+    echo "Using local snapshot: $VLLM_MODEL"
 else
-    PYTHON="singularity exec --bind /scratch,/flash,/projappl $CONTAINER python3"
-    VLLM_CMD="singularity exec --bind /scratch,/flash,/projappl $CONTAINER python3 -m vllm.entrypoints.openai.api_server"
+    VLLM_MODEL="$HF_MODEL"
+    echo "No local snapshot found, will download: $HF_MODEL"
 fi
 
 # ── Start vLLM server ─────────────────────────────────────────────────────────
-echo "[$(date +%H:%M:%S)] Starting vLLM server with $HF_MODEL ..."
+echo "[$(date +%H:%M:%S)] Starting vLLM server with $VLLM_MODEL ..."
 
-# Determine tensor parallelism from model size
-# 405B dense and large MoE models → TP=8 (full LUMI-G node, 512 GB HBM2e)
-# Mid-size MoE (235B, 30B active) → TP=8 recommended for throughput
-# Smaller models → TP=4
-if echo "$HF_MODEL" | grep -q "405B\|235B\|72B\|122B\|110B"; then
+# Tensor parallelism:
+# ≥70B dense models → TP=8 (uses all 8 GCDs for max throughput & KV-cache per GCD)
+# MoE or smaller models → TP=4
+if echo "$HF_MODEL" | grep -q "70B\|72B\|405B\|235B\|122B\|110B"; then
     TP=8
-elif echo "$HF_MODEL" | grep -q "35B\|30B"; then
+elif echo "$HF_MODEL" | grep -q "35B\|30B\|32B"; then
     TP=4
 else
     TP=2
@@ -93,7 +111,7 @@ fi
 echo "Tensor parallelism: TP=$TP"
 
 $VLLM_CMD \
-    --model "$HF_MODEL" \
+    --model "$VLLM_MODEL" \
     --tensor-parallel-size $TP \
     --port $VLLM_PORT \
     --host 0.0.0.0 \

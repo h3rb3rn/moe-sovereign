@@ -773,3 +773,202 @@ Notes: Damit sind alle in der Review vom 20:24Z-Eintrag genannten
 Widersprüche aufgelöst bis auf den fehlenden agy-Status-Log-Eintrag
 (liegt beim Ersteller). Offen bleibt weiterhin die Skill-Freigabe
 (TASK-32) durch den Betreiber.
+
+---
+
+## 2026-08-07T00:00:00Z — TASK-52 — done (spec only, no code)
+
+Plan / progress:
+- Nutzer wollte lokale Bild-/Audio-Generierung (OpenAI-API-Parität
+  `/v1/images/generations`, `/v1/audio/speech`) auf N04-RGTX evaluieren und
+  als Lastenheft-Task spezifizieren.
+- Hardware-Recherche (WebSearch, nicht aus Trainingsstand geraten):
+  GTX 1060 (Pascal, CC 6.1) von aktuellem PyTorch/cuDNN nicht mehr
+  unterstützt — gleiches Problem wie N11-M10, kein VRAM-Workaround möglich.
+  RTX 2060 (Turing, CC 7.5) liegt exakt auf der aktuellen PyTorch-Untergrenze.
+  FLUX-fp8 braucht nativ Ada/Hopper-Tensor-Cores (weder RTX 2060 noch RTX
+  3060 vorhanden) — läuft hier nur über Weight-only-Quantisierung, langsamer
+  als vielfach zitierte Ada-Benchmarks.
+- Wichtiger Infra-Fund: N04-RTX/N04-RGTX/N04-TESLA sind derselbe physische
+  Host (192.168.155.224, nur Ollama-Port unterschiedlich) — GPU-Pinning für
+  neue Container muss vor Compose-Änderungen per `nvidia-smi -L` verifiziert
+  werden, sonst Risiko einer Kollision mit der laufenden N04-RTX-Instanz.
+- TASK-52 in AGENT_LASTENHEFT.md angelegt: MCP-Tool-Ansatz
+  (`generate_image`/`generate_speech` in mcp-precision, neue
+  `determinism: generative_model`-Klasse, explizit vom
+  Precision-Evidence-Bypass ausgeschlossen), Template-Override-Felder analog
+  `guardrail_*`, zwei neue Backend-Container (comfyui, kokoro-tts) GPU-gepinnt
+  auf die verifizierte RTX-2060-Device-ID. Content-Moderation für generierte
+  Bilder (Guard-Node deckt nur Text ab) und Response-Envelope-Verifikation
+  explizit als offene Entscheidungen markiert, nicht stillschweigend
+  angenommen.
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log meldet TASK-52 oder Arbeit an
+  mcp_server/server.py, services/routing.py, admin_ui/app.py, docker-compose.yml
+  im relevanten Zeitraum als in_progress.
+- TASK-51 (Codex CLI, 2026-08-07, completed) betrifft services/deliberation/,
+  routing.py-Template-Resolution, dynamic_router.py, graph/expert.py — keine
+  Dateiüberschneidung mit dem für TASK-52 vorgesehenen Scope wurde als
+  in_progress vorgefunden; dennoch bei Implementierung erneut prüfen, da
+  services/routing.py von beiden Tasks berührt wird.
+
+Notes: Nur Planungsdokument geschrieben (AGENT_LASTENHEFT.md TASK-52), keine
+Code-, Compose- oder Config-Änderung. Owner bleibt Claude Code, Status
+`pending` bis der Nutzer Implementierung beauftragt. Kein `nvidia-smi`-Check
+auf 192.168.155.224 durchgeführt (kein Shell-Zugriff auf diesen Host in
+dieser Session) — als Instruktion 1 im Task explizit als Vorbedingung vor
+jeder Compose-Änderung vermerkt, nicht angenommen.
+
+---
+
+## 2026-08-07T21:20:00Z — TASK-53 — starting
+
+Plan / progress:
+- User meldete unerwünschte native OpenRouter-Aufrufe an Frontier-Modelle
+  (gpt-5.4-pro, gpt-5.5-pro, claude-opus-4.7-fast, ...) mit dem echten
+  System-Key während des TASK-51 "temporary deliberation validation rerun"
+  (07.08.2026, 20:55 Uhr). Root-Cause-Analyse (read-only, Container-Logs +
+  Code) ergab einen tieferliegenden, vorbestehenden Compliance-Gap, nicht nur
+  einen TASK-51-spezifischen Bug:
+  1. `local_only_routing` (API-Key-Flag, korrekt aus `user_ctx` gelesen) wird
+     in `services/pipeline/chat.py` nur transient für den
+     `get_dynamic_template(...)`-Aufruf berechnet und **nie** auf
+     `AgentState` geschrieben — `graph/expert.py:916`
+     (`state_.get("local_only_routing")`) liest ein Feld, das in
+     `pipeline/state.py` nicht deklariert ist und von keinem der drei
+     Graph-Invoke-Entry-Points (`main.py::stream_response`,
+     `services/pipeline/chat.py`, `services/pipeline/anthropic.py::
+     _anthropic_moe_handler`) je gesetzt wird — immer `False`.
+  2. `services/sovereignty.py::assert_egress_allowed()` (Egress-Guard,
+     fail-closed) ist im gesamten Graph-Pipeline-Pfad nirgends verdrahtet —
+     nur `_anthropic_tool_handler`/`_anthropic_reasoning_handler`
+     (`session.tool_url`, ein einzelner fixer Endpoint) sind über den
+     bestehenden Check in `anthropic_messages` (Zeile ~3153) geschützt. Der
+     volle Planner/Experten/Judge/Debatte-Graph (alle drei Entry-Points) hat
+     keinen einzigen Egress-Check vor einem ausgehenden LLM-Call.
+  3. `graph/expert.py::run_moderated_request()` (TASK-51,
+     Moderated-Debate-Panel) und `run_task()`'s statischer
+     Single-Expert-Pfad wählen Kandidaten direkt aus
+     `effective_experts`/`EXPERTS` ohne jede local_only/is_local-Filterung
+     (im Unterschied zu `services/dynamic_router.py::
+     _score_and_allocate_model`'s "Compliance Gate", die nur für die
+     "dynamic"-Kategorie über `expert_builder.py` läuft).
+- Fix-Plan (kein Pflaster an der TASK-51-Stelle, sondern die fehlende
+  End-to-End-Durchleitung + der fehlende fail-closed-Egress-Check):
+  1. `local_only_routing: bool` neu in `AgentState` (`pipeline/state.py`)
+     deklarieren.
+  2. `services/sovereignty.py::assert_egress_allowed` von
+     `(url, user_ctx: dict)` auf `(url, local_only: bool)` entkoppeln.
+  3. In allen drei Graph-Invoke-Entry-Points `local_only` unbedingt (nicht
+     nur im dynamic-router-Zweig) aus Permission-Flag > Key-Flag > globalem
+     Env berechnen und in den State schreiben.
+  4. Egress-Guard an den tatsächlichen Dispatch-Punkten verdrahten:
+     `graph/expert.py::run_single()` (deckt Single-Expert- UND
+     Debatte-Turn-Pfad ab, da `run_moderated_request` intern `run_single`
+     aufruft) sowie `services/inference.py::_invoke_judge_with_retry`
+     (Moderator + regulärer Judge) und das Planner-Äquivalent.
+  5. Zusätzlich defense-in-depth: local_only/is_local-Filter auf
+     `run_task`'s und `run_moderated_request`'s Kandidatenlisten, damit
+     lokal_only-Requests gar nicht erst einen zum Scheitern verurteilten
+     Cloud-Kandidaten auswählen.
+  6. Tests ergänzen, volle Regression, Container neu bauen/recreaten, live
+     mit einem local_only_routing=1-Request gegen eine bekannte
+     Cloud-Kategorie verifizieren (Erwartung: EgressDenied/403, kein
+     ausgehender Call).
+- TASK-53 in `AGENT_LASTENHEFT.md` wird vor der ersten Code-Änderung
+  ergänzt.
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log zeigt `in_progress` auf
+  `graph/expert.py`, `services/inference.py`, `services/sovereignty.py`,
+  `services/pipeline/chat.py`, `services/pipeline/anthropic.py`, `main.py`
+  oder `pipeline/state.py`.
+- TASK-51 (Codex CLI) ist `done`; keine Dateiüberschneidung als aktive
+  Lease vorgefunden.
+- Dirty Worktree (viele vorbestehende, unrelated Änderungen) wird
+  unangetastet erhalten; nur die oben genannten Dateien werden bearbeitet.
+
+---
+
+## 2026-08-07T21:45:00Z — TASK-53 — done
+
+Plan / progress:
+- Alle sechs geplanten Fix-Schritte umgesetzt: `AgentState.local_only_routing`
+  deklariert; `services/sovereignty.py::assert_egress_allowed` von
+  `(url, user_ctx)` auf `(url, local_only: bool)` entkoppelt plus neue
+  `resolve_local_only(user_perms, user_ctx)`-Hilfsfunktion (single source of
+  truth für Permission-Flag > Key-Flag > globalen Env); `local_only`
+  unbedingt (nicht mehr nur im dynamic-router-Zweig) in
+  `services/pipeline/chat.py` berechnet und in **beide** dortigen
+  Graph-Entry-Points geschrieben; `main.py::stream_response()` um
+  `local_only`-Parameter erweitert; `services/pipeline/anthropic.py::
+  _anthropic_moe_handler` ebenso; zusätzlich `services/pipeline/ollama.py`
+  und `services/pipeline/responses.py` (beide rufen `stream_response()`
+  direkt auf — beim ersten Scan übersehen, beim systematischen Sichten aller
+  `stream_response(`-Aufrufer gefunden und nachgezogen).
+- Egress-Guard an den echten Dispatch-Punkten verdrahtet:
+  `graph/expert.py::run_single()` (deckt Single-Expert- und
+  Debatte-Turn-Pfad ab), `services/inference.py::_invoke_judge_with_retry`
+  (Judge + Moderator) und `_invoke_planner_with_retry`.
+- Defense-in-depth-Filter in `run_task`/`run_moderated_request` ergänzt —
+  dabei einen eigenen Bug beim ersten Entwurf gefunden und korrigiert:
+  `model_cfg["endpoint"]` ist ein symbolischer Node-Name (z.B.
+  "openrouterai"), keine URL; `_is_local_url()` behandelt jeden punktfreien,
+  unaufgelösten String als lokal. Ungeprüft hätte der Filter genau die
+  TASK-51-Vorfallskonfiguration (`endpoint="openrouterai"`) fälschlich als
+  lokal durchgelassen. Fix: erst durch `URL_MAP` auflösen, dann prüfen —
+  exakt wie `run_single()` es beim tatsächlichen Dispatch tut.
+- 13 neue Tests (`tests/test_sovereignty.py`, 11 Unit-Tests für Guard/
+  Resolve-Logik; zwei neue Dispatch-Level-Tests in
+  `tests/test_jmoe_debate_judge.py` über den echten `expert_worker()`-
+  Entry-Point). Volle Regression: 952 passed (vorher 938). `compileall`,
+  `git diff --check`, `scripts/check_governance.py --check` (27/9) grün.
+- `langgraph-app` gebaut/recreatet, `/ready` vollständig positiv.
+- **Live-Verifikation deckte einen vierten, von keinem Unit-Test erreichbaren
+  Dispatch-Pfad auf:** derselbe Live-Request
+  (`model=openai/gpt-4o-mini@openrouterai` mit dem lokal_only-Key
+  `moe-sk-0261cddfe...`, der bereits als "Benchmark"-Key mit
+  `local_only_routing=true` in `api_keys` existiert — kein Credential
+  angelegt/verändert) erreichte nach dem ersten Build tatsächlich
+  OpenRouter und lieferte eine echte Antwort zurück. Root Cause:
+  `services/pipeline/chat.py`'s `_native_endpoint`-"native model@node"-
+  Passthrough dispatcht per rohem `httpx`/`_stream_native_llm()` komplett
+  außerhalb von `app_graph` — keiner der Graph-seitigen Fixes deckt das ab.
+  Nachträglich in `chat.py` direkt am Anfang von `if _native_endpoint:`
+  gefixt (ein Guard für Streaming- und Non-Streaming-Zweig), erneut
+  gebaut/recreatet.
+- Live-Beweis nach dem zweiten Build: derselbe Request → sauberer 403
+  (`local_only_violation`), Container-Log zeigt `sovereignty: BLOCKED
+  egress to openrouter.ai (local_only key)`, kein Request an OpenRouter mehr
+  im Log. Regressionsgegenprobe mit demselben Key: ein voller
+  `model=moe-auto`-Request (Planner→Experte→Judge, echter Graph-Pfad) lief
+  normal durch (133s, kalter qwen3.6:35b-Load), Log zeigt ausschließlich
+  Traffic zu `192.168.155.224:11434` (lokaler N04-RTX) — lokal_only
+  blockiert Cloud-Egress, ohne legitimes lokales Routing zu beeinträchtigen.
+- `AGENT_LASTENHEFT.md` TASK-53 auf `done` mit vollständigen Resolution-
+  Notes (Fix-Liste inkl. des nachträglich gefundenen vierten Pfads,
+  Live-Evidenz) aktualisiert.
+
+Pre-conditions verified:
+- `langgraph-orchestrator` beide Male healthy nach Recreate, `/ready`
+  vollständig positiv.
+- Kein Commit/Push/PR/Publish. Kein Credential angelegt, geändert oder
+  widerrufen — ausschließlich ein bereits vorhandener, für Tests
+  vorgesehener Key read-only zur Live-Verifikation verwendet (siehe
+  Memory `test-api-key-horndev`).
+- Vorbestehender Dirty Worktree unangetastet; nur die für TASK-53
+  vorgesehenen Dateien plus `services/pipeline/chat.py` (nachträglich,
+  vierter Fund) geändert.
+
+Notes:
+- Bewusst außerhalb des Scopes belassen: `services/inference.py::
+  ainvoke_judge_llm()` (systemweiter, admin-konfigurierter
+  Hintergrund-Judge für OpenWebUI-interne Requests/Self-Rating —
+  request-unabhängig, kein `state`-Parameter, per Design derselbe globale
+  `JUDGE_URL` wie der reguläre Judge, welcher in diesem Deployment lokal
+  konfiguriert ist) und der lokale `_FALLBACK_NODE`-Pfad in
+  `_invoke_llm_with_fallback` (laut `config.py`-Kommentar explizit "falls
+  back to a configured **local** node" — invariant, nicht request-abhängig
+  konfigurierbar). Beide als dokumentierte, bewusste Scope-Grenzen
+  festgehalten, nicht übersehen.

@@ -23,7 +23,7 @@ moe-infra/
 ├── context_budget.py                      Per-model context-window estimation
 │
 ├── routes/                                FastAPI APIRouters (one per concern)
-│   ├── health.py             /health, /metrics
+│   ├── health.py             /health, /ready, /metrics
 │   ├── watchdog.py           /api/watchdog/*, /api/starfleet/features
 │   ├── mission_context.py    /api/mission-context
 │   ├── graph.py              /graph/*
@@ -58,7 +58,8 @@ moe-infra/
     ├── planner.py            planner_node + plan sanitization + topological levels
     ├── expert.py             expert_worker (parallel expert execution)
     ├── research.py           research_node + research_fallback + domain extraction
-    └── synthesis.py          merger_node, thinking_node, resolve_conflicts_node, critic_node
+    ├── synthesis.py          merger, thinking, conflict resolution, critic
+    └── quality_gate.py       Trust enforcement + HITL/quality decision
 ```
 
 The split was completed in 14 phases — `main.py` shrank from 11,190 → ~1,500 lines (−86 %) without a single behavioural change. Every phase ended with all 195 tests green.
@@ -69,7 +70,10 @@ The split was completed in 14 phases — `main.py` shrank from 11,190 → ~1,500
 
 ```mermaid
 flowchart TD
-    IN([Client Request]) --> CACHE
+    IN([Client Request]) --> GUARD{guard\noptional Llama Guard}
+    GUARD -->|safe / disabled / provider error| CACHE
+    GUARD -->|unsafe| REFUSE[fixed refusal\nno expert or judge call]
+    REFUSE --> MERGE
 
     CACHE{cache_lookup\nChromaDB semantic\nhit < 0.15}
     CACHE -->|HIT ⚡| MERGE
@@ -83,21 +87,30 @@ flowchart TD
         W[workers\nTier 1 + Tier 2\nexpert models]
         R[research\nSearXNG\nweb search]
         M[math\nSymPy\ncalculation]
-        MCP[mcp\nPrecision Tools\n20 deterministic tools]
+        MCP[mcp\nPrecision Tools\ndynamic catalogue]
         GR[graph_rag\nNeo4j\nValkey cache TTL 1h]
     end
 
     PAR --> RF[research_fallback\nconditional\nweb fallback]
-    RF --> THINK[thinking\nchain-of-thought\nreasoning trace]
-    THINK --> MERGE
+    RF --> THINK[thinking\nbounded reasoning trace]
+    THINK --> REVIEW[strategy_review\noptional review]
+    REVIEW --> MERGE
 
     MERGE{merger\nJudge LLM\nor Fast-Path ⚡}
     MERGE -->|single hoch expert\nno extra context| FP[⚡ Fast-Path\ndirect return]
     MERGE -->|ensemble / multi| JUDGE[Judge LLM\nsynthesis]
 
-    JUDGE --> CRIT[critic\npost-validation\nself-evaluation]
-    FP --> CRIT
-    CRIT --> OUT([Streaming Response])
+    JUDGE --> DECIDE{replan,\nself-critique\nor validate?}
+    FP --> DECIDE
+    DECIDE -->|replan| PLAN
+    DECIDE -->|self-critique| SELF[self_critique]
+    SELF --> MERGE
+    DECIDE -->|validate| CONFLICT[resolve_conflicts]
+    CONFLICT --> CRIT[critic\npost-validation]
+    CRIT --> QG{quality_gate\nTrust + HITL}
+    QG -->|allow| OUT([Streaming Response])
+    QG -->|review required| HOLD([HTTP 202 / gated SSE])
+    QG -->|block| BLOCK([HTTP 422 / blocked SSE])
 
     style CACHE fill:#1e3a5f,color:#fff
     style MERGE fill:#1e3a5f,color:#fff
@@ -110,17 +123,30 @@ flowchart TD
 
 | Node | Function | Key Logic |
 |---|---|---|
+| `guard` | Optional safety pre-filter | Runs before cache access, records an AI-I/O audit entry and short-circuits unsafe input to a fixed refusal; provider failures are visible in the audit and fail open |
 | `cache_lookup` | ChromaDB semantic similarity | distance < 0.15 → hard hit; 0.15–0.50 → soft/few-shot examples |
 | `planner` | Task decomposition (phi4:14b) | Produces `[{task, category, search_query?, mcp_tool?}]`; Valkey plan cache TTL=30 min |
 | `workers` | Parallel expert execution | Two-tier routing; T1 (≤20B) first, T2 (>20B) only if T1 confidence < threshold |
 | `research` | SearXNG web search | Single or multi-query deep search; always runs if `research` category in plan |
 | `math` | SymPy calculation | Runs only if `math` category in plan AND no `precision_tools` task |
-| `mcp` | MCP Precision Tools | 20 deterministic tools via HTTP; runs if `precision_tools` in plan |
+| `mcp` | MCP Precision Tools | Uses the enabled runtime catalogue from `GET /tools`; runs if `precision_tools` is in the plan |
 | `graph_rag` | Neo4j knowledge graph | Entity + relation context; Valkey cache TTL=1h |
 | `research_fallback` | Conditional extra search | Triggers if merger needs more context |
 | `thinking` | Chain-of-thought reasoning | Generates `reasoning_trace`; activated by `force_think` modes |
+| `strategy_review` | Optional plan/result review | Pass-through unless strategy review is enabled |
 | `merger` | Response synthesis (Judge LLM) | Fast-path bypasses Judge for single high-confidence experts |
-| `critic` | Post-generation validation | Async self-evaluation; flags low-quality cache entries |
+| `self_critique` | Bounded correction loop | Sends declared answer gaps back to the merger within the configured retry limit |
+| `resolve_conflicts` | Paraconsistent conflict handling | Resolves or surfaces incompatible expert claims before validation |
+| `critic` | Post-generation validation | Runs self-evaluation and records validation signals |
+| `quality_gate` | Final enforcement | Applies Trust score, boundary/structured-output failures and owner-bound HITL; a block cannot produce a normal answer |
+
+The global guard is enabled only when `GUARD_MODEL` and `GUARD_ENDPOINT` are
+configured; an expert template may override its model, endpoint and policy
+context. Its provider call shares the planner/expert/judge AI-I/O audit
+lifecycle, including an explicit `error` record when the request-wide timeout
+cancels the call. The current policy is deliberately fail-open for guard
+provider failures, so readiness and audit telemetry must be monitored rather
+than interpreting a configured guard as a hard availability guarantee.
 
 ---
 
@@ -647,27 +673,15 @@ Beyond the algebraic hierarchy, the following classical results are used:
 
 ---
 
-### 1 — Intuitionistic Logic — `ConstructiveProof[T]`
+### 1 — Intuitionistic verification (research status)
 
 **Basis:** De Vries (2007), §3 — Heyting algebras.  
-**Location:** `pipeline/logic_types.py`
-
-A formula ϕ is valid in intuitionistic logic only when an explicit *proof
-object* exists; the default truth value without a proof is ⊥ (the bottom
-element of the Heyting lattice). The generic Pydantic model
-`ConstructiveProof[T]` enforces this on every LLM output:
-
-```python
-class ConstructiveProof(BaseModel, Generic[T]):
-    content:      T
-    is_proven:    bool = False        # ⊥ by default — LLM output is unproven
-    proof_method: Literal["unverified", "sandbox_exec", "unit_test", "static_analysis"]
-```
-
-`is_proven` may only be set to `True` by an executor node performing a
-constructive verification (sandbox run, test suite pass). LLM assertion alone
-is never sufficient — this mirrors the intuitionistic rejection of the law of
-excluded middle.
+An earlier `ConstructiveProof[T]` data wrapper represented this idea but had no
+executor node and was never consumed at a decision boundary. It was removed in
+TASK-36 so a passive type cannot be mistaken for an active verification
+guarantee. Constructive executor verification remains research/planned work;
+the production guarantees currently come from the explicitly wired quality,
+trust, boundary and tool-validation gates described below.
 
 ---
 
@@ -1157,7 +1171,6 @@ disabling and re-enabling the toggle.
 
 | Component | Logic / Theory | Pub. basis | Status |
 |---|---|---|---|
-| `ConstructiveProof[T]` | Intuitionistic / Heyting algebra | De Vries 2007, §3 | ✅ Active |
 | `conflict_registry` (LLM experts) | Paraconsistent | De Vries 2007, §2 | ✅ Active |
 | `resolve_conflicts_node` (Strategy A+B) | Paraconsistent | De Vries 2007, §2 | ✅ Active |
 | `moe:graph_conflict_log` (Neo4j) | Paraconsistent | De Vries 2007, §2 | ✅ Active |
@@ -1173,7 +1186,7 @@ disabling and re-enabling the toggle.
 | `looks_like_premature_stop` + DB-backed patterns | Protocol-violation detection | — (pragmatic heuristic) | ✅ Active |
 | `record_and_classify_tool_ending` + self-hosted judge | Human-in-the-loop escalation | — (pragmatic heuristic) | ✅ Active |
 | `_build_genesis_curator_template` | Ontology curator bootstrap | — (pragmatic heuristic) | ✅ Active |
-| `ConstructiveProof` executor node | Intuitionistic | De Vries 2007, §3 | ⏳ Planned |
+| Constructive executor verification | Intuitionistic | De Vries 2007, §3 | 🔬 Research / not deployed |
 
 ---
 

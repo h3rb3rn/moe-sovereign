@@ -110,11 +110,6 @@ _NODE_ACTIVE_PREFIX = "moe:healer:active:"   # int: tasks currently running on n
 _NODE_RUNS_PREFIX   = "moe:healer:runs:"     # int: total successful completions per node
 _NODE_ACTIVE_TTL    = 3600                   # safety expiry so crashes don't freeze the system
 
-# Legacy EWMA timing (kept for observability, not used for slot decisions anymore)
-_TIMING_KEY_PREFIX = "moe:healer_timing:"
-_TIMING_EWMA_ALPHA  = 0.3
-_TIMING_FALLBACK_S  = 120.0
-
 # Back-off between iterations when no tasks succeeded in the previous batch.
 _BACKOFF_ON_ALL_FAIL_S = 30
 
@@ -298,38 +293,6 @@ async def _record_node_success(redis_cli, node_name: str) -> None:
         pass
 
 
-# ─── Legacy EWMA timing (observability only) ─────────────────────────────────
-
-async def _record_timing(redis_cli, template: str, duration_s: float) -> None:
-    """Update EWMA of successful request duration for a template in Redis."""
-    if redis_cli is None:
-        return
-    key = _TIMING_KEY_PREFIX + template
-    try:
-        raw = await redis_cli.get(key)
-        if raw is None:
-            new_avg = duration_s
-        else:
-            old_avg = float(raw)
-            new_avg = _TIMING_EWMA_ALPHA * duration_s + (1 - _TIMING_EWMA_ALPHA) * old_avg
-        await redis_cli.set(key, f"{new_avg:.2f}", ex=86400)
-    except Exception:
-        pass
-
-
-async def _get_avg_duration(redis_cli, template: str) -> float:
-    """Return the stored EWMA duration for a template, or the fallback."""
-    if redis_cli is None:
-        return _TIMING_FALLBACK_S
-    try:
-        raw = await redis_cli.get(_TIMING_KEY_PREFIX + template)
-        if raw is not None:
-            return float(raw)
-    except Exception:
-        pass
-    return _TIMING_FALLBACK_S
-
-
 # ─── Gap queue (atomic claim via ZPOPMAX) ─────────────────────────────────────
 
 async def _pop_gaps(redis_cli, count: int) -> list[tuple[str, float]]:
@@ -463,12 +426,8 @@ def parse_entity(content: str) -> Optional[dict]:
 
 async def classify_via_template(
     client: httpx.AsyncClient, template: str, term: str, context: str,
-    redis_cli=None,
 ) -> Optional[dict]:
-    """Send the term through the given MoE template and parse the result.
-
-    Records successful response duration in Redis for EWMA observability.
-    """
+    """Send the term through the given MoE template and parse the result."""
     t0 = time.time()
     ctx_section = context if context else ""
     body = {
@@ -503,7 +462,6 @@ async def classify_via_template(
             print(f"  [{template[-10:]}] {marker} '{term}' → "
                   f"{entity.get('entity_type','?')} (conf={conf:.2f}) in {dt:.1f}s",
                   flush=True)
-            await _record_timing(redis_cli, template, dt)
             return entity
         print(f"  [{template[-10:]}] ✗ '{term}': could not parse JSON in {dt:.1f}s",
               flush=True)
@@ -594,7 +552,7 @@ async def process_gap(
     """
     node_name = _node_name_from_template(template)
     ctx = await fetch_graph_context(driver, term)
-    entity = await classify_via_template(client, template, term, ctx, redis_cli=redis_cli)
+    entity = await classify_via_template(client, template, term, ctx)
 
     resolved = False
     if entity:

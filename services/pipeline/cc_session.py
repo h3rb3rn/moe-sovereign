@@ -26,7 +26,12 @@ from config import (
     AGENT_INGEST_ENABLED,
 )
 from services.templates import _read_cc_profiles
-from services.routing import _resolve_user_experts, _resolve_template_prompts, _server_info
+from services.routing import (
+    _resolve_template_prompts,
+    _resolve_template_selection,
+    _resolve_user_experts,
+    _server_info,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +97,11 @@ class CCSession:
     profile_not_found: bool = False
 
 
-def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
+def _resolve_cc_session(
+    user_ctx: dict,
+    profile_ids: list,
+    requested_model: str = "",
+) -> CCSession:
     """Build a CCSession from user context and assigned CC-profile IDs.
 
     Consolidates the 3-phase resolution previously scattered across
@@ -238,9 +247,25 @@ def _resolve_cc_session(user_ctx: dict, profile_ids: list) -> CCSession:
         tool_timeout = int(profile["tool_timeout"])
 
     # ── Phase 5: Template resolution — exactly once ───────────────────────────
-    # Determine the template to use: CC-profile override takes precedence over
-    # the user's own template assignment.
-    cc_tmpl_id = (profile.get("expert_template_id") or None) if profile else None
+    # An explicitly requested, authorized expert-template model has the same
+    # meaning on /v1/messages as on the OpenAI facades. Claude aliases and
+    # unknown model IDs do not resolve as templates and therefore retain the
+    # established CC-profile/default selection behavior.
+    requested_tmpl_id = None
+    if requested_model:
+        requested_selection = _resolve_template_selection(
+            permissions_json,
+            override_tmpl_id=requested_model,
+            user_templates_json=user_templates_json,
+            admin_override=False,
+        )
+        if requested_selection.get("authorized"):
+            requested_tmpl_id = requested_selection.get("id")
+
+    # Explicit API model > CC-profile override > user's assigned default.
+    cc_tmpl_id = requested_tmpl_id or (
+        (profile.get("expert_template_id") or None) if profile else None
+    )
 
     if cc_tmpl_id:
         experts = _resolve_user_experts(

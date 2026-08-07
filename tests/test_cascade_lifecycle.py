@@ -4,7 +4,8 @@ import pytest
 from unittest.mock import MagicMock, patch
 from services.cascade import (
     CascadeEvent, CascadeType, classify_gap,
-    emit_cascade, resolve_cascade, list_open_cascades,
+    emit_cascade, list_open_cascades,
+    resolve_open_cascades,
 )
 
 
@@ -62,20 +63,6 @@ def test_emit_cascade_stores_in_valkey(mock_vk):
 
 
 @patch("services.cascade._valkey")
-def test_resolve_cascade_updates_valkey(mock_vk):
-    client, store = _mock_redis()
-    mock_vk.return_value = client
-
-    ev = CascadeEvent(CascadeType.EXPERT_FAILURE, "tool failed", "retry")
-    emit_cascade(ev, request_id="req-def")
-    resolve_cascade(ev)
-
-    events = json.loads(store["cascade_events:req-def"])
-    assert events[0]["resolved"] is True
-    assert events[0]["resolved_at"] is not None
-
-
-@patch("services.cascade._valkey")
 def test_list_open_cascades_filters_resolved(mock_vk):
     client, store = _mock_redis()
     mock_vk.return_value = client
@@ -84,7 +71,9 @@ def test_list_open_cascades_filters_resolved(mock_vk):
     ev2 = CascadeEvent(CascadeType.TOOL_FAILURE, "gap2", "hint2")
     emit_cascade(ev1, request_id="req-xyz")
     emit_cascade(ev2, request_id="req-xyz")
-    resolve_cascade(ev1)
+    stored = json.loads(store["cascade_events:req-xyz"])
+    stored[0]["resolved"] = True
+    store["cascade_events:req-xyz"] = json.dumps(stored)
 
     open_events = list_open_cascades("req-xyz")
     assert len(open_events) == 1
@@ -96,3 +85,22 @@ def test_list_open_cascades_fail_open(mock_vk):
     mock_vk.return_value = None
     result = list_open_cascades("req-no-valkey")
     assert result == []
+
+
+@patch("services.cascade._valkey")
+def test_resolve_open_cascades_marks_all_events(mock_vk):
+    client, store = _mock_redis()
+    mock_vk.return_value = client
+    emit_cascade(
+        CascadeEvent(CascadeType.SPEC_GAP, "bad plan", "repair"),
+        request_id="req-all",
+    )
+    emit_cascade(
+        CascadeEvent(CascadeType.CONTEXT_GAP, "missing fact", "search"),
+        request_id="req-all",
+    )
+
+    changed = resolve_open_cascades("req-all")
+
+    assert len(changed) == 2
+    assert list_open_cascades("req-all") == []

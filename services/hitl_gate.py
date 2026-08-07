@@ -10,8 +10,9 @@ Gate lifecycle:
   pending → rejected  (human rejected)
   pending → expired   (TTL elapsed, Valkey key evicted)
 
-All operations are fail-open: if Valkey is unavailable, gate creation returns None
-and the pipeline continues without freezing.
+The storage adapter returns ``None``/``False`` when Valkey is unavailable.
+The final graph quality gate interprets a required-gate creation failure as a
+hard block, so a draft is never released merely because gate storage failed.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ def create_gate(
     response_draft: str,
     ttl_seconds: int = _VALKEY_TTL,
     user_id: str = "",
+    commit_payload: Optional[dict] = None,
 ) -> Optional[str]:
     """Freeze a response draft behind a gate; return gate_id or None on failure."""
     gate_id = str(uuid.uuid4())
@@ -55,6 +57,9 @@ def create_gate(
         "response_draft": response_draft,
         "status":        "pending",
         "ttl_seconds":   ttl_seconds,
+        # Frozen post-quality persistence input. It contains no credential and
+        # is consumed only after an explicit approval.
+        "commit_payload": commit_payload or {},
     }
     try:
         client = _valkey()

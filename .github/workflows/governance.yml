@@ -1,0 +1,51 @@
+name: Governance
+
+on:
+  push:
+    paths:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "PROJECT_COMPLIANCE.md"
+      - ".claude/rules/**"
+      - "agent_status/**"
+      - "AGENT_LASTENHEFT.md"
+      - "configs/runtime_entrypoints.json"
+      - "docs/ai-memory/**"
+      - "docs/backlog/**"
+      - "docs/checklists/**"
+      - "docs/generated/**"
+      - "scripts/check_governance.py"
+      - ".github/workflows/governance.yml"
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "PROJECT_COMPLIANCE.md"
+      - ".claude/rules/**"
+      - "agent_status/**"
+      - "AGENT_LASTENHEFT.md"
+      - "configs/runtime_entrypoints.json"
+      - "docs/ai-memory/**"
+      - "docs/backlog/**"
+      - "docs/checklists/**"
+      - "docs/generated/**"
+      - "scripts/check_governance.py"
+      - ".github/workflows/governance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check governance and generated catalogs
+        run: python3 scripts/check_governance.py --check

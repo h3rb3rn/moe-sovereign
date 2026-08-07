@@ -1,19 +1,25 @@
-# Authority and Architecture — MoE Sovereign (moe-infra)
+# Authority and Architecture — MoE Sovereign
+
+Owner: Platform Engineering
+Version: 2.0
+Last verified: 2026-07-30
 
 ## Project Authority Model
 
 | Layer | Authority | Notes |
 |---|---|---|
-| **Primary authority** | `admin_expert_templates` (PostgreSQL) | All routing decisions derive from this table. |
+| **Template authority** | `admin_expert_templates` (PostgreSQL) | Durable template policy and ownership; code/config still enforce eligibility, safety, and request constraints. |
 | **Derived runtime state** | ChromaDB cache, Valkey plan cache, Thompson sampling scores | These are caches and projections — never source of truth. |
 | **UI responsibility** | Admin UI surfaces state and emits intent | Must not become a hidden routing authority. |
 | **Persistence truth** | PostgreSQL (`admin_expert_templates`, `dynamic_template_feedback_log`, `model_metadata`) | Durable. Not disposable. |
-| **Disposable state** | Container filesystems, Valkey cache, ChromaDB collections | Rebuildfähig per `docker compose up -d`. |
+| **Disposable state** | Container filesystems, Valkey cache, ChromaDB collections | Rebuildable only when their durable sources and rebuild procedure are proven. |
 
 ## Core Direction
 
-The orchestrator is a LangGraph pipeline:
-`planner → expert workers (parallel) → merger/judge → response`
+The orchestrator is a compound LangGraph pipeline:
+`request boundary → guard/cache/routing → fast path or planner →
+tools/experts/research → synthesis/trust/correction → quality/policy gate →
+response and bounded learning/audit`.
 
 Template-based routing is the primary mechanism. Dynamic routing (IMoE ONNX
 classifier + ChromaDB cache) augments but does not replace template routing.
@@ -43,16 +49,20 @@ classifier + ChromaDB cache) augments but does not replace template routing.
 - Calling `log_dynamic_template_feedback()` without wiring its callers
   into the compile path (causes dead feedback loop — see Bug D fix, 2026-06-12).
 
-## LangGraph Pipeline
+## Pipeline shape
 
 ```
-Client → cache_lookup (ChromaDB) → HIT: merge
-                                 → MISS: planner → expert workers (parallel)
-                                         → merger/judge → critic → response
+Client → auth/policy/guard → cache + route
+                           ├─ eligible conservative direct path
+                           └─ planner → MCP / experts / research / GraphRAG
+                                      → synthesis + trust + bounded correction
+                                      → quality + Constitution + optional HITL
+                                      → response + audit/feedback
 ```
 
-Tools injected at: `mcp_node` (MCP server), `graph_rag_node` (Neo4j),
-`math_node_wrapper` (local math), `research_node` (SearXNG).
+This is a conceptual ownership view, not a generated node inventory. Dynamic
+framework/protocol callbacks are catalogued in
+`../generated/runtime-entrypoints.md`.
 
 ## Key Invariants
 
@@ -62,3 +72,6 @@ Tools injected at: `mcp_node` (MCP server), `graph_rag_node` (Neo4j),
   `get_model_context_window(model)`).
 - All infrastructure config is read from environment variables — no defaults
   pointing at specific servers.
+- Required auth, tenant, `local_only`, schema, integrity, policy, and gate
+  boundaries follow the fail-closed matrix in `PROJECT_COMPLIANCE.md`.
+- A request carries one monotonic deadline through every stage and retry.

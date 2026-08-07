@@ -32,7 +32,7 @@ from config import (
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
     _CUSTOM_EXPERT_PROMPTS, PLANNER_MAX_TASKS, PLANNER_RETRIES,
     KAFKA_TOPIC_INGEST, NEO4J_URI, NEO4J_USER, NEO4J_PASS,
-    _FALLBACK_ENABLED, JUDGE_NUM_CTX,
+    _FALLBACK_ENABLED, JUDGE_NUM_CTX, EXPERT_THINKING_ENABLED,
 )
 from metrics import (
     PROM_EXPERT_CALLS, PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
@@ -48,8 +48,9 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _refine_expert_response,
+    assign_gpu, _refine_expert_response,
     _mark_endpoint_degraded, _endpoint_is_degraded,
+    _audit_create, _audit_complete, _ollama_answer_content,
 )
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
@@ -88,6 +89,26 @@ from pipeline.state import AgentState
 
 # Cross-module: dependency-level helpers live in graph.planner
 from graph.planner import _topological_levels, _inject_prior_results
+from services.deadline import (
+    RequestDeadlineExceeded,
+    bounded_output_tokens,
+    remaining_timeout,
+)
+from services.deliberation.capacity import CapacityInputs, plan_deliberation_capacity
+from services.deliberation.contracts import (
+    legacy_deliberation_policy,
+    parse_deliberation_policy,
+)
+from services.deliberation.runtime import (
+    DeliberationExecutionError,
+    ModeratorDecision,
+    build_moderator_prompt,
+    build_role_roster,
+    build_turn_task,
+    compact_transcript,
+    max_role_repetition,
+    parse_moderator_decision,
+)
 
 
 def _tier2_escalation_decision(cost_tier_t1: bool, t1_confs: list, has_tier2: bool) -> str:
@@ -123,7 +144,7 @@ async def expert_worker(state_: AgentState):
     if state_.get("cache_hit"):
         return {"expert_results": []}
 
-    NON_EXPERT_CATEGORIES = {"precision_tools", "research"}
+    NON_EXPERT_CATEGORIES = {"precision_tools", "research", "math"}
     local_conflicts = []
     plan         = state_.get("plan", [])
     chat_history = state_.get("chat_history") or []
@@ -134,6 +155,69 @@ async def expert_worker(state_: AgentState):
     if not expert_tasks:
         return {"expert_results": []}
 
+    from config import JMOE_DEBATE_ENABLED
+
+    raw_deliberation_policy = state_.get("deliberation_policy")
+    deliberation_policy = (
+        parse_deliberation_policy(raw_deliberation_policy)
+        if raw_deliberation_policy
+        else legacy_deliberation_policy(JMOE_DEBATE_ENABLED)
+    )
+    effective_expert_catalog = state_.get("user_experts") or EXPERTS
+    distinct_models = {
+        (str(model.get("model") or ""), str(model.get("endpoint") or ""))
+        for models in effective_expert_catalog.values()
+        if isinstance(models, list)
+        for model in models
+        if isinstance(model, dict) and model.get("enabled", True) and model.get("model")
+    }
+    deadline = state_.get("request_deadline_monotonic")
+    remaining_seconds = None
+    if deadline not in (None, ""):
+        try:
+            remaining_seconds = max(0.0, float(deadline) - time.monotonic())
+        except (TypeError, ValueError) as exc:
+            raise DeliberationExecutionError(
+                "invalid request deadline for deliberation"
+            ) from exc
+    cynefin_domain = str(state_.get("cynefin_domain") or "")
+    if not cynefin_domain:
+        from services.cynefin import classify_cynefin
+
+        cynefin_domain = classify_cynefin(dict(state_)).value
+    deliberation_capacity = plan_deliberation_capacity(
+        deliberation_policy,
+        CapacityInputs(
+            complexity_level=str(state_.get("complexity_level") or "trivial"),
+            cynefin_domain=cynefin_domain,
+            trust_verdict=str(state_.get("trust_verdict") or ""),
+            plan=plan,
+            remaining_seconds=remaining_seconds,
+            available_models=len(distinct_models),
+        ),
+    )
+    local_deliberation_events: list[dict[str, Any]] = [
+        {
+            "event": "capacity_planned",
+            "mode": deliberation_capacity.selected_mode,
+            "active": deliberation_capacity.active,
+            "initial_agents": deliberation_capacity.initial_agents,
+            "reserve_agents": deliberation_capacity.reserve_agents,
+            "initial_rounds": deliberation_capacity.initial_rounds,
+            "reserve_rounds": deliberation_capacity.reserve_rounds,
+            "reason": deliberation_capacity.activation_reason,
+            "budget_limited": deliberation_capacity.budget_limited,
+        }
+    ]
+    if (
+        deliberation_policy.activation == "required"
+        and not deliberation_capacity.active
+        and deliberation_policy.fallback == "fail"
+    ):
+        raise DeliberationExecutionError(
+            f"required deliberation unavailable: {deliberation_capacity.activation_reason}"
+        )
+
     logger.info(f"--- [NODE] EXPERTS ({len(expert_tasks)} Tasks, Two-Tier) ---")
 
     from langchain_openai import ChatOpenAI
@@ -141,6 +225,13 @@ async def expert_worker(state_: AgentState):
     from config import LITELLM_URL, INFERENCE_SERVERS_LIST, URL_MAP
     from services.inference import _endpoint_semaphores
     from cache_aligner import is_anthropic_native, call_anthropic_cached
+    from context_budget import adaptive_context_window
+
+    # Micro debates execute inside task groups that may run concurrently. Keep
+    # a request-wide reservation counter so max_model_calls cannot silently be
+    # multiplied by the number of planner tasks.
+    micro_budget_lock = asyncio.Lock()
+    micro_calls_reserved = 0
 
     async def run_single(model_cfg: dict, task_item: dict, t_idx: int, e_idx: int) -> dict:
         model_name = model_cfg["model"]
@@ -176,9 +267,48 @@ async def expert_worker(state_: AgentState):
             token      = selected.get("token", "ollama")
             api_type   = selected.get("api_type", "ollama")
             semaphore  = _endpoint_semaphores.get(endpoint, asyncio.Semaphore(1))
-        async with semaphore:
+
+        # Sovereignty guard: local_only requests must never reach a non-local
+        # endpoint, regardless of which branch above resolved `url` (static
+        # template category, dynamically materialized expert, or a
+        # moderated-debate panel participant — run_moderated_request()
+        # dispatches turns through this same function). Checked here, once,
+        # right before `url` is used for anything network-facing, rather than
+        # only at candidate-selection time.
+        from services.sovereignty import assert_egress_allowed, EgressDenied
+        try:
+            assert_egress_allowed(url, bool(state_.get("local_only_routing")))
+        except EgressDenied as _egress_exc:
+            PROM_EXPERT_FAILURES.labels(model=model_name, reason="local_only_blocked").inc()
+            logger.error("🚫 Expert %s blocked by local_only routing: %s", model_name, _egress_exc)
+            await _report(f"🚫 Expert {model_name}: blocked (local_only routing)")
+            await _record_stage(state_.get("response_id", ""), "expert", "error", model_name)
+            return {"res": f"[{model_name} ERROR]: {_egress_exc}", "model_cat": None}
+
+        from services.node_load import track as _track_node_load
+        async with semaphore, _track_node_load(endpoint):
             task_text  = task_item.get("task", str(task_item))
             cat        = task_item.get("category", "general")
+            is_deliberation_turn = bool(task_item.get("_deliberation_turn"))
+
+            # ── Web-Research-Kontext in Task-Text injizieren ───────────────────
+            # Kategorien die rein linguistisch / visuell arbeiten profitieren nicht.
+            _WEB_SKIP_CATS = {"vision", "creative_writer", "translation"}
+            _web_research_raw = (
+                task_item.get("_inline_web_research") or  # dynamic-expert inline search
+                state_.get("web_research") or ""
+            ).strip()
+            if _web_research_raw and cat not in _WEB_SKIP_CATS:
+                # Budget: 20 % des Expert-Kontextfensters, maximal 6000 Zeichen.
+                _ctx_est = int(model_cfg.get("context_window") or 0)
+                _web_budget = min(6000, max(1000, int(_ctx_est * 0.20 * 4))) if _ctx_est else 4000
+                _web_snippet = _web_research_raw[:_web_budget]
+                task_text = (
+                    f"[WEB-RECHERCHE-KONTEXT — nutze diese Fakten, halluziniere keine eigenen Quellen]:\n"
+                    f"{_web_snippet}\n\n"
+                    f"[AUFGABE]:\n{task_text}"
+                )
+
             gpu        = await assign_gpu(endpoint)
             PROM_EXPERT_CALLS.labels(model=model_name, category=cat, node=endpoint).inc()
 
@@ -335,6 +465,11 @@ async def expert_worker(state_: AgentState):
             _max_output_cap = (
                 MAX_EXPERT_OUTPUT_CHARS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_OUTPUT_CHARS
             )
+            if is_deliberation_turn:
+                _max_output_cap = min(
+                    _max_output_cap,
+                    deliberation_policy.max_turn_tokens * EXPERT_CHARS_PER_TOKEN,
+                )
             _expert_max_output = _max_output_cap
             _max_input_chars = 0
             if _expert_ctx_window > 0:
@@ -419,6 +554,11 @@ async def expert_worker(state_: AgentState):
                 if not LITELLM_URL and not model_cfg.get("_user_conn_url")
                 else EXPERT_TIMEOUT
             )
+            _expert_node_timeout = remaining_timeout(
+                state_,
+                _expert_node_timeout,
+                stage=f"expert:{cat}",
+            )
             _expert_temp = state_.get("query_temperature")  # None = API default
             # max_tokens must be passed via model_kwargs so LangChain forwards it
             # verbatim to Ollama as "max_tokens". Using the top-level max_tokens
@@ -431,6 +571,16 @@ async def expert_worker(state_: AgentState):
             _expert_max_tokens = (
                 MAX_EXPERT_TOKENS_CODE if cat in _CODE_GEN_CATS else MAX_EXPERT_TOKENS
             )
+            _expert_max_tokens = bounded_output_tokens(
+                state_,
+                _expert_max_tokens,
+                minimum_internal=128,
+            )
+            if is_deliberation_turn:
+                _expert_max_tokens = min(
+                    _expert_max_tokens,
+                    deliberation_policy.max_turn_tokens,
+                )
             _model_kw: dict = {"max_tokens": _expert_max_tokens}
             # extra_body must be a direct ChatOpenAI constructor parameter, NOT inside
             # model_kwargs — LangChain warns and silently drops extra_body from model_kwargs,
@@ -439,7 +589,15 @@ async def expert_worker(state_: AgentState):
             # Only send num_ctx when the template explicitly sets context_window.
             # Without an explicit override, rely on OLLAMA_CONTEXT_LENGTH / Modelfile defaults —
             # sending the GGUF training context would downgrade and reload an already-warm model.
-            _expert_ctx_for_api = _expert_ctx_window if _expert_ctx_override > 0 else 0
+            _expert_ctx_for_api = (
+                adaptive_context_window(
+                    _expert_ctx_window,
+                    f"{sys_prompt}\n\n{task_text}",
+                    _expert_max_tokens,
+                )
+                if _expert_ctx_override > 0
+                else 0
+            )
             _extra_body = {"options": {"num_ctx": _expert_ctx_for_api}} if _expert_ctx_for_api > 0 else {}
             if state_.get("enable_habe"):
                 from services.inference import _inject_habe_prefix_embeddings
@@ -459,7 +617,12 @@ async def expert_worker(state_: AgentState):
             # the /no_think prefix in the user message is the reliable cross-version method.
             # qwen3 respects this directive and skips the <think>…</think> block entirely,
             # saving ~30k tokens and 10+ minutes for factual-lookup categories.
-            _thinking_enabled = bool(model_cfg.get("thinking_mode", True))
+            _thinking_enabled = bool(
+                model_cfg.get(
+                    "thinking_mode",
+                    EXPERT_THINKING_ENABLED,
+                )
+            )
             if not _thinking_enabled and messages:
                 from langchain_core.messages import HumanMessage
                 _patched = list(messages)
@@ -499,22 +662,74 @@ async def expert_worker(state_: AgentState):
                         # instance's own server-configured OLLAMA_KEEP_ALIVE
                         # default instead of silently overriding it.
                     }
+                    from services.model_capabilities import (
+                        enforce_streaming_capability,
+                        get_model_caps,
+                    )
+                    _native_payload["stream"] = enforce_streaming_capability(
+                        model_name, bool(_native_payload["stream"])
+                    )
+                    logger.debug(
+                        "model=%s caps=%s stage=expert",
+                        model_name,
+                        get_model_caps(model_name),
+                    )
                     if state_.get("enable_habe"):
                         from services.inference import _inject_habe_prefix_embeddings
                         _inject_habe_prefix_embeddings(_native_payload["options"], state_)
                     if not _thinking_enabled:
                         _native_payload["think"] = False
-                    async with httpx.AsyncClient(timeout=_expert_node_timeout) as _acl:
-                        _r = await _acl.post(
-                            f"{_ollama_base}/api/chat",
-                            json=_native_payload,
-                            headers={"Authorization": f"Bearer {token}"},
+                    _expert_audit = _audit_create(
+                        state_.get("session_id", ""),
+                        state_.get("response_id", ""),
+                        model_name,
+                        f"{_ollama_base}/api/chat",
+                        "expert",
+                        {
+                            **_native_payload,
+                            "expert_category": cat,
+                        },
+                    )
+                    try:
+                        async with httpx.AsyncClient(timeout=_expert_node_timeout) as _acl:
+                            _r = await _acl.post(
+                                f"{_ollama_base}/api/chat",
+                                json=_native_payload,
+                                headers={"Authorization": f"Bearer {token}"},
+                            )
+                        _r.raise_for_status()
+                        _rdata = _r.json()
+                        await _audit_complete(
+                            _expert_audit,
+                            _rdata,
+                            _rdata.get("prompt_eval_count"),
+                            _rdata.get("eval_count"),
                         )
-                    _r.raise_for_status()
-                    _rdata = _r.json()
+                    except Exception as exc:
+                        await _audit_complete(
+                            _expert_audit,
+                            {"error": str(exc)},
+                            None,
+                            None,
+                            "error",
+                        )
+                        raise
                     from types import SimpleNamespace as _NS
+                    _native_answer = _ollama_answer_content(_rdata)
+                    if not _native_answer.strip():
+                        _thinking_chars = len(
+                            str(_rdata.get("message", {}).get("thinking", ""))
+                        )
+                        raise RuntimeError(
+                            "expert returned no public answer content"
+                            + (
+                                f" (thinking-only trace: {_thinking_chars} chars)"
+                                if _thinking_chars
+                                else ""
+                            )
+                        )
                     res = _NS(
-                        content=_rdata.get("message", {}).get("content", ""),
+                        content=_native_answer,
                         usage_metadata={
                             "input_tokens":  _rdata.get("prompt_eval_count", 0),
                             "output_tokens": _rdata.get("eval_count", 0),
@@ -529,16 +744,44 @@ async def expert_worker(state_: AgentState):
                         if isinstance(m, dict)
                         else getattr(m, "type", "") not in ("system",)
                     )]
-                    _anthr_text, _anthr_usage = await call_anthropic_cached(
-                        url=url,
-                        token=token,
-                        model=model_name,
-                        messages_oai=_anthr_msgs,
-                        static_system=_base_static_sys,
-                        dynamic_system=_dynamic_sys,
-                        max_tokens=_expert_max_tokens,
-                        timeout=_expert_node_timeout,
+                    _expert_audit = _audit_create(
+                        state_.get("session_id", ""),
+                        state_.get("response_id", ""),
+                        model_name,
+                        url,
+                        "expert",
+                        {
+                            "messages": _anthr_msgs,
+                            "system": [_base_static_sys, _dynamic_sys],
+                            "expert_category": cat,
+                        },
                     )
+                    try:
+                        _anthr_text, _anthr_usage = await call_anthropic_cached(
+                            url=url,
+                            token=token,
+                            model=model_name,
+                            messages_oai=_anthr_msgs,
+                            static_system=_base_static_sys,
+                            dynamic_system=_dynamic_sys,
+                            max_tokens=_expert_max_tokens,
+                            timeout=_expert_node_timeout,
+                        )
+                        await _audit_complete(
+                            _expert_audit,
+                            {"content": _anthr_text},
+                            _anthr_usage.get("prompt_tokens"),
+                            _anthr_usage.get("completion_tokens"),
+                        )
+                    except Exception as exc:
+                        await _audit_complete(
+                            _expert_audit,
+                            {"error": str(exc)},
+                            None,
+                            None,
+                            "error",
+                        )
+                        raise
                     from types import SimpleNamespace as _NS
                     res = _NS(
                         content=_anthr_text,
@@ -558,6 +801,9 @@ async def expert_worker(state_: AgentState):
                         llm, _primary_url, messages,
                         timeout=_expert_node_timeout,
                         label=f"Expert[{cat}]",
+                        audit_context=state_,
+                        audit_stage="expert",
+                        model=model_name,
                     )
                 # Interactive-pipeline latency was never recorded before —
                 # only the Agent Tool Path (services/pipeline/chat.py) fed
@@ -639,6 +885,8 @@ async def expert_worker(state_: AgentState):
                     result["prompt_tokens"]     = 0
                     result["completion_tokens"] = 0
                 return result
+            except RequestDeadlineExceeded:
+                raise
             except Exception as e:
                 err = str(e)
                 # Distinguish real GPU errors (VRAM/CUDA) from network/timeout errors
@@ -676,7 +924,54 @@ async def expert_worker(state_: AgentState):
             logger.debug("scope_guard: check failed (fail-open): %s", _sg_e)
 
         effective_experts = state_.get("user_experts") or EXPERTS
+
+        # ── Dynamic Expert Materialization ─────────────────────────────────────
+        if cat == "dynamic" and not effective_experts.get("dynamic"):
+            try:
+                from services.expert_builder import build_expert_for_task as _build_dyn
+                _dyn_models, _dyn_web = await _build_dyn(
+                    task,
+                    local_only=bool(state_.get("local_only_routing")),
+                    user_connections=state_.get("user_connections"),
+                    existing_web_research=state_.get("web_research") or "",
+                )
+                if _dyn_models:
+                    effective_experts = dict(effective_experts)
+                    effective_experts["dynamic"] = _dyn_models
+                    # Inline-Recherche des expert_builders in den Task-Dict einfalten,
+                    # damit run_single() sie via task_item["_inline_web_research"] sieht.
+                    if _dyn_web and not state_.get("web_research"):
+                        task = dict(task)
+                        task["_inline_web_research"] = _dyn_web
+                else:
+                    logger.warning("⚠️ expert_builder: no model — falling back to 'general'")
+                    cat = "general"
+            except Exception as _dyn_e:
+                logger.warning("⚠️ expert_builder failed (%s) — falling back to 'general'", _dyn_e)
+                cat = "general"
+
         all_experts = [e for e in effective_experts.get(cat, effective_experts.get("general", EXPERTS.get(cat, EXPERTS.get("general", [])))) if e.get("enabled", True)]
+        if state_.get("local_only_routing"):
+            # Defense-in-depth: run_single()'s egress guard blocks any cloud
+            # dispatch anyway, but filtering here avoids burning a forced/
+            # parallel-ensemble call slot on a candidate that is guaranteed
+            # to be rejected, and lets a local sibling candidate take its
+            # place when one exists for this category.
+            #
+            # `endpoint` is a symbolic node name (e.g. "openrouterai"), not a
+            # URL — resolve it through URL_MAP first, exactly like run_single()
+            # does at dispatch time. _is_local_url() treats any dot-free,
+            # unresolved string as local (internal short hostname), so
+            # checking the raw endpoint name directly would silently accept
+            # every symbolically-named cloud gateway (the TASK-51 incident's
+            # exact shape: endpoint="openrouterai").
+            from services.dynamic_router import _is_local_url
+            _local_experts = [
+                e for e in all_experts
+                if _is_local_url(URL_MAP.get(e.get("endpoint", ""), e.get("endpoint", "")))
+            ]
+            if _local_experts:
+                all_experts = _local_experts
 
         forced_experts = [e for e in all_experts if e.get("forced", False)]
         normal_experts = [e for e in all_experts if not e.get("forced", False)]
@@ -687,22 +982,66 @@ async def expert_worker(state_: AgentState):
             scored.append((score, e))
         scored.sort(key=lambda x: -x[0])
 
-        # Check if J-MoE debate should run (Theory C: Game-Theoretic Debate)
-        from config import JMOE_DEBATE_ENABLED
-        if JMOE_DEBATE_ENABLED and len(scored) >= 2:
+        micro_slot_reserved = False
+        if (
+            deliberation_capacity.active
+            and deliberation_capacity.selected_mode == "micro"
+            and len(scored) >= 2
+        ):
+            nonlocal micro_calls_reserved
+            async with micro_budget_lock:
+                if (
+                    micro_calls_reserved + 3
+                    <= deliberation_capacity.model_call_budget
+                ):
+                    micro_calls_reserved += 3
+                    micro_slot_reserved = True
+            if not micro_slot_reserved:
+                local_deliberation_events.append({
+                    "event": "micro_debate_budget_exhausted",
+                    "category": cat,
+                    "model_calls_reserved": micro_calls_reserved,
+                    "model_call_budget": deliberation_capacity.model_call_budget,
+                })
+                if deliberation_policy.fallback == "fail":
+                    raise DeliberationExecutionError(
+                        f"micro deliberation call budget exhausted before {cat}"
+                    )
+
+        # Compatibility micro-debate, now governed by the frozen per-template
+        # policy and the shared request budget rather than the global flag alone.
+        if (
+            deliberation_capacity.active
+            and deliberation_capacity.selected_mode == "micro"
+            and len(scored) >= 2
+            and micro_slot_reserved
+        ):
             proponent = scored[0][1]
             skeptic = scored[1][1]
+            local_deliberation_events.append({
+                "event": "micro_debate_started",
+                "category": cat,
+                "agents": 2,
+                "rounds": 1,
+            })
             logger.info(f"⚖️ Starting J-MoE Debate in category '{cat}' between Proponent ({proponent['model']}) and Skeptic ({skeptic['model']})")
             await _report(f"⚖️ Debate [{cat}]: Proponent ({proponent['model']}) vs Skeptic ({skeptic['model']})")
             
             # 1. Proponent Initial Answer
-            prop_res = await run_single(proponent, task, i + 1, 1)
+            proponent_task = dict(task)
+            proponent_task["_deliberation_turn"] = True
+            prop_res = await run_single(proponent, proponent_task, i + 1, 1)
             prop_ans = prop_res.get("res", "")
             
             # 2. Skeptic Critique
             skeptic_task = task.copy()
-            skeptic_task["input"] = (
-                f"[User Query]\n{task.get('input', '')}\n\n"
+            skeptic_task["_deliberation_turn"] = True
+            # run_single consumes the canonical planner field ``task``. The
+            # former ``input`` assignment was never read, so the skeptic saw
+            # only the original user task and not the proponent answer it was
+            # supposed to critique.
+            skeptic_task["task"] = (
+                f"[User Query]\n{task.get('task', '')}\n\n"
                 f"[Proponent Initial Answer]\n{prop_ans}\n\n"
                 f"[Task]\n"
                 f"You are an adversarial Skeptic/Opponent in a formal debate. Critique the Proponent's answer above. "
@@ -713,8 +1052,9 @@ async def expert_worker(state_: AgentState):
             
             # 3. Proponent Rebuttal & Refined Answer
             rebuttal_task = task.copy()
-            rebuttal_task["input"] = (
-                f"[User Query]\n{task.get('input', '')}\n\n"
+            rebuttal_task["_deliberation_turn"] = True
+            rebuttal_task["task"] = (
+                f"[User Query]\n{task.get('task', '')}\n\n"
                 f"[Your Initial Answer]\n{prop_ans}\n\n"
                 f"[Skeptic Critique]\n{sk_critique}\n\n"
                 f"[Task]\n"
@@ -755,6 +1095,21 @@ async def expert_worker(state_: AgentState):
                 "user_conn_completion_tokens": prop_res.get("user_conn_completion_tokens", 0) + sk_res.get("user_conn_completion_tokens", 0) + rebuttal_res.get("user_conn_completion_tokens", 0),
             }
             return [final_res]
+
+        if (
+            deliberation_capacity.active
+            and deliberation_capacity.selected_mode == "micro"
+            and len(scored) < 2
+        ):
+            local_deliberation_events.append({
+                "event": "micro_debate_unavailable",
+                "category": cat,
+                "reason": "fewer_than_two_models",
+            })
+            if deliberation_policy.fallback == "fail":
+                raise DeliberationExecutionError(
+                    f"micro deliberation for {cat} requires two models"
+                )
 
         tier1 = [(s, e) for s, e in scored if e.get("_tier", 1) == 1 and s >= EXPERT_MIN_SCORE]
         tier2 = [(s, e) for s, e in scored if e.get("_tier", 2) == 2 and s >= EXPERT_MIN_SCORE]
@@ -848,6 +1203,485 @@ async def expert_worker(state_: AgentState):
 
         return task_results
 
+    async def run_moderated_request() -> Optional[List[dict]]:
+        """Run one request-level moderated debate across planned domains."""
+
+        candidate_pool: list[tuple[float, str, dict]] = []
+        seen_candidates: set[tuple[str, str, str]] = set()
+        specialist_categories: list[str] = []
+        effective_experts = state_.get("user_experts") or EXPERTS
+        local_only_routing = bool(state_.get("local_only_routing"))
+        if local_only_routing:
+            from services.dynamic_router import _is_local_url
+
+        for _, planned_task in expert_tasks:
+            category = str(planned_task.get("category") or "general")
+            if category not in specialist_categories:
+                specialist_categories.append(category)
+            category_models = effective_experts.get(category)
+            if not isinstance(category_models, list) or not category_models:
+                category_models = effective_experts.get("general", EXPERTS.get("general", []))
+            for model_cfg in category_models or []:
+                if not isinstance(model_cfg, dict) or not model_cfg.get("enabled", True):
+                    continue
+                model_name = str(model_cfg.get("model") or "")
+                if not model_name:
+                    continue
+                _ep_name = str(model_cfg.get("endpoint") or "")
+                if local_only_routing and not _is_local_url(URL_MAP.get(_ep_name, _ep_name)):
+                    # Defense-in-depth: run_single() (called below for every
+                    # debate turn) blocks any cloud dispatch anyway, but
+                    # excluding these candidates here keeps the debate panel
+                    # itself restricted to models that can actually run,
+                    # instead of reserving a role/round budget slot for a
+                    # participant guaranteed to fail at dispatch.
+                    continue
+                key = (category, model_name, str(model_cfg.get("endpoint") or ""))
+                if key in seen_candidates:
+                    continue
+                seen_candidates.add(key)
+                score = (
+                    2.0
+                    if model_cfg.get("forced")
+                    else await _get_expert_score(model_name, category)
+                )
+                candidate_pool.append((score, category, model_cfg))
+
+        candidate_pool.sort(
+            key=lambda item: (-item[0], item[1], str(item[2].get("model") or ""))
+        )
+        if not candidate_pool:
+            local_deliberation_events.append({
+                "event": "moderated_debate_unavailable",
+                "reason": "no_models",
+            })
+            if deliberation_policy.fallback == "fail":
+                raise DeliberationExecutionError(
+                    "required moderated deliberation has no available models"
+                )
+            return None
+
+        roles = build_role_roster(
+            deliberation_capacity.max_agents,
+            specialist_categories,
+        )
+        participants: list[dict[str, Any]] = []
+        generic_index = 0
+        for role in roles:
+            selected: tuple[float, str, dict] | None = None
+            if role.specialist_category:
+                selected = next(
+                    (
+                        candidate
+                        for candidate in candidate_pool
+                        if candidate[1] == role.specialist_category
+                    ),
+                    None,
+                )
+            if selected is None:
+                selected = candidate_pool[generic_index % len(candidate_pool)]
+                generic_index += 1
+            participants.append({
+                "role": role,
+                "category": selected[1],
+                "model_cfg": selected[2],
+            })
+
+        active_participants = participants[:deliberation_capacity.initial_agents]
+        reserve_participants = participants[deliberation_capacity.initial_agents:]
+        distinct_selected_models = {
+            (
+                str(participant["model_cfg"].get("model") or ""),
+                str(participant["model_cfg"].get("endpoint") or ""),
+            )
+            for participant in active_participants
+        }
+        if len(distinct_selected_models) < len(active_participants):
+            local_deliberation_events.append({
+                "event": "model_diversity_degraded",
+                "agents": len(active_participants),
+                "distinct_models": len(distinct_selected_models),
+            })
+
+        plan_summary = json.dumps(
+            [
+                {
+                    "id": task.get("id", f"task-{index + 1}"),
+                    "category": task.get("category", "general"),
+                    "task": str(task.get("task") or "")[:800],
+                    "depends_on": task.get("depends_on") or [],
+                }
+                for index, (_, task) in enumerate(expert_tasks)
+            ],
+            ensure_ascii=False,
+        )[:8000]
+        turns: list[dict[str, Any]] = []
+        moderator_records: list[ModeratorDecision] = []
+        model_calls = 0
+        usage_totals = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "user_conn_prompt_tokens": 0,
+            "user_conn_completion_tokens": 0,
+        }
+
+        def add_usage(result: dict[str, Any]) -> None:
+            for key in usage_totals:
+                usage_totals[key] += int(result.get(key, 0) or 0)
+
+        correction = ""
+        round_number = 1
+        round_limit = deliberation_capacity.initial_rounds
+        activated_reserve_rounds = 0
+        activated_reserve_agents = 0
+        loop_stopped = False
+        early_consensus = False
+        last_decision: ModeratorDecision | None = None
+
+        local_deliberation_events.append({
+            "event": "moderated_debate_started",
+            "agents": len(active_participants),
+            "rounds": round_limit,
+            "model_call_budget": deliberation_capacity.model_call_budget,
+        })
+        await _report(
+            "⚖️ Moderated deliberation: "
+            f"{len(active_participants)} agents, {round_limit} initial rounds, "
+            f"{deliberation_capacity.reserve_agents}/{deliberation_capacity.reserve_rounds} reserve"
+        )
+
+        while round_number <= round_limit:
+            round_failures = 0
+            max_repetition = 0.0
+            for participant_index, participant in enumerate(list(active_participants), start=1):
+                if model_calls >= deliberation_capacity.model_call_budget:
+                    local_deliberation_events.append({
+                        "event": "model_call_budget_exhausted",
+                        "round": round_number,
+                        "model_calls": model_calls,
+                    })
+                    break
+                transcript = compact_transcript(turns)
+                role = participant["role"]
+                role_task = {
+                    "id": f"deliberation-r{round_number}-{participant_index}",
+                    "category": participant["category"],
+                    "_deliberation_turn": True,
+                    "task": build_turn_task(
+                        user_query=str(state_.get("input") or ""),
+                        plan_summary=plan_summary,
+                        role=role,
+                        round_number=round_number,
+                        transcript=transcript,
+                        correction=correction,
+                    ),
+                }
+                result = await run_single(
+                    participant["model_cfg"],
+                    role_task,
+                    round_number,
+                    participant_index,
+                )
+                model_calls += 1
+                add_usage(result)
+                content = str(result.get("res") or "").strip()
+                successful = bool(result.get("model_cat")) and " ERROR]" not in content
+                if not successful:
+                    round_failures += 1
+                turns.append({
+                    "round": round_number,
+                    "role": role.role_id,
+                    "category": participant["category"],
+                    "model": str(participant["model_cfg"].get("model") or ""),
+                    "content": content,
+                    "status": "completed" if successful else "failed",
+                })
+                max_repetition = max(max_repetition, max_role_repetition(turns))
+                local_deliberation_events.append({
+                    "event": "turn_completed" if successful else "turn_failed",
+                    "round": round_number,
+                    "role": role.role_id,
+                    "category": participant["category"],
+                })
+
+            if max_repetition >= deliberation_policy.repetition_threshold:
+                loop_stopped = True
+                local_deliberation_events.append({
+                    "event": "repetition_stopped",
+                    "round": round_number,
+                    "score": round(max_repetition, 3),
+                })
+                break
+
+            decision: ModeratorDecision | None = None
+            moderation_due = (
+                round_number % deliberation_policy.moderator_interval == 0
+                or round_number >= round_limit
+            )
+            if (
+                turns
+                and moderation_due
+                and model_calls < deliberation_capacity.model_call_budget
+            ):
+                moderator_prompt = build_moderator_prompt(
+                    user_query=str(state_.get("input") or ""),
+                    transcript=compact_transcript(turns, max_chars=20000),
+                    convergence_threshold=deliberation_policy.convergence_threshold,
+                )
+                parse_failure = ""
+                for attempt in range(2):
+                    if model_calls >= deliberation_capacity.model_call_budget:
+                        break
+                    prompt = moderator_prompt
+                    if attempt and parse_failure:
+                        prompt += (
+                            "\n\nYour previous response violated the JSON contract. "
+                            f"Repair it once. Validation error: {parse_failure[:500]}"
+                        )
+                    try:
+                        # Reserve before dispatch. Failed/invalid moderator calls
+                        # still consume request capacity and must not enable an
+                        # unbounded retry path.
+                        model_calls += 1
+                        moderator_result = await _invoke_judge_with_retry(
+                            state_, prompt, max_retries=1, temperature=0.0
+                        )
+                        moderator_usage = _extract_usage(moderator_result)
+                        add_usage(moderator_usage)
+                        decision = parse_moderator_decision(
+                            str(getattr(moderator_result, "content", "") or "")
+                        )
+                        break
+                    except RequestDeadlineExceeded:
+                        raise
+                    except asyncio.CancelledError:
+                        raise
+                    except DeliberationExecutionError as exc:
+                        parse_failure = str(exc)
+                        local_deliberation_events.append({
+                            "event": "moderator_contract_invalid",
+                            "round": round_number,
+                            "attempt": attempt + 1,
+                        })
+                    except Exception as exc:
+                        logger.warning("deliberation moderator failed: %s", exc)
+                        parse_failure = "moderator_call_failed"
+                        local_deliberation_events.append({
+                            "event": "moderator_failed",
+                            "round": round_number,
+                        })
+                        break
+
+                if decision is None:
+                    if deliberation_policy.fallback == "fail":
+                        raise DeliberationExecutionError(
+                            parse_failure or "moderator unavailable"
+                        )
+                    decision = ModeratorDecision(
+                        status="CONTINUE",
+                        reason="Moderator unavailable; preserving explicit unresolved state.",
+                        correction="",
+                        direction="Proceed to bounded synthesis with limitations.",
+                        convergence_score=0.0,
+                        unresolved_conflicts=1,
+                        missing_perspectives=[],
+                    )
+
+                moderator_records.append(decision)
+                last_decision = decision
+                local_deliberation_events.append({
+                    "event": "moderator_decision",
+                    "round": round_number,
+                    "status": decision.status,
+                    "convergence_score": decision.convergence_score,
+                    "unresolved_conflicts": decision.unresolved_conflicts,
+                    "missing_perspectives": len(decision.missing_perspectives),
+                })
+                correction = decision.correction if decision.status == "CORRECTION" else ""
+
+                if (
+                    decision.status == "CONSENSUS"
+                    and decision.convergence_score >= deliberation_policy.convergence_threshold
+                    and decision.unresolved_conflicts == 0
+                    and round_number >= deliberation_policy.min_rounds
+                ):
+                    early_consensus = True
+                    local_deliberation_events.append({
+                        "event": "early_consensus",
+                        "round": round_number,
+                        "convergence_score": decision.convergence_score,
+                    })
+                    break
+
+            if model_calls >= deliberation_capacity.model_call_budget:
+                break
+
+            needs_extension = bool(
+                round_failures
+                or (
+                    decision
+                    and (
+                        decision.status in {"CONTINUE", "CORRECTION"}
+                        and (
+                            decision.unresolved_conflicts > 0
+                            or bool(decision.correction)
+                            or bool(decision.missing_perspectives)
+                        )
+                    )
+                )
+            )
+            if round_number >= round_limit:
+                can_extend = (
+                    needs_extension
+                    and activated_reserve_rounds < deliberation_capacity.reserve_rounds
+                )
+                if not can_extend:
+                    break
+
+                if reserve_participants and (
+                    round_failures or (decision and decision.missing_perspectives)
+                ):
+                    requested = max(
+                        1,
+                        round_failures,
+                        len(decision.missing_perspectives) if decision else 0,
+                    )
+                    available = deliberation_capacity.reserve_agents - activated_reserve_agents
+                    activate_count = min(requested, available, len(reserve_participants))
+                    if activate_count:
+                        active_participants.extend(reserve_participants[:activate_count])
+                        del reserve_participants[:activate_count]
+                        activated_reserve_agents += activate_count
+                        local_deliberation_events.append({
+                            "event": "reserve_agents_activated",
+                            "round": round_number + 1,
+                            "count": activate_count,
+                            "reason": (
+                                "turn_failure" if round_failures else "missing_perspective"
+                            ),
+                        })
+
+                activated_reserve_rounds += 1
+                round_limit += 1
+                local_deliberation_events.append({
+                    "event": "reserve_round_activated",
+                    "round": round_limit,
+                    "reason": (
+                        "turn_failure"
+                        if round_failures
+                        else (decision.status.lower() if decision else "unresolved")
+                    ),
+                })
+            round_number += 1
+
+        successful_turns = [turn for turn in turns if turn["status"] == "completed"]
+        if not successful_turns:
+            if deliberation_policy.fallback == "fail":
+                raise DeliberationExecutionError(
+                    "moderated deliberation produced no successful turns"
+                )
+            return None
+
+        if last_decision and last_decision.unresolved_conflicts > 0 and len(successful_turns) >= 2:
+            from parsing import _improvement_ratio
+
+            left = successful_turns[0]["content"]
+            right = successful_turns[1]["content"]
+            local_conflicts.append({
+                "category": "deliberation",
+                "proposition_a": left[:600],
+                "proposition_b": right[:600],
+                "divergence_score": round(_improvement_ratio(left, right), 3),
+                "resolution": "pending",
+                "resolved_by": "moderator_unresolved",
+            })
+
+        transcript = compact_transcript(
+            successful_turns,
+            max_chars=32000,
+            recent_full_turns=8,
+        )
+        moderator_summary = "\n".join(
+            (
+                f"- Round {index}: {decision.status}; convergence="
+                f"{decision.convergence_score:.2f}; unresolved="
+                f"{decision.unresolved_conflicts}; reason={decision.reason}"
+            )
+            for index, decision in enumerate(moderator_records, start=1)
+        ) or "- No valid moderator decision; limitations remain explicit."
+        model_names = sorted({turn["model"] for turn in successful_turns if turn["model"]})
+        local_deliberation_events.append({
+            "event": "moderated_debate_completed",
+            "turns": len(successful_turns),
+            "rounds": max((int(turn["round"]) for turn in successful_turns), default=0),
+            "agents": len({turn["role"] for turn in successful_turns}),
+            "model_calls": model_calls,
+            "early_consensus": early_consensus,
+            "loop_stopped": loop_stopped,
+            "reserve_agents_used": activated_reserve_agents,
+            "reserve_rounds_used": activated_reserve_rounds,
+        })
+        return [{
+            "res": (
+                "[MODERATED DELIBERATION]\n"
+                f"Agents: {len({turn['role'] for turn in successful_turns})}; "
+                f"Rounds: {max((int(turn['round']) for turn in successful_turns), default=0)}; "
+                f"Model calls: {model_calls}\n\n"
+                f"{transcript}\n\n[MODERATOR DECISIONS]\n{moderator_summary}"
+            ),
+            "model_cat": f"{'+'.join(model_names)}::ModeratedDeliberation",
+            **usage_totals,
+        }]
+
+    if (
+        deliberation_capacity.active
+        and deliberation_capacity.selected_mode == "moderated"
+    ):
+        moderated_results = await run_moderated_request()
+        if moderated_results is not None:
+            used = [
+                result["model_cat"]
+                for result in moderated_results
+                if result.get("model_cat")
+            ]
+            completed_models = [model for model in used if model]
+            deliberation_task_events = [
+                {
+                    "task_id": task.get("id", f"task{index}"),
+                    "category": task.get("category", "general"),
+                    "status": "completed" if completed_models else "failed",
+                    "executor": "moderated_deliberation",
+                    "iteration": int(state_.get("agentic_iteration") or 0),
+                    "reason": "" if completed_models else "no_deliberation_result",
+                    "models": completed_models,
+                }
+                for index, (_, task) in enumerate(expert_tasks)
+            ]
+            return {
+                "expert_results": [
+                    result["res"] for result in moderated_results if "res" in result
+                ],
+                "expert_models_used": used,
+                "prompt_tokens": sum(
+                    result.get("prompt_tokens", 0) for result in moderated_results
+                ),
+                "completion_tokens": sum(
+                    result.get("completion_tokens", 0) for result in moderated_results
+                ),
+                "user_conn_prompt_tokens": sum(
+                    result.get("user_conn_prompt_tokens", 0)
+                    for result in moderated_results
+                ),
+                "user_conn_completion_tokens": sum(
+                    result.get("user_conn_completion_tokens", 0)
+                    for result in moderated_results
+                ),
+                "conflict_registry": local_conflicts,
+                "task_events": deliberation_task_events,
+                "deliberation_capacity": deliberation_capacity.as_dict(),
+                "deliberation_events": local_deliberation_events,
+            }
+
     # Dynamic parallel/sequential execution via dependency levels.
     # Tasks with no 'depends_on' run in parallel (level 0).
     # Tasks whose 'depends_on' points to a level-N task run in level N+1.
@@ -860,6 +1694,7 @@ async def expert_worker(state_: AgentState):
 
     all_results: List[dict] = []
     prior_outputs: dict[str, str] = {}  # task_id → trimmed expert output for placeholder injection
+    task_events: list[dict] = []
 
     for lvl_idx, level in enumerate(levels):
         # Inject results from prior levels into {result_of:id} placeholders
@@ -884,6 +1719,22 @@ async def expert_worker(state_: AgentState):
             if tid:
                 combined = " | ".join(r.get("res", "") for r in group if r.get("res"))
                 prior_outputs[tid] = combined[:400]
+                successful_models = [
+                    r.get("model_cat")
+                    for r in group
+                    if r.get("model_cat") and r.get("res")
+                ]
+                task_events.append(
+                    {
+                        "task_id": tid,
+                        "category": orig_task.get("category", "general"),
+                        "status": "completed" if successful_models else "failed",
+                        "executor": "workers",
+                        "iteration": int(state_.get("agentic_iteration") or 0),
+                        "reason": "" if successful_models else "no_expert_result",
+                        "models": successful_models,
+                    }
+                )
 
     used = [r["model_cat"] for r in all_results if r.get("model_cat")]
     return {
@@ -894,4 +1745,7 @@ async def expert_worker(state_: AgentState):
         "user_conn_prompt_tokens":     sum(r.get("user_conn_prompt_tokens",     0) for r in all_results),
         "user_conn_completion_tokens": sum(r.get("user_conn_completion_tokens", 0) for r in all_results),
         "conflict_registry":           local_conflicts,
+        "task_events":                 task_events,
+        "deliberation_capacity":       deliberation_capacity.as_dict(),
+        "deliberation_events":         local_deliberation_events,
     }

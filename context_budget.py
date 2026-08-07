@@ -19,6 +19,7 @@ would silently return wrong values for renamed or future models.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import Optional
 
@@ -142,6 +143,9 @@ _CLAUDE_CTX_TABLE: dict[str, int] = {
     "claude-3-opus":    200_000,
     "claude-3-sonnet":  200_000,
     "claude-3-haiku":   200_000,
+    # qwen3-planner: SFT fine-tune on Qwen3-8B base (n_ctx_train=40960, no RoPE scaling).
+    # Must appear before "qwen3" so the prefix check matches this first.
+    "qwen3-planner":    40_960,
     # Qwen3 family (all generations) — 262k native context window.
     # Name-based entry needed because the tag carries no k-suffix; the param-count
     # heuristic would otherwise cap these at 32 768 (conservative VRAM estimate).
@@ -231,6 +235,28 @@ def resolve_requested_ctx(model: str, state_num_ctx: int = 0, num_ctx_env: int =
             )
         return safe_ctx
     return requested_ctx
+
+
+def adaptive_context_window(
+    requested_ctx: int,
+    prompt: str,
+    output_tokens: int,
+) -> int:
+    """Choose the smallest standard context tier that safely fits this call.
+
+    A template's large window remains the hard ceiling, not the default
+    allocation for every short request. The estimate is deliberately
+    conservative for mixed German/English/JSON prompts.
+    """
+    requested = max(0, int(requested_ctx or 0))
+    if requested <= 0:
+        return 0
+
+    estimated_input_tokens = math.ceil(len(prompt or "") / 3.5)
+    required = estimated_input_tokens + max(1, int(output_tokens or 0)) + 1024
+    tiers = (16_384, 32_768, 65_536, 131_072, 262_144)
+    selected = next((tier for tier in tiers if tier >= required), requested)
+    return min(requested, max(4_096, selected))
 
 
 async def _fetch_litellm_model_info(model: str, base_url: str, token: str,

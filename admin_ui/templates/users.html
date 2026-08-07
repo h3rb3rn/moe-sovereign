@@ -335,7 +335,7 @@ async function _loadResources() {
   try {
     const r = await fetch('/api/resources');
     _resourcesCache = await r.json();
-  } catch(e) { _resourcesCache = {expert_template:[],cc_profile:[],model_endpoint:[],moe_mode:['native','moe_orchestrated','moe_reasoning','moe-auto','moe-auto:local-only','moe-auto:global-only','moe-auto:user-conns-only'],skill:[],mcp_tool:[]}; }
+  } catch(e) { _resourcesCache = {expert_template:[],cc_profile:[],model_endpoint:[],moe_mode:['native','moe_orchestrated','moe_reasoning','moe-auto','moe-auto:local-only','moe-auto:global-only','moe-auto:user-conns-only','moe-auto:no-deliberation','moe-auto:deliberation-required'],skill:[],mcp_tool:[]}; }
   return _resourcesCache;
 }
 
@@ -836,6 +836,8 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
             const local  = moePermState('moe-auto:local-only');
             const glob   = moePermState('moe-auto:global-only');
             const uconn  = moePermState('moe-auto:user-conns-only');
+            const noDelib = moePermState('moe-auto:no-deliberation');
+            const reqDelib = moePermState('moe-auto:deliberation-required');
 
             const rows = [
               {
@@ -865,6 +867,20 @@ async function openUserDetail(uid, name, activeTab = 'tab-budget') {
                 desc:'Dynamic Router darf ausschließlich Verbindungen verwenden, die der User selbst angelegt hat (persönliche API Connections). Globale Admin-Endpoints werden ignoriert.',
                 ...uconn,
                 onclick: `toggleMoeAutoSubPerm('${uid}','moe-auto:user-conns-only',${uconn.isGranted},'${uconn.permId}','${name}')`
+              },
+              {
+                icon:'bi-people', color:'text-secondary',
+                title:'Adaptive Debatte deaktivieren',
+                desc:'Das dynamisch erzeugte Template führt keine Debatte aus. Diese Freigabe hat Vorrang, falls gleichzeitig „Debatte erforderlich“ gesetzt ist.',
+                ...noDelib,
+                onclick: `toggleMoeAutoSubPerm('${uid}','moe-auto:no-deliberation',${noDelib.isGranted},'${noDelib.permId}','${name}')`
+              },
+              {
+                icon:'bi-people-fill', color:'text-danger',
+                title:'Debatte erforderlich',
+                desc:'Das dynamisch erzeugte Template fordert eine budgetierte Debatte auch unterhalb der adaptiven Komplexitätsschwelle an. Fallback- und Trust-Grenzen bleiben wirksam.',
+                ...reqDelib,
+                onclick: `toggleMoeAutoSubPerm('${uid}','moe-auto:deliberation-required',${reqDelib.isGranted},'${reqDelib.permId}','${name}')`
               },
             ];
 

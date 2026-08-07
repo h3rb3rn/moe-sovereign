@@ -9,10 +9,13 @@ Covers:
   - hash_text(): valid algorithm selection, rejection of unknown algorithms
   - base64_codec(): encode/decode round-trip, invalid mode handling
   - date_diff(): valid date arithmetic, invalid date format handling
+  - calendar_facts(): localized structured calendar facts and boundary cases
   - gcd_lcm(): gcd/lcm/both operations and integer correctness
   - statistics_calc(): standard statistical measures, unknown-op silencing
   - subnet_calc(): valid CIDR parsing, invalid CIDR error handling
 """
+
+import json
 
 import pytest
 
@@ -20,16 +23,126 @@ import pytest
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "mcp_server"))
 
 from mcp_server.server import (
+    _TOOL_ACCESS_KIND,
+    _TOOL_DESCRIPTIONS,
+    _TOOL_REGISTRY,
+    _input_schema,
+    build_tools_catalog,
+    execute_tool,
+    InvokeRequest,
     base64_codec,
     calculate,
+    calendar_facts,
     date_diff,
+    day_of_week,
     gcd_lcm,
     hash_text,
     statistics_calc,
     subnet_calc,
 )
+
+
+def test_tools_catalog_exposes_versioned_structured_contracts():
+    tools = {item["name"]: item for item in build_tools_catalog()["tools"]}
+
+    assert len(tools) == len(_TOOL_DESCRIPTIONS)
+    assert set(tools).issubset(_TOOL_REGISTRY)
+    for name in ("calendar_facts", "gcd_lcm", "unit_convert"):
+        contract = tools[name]
+        assert contract["contract_id"].startswith("moe.precision.")
+        assert contract["contract_version"] == "1.0.0"
+        assert len(contract["contract_hash"]) == 64
+        assert contract["structured_result"] is True
+        assert contract["inputSchema"]["additionalProperties"] is False
+        assert isinstance(contract["outputSchema"], dict)
+        assert contract["normalization_policy"] == {
+            "apply_schema_defaults": True,
+            "reject_unknown_properties": True,
+        }
+        assert contract["retry_policy"] == {
+            "max_attempts": 1,
+            "argument_mutation": False,
+        }
+        assert contract["cache_policy"] == {"mode": "bypass"}
+
+    assert tools["calculate"]["structured_result"] is False
+    assert tools["calculate"]["contract_version"] == "0.0.0"
+    assert tools["calculate"]["outputSchema"] == {"type": "string"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,args,expected",
+    [
+        (
+            "calendar_facts",
+            {"date_str": "2026-07-29", "locale": "de"},
+            ("weekday_name", "Mittwoch"),
+        ),
+        (
+            "gcd_lcm",
+            {"a": 391, "b": 299, "operation": "gcd"},
+            ("gcd", 23),
+        ),
+    ],
+)
+async def test_invoke_keeps_legacy_result_and_adds_valid_structured_result(
+    tool,
+    args,
+    expected,
+):
+    response = await execute_tool(InvokeRequest(tool=tool, args=args))
+
+    assert isinstance(response["result"], str)
+    structured = response["structured_result"]
+    assert structured["status"] == "completed"
+    assert structured["tool"] == tool
+    assert structured["input_normalized"] == args
+    assert structured["facts"][expected[0]] == expected[1]
+    assert len(structured["contract_hash"]) == 64
+    assert len(structured["result_hash"]) == 64
+    assert structured["source"]["version"]
+    assert structured["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_invoke_rejects_wrong_type_and_unknown_fields_before_tool_call():
+    wrong_type = await execute_tool(
+        InvokeRequest(
+            tool="gcd_lcm",
+            args={"a": "391", "b": 299, "operation": "gcd"},
+        )
+    )
+    unknown = await execute_tool(
+        InvokeRequest(
+            tool="gcd_lcm",
+            args={"a": 391, "b": 299, "operation": "gcd", "extra": True},
+        )
+    )
+
+    assert wrong_type["error_code"] == "input_schema_invalid"
+    assert unknown["error_code"] == "input_schema_invalid"
+
+
+@pytest.mark.asyncio
+async def test_invoke_rejects_invalid_structured_output(monkeypatch):
+    monkeypatch.setattr(
+        "mcp_server.server._structured_facts",
+        lambda *_args, **_kwargs: {"gcd": "not-an-integer"},
+    )
+
+    response = await execute_tool(
+        InvokeRequest(
+            tool="gcd_lcm",
+            args={"a": 391, "b": 299, "operation": "gcd"},
+        )
+    )
+
+    assert response["error_code"] == "output_schema_invalid"
+    assert "structured_result" not in response
 
 # ── calculate() ───────────────────────────────────────────────────────────────
 
@@ -171,6 +284,24 @@ def test_date_diff_same_date():
     assert "0" in result
 
 
+def test_date_diff_uses_calendar_delta_not_365_30_approximation():
+    result = date_diff("2024-01-31", "2024-03-01")
+    assert result == (
+        "From 2024-01-31 to 2024-03-01: 30 days total "
+        "(0 years, 1 months, 1 days calendar delta)"
+    )
+    assert "≈" not in result
+
+
+def test_date_diff_leap_year_delta_is_exact_and_order_independent():
+    expected = (
+        "From 2024-02-29 to 2025-03-01: 366 days total "
+        "(1 years, 0 months, 1 days calendar delta)"
+    )
+    assert date_diff("2024-02-29", "2025-03-01") == expected
+    assert date_diff("2025-03-01", "2024-02-29") == expected
+
+
 def test_date_diff_invalid_format_returns_error():
     """DD-MM-YYYY is not the expected format; must return an error string."""
     result = date_diff("31-01-2024", "2024-01-01")
@@ -180,6 +311,91 @@ def test_date_diff_invalid_format_returns_error():
 def test_date_diff_non_date_string_returns_error():
     result = date_diff("not-a-date", "2024-01-01")
     assert result.startswith("Error") or result.startswith("Fehler")
+
+
+# ── calendar_facts() ─────────────────────────────────────────────────────────
+
+
+def _calendar_json(date_str: str, locale: str = "de") -> dict:
+    return json.loads(calendar_facts(date_str, locale))
+
+
+def test_calendar_facts_german_leap_day_is_structured_and_exact():
+    result = _calendar_json("2024-02-29", "de")
+
+    assert result == {
+        "calendar_system": "proleptic_gregorian",
+        "date": "2024-02-29",
+        "day": 29,
+        "day_of_year": 60,
+        "days_in_month": 29,
+        "days_in_year": 366,
+        "is_leap_year": True,
+        "is_weekend": False,
+        "iso_week": 9,
+        "iso_week_year": 2024,
+        "locale": "de",
+        "month": 2,
+        "month_name": "Februar",
+        "quarter": 1,
+        "weekday_iso": 4,
+        "weekday_name": "Donnerstag",
+        "year": 2024,
+    }
+
+
+def test_calendar_facts_reports_iso_week_year_boundary():
+    result = _calendar_json("2021-01-01", "en")
+
+    assert result["weekday_name"] == "Friday"
+    assert result["weekday_iso"] == 5
+    assert result["iso_week"] == 53
+    assert result["iso_week_year"] == 2020
+    assert result["day_of_year"] == 1
+
+
+def test_calendar_facts_reports_month_quarter_and_weekend_boundary():
+    result = _calendar_json("2024-06-30", "en")
+
+    assert result["month_name"] == "June"
+    assert result["days_in_month"] == 30
+    assert result["quarter"] == 2
+    assert result["weekday_name"] == "Sunday"
+    assert result["is_weekend"] is True
+
+
+@pytest.mark.parametrize(
+    "date_str",
+    ["29.02.2024", "2023-02-29", "2024-2-09", "today", ""],
+)
+def test_calendar_facts_rejects_non_iso_or_invalid_dates(date_str):
+    with pytest.raises(ValueError, match="valid ISO date"):
+        calendar_facts(date_str, "de")
+
+
+def test_calendar_facts_rejects_unknown_locale():
+    with pytest.raises(ValueError, match="locale must be one of"):
+        calendar_facts("2026-07-29", "de-DE")
+
+
+def test_calendar_facts_registry_and_schema_are_complete():
+    assert _TOOL_REGISTRY["calendar_facts"] is calendar_facts
+    assert "calendar_facts" in _TOOL_DESCRIPTIONS
+    assert _TOOL_ACCESS_KIND["calendar_facts"] == "read"
+    assert _input_schema(calendar_facts) == {
+        "type": "object",
+        "properties": {
+            "date_str": {"type": "string"},
+            "locale": {"type": "string", "default": "de"},
+        },
+        "required": ["date_str"],
+        "additionalProperties": False,
+    }
+
+
+def test_day_of_week_remains_backward_compatible():
+    result = day_of_week("2026-07-29")
+    assert result == "2026-07-29 is a Wednesday (CW 31, day 210 of year 2026)"
 
 
 # ── gcd_lcm() ─────────────────────────────────────────────────────────────────

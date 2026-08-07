@@ -222,21 +222,6 @@ async def ensure_indexed(
         return False
 
 
-async def retrieve(
-    session_id: str,
-    query: str,
-    redis_client,
-    n_results: int = RETRIEVAL_TOP_K,
-) -> str:
-    """Retrieve relevant context chunks.  Thin wrapper over retrieve_context_for_task."""
-    return await retrieve_context_for_task(
-        session_id=session_id,
-        task_text=query,
-        redis_client=redis_client,
-        n_results=n_results,
-    )
-
-
 async def chunk_and_index_context(
     session_id: str,
     content: str,

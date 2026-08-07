@@ -137,6 +137,8 @@ async def test_get_dynamic_template_integration():
         assert tmpl["enable_graphrag"] is True
         assert tmpl["enable_web_research"] is False
         assert "general" in tmpl["experts"]
+        assert tmpl["deliberation_policy"]["activation"] == "adaptive"
+        assert tmpl["deliberation_policy"]["mode"] == "auto"
 
 
 @pytest.mark.asyncio
@@ -361,5 +363,4 @@ async def test_routellm_template_routing_integration():
         assert "RouteLLM_Score" in tmpl["reasoning_trace"]
         assert "path=weak" in tmpl["reasoning_trace"]
         assert tmpl["experts"]["general"]["models"][0]["model"] == "model_small:8b"
-
 

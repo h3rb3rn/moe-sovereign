@@ -1,16 +1,19 @@
 """routes/watchdog.py — Watchdog alerts, Starfleet features, node-status endpoints."""
 
 import asyncio
+import hmac
 import json
+import os
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import starfleet_config as _starfleet
 import watchdog as _watchdog
 import state
 from config import INFERENCE_SERVERS_LIST
+from services.auth import _extract_api_key, _validate_api_key
 
 router = APIRouter()
 
@@ -36,6 +39,60 @@ async def watchdog_alerts_endpoint(limit: int = 20):
 async def starfleet_features_endpoint():
     """Return current state of all Starfleet feature toggles."""
     return await _starfleet.get_all_feature_states(state.redis_client)
+
+
+async def _require_feature_admin(request: Request) -> None:
+    raw_key = _extract_api_key(request)
+    if not raw_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+    user_ctx = await _validate_api_key(raw_key)
+    if not user_ctx or "error" in user_ctx:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    system_key = os.getenv("SYSTEM_API_KEY", "")
+    is_system = bool(system_key) and hmac.compare_digest(raw_key, system_key)
+    is_admin = str(user_ctx.get("is_admin", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "admin",
+    }
+    if not (is_system or is_admin):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@router.put("/api/starfleet/features/{name}")
+async def starfleet_feature_set(name: str, request: Request):
+    """Set a validated Redis runtime override for a known feature."""
+    await _require_feature_admin(request)
+    body = await request.json()
+    if "enabled" not in body or not isinstance(body["enabled"], bool):
+        raise HTTPException(status_code=400, detail="'enabled' must be a boolean")
+    known = name in _starfleet.feature_names()
+    previous = (
+        await _starfleet.is_feature_enabled(name, state.redis_client)
+        if known
+        else False
+    )
+    if not await _starfleet.set_feature_enabled(
+        name,
+        body["enabled"],
+        state.redis_client,
+    ):
+        raise HTTPException(
+            status_code=404 if not known else 503,
+            detail=(
+                f"Unknown feature '{name}'"
+                if not known
+                else "Valkey unavailable"
+            ),
+        )
+    return {
+        "ok": True,
+        "feature": name,
+        "enabled": body["enabled"],
+        "previous": previous,
+        "source": "redis",
+    }
 
 
 @router.get("/api/watchdog/config")

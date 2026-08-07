@@ -1,60 +1,37 @@
-# E-2.4 Adaptive Komplexitätssteuerung (Cynefin)
+# E-2.4 Adaptive Complexity Control
 
+Owner: Platform Engineering
+Version: 2.0
+Last verified: 2026-07-30
 Level: Epic
-Status: Open
+Status: Partial
 
-Parent Initiative: I-2 Pipeline Quality Gate Stack (`../initiative.md`)
+Parent: [I-2 Pipeline Quality-Gate Stack](../initiative.md)
 
-## Epic Goal
+## Outcome
 
-Automatische, deterministisch-heuristische Klassifikation der Anfrage-Komplexität
-zur Laufzeit. Das Ergebnis steuert Default-Autonomie-Level und `max_iterations`
-ohne separaten LLM-Call.
+Deterministic Cynefin-style classification selects bounded autonomy and work
+budgets without another classification LLM call.
 
-## Capability / Proof Package
+## Implemented and evidenced
 
-Cynefin-Klassifikation aus Planner-Signalen (keine separaten LLM-Calls):
-- `clear`: 1 Subtask, 1 Domain, kein Constitution-Treffer → `auto`
-- `complicated`: 2–4 Subtasks, ≤2 Domains, kein Trust-Score-Warning → `auto`
-- `complex`: ≥5 Subtasks oder ≥3 Domains oder Trust-Score `proceed-with-assumption` → `supervised`
-- `chaotic`: Constitution-`block`-Treffer oder Trust-Score `block` → `supervised` + sofortiger Gate
+- `services/cynefin.py` deterministic classifier;
+- classification from updated planner state and final trust state;
+- state/usage propagation and focused unit/integration tests;
+- conservative trivial fast-path eligibility remains a separate,
+  independently tested optimization.
 
-`supervised`-Modus: Caller bekommt Zwischenbericht mit Plan-Summary und
-Bestätigung bevor Expert-Kosten anfallen. API-Parameter `autonomy_override`
-erlaubt In-Session-Wechsel.
+## Remaining gap
 
-## Scope
+The original epic also promises caller-visible `supervised` confirmation
+before expensive expert dispatch. That API/state-machine contract is not
+demonstrated by the classifier implementation alone.
 
-- `services/complexity.py` (neu) — Klassifikations-Heuristik
-- `configs/complexity-thresholds.yaml` (neu) — Schwellen konfigurierbar
-- Erweiterung `pipeline/state.py` um `complexity_class`, `autonomy_level`
-- Integration in `graph/planner.py` nach Plan-Finalisierung
-- Erweiterung API-Schema um `autonomy_override`-Parameter
+## Exit criteria
 
-## Dependencies / Preconditions
-
-- E-2.2 abgeschlossen (Trust-Score als Komplexitätssignal)
-
-## Success Semantics
-
-- Anfrage mit ≥5 Subtasks → `complexity_class: complex`, `autonomy_level: supervised` in State
-- `supervised`-Modus sendet Zwischenbericht an Caller vor Expert-Dispatch
-- Constitution-`block` → `complexity_class: chaotic`, sofortiger Gate
-
-## Failure Semantics
-
-- Klassifikation wirft Exception → fail-open, Default `complicated`, `auto`
-
-## Quality Constraints
-
-- Klassifikation deterministisch, kein LLM-Call, &lt;5ms
-- Fail-open
-
-## Exit Criteria
-
-- `pytest tests/ -q` grün
-- Anfrage mit 6 Subtasks produziert nachweislich `complex`-Klassifikation
-
-## Source Material
-
-- Wiki `re-loop-interaktionsmodi.md`: `/opt/deployment/adSCAILE_Framework/adSCAILE_shared_tools/adscaile_wiki-main/wiki/re-loop-interaktionsmodi.md`
+- complexity/autonomy mapping is versioned and deterministically tested;
+- `supervised` mode pauses before expert cost, returns an authenticated
+  approval handle, and resumes idempotently;
+- missing classification cannot weaken a Constitution, tenant, `local_only`,
+  or mandatory HITL decision;
+- latency overhead and failure behavior are measured.

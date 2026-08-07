@@ -84,6 +84,19 @@ def test_build_failure_raw_text_truncated():
     assert len(failure.raw_text) == 1600
 
 
+def test_failure_as_dict_is_json_safe():
+    failure = build_failure(
+        json.JSONDecodeError("x", "", 0),
+        model="m",
+        stage="planner",
+        retry_round=1,
+    )
+    payload = failure.as_dict()
+    assert payload["failure_kind"] == "SCHEMA_OUTPUT"
+    assert "RETRY_SAME" in payload["allowed_actions"]
+    json.dumps(payload)
+
+
 # ── resolve_retry_model ────────────────────────────────────────────────────────
 
 def test_resolve_retry_same():

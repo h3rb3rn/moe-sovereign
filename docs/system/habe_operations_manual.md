@@ -1,6 +1,9 @@
-# Betriebshandbuch: Holographic Ambient Background Engine (HABE) 2.0
+# Betriebshandbuch: Holographic Ambient Background Engine (HABE)
 
-Dieses Betriebshandbuch beschreibt die theoretischen Grundlagen, die mathematische Funktionsweise, die administrative Konfiguration und die Systemintegration der **Holographic Ambient Background Engine (HABE) 2.0** in der **MoE Sovereign**-Infrastruktur.
+Dieses Betriebshandbuch beschreibt die theoretischen Grundlagen, die
+mathematische Funktionsweise, die administrative Konfiguration und die
+implementierte Systemintegration der **Holographic Ambient Background Engine
+(HABE)** in der **MoE Sovereign**-Infrastruktur.
 
 ---
 
@@ -8,13 +11,23 @@ Dieses Betriebshandbuch beschreibt die theoretischen Grundlagen, die mathematisc
 
 Die HABE-Architektur simuliert Hubert Dreyfus' Konzept des **„unbewussten Hintergrundwissens“ (1965: Alchemy and Artificial Intelligence)**. Dreyfus argumentierte, dass menschliche Intelligenz auf einem impliziten, nicht-regelbasierten Hintergrund beruht, der unsere Wahrnehmung moduliert, ohne explizit als Faktenkette abgerufen zu werden.
 
-In MoE Sovereign wird dieses unbewusste Hintergrundwissen simuliert, indem wir die gesamte Wissensbasis (GraphRAG-Tripel und Cache-Historien) in einen einzigen kontinuierlichen Vektor – den **Holographic Ambient Vector (HAV)** – komprimieren. Dieser Vektor moduliert den Aufmerksamkeitsprozess (Attention Space) und den KV-Cache der ausführenden SLMs, anstatt expliziten Kontext via Prompt-Erweiterung einzuschleusen.
+In MoE Sovereign werden aktive GraphRAG-Tripel in einen kontinuierlichen
+Vektor – den **Holographic Ambient Vector (HAV)** – kompiliert. In der
+gegenwärtig produktiven Integration bewertet HABE damit abgerufene
+GraphRAG-Zeilen, filtert bzw. ordnet sie neu und liefert die ausgewählten
+Fakten als nachvollziehbaren Textkontext an die Synthese. Eine direkte
+Attention- oder KV-Cache-Injektion ist nicht Teil des produktiven
+Inferenzvertrags.
 
 ---
 
 ## 2. Mathematische Grundlagen: Vector Symbolic Architectures (VSA)
 
-HABE nutzt eine dichte Vektor-VSA-Implementierung (spezifisch **Holographic Reduced Representations - HRR**) der Dimension $D = 2048$. Dies ermöglicht die verlustfreie algebraische Speicherung von strukturierten Relationen (Subjekt-Prädikat-Objekt-Tripel) in einem einzigen Vektor konstanter Größe.
+HABE nutzt eine dichte Vektor-VSA-Implementierung (spezifisch
+**Holographic Reduced Representations - HRR**) der Dimension $D = 2048$.
+Die Repräsentation ist eine verlustbehaftete Superposition strukturierter
+Relationen; ihre Ähnlichkeitsscores dienen als Retrievalsignal und ersetzen
+keinen belegbaren GraphRAG-Fakt.
 
 ### 2.1. Grundlegende Operationen
 1.  **Erzeugung (Generation):** Jedes Symbol (z. B. `subj:Therapie`, `pred:behandelt`, `obj:Migräne`) wird als dichte, normalisierte Zufallsvariable initialisiert:
@@ -27,15 +40,24 @@ HABE nutzt eine dichte Vektor-VSA-Implementierung (spezifisch **Holographic Redu
 4.  **Bündelung (Bundling / Superposition $\oplus$):** Aggregation mehrerer Relationen durch Vektoraddition und anschließende Normalisierung:
     $$\mathbf{S} = \text{Normalize}\left(\sum_{i=1}^N \mathbf{T}_i\right)$$
 
-### 2.2. HABE 2.0: Hierarchische Graphen-Strukturen
-Das HABE 2.0-Upgrade erweitert die flache Triplett-Kompression um hierarchische Wissensgraphen (Bäume). Ein Eltern-Knoten bindet seine Kind-Subgraphen und deren Relation rekursiv in sich ein:
+### 2.2. Forschungsnotiz: hierarchische Graphen-Strukturen
+
+Eine rekursive Bindung ganzer Subgraphen wäre eine mögliche spätere
+Erweiterung:
 
 $$\mathbf{v}_{\text{parent\_subgraph}} = \text{bundle}\left(\mathbf{v}_{\text{parent}}, \text{bind}(\mathbf{v}_{\text{child\_subgraph}} \circledast \mathbf{v}_{\text{relation}}, \mathbf{v}_{\text{parent}})\right)$$
 
-*   **Vorteil:** Verschachtelte Strukturen (z. B. eine Applikation mit untergeordneten Datenbanken, welche wiederum auf spezifischen Servern laufen) können als ein einziger Vektor abgebildet werden.
-*   **Abfrage (Recursive Unbinding):** Um die Substrukturen abzufragen, wird der hierarchische Vektor stufenweise entbunden:
+Diese Formel ist **keine aktuelle Produktionsfähigkeit**. Der implementierte
+Rebuild kompiliert flache Subjekt-Prädikat-Objekt-Tripel; die früher isoliert
+vorhandenen, aber nicht aufgerufenen Hierarchie- und
+Virtual-Prefix-Hilfsfunktionen wurden entfernt. Vor einer späteren Einführung
+wären ein realer GraphRAG-Aufrufer, Qualitätsmetriken und ein End-to-End-Test
+erforderlich.
+
+Eine mögliche Abfrage würde den Vektor stufenweise entbinden:
     $$\mathbf{v}_{\text{child\_subgraph}} \approx \text{unbind}(\mathbf{v}_{\text{parent\_subgraph}}, \mathbf{v}_{\text{parent}} \circledast \mathbf{v}_{\text{relation}})$$
-    Der resultierende verrauschte Vektor wird erneut über den Cleanup-Mechanismus mit dem Vokabular abgeglichen.
+Der resultierende verrauschte Vektor müsste anschließend über den
+Cleanup-Mechanismus mit dem Vokabular abgeglichen werden.
 
 ---
 
@@ -60,15 +82,26 @@ Der Skalierungsfaktor $C$ ist auf $3.0$ vordefiniert, was statistisch $99.9\%$ d
 
 ---
 
-## 4. Virtual Prefix Attention Modulation & Systemintegration
+## 4. Retrieval-Modulation und Systemintegration
 
-HABE 2.0 schleust das VSA-Hintergrundwissen nicht als Klartext in den Context Window des LLMs ein, sondern überbrückt die Lücke im latenten Vektorraum:
+Der implementierte Datenpfad ist:
 
-1.  **VSA-Export:** Der kompilierte, normalisierte HAV-Vektor wird in eine liste von 2048 Gleitkommazahlen exportiert.
-2.  **API-Einspeisung:** Das Backend (`services/inference.py` / `graph/expert.py`) fängt Anfragen ab, wenn `enable_habe=True` im aktiven Template gesetzt ist, und übergibt die Embeddings über die Inferenzoptionen:
-    *   **OpenAI-kompatibel:** Übergeben in `extra_body.options.habe_prefix_embedding`
-    *   **Native Ollama:** Übergeben als `options.habe_prefix_embedding` im Request-Payload.
-3.  **Inferenz-Wirkung:** Das lokale Sprachmodell (z. B. Qwen oder Llama) nutzt diese Embeddings im Attention-Mechanismus als virtuelles Prefix. Es "fühlt" den topologischen Wissenshintergrund, ohne Kontext-Token zu belegen.
+1. **VSA-Export:** Der Rebuild schreibt den normalisierten HAV als NumPy-Datei
+   `models/habe_vector.npy` und das stabile Symbolvokabular als
+   `models/habe_vocab.json`.
+2. **GraphRAG-Abruf:** `graph/tool_nodes.py` lädt beide Artefakte, extrahiert
+   Konzepte aus der Anfrage und bewertet die bereits abgerufenen
+   GraphRAG-Zeilen.
+3. **Begrenzte Modulation:** Nur Zeilen oberhalb des dynamischen
+   Rauschschwellwerts werden priorisiert; bei fehlenden oder ungültigen
+   Artefakten bleibt der normale GraphRAG-Kontext erhalten.
+4. **Attribution:** Die tatsächlich an die Synthese gelieferten Entitäten
+   werden nach der Antwort als Retrieval-Hit oder -Miss zurückgeschrieben.
+
+Die frühere Hilfsfunktion zur Übergabe von `habe_prefix_embedding` ist
+bewusst ein No-op. Eine latente Prefix-Integration wäre
+inferenzbackend-spezifische Forschung und muss vor einer Produktivbehauptung
+implementiert und gegen den jeweiligen Serververtrag getestet werden.
 
 ### 4.1. API-Datenfluss
 
@@ -78,29 +111,49 @@ HABE 2.0 schleust das VSA-Hintergrundwissen nicht als Klartext in den Context Wi
                                 (Sichert config_json)
                                       │
                                       ▼
-[inference.py / routing.py] <── [PostgreSQL / SQLite]
+[routing.py] <────────────── [PostgreSQL]
             │
       (Liest enable_habe)
             │
             ▼
-[graph/expert.py / main.py] ──(Wenn True)──> [vsa_background.py (Hierarchische Kompilierung)]
-                                                            │
-                                                     (Exportiert Embeddings)
-                                                            │
-                                                            ▼
-                                              [LLM Attention Engine (Local)]
+[graph/tool_nodes.py] ──(Wenn True)──> [habe_vector.npy + habe_vocab.json]
+            │
+      (Bewertet GraphRAG-Zeilen)
+            │
+            ▼
+[Synthese-Prompt + Retrieval-Attribution]
 ```
 
 ---
 
 ## 5. Betriebsabläufe: Der Rebuild-Cronjob
 
-Da die VSA-Operationen rein algebraisch sind, benötigt das „Nachtrainieren“ des Hintergrunds kein Deep Learning. Ein stündlicher oder täglicher Cronjob führt die Vektor-Kompilierung auf CPU-Ebene durch.
+Da die VSA-Operationen algebraisch sind, benötigt der Rebuild kein
+Gewichtstraining. Der Dienst `moe-maintenance` führt ihn standardmäßig
+täglich als isolierten Subprozess mit Timeout und Statusdatei aus.
 
 ### 5.1. Ablauf des Cronjobs (`scripts/cron_habe_rebuild.py`)
 1.  **Abfrage:** Extrahiert alle aktiven Wissens-Tripel aus Neo4j.
 2.  **Hierarchischer Zusammenbau:** Ordnet verschachtelte Entitäten in hierarchische Baumstrukturen und kompiliert sie zu einem einzigen HAV.
-3.  **Export:** Speichert den Summenvektor als Binärdatei unter `models/habe_vector.bin` und aktualisiert das Vokabular-Mapping in `models/habe_vocab.json`.
+3. **Sicherer Export:** Schreibt Vektor und Vokabular zunächst in temporäre
+   Dateien und veröffentlicht sie atomar als `models/habe_vector.npy` und
+   `models/habe_vocab.json`.
+4. **Fehlerverhalten:** Liefert Neo4j keine Tripel, bleibt der letzte gültige
+   Snapshot unangetastet und der Job endet fehlerhaft. Synthetische
+   Bootstrap-Tripel sind nur mit `HABE_ALLOW_BOOTSTRAP=1` für Entwicklung
+   erlaubt.
+
+### 5.2. Scheduler-Konfiguration
+
+```dotenv
+HABE_SCHEDULER_ENABLED=1
+HABE_REBUILD_INTERVAL_SECONDS=86400
+HABE_REBUILD_TIMEOUT_SECONDS=1800
+HABE_ALLOW_BOOTSTRAP=0
+```
+
+Der letzte Exit-Code, die Laufzeit und das Ende der Jobausgabe stehen in
+`/app/logs/maintenance-status.json`.
 
 ---
 

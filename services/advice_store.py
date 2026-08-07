@@ -115,8 +115,17 @@ def get_active_advice(query: str = None) -> list[str]:
             
     return active
 
-def enforce_advice_rules(query: str, plan: list) -> list:
-    """Enforces symbolic constraints on the generated plan based on declarative advice rules."""
+def enforce_advice_rules(
+    query: str,
+    plan: list,
+    tool_schemas: dict | None = None,
+) -> list:
+    """Enforce only advice tasks whose required arguments are proven.
+
+    Advice is a routing constraint, not authority to invent MCP arguments. A
+    rule with no complete extractor is observed in logs but cannot inject an
+    unexecutable task that invalidates an otherwise typed precision plan.
+    """
     rules = load_advice_rules()
     modified_plan = list(plan)
     
@@ -187,6 +196,24 @@ def enforce_advice_rules(query: str, plan: list) -> list:
                         cidr_match = re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}\b', query)
                         if cidr_match:
                             new_task["mcp_args"] = {"cidr": cidr_match.group(0)}
+
+                    schema = (tool_schemas or {}).get(mcp_tool) or {}
+                    required = schema.get("required") or []
+                    if not required and mcp_tool == "calculate":
+                        # Compatibility for callers without a discovered
+                        # catalogue; calculate has always required expression.
+                        required = ["expression"]
+                    missing = [
+                        name for name in required
+                        if name not in new_task["mcp_args"]
+                    ]
+                    if missing:
+                        logger.warning(
+                            "AdviceTaker: rule %s not injected; required MCP "
+                            "arguments are not extractable: %s",
+                            r.get("id"), ",".join(missing),
+                        )
+                        continue
                             
                 # Inject at the beginning of the plan so it runs before general experts
                 modified_plan.insert(0, new_task)

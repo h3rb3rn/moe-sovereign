@@ -14,7 +14,6 @@ from prometheus_client import (
 from datetime import datetime, timedelta, timezone
 from typing import List, Annotated, Dict, Any, TypedDict, Optional, Union, AsyncGenerator
 from pipeline.state import AgentState
-from pipeline.logic_types import goedel_tnorm, lukasiewicz_tnorm
 from web_search import (
     _domain_score,
     _reliability_label,
@@ -24,7 +23,6 @@ from parsing import (
     _extract_usage,
     _extract_json,
     _parse_expert_confidence,
-    _parse_expert_gaps,
     _expert_category,
     _dedup_by_category,
     _collect_conflicts,
@@ -53,6 +51,7 @@ from graph_rag.corrections import (
 from config import (
     # Runtime flags
     CORRECTION_MEMORY_ENABLED, _EDGE_MODE, LOG_LEVEL,
+    MCP_STRUCTURED_RESULT_REQUIRED,
     # Kafka
     KAFKA_BOOTSTRAP, KAFKA_TOPIC_INGEST, KAFKA_TOPIC_REQUESTS,
     KAFKA_TOPIC_FEEDBACK, KAFKA_TOPIC_LINTING, KAFKA_TOPIC_AUDIT,
@@ -80,7 +79,7 @@ from config import (
     # History
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS, HISTORY_MAX_ENTRIES,
     # Timeouts
-    JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT,
+    JUDGE_TIMEOUT, EXPERT_TIMEOUT, PLANNER_TIMEOUT, ORCHESTRATION_TIMEOUT,
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
     TOOL_MAX_TOKENS, REASONING_MAX_TOKENS,
     PLANNER_RETRIES, PLANNER_MAX_TASKS, SSE_CHUNK_SIZE,
@@ -262,7 +261,7 @@ _TOOL_GROUP_CORE = frozenset({
     "wikidata_search", "wikidata_sparql",
     "web_browser", "duckduckgo_search",
     "calculate", "python_sandbox",
-    "date_diff", "date_add", "unit_convert",
+    "date_diff", "date_add", "calendar_facts", "unit_convert",
 })
 # Research: shown when query contains paper/author/database/species/media markers
 _TOOL_GROUP_RESEARCH = frozenset({
@@ -524,7 +523,7 @@ from services.inference import (
     ainvoke_judge_llm, judge_llm_ollama_aware,
     _refine_expert_response,
     _ps_cache, _PS_CACHE_TTL, _get_model_node_load, _estimate_model_vram_gb,
-    _select_node, _get_expert_score, _record_expert_outcome, _infer_tier,
+    _select_node, _get_expert_score, _record_expert_outcome,
 )
 # _dedup_by_category — see parsing.py
 
@@ -698,7 +697,8 @@ from prompts import _ROUTE_PROTOTYPES
 # LangGraph nodes moved to thematic submodules under graph/
 from graph import (
     _seed_task_type_prototypes,
-    cache_lookup_node, semantic_router_node,
+    guard_node, _route_guard,
+    precision_preflight_node, cache_lookup_node, semantic_router_node,
     _validate_tool_result, mcp_node,
     graph_rag_node, math_node_wrapper,
     _sanitize_plan, _detect_query_temperature,
@@ -708,7 +708,11 @@ from graph import (
     research_node,
     _extract_authoritative_domains, _rerank_graph_context, _compress_graph_context_llm,
     merger_node, research_fallback_node, thinking_node,
-    _should_replan, resolve_conflicts_node, critic_node, self_critique_node, _route_cache,
+    _should_replan, resolve_conflicts_node, critic_node, self_critique_node,
+    quality_gate_node, _route_cache, _route_precision_preflight,
+    deterministic_precision_renderer_node, precision_bind_node,
+    precision_slot_prepare_node,
+    _route_quality_gate, response_commit_node,
     strategy_review_node,
 )
 
@@ -759,31 +763,85 @@ async def _load_mcp_tool_descriptions():
             tools = resp.json().get("tools", [])
             general_lines = []
             agentic_lines = []
+            active_tool_descriptions: dict[str, str] = {}
+            active_tool_schemas: dict[str, dict] = {}
             for t in tools:
+                if not isinstance(t, dict) or not isinstance(t.get("name"), str):
+                    raise ValueError("MCP /tools contains an invalid tool entry")
+                if not t.get("enabled", True):
+                    continue
+                input_schema = t.get("inputSchema")
+                output_schema = t.get("outputSchema")
+                if not isinstance(input_schema, dict):
+                    raise ValueError(f"MCP tool {t['name']} has no valid inputSchema")
+                if not isinstance(output_schema, dict):
+                    raise ValueError(f"MCP tool {t['name']} has no valid outputSchema")
+                properties = input_schema.get("properties", {})
+                required = input_schema.get("required", [])
+                if not isinstance(properties, dict) or not isinstance(required, list):
+                    raise ValueError(f"MCP tool {t['name']} has a malformed inputSchema")
                 line = f"  - {t['name']}: {t['description']}"
                 if t['name'] in _AGENTIC_TOOL_NAMES:
                     agentic_lines.append(line)
                 else:
                     general_lines.append(line)
-                    state._MCP_TOOLS_DICT[t['name']] = t['description']
+                    active_tool_descriptions[t['name']] = t['description']
                 # Store schema for pre-call validation
-                state.MCP_TOOL_SCHEMAS[t["name"]] = {
-                    "required": t.get("required_args", t.get("required", [])),
-                    "args": t.get("args", t.get("parameters", {})),
+                active_tool_schemas[t["name"]] = {
+                    "required": required,
+                    "args": properties,
+                    "additionalProperties": bool(
+                        input_schema.get("additionalProperties", False)
+                    ),
                     "access_kind": t.get("access_kind", "read"),  # telemetry only, see graph/tool_nodes.py
+                    "output_schema": output_schema,
+                    "contract_id": str(t.get("contract_id") or f"legacy.{t['name']}"),
+                    "contract_version": str(t.get("contract_version") or "0.0.0"),
+                    "contract_hash": str(t.get("contract_hash") or ""),
+                    "determinism": str(t.get("determinism") or "unclassified"),
+                    "source_policy": t.get("source_policy") or {"kind": "unclassified"},
+                    "structured_result_required": bool(
+                        t.get("structured_result", False)
+                        and MCP_STRUCTURED_RESULT_REQUIRED
+                    ),
+                    "normalization_policy": t.get("normalization_policy") or {},
+                    "retry_policy": t.get("retry_policy") or {},
+                    "cache_policy": t.get("cache_policy") or {"mode": "legacy"},
+                    "evidence_policy": t.get("evidence_policy") or {},
+                    "limits": t.get("limits") or {"max_result_chars": 65536},
                 }
+            # Replace the discovered catalog only after the complete response
+            # has been validated. This removes stale/disabled tools without
+            # exposing a partially rebuilt catalog to concurrent requests.
+            state._MCP_TOOLS_DICT.clear()
+            state._MCP_TOOLS_DICT.update(active_tool_descriptions)
+            state.MCP_TOOL_SCHEMAS.clear()
+            state.MCP_TOOL_SCHEMAS.update(active_tool_schemas)
             state.MCP_TOOLS_DESCRIPTION = "\n".join(general_lines)
             state.AGENTIC_CODE_TOOLS_DESCRIPTION = "\n".join(agentic_lines)
             logger.info(
-                f"✅ MCP server: {len(tools)} tools loaded ({len(agentic_lines)} code-nav exclusive)"
+                "✅ MCP server: %d/%d active tools loaded (%d code-nav exclusive)",
+                len(active_tool_schemas),
+                len(tools),
+                len(agentic_lines),
             )
     except Exception as e:
-        logger.warning(f"⚠️ MCP server unreachable ({e}) — planner without tool descriptions")
+        # An old schema must never make an unavailable or removed precision
+        # tool look executable. The static descriptions below are prompt hints
+        # only; mandatory tool contracts remain fail-closed without schemas.
+        state._MCP_TOOLS_DICT.clear()
+        state.MCP_TOOL_SCHEMAS.clear()
+        state.AGENTIC_CODE_TOOLS_DESCRIPTION = ""
+        logger.warning(
+            "⚠️ MCP server unreachable (%s) — executable tool catalog cleared",
+            e,
+        )
         state.MCP_TOOLS_DESCRIPTION = (
             "  - calculate: Exact arithmetic and formulas\n"
             "  - solve_equation: Solve algebraic equations\n"
             "  - date_diff: Difference between two dates\n"
             "  - date_add: Date arithmetic\n"
+            "  - calendar_facts: Localized weekday and ISO calendar facts\n"
             "  - day_of_week: Day of week for a date\n"
             "  - unit_convert: Unit conversion\n"
             "  - statistics_calc: Statistical metrics\n"
@@ -1028,6 +1086,12 @@ async def _gauge_updater_loop():
 # above; this block wires them into a StateGraph that lifespan() compiles with
 # the appropriate checkpointer.
 builder = StateGraph(AgentState)
+builder.add_node("guard",              guard_node)
+builder.add_node("precision_preflight", precision_preflight_node)
+builder.add_node("precision_mcp",      mcp_node)
+builder.add_node("precision_renderer", deterministic_precision_renderer_node)
+builder.add_node("precision_slots",    precision_slot_prepare_node)
+builder.add_node("precision_bind",     precision_bind_node)
 builder.add_node("cache",              cache_lookup_node)
 builder.add_node("semantic_router",    semantic_router_node)
 builder.add_node("planner",            planner_node)
@@ -1044,8 +1108,20 @@ builder.add_node("resolve_conflicts",  resolve_conflicts_node)
 builder.add_node("self_critique",      self_critique_node)
 builder.add_node("strategy_review",    strategy_review_node)
 builder.add_node("critic",             critic_node)
+builder.add_node("quality_gate",       quality_gate_node)
+builder.add_node("response_commit",    response_commit_node)
 
-builder.set_entry_point("cache")
+builder.set_entry_point("guard")
+builder.add_conditional_edges(
+    "guard", _route_guard,
+    {"precision_preflight": "precision_preflight", "merger": "merger"},
+)
+builder.add_conditional_edges(
+    "precision_preflight", _route_precision_preflight,
+    {"precision_mcp": "precision_mcp", "cache": "cache"},
+)
+builder.add_edge("precision_mcp", "precision_renderer")
+builder.add_edge("precision_renderer", "precision_bind")
 builder.add_conditional_edges(
     "cache", _route_cache,
     {"semantic_router": "semantic_router", "merger": "merger"},
@@ -1059,8 +1135,9 @@ builder.add_edge("fuzzy_router", "mcp")
 builder.add_edge("fuzzy_router", "graph_rag")
 builder.add_edge(
     ["workers", "research", "math", "mcp", "graph_rag"],
-    "research_fallback",
+    "precision_slots",
 )
+builder.add_edge("precision_slots", "research_fallback")
 builder.add_edge("research_fallback", "thinking")
 builder.add_edge("thinking", "strategy_review")
 # strategy_review is a pass-through when STRATEGY_REVIEW_ENABLED is not set
@@ -1072,7 +1149,13 @@ builder.add_conditional_edges(
 # Self-critique loops back to merger for re-evaluation (TASK-11)
 builder.add_edge("self_critique", "merger")
 builder.add_edge("resolve_conflicts", "critic")
-builder.add_edge("critic", END)
+builder.add_edge("critic", "precision_bind")
+builder.add_edge("precision_bind", "quality_gate")
+builder.add_conditional_edges(
+    "quality_gate", _route_quality_gate,
+    {"response_commit": "response_commit", "end": END},
+)
+builder.add_edge("response_commit", END)
 
 app_graph = None
 
@@ -1728,6 +1811,7 @@ async def _stream_native_llm(
                 user_id=user_id, api_key_id="", request_id=chat_id,
                 model=model_name, moe_mode="native",
                 prompt_tokens=p_tok, completion_tokens=c_tok, session_id=session_id,
+                latency_ms=round(total_s * 1000),
             ))
             # User-owned connections are billed by the user's own provider — exclude from MoE budget.
             if not is_user_conn:
@@ -1767,12 +1851,20 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                           planner_token_override: str = "",
                           planner_num_ctx: int = 0,
                           judge_num_ctx: int = 0,
+                          guardrail_prompt: str = "",
+                          guardrail_model_override: str = "",
+                          guardrail_url_override: str = "",
+                          guardrail_token_override: str = "",
+                          guardrail_num_ctx: int = 0,
                           model_name: str = "",
                           pending_reports: Optional[List[str]] = None,
                           images: Optional[List[Dict]] = None,
                           session_id: str = None,
                           max_agentic_rounds: int = 0,
-                          no_cache: bool = False):
+                          deliberation_policy: Optional[dict] = None,
+                          no_cache: bool = False,
+                          client_max_output_tokens: int = 0,
+                          local_only: bool = False):
     from services.helpers import current_chat_id
     current_chat_id.set(chat_id)
     _deregistered = False
@@ -1807,8 +1899,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
             if state.app_graph is None:
                 result_box["error"] = Exception("Orchestrator graph not ready — retry in a few seconds")
                 return
-            result_box["data"] = await state.app_graph.ainvoke(
+            result_box["data"] = await asyncio.wait_for(
+                state.app_graph.ainvoke(
                 {"input": user_input, "response_id": chat_id, "mode": mode,
+                 "request_deadline_monotonic": _t_start + ORCHESTRATION_TIMEOUT,
+                 "client_max_output_tokens": client_max_output_tokens,
                  "expert_models_used": [], "prompt_tokens": 0, "completion_tokens": 0,
                  "user_conn_prompt_tokens": 0, "user_conn_completion_tokens": 0,
                  "chat_history": chat_history or [], "reasoning_trace": "",
@@ -1816,6 +1911,7 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "user_id": user_id, "api_key_id": api_key_id,
                  "user_permissions": user_permissions or {},
                  "user_experts": user_experts or {},
+                 "local_only_routing": local_only,
                  "planner_prompt": planner_prompt or "",
                  "judge_prompt":   judge_prompt or "",
                  "judge_model_override":   judge_model_override or "",
@@ -1826,15 +1922,38 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "planner_token_override": planner_token_override or "",
                  "planner_num_ctx":        planner_num_ctx,
                  "judge_num_ctx":          judge_num_ctx,
+                 "guardrail_prompt":            guardrail_prompt or "",
+                 "guardrail_model_override":    guardrail_model_override or "",
+                 "guardrail_url_override":      guardrail_url_override or "",
+                 "guardrail_token_override":    guardrail_token_override or "",
+                 "guardrail_num_ctx":           guardrail_num_ctx,
                  "template_name":          model_name or "",
                  "pending_reports": pending_reports or [],
                  "max_agentic_rounds": max_agentic_rounds,
+                 "deliberation_policy": deliberation_policy or {},
+                 "deliberation_capacity": {},
+                 "deliberation_events": [],
                  "agentic_iteration": 0,
                  "agentic_history": [],
                  "agentic_gap": "",
                  "attempted_queries": [],
                  "search_strategy_hint": "",
                  "conflict_registry": [],
+                 "task_events": [],
+                 "mcp_evidence": [],
+                 "required_precision_intents": [],
+                 "precision_contract_snapshot": {},
+                 "precision_contract_hash": "",
+                 "precision_catalog_hash": "",
+                 "precision_cache_bypassed": False,
+                 "precision_direct": False,
+                 "precision_fact_slots": [],
+                 "precision_prompt_projection": "",
+                 "precision_rendered_response": "",
+                 "precision_binding_status": "not_required",
+                 "precision_binding_errors": [],
+                 "precision_binding_hash": "",
+                 "precision_bound_response_hash": "",
                  "vector_confidence": 0.5,
                  "graph_confidence": 0.5,
                  "fuzzy_routing_scores": {},
@@ -1844,10 +1963,27 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "self_critique_round": 0,
                  "self_critique_max": int(__import__("os").getenv("SELF_CRITIQUE_MAX_ROUNDS", "2")),
                  "constitution_violations": [],
+                 "retrieved_graph_chunks": [],
                  "cynefin_domain": "",
                  "hitl_gate_id": "",
+                 "hitl_gate_reason": "",
+                 "quality_blocked": False,
+                 "quality_block_reason": "",
+                 "candidate_status": "normal",
+                 "candidate_reason": "",
+                 "quality_gate_status": "",
+                 "response_commit_context": {},
+                 "response_commit_status": "not_started",
+                 "response_commit_key": "",
+                 "response_commit_sinks": {},
+                 "response_commit_errors": [],
                  "strategy_feedback": ""},
                 config,
+                ),
+                timeout=max(
+                    0.001,
+                    ORCHESTRATION_TIMEOUT - (time.monotonic() - _t_start),
+                ),
             )
         except Exception as e:
             logger.exception(
@@ -1889,11 +2025,41 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
     # Pipeline complete — deregister now, before streaming content.
     # This prevents the request from remaining "active" if the client closes the connection
     # after the last content chunk (normal OpenWebUI behavior).
-    _pipeline_data = result_box.get("data") or {}
+    _pipeline_error = result_box.get("error")
+    if _pipeline_error is not None:
+        from services.ai_io_audit import aggregate_request_usage
+        from services.request_snapshot import consume_request_snapshot
+
+        _partial_usage = await aggregate_request_usage(chat_id)
+        _progress = consume_request_snapshot(chat_id)
+        _pipeline_data = {
+            "user_id": user_id,
+            "api_key_id": api_key_id,
+            "prompt_tokens": _partial_usage["prompt_tokens"],
+            "completion_tokens": _partial_usage["completion_tokens"],
+            **_progress,
+        }
+        result_box["data"] = _pipeline_data
+    else:
+        from services.request_snapshot import clear_request_snapshot
+
+        clear_request_snapshot(chat_id)
+        _pipeline_data = result_box.get("data") or {}
+    from services.deliberation.runtime import summarize_deliberation_telemetry
+    _deliberation_meta = summarize_deliberation_telemetry(
+        _pipeline_data.get("deliberation_capacity"),
+        _pipeline_data.get("deliberation_events"),
+    )
     asyncio.create_task(_deregister_active_request(chat_id, extra_meta={
+        "status": (
+            "timeout"
+            if isinstance(_pipeline_error, asyncio.TimeoutError)
+            else ("failed" if _pipeline_error is not None else "completed")
+        ),
         "trust_verdict":  _pipeline_data.get("trust_verdict") or "",
         "trust_score":    _pipeline_data.get("trust_score")  or 0.0,
         "cynefin_domain": _pipeline_data.get("cynefin_domain") or "",
+        **_deliberation_meta,
     }))
     _deregistered = True
 
@@ -1920,7 +2086,24 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
     if "error" in result_box:
         yield _chunk({"content": f"Error: {result_box['error']}"})
     else:
-        content = result_box.get("data", {}).get("final_response") or ""
+        _stream_data = result_box.get("data", {})
+        if _stream_data.get("hitl_gate_id"):
+            content = json.dumps({
+                "status": "pending_human_approval",
+                "gate_id": _stream_data["hitl_gate_id"],
+                "reason": _stream_data.get("hitl_gate_reason", ""),
+                "request_id": chat_id,
+            })
+        elif _stream_data.get("quality_blocked"):
+            content = json.dumps({
+                "error": {
+                    "type": "quality_blocked",
+                    "code": _stream_data.get("quality_block_reason", "quality_blocked"),
+                    "request_id": chat_id,
+                }
+            })
+        else:
+            content = _stream_data.get("final_response") or ""
         for i in range(0, len(content), SSE_CHUNK_SIZE):
             if _t_first_token is None:
                 _t_first_token = time.monotonic()
@@ -1969,6 +2152,11 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 moe_mode=mode,
                 prompt_tokens=p_tok,
                 completion_tokens=c_tok,
+                status=(
+                    "timeout"
+                    if isinstance(_pipeline_error, asyncio.TimeoutError)
+                    else ("error" if _pipeline_error is not None else "ok")
+                ),
                 session_id=session_id,
                 latency_ms=int(total_s * 1000),
                 complexity_level=data.get("complexity_level", ""),
@@ -1980,6 +2168,9 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                 cynefin_domain=_cynefin_domain,
                 self_critique_round=_self_critique_round,
                 cascade_type=_cascade_type,
+                structured_failure_round=int(
+                    data.get("structured_failure_round") or 0
+                ),
             ))
             # Deduct user-conn tokens: those are billed by the user's own provider.
             _uc_p = data.get("user_conn_prompt_tokens", 0)

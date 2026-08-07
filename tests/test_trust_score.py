@@ -143,12 +143,137 @@ def test_unsupported_claims_lower_score_than_grounded_claims():
         plan=[{"task": "t1"}],
         web_research="https://stats.example.com",
         graph_context="Berlin population figures: 3800000 residents recorded.",
+        retrieved_graph_chunks=[{"entity": "Berlin"}],
     ))
     ungrounded = compute_trust_score(_state(
         expert_results=["[RESEARCH / m]: Berlin has 3800000 residents."],
         plan=[{"task": "t1"}],
         web_research="https://stats.example.com",
         graph_context="unrelated content about database indexing strategies.",
+        retrieved_graph_chunks=[{"entity": "database"}],
     ))
     assert ungrounded.factors["unsupported_claims_penalty"] > grounded.factors["unsupported_claims_penalty"]
     assert ungrounded.score < grounded.score
+
+
+def test_verified_trivial_direct_response_does_not_require_retrieval_sources():
+    ts = compute_trust_score(_state(
+        expert_results=["[qwen3.6:35b / general]: CONFIDENCE: low\nDETAILS:\nOK"],
+        plan=[{"task": "Antworte ausschließlich mit: OK", "category": "general"}],
+        trivial_fast_path=True,
+    ))
+    assert ts.hard_blocked is False
+    assert ts.verdict == TrustVerdict.PROCEED
+    assert ts.factors["trivial_fast_path"] == 1.0
+
+
+def test_trivial_direct_response_with_conflict_is_not_auto_trusted():
+    ts = compute_trust_score(_state(
+        expert_results=["[qwen3.6:35b / general]: A sufficiently long answer."],
+        plan=[{"task": "Say hello", "category": "general"}],
+        trivial_fast_path=True,
+        conflict_registry=[{"category": "general", "resolution": "pending"}],
+    ))
+    assert ts.verdict != TrustVerdict.PROCEED
+
+
+def test_completed_precision_evidence_counts_as_grounded_execution():
+    ts = compute_trust_score(
+        _state(
+            expert_results=[
+                "[CODE_REVIEWER / qwen]: Parameterized query is safe and complete."
+            ],
+            plan=[
+                {
+                    "id": "task-1",
+                    "task": "gcd",
+                    "category": "precision_tools",
+                },
+                {
+                    "id": "task-2",
+                    "task": "convert",
+                    "category": "precision_tools",
+                },
+                {
+                    "id": "task-3",
+                    "task": "weekday",
+                    "category": "precision_tools",
+                },
+                {
+                    "id": "task-4",
+                    "task": "review SQL",
+                    "category": "code_reviewer",
+                },
+            ],
+            task_events=[
+                {
+                    "task_id": f"task-{index}",
+                    "status": "completed",
+                    "iteration": 0,
+                }
+                for index in range(1, 5)
+            ],
+            mcp_evidence=[
+                {
+                    "task_id": f"task-{index}",
+                    "status": "completed",
+                    "result": result,
+                }
+                for index, result in enumerate(
+                    ["gcd=23", "20 m/s", "Mittwoch"],
+                    start=1,
+                )
+            ],
+        )
+    )
+
+    assert ts.verdict == TrustVerdict.PROCEED
+    assert ts.factors["deterministic_coverage"] == 1.0
+    assert ts.factors["cross_reference_coverage"] == 1.0
+
+
+def test_irrelevant_graph_text_without_attribution_does_not_count_as_source():
+    ts = compute_trust_score(
+        _state(
+            expert_results=["[GENERAL / model]: A sufficiently detailed answer."],
+            plan=[{"id": "task-1", "task": "answer", "category": "general"}],
+            task_events=[
+                {
+                    "task_id": "task-1",
+                    "status": "completed",
+                    "iteration": 0,
+                }
+            ],
+            graph_context="666 characters of unrelated graph material",
+            retrieved_graph_chunks=[],
+        )
+    )
+
+    assert ts.factors["source_count"] == 0.0
+
+
+def test_creative_task_does_not_require_fact_sources():
+    ts = compute_trust_score(
+        _state(
+            expert_results=[
+                "[CREATIVE_WRITER / model]: A long original poem about blue rain."
+            ],
+            plan=[
+                {
+                    "id": "task-1",
+                    "task": "write a poem",
+                    "category": "creative_writer",
+                }
+            ],
+            task_events=[
+                {
+                    "task_id": "task-1",
+                    "status": "completed",
+                    "iteration": 0,
+                }
+            ],
+        )
+    )
+
+    assert ts.verdict == TrustVerdict.PROCEED
+    assert ts.factors["creative_task_fit"] == 1.0

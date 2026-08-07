@@ -83,6 +83,13 @@
           <span class="badge bg-danger" style="font-size:.72rem" title="All models use external APIs — data leaves your network"><i class="bi bi-cloud-arrow-up me-1"></i>External</span>
           {% endif %}
           <span class="badge bg-secondary" style="font-size:.72rem">{{ tmpl.experts|length }} {{ t(request, 'tmpl.categories') }}</span>
+          {% if tmpl.deliberation_policy is defined %}
+          <span class="badge {% if tmpl.deliberation_policy.activation == 'disabled' %}bg-secondary{% elif tmpl.deliberation_policy.activation == 'required' %}bg-danger{% else %}bg-primary{% endif %}" style="font-size:.65rem" title="{{ t(request, 'deliberation.title') }}">
+            <i class="bi bi-people-fill me-1"></i>{{ tmpl.deliberation_policy.activation }} / {{ tmpl.deliberation_policy.mode }}
+          </span>
+          {% else %}
+          <span class="badge bg-warning text-dark" style="font-size:.65rem" title="Legacy J-MoE compatibility policy"><i class="bi bi-people-fill me-1"></i>legacy / micro</span>
+          {% endif %}
           {% if tmpl.planner_prompt is defined and tmpl.planner_prompt %}
           <span class="badge bg-info text-dark" style="font-size:.65rem" title="{{ tmpl.planner_prompt[:80] }}"><i class="bi bi-diagram-3 me-1"></i>Planner</span>
           {% endif %}
@@ -285,6 +292,24 @@
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_cache"><label class="form-check-label small" for="ct_agent_cache">Agent Cache</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_graphrag"><label class="form-check-label small" for="ct_agent_graphrag">Agent GraphRAG</label></div></div>
           <div class="col-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ct_agent_ingest"><label class="form-check-label small" for="ct_agent_ingest">Agent Ingestion</label></div></div>
+        </div>
+        <div class="card mt-3 border-primary-subtle">
+          <div class="card-header py-2"><strong><i class="bi bi-people-fill me-1 text-primary"></i>{{ t(request, 'deliberation.title') }}</strong></div>
+          <div class="card-body py-2">
+            <p class="small text-muted mb-2">{{ t(request, 'deliberation.help') }}</p>
+            <div class="row g-2">
+              <div class="col-md-3"><label class="form-label small" for="ct_deliberation_activation">{{ t(request, 'deliberation.activation') }}</label><select class="form-select form-select-sm" id="ct_deliberation_activation"><option value="disabled">{{ t(request, 'deliberation.disabled') }}</option><option value="adaptive">{{ t(request, 'deliberation.adaptive') }}</option><option value="required">{{ t(request, 'deliberation.required') }}</option></select></div>
+              <div class="col-md-3"><label class="form-label small" for="ct_deliberation_mode">{{ t(request, 'deliberation.mode') }}</label><select class="form-select form-select-sm" id="ct_deliberation_mode"><option value="auto">{{ t(request, 'deliberation.mode_auto') }}</option><option value="micro">{{ t(request, 'deliberation.mode_micro') }}</option><option value="moderated">{{ t(request, 'deliberation.mode_moderated') }}</option></select></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_initial_agents">{{ t(request, 'deliberation.initial_agents') }}</label><input class="form-control form-control-sm" id="ct_deliberation_initial_agents" type="number" min="2" max="12" value="6"></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_reserve_agents">{{ t(request, 'deliberation.reserve_agents') }}</label><input class="form-control form-control-sm" id="ct_deliberation_reserve_agents" type="number" min="0" max="6" value="2"></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_max_agents">{{ t(request, 'deliberation.max_agents') }}</label><input class="form-control form-control-sm" id="ct_deliberation_max_agents" type="number" min="2" max="12" value="8"></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_initial_rounds">{{ t(request, 'deliberation.initial_rounds') }}</label><input class="form-control form-control-sm" id="ct_deliberation_initial_rounds" type="number" min="1" max="8" value="3"></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_reserve_rounds">{{ t(request, 'deliberation.reserve_rounds') }}</label><input class="form-control form-control-sm" id="ct_deliberation_reserve_rounds" type="number" min="0" max="4" value="2"></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_max_rounds">{{ t(request, 'deliberation.max_rounds') }}</label><input class="form-control form-control-sm" id="ct_deliberation_max_rounds" type="number" min="1" max="8" value="5"></div>
+              <div class="col-md-2"><label class="form-label small" for="ct_deliberation_max_calls">{{ t(request, 'deliberation.max_calls') }}</label><input class="form-control form-control-sm" id="ct_deliberation_max_calls" type="number" min="3" max="96" value="18"></div>
+              <div class="col-md-4"><label class="form-label small" for="ct_deliberation_fallback">{{ t(request, 'deliberation.fallback') }}</label><select class="form-select form-select-sm" id="ct_deliberation_fallback"><option value="standard">{{ t(request, 'deliberation.fallback_standard') }}</option><option value="fail">{{ t(request, 'deliberation.fallback_fail') }}</option></select></div>
+            </div>
+          </div>
         </div>
         <div class="row g-2 mt-1">
           <div class="col-12"><small class="text-muted fw-bold">{{ t(request, 'section.context_window') }}</small></div>
@@ -672,6 +697,36 @@ function addExpertCategory(prefix) {
 }
 
 // ─── Page init ───────────────────────────────────────────────────────────────
+function setDeliberationControls(prefix, policy, legacyWhenMissing = false) {
+  const dp = policy || (legacyWhenMissing ? {
+    activation: 'required', mode: 'micro', initial_agent_cap: 2,
+    reserve_agents: 0, absolute_max_agents: 2, initial_round_cap: 1,
+    reserve_rounds: 0, absolute_max_rounds: 1, max_model_calls: 3,
+    fallback: 'standard'
+  } : {
+    activation: 'disabled', mode: 'auto', initial_agent_cap: 6,
+    reserve_agents: 2, absolute_max_agents: 8, initial_round_cap: 3,
+    reserve_rounds: 2, absolute_max_rounds: 5, max_model_calls: 18,
+    fallback: 'standard'
+  });
+  const values = {
+    activation: dp.activation || 'disabled',
+    mode: dp.mode || 'auto',
+    initial_agents: dp.initial_agent_cap ?? 6,
+    reserve_agents: dp.reserve_agents ?? 2,
+    max_agents: dp.absolute_max_agents ?? 8,
+    initial_rounds: dp.initial_round_cap ?? 3,
+    reserve_rounds: dp.reserve_rounds ?? 2,
+    max_rounds: dp.absolute_max_rounds ?? 5,
+    max_calls: dp.max_model_calls ?? 18,
+    fallback: dp.fallback || 'standard',
+  };
+  Object.entries(values).forEach(([suffix, value]) => {
+    const element = document.getElementById(`${prefix}_deliberation_${suffix}`);
+    if (element) element.value = value;
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   const llms = await fetchAvailableLlms();
   document.getElementById('ct_experts_table').innerHTML = buildExpertRows('ct', {}, llms);
@@ -690,6 +745,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     buildLlmDropdown('ct_planner_llm_select', l, '');
     buildLlmDropdown('ct_judge_llm_select',   l, '');
     buildLlmDropdown('ct_tool_expert_llm_select', l, '');
+    setDeliberationControls('ct', null, false);
     _updateMedicalLegalWarning('ct');
   });
   document.getElementById('createTemplateModal').addEventListener('hidden.bs.modal', () => {
@@ -725,12 +781,40 @@ async function copyTemplate(tmplId) {
   if (ctPlannerCtx) ctPlannerCtx.value = src.planner_num_ctx || '';
   if (ctJudgeCtx)   ctJudgeCtx.value   = src.judge_num_ctx   || '';
   if (ctToolExpertCtx) ctToolExpertCtx.value = src.tool_expert_num_ctx || '';
+  setDeliberationControls('ct', src.deliberation_policy, true);
   _updateMedicalLegalWarning('ct');
   document.getElementById('ct_error').classList.add('d-none');
   new bootstrap.Modal(document.getElementById('createTemplateModal')).show();
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────
+function collectDeliberationPolicy(prefix) {
+  const intValue = (suffix, fallback) => {
+    const value = parseInt(document.getElementById(`${prefix}_deliberation_${suffix}`)?.value, 10);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  return {
+    schema_version: '1.0',
+    activation: document.getElementById(`${prefix}_deliberation_activation`)?.value || 'disabled',
+    mode: document.getElementById(`${prefix}_deliberation_mode`)?.value || 'auto',
+    min_agents: 2,
+    initial_agent_cap: intValue('initial_agents', 6),
+    reserve_agents: intValue('reserve_agents', 2),
+    absolute_max_agents: intValue('max_agents', 8),
+    min_rounds: 1,
+    initial_round_cap: intValue('initial_rounds', 3),
+    reserve_rounds: intValue('reserve_rounds', 2),
+    absolute_max_rounds: intValue('max_rounds', 5),
+    max_model_calls: intValue('max_calls', 18),
+    moderator_interval: 1,
+    estimated_turn_seconds: 20.0,
+    synthesis_reserve_seconds: 30.0,
+    convergence_threshold: 0.82,
+    repetition_threshold: 0.78,
+    fallback: document.getElementById(`${prefix}_deliberation_fallback`)?.value || 'standard',
+  };
+}
+
 async function createTemplate() {
   const btn = document.querySelector('#createTemplateModal .btn-primary');
   const err = document.getElementById('ct_error');
@@ -763,6 +847,7 @@ async function createTemplate() {
         agent_cache:             document.getElementById('ct_agent_cache').checked,
         agent_graphrag:          document.getElementById('ct_agent_graphrag').checked,
         agent_ingest:            document.getElementById('ct_agent_ingest').checked,
+        deliberation_policy:     collectDeliberationPolicy('ct'),
         graphrag_max_chars:  parseInt(document.getElementById('ct_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('ct_compression_enabled').checked
                                ? (parseInt(document.getElementById('ct_history_max_turns').value) || 0)
@@ -794,6 +879,12 @@ async function openEditModal(tmplId) {
   ]);
   const tmpl = listRes.find(t => t.id === tmplId);
   if (!tmpl) { document.getElementById('editModalBody').innerHTML = '<p class="text-danger">Template not found.</p>'; return; }
+  const dp = tmpl.deliberation_policy || {
+    activation: 'required', mode: 'micro', initial_agent_cap: 2,
+    reserve_agents: 0, absolute_max_agents: 2, initial_round_cap: 1,
+    reserve_rounds: 0, absolute_max_rounds: 1, max_model_calls: 3,
+    fallback: 'standard'
+  };
 
   document.getElementById('editModalBody').innerHTML = `
     <div class="row g-3 mb-3">
@@ -930,6 +1021,24 @@ async function openEditModal(tmplId) {
         <div class="form-text" style="font-size:.7rem;">Prepends project context to system prompt (requires system-wide Mission Context feature)</div>
       </div>
     </div>
+    <div class="card mt-3 border-primary-subtle">
+      <div class="card-header py-2"><strong><i class="bi bi-people-fill me-1 text-primary"></i>{{ t(request, 'deliberation.title') }}</strong></div>
+      <div class="card-body py-2">
+        <p class="small text-muted mb-2">{{ t(request, 'deliberation.help') }}</p>
+        <div class="row g-2">
+          <div class="col-md-3"><label class="form-label small" for="et_deliberation_activation">{{ t(request, 'deliberation.activation') }}</label><select class="form-select form-select-sm" id="et_deliberation_activation"><option value="disabled" ${dp.activation === 'disabled' ? 'selected' : ''}>{{ t(request, 'deliberation.disabled') }}</option><option value="adaptive" ${dp.activation === 'adaptive' ? 'selected' : ''}>{{ t(request, 'deliberation.adaptive') }}</option><option value="required" ${dp.activation === 'required' ? 'selected' : ''}>{{ t(request, 'deliberation.required') }}</option></select></div>
+          <div class="col-md-3"><label class="form-label small" for="et_deliberation_mode">{{ t(request, 'deliberation.mode') }}</label><select class="form-select form-select-sm" id="et_deliberation_mode"><option value="auto" ${dp.mode === 'auto' ? 'selected' : ''}>{{ t(request, 'deliberation.mode_auto') }}</option><option value="micro" ${dp.mode === 'micro' ? 'selected' : ''}>{{ t(request, 'deliberation.mode_micro') }}</option><option value="moderated" ${dp.mode === 'moderated' ? 'selected' : ''}>{{ t(request, 'deliberation.mode_moderated') }}</option></select></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_initial_agents">{{ t(request, 'deliberation.initial_agents') }}</label><input class="form-control form-control-sm" id="et_deliberation_initial_agents" type="number" min="2" max="12" value="${dp.initial_agent_cap ?? 6}"></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_reserve_agents">{{ t(request, 'deliberation.reserve_agents') }}</label><input class="form-control form-control-sm" id="et_deliberation_reserve_agents" type="number" min="0" max="6" value="${dp.reserve_agents ?? 2}"></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_max_agents">{{ t(request, 'deliberation.max_agents') }}</label><input class="form-control form-control-sm" id="et_deliberation_max_agents" type="number" min="2" max="12" value="${dp.absolute_max_agents ?? 8}"></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_initial_rounds">{{ t(request, 'deliberation.initial_rounds') }}</label><input class="form-control form-control-sm" id="et_deliberation_initial_rounds" type="number" min="1" max="8" value="${dp.initial_round_cap ?? 3}"></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_reserve_rounds">{{ t(request, 'deliberation.reserve_rounds') }}</label><input class="form-control form-control-sm" id="et_deliberation_reserve_rounds" type="number" min="0" max="4" value="${dp.reserve_rounds ?? 2}"></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_max_rounds">{{ t(request, 'deliberation.max_rounds') }}</label><input class="form-control form-control-sm" id="et_deliberation_max_rounds" type="number" min="1" max="8" value="${dp.absolute_max_rounds ?? 5}"></div>
+          <div class="col-md-2"><label class="form-label small" for="et_deliberation_max_calls">{{ t(request, 'deliberation.max_calls') }}</label><input class="form-control form-control-sm" id="et_deliberation_max_calls" type="number" min="3" max="96" value="${dp.max_model_calls ?? 18}"></div>
+          <div class="col-md-4"><label class="form-label small" for="et_deliberation_fallback">{{ t(request, 'deliberation.fallback') }}</label><select class="form-select form-select-sm" id="et_deliberation_fallback"><option value="standard" ${dp.fallback !== 'fail' ? 'selected' : ''}>{{ t(request, 'deliberation.fallback_standard') }}</option><option value="fail" ${dp.fallback === 'fail' ? 'selected' : ''}>{{ t(request, 'deliberation.fallback_fail') }}</option></select></div>
+        </div>
+      </div>
+    </div>
     <div class="row g-2 mt-1">
       <div class="col-12"><small class="text-muted fw-bold">Augmented Tool Path <span class="fw-normal">(opt-in — agentic tool-call fast path enrichment)</span></small></div>
       <div class="col-3">
@@ -1028,6 +1137,7 @@ async function saveEditTemplate() {
         agent_cache:             document.getElementById('et_agent_cache').checked,
         agent_graphrag:          document.getElementById('et_agent_graphrag').checked,
         agent_ingest:            document.getElementById('et_agent_ingest').checked,
+        deliberation_policy:     collectDeliberationPolicy('et'),
         graphrag_max_chars:  parseInt(document.getElementById('et_graphrag_max_chars').value) || 0,
         history_max_turns:   document.getElementById('et_compression_enabled').checked
                                ? (parseInt(document.getElementById('et_history_max_turns').value) || 0)

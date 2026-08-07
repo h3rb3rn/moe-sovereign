@@ -178,6 +178,20 @@ Ablations (model sizes, data quality):
 **Target metric:** GAIA plan quality score ≥95% of Llama-3.1-405B teacher at <1/50 inference cost.
 phi4:14b CPU fallback target: complete plan in <1s on Xeon Skylake (AVX-512 BF16).
 
+> **Ist-Abgleich (2026-07-24, LUMI-G Job 20190726):** Basismodell abweichend von diesem
+> Konzept auf `Qwen3-8B` festgelegt (bewusste Entscheidung, nicht `phi4:14b` — bessere
+> ROCm/DeepSpeed-ZeRO-3-Unterstützung, siehe `eurohpc_lumi_activity_report.md` Aktivität 10).
+> **Kritischer Konfigurationsfehler:** Der tatsächliche Trainingslauf setzte
+> `max_seq_len=1536` statt der hier korrekt dokumentierten **4096 Token** — der Systemprompt
+> allein benötigt bereits ~2.500 Token, wodurch die Ziel-JSON-Antwort bei jedem der
+> 259.829 Trainingsbeispiele außerhalb des Loss-Fensters lag (100% Truncation-Rate laut
+> Trainingslog). Der Fine-Tune war dadurch strukturell wirkungslos, obwohl der Job formal
+> erfolgreich durchlief. Root-Cause-Analyse und Fix: `eurohpc_lumi_activity_report.md`
+> Aktivität 10. **Merke für zukünftige Phasen (4/5):** Die in diesem Dokument
+> vorab kalkulierten Context-Werte sind bindend — Abweichungen im tatsächlichen
+> Trainingsscript müssen vor Job-Submission gegen dieses Konzept geprüft werden, nicht erst
+> nachträglich anhand der Logs.
+
 ### Phase 4 — Offline RL Routing Policy (Months 4–5, **3,500 GPU-h**)
 
 ```

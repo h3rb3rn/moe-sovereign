@@ -8,10 +8,14 @@ imports keep working.
 # Router/gatekeeper nodes
 from graph.router_nodes import (
     _seed_task_type_prototypes,
+    guard_node,
+    _route_guard,
+    precision_preflight_node,
     cache_lookup_node,
     semantic_router_node,
     fuzzy_router_node,
     _route_cache,
+    _route_precision_preflight,
 )
 
 # Deterministic tool nodes
@@ -53,5 +57,16 @@ from graph.synthesis import (
     resolve_conflicts_node,
     critic_node,
     self_critique_node,
+    quality_gate_node,
 )
 from graph.strategy_review_node import strategy_review_node
+
+# Deterministic direct rendering + final evidence binding
+from graph.precision import (
+    deterministic_precision_renderer_node,
+    precision_bind_node,
+    precision_slot_prepare_node,
+)
+
+# Quality-atomic persistence
+from graph.commit import _route_quality_gate, response_commit_node

@@ -95,6 +95,11 @@ PROM_MCP_TOOL_ACCESS = Counter(
     'moe_mcp_tool_access_total', 'MCP precision-tool calls by access classification and verdict',
     ['tool', 'access_kind', 'verdict'],
 )
+PROM_PRECISION_EVENTS = Counter(
+    'moe_precision_events_total',
+    'Low-cardinality precision-contract lifecycle events',
+    ['contract', 'stage', 'outcome', 'mode'],
+)
 
 # ---------------------------------------------------------------------------
 # RL flywheel, context window, memory

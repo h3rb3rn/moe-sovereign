@@ -34,6 +34,8 @@ _DEFAULT_WEIGHTS: Dict[str, float] = {
     "expert_count":              0.25,   # Non-empty expert results
     "conflict_penalty":          0.20,   # Deducted per unresolved paraconsistent conflict
     "cross_reference_coverage":  0.20,   # Fraction of plan tasks with non-empty expert result
+    "deterministic_coverage":     0.32,   # Fraction of precision tasks with completed MCP evidence
+    "creative_task_fit":          0.45,   # Source-free creative tasks are judged by execution, not citations
     # Hallucination proxy, Stage 1 (cheap/deterministic): fraction of specific-
     # looking claims (numbers, proper nouns) in the expert output that don't
     # appear anywhere in the retrieved sources. Deliberately noisy — paraphrasing,
@@ -77,7 +79,7 @@ def _unsupported_claim_ratio(response_text: str, source_text: str) -> float:
     non-zero ratio on an otherwise-fine answer is expected noise, not a bug —
     see the factor's default weight above.
     """
-    if not response_text or not source_text:
+    if not response_text or not source_text.strip():
         return 0.0
     claims = _extract_checkable_claims(response_text)
     if not claims:
@@ -137,19 +139,40 @@ def compute_trust_score(state_: dict) -> TrustScore:
     plan            = state_.get("plan") or []
     graph_context   = state_.get("graph_context") or ""
     web_research    = state_.get("web_research") or ""
+    mcp_evidence    = state_.get("mcp_evidence") or []
+    task_events     = state_.get("task_events") or []
     conflict_reg    = state_.get("conflict_registry") or []
     judge_before_after = state_.get("judge_before_after") or {}
 
     # ── Factor 1: source_count ─────────────────────────────────────────────────
-    # Count distinct sources: Neo4j entities embedded in graph_context + web citations
-    _neo4j_hits = graph_context.count("[NEO4J:") + graph_context.count("NEO4J_ENTITY:")
-    _neo4j_hits += graph_context.count("entity:") + (1 if graph_context.strip() else 0)
+    # Count only identifiable GraphRAG chunks, not arbitrary context text. A
+    # non-empty but irrelevant graph response must not increase trust.
+    _retrieved_graph_chunks = [
+        chunk
+        for chunk in (state_.get("retrieved_graph_chunks") or [])
+        if isinstance(chunk, dict)
+    ]
+    _neo4j_hits = len(_retrieved_graph_chunks)
     _web_hits   = web_research.count("http://") + web_research.count("https://")
-    source_count_raw = _neo4j_hits + _web_hits
+    _completed_mcp = [
+        evidence
+        for evidence in mcp_evidence
+        if isinstance(evidence, dict)
+        and evidence.get("status") == "completed"
+        and str(evidence.get("result") or "").strip()
+    ]
+    source_count_raw = _neo4j_hits + _web_hits + len(_completed_mcp)
     source_count_norm = min(source_count_raw / _MAX_SOURCE_COUNT, 1.0)
 
     # ── Factor 2: expert_count ─────────────────────────────────────────────────
-    non_empty_experts = [r for r in expert_results if r and len(r.strip()) > 20]
+    non_empty_experts = [
+        r
+        for r in expert_results
+        if r
+        and len(r.strip()) > 20
+        and " ERROR]:" not in r
+        and not r.startswith("[Judge unavailable")
+    ]
     expert_count_norm = min(len(non_empty_experts) / _MAX_EXPERT_COUNT, 1.0)
 
     # ── Factor 3: conflict_penalty ─────────────────────────────────────────────
@@ -159,16 +182,78 @@ def compute_trust_score(state_: dict) -> TrustScore:
     conflict_penalty_norm = min(unresolved_conflicts / 3.0, 1.0)  # ≥3 conflicts → max penalty
 
     # ── Factor 4: cross_reference_coverage ────────────────────────────────────
-    # What fraction of planned tasks received a non-empty expert answer?
+    # What fraction of planned tasks has a successful terminal execution event?
     plan_count = max(len(plan), 1)
-    covered    = min(len(non_empty_experts), plan_count)
+    current_iteration = int(state_.get("agentic_iteration") or 0)
+    completed_task_ids = {
+        str(event.get("task_id") or "")
+        for event in task_events
+        if isinstance(event, dict)
+        and int(event.get("iteration") or 0) == current_iteration
+        and event.get("status") == "completed"
+    }
+    tracked_task_ids = {
+        str(task.get("id") or "")
+        for task in plan
+        if isinstance(task, dict) and task.get("id")
+    }
+    if tracked_task_ids:
+        covered = len(tracked_task_ids & completed_task_ids)
+    else:
+        # Backwards-compatible scoring for historical states/tests created
+        # before the execution ledger existed.
+        covered = min(len(non_empty_experts), plan_count)
     cross_ref_norm = covered / plan_count
+
+    precision_tasks = [
+        task
+        for task in plan
+        if isinstance(task, dict) and task.get("category") == "precision_tools"
+    ]
+    completed_precision_ids = {
+        str(evidence.get("task_id") or "")
+        for evidence in _completed_mcp
+    }
+    deterministic_coverage = (
+        len(
+            {
+                str(task.get("id") or "")
+                for task in precision_tasks
+                if task.get("id")
+            }
+            & completed_precision_ids
+        )
+        / len(precision_tasks)
+        if precision_tasks
+        else 0.0
+    )
+
+    plan_categories = {
+        str(task.get("category") or "")
+        for task in plan
+        if isinstance(task, dict)
+    }
+    creative_task_fit = (
+        1.0
+        if plan_categories
+        and plan_categories <= {"creative_writer", "creative"}
+        and covered == len(plan)
+        and bool(non_empty_experts)
+        and not unresolved_conflicts
+        else 0.0
+    )
 
     # ── Factor 5: unsupported_claims_penalty (hallucination proxy, Stage 1) ────
     combined_expert_text = " ".join(non_empty_experts)
-    combined_source_text = "\n".join([
-        graph_context, web_research, state_.get("mcp_result") or "",
-    ])
+    # The pre-synthesis expert-claim proxy may compare only like-for-like
+    # retrieval evidence. MCP results ground their own precision tasks but are
+    # not a textual source for unrelated expert prose (for example SQL review).
+    combined_source_text = "\n".join(
+        [
+            graph_context if _retrieved_graph_chunks else "",
+            web_research,
+        ]
+    )
     unsupported_ratio = _unsupported_claim_ratio(combined_expert_text, combined_source_text)
 
     factors = {
@@ -176,6 +261,8 @@ def compute_trust_score(state_: dict) -> TrustScore:
         "expert_count":              expert_count_norm,
         "conflict_penalty":          conflict_penalty_norm,
         "cross_reference_coverage":  cross_ref_norm,
+        "deterministic_coverage":    deterministic_coverage,
+        "creative_task_fit":         creative_task_fit,
         "unsupported_claims_penalty": unsupported_ratio,
     }
 
@@ -184,15 +271,40 @@ def compute_trust_score(state_: dict) -> TrustScore:
         + weights["expert_count"]           * expert_count_norm
         - weights["conflict_penalty"]       * conflict_penalty_norm
         + weights["cross_reference_coverage"] * cross_ref_norm
+        + weights["deterministic_coverage"] * deterministic_coverage
+        + weights["creative_task_fit"] * creative_task_fit
         - weights["unsupported_claims_penalty"] * unsupported_ratio
     )
     score = max(0.0, min(1.0, raw_score))
+
+    # A conservative trivial fast-path is deliberately a direct model
+    # execution: the request has already been rejected by the shared gate when
+    # it needs retrieval, exact operations, legal/current data, tools, files,
+    # conversation context or a specialized mode. Requiring external source
+    # count for the remaining context-free one-shot answer would classify every
+    # valid response (including "OK") as BLOCK and trigger two judge loops,
+    # negating the path entirely. A present expert answer with no conflict is
+    # therefore sufficient for PROCEED; the Guard, Constitution and final
+    # Quality-Gate remain in the graph.
+    trivial_direct_verified = (
+        bool(state_.get("trivial_fast_path"))
+        and bool(non_empty_experts)
+        and not unresolved_conflicts
+    )
+    if trivial_direct_verified:
+        score = max(score, _THRESHOLD_PROCEED)
+        factors["trivial_fast_path"] = 1.0
 
     # ── Hard-block conditions (override score) ─────────────────────────────────
     hard_blocked = False
     hard_reason  = ""
 
-    if not non_empty_experts and not graph_context.strip() and not web_research.strip():
+    if (
+        not non_empty_experts
+        and not _retrieved_graph_chunks
+        and not web_research.strip()
+        and not _completed_mcp
+    ):
         hard_blocked = True
         hard_reason  = "No expert results and no retrieval context — cannot produce a grounded response"
 
@@ -222,6 +334,14 @@ def compute_trust_score(state_: dict) -> TrustScore:
         reason_parts.append(f"{unresolved_conflicts} unresolved conflict(s)")
     if unsupported_ratio > 0.3:
         reason_parts.append(f"{unsupported_ratio:.0%} of claims unsupported by sources")
+    if trivial_direct_verified:
+        reason_parts.append("verified context-free direct path")
+    if deterministic_coverage:
+        reason_parts.append(
+            f"{deterministic_coverage:.0%} deterministic task coverage"
+        )
+    if creative_task_fit:
+        reason_parts.append("source-free creative task executed")
 
     return TrustScore(
         score=score,

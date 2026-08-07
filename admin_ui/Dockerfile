@@ -11,6 +11,7 @@ COPY curator_provisioner.py .
 COPY grafana_generator.py .
 COPY maintenance.py .
 COPY statistics.py .
+COPY deliberation_policy.py .
 COPY templates/ templates/
 COPY static/ static/
 COPY lang/ lang/

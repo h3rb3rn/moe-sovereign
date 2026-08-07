@@ -1,5 +1,6 @@
 """routes/health.py — Liveness, metrics, observability, and MCP tool-server proxy."""
 
+import asyncio
 import os
 import time
 from typing import Any, Dict, Optional
@@ -11,6 +12,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel
 
 import state
+from services.boundary_check import validate_boundary_contracts
 
 router = APIRouter()
 
@@ -72,6 +74,111 @@ async def mcp_invoke(body: _InvokeRequest):
 async def health_check():
     """Liveness probe for Docker HEALTHCHECK and load balancers."""
     return {"status": "ok"}
+
+
+async def _readiness_checks() -> tuple[dict, bool]:
+    """Probe request-critical state plus degradable optional dependencies."""
+    checks: dict[str, dict[str, Any]] = {}
+
+    def record(name: str, ok: bool, critical: bool, detail: str = "") -> None:
+        checks[name] = {
+            "ok": ok,
+            "critical": critical,
+            **({"detail": detail[:300]} if detail else {}),
+        }
+
+    record(
+        "orchestration_graph",
+        state.app_graph is not None,
+        True,
+        "" if state.app_graph is not None else "LangGraph is not compiled",
+    )
+
+    try:
+        contract_count = validate_boundary_contracts(force_reload=True)
+        record("boundary_contracts", contract_count > 0, True)
+    except Exception as exc:
+        record("boundary_contracts", False, True, str(exc))
+
+    if state.redis_client is None:
+        record("valkey", False, True, "client is not initialized")
+    else:
+        try:
+            await asyncio.wait_for(state.redis_client.ping(), timeout=2.0)
+            record("valkey", True, True)
+        except Exception as exc:
+            record("valkey", False, True, str(exc))
+
+    if state._userdb_pool is None:
+        record("user_database", False, True, "connection pool is not initialized")
+    else:
+        try:
+            async def _postgres_ping() -> None:
+                async with state._userdb_pool.connection() as conn:
+                    await conn.execute("SELECT 1")
+
+            await asyncio.wait_for(_postgres_ping(), timeout=3.0)
+            record("user_database", True, True)
+        except Exception as exc:
+            record("user_database", False, True, str(exc))
+
+    if state.graph_manager is None:
+        record("neo4j", False, False, "GraphRAG manager is unavailable")
+    else:
+        try:
+            await asyncio.wait_for(
+                state.graph_manager.driver.verify_connectivity(), timeout=3.0
+            )
+            record("neo4j", True, False)
+        except Exception as exc:
+            record("neo4j", False, False, str(exc))
+
+    try:
+        client = state.http_client
+        if client is None:
+            async with httpx.AsyncClient(timeout=3.0) as temporary:
+                response = await temporary.get(f"{_MCP_URL}/tools")
+        else:
+            response = await asyncio.wait_for(
+                client.get(f"{_MCP_URL}/tools"), timeout=3.0
+            )
+        response.raise_for_status()
+        record("mcp_precision", True, False)
+    except Exception as exc:
+        record("mcp_precision", False, False, str(exc))
+
+    record(
+        "chroma_cache",
+        state.cache_collection is not None,
+        False,
+        "" if state.cache_collection is not None else "cache collection is unavailable",
+    )
+
+    critical_ready = all(
+        check["ok"] for check in checks.values() if check["critical"]
+    )
+    return checks, critical_ready
+
+
+@router.get("/ready")
+async def readiness_check():
+    """Deep readiness: 503 for broken request-critical dependencies.
+
+    Optional GraphRAG, MCP and Chroma failures are reported as ``degraded`` but
+    do not remove the orchestrator from service because the pipeline has
+    explicit fallbacks for those components.
+    """
+    checks, critical_ready = await _readiness_checks()
+    optional_ready = all(
+        check["ok"] for check in checks.values() if not check["critical"]
+    )
+    status = "ready" if critical_ready and optional_ready else (
+        "degraded" if critical_ready else "not_ready"
+    )
+    return JSONResponse(
+        status_code=200 if critical_ready else 503,
+        content={"status": status, "checks": checks},
+    )
 
 
 @router.get("/metrics")
