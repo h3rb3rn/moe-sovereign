@@ -19,7 +19,7 @@ cffi==2.1.0
 charset-normalizer==3.4.9
 chromadb==1.5.9
 click==8.4.2
-cryptography==49.0.0
+cryptography==50.0.0
 cssselect2==0.9.0
 ddgs==9.14.4
 distro==1.9.0
@@ -35,7 +35,7 @@ googleapis-common-protos==1.75.0
 greenlet==3.5.4
 grpcio==1.83.0
 h11==0.16.0
-h2==4.4.0
+h2==4.4.1
 hf-xet==1.5.2
 hpack==4.2.0
 httpcore==1.0.9
@@ -62,7 +62,7 @@ langchain-protocol==0.0.18
 langchain-text-splitters==1.1.2
 langgraph==1.2.10
 langgraph-checkpoint==4.1.1
-langgraph-checkpoint-postgres==3.1.0
+langgraph-checkpoint-postgres==3.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
 langsmith==0.10.11
