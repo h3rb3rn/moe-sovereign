@@ -8,8 +8,8 @@
 # Self-removes its own crontab line after running (one-shot).
 
 set -euo pipefail
-cd /opt/moe-infra
-OUT="/opt/moe-infra/quality_probe_snapshot_2026-07-12.txt"
+cd /opt/moe-sovereign
+OUT="/opt/moe-sovereign/quality_probe_snapshot_2026-07-12.txt"
 
 PW=$(grep -oP 'MOE_USERDB_PASSWORD=\K\S+' .env)
 

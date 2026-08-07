@@ -8,7 +8,7 @@ Writes one JSONL record per completed pipeline request containing the full
   Action: which experts were called, in which configuration
   Reward: confidence distribution, refinement cost, self-eval score
 
-Log file: /opt/moe-infra/agent-logs/policy_training.jsonl
+Log file: /opt/moe-sovereign/agent-logs/policy_training.jsonl
 Each record is a single JSON line. The self-eval score arrives asynchronously
 and is appended as an update to the same record via update_policy_event().
 """
@@ -26,7 +26,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_LOG_PATH = Path(os.getenv("POLICY_LOG_PATH", "/opt/moe-infra/agent-logs/policy_training.jsonl"))
+_LOG_PATH = Path(os.getenv("POLICY_LOG_PATH", "/opt/moe-sovereign/agent-logs/policy_training.jsonl"))
 _LOG_ENABLED = os.getenv("POLICY_LOG_ENABLED", "1") not in ("0", "false", "False")
 
 # In-memory index: chat_id → byte offset of that record's newline.

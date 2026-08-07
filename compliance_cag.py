@@ -12,7 +12,7 @@ Based on: Chan et al. 2024, "Don't Do RAG: When Cache-Augmented Generation
 is All You Need for Knowledge Tasks" (arXiv:2412.15605).
 
 Admin interface:
-  Drop JSON files into $MOE_DATA_ROOT/cag/ (default: /opt/moe-infra/cag/).
+  Drop JSON files into $MOE_DATA_ROOT/cag/ (default: /opt/moe-sovereign/cag/).
   Each file must have the schema:
     {
       "name":     "BAIT",
@@ -39,7 +39,7 @@ from typing import Optional
 
 logger = logging.getLogger("MOE-SOVEREIGN.compliance_cag")
 
-_DATA_ROOT       = Path(os.getenv("MOE_DATA_ROOT", "/opt/moe-infra"))
+_DATA_ROOT       = Path(os.getenv("MOE_DATA_ROOT", "/opt/moe-sovereign"))
 _CAG_DIR         = Path(os.getenv("CAG_COMPLIANCE_DIR", str(_DATA_ROOT / "cag")))
 _RELOAD_INTERVAL = int(os.getenv("CAG_RELOAD_INTERVAL_S", "300"))
 _CAG_ENABLED     = os.getenv("GRAPHRAG_CAG_ENABLED", "1") not in ("0", "false", "no")

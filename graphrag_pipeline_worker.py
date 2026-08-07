@@ -53,7 +53,7 @@ _judge_url = next(
 )
 
 # Default sources — resolved relative to MOE_PROJECT_ROOT env var
-_PROJECT_ROOT = Path(os.getenv("MOE_PROJECT_ROOT", "/opt/moe-infra"))
+_PROJECT_ROOT = Path(os.getenv("MOE_PROJECT_ROOT", "/opt/moe-sovereign"))
 DEFAULT_SOURCES = [
     str(_PROJECT_ROOT / "SYSTEM.md"),
     str(_PROJECT_ROOT / "KAFKA.md"),

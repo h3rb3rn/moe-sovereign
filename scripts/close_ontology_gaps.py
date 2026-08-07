@@ -14,7 +14,7 @@ This implements the "Level 3 Compounding Loop":
 
 Schedule:
   Run as a nightly cron job when inference nodes are idle:
-    0 2 * * * MOE_API_KEY=... python3 /opt/moe-infra/scripts/close_ontology_gaps.py
+    0 2 * * * MOE_API_KEY=... python3 /opt/moe-sovereign/scripts/close_ontology_gaps.py
 
 Configuration via environment variables:
   MOE_API_BASE         Orchestrator URL (default: http://localhost:8002)

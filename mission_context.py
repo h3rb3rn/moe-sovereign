@@ -17,7 +17,7 @@ from typing import Any
 
 logger = logging.getLogger("MOE-SOVEREIGN.mission_context")
 
-_DATA_ROOT = Path(os.getenv("MOE_DATA_ROOT", "/opt/moe-infra"))
+_DATA_ROOT = Path(os.getenv("MOE_DATA_ROOT", "/opt/moe-sovereign"))
 _CONTEXT_FILE = _DATA_ROOT / "mission_context.json"
 
 _EMPTY_CONTEXT: dict[str, Any] = {

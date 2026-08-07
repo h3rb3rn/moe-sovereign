@@ -12,7 +12,7 @@ import numpy as np
 # Adjust path to find config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-POLICY_LOG_PATH = os.getenv("POLICY_LOG_PATH", "/opt/moe-infra/agent-logs/policy_training.jsonl")
+POLICY_LOG_PATH = os.getenv("POLICY_LOG_PATH", "/opt/moe-sovereign/agent-logs/policy_training.jsonl")
 
 def generate_sample_telemetry():
     """Generates realistic mockup telemetry logs if the policy log file doesn't exist."""
