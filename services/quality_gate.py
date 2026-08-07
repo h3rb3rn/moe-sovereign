@@ -1,0 +1,276 @@
+"""Pure final-quality decision used by the LangGraph enforcement node."""
+
+from dataclasses import dataclass
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+
+from services.cynefin import classify_cynefin
+from services.pipeline.contracts import (
+    canonical_json_hash,
+    detect_required_precision_intents,
+    precision_evidence_input,
+    precision_args_match,
+    tool_schema_contract_hash,
+)
+
+
+@dataclass(frozen=True)
+class QualityGateDecision:
+    action: str
+    reason: str
+    cynefin_domain: str
+
+
+def incomplete_plan_tasks(state_: dict) -> list[dict]:
+    """Return current-plan tasks without a successful terminal ledger event."""
+    plan = state_.get("plan") or []
+    if not plan:
+        return []
+
+    iteration = int(state_.get("agentic_iteration") or 0)
+    latest: dict[str, dict] = {}
+    for event in state_.get("task_events") or []:
+        if not isinstance(event, dict):
+            continue
+        if int(event.get("iteration") or 0) != iteration:
+            continue
+        task_id = str(event.get("task_id") or "")
+        if task_id:
+            latest[task_id] = event
+
+    incomplete: list[dict] = []
+    for task in plan:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "")
+        # Legacy/untracked plans are not silently declared complete. New planner
+        # paths always assign IDs before handoff, making this branch observable.
+        event = latest.get(task_id) if task_id else None
+        if event is None or event.get("status") != "completed":
+            incomplete.append(
+                {
+                    "task_id": task_id or "<missing-id>",
+                    "category": str(task.get("category") or ""),
+                    "status": str((event or {}).get("status") or "missing"),
+                    "reason": str((event or {}).get("reason") or ""),
+                }
+            )
+    return incomplete
+
+
+def precision_evidence_issues(state_: dict) -> list[str]:
+    """Validate the mandatory intent→task→evidence chain without I/O."""
+    if state_.get("guard_blocked"):
+        return []
+    detected = detect_required_precision_intents(str(state_.get("input") or ""))
+    if not detected:
+        return []
+
+    required = state_.get("required_precision_intents")
+    if not required and state_.get("precision_contract_mode") == "shadow":
+        return []
+    if not isinstance(required, list) or not required:
+        return ["precision_preflight_missing"]
+    if state_.get("precision_contract_mode") == "shadow":
+        enforced_tools = {str(item.get("tool") or "") for item in required if isinstance(item, dict)}
+        detected = [item for item in detected if item.tool in enforced_tools]
+    detected_material = [
+        {
+            "tool": item.tool,
+            "args": item.args,
+            "source_item": item.source_item,
+        }
+        for item in detected
+    ]
+    required_material = [
+        {
+            "tool": item.get("tool"),
+            "args": item.get("args"),
+            "source_item": item.get("source_item"),
+        }
+        for item in required
+        if isinstance(item, dict)
+    ]
+    if required_material != detected_material:
+        return ["precision_preflight_mismatch"]
+
+    snapshots = state_.get("precision_contract_snapshot") or {}
+    contract_material = [
+        {
+            "tool": item.get("tool"),
+            "source_item": item.get("source_item"),
+            "schema_hash": item.get("schema_hash"),
+        }
+        for item in required
+    ]
+    if state_.get("precision_contract_hash") != canonical_json_hash(contract_material):
+        return ["precision_contract_changed:preflight_hash"]
+
+    plan = [task for task in (state_.get("plan") or []) if isinstance(task, dict)]
+    evidence = [
+        item
+        for item in (state_.get("mcp_evidence") or [])
+        if isinstance(item, dict)
+        and int(item.get("iteration") or 0) == int(state_.get("agentic_iteration") or 0)
+    ]
+    used_task_ids: set[str] = set()
+    issues: list[str] = []
+    for intent in required:
+        tool = str(intent.get("tool") or "")
+        expected_args = intent.get("args") or {}
+        schema = snapshots.get(tool)
+        schema_hash = str(intent.get("schema_hash") or "")
+        if (
+            not isinstance(schema, dict)
+            or not schema_hash
+            or tool_schema_contract_hash(schema) != schema_hash
+        ):
+            issues.append(f"precision_contract_changed:{tool}")
+            continue
+
+        matching_tasks = [
+            task
+            for task in plan
+            if str(task.get("id") or "") not in used_task_ids
+            and task.get("category") == "precision_tools"
+            and task.get("mcp_tool") == tool
+            and precision_args_match(task.get("mcp_args"), expected_args, schema)
+        ]
+        if not matching_tasks:
+            issues.append(f"precision_evidence_mismatch:{tool}:task")
+            continue
+        task = matching_tasks[0]
+        task_id = str(task.get("id") or "")
+        used_task_ids.add(task_id)
+        matching_evidence = [
+            item
+            for item in evidence
+            if str(item.get("task_id") or "") == task_id
+            and item.get("status") == "completed"
+        ]
+        if not matching_evidence:
+            issues.append(f"precision_evidence_missing:{task_id or tool}")
+            continue
+        if len(matching_evidence) != 1:
+            issues.append(f"precision_evidence_mismatch:{task_id}:duplicate")
+            continue
+        item = matching_evidence[0]
+        used_args = item.get("args")
+        if (
+            item.get("tool") != tool
+            or item.get("contract_hash") != schema_hash
+            or not precision_args_match(used_args, expected_args, schema)
+            or item.get("input_hash") != canonical_json_hash(used_args)
+        ):
+            issues.append(f"precision_evidence_mismatch:{task_id}:content")
+            continue
+        if schema.get("structured_result_required"):
+            facts = item.get("facts")
+            expected_result_hash = canonical_json_hash(
+                {
+                    "contract_hash": schema_hash,
+                    "input_normalized": precision_evidence_input(used_args, schema),
+                    "facts": facts,
+                }
+            )
+            output_schema = schema.get("output_schema")
+            try:
+                structured_valid = (
+                    isinstance(output_schema, dict)
+                    and not list(
+                        Draft202012Validator(output_schema).iter_errors(facts)
+                    )
+                )
+                if isinstance(output_schema, dict):
+                    Draft202012Validator.check_schema(output_schema)
+            except SchemaError:
+                structured_valid = False
+            source_metadata = item.get("source_metadata")
+            if (
+                not structured_valid
+                or item.get("result_hash") != expected_result_hash
+                or item.get("contract_id") != schema.get("contract_id")
+                or item.get("contract_version") != schema.get("contract_version")
+                or item.get("determinism") != schema.get("determinism")
+                or not isinstance(source_metadata, dict)
+                or not source_metadata.get("version")
+            ):
+                issues.append(f"precision_evidence_mismatch:{task_id}:structured")
+    return issues
+
+
+def evaluate_quality_gate(state_: dict) -> QualityGateDecision:
+    """Return ``pass``, ``block`` or ``gate`` without performing I/O."""
+    trust_verdict = (state_.get("trust_verdict") or "").upper()
+    cynefin_domain = classify_cynefin(state_).value
+
+    incomplete = incomplete_plan_tasks(state_)
+    if incomplete:
+        detail = ",".join(
+            f"{task['task_id']}:{task['status']}" for task in incomplete[:8]
+        )
+        return QualityGateDecision(
+            "block",
+            f"incomplete_task_execution:{detail}",
+            cynefin_domain,
+        )
+
+    precision_issues = precision_evidence_issues(state_)
+    if precision_issues:
+        return QualityGateDecision(
+            "block",
+            precision_issues[0],
+            cynefin_domain,
+        )
+
+    if state_.get("required_precision_intents"):
+        binding_status = str(state_.get("precision_binding_status") or "")
+        binding_errors = state_.get("precision_binding_errors") or []
+        if binding_status != "bound":
+            reason = str(binding_errors[0]) if binding_errors else "precision_binding_missing"
+            return QualityGateDecision("block", reason, cynefin_domain)
+        from services.precision_response import precision_binding_hash
+
+        slots = [
+            item
+            for item in (state_.get("precision_fact_slots") or [])
+            if isinstance(item, dict)
+        ]
+        if (
+            not slots
+            or state_.get("precision_binding_hash") != precision_binding_hash(slots)
+            or state_.get("precision_bound_response_hash")
+            != canonical_json_hash(str(state_.get("final_response") or ""))
+        ):
+            return QualityGateDecision(
+                "block",
+                "precision_binding_mismatch",
+                cynefin_domain,
+            )
+
+    if trust_verdict == "BLOCK":
+        return QualityGateDecision("block", "trust_score_block", cynefin_domain)
+
+    constitution_violations = state_.get("constitution_violations") or []
+    has_constitution_warning = any(
+        str(v.get("on_violation", "")).lower() == "warn"
+        for v in constitution_violations
+        if isinstance(v, dict)
+    )
+    requires_human = (
+        trust_verdict == "PROCEED_WITH_ASSUMPTION"
+        and (
+            has_constitution_warning
+            or cynefin_domain in {"COMPLEX", "CHAOTIC"}
+        )
+    )
+    if not requires_human:
+        return QualityGateDecision("pass", "", cynefin_domain)
+
+    reason_parts = ["trust verdict PROCEED_WITH_ASSUMPTION"]
+    if has_constitution_warning:
+        reason_parts.append("constitution warning")
+    if cynefin_domain in {"COMPLEX", "CHAOTIC"}:
+        reason_parts.append(f"Cynefin {cynefin_domain}")
+    return QualityGateDecision("gate", "; ".join(reason_parts), cynefin_domain)

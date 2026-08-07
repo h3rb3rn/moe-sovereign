@@ -248,11 +248,6 @@ async def fetch_local_models_with_metadata(client: httpx.AsyncClient) -> dict[st
     return result
 
 
-async def fetch_local_models(client: httpx.AsyncClient) -> set[str]:
-    """Legacy wrapper — returns just the model@node IDs. Use fetch_local_models_with_metadata for full data."""
-    meta = await fetch_local_models_with_metadata(client)
-    return set(meta.keys())
-
 async def fetch_cloud_models(client: httpx.AsyncClient) -> set[str]:
     models = set()
     for cloud in CLOUD_ENDPOINTS:

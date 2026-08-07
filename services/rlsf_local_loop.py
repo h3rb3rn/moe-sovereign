@@ -199,6 +199,17 @@ async def run_rlsf_loop(batch_size: int = 100, dry_run: bool = False) -> dict:
     """Run the main reinforcement learning feedback loop."""
     start_time = time.time()
     ts_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if not is_enabled():
+        return {
+            "job": "rlsf_local_loop",
+            "ts": ts_str,
+            "duration_s": 0,
+            "freed_bytes": 0,
+            "details": {
+                "status": "disabled",
+                "message": "RLSF local loop is disabled in cleanup-config.json",
+            },
+        }
 
     # 1. Gather unevaluated entries
     unevaluated = await find_unevaluated_chats()
@@ -366,10 +377,9 @@ if __name__ == "__main__":
     
     # Read batch size from cleanup-config.json
     cfg = _read_config().get("rlsf_local_loop", {})
-    enabled = cfg.get("enabled", True)
     batch_sz = int(cfg.get("batch_size", 100))
 
-    if not enabled:
+    if not is_enabled():
         print("RLSF local loop is disabled in cleanup-config.json.")
         exit(0)
 

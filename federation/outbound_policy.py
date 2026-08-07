@@ -70,7 +70,6 @@ def filter_bundle_by_policy(bundle: dict, policies: list[dict]) -> dict:
         stats["entities_passed"] += 1
 
     # Filter relations by domain + confidence + verified
-    allowed_entity_names = {e.get("name") for e in filtered_entities}
     for rel in bundle.get("relations", []):
         domain = rel.get("domain", "general")
 
@@ -122,11 +121,6 @@ def filter_bundle_by_policy(bundle: dict, policies: list[dict]) -> dict:
     )
 
     return result
-
-
-def get_auto_push_domains(policies: list[dict]) -> list[str]:
-    """Return domains configured for automatic push."""
-    return [p["domain"] for p in policies if p["mode"] == "auto"]
 
 
 def get_manual_domains(policies: list[dict]) -> list[str]:

@@ -62,6 +62,7 @@ from services.routing import (
     _resolve_user_experts, _resolve_template_prompts,
     _server_info, _is_endpoint_error,
 )
+from services.deliberation.contracts import DeliberationPolicyError
 from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
@@ -123,20 +124,6 @@ def _ollama_messages_to_oai(messages: list) -> list:
     return out
 
 
-def _ollama_options_to_oai(options: dict) -> dict:
-    """Map Ollama generation options to OpenAI-compatible parameters."""
-    result = {}
-    if "temperature" in options:
-        result["temperature"] = options["temperature"]
-    if "num_predict" in options:
-        result["max_tokens"] = options["num_predict"]
-    if "top_p" in options:
-        result["top_p"] = options["top_p"]
-    if "seed" in options:
-        result["seed"] = options["seed"]
-    return result
-
-
 async def _ollama_resolve_template(model_name: str, user_perms: dict, user_templates_json: str = "{}"):
     """Return (tmpl_id, tmpl_dict | None, error_response | None) for an Ollama model name."""
     all_tmpls   = _read_expert_templates()
@@ -178,6 +165,8 @@ async def _ollama_internal_stream(
     user_id   = user_ctx.get("user_id", "anon")
     api_key_id = user_ctx.get("key_id", "")
     user_perms = json.loads(user_ctx.get("permissions_json", "{}"))
+    from services.sovereignty import resolve_local_only
+    local_only = resolve_local_only(user_perms, user_ctx)
 
     tmpl_id, matched_tmpl, err = await _ollama_resolve_template(
         model_name, user_perms, user_ctx.get("user_templates_json", "{}")
@@ -192,10 +181,14 @@ async def _ollama_internal_stream(
         user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
         user_templates_json=_user_tmpls_json, admin_override=False,
         user_connections_json=_user_conns_json) or {}
-    tmpl_prompts  = _resolve_template_prompts(
-        user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
-        user_templates_json=_user_tmpls_json, admin_override=False,
-        user_connections_json=_user_conns_json)
+    try:
+        tmpl_prompts = _resolve_template_prompts(
+            user_ctx.get("permissions_json", ""), override_tmpl_id=tmpl_id,
+            user_templates_json=_user_tmpls_json, admin_override=False,
+            user_connections_json=_user_conns_json)
+    except DeliberationPolicyError:
+        yield f"data: {json.dumps({'error': 'deliberation_policy_invalid'})}\n\n"
+        return
 
     mode = _MODEL_ID_TO_MODE.get(model_name, "default")
     if matched_tmpl and matched_tmpl.get("force_think") and mode == "default":
@@ -224,6 +217,16 @@ async def _ollama_internal_stream(
     _hist_turns = tmpl_prompts.get("history_max_turns", 0) or None
     _hist_chars = tmpl_prompts.get("history_max_chars", 0) or None
     history = _truncate_history(raw_history, max_turns=_hist_turns, max_chars=_hist_chars)
+    raw_num_predict = 0
+    if isinstance(extra_params, dict):
+        options = extra_params.get("options")
+        if isinstance(options, dict):
+            raw_num_predict = options.get("num_predict", 0)
+        raw_num_predict = extra_params.get("num_predict", raw_num_predict)
+    try:
+        client_max_output_tokens = max(0, int(raw_num_predict or 0))
+    except (TypeError, ValueError):
+        client_max_output_tokens = 0
 
     asyncio.create_task(_register_active_request(
         chat_id=chat_id, user_id=user_id, model=model_name,
@@ -249,11 +252,19 @@ async def _ollama_internal_stream(
         planner_token_override=tmpl_prompts["planner_token_override"],
         planner_num_ctx=tmpl_prompts.get("planner_num_ctx", 0),
         judge_num_ctx=tmpl_prompts.get("judge_num_ctx", 0),
+        guardrail_prompt=tmpl_prompts.get("guardrail_prompt", ""),
+        guardrail_model_override=tmpl_prompts.get("guardrail_model_override", ""),
+        guardrail_url_override=tmpl_prompts.get("guardrail_url_override", ""),
+        guardrail_token_override=tmpl_prompts.get("guardrail_token_override", ""),
+        guardrail_num_ctx=tmpl_prompts.get("guardrail_num_ctx", 0),
         model_name=model_name,
         pending_reports=[],
         images=_user_images,
         session_id=None,
         max_agentic_rounds=tmpl_prompts.get("max_agentic_rounds", 0),
+        deliberation_policy=tmpl_prompts.get("deliberation_policy", {}),
+        client_max_output_tokens=client_max_output_tokens,
         no_cache=False,
+        local_only=local_only,
     ):
         yield sse_line

@@ -1,11 +1,7 @@
 """
 pipeline/logic_types.py — Formal logic state types for MoE Sovereign.
 
-Mathematical foundations (see docstrings per class for precise attribution):
-
-  Intuitionistic Logic  — de Vries (2007), Section 3: Heyting algebra structure.
-                          A claim is only valid when a constructive proof is provided;
-                          truth is not assumed by default.
+Mathematical foundation (see class docstrings for precise attribution):
 
   Paraconsistent Logic  — de Vries (2007), Section 2: paraconsistent systems tolerate
                           contradictions without collapsing to trivial (ex contradictione
@@ -18,56 +14,9 @@ References:
 
 from __future__ import annotations
 
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
-T = TypeVar("T")
-
-
-class ConstructiveProof(BaseModel, Generic[T]):
-    """Wrapper that enforces the intuitionistic validity condition on any claim.
-
-    Intuitionistic Logic requires that a proposition be accompanied by a
-    constructive proof to be considered true; mere assertion is insufficient.
-    This is captured in Heyting algebra semantics where 'p → q' holds only
-    when there is an explicit construction mapping proofs of p to proofs of q.
-
-    Mathematical foundation:
-        de Vries (2007), arXiv:0707.2161, Section 3 — Heyting algebras as the
-        algebraic model of intuitionistic logic. A formula ϕ is valid iff it has
-        a proof object; the default truth value without a proof is ⊥ (bottom).
-
-    Fields:
-        content       — The claim, generated code, policy, or technical output.
-        is_proven     — True only when a constructive execution has verified the
-                        content (e.g. sandbox run, unit test pass). Defaults to
-                        False: LLM-generated content is always unproven until
-                        verified by an executor node.
-        proof_method  — Human-readable description of how the proof was obtained.
-                        'unverified' means no proof exists yet.
-    """
-
-    content: T
-    is_proven: bool = False
-    proof_method: Literal["unverified", "sandbox_exec", "unit_test", "static_analysis"] = "unverified"
-
-    model_config = {"arbitrary_types_allowed": True}
-
-    def assert_proven(self) -> "ConstructiveProof[T]":
-        """Return this instance only if is_proven; raise otherwise.
-
-        Use at decision boundaries where unproven claims must not proceed.
-        """
-        if not self.is_proven:
-            raise ValueError(
-                f"Intuitionistic validity violation: content has not been "
-                f"constructively proven (proof_method='{self.proof_method}'). "
-                f"An executor node must set is_proven=True before this claim "
-                f"can be used as a verified fact."
-            )
-        return self
-
 
 class ConflictEntry(BaseModel):
     """A single entry in the paraconsistent conflict registry.

@@ -9,16 +9,12 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import List
-
 logger = logging.getLogger("MOE-SOVEREIGN")
 
 _DEFAULT_CAPS: dict = {
     "json_schema":   False,
     "json_object":   True,
     "stream":        True,
-    "responses_api": False,
-    "hints":         [],
 }
 
 _CAPS_PATH = Path(__file__).parent.parent / "configs" / "model_capabilities.yaml"
@@ -71,6 +67,44 @@ def model_supports_streaming(model: str) -> bool:
     return bool(get_model_caps(model).get("stream", True))
 
 
-def model_hint_tokens(model: str) -> List[str]:
-    """Return the hint-token list for *model* (empty list if none)."""
-    return list(get_model_caps(model).get("hints") or [])
+def enforce_streaming_capability(model: str, requested: bool) -> bool:
+    """Return the wire-level stream flag allowed by the selected model."""
+    return bool(requested and model_supports_streaming(model))
+
+
+def apply_ollama_structured_capability(
+    payload: dict,
+    model: str,
+    schema: dict | None = None,
+) -> dict:
+    """Apply the strongest supported Ollama ``format`` contract.
+
+    A copy is returned so callers can safely reuse their base payload.
+    """
+    result = dict(payload)
+    result["stream"] = enforce_streaming_capability(
+        model, bool(result.get("stream", False))
+    )
+    if schema and model_supports_json_schema(model):
+        result["format"] = schema
+    elif schema and model_supports_json_object(model):
+        result["format"] = "json"
+    else:
+        result.pop("format", None)
+    return result
+
+
+def openai_response_format(model: str, schema: dict | None = None) -> dict | None:
+    """Return a provider-neutral OpenAI response_format or ``None``."""
+    if schema and model_supports_json_schema(model):
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "moe_structured_output",
+                "strict": True,
+                "schema": schema,
+            },
+        }
+    if model_supports_json_object(model):
+        return {"type": "json_object"}
+    return None

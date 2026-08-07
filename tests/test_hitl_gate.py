@@ -1,6 +1,15 @@
 """Tests for services/hitl_gate.py (TASK-14)."""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from routes.gates import _check_authorization
+
+
+class _HTTPError(Exception):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
 
 
 def _mock_redis(data_store: dict):
@@ -96,3 +105,86 @@ def test_fail_open_on_valkey_unavailable(mock_vk):
     # Should not raise, returns None
     result = create_gate("req-6", "reason", "draft")
     assert result is None
+
+
+def test_gate_owner_may_decide_own_gate():
+    _check_authorization(
+        {"user_id": "owner"},
+        {"user_id": "owner", "is_admin": False, "is_system": False},
+        "approve",
+    )
+
+
+def test_authenticated_non_owner_is_forbidden():
+    with patch("routes.gates.HTTPException", _HTTPError):
+        with pytest.raises(_HTTPError) as exc:
+            _check_authorization(
+                {"user_id": "owner"},
+                {"user_id": "other", "is_admin": False, "is_system": False},
+                "approve",
+            )
+    assert exc.value.status_code == 403
+
+
+def test_ownerless_gate_requires_admin_or_system():
+    with patch("routes.gates.HTTPException", _HTTPError):
+        with pytest.raises(_HTTPError) as exc:
+            _check_authorization(
+                {"user_id": ""},
+                {"user_id": "user", "is_admin": False, "is_system": False},
+                "approve",
+            )
+    assert exc.value.status_code == 403
+
+    _check_authorization(
+        {"user_id": ""},
+        {"user_id": "", "is_admin": False, "is_system": True},
+        "approve",
+    )
+
+
+@pytest.mark.asyncio
+async def test_approval_commits_frozen_payload_before_release():
+    gate = {
+        "status": "pending",
+        "user_id": "owner",
+        "response_draft": "approved response",
+        "commit_payload": {"final_response": "approved response"},
+    }
+    with (
+        patch(
+            "services.response_commit.commit_response_payload",
+            new=AsyncMock(return_value={"status": "complete", "errors": []}),
+        ) as commit_payload,
+    ):
+        from routes.gates import _commit_approved_gate
+
+        result = await _commit_approved_gate(gate)
+
+    commit_payload.assert_awaited_once()
+    assert result == "complete"
+
+
+@pytest.mark.asyncio
+async def test_partial_commit_keeps_gate_pending_for_retry():
+    gate = {
+        "status": "pending",
+        "user_id": "owner",
+        "response_draft": "approved response",
+        "commit_payload": {"final_response": "approved response"},
+    }
+    with (
+        patch(
+            "services.response_commit.commit_response_payload",
+            new=AsyncMock(return_value={
+                "status": "partial", "errors": ["kafka_ingest:RuntimeError"],
+            }),
+        ),
+        patch("routes.gates.HTTPException", _HTTPError),
+    ):
+        from routes.gates import _commit_approved_gate
+
+        with pytest.raises(_HTTPError) as exc:
+            await _commit_approved_gate(gate)
+
+    assert exc.value.status_code == 503

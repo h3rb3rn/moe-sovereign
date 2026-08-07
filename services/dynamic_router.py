@@ -296,27 +296,6 @@ async def _run_sovereign_classifier(prompt: str) -> Optional[dict]:
         return None
 
 
-async def classify_active_experts(prompt: str) -> tuple[list[str], str]:
-    """Lightweight classification for the Claude Code expert council (no
-    ChromaDB template match, no model allocation).
-
-    Returns (active_experts sorted by probability descending, complexity).
-    Falls back to (["general"], "moderate") if the classifier is unavailable.
-    """
-    classification = await _run_sovereign_classifier(prompt)
-    if classification is None:
-        return ["general"], "moderate"
-
-    active_experts = classification["active_experts"]
-    expert_probs = classification["expert_probs"]
-    active_experts = sorted(
-        active_experts,
-        key=lambda exp: expert_probs[EXPERT_CLASSES.index(exp)],
-        reverse=True,
-    )
-    return active_experts, classification["complexity"]
-
-
 async def _get_cluster_state() -> list[dict]:
     """Gets lists of available models and warmed state, cached for 10s."""
     now = time.monotonic()
@@ -648,6 +627,68 @@ def _is_local_url(url: str) -> bool:
     return False
 
 
+# ── Per-category MCP tool and skill defaults (used by fallback prompt generator) ──
+# Loaded at runtime so additions to the MCP server or skill directory are picked up
+# without changing this mapping. The lists name tools by their mcp_server tool name.
+
+_CATEGORY_MCP_TOOLS: dict[str, list[str]] = {
+    "math":             ["calculate", "solve_equation", "statistics_calc", "unit_convert",
+                         "prime_factorize", "gcd_lcm", "roman_numeral"],
+    "science":          ["calculate", "unit_convert"],
+    "data_analysis":    ["statistics_calc", "json_query", "calculate", "unit_convert"],
+    "legal_advisor":    ["legal_get_paragraph", "legal_search_laws", "legal_get_law_overview"],
+    "technical_support":["subnet_calc", "hash_text", "regex_extract"],
+    "code_reviewer":    ["regex_extract", "hash_text"],
+    "vision":           ["text_analyze", "regex_extract"],
+    "precision_tools":  ["calculate", "unit_convert", "date_diff", "date_add",
+                         "calendar_facts", "day_of_week", "statistics_calc", "hash_text"],
+    "general":          [],
+    "reasoning":        [],
+    "research":         [],
+    "creative_writer":  [],
+    "translation":      [],
+    "medical_consult":  [],
+    "tool_agent":       ["calculate", "unit_convert", "regex_extract", "json_query"],
+}
+
+_CATEGORY_SKILLS: dict[str, list[str]] = {
+    "data_analysis":    ["web-artifacts-builder"],
+    "research":         ["web-artifacts-builder"],
+    "creative_writer":  ["web-artifacts-builder"],
+    "code_reviewer":    ["agentic-coder"],
+    "technical_support":["agentic-coder"],
+}
+
+
+def _resolve_expert_tools_heuristic(category: str, prompt_hint: str = "") -> list[str]:
+    """Return MCP tool names for a category, optionally extended by prompt content."""
+    base = list(_CATEGORY_MCP_TOOLS.get(category, []))
+    # Extend from prompt signals for uncategorised / dynamic experts
+    h = prompt_hint.lower()
+    if not base:
+        if any(k in h for k in ("rechne", "berechne", "calculate", "compute", "math", "statistics")):
+            base = _CATEGORY_MCP_TOOLS["math"]
+        elif any(k in h for k in ("§", "gesetz", "recht", "legal", "paragraph", "bgb", "bgh")):
+            base = _CATEGORY_MCP_TOOLS["legal_advisor"]
+        elif any(k in h for k in ("subnetz", "ip", "subnet", "hash", "regex", "network")):
+            base = _CATEGORY_MCP_TOOLS["technical_support"]
+        elif any(k in h for k in ("data", "statistik", "csv", "json", "tabelle")):
+            base = _CATEGORY_MCP_TOOLS["data_analysis"]
+    return base
+
+
+def _resolve_expert_skills_heuristic(category: str, prompt_hint: str = "") -> list[str]:
+    """Return skill names for a category based on category defaults and prompt signals."""
+    base = list(_CATEGORY_SKILLS.get(category, []))
+    h = prompt_hint.lower()
+    if not base:
+        if any(k in h for k in ("chart", "diagramm", "html", "pdf", "report", "visuali")):
+            base = ["web-artifacts-builder"]
+        elif any(k in h for k in ("code", "repository", "refactor", "implement", "debug")):
+            base = ["agentic-coder"]
+    return base
+
+
 def _generate_fallback_structured_prompts(prompt: str, active_experts: list) -> dict:
     """Generate structured/persona-based fallback system prompts with zero latency."""
     # 1. Base default prompts
@@ -704,7 +745,14 @@ def _generate_fallback_structured_prompts(prompt: str, active_experts: list) -> 
     return {
         "planner_prompt": planner_prompt,
         "judge_prompt": judge_prompt,
-        "experts": {exp: {"system_prompt": prompt_text} for exp, prompt_text in experts_prompts.items()}
+        "experts": {
+            exp: {
+                "system_prompt": prompt_text,
+                "mcp_tools":     _resolve_expert_tools_heuristic(exp, prompt),
+                "skills":        _resolve_expert_skills_heuristic(exp, prompt),
+            }
+            for exp, prompt_text in experts_prompts.items()
+        },
     }
 
 
@@ -720,48 +768,63 @@ async def _generate_prompt_specific_prompts(prompt: str, active_experts: list) -
     if enabled:
         try:
             from services.llm_instances import planner_llm
-            
+
+            # Build compact tool + skill catalogs for the LLM to choose from
+            available_tools = list(state._MCP_TOOLS_DICT.keys()) if state._MCP_TOOLS_DICT else []
+            tool_catalog = (
+                "Available MCP tools: " + ", ".join(available_tools)
+                if available_tools else "No MCP tools registered."
+            )
+            try:
+                from services.skills import _build_skill_catalog
+                skill_catalog_raw = _build_skill_catalog().strip()
+                skill_catalog = skill_catalog_raw if skill_catalog_raw else "No skills registered."
+            except Exception:
+                skill_catalog = "No skills registered."
+
             system_instruction = (
-                "You are an expert meta-prompter. Your task is to generate highly optimized, context-specific system prompts "
-                "for different models in a Mixture of Experts (MoE) system, tailored specifically to a given user query.\n\n"
-                "The MoE system has a Planner model, a Judge model, and a set of specialized Expert models.\n"
-                "You must generate custom, prompt-specific system prompts for:\n"
-                "1. The Planner (who breaks down the user query and delegates subtasks to experts).\n"
-                "2. The Judge (who synthesizes and merges the expert responses using paraconsistent logic rules).\n"
-                "3. Each of the requested active expert models.\n\n"
-                "Output ONLY a valid JSON object matching this schema:\n"
+                "You are an expert meta-prompter for a Mixture-of-Experts (MoE) system.\n"
+                "Generate optimized, query-specific system prompts for the Planner, Judge, and each Expert.\n"
+                "For each expert also decide which MCP tools and output skills would IMPROVE its output quality.\n\n"
+                "Rules:\n"
+                "• Only assign MCP tools that are genuinely useful for the subtask — not all tools per expert.\n"
+                "• Only assign skills when the expert's output benefits from a specific format (chart, PDF, code).\n"
+                "• Empty lists [] are correct when no tool or skill is needed.\n\n"
+                f"{tool_catalog}\n\n"
+                f"Skills catalog:\n{skill_catalog}\n\n"
+                "Output ONLY a valid JSON object with this exact schema (no markdown, no extra keys):\n"
                 "{\n"
                 '  "planner_prompt": "string",\n'
                 '  "judge_prompt": "string",\n'
                 '  "experts": {\n'
-                '    "<expert_category_1>": {\n'
-                '      "system_prompt": "string"\n'
-                '    },\n'
-                '    ...\n'
+                '    "<expert_category>": {\n'
+                '      "system_prompt": "string",\n'
+                '      "mcp_tools": ["tool_name", ...],\n'
+                '      "skills": ["skill_name", ...]\n'
+                '    }\n'
                 '  }\n'
-                "}\n"
-                "Do not include any extra keys, markdown formatting, or explanations."
+                "}"
             )
-            
+
             user_content = (
                 f"User Query: {prompt}\n"
                 f"Active Expert Categories: {', '.join(active_experts)}\n\n"
-                "Generate the custom system prompts."
+                "Generate the system prompts, MCP tool lists, and skill lists."
             )
-            
-            logger.info("Generating prompt-specific system prompts using LLM...")
+
+            logger.info("Generating prompt-specific system prompts (with tool/skill assignment) via LLM...")
             res = await planner_llm.ainvoke([
                 {"role": "system", "content": system_instruction},
                 {"role": "user", "content": user_content}
             ])
-            
+
             content = res.content.strip()
             if content.startswith("```"):
                 if "\n" in content:
                     content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
                 else:
                     content = content.replace("```", "").strip()
-            
+
             parsed = json.loads(content)
             if (
                 isinstance(parsed, dict)
@@ -772,8 +835,22 @@ async def _generate_prompt_specific_prompts(prompt: str, active_experts: list) -
             ):
                 fallback_data = _generate_fallback_structured_prompts(prompt, active_experts)
                 for exp in active_experts:
-                    if exp not in parsed["experts"] or not isinstance(parsed["experts"][exp], dict) or "system_prompt" not in parsed["experts"][exp]:
-                        parsed["experts"][exp] = {"system_prompt": fallback_data["experts"][exp]["system_prompt"]}
+                    fb_exp = fallback_data["experts"].get(exp, {})
+                    exp_entry = parsed["experts"].get(exp)
+                    if not isinstance(exp_entry, dict) or "system_prompt" not in exp_entry:
+                        # Full fallback for this expert
+                        parsed["experts"][exp] = fb_exp
+                    else:
+                        # Ensure mcp_tools and skills are valid lists; fall back to heuristic if absent/invalid
+                        if not isinstance(exp_entry.get("mcp_tools"), list):
+                            exp_entry["mcp_tools"] = fb_exp.get("mcp_tools", [])
+                        if not isinstance(exp_entry.get("skills"), list):
+                            exp_entry["skills"] = fb_exp.get("skills", [])
+                        # Filter out any tool names not actually registered
+                        if available_tools:
+                            exp_entry["mcp_tools"] = [
+                                t for t in exp_entry["mcp_tools"] if t in available_tools
+                            ]
                 return parsed
             else:
                 logger.warning("LLM response did not match expected schema, falling back to structured prompts.")
@@ -789,6 +866,7 @@ async def get_dynamic_template(
     user_connections: Optional[dict] = None,
     global_only: bool = False,
     user_conns_only: bool = False,
+    deliberation_activation: str = "adaptive",
 ) -> Optional[dict]:
     """Main service entrypoint: matching, ONNX routing, cluster mapping, scoring and allocation.
 
@@ -822,6 +900,12 @@ async def get_dynamic_template(
                             # config_json was stored before "id"/"name" were added to the
                             # caller's dict (see _save_template_to_db_and_cache call site) —
                             # restore them so downstream tracing (chat.py: dynamic_tmpl["id"]) works.
+                            from services.deliberation.contracts import dynamic_deliberation_policy
+
+                            cached_config["deliberation_policy"] = (
+                                dynamic_deliberation_policy(deliberation_activation)
+                                .model_dump(mode="json")
+                            )
                             cached_config["id"] = tmpl_id
                             cached_config["name"] = tmpl_name
                             return cached_config
@@ -1006,15 +1090,18 @@ async def get_dynamic_template(
                 # Context window mapping
                 ctx = primary["context_window"]
                 
-                # Custom system prompts for experts resolved dynamically
-                sys_prompt = resolved_prompts.get("experts", {}).get(exp, {}).get("system_prompt")
-                if not sys_prompt:
-                    sys_prompt = f"You are a specialized expert in {exp}."
+                # System prompt, MCP tools, and skills resolved dynamically per expert
+                exp_resolved = resolved_prompts.get("experts", {}).get(exp, {})
+                sys_prompt = exp_resolved.get("system_prompt") or f"You are a specialized expert in {exp}."
+                mcp_tools  = exp_resolved.get("mcp_tools") or []
+                skills     = exp_resolved.get("skills") or []
 
                 experts_config[exp] = {
-                    "system_prompt": sys_prompt,
+                    "system_prompt":  sys_prompt,
                     "context_window": ctx,
-                    "models": models_cfg
+                    "models":         models_cfg,
+                    "mcp_tools":      mcp_tools,
+                    "skills":         skills,
                 }
 
         # Build complete dynamic template configuration
@@ -1034,6 +1121,8 @@ async def get_dynamic_template(
         if not judge_prompt:
             judge_prompt = f"You are a specialized synthesis judge. Consolidate and merge responses from the following expert models: {', '.join(active_experts)}. Resolve contradictions using paraconsistent logic rules and output a unified, high-quality answer."
         
+        from services.deliberation.contracts import dynamic_deliberation_policy
+
         template_config = {
             "planner_model": planner_model,
             "judge_model": judge_model,
@@ -1046,6 +1135,9 @@ async def get_dynamic_template(
             "enable_web_research": enable_web_research,
             "experts": experts_config,
             "causal_intervention": interventions[0] if interventions else None,
+            "deliberation_policy": dynamic_deliberation_policy(
+                deliberation_activation
+            ).model_dump(mode="json"),
             "reasoning_trace": justification_trace
         }
         

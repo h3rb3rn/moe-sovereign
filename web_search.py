@@ -23,6 +23,8 @@ import logging
 import os
 from typing import List
 
+from services.async_utils import run_sync_daemon
+
 logger = logging.getLogger("moe.web_search")
 
 # Neither SearxSearchWrapper nor the DDG client take an explicit timeout, and
@@ -113,7 +115,9 @@ async def _ddg_search_with_citations(query: str) -> str:
             return list(ddgs.text(q, max_results=5))
 
     try:
-        raw = await asyncio.wait_for(asyncio.to_thread(_sync_ddg, query), timeout=_SEARCH_TIMEOUT_S)
+        raw = await run_sync_daemon(
+            _sync_ddg, query, timeout=_SEARCH_TIMEOUT_S
+        )
         if not raw:
             return ""
         raw = sorted(raw, key=lambda r: _domain_score(r.get("href", "")), reverse=True)
@@ -157,8 +161,11 @@ async def _web_search_with_citations(
 
     if search is not None:
         try:
-            raw_results = await asyncio.wait_for(
-                asyncio.to_thread(search.results, query, num_results=5), timeout=_SEARCH_TIMEOUT_S
+            raw_results = await run_sync_daemon(
+                search.results,
+                query,
+                num_results=5,
+                timeout=_SEARCH_TIMEOUT_S,
             )
             if raw_results:
                 raw_results = sorted(
@@ -169,8 +176,10 @@ async def _web_search_with_citations(
                 searxng_result = _format_results(raw_results)
             if not searxng_result:
                 # Last-resort: use search.run() which returns plain text
-                fallback_text = await asyncio.wait_for(
-                    asyncio.to_thread(search.run, query), timeout=_SEARCH_TIMEOUT_S
+                fallback_text = await run_sync_daemon(
+                    search.run,
+                    query,
+                    timeout=_SEARCH_TIMEOUT_S,
                 )
                 if fallback_text:
                     searxng_result = fallback_text

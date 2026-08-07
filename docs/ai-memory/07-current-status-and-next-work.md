@@ -1,65 +1,62 @@
-# Current Status and Next Work — MoE Sovereign (moe-infra)
+# Current Status and Next Work — MoE Sovereign
 
-Purpose: compact current-state file for context restore.
+Owner: Platform Engineering
+Version: 2.2
+Last verified: 2026-08-02
 
-## Current Status (2026-07-02)
+## Current status
 
-All active tasks are tracked as follows:
+- Core deployment and readiness are healthy at the latest live check.
+- The local full suite passed 908 tests (latest documentation-closeout rerun:
+  5.96 seconds).
+- TASK-42 and TASK-43 are complete: mandatory precision requests bypass
+  legacy answer caches, freeze the active contract, execute against full
+  JSON Schemas and carry typed, hash-bound evidence into the final gate.
+- MCP and orchestrator images are healthy with RestartCount 0; the active
+  orchestrator loaded 64/64 MCP tools.
+- Native and conservative trivial paths respond successfully.
+- The earlier TASK-37 timeout, silent malformed-task omission and incomplete
+  timeout usage remain historical defects. The current fixed mixed corpus now
+  completes through the private template, but one successful mixed scenario
+  is not broad production-readiness evidence for every complex workflow.
+- TASK-38, TASK-39 and TASK-44 are complete. Pure precision requests now use
+  deterministic direct responses across all API facades; mixed requests bind
+  isolated typed fact slots after the final model mutation.
+- TASK-45 quality-atomic persistence is complete. Reusable semantic writes now
+  occur only in the idempotent post-quality commit; Precision response caching
+  remains deliberately bypassed until its reader can revalidate typed evidence.
+- TASK-46 through TASK-50 are complete. Time/timezone, Decimal finance, exact
+  probability and safe structured validation are enforced through typed MCP
+  contracts. The fixed rollout corpus passed 13/13 API cases; practical flag
+  and image rollback both passed before the final images were restored.
+- Precision cache policy remains `bypass`; enabling it requires a reader that
+  revalidates the complete evidence envelope.
+- TASK-9 remains owned/in progress in `agent_status/agy.md`; verify remote
+  LUMI state with its owner before changing training artifacts.
+- The working tree is intentionally dirty and the current branch upstream is
+  gone. Preserve unrelated changes and do not push.
 
-| Task | Summary | Status |
-|---|---|---|
-| TASK-1 | PRE-FLIGHT ctx-resolution mismatch (Bug B) — `resolve_requested_ctx()` | ✅ done |
-| TASK-2 | LUMI-G SSH cert renewal + router model training | ✅ done |
-| TASK-3 | IMoE end-to-end verification + walkthrough report | ✅ done |
-| TASK-4 | ChromaDB semantic template cache never hitting (Bug C) | ✅ done |
-| TASK-5 | `dynamic_template_feedback_log` insert path dead (Bug D) | ✅ done |
-| TASK-6 | Hardcoded infra/secrets in `dynamic_router.py` | ✅ done |
-| TASK-7 | Dynamic system prompts / Sovereign-14B SFT pipeline | ✅ done |
-| TASK-8 | HABE (Holographic Ambient Background Engine) + GUI | ✅ done |
-| TASK-9 | Large-Scale Dataset Gen & Judge QLoRA v2 (8-GPU DDP) | 🔄 in_progress |
+## Next work
 
-Authoritative task details and resolution notes:
-`../../AGENT_LASTENHEFT.md` Section 3.
+1. Use rollout telemetry to select and specify the next P1 deterministic
+   contract: business calendar, version comparison, identifier validation,
+   advanced statistics, geospatial calculation or tokenizer metrics.
+2. Add full evidence-envelope revalidation to the Precision cache reader
+   before changing `PRECISION_CACHE_POLICY=bypass`.
+3. Broaden mixed/private-template benchmarks beyond the single validated
+   Decimal + probability + code-review workflow.
+4. Complete E-2.3 checkpoints/artifact lineage and E-2.5 tenant isolation
+   before resilience or multi-tenant readiness claims.
+5. Reconcile LUMI TASK-9 from the current remote scheduler state.
 
-## Next Work
+## Primary references
 
-1. **TASK-9: Large-Scale Dataset Generation & Judge Model Training (v2)** (highest priority active item)
-   - Complete 90k samples generation using the async generator `generate_judge_dataset_async.py` (concurrency 48) on LUMI-G.
-   - Run the chained trigger job `merge_shards_and_train.sh` (Job `19682382`) to merge/deduplicate/trigger DDP training.
-   - Run the 8-GPU QLoRA DDP training on the dense **granite4.1:30b** base.
-   - Merge the final adapter and quantize the model to 4-bit (AWQ/GGUF) for deployment on `N04-RTX`.
+- `../../AGENTS.md`
+- `../../PROJECT_COMPLIANCE.md`
+- `../../AGENT_LASTENHEFT.md` TASK-37 through TASK-39
+- `../backlog/current/roadmap.md`
+- `../system/systembewertung_2026-07-30.md`
 
-2. **Phase 3: Planner Model Distillation (Granite-3B CPU-focused SLM)**
-   - Synthesize 200k planner pairs using teacher models.
-   - Train a fast local JSON planner model (**granite4.1:3b**) to run on MoE-Sovereign VM CPU.
-
-3. **Follow-ups from TASK-6**:
-   - Make personal API key prefix configurable via env vars in `scripts/dataset_generator.py`, `scripts/send_request.py`, `scripts/index_models_metadata.py`.
-   - Cloud-model discovery must not assume a hardcoded AIHUB account — configure fully via Admin UI.
-
-4. **Model cleanup**: `models/backup_20260612/` (552 KB old ONNX) is safe to delete.
-
-## Recent Decisions
-
-- **2026-06-12**: `resolve_requested_ctx()` added to `context_budget.py` (TASK-1).
-- **2026-06-12**: ChromaDB document text aligned with query text in `dynamic_router.py` (TASK-4).
-- **2026-06-12**: `CLOUD_ENDPOINT`/`CLOUD_TOKEN` moved to env vars (TASK-6).
-- **2026-06-16**: HABE VSA module (`services/vsa_background.py`) deployed (TASK-8).
-- **2026-06-22**: Dynamic system prompts generated dynamically in `dynamic_router.py` and dataset (TASK-7).
-- **2026-06-26**: Merged Judge v1 model (FP16 Qwen2.5-32B) successfully merged on CPU (Job 19540774).
-- **2026-06-28**: Concurrency increased to 48 in `generate_judge_dataset_async.py` using `asyncio` and `httpx` to maximize vLLM throughput (10x-20x speedup).
-- **2026-06-28**: Fixed deduplication key truncation bug in `merge_shards_and_train.sh` to prevent loss of unique samples.
-- **2026-06-28**: Set up automated SLURM job chaining (`--dependency=afterok:JOB_IDS`) for seamless pipeline execution.
-- **2026-06-29**: Copied singularity container image to local project scratch (14 GB) and updated scripts to use this copy, resolving compute node mount issues (`/pfs/lustref1` unavailable on nodes).
-- **2026-06-29**: The async generator jobs (19598021-23) ran successfully but timed out after 4 hours, generating 50,276 samples (exhibiting ~11,300 samples/hour throughput, an 18x speedup over v1).
-- **2026-07-02**: Resubmitted the generator shards as resume runs (Jobs 19682379-81) to complete the remaining ~40k samples, along with the chained merge/train trigger (Job 19682382).
-
-## Do Not Forget
-
-- VRAM rule: llama3:70b-class models ≤60 GB context budget.
-- `local_only=True` must exclude all `CLOUD_ENDPOINT` models — verify in `_get_cluster_state()`.
-- No hardcoded server names, IPs, or model names in source.
-- All code, comments, and docstrings must be in English.
-- UI strings go through the translation system (`t(request, 'key')`).
-- After Python changes: rebuild + restart affected service.
-- GitOps: always use a feature branch and PR — never push directly to main.
+Do not restore old “follow-ups” already superseded by TASK-35/36 evidence.
+Do not treat this summary as permission for credentials, deployment,
+migration, deletion, push, or external publication.

@@ -28,6 +28,7 @@ _CASCADE_PREFIX = "cascade_events:"
 
 
 class CascadeType(str, Enum):
+    SPEC_GAP       = "SPEC_GAP"        # Planner/schema contract is incomplete or invalid
     CONTEXT_GAP    = "CONTEXT_GAP"     # Missing retrieval context — different GraphRAG / web query needed
     EXPERT_FAILURE = "EXPERT_FAILURE"  # Expert returned capability disclaimer or empty
     CONTRADICTION  = "CONTRADICTION"   # Paraconsistent conflict between experts, unresolved
@@ -138,7 +139,7 @@ def emit_cascade(event: CascadeEvent, request_id: str = "") -> CascadeEvent:
         client = _valkey()
         if client is None:
             return event
-        key  = f"{_CASCADE_PREFIX}{request_id}"
+        key  = f"{_CASCADE_PREFIX}{event.request_id}"
         raw  = client.get(key)
         events: List[dict] = json.loads(raw) if raw else []
         events.append({
@@ -151,33 +152,6 @@ def emit_cascade(event: CascadeEvent, request_id: str = "") -> CascadeEvent:
         client.setex(key, _CASCADE_TTL, json.dumps(events))
     except Exception as _e:
         logger.debug("cascade.emit_cascade: Valkey write failed: %s", _e)
-    return event
-
-
-def resolve_cascade(event: CascadeEvent) -> CascadeEvent:
-    """Mark a CascadeEvent as resolved (in-place and in Valkey)."""
-    import datetime
-    event.resolved    = True
-    event.resolved_at = datetime.datetime.utcnow().isoformat() + "Z"
-    if not event.request_id:
-        return event
-    try:
-        client = _valkey()
-        if client is None:
-            return event
-        key  = f"{_CASCADE_PREFIX}{event.request_id}"
-        raw  = client.get(key)
-        if not raw:
-            return event
-        events = json.loads(raw)
-        for e in events:
-            if e.get("event_id") == event.event_id:
-                e["resolved"]    = True
-                e["resolved_at"] = event.resolved_at
-        ttl = client.ttl(key)
-        client.setex(key, max(ttl, 1), json.dumps(events))
-    except Exception as _e:
-        logger.debug("cascade.resolve_cascade: Valkey update failed: %s", _e)
     return event
 
 
@@ -194,4 +168,35 @@ def list_open_cascades(request_id: str) -> List[dict]:
         return [e for e in events if not e.get("resolved")]
     except Exception as _e:
         logger.debug("cascade.list_open_cascades: Valkey read failed: %s", _e)
+        return []
+
+
+def resolve_open_cascades(request_id: str) -> List[dict]:
+    """Mark every currently-open event for *request_id* as resolved."""
+    import datetime
+
+    if not request_id:
+        return []
+    try:
+        client = _valkey()
+        if client is None:
+            return []
+        key = f"{_CASCADE_PREFIX}{request_id}"
+        raw = client.get(key)
+        if not raw:
+            return []
+        events = json.loads(raw)
+        resolved_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        changed: List[dict] = []
+        for event in events:
+            if not event.get("resolved"):
+                event["resolved"] = True
+                event["resolved_at"] = resolved_at
+                changed.append(event)
+        if changed:
+            ttl = client.ttl(key)
+            client.setex(key, max(ttl, 1), json.dumps(events))
+        return changed
+    except Exception as exc:
+        logger.debug("cascade.resolve_open_cascades: Valkey update failed: %s", exc)
         return []

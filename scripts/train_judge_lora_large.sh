@@ -83,7 +83,7 @@ singularity exec \
             --epochs      3 \
             --batch_size  2 \
             --grad_accum  8 \
-            --max_seq_len 2048 \
+            --max_seq_len 8192 \
             --lora_r      64 \
             --lora_alpha  128 \
             --no_4bit \

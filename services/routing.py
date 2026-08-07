@@ -12,6 +12,12 @@ from typing import Optional
 from config import (
     URL_MAP, TOKEN_MAP, _WEB_SEARCH_FALLBACK_DDG, INFERENCE_SERVERS_LIST,
     AGENT_CACHE_ENABLED, AGENT_GRAPHRAG_ENABLED, AGENT_INGEST_ENABLED,
+    EXPERT_THINKING_ENABLED, JMOE_DEBATE_ENABLED,
+)
+from services.deliberation.contracts import (
+    DeliberationPolicyError,
+    legacy_deliberation_policy,
+    parse_deliberation_policy,
 )
 from services.templates import _read_expert_templates
 
@@ -141,6 +147,9 @@ def _resolve_user_experts(
         for cat, cat_cfg in tmpl.get("experts", {}).items():
             _sys_prompt = (cat_cfg.get("system_prompt") or "").strip() if isinstance(cat_cfg, dict) else ""
             _cat_ctx = int(cat_cfg.get("context_window") or 0) if isinstance(cat_cfg, dict) else 0
+            # Per-expert MCP tools and Skills (set by dynamic_router or admin template config)
+            _mcp_tools = list(cat_cfg.get("mcp_tools") or []) if isinstance(cat_cfg, dict) else []
+            _skills    = list(cat_cfg.get("skills") or []) if isinstance(cat_cfg, dict) else []
             if isinstance(cat_cfg, dict) and "models" in cat_cfg:
                 models_list = []
                 for m in cat_cfg.get("models", []):
@@ -170,6 +179,17 @@ def _resolve_user_experts(
                         "_tier":          model_tier,
                         "_system_prompt": _sys_prompt,
                         "context_window": _cat_ctx,
+                        "thinking_mode":  bool(
+                            m.get(
+                                "thinking_mode",
+                                cat_cfg.get(
+                                    "thinking_mode",
+                                    EXPERT_THINKING_ENABLED,
+                                ),
+                            )
+                        ),
+                        "_mcp_tools":     _mcp_tools,
+                        "_skills":        _skills,
                     })
                 result[cat] = models_list
             elif isinstance(cat_cfg, dict):
@@ -189,6 +209,14 @@ def _resolve_user_experts(
                     "_tier":          None,
                     "_system_prompt": _sys_prompt,
                     "context_window": _cat_ctx,
+                    "thinking_mode":  bool(
+                        cat_cfg.get(
+                            "thinking_mode",
+                            EXPERT_THINKING_ENABLED,
+                        )
+                    ),
+                    "_mcp_tools":     _mcp_tools,
+                    "_skills":        _skills,
                 }]
         return result or None
     except Exception:
@@ -248,12 +276,15 @@ def _resolve_template_prompts(
     user_connections_json: str = "{}",
 ) -> dict:
     """Return planner_prompt, judge_prompt and optional model overrides from the template."""
+    legacy_policy = legacy_deliberation_policy(JMOE_DEBATE_ENABLED)
     empty = {
         "planner_prompt": "", "judge_prompt": "",
         "judge_model_override": "", "judge_url_override": "", "judge_token_override": "",
         "planner_model_override": "", "planner_url_override": "", "planner_token_override": "",
         "tool_expert_model_override": "", "tool_expert_url_override": "", "tool_expert_token_override": "",
-        "planner_num_ctx": 0, "judge_num_ctx": 0, "tool_expert_num_ctx": 0,
+        "guardrail_prompt": "",
+        "guardrail_model_override": "", "guardrail_url_override": "", "guardrail_token_override": "",
+        "planner_num_ctx": 0, "judge_num_ctx": 0, "tool_expert_num_ctx": 0, "guardrail_num_ctx": 0,
         "enable_cache": True, "enable_graphrag": True, "enable_web_research": True,
         "enable_habe": False,
         "search_fallback_ddg": _WEB_SEARCH_FALLBACK_DDG,
@@ -267,6 +298,7 @@ def _resolve_template_prompts(
         "cross_session_scopes": ["private"], "cross_session_ttl_days": 0,
         "complexity_level": "",
         "causal_intervention": None,
+        "deliberation_policy": legacy_policy.model_dump(mode="json"),
         # Augmented Tool Path (agentic clients) — mirrors the global AGENT_*_ENABLED
         # defaults (off), overridable per expert template. See config.py.
         "agent_cache": AGENT_CACHE_ENABLED,
@@ -284,6 +316,16 @@ def _resolve_template_prompts(
         if tmpl is None:
             return empty
 
+        # An explicit policy is a security/resource contract and must validate
+        # fail closed. Templates predating schema 1.0 retain the established
+        # global three-call J-MoE behavior until they are edited explicitly.
+        if "deliberation_policy" in tmpl:
+            deliberation_policy = parse_deliberation_policy(
+                tmpl.get("deliberation_policy")
+            )
+        else:
+            deliberation_policy = legacy_policy
+
         def _split_model_ep(val: str) -> tuple:
             if val and "@" in val:
                 at = val.rindex("@")
@@ -293,6 +335,7 @@ def _resolve_template_prompts(
         judge_m,       judge_ep       = _split_model_ep(tmpl.get("judge_model", ""))
         planner_m,     planner_ep     = _split_model_ep(tmpl.get("planner_model", ""))
         tool_expert_m, tool_expert_ep = _split_model_ep(tmpl.get("tool_expert_model", ""))
+        guardrail_m,   guardrail_ep   = _split_model_ep(tmpl.get("guardrail_model", ""))
 
         def _resolve_ep_url(ep: str) -> tuple:
             if ep in URL_MAP:
@@ -305,6 +348,7 @@ def _resolve_template_prompts(
         judge_url,       judge_tok       = _resolve_ep_url(judge_ep)       if judge_ep       else ("", "ollama")
         planner_url,     planner_tok     = _resolve_ep_url(planner_ep)     if planner_ep     else ("", "ollama")
         tool_expert_url, tool_expert_tok = _resolve_ep_url(tool_expert_ep) if tool_expert_ep else ("", "ollama")
+        guardrail_url,   guardrail_tok   = _resolve_ep_url(guardrail_ep)   if guardrail_ep   else ("", "ollama")
         return {
             "planner_prompt":              tmpl.get("planner_prompt", ""),
             "judge_prompt":                tmpl.get("judge_prompt", ""),
@@ -317,9 +361,14 @@ def _resolve_template_prompts(
             "tool_expert_model_override":  tool_expert_m,
             "tool_expert_url_override":    tool_expert_url,
             "tool_expert_token_override":  tool_expert_tok,
+            "guardrail_prompt":            tmpl.get("guardrail_prompt", ""),
+            "guardrail_model_override":    guardrail_m,
+            "guardrail_url_override":      guardrail_url,
+            "guardrail_token_override":    guardrail_tok,
             "planner_num_ctx":             int(tmpl.get("planner_num_ctx") or 0),
             "judge_num_ctx":               int(tmpl.get("judge_num_ctx") or 0),
             "tool_expert_num_ctx":         int(tmpl.get("tool_expert_num_ctx") or 0),
+            "guardrail_num_ctx":           int(tmpl.get("guardrail_num_ctx") or 0),
             "enable_cache":            tmpl.get("enable_cache", True),
             "enable_graphrag":         tmpl.get("enable_graphrag", True),
             "enable_web_research":     tmpl.get("enable_web_research", True),
@@ -339,10 +388,13 @@ def _resolve_template_prompts(
             "cross_session_ttl_days":  int(tmpl.get("cross_session_ttl_days") or 0),
             "complexity_level":        tmpl.get("complexity_level", ""),
             "causal_intervention":     tmpl.get("causal_intervention"),
+            "deliberation_policy":     deliberation_policy.model_dump(mode="json"),
             "agent_cache":             bool(tmpl.get("agent_cache", AGENT_CACHE_ENABLED)),
             "agent_graphrag":          bool(tmpl.get("agent_graphrag", AGENT_GRAPHRAG_ENABLED)),
             "agent_ingest":            bool(tmpl.get("agent_ingest", AGENT_INGEST_ENABLED)),
         }
+    except DeliberationPolicyError:
+        raise
     except Exception:
         logger.exception("_resolve_template_prompts failed — returning empty prompt config")
         return empty

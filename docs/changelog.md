@@ -8,6 +8,116 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-08-02 — Evidence-bound Precision Platform Rollout
+
+> `impact: major` · `breaking: no` · `domain: mcp, orchestration, quality-gate, telemetry`
+
+### Added
+
+- Versioned `time_facts`, `timezone_convert`, `decimal_finance`,
+  `exact_probability` and `structured_validate` MCP contracts with typed
+  schemas, bounded execution, runtime provenance and hash-bound evidence.
+- Precision preflight before answer caches, immutable contract snapshots,
+  deterministic direct rendering for pure prompts and opaque evidence slots
+  for mixed synthesis.
+- Quality-atomic, idempotent persistence after the final gate plus a
+  low-cardinality precision rollout metric and shadow/enforce controls.
+- A fixed adversarial API corpus and reusable native-versus-orchestrated
+  benchmark runner with temporary-key cleanup and 900-second cold-start
+  allowance.
+
+### Fixed
+
+- Structured validation no longer echoes raw payloads or schemas through
+  result envelopes, operational logs, telemetry or working keys.
+- Advice rules no longer inject an MCP task unless every required argument is
+  available; this removed a real mixed-plan failure caused by an empty legacy
+  `calculate` task.
+- Required precision work can no longer be bypassed through legacy caches,
+  planner/judge argument drift, model mutation or pre-quality semantic writes.
+
+### Validated
+
+- The versioned rollout corpus passed 13/13 API cases, the complete regression
+  passed 908 tests, and practical feature-flag and prior-image rollback both
+  completed before the final healthy images were restored.
+- Detailed methodology and limitations are recorded in
+  `system/toolstack/precision_rollout_benchmark_2026-08-02.md`.
+
+---
+
+## 2026-07-31 — Deterministic Calendar Contract and Offloading Review
+
+> `impact: minor` · `breaking: no` · `domain: mcp, planner-contracts, precision-routing`
+
+### Added
+
+- `calendar_facts(date_str, locale)` returns strict, localized and
+  machine-readable weekday and ISO calendar facts, including the separate ISO
+  week-year, leap-year/month boundaries and weekend status.
+- A deterministic-offloading evaluation prioritizes precision-intent
+  enforcement, time-zone conversion, decimal finance, exact probability and
+  structured validation, while separating pure calculations from mutable
+  authoritative data sources.
+
+### Fixed
+
+- Explicit German and English weekday requests in the bounded planner
+  recovery path now dispatch `calendar_facts`; legacy `day_of_week` remains
+  available for compatibility.
+- `date_diff` now reports a real calendar delta instead of approximating every
+  year as 365 days and every month as 30 days.
+- Error strings and JSON error objects returned by MCP tools can no longer be
+  accepted as successful precision evidence.
+- Removed the nonexistent `format_number` entry from dynamic precision-tool
+  defaults and synchronized the new tool across registry, access kind, planner
+  catalogue and fallback descriptions.
+- MCP image builds now use a digest-pinned Python base and an exact transitive
+  dependency lock. This keeps the proven FastMCP 1.28.1 API after MCP 2.0
+  removed the imported `mcp.server.fastmcp` module.
+
+---
+
+## 2026-07-24 — Planner SFT Root-Cause: Sequence-Length Truncation Made Fine-Tune Ineffective
+
+> `impact: major` · `breaking: no` · `domain: planner, sft-training, lumi-g`
+
+### Investigated
+
+- **`qwen3-planner:q4km` fine-tune (LUMI-G job 20190726) had no measurable training
+  effect.** The SFT script's `max_seq_len=1536` was inherited from an earlier, much
+  shorter prompt format and never updated as the planner system prompt grew to
+  ~2,500 tokens. With the tokenizer's default `truncation_side="right"` and no
+  completion-only loss masking (`DataCollatorForCompletionOnlyLM`), the target JSON
+  answer — which follows system+user in the chat template — landed entirely outside
+  the 1,536-token window for effectively all 259,829 training samples
+  (`p99=3628 > max_seq_len=1536`, confirmed via the actual LUMI training logs and a
+  re-tokenization of sample examples with the real `Qwen3-8B` tokenizer). The model
+  trained on next-token prediction over a repeated system-prompt prefix instead of
+  the (query → plan) mapping. A role-suitability benchmark run through the production
+  orchestrator still passed (valid JSON, correct categories) — most likely explained
+  entirely by `Qwen3-8B`'s base zero-shot instruction-following, not by the fine-tune.
+- **Independent finding — prompt/taxonomy drift.** The training system prompt
+  (`PLANNER_SYSTEM_PROMPT`, `research`/`dynamic` categories) diverges from the
+  system prompt actually served by the production template used during
+  verification (`web_researcher` instead of `research`, a `memory_recall` category
+  absent from training, no `dynamic` category at all). Even a correctly trained
+  model would not transfer cleanly to that template as configured.
+
+### Planned
+
+- Re-submit the SFT job with `max_seq_len=4096` (covers the measured `p99=3628` with
+  margin; matches the value already specified in
+  `docs/system/eurohpc_training_concept.md` Phase 3, which the executed job
+  deviated from). No new teacher generation needed — same 259,829-sample dataset.
+- Canonicalize on one planner system prompt before retraining; align production
+  templates to its category taxonomy instead of the reverse.
+- Full root-cause writeup: `eurohpc_lumi_activity_report.md` (Aktivität 10) and
+  the whitepaper (`whitepaper/de/sections/14_evaluation_and_lessons.tex`,
+  Episode 11).
+
+---
+
 ## 2026-07-20 — Codex Responses Template Resolution and Stream Reliability
 
 > `impact: patch` · `breaking: no` · `domain: responses-api, template-routing, inference`

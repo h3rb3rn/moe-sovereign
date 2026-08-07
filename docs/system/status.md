@@ -3,16 +3,16 @@
 !!! info "Auto-generated"
     This page is updated every 15 minutes by the `moe-docs-sync` service.
 
-*Last updated: **2026-07-20 00:10***
+*Last updated: **2026-08-07 21:25***
 
 ## Metrics
 
 | Metric | Value |
 |--------|-------|
-| Neo4j Entities | 16589 |
-| Neo4j Relations | 17513 |
-| ChromaDB Documents | 3487 |
-| Total Requests | ? |
+| Neo4j Entities | 16834 |
+| Neo4j Relations | 17787 |
+| ChromaDB Documents | 3525 |
+| Total Requests | 1 |
 
 ## Docker Containers
 
@@ -31,6 +31,7 @@
 | moe-grafana | running | 3001→3000/tcp |
 | moe-jupyterlab | running | 8899→8888/tcp |
 | moe-kafka | running | 9092→9092/tcp |
+| moe-maintenance | running | — |
 | moe-prometheus | running | 9090→9090/tcp |
 | moe-splash | running | — |
 | moe-storage-garage | running | 3900→3900/tcp, 3903→3903/tcp |

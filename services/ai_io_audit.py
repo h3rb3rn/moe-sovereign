@@ -37,7 +37,23 @@ def sanitize_audit_payload(payload: object) -> object:
         }
     if isinstance(payload, list):
         return [sanitize_audit_payload(item) for item in payload]
-    return payload
+    if isinstance(payload, tuple):
+        return [sanitize_audit_payload(item) for item in payload]
+    if payload is None or isinstance(payload, (str, int, float, bool)):
+        return payload
+    # LangChain message/model objects are not JSON serialisable. Preserve their
+    # useful public representation without retaining arbitrary Python objects.
+    if hasattr(payload, "model_dump"):
+        try:
+            return sanitize_audit_payload(payload.model_dump())
+        except Exception:
+            pass
+    if hasattr(payload, "content"):
+        return {
+            "type": getattr(payload, "type", type(payload).__name__),
+            "content": sanitize_audit_payload(getattr(payload, "content", "")),
+        }
+    return str(payload)
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -87,7 +103,13 @@ def create_audit_entry(
     request_body: dict,
 ) -> AiIoAuditEntry:
     """Create and register a new live audit entry. Returns the entry."""
-    audit_id = f"{session_id}:{request_id}"
+    # A request can contain planner, N expert and multiple judge calls. The old
+    # session:request key made those calls overwrite each other in-memory and
+    # collide on the Postgres primary key.
+    audit_id = (
+        f"{session_id or 'no-session'}:{request_id or 'no-request'}:"
+        f"{stage}:{uuid.uuid4().hex[:12]}"
+    )
     entry = AiIoAuditEntry(
         audit_id=audit_id,
         session_id=session_id,
@@ -164,6 +186,49 @@ async def _persist(entry: AiIoAuditEntry) -> None:
                 )
     except Exception as exc:
         logger.warning("ai_io_audit: persist failed for %s: %s", entry.audit_id, exc)
+
+
+async def aggregate_request_usage(request_id: str) -> dict:
+    """Aggregate terminal stage audits for timeout/error usage accounting."""
+    if not request_id:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "stages": []}
+    try:
+        import state as _state
+
+        if _state._userdb_pool is None:
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "stages": [],
+            }
+        async with _state._userdb_pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT
+                        COALESCE(SUM(prompt_tokens), 0),
+                        COALESCE(SUM(completion_tokens), 0),
+                        COALESCE(array_agg(DISTINCT stage), ARRAY[]::text[])
+                    FROM ai_io_audit_log
+                    WHERE request_id=%s AND status IN ('completed', 'error')
+                    """,
+                    (request_id,),
+                )
+                row = await cur.fetchone()
+        if not row:
+            return {"prompt_tokens": 0, "completion_tokens": 0, "stages": []}
+        return {
+            "prompt_tokens": int(row[0] or 0),
+            "completion_tokens": int(row[1] or 0),
+            "stages": list(row[2] or []),
+        }
+    except Exception as exc:
+        logger.warning(
+            "ai_io_audit: request aggregation failed for %s: %s",
+            request_id,
+            exc,
+        )
+        return {"prompt_tokens": 0, "completion_tokens": 0, "stages": []}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

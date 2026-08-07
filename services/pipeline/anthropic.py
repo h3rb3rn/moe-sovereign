@@ -52,6 +52,7 @@ from config import (
     CC_HISTORY_COMPRESS_LLM_TIMEOUT,
     AGENT_GRAPHRAG_MAX_CHARS,
     AGENT_GRAPHRAG_TIMEOUT_S,
+    ORCHESTRATION_TIMEOUT,
 )
 from metrics import (
     PROM_TOKENS, PROM_REQUESTS, PROM_EXPERT_CALLS, PROM_CONFIDENCE,
@@ -76,7 +77,7 @@ from services.tracking import (
     _log_usage_to_db, _register_active_request,
     _deregister_active_request, _increment_user_budget,
     _check_ip_rate_limit, _record_stage, _patch_active_request_backend,
-    _record_file_touch, _touch_model_recently_used, _record_node_latency,
+    _record_file_touch, _record_node_latency,
 )
 from services.llm_instances import judge_llm, planner_llm, ingest_llm, search
 from services.helpers import (
@@ -117,6 +118,7 @@ from services.agent_enrichment import (
     agent_cache_lookup,
     extract_file_touches,
 )
+from services.pipeline.contracts import detect_required_precision_intents
 
 
 async def _agent_writeback_traced(chat_id: str, *args, **kwargs) -> None:
@@ -140,6 +142,7 @@ async def _agent_writeback_traced(chat_id: str, *args, **kwargs) -> None:
 # running the total context into num_ctx and getting done_reason=length.
 _CC_TOOL_CHARS_PER_TOKEN = 3
 from services.pipeline.cc_session import CCSession, _resolve_cc_session
+from services.deliberation.contracts import DeliberationPolicyError
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -186,12 +189,6 @@ def _trim_oai_to_budget_impl(oai_msgs: list, available_input_tokens: int) -> tup
         dropped = True
 
     return sys_msgs + [m for g in kept_groups for m in g], dropped, dropped_groups
-
-
-def _trim_oai_to_budget(oai_msgs: list, available_input_tokens: int) -> tuple:
-    """Thin wrapper over _trim_oai_to_budget_impl discarding the dropped groups."""
-    kept_msgs, dropped, _dropped_groups = _trim_oai_to_budget_impl(oai_msgs, available_input_tokens)
-    return kept_msgs, dropped
 
 
 async def _summarize_dropped_groups_llm(dropped_groups: list, budget_hint_chars: int = 1500) -> Optional[str]:
@@ -759,19 +756,9 @@ async def _anthropic_tool_handler(
         effective_token = _syn_exp.get("token", "ollama")
         effective_node  = _syn_exp.get("endpoint", effective_node)
 
-    # The anthropic_messages() caller registers this request via
-    # _register_active_request() before dispatching here, when the tool
-    # model/endpoint aren't resolved yet — patch them in now so
-    # graph/planner.py's and graph/expert.py's proactive VRAM-unload can see
-    # this session as "using" effective_model on this node and skip an unload
-    # that would otherwise evict it out from under a live CC tool session.
+    # The caller registers before the tool model/endpoint is resolved. Patch
+    # the real backend into live monitoring once it is known.
     asyncio.create_task(_patch_active_request_backend(chat_id, effective_model, effective_url))
-    # Covers the gap BETWEEN this CC session's individual HTTP turns (each is
-    # stateless — no moe:active:* entry exists while the user is reading/
-    # typing the next message) — see _RECENT_USE_GRACE_SECONDS in
-    # services/tracking.py for why the in-flight check above isn't
-    # sufficient on its own.
-    asyncio.create_task(_touch_model_recently_used(effective_model, effective_url))
 
     _node_timeout   = float(session.tool_timeout)
 
@@ -925,6 +912,9 @@ async def _anthropic_tool_handler(
     _agent_turn = _classify_agent_turn(
         messages, tools, api="anthropic", user_id=user_id, system_text=system,
     )
+    _agent_precision_required = bool(
+        detect_required_precision_intents(_agent_turn.query)
+    )
 
     # ── Augmented Tool Path: cache-read hook (opt-in, off by default) ─────────
     # Only served on the initial task turn for a genuinely informational query
@@ -935,6 +925,7 @@ async def _anthropic_tool_handler(
         session.agent_cache and _agent_turn.kind == "initial_task"
         and _agent_turn.cacheable
         and (session.tool_choice or CLAUDE_CODE_TOOL_CHOICE) != "required"
+        and not _agent_precision_required
     ):
         _agent_cached = await agent_cache_lookup(
             _agent_turn.query, _agent_turn.scope,
@@ -967,6 +958,13 @@ async def _anthropic_tool_handler(
                 "stop_reason": "end_turn", "stop_sequence": None,
                 "usage": {"input_tokens": 0, "output_tokens": 0},
             }
+    elif session.agent_cache and _agent_precision_required:
+        await _record_stage(
+            chat_id,
+            "agent_cache",
+            "bypassed",
+            "required_precision_intent",
+        )
 
     # ── Tier-3 Context Index: chunk large system_prompt into ChromaDB ────────────
     # When the client ships a large system_prompt (codebase, documents, long files),
@@ -2719,8 +2717,16 @@ async def _anthropic_moe_handler(
     user_id: str = "anon",
     api_key_id: str = "",
     session_id: str | None = None,
+    local_only: bool = False,
 ):
     """Route pure text requests through the MoE agent pipeline."""
+    from services.deliberation.runtime import summarize_deliberation_telemetry
+
+    request_started = time.monotonic()
+    try:
+        client_max_output_tokens = max(0, int(body.get("max_tokens") or 0))
+    except (TypeError, ValueError):
+        client_max_output_tokens = 0
     model_id   = body.get("model", "moe-orchestrator-agent")
     messages   = body.get("messages", [])
     system     = body.get("system") or ""
@@ -2823,8 +2829,45 @@ async def _anthropic_moe_handler(
         "planner_token_override": _pcfg.get("planner_token_override", ""),
         "planner_num_ctx":        _pcfg.get("planner_num_ctx", 0),
         "judge_num_ctx":          _pcfg.get("judge_num_ctx", 0),
+        "deliberation_policy":     _pcfg.get("deliberation_policy", {}),
+        "deliberation_capacity":   {},
+        "deliberation_events":     [],
+        "local_only_routing":      local_only,
+        "request_deadline_monotonic": request_started + ORCHESTRATION_TIMEOUT,
+        "client_max_output_tokens": client_max_output_tokens,
+        "guardrail_prompt":            _pcfg.get("guardrail_prompt", ""),
+        "guardrail_model_override":    _pcfg.get("guardrail_model_override", ""),
+        "guardrail_url_override":      _pcfg.get("guardrail_url_override", ""),
+        "guardrail_token_override":    _pcfg.get("guardrail_token_override", ""),
+        "guardrail_num_ctx":           _pcfg.get("guardrail_num_ctx", 0),
         "template_name":          body.get("model", "") or "",
         "pending_reports": _cc_pending_reports,
+        "agentic_iteration": 0,
+        "task_events": [],
+        "mcp_evidence": [],
+        "required_precision_intents": [],
+        "precision_contract_snapshot": {},
+        "precision_contract_hash": "",
+        "precision_catalog_hash": "",
+        "precision_cache_bypassed": False,
+        "precision_direct": False,
+        "precision_fact_slots": [],
+        "precision_prompt_projection": "",
+        "precision_rendered_response": "",
+        "precision_binding_status": "not_required",
+        "precision_binding_errors": [],
+        "precision_binding_hash": "",
+        "precision_bound_response_hash": "",
+        "precision_hybrid_composed": False,
+        "precision_hybrid_expert_body": "",
+        "precision_hybrid_expert_task": "",
+        "precision_hybrid_expert_confidence": "",
+        "quality_gate_status": "",
+        "response_commit_context": {},
+        "response_commit_status": "not_started",
+        "response_commit_key": "",
+        "response_commit_sinks": {},
+        "response_commit_errors": [],
     }
     invoke_cfg = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
@@ -2912,6 +2955,24 @@ async def _anthropic_moe_handler(
                 in_tok  = data.get("prompt_tokens", 0)
                 out_tok = data.get("completion_tokens", 0)
 
+                if data.get("quality_blocked"):
+                    yield _sse_event(
+                        "content_block_stop",
+                        {"type": "content_block_stop", "index": _text_block_index},
+                    )
+                    yield _sse_event("error", {
+                        "type": "error",
+                        "error": {
+                            "type": "quality_blocked",
+                            "message": "The response was withheld by the quality gate.",
+                            "code": data.get(
+                                "quality_block_reason", "quality_blocked"
+                            ),
+                            "request_id": chat_id,
+                        },
+                    })
+                    return
+
                 # Online quality probe (sampled): pipeline vs. single best expert.
                 if "data" in result_box:
                     try:
@@ -2953,7 +3014,13 @@ async def _anthropic_moe_handler(
                     "usage": {"output_tokens": out_tok}
                 })
                 yield _sse_event("message_stop", {"type": "message_stop"})
-                asyncio.create_task(_deregister_active_request(chat_id))
+                asyncio.create_task(_deregister_active_request(
+                    chat_id,
+                    summarize_deliberation_telemetry(
+                        data.get("deliberation_capacity"),
+                        data.get("deliberation_events"),
+                    ),
+                ))
                 _did_deregister = True
             finally:
                 # Cancel the pipeline task if the client disconnected before it finished.
@@ -2974,6 +3041,19 @@ async def _anthropic_moe_handler(
     content = result.get("final_response", "")
     _p_tok = result.get("prompt_tokens", 0)
     _c_tok = result.get("completion_tokens", 0)
+
+    if result.get("quality_blocked"):
+        asyncio.create_task(_deregister_active_request(chat_id))
+        return JSONResponse(
+            status_code=422,
+            headers={"X-MoE-Quality": "blocked"},
+            content={"error": {
+                "type": "quality_blocked",
+                "message": "The response was withheld by the quality gate.",
+                "code": result.get("quality_block_reason", "quality_blocked"),
+                "request_id": chat_id,
+            }},
+        )
 
     # Online quality probe (sampled): pipeline vs. single best expert.
     try:
@@ -3000,7 +3080,13 @@ async def _anthropic_moe_handler(
         _bill_p = max(0, _p_tok - _uc_p)
         _bill_c = max(0, _c_tok - _uc_c)
         asyncio.create_task(_increment_user_budget(user_id, _bill_p + _bill_c, prompt_tokens=_bill_p, completion_tokens=_bill_c))
-    asyncio.create_task(_deregister_active_request(chat_id))
+    asyncio.create_task(_deregister_active_request(
+        chat_id,
+        summarize_deliberation_telemetry(
+            result.get("deliberation_capacity"),
+            result.get("deliberation_events"),
+        ),
+    ))
     return {
         "id": chat_id, "type": "message", "role": "assistant",
         "content": [{"type": "text", "text": content}],
@@ -3053,13 +3139,26 @@ async def anthropic_messages(request: Request):
 
     # ─── Resolve per-request CC session (profile, endpoint, template) ─────────
     _profile_ids = json.loads(user_ctx.get("permissions_json", "") or "{}").get("cc_profile", [])
-    session = _resolve_cc_session(user_ctx, _profile_ids)
+    try:
+        session = _resolve_cc_session(
+            user_ctx,
+            _profile_ids,
+            requested_model=model,
+        )
+    except DeliberationPolicyError as exc:
+        return JSONResponse(status_code=422, content={"error": {
+            "message": str(exc),
+            "type": "invalid_request_error",
+            "code": "deliberation_policy_invalid",
+        }})
 
     # Sovereignty guard: local_only keys must never reach non-local endpoints.
-    from services.sovereignty import assert_egress_allowed, EgressDenied
+    from services.sovereignty import assert_egress_allowed, resolve_local_only, EgressDenied
+    _user_perms_for_sovereignty = json.loads(user_ctx.get("permissions_json", "") or "{}")
+    _local_only = resolve_local_only(_user_perms_for_sovereignty, user_ctx)
     try:
         if session.tool_url:
-            assert_egress_allowed(session.tool_url, user_ctx)
+            assert_egress_allowed(session.tool_url, _local_only)
     except EgressDenied as _ed:
         return JSONResponse(status_code=403, content={"error": {
             "message": str(_ed), "type": "permission_error", "code": "local_only_violation",
@@ -3086,7 +3185,14 @@ async def anthropic_messages(request: Request):
     )
 
     # Live monitoring
+    from services.cc_fastpath import (
+        is_fastpath_request as _is_fp,
+        requires_precision_pipeline as _requires_precision_pipeline,
+    )
+    _force_precision_pipeline = _requires_precision_pipeline(body)
+
     _cc_moe_mode = (
+        "cc_moe"       if _force_precision_pipeline else
         "cc_tool"      if (tools or has_tool_results or session.mode == "native") else
         "cc_reasoning" if session.mode == "moe_reasoning" else
         "cc_moe"
@@ -3110,14 +3216,26 @@ async def anthropic_messages(request: Request):
     # MoE pipeline entirely — a 5-line topic-detection request must never run
     # planner+experts+judge for minutes (observed: 5 min pipeline for one
     # CC-internal side request). Flag: CC_FASTPATH=1.
-    from services.cc_fastpath import is_fastpath_request as _is_fp
     _fp_reason = _is_fp(body)
     if _fp_reason:
         logger.info("cc_dispatch: fast-path (%s) — bypassing MoE pipeline", _fp_reason)
+    if _force_precision_pipeline:
+        logger.info(
+            "cc_dispatch: mandatory precision contract — forcing evidence-bound pipeline"
+        )
 
     try:
+        # Mandatory deterministic plain-text turns take precedence over the
+        # profile's native/reasoning mode so every API facade enforces the same
+        # typed evidence and final-response binding contract. Real client tool
+        # turns are excluded by requires_precision_pipeline().
+        if _force_precision_pipeline:
+            _result = await _anthropic_moe_handler(
+                body, chat_id, session, _user_id, _api_key_id, session_id,
+                local_only=_local_only,
+            )
         # Mode 1: Native or tool/tool_result turns → tool handler (precise function calling)
-        if session.mode == "native" or tools or has_tool_results or _fp_reason:
+        elif session.mode == "native" or tools or has_tool_results or _fp_reason:
             _result = await _anthropic_tool_handler(
                 body, chat_id, session, _user_id, _api_key_id, session_id,
             )
@@ -3130,6 +3248,7 @@ async def anthropic_messages(request: Request):
         else:
             _result = await _anthropic_moe_handler(
                 body, chat_id, session, _user_id, _api_key_id, session_id,
+                local_only=_local_only,
             )
         return _result
     except Exception as _exc:
@@ -3141,6 +3260,3 @@ async def anthropic_messages(request: Request):
 
 
 # _ONTOLOGY_RUN_KEY and _ONTOLOGY_RUNS_HISTORY_KEY moved to services/healer.py
-
-
-

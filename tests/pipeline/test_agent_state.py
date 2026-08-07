@@ -25,6 +25,8 @@ REQUIRED_FIELDS = {
     "input", "response_id", "mode", "user_id",
     # Routing
     "plan", "complexity_level", "direct_expert",
+    "deliberation_policy", "deliberation_capacity", "deliberation_events",
+    "request_deadline_monotonic", "client_max_output_tokens",
     # Results
     "expert_results", "expert_models_used", "final_response",
     "web_research", "cached_facts", "graph_context",

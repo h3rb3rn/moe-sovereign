@@ -124,12 +124,14 @@ nav:
   - System:
     - system/index.md
     - Architecture: system/architecture.md
+    - Systembewertung 2026-07-30: system/systembewertung_2026-07-30.md
     - EU Sovereignty Charter: system/eu_sovereignty_charter.md
     - License Compliance: system/license_compliance.md
     - Palantir Comparison (→ moe-codex): system/palantir_comparison.md
     - MoE Codex Extension: system/codex-extension.md
     - System Documentation: system/overview.md
     - Pipeline Details: system/pipeline.md
+    - Adaptive Deliberation: system/deliberation.md
     - Data Flow: system/dataflow.md
     - Infrastructure: system/infrastructure.md
     - Hardware: system/hardware.md
@@ -138,6 +140,8 @@ nav:
       - LangGraph: system/toolstack/langgraph.md
       - GraphRAG / Neo4j: system/toolstack/graphrag_neo4j.md
       - MCP Precision Tools: system/toolstack/mcp_tools.md
+      - Deterministic Offloading Evaluation: system/toolstack/deterministic_offloading_evaluation_2026-07-31.md
+      - Precision Rollout Benchmark: system/toolstack/precision_rollout_benchmark_2026-08-02.md
       - Ollama Cluster: system/toolstack/ollama_cluster.md
     - MoE-Eval Benchmarks: system/benchmarks.md
     - Memory Architecture (4-Tier): system/memory.md
@@ -164,6 +168,7 @@ nav:
     - Self-Correction Journal: self_correction/journal.md
   - Reference:
     - Authentication: reference/auth.md
+    - Runtime Entry Points (generated): generated/runtime-entrypoints.md
     - Import & Export (incl. Knowledge Bundles): reference/import-export.md
     - Expert Categories: reference/expert-categories.md
     - Expert Reference Template: reference/expert-template.md

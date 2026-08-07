@@ -15,7 +15,7 @@ import httpx
 import state
 from config import (
     MODES, _MODEL_ID_TO_MODE, EXPERTS, EXPERT_TIMEOUT, JUDGE_TIMEOUT,
-    PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL,
+    PLANNER_TIMEOUT, MAX_EXPERT_OUTPUT_CHARS, JUDGE_MODEL, GUARD_MODEL,
     HISTORY_MAX_TURNS, HISTORY_MAX_CHARS,
     CACHE_HIT_THRESHOLD, SOFT_CACHE_THRESHOLD, SOFT_CACHE_MAX_EXAMPLES,
     KNOWLEDGE_BYPASS_ENABLED, KNOWLEDGE_BYPASS_THRESHOLD,
@@ -31,7 +31,8 @@ from config import (
     JUDGE_REFINE_MAX_ROUNDS, JUDGE_REFINE_MIN_IMPROVEMENT,
     _CUSTOM_EXPERT_PROMPTS, PLANNER_MAX_TASKS, PLANNER_RETRIES,
     KAFKA_TOPIC_INGEST, NEO4J_URI, NEO4J_USER, NEO4J_PASS,
-    _FALLBACK_ENABLED,
+    _FALLBACK_ENABLED, PRECISION_DIRECT_RESPONSE_ENABLED,
+    PRECISION_CONTRACT_MODE,
 )
 from metrics import (
     PROM_EXPERT_CALLS, PROM_CONFIDENCE, PROM_CACHE_HITS, PROM_CACHE_MISSES,
@@ -46,8 +47,9 @@ from metrics import (
 from services.inference import (
     _select_node, _invoke_llm_with_fallback, _invoke_judge_with_retry,
     _get_judge_llm, _get_planner_llm, _get_expert_score, _record_expert_outcome,
-    _infer_tier, assign_gpu, _ollama_unload, _refine_expert_response,
+    assign_gpu, _ollama_unload, _refine_expert_response,
     _estimate_model_vram_gb, _mark_endpoint_degraded, _endpoint_is_degraded,
+    ainvoke_guard_decision,
 )
 from services.routing import (
     _resolve_user_experts, _resolve_template_prompts, _server_info, _is_endpoint_error,
@@ -84,6 +86,11 @@ logger = logging.getLogger("MOE-SOVEREIGN")
 
 # AgentState import — defined in pipeline/state.py
 from pipeline.state import AgentState
+from services.pipeline.contracts import (
+    build_direct_precision_plan,
+    build_precision_preflight,
+    apply_precision_contract_mode,
+)
 
 
 async def _seed_task_type_prototypes() -> None:
@@ -111,8 +118,173 @@ async def _seed_task_type_prototypes() -> None:
 # --- NODES ---
 
 
+async def guard_node(state_: AgentState):
+    """Llama Guard pre-filter — runs first, before cache, so even cache entries
+    created before this node existed are not implicitly trusted as safe.
+
+    Fail-open on any error (see ainvoke_guard_llm docstring) — a misconfigured or
+    unreachable guard model must never block production traffic, only narrow it
+    once demonstrably working.
+    """
+    logger.debug("--- [NODE] GUARD ---")
+    _guard_model = state_.get("guardrail_model_override") or GUARD_MODEL
+    if not _guard_model:
+        return {"guard_blocked": False}  # guard not configured for this template/deployment
+
+    await _record_stage(state_.get("response_id", ""), "guard", "started")
+    _decision = await ainvoke_guard_decision(
+        state_["input"],
+        guard_model=_guard_model,
+        guard_url=state_.get("guardrail_url_override") or "",
+        guard_token=state_.get("guardrail_token_override") or "",
+        policy_context=state_.get("guardrail_prompt") or "",
+        session_id=state_.get("session_id", ""),
+        request_id=state_.get("response_id", ""),
+        deadline_state=state_,
+    )
+    if not _decision.is_unsafe:
+        if _decision.status.startswith("fail_open"):
+            await _record_stage(
+                state_.get("response_id", ""),
+                "guard",
+                "fail_open",
+                detail=_decision.status,
+            )
+            return {
+                "guard_blocked": False,
+                "guard_status": _decision.status,
+            }
+        await _record_stage(state_.get("response_id", ""), "guard", "passed")
+        return {
+            "guard_blocked": False,
+            "guard_status": _decision.status,
+        }
+
+    logger.info(f"🛡️ Guard blocked request (category={_decision.category})")
+    await _report(f"🛡️ Request blocked by safety filter (category {_decision.category})")
+    await _record_stage(
+        state_.get("response_id", ""),
+        "guard",
+        "blocked",
+        detail=_decision.category,
+    )
+    return {
+        "guard_blocked": True,
+        "guard_reason": _decision.category,
+        "guard_status": _decision.status,
+        "guard_response": (
+            "Diese Anfrage wurde von einem automatisierten Sicherheitsfilter als "
+            "problematisch eingestuft und kann nicht bearbeitet werden. Bitte "
+            "formuliere deine Anfrage anders."
+        ),
+    }
+
+
+async def precision_preflight_node(state_: AgentState):
+    """Freeze mandatory deterministic contracts before any response cache."""
+    detected_preflight = build_precision_preflight(
+        state_.get("input", ""), state.MCP_TOOL_SCHEMAS,
+    )
+    preflight = apply_precision_contract_mode(
+        detected_preflight, PRECISION_CONTRACT_MODE,
+    )
+    required = preflight["required_precision_intents"]
+    from services.precision_telemetry import record_precision_event
+    for item in required:
+        record_precision_event(
+            "intent", "detected", tool=str(item.get("tool") or ""),
+            mode=PRECISION_CONTRACT_MODE,
+        )
+    for item in preflight["precision_shadow_intents"]:
+        record_precision_event(
+            "intent", "shadow", tool=str(item.get("tool") or ""),
+            mode=PRECISION_CONTRACT_MODE,
+        )
+    direct_plan = (
+        build_direct_precision_plan(state_.get("input", ""))
+        if PRECISION_DIRECT_RESPONSE_ENABLED and required
+        else []
+    )
+    if direct_plan and {
+        str(task.get("mcp_tool") or "") for task in direct_plan
+    } != {
+        str(item.get("tool") or "") for item in required
+    }:
+        direct_plan = []
+    direct = bool(direct_plan)
+    if required:
+        record_precision_event(
+            "route", "direct" if direct else "mixed",
+            tool=str(required[0].get("tool") or "") if len(required) == 1 else "multi",
+            mode=PRECISION_CONTRACT_MODE,
+        )
+    await _record_stage(
+        state_.get("response_id", ""),
+        "precision_preflight",
+        "required" if required else "none",
+        ",".join(str(item.get("tool") or "") for item in required),
+    )
+    if direct:
+        await _record_stage(
+            state_.get("response_id", ""),
+            "precision_direct",
+            "selected",
+            str(len(direct_plan)),
+        )
+    return {
+        **preflight,
+        "precision_direct": direct,
+        "precision_cache_bypassed": direct,
+        **({"plan": direct_plan} if direct else {}),
+    }
+
+
 async def cache_lookup_node(state_: AgentState):
     logger.debug("--- [NODE] CACHE LOOKUP ---")
+    # Security in depth: recompute when this node is invoked directly or a
+    # future topology change omits the dedicated preflight node.  An explicit
+    # precision request must never trust a legacy free-text response cache.
+    detected_preflight = apply_precision_contract_mode(
+        build_precision_preflight(
+            state_.get("input", ""), state.MCP_TOOL_SCHEMAS,
+        ),
+        PRECISION_CONTRACT_MODE,
+    )
+    detected_required = detected_preflight["required_precision_intents"]
+    existing_required = state_.get("required_precision_intents") or []
+    required_precision = detected_required or existing_required
+    # Never replace a snapshot created by the dedicated preceding node.  The
+    # fallback is only for direct invocation/topology regressions; catalog
+    # changes between nodes must be detected later as drift.
+    preflight_update = (
+        detected_preflight
+        if "required_precision_intents" not in state_
+        else {}
+    )
+    if required_precision:
+        logger.info(
+            "Precision response cache bypassed for mandatory tools: %s",
+            ", ".join(str(item.get("tool") or "") for item in required_precision),
+        )
+        await _record_stage(
+            state_.get("response_id", ""),
+            "cache",
+            "bypassed",
+            "required_precision_intent",
+        )
+        from services.precision_telemetry import record_precision_event
+        record_precision_event(
+            "cache", "bypassed",
+            tool=str(required_precision[0].get("tool") or "") if len(required_precision) == 1 else "multi",
+            mode=PRECISION_CONTRACT_MODE,
+        )
+        return {
+            **preflight_update,
+            "cached_facts": "",
+            "cache_hit": False,
+            "soft_cache_examples": "",
+            "precision_cache_bypassed": True,
+        }
     # Template toggle: skip cache if disabled
     if not state_.get("enable_cache", True):
         logger.info("Cache disabled by template toggle")
@@ -120,15 +292,30 @@ async def cache_lookup_node(state_: AgentState):
     # Non-default modes bypass the cache — format mismatch would deliver wrong answers
     if state_.get("mode", "default") != "default":
         return {"cached_facts": "", "cache_hit": False}
+    # Explicit request contract: no_cache bypasses both L0 Valkey and L1
+    # ChromaDB, including soft-example lookup. It is used for benchmarks and
+    # freshness-sensitive requests, so even a discarded semantic query is
+    # unwanted work and can perturb latency measurements.
+    if state_.get("no_cache"):
+        logger.info("Cache fully bypassed by request no_cache=true")
+        await _record_stage(
+            state_.get("response_id", ""),
+            "cache",
+            "bypassed",
+            "no_cache",
+        )
+        return {
+            "cached_facts": "",
+            "cache_hit": False,
+            "soft_cache_examples": "",
+        }
     await _report("🔍 Cache-Lookup...")
     await _record_stage(state_.get("response_id", ""), "cache", "started")
     # Normalized query for similarity search — pipeline input stays unchanged
     _cache_query = re.sub(r'\s+', ' ', state_["input"].lower().strip().rstrip('?!.,;'))
 
     # L0: Exact query hash cache (Valkey, instant, before ChromaDB)
-    if state_.get("no_cache"):
-        pass  # skip L0 cache — no_cache flag set by client
-    elif state.redis_client:
+    if state.redis_client:
         try:
             import hashlib as _hl
             _q_hash = _hl.sha256(_cache_query.encode()).hexdigest()[:24]
@@ -157,7 +344,7 @@ async def cache_lookup_node(state_: AgentState):
         if _all_dists:
             _nearest_dist = float(_all_dists[0])
             PROM_CACHE_DISTANCE.observe(_nearest_dist)
-    if not state_.get("no_cache") and res['documents'] and res['documents'][0]:
+    if res['documents'] and res['documents'][0]:
         docs  = res['documents'][0]
         dists = res.get('distances', [[1.0] * len(docs)])[0]
         metas = res.get('metadatas', [[{}]  * len(docs)])[0]
@@ -288,7 +475,7 @@ async def fuzzy_router_node(state_: AgentState):
     if state_.get("cache_hit"):
         return {}
 
-    from pipeline.logic_types import goedel_tnorm
+    from pipeline.logic_types import goedel_tnorm, lukasiewicz_tnorm
     from parsing import _compute_routing_confidence
 
     plan             = state_.get("plan") or []
@@ -304,9 +491,16 @@ async def fuzzy_router_node(state_: AgentState):
     _complexity_weight = {"trivial": 0.1, "memory_recall": 0.0, "moderate": 0.5, "complex": 1.0}
     complexity_score   = _complexity_weight.get(complexity_level, 0.5)
 
-    # Godel t-norm: conservative gate — both signals must be strong
-    tnorm_vector = goedel_tnorm(vector_conf, complexity_score)
-    tnorm_graph  = goedel_tnorm(graph_conf,  complexity_score)
+    # Select the documented fuzzy conjunction. Gödel remains the conservative
+    # production default; Łukasiewicz can be selected explicitly for deployments
+    # that want partial evidence to combine.
+    _tnorm_method = os.getenv("FUZZY_TNORM", "goedel").strip().lower()
+    _tnorm = lukasiewicz_tnorm if _tnorm_method in {
+        "lukasiewicz", "łukasiewicz", "luk",
+    } else goedel_tnorm
+    _tnorm_method = "lukasiewicz" if _tnorm is lukasiewicz_tnorm else "goedel"
+    tnorm_vector = _tnorm(vector_conf, complexity_score)
+    tnorm_graph  = _tnorm(graph_conf, complexity_score)
 
     # Heuristic gate decisions (fuzzy thresholds). These are no longer the final
     # authority — they serve as the contextual bandit's cold-start fallback and,
@@ -333,7 +527,7 @@ async def fuzzy_router_node(state_: AgentState):
         "graph_confidence":  graph_conf,
         "tnorm_vector":      round(tnorm_vector, 3),
         "tnorm_graph":       round(tnorm_graph, 3),
-        "method":            "goedel",
+        "method":            _tnorm_method,
         "vector_threshold":  _FUZZY_VECTOR_THRESHOLD,
         "graph_threshold":   _FUZZY_GRAPH_THRESHOLD,
         "research_source":   _src_r,
@@ -367,3 +561,14 @@ async def fuzzy_router_node(state_: AgentState):
 def _route_cache(state_: AgentState) -> str:
     """On cache hit go directly to merger — entire pipeline is skipped."""
     return "merger" if state_.get("cache_hit") else "semantic_router"
+
+
+def _route_precision_preflight(state_: AgentState) -> str:
+    """Select the model-free path only for a completely covered request."""
+    return "precision_mcp" if state_.get("precision_direct") else "cache"
+
+
+def _route_guard(state_: AgentState) -> str:
+    """On guard block go directly to merger (same short-circuit target as cache_hit),
+    which returns guard_response as final_response — see merger_node/critic_node."""
+    return "merger" if state_.get("guard_blocked") else "precision_preflight"

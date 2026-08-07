@@ -78,7 +78,7 @@ class TrainingConfig:
         "JUDGE_OUTPUT_DIR",
         "/scratch/project_465003058/hornphil/models/sovereign-judge-7b-lora",
     )
-    max_seq_len: int = int(os.getenv("JUDGE_MAX_SEQ_LEN", "2048"))
+    max_seq_len: int = int(os.getenv("JUDGE_MAX_SEQ_LEN", "8192"))
     epochs: int = int(os.getenv("JUDGE_EPOCHS", "3"))
     batch_size: int = int(os.getenv("JUDGE_BATCH_SIZE", "4"))
     grad_accum: int = int(os.getenv("JUDGE_GRAD_ACCUM", "4"))
@@ -130,16 +130,6 @@ def load_dataset_from_jsonl(path: str) -> Dataset:
     if not records:
         raise ValueError(f"Dataset at {path!r} is empty — aborting.")
     return Dataset.from_list(records)
-
-
-def format_prompt(example: dict) -> dict:
-    """Apply Alpaca template → 'text' field consumed by SFTTrainer."""
-    text = ALPACA_PROMPT_TEMPLATE.format(
-        instruction=example.get("instruction", ""),
-        input=example.get("input", ""),
-        output=example.get("output", ""),
-    )
-    return {"text": text}
 
 
 # ---------------------------------------------------------------------------

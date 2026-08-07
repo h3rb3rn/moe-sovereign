@@ -23,6 +23,9 @@ _EXPECTED_CORE_NODES = {
     "cache", "semantic_router", "planner", "fuzzy_router", "workers",
     "research", "math", "mcp", "graph_rag", "research_fallback",
     "thinking", "merger", "resolve_conflicts", "critic",
+    "precision_preflight", "precision_mcp", "precision_renderer",
+    "precision_slots", "precision_bind", "quality_gate",
+    "response_commit",
 }
 
 

@@ -1,41 +1,42 @@
-# AI Memory Restore Index — MoE Sovereign (moe-infra)
+# AI Memory Restore Index — MoE Sovereign
 
-Purpose: deterministic restore path after context loss.
+Owner: Platform Engineering
+Version: 2.0
+Last verified: 2026-07-30
 
-This folder summarizes current rules and active project state. It does not
-replace source evidence, current backlog sheets, or `AGENT_LASTENHEFT.md`.
+This folder is a compact restore pack. It is not an instruction authority,
+runtime source of truth, or replacement for current task evidence.
 
-## Read Order After Context Loss
+## Read order after context loss
 
-1. `00-restore-protocol.md`
-2. `07-current-status-and-next-work.md`
-3. `AGENT_LASTENHEFT.md` Section 1 (big picture) and Section 3 (task backlog)
-4. task-specific backlog sheet or source file only when detail is needed
+1. `../../AGENTS.md`
+2. `../../PROJECT_COMPLIANCE.md`
+3. `00-restore-protocol.md`
+4. `07-current-status-and-next-work.md`
+5. the active owner entry under `../../agent_status/`
+6. the relevant `AGENT_LASTENHEFT.md` task
+7. task-specific code, tests, configuration, and deployment evidence
 
-## Mandatory Backlog Refinement Entry
+Always verify the branch, HEAD, dirty worktree, leases, and runtime locally.
+Treat remembered status as historical until verified.
 
-For backlog refinement, load additionally:
+## Backlog refinement entry
+
+Read, in order:
 
 1. `../backlog/backlog.md`
 2. `../backlog/current/current.md`
-3. matching level template under `../backlog/templates/`
+3. the matching template under `../backlog/templates/`
 4. `../backlog/current/dependency-map.md`
 5. `../backlog/current/roadmap.md`
-6. target initiative, epic, story, and task sheets
+6. the target parent/child sheets and relevant code contracts
 
-## Precedence
+## Contents
 
-1. `../../PROJECT_COMPLIANCE.md`
-2. this restore pack
-3. `../../CLAUDE.md` and `../../AGENTS.md`
-4. `../../AGENT_LASTENHEFT.md`
-5. current backlog sheets
-6. source evidence
-7. archive / historical notes
+- `00-restore-protocol.md`: resumption and lease behavior
+- `01-authority-and-architecture.md`: component ownership boundaries
+- `06-testing-deploy-and-coverage.md`: proof order and deployment evidence
+- `07-current-status-and-next-work.md`: concise current status and next work
 
-## Subfiles
-
-- `00-restore-protocol.md`: restore behavior and working contract
-- `01-authority-and-architecture.md`: authority ownership model
-- `06-testing-deploy-and-coverage.md`: clean verification and proof layers
-- `07-current-status-and-next-work.md`: current state and next work
+Persist decisions, evidence, and next actions only. Never persist secrets,
+raw credentials, hidden chain-of-thought, or unverified handoff claims.

@@ -1,62 +1,55 @@
-# Testing, Deploy, and Coverage — MoE Sovereign (moe-infra)
+# Testing, Deployment, and Proof — MoE Sovereign
 
-## Clean Test Ritual
+Owner: Platform Engineering
+Version: 2.0
+Last verified: 2026-07-30
 
-Before any proof run:
+## Verification order
 
-1. Rebuild and restart the affected service:
-   ```
-   sudo docker compose build <service> && sudo docker compose up -d <service>
-   ```
-2. Verify startup logs are clean (no new errors beyond known pre-existing
-   warnings such as the NiFi self-signed-cert warning).
-3. Run the targeted proof.
-4. Run broader proof only after targeted proof passes.
-
-Do not recycle unknown container, runtime, or session state for clean
-verification.
-
-## Verification Layers
-
-Run in this order — never skip a layer to reach the next:
-
-| Layer | Command / Method | Scope |
+| Layer | Proof | When |
 |---|---|---|
-| 1. Syntax / static | `python3 -m py_compile <file>` or linting | Touched files only |
-| 2. Domain / unit | `python3 -m pytest tests/ -q` | Full test suite (currently 195+ tests) |
-| 3. API / persistence | In-container Python script against live DB and ChromaDB | Specific seam under test |
-| 4. Integration (E2E) | `http://192.168.155.225:8002/v1/chat/completions`, model `moe-auto` | Full pipeline round-trip |
-| 5. External / LUMI-G | SLURM job, remote training | Only when layers 1–4 pass |
+| 1 | Syntax, schema, generated-file, governance, and diff checks | Every relevant change |
+| 2 | Focused unit/contract tests | Before any rebuild |
+| 3 | Full relevant test suite | Before deployment claim |
+| 4 | Build/recreate affected service and inspect startup/readiness | Runtime/image/config/dependency change only |
+| 5 | API, persistence, authorization, and failure-path integration | Changed seam |
+| 6 | Real MoE-API E2E, including cold/warm runs | Routing/model/deadline/performance change |
+| 7 | External/LUMI-G proof | Only after local layers pass and with explicit scope |
 
-## GUI Rule
+Do not rebuild first and then use the rebuilt service as the only proof. Do
+not use an unknown stale container for deployment parity.
 
-Admin UI tests validate rendering, visible interaction, and configuration
-intent. They do not own routing or backend semantics.
+## Current verified baseline
 
-## Service Names
+- Full local suite: **669 passed** on 2026-07-29 (TASK-36).
+- Core image:
+  `sha256:286a5752e829e3dff0366f4faa3791f20a7d603bfd3546feef34d33c7e4e53f9`.
+- Core readiness: graph, Valkey, user DB, Neo4j, MCP, and Chroma positive.
+- Conservative trivial request: HTTP 200/exact `OK` in 10.27 seconds.
+- Complex private template: not production-ready; TASK-37 returned HTTP 504
+  after 900 seconds despite a correct internal candidate.
 
-| Service | Command suffix | Purpose |
-|---|---|---|
-| `langgraph-app` | `main.py` | Core orchestrator |
-| `moe-admin` | `admin_ui/` | Admin UI |
-| `mcp-precision` | `mcp_server/` | MCP tool server |
+These are dated facts, not permanent guarantees. Re-verify after relevant
+changes.
 
-## Coverage Log
+## Service names
 
-Track current coverage here (update after each verification session):
+| Compose service | Runtime role |
+|---|---|
+| `langgraph-app` | core orchestrator (`langgraph-orchestrator` container) |
+| `moe-admin` | Admin UI |
+| `mcp-precision` | deterministic MCP tools |
 
-- Backend / domain: `pytest tests/` — 195+ tests (as of 2026-06-12)
-- API / persistence: in-container E2E for seams under active development
-- GUI / browser: Admin UI manual smoke test
-- Live / external: MoE-API round-trip via `moe-auto`
-- Known gaps:
-  - Router model training on LUMI-G (requires renewed SSH cert)
-  - Sovereign-14B SFT pipeline (TASK-7, pending)
-  - Dynamic system prompts in dataset generation (TASK-7, pending)
+## Required evidence for “done”
 
-## Important Test Files
+- command and exact result;
+- source/commit or dirty snapshot identity;
+- container image digest when deployed;
+- readiness and rollback;
+- negative/failure paths;
+- terminal cleanup and audit;
+- benchmark method/sample/cold-warm conditions where performance is claimed.
 
-- `tests/test_dynamic_router.py` — IMoE gating network (6 tests)
-- `tests/test_context_index.py` — context budget resolution (24 tests)
-- `tests/test_dynamic_router.py` — ChromaDB cache, Thompson sampling,
-  local_only compliance
+For governance/backlog changes run
+`python3 scripts/check_governance.py --check` and a MkDocs build. No service
+rebuild is required.

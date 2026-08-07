@@ -1,114 +1,55 @@
-# I-2 Pipeline Quality Gate Stack
+# I-2 Pipeline Quality-Gate Stack
 
+Owner: Platform Engineering
+Version: 2.0
+Last verified: 2026-07-30
 Level: Initiative
-Status: Open
+Status: Partial
 
-Parent: Current Backlog Decomposition (`../../current/current.md`)
+## Strategic outcome
 
-## Strategic Outcome
+Make planner → tools/experts → synthesis behavior contract-valid, bounded,
+observable, resumable where promised, and isolated by principal/tenant.
 
-Deterministisch messbare Antwortqualität, vollständige Compliance-Auditierbarkeit
-und strukturelle Resilienz in der Planner→Experts→Judge-Pipeline — ohne den
-Fokus auf lokale, souveräne Inferenz zu verschieben.
+## Verified implementation
 
-## Value / Reason
+- Boundary checks, Definition of Ready, scope guard, decision log, cascade
+  lifecycle, trust score, quality gate, HITL, self-critique, and Cynefin
+  classification have production call sites and focused tests.
+- TASK-35/36 live validation proved authentication/ownership for gates,
+  boundary blocking/cascades, quality blocking, readiness, terminal cleanup,
+  and the conservative trivial fast path.
+- Handover snapshots and resume routes exist with unit coverage.
 
-Die vier in feat/sovereign-typed-cascades-dor-constitution eingeführten
-Mechanismen (Cascade Types, DoR, Constitution, Retry Budget) bilden die
-Basis-Schicht. Diese Initiative schließt die verbleibenden Qualitätslücken:
+## Open proof gaps
 
-- Der Judge hat kein quantitatives Qualitätsverdikt (kein Trust-Score).
-- Grenzwerte zwischen Pipeline-Stufen sind undeklariert (kein Boundary Contract).
-- Laufzeit-Entscheidungen sind nicht begründet dokumentiert (kein Decision Log).
-- Expert-Crashes führen zu vollständigem Neustart (kein Checkpointing).
-- Kontext geht über Session-Grenzen verloren (kein Handover).
-- Multi-Tenant-Betrieb ist nicht datenisoliert.
-
-## Risk Reduced
-
-- Antworten mit 0 validierten Quellen werden als valide durchgereicht.
-- Judge-Übersteuerungen sind im Audit-Trail nicht begründet.
-- Stiller garbage-in/garbage-out an Phasengrenzen bleibt unentdeckt.
-- Crash eines Expert-Nodes führt zu vollständigem Neustart laufender Traversals.
-- Cross-Tenant-Datenlecks bei Multi-Kunden-Betrieb.
-
-## Users / Stakeholders
-
-- Nutzer der OpenAI-kompatiblen API (indirekt: verbesserte Antwortqualität)
-- Betreiber (Observability, Compliance-Audit)
-- Downstream: Judge-Node, Expert-Nodes, Constitution-Enforcement
-
-## Current Seam
-
-Judge entscheidet ohne messbare Schwellen. Planner→Expert-Übergabe ist ein
-frei-strukturiertes Dict ohne deklarierte Pflichtfelder. Kafka-Events zeigen
-WHAT, nie WHY. Expert-Crash = Vollneustart.
-
-## Scope
-
-- Quantitativer Trust-Score nach jedem Expert-Durchlauf
-- Self-Critique Iteration Loop (max. 2 Runden bei borderline Score)
-- Human-in-the-Loop Gate für kritische Antworten
-- Boundary Contracts an Planner→Expert und Expert→Judge
-- Decision Log mit Rationale-Pflicht
-- Deterministischer Scope Guard vor Expert-Dispatch
-- Cascade Event Resolution Tracking (open/resolved)
-- Handover / Context-Preservation über Session-Grenzen
-- Resumable Task Checkpointing (Mid-Expert Crash Recovery)
-- Artefakt-Registry mit SHA-256 Provenance
-- Cynefin-basierte Complexity Classification mit adaptivem Autonomie-Level
-- Multi-Tenant Data Isolation (Fail-Closed)
-
-## Out Of Scope
-
-- Änderungen am Modell-Routing oder Expert-Auswahl-Logik
-- Neue Expert-Typen oder Domain-Erweiterungen
-- Infrastruktur-Änderungen (K3s, Longhorn, Netzwerk)
-- SFT-Training oder ONNX-Export (→ I-1)
-
-## Success Measures
-
-- Trust-Score wird nach jedem Expert-Durchlauf berechnet und in AgentState gesetzt
-- `block`-Verdict stoppt den Loop deterministisch ohne LLM-Fallback
-- `decision_log`-Tabelle enthält Rationale für jede Judge-Übersteuerung
-- Boundary-Contract-Violation produziert SPEC_GAP-Cascade, kein Expert-Aufruf
-- `pytest tests/ -q` bleibt grün nach jedem Epic
-
-## Dependencies / Preconditions
-
-- feat/sovereign-typed-cascades-dor-constitution gemergt (✓ bereits auf main)
-- PostgreSQL-Verbindung via `langgraph-checkpoint-postgres` (bereits vorhanden)
-- Valkey/Redis-Verbindung (bereits vorhanden)
-- Kafka `moe.audit` Topic (bereits vorhanden)
-
-## Roadmap / Priority Notes
-
-Empfohlene Reihenfolge nach Aufwand/Nutzen:
-
-1. **E-2.1** (gering, sofort): Boundary Contracts + Decision Log + Scope Guard + Cascade Resolution
-2. **E-2.2** (mittel): Trust-Score + Self-Critique + Human-in-the-Loop Gate
-3. **E-2.3** (mittel): Handover + Task-Checkpointing + Artefakt-Registry
-4. **E-2.4** (mittel): Cynefin Complexity Classification
-5. **E-2.5** (hoch): Multi-Tenant Data Isolation
-
-## Refinement Check
-
-- Authority model check: lokal, kein externer Egress, kein Modell-Swap
-- Related backlog check: I-1 (SFT) ist unabhängig — keine Blockierung
-- Code-contract check: bestehende AgentState TypedDict-Erweiterung als Pattern
-- Refinement result: bereit für Epic-Decomposition
+- Required boundary configuration/check failures still fail open (COMP-01).
+- TASK-37 reproduced silent precision-task loss and a 900-second template
+  timeout despite a correct internal candidate (COMP-03/TASK-38).
+- Handover is not the planned per-task checkpoint and artifact-provenance
+  package (COMP-04).
+- Full fail-closed storage/tool isolation for multiple tenants is not
+  implemented or E2E-proven (COMP-02).
+- Cynefin classification exists; the caller-visible supervised pre-dispatch
+  contract remains unproven.
 
 ## Epics
 
-- E-2.1 Deterministische Pipeline-Signale: `I-2-pipeline-quality-gate/E-2.1-deterministic-signals/epic.md`
-- E-2.2 Trust-Score & Selbstkorrektur-Loop: `I-2-pipeline-quality-gate/E-2.2-trust-score-self-critique/epic.md`
-- E-2.3 Kontext-Kontinuität & Crash-Resilienz: `I-2-pipeline-quality-gate/E-2.3-context-resilience/epic.md`
-- E-2.4 Adaptive Komplexitätssteuerung: `I-2-pipeline-quality-gate/E-2.4-complexity-classification/epic.md`
-- E-2.5 Multi-Tenant Data Isolation: `I-2-pipeline-quality-gate/E-2.5-multi-tenant/epic.md`
+- [E-2.1 Deterministic pipeline signals](E-2.1-deterministic-signals/epic.md)
+- [E-2.2 Trust score and correction loop](E-2.2-trust-score-self-critique/epic.md)
+- [E-2.3 Context continuity and crash resilience](E-2.3-context-resilience/epic.md)
+- [E-2.4 Adaptive complexity control](E-2.4-complexity-classification/epic.md)
+- [E-2.5 Multi-tenant data isolation](E-2.5-multi-tenant/epic.md)
 
-## Source Material
+## Initiative exit criteria
 
-- adSCAILE Wiki (lokal): `/opt/deployment/adSCAILE_Framework/adSCAILE_shared_tools/adscaile_wiki-main/wiki/`
-- Relevante Wiki-Seiten: `re-loop-trust-substrate.md`, `boundary-contracts.md`, `decision-log.md`,
-  `human-in-the-loop.md`, `haertung-loop-v6.md`, `cascade-events.md`, `handover.md`,
-  `resilience-pack.md`, `knowledge-base.md`, `re-loop-interaktionsmodi.md`, `mandantenfaehigkeit.md`
+- Every planned task executes, is explicitly repaired/fallbacked, or returns
+  a structured failure; no task disappears between nodes.
+- One monotonic deadline, token/context budgets, and bounded retries apply
+  across every model/tool stage.
+- Trust/provenance uses only relevant validated sources and deterministic
+  tool evidence.
+- Mandatory security/policy/tenant/contract boundaries fail closed according
+  to `PROJECT_COMPLIANCE.md`.
+- E-2.3 and E-2.5 proof packages pass their negative and E2E tests.
+- The complex expert-template benchmark meets TASK-38 cold/warm criteria.

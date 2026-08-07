@@ -51,6 +51,7 @@ from config import (
 from metrics import PROM_AGENT_CACHE, PROM_AGENT_WRITEBACK
 from services.helpers import _entry_is_fresh
 from services.kafka import _kafka_publish
+from services.async_utils import run_sync_daemon
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -599,12 +600,24 @@ async def record_and_classify_tool_ending(chat_id: str, model: str, content: str
     classifier never delays the insert. Never raises."""
     row_id = f"ute-{uuid.uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
-    await asyncio.to_thread(
-        _insert_unclassified_tool_ending_sync, row_id, chat_id, model, content, tool_msgs, now,
+    await run_sync_daemon(
+        _insert_unclassified_tool_ending_sync,
+        row_id,
+        chat_id,
+        model,
+        content,
+        tool_msgs,
+        now,
+        timeout=5.0,
     )
     verdict = await _classify_tool_ending(content)
     if verdict is not None:
-        await asyncio.to_thread(_update_tool_ending_classification_sync, row_id, verdict)
+        await run_sync_daemon(
+            _update_tool_ending_classification_sync,
+            row_id,
+            verdict,
+            timeout=5.0,
+        )
 
 
 # ── Workspace / scope ─────────────────────────────────────────────────────────
@@ -810,8 +823,12 @@ async def _agent_cache_lookup_impl(query: str, scope: str, redis_client, collect
         except Exception as e:
             logger.debug("agent_cache_lookup: L0 check failed: %s", e)
 
-    res = await asyncio.to_thread(
-        collection.query, query_texts=[query], n_results=3, where={"scope": scope},
+    res = await run_sync_daemon(
+        collection.query,
+        query_texts=[query],
+        n_results=3,
+        where={"scope": scope},
+        timeout=max(0.05, AGENT_CACHE_MAX_LOOKUP_MS / 1000),
     )
     docs = (res.get("documents") or [[]])[0]
     if not docs:
@@ -889,7 +906,9 @@ async def agent_graph_context(
 
     if ctx and redis_client:
         try:
-            asyncio.create_task(redis_client.setex(cache_key, 3600, ctx))
+            await asyncio.wait_for(
+                redis_client.setex(cache_key, 3600, ctx), timeout=1.0
+            )
         except Exception:
             pass
 
@@ -936,8 +955,12 @@ async def agent_writeback(
         "session_id": session_id or "",
     }
     try:
-        await asyncio.to_thread(
-            collection.upsert, ids=[doc_id], documents=[answer], metadatas=[metadata],
+        await run_sync_daemon(
+            collection.upsert,
+            ids=[doc_id],
+            documents=[answer],
+            metadatas=[metadata],
+            timeout=5.0,
         )
     except Exception as e:
         logger.warning("agent_writeback: L1 upsert failed: %s", e)
@@ -1003,15 +1026,23 @@ async def _agent_judge_promote(
     try:
         if score >= _JUDGE_PROMOTE_SCORE_MIN:
             promoted = {**metadata, "confidence": _AGENT_CONFIDENCE_PROMOTED}
-            await asyncio.to_thread(
-                collection.upsert, ids=[doc_id], documents=[answer], metadatas=[promoted],
+            await run_sync_daemon(
+                collection.upsert,
+                ids=[doc_id],
+                documents=[answer],
+                metadatas=[promoted],
+                timeout=5.0,
             )
             if redis_client:
                 await redis_client.setex(_l0_key(scope, query), AGENT_CACHE_L0_TTL, answer)
         elif score <= _JUDGE_FLAG_SCORE_MAX:
             flagged = {**metadata, "flagged": True}
-            await asyncio.to_thread(
-                collection.upsert, ids=[doc_id], documents=[answer], metadatas=[flagged],
+            await run_sync_daemon(
+                collection.upsert,
+                ids=[doc_id],
+                documents=[answer],
+                metadatas=[flagged],
+                timeout=5.0,
             )
     except Exception as e:
         logger.warning("agent_writeback: judge promotion write failed: %s", e)

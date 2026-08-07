@@ -7,6 +7,7 @@ import time
 import random
 import os
 import logging
+from dataclasses import dataclass
 
 import httpx
 from langchain_openai import ChatOpenAI
@@ -14,17 +15,18 @@ from langchain_openai import ChatOpenAI
 import state
 from config import (
     URL_MAP, TOKEN_MAP, API_TYPE_MAP, INFERENCE_SERVERS_LIST,
-    EXPERT_MIN_DATAPOINTS, EXPERT_TIER_BOUNDARY_B,
+    EXPERT_MIN_DATAPOINTS,
     JUDGE_TIMEOUT, PLANNER_TIMEOUT, EXPERT_TIMEOUT,
     JUDGE_MODEL, JUDGE_URL, JUDGE_TOKEN,
     _FALLBACK_NODE, _FALLBACK_MODEL, _FALLBACK_MODEL_SECOND,
     _FALLBACK_ENABLED, _ENDPOINT_DEGRADED_TTL, _EXTERNAL_ENDPOINT_PATTERNS,
     MAX_EXPERT_OUTPUT_CHARS, MAX_JUDGE_TOKENS, THOMPSON_SAMPLING_ENABLED,
     JUDGE_NUM_CTX, PLANNER_NUM_CTX,
-    MAX_PLANNER_TOKENS,
+    MAX_PLANNER_TOKENS, PLANNER_THINKING_ENABLED,
+    JUDGE_THINKING_ENABLED,
 )
 from context_budget import get_model_context_window as _static_ctx
-from context_budget import resolve_requested_ctx
+from context_budget import adaptive_context_window, resolve_requested_ctx
 from metrics import PROM_THOMPSON
 from services.routing import _server_info, _is_endpoint_error
 from services.tracking import _get_node_latency_stats, _get_premature_stop_rate
@@ -34,7 +36,30 @@ if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI  # noqa: F811 — type hints only
 
 from services.llm_instances import judge_llm, planner_llm
-from services.model_capabilities import get_model_caps, model_supports_streaming
+from services.model_capabilities import (
+    apply_ollama_structured_capability,
+    enforce_streaming_capability,
+    get_model_caps,
+    openai_response_format,
+)
+from services.deadline import (
+    RequestDeadlineExceeded,
+    bounded_output_tokens,
+    remaining_timeout,
+    sleep_with_budget,
+    wait_for_budget,
+)
+
+
+def _ollama_answer_content(response: dict) -> str:
+    """Return public answer content, never Ollama's private thinking trace."""
+    if not isinstance(response, dict):
+        return ""
+    message = response.get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content", "")
+    return content if isinstance(content, str) else str(content or "")
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
@@ -62,6 +87,85 @@ async def _audit_complete(entry, response_body, prompt_tokens, completion_tokens
                                    completion_tokens, status)
     except Exception:
         pass
+
+
+async def _audit_cancel(entry) -> None:
+    """Close an audit entry even when the surrounding invocation is cancelled."""
+    try:
+        await asyncio.shield(
+            _audit_complete(
+                entry,
+                {"error": "cancelled"},
+                None,
+                None,
+                "error",
+            )
+        )
+    except asyncio.CancelledError:
+        # A second cancellation may interrupt the shield await; the shielded
+        # completion task continues independently and removes the live entry.
+        pass
+
+
+def _audit_usage(response) -> tuple[Optional[int], Optional[int]]:
+    """Extract token counts from LangChain or native-provider response shapes."""
+    usage = getattr(response, "usage_metadata", None) or {}
+    if not usage:
+        metadata = getattr(response, "response_metadata", None) or {}
+        usage = metadata.get("token_usage") or metadata.get("usage") or {}
+    prompt_tokens = (
+        usage.get("input_tokens")
+        if isinstance(usage, dict) else None
+    )
+    completion_tokens = (
+        usage.get("output_tokens")
+        if isinstance(usage, dict) else None
+    )
+    if isinstance(usage, dict):
+        prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+        completion_tokens = usage.get("completion_tokens", completion_tokens)
+    return prompt_tokens, completion_tokens
+
+
+async def _audited_ainvoke(
+    llm,
+    prompt,
+    *,
+    endpoint: str,
+    model: str,
+    stage: str,
+    context: Optional[dict] = None,
+):
+    """Invoke a LangChain-compatible model with a complete audit lifecycle."""
+    context = context or {}
+    caps = get_model_caps(model)
+    logger.debug("model=%s caps=%s stage=%s", model, caps, stage)
+    entry = _audit_create(
+        context.get("session_id", ""),
+        context.get("response_id", ""),
+        model,
+        endpoint,
+        stage,
+        {"prompt": prompt},
+    )
+    try:
+        response = await llm.ainvoke(prompt)
+        prompt_tokens, completion_tokens = _audit_usage(response)
+        await _audit_complete(
+            entry,
+            {"content": getattr(response, "content", "")},
+            prompt_tokens,
+            completion_tokens,
+        )
+        return response
+    except asyncio.CancelledError:
+        await _audit_cancel(entry)
+        raise
+    except Exception as exc:
+        await _audit_complete(
+            entry, {"error": str(exc)}, None, None, "error"
+        )
+        raise
 
 # Module-level threading locks
 # synchronous dict mutation (e.g. _endpoint_gpu_indices[k] = v) is NOT atomic
@@ -418,6 +522,9 @@ async def _invoke_llm_with_fallback(
     prompt,
     timeout: float = 120.0,
     label: str = "LLM",
+    audit_context: Optional[dict] = None,
+    audit_stage: str = "",
+    model: str = "",
 ) -> tuple:
     """Invoke primary_llm; on auth/quota error or empty response, retry with fallback node.
 
@@ -437,8 +544,25 @@ async def _invoke_llm_with_fallback(
         _fb_model = model or _FALLBACK_MODEL
         logger.warning("🔄 %s: %s — falling back to %s@%s",
                        label, reason, _fb_model, _FALLBACK_NODE)
-        fb_llm = await _get_fallback_llm(timeout, model=_fb_model)
-        fb_res = await fb_llm.ainvoke(prompt)
+        _fallback_timeout = remaining_timeout(
+            audit_context,
+            timeout,
+            stage=f"{label}_fallback",
+        )
+        fb_llm = await _get_fallback_llm(_fallback_timeout, model=_fb_model)
+        fb_res = await wait_for_budget(
+            _audited_ainvoke(
+                fb_llm,
+                prompt,
+                endpoint=URL_MAP.get(_FALLBACK_NODE, _FALLBACK_NODE),
+                model=_fb_model,
+                stage=audit_stage or label.lower(),
+                context=audit_context,
+            ),
+            audit_context,
+            _fallback_timeout,
+            stage=f"{label}_fallback",
+        )
         return fb_res, True
 
     async def _try_fallback_chain(reason: str) -> tuple:
@@ -477,18 +601,43 @@ async def _invoke_llm_with_fallback(
     _last_exc: Exception | None = None
     for _attempt in range(_ENDPOINT_RETRY_COUNT if _on_external else 1):
         try:
-            res = await primary_llm.ainvoke(prompt)
+            _primary_model = model
+            if not _primary_model:
+                for attr in ("model_name", "model"):
+                    value = getattr(primary_llm, attr, "")
+                    if isinstance(value, str) and value:
+                        _primary_model = value
+                        break
+            res = await wait_for_budget(
+                _audited_ainvoke(
+                    primary_llm,
+                    prompt,
+                    endpoint=primary_url,
+                    model=_primary_model or "unknown",
+                    stage=audit_stage or label.lower(),
+                    context=audit_context,
+                ),
+                audit_context,
+                timeout,
+                stage=label,
+            )
             # Silent failure: some external endpoints return HTTP 200 with empty body
             if _on_external and (not res or not getattr(res, "content", None) or not res.content.strip()):
                 _last_exc = RuntimeError("Empty response")
                 if _attempt < _ENDPOINT_RETRY_COUNT - 1:
                     logger.debug("⏳ %s: Empty response, retry %d/%d in %.0fs",
                                  label, _attempt + 1, _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY)
-                    await asyncio.sleep(_ENDPOINT_RETRY_DELAY)
+                    await sleep_with_budget(
+                        _ENDPOINT_RETRY_DELAY,
+                        audit_context,
+                        stage=f"{label}_retry",
+                    )
                     continue
                 # Exhausted retries → fallback
                 return await _try_fallback_chain("Primary endpoint returned empty response after retries")
             return res, False
+        except RequestDeadlineExceeded:
+            raise
         except Exception as e:
             _last_exc = e
             if _is_endpoint_error(e) or (_on_external and "empty" in str(e).lower()):
@@ -502,7 +651,11 @@ async def _invoke_llm_with_fallback(
                     _m = _re.search(r'retry_after_seconds[\'\":\s]+(\d+(?:\.\d+)?)', _e_str)
                     _wait = float(_m.group(1)) + 1.0 if _m else 30.0
                     logger.info("⏳ %s: 429 rate-limit — waiting %.0fs (retry_after) then retrying", label, _wait)
-                    await asyncio.sleep(_wait)
+                    await sleep_with_budget(
+                        _wait,
+                        audit_context,
+                        stage=f"{label}_rate_limit",
+                    )
                     # Do NOT mark endpoint as degraded — it's temporarily rate-limited, not broken.
                     if _attempt < _ENDPOINT_RETRY_COUNT - 1:
                         continue
@@ -510,7 +663,11 @@ async def _invoke_llm_with_fallback(
                 if _attempt < _ENDPOINT_RETRY_COUNT - 1:
                     logger.debug("⏳ %s: External endpoint error, retry %d/%d in %.0fs: %s",
                                  label, _attempt + 1, _ENDPOINT_RETRY_COUNT, _ENDPOINT_RETRY_DELAY, str(e)[:60])
-                    await asyncio.sleep(_ENDPOINT_RETRY_DELAY)
+                    await sleep_with_budget(
+                        _ENDPOINT_RETRY_DELAY,
+                        audit_context,
+                        stage=f"{label}_retry",
+                    )
                     continue
                 # Exhausted retries → fallback
                 return await _try_fallback_chain(f"External endpoint error after {_ENDPOINT_RETRY_COUNT} retries: {str(e)[:60]}")
@@ -568,10 +725,27 @@ async def _invoke_judge_with_retry(
             _j_url_base = (_ju or "").rstrip("/")
             _j_api_type = _url_api_type(_j_url_base)
 
+            # Sovereignty guard: covers both the native-Ollama branch below and
+            # the ChatOpenAI/_invoke_llm_with_fallback branch further down —
+            # both dispatch to this same resolved _j_url_base. Applies equally
+            # to the regular judge stage and the deliberation moderator (which
+            # calls this same function).
+            from services.sovereignty import assert_egress_allowed, EgressDenied
+            assert_egress_allowed(_j_url_base, bool(state.get("local_only_routing")))
+
             if _j_api_type == "ollama" and _jm and _j_url_base:
                 # Native Ollama /api/chat — respects options.num_ctx unlike /v1/chat/completions.
                 _ollama_base = _j_url_base.removesuffix("/v1")
                 _ctx = int(state.get("judge_num_ctx") or 0) or JUDGE_NUM_CTX or _static_ctx(_jm)
+                _judge_output_limit = bounded_output_tokens(
+                    state,
+                    MAX_JUDGE_TOKENS,
+                )
+                _ctx = adaptive_context_window(
+                    _ctx,
+                    prompt,
+                    _judge_output_limit,
+                )
                 # Never downgrade a warm model: if Ollama already has this model loaded
                 # with a larger context window, reuse that window instead of forcing a
                 # reload — llama-server can't resize a running instance's context, so a
@@ -606,17 +780,21 @@ async def _invoke_judge_with_retry(
                 if _ctx > 0:
                     _opts["num_ctx"] = _ctx
                 if MAX_JUDGE_TOKENS > 0:
-                    _opts["num_predict"] = MAX_JUDGE_TOKENS
+                    _opts["num_predict"] = _judge_output_limit
                 if temperature is not None:
                     _opts["temperature"] = temperature
                 _payload: dict = {
                     "model":      _jm,
                     "messages":   [{"role": "user", "content": prompt}],
                     "stream":     False,
+                    "think":      JUDGE_THINKING_ENABLED,
                     # Short lease: frees VRAM within 5m after pipeline completes so expert/planner
                     # models can load without eviction.
                     "keep_alive": "5m",
                 }
+                _payload["stream"] = enforce_streaming_capability(
+                    _jm, bool(_payload["stream"])
+                )
                 if _opts:
                     _payload["options"] = _opts
                 logger.debug("model=%s caps=%s", _jm, get_model_caps(_jm))
@@ -626,7 +804,12 @@ async def _invoke_judge_with_retry(
                 )
                 _resp_json: dict = {}
                 try:
-                    async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
+                    _judge_timeout = remaining_timeout(
+                        state,
+                        JUDGE_TIMEOUT,
+                        stage="judge",
+                    )
+                    async with httpx.AsyncClient(timeout=_judge_timeout) as _hc:
                         _r = await _hc.post(
                             f"{_ollama_base}/api/chat",
                             json=_payload,
@@ -634,18 +817,44 @@ async def _invoke_judge_with_retry(
                         )
                     _r.raise_for_status()
                     _resp_json = _r.json()
-                    await _audit_complete(_audit_entry, _resp_json, None, None)
+                    await _audit_complete(
+                        _audit_entry,
+                        _resp_json,
+                        _resp_json.get("prompt_eval_count"),
+                        _resp_json.get("eval_count"),
+                    )
+                except asyncio.CancelledError:
+                    await _audit_cancel(_audit_entry)
+                    raise
                 except Exception as _ae:
                     await _audit_complete(_audit_entry, {"error": str(_ae)}, None, None, "error")
                     raise
-                res = _NS(content=_resp_json.get("message", {}).get("content", ""))
+                res = _NS(
+                    content=_ollama_answer_content(_resp_json),
+                    usage_metadata={
+                        "input_tokens": int(
+                            _resp_json.get("prompt_eval_count", 0)
+                        ),
+                        "output_tokens": int(
+                            _resp_json.get("eval_count", 0)
+                        ),
+                    },
+                )
             else:
                 # Non-Ollama path (AIHUB, cloud providers): use LangChain ChatOpenAI
                 llm = await _get_judge_llm(state)
+                llm = llm.bind(
+                    max_tokens=bounded_output_tokens(
+                        state,
+                        MAX_JUDGE_TOKENS,
+                    )
+                )
                 if temperature is not None:
                     llm = llm.bind(temperature=temperature)
                 res, _ = await _invoke_llm_with_fallback(
-                    llm, _j_url_base, prompt, timeout=JUDGE_TIMEOUT, label="Judge"
+                    llm, _j_url_base, prompt, timeout=JUDGE_TIMEOUT,
+                    label="Judge", audit_context=state,
+                    audit_stage="judge", model=_jm,
                 )
 
             if res and hasattr(res, 'content') and res.content and len(res.content.strip()) > 0:
@@ -654,6 +863,13 @@ async def _invoke_judge_with_retry(
                 return res
             logger.warning(f"⚠️ Judge returned empty/short response (attempt {attempt+1}/{max_retries})")
             last_error = "Empty response"
+        except RequestDeadlineExceeded:
+            raise
+        except EgressDenied:
+            # Deterministic configuration violation, not a transient failure —
+            # a fixed (non-floating) judge endpoint would fail identically on
+            # every retry. Fail fast instead of burning the 5s/10s/15s backoff.
+            raise
         except Exception as e:
             logger.warning(f"⚠️ Judge invoke failed (attempt {attempt+1}/{max_retries}): {e}")
             last_error = str(e)
@@ -661,7 +877,7 @@ async def _invoke_judge_with_retry(
         if attempt < max_retries - 1:
             wait = 5 * (attempt + 1)  # 5s, 10s, 15s
             logger.info(f"🔄 Judge retry in {wait}s (warming up model)...")
-            await asyncio.sleep(wait)
+            await sleep_with_budget(wait, state, stage="judge_retry")
             # Clear PS cache to force fresh node discovery
             with _cache_lock:
                 _ps_cache.clear()
@@ -708,25 +924,234 @@ async def ainvoke_judge_llm(prompt):
             "model":      JUDGE_MODEL,
             "messages":   _messages,
             "stream":     False,
+            "think":      JUDGE_THINKING_ENABLED,
             "keep_alive": "5m",
         }
+        _payload["stream"] = enforce_streaming_capability(
+            JUDGE_MODEL, bool(_payload["stream"])
+        )
         if _opts:
             _payload["options"] = _opts
-        async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
-            _r = await _hc.post(
-                f"{_ollama_base}/api/chat", json=_payload,
-                headers={"Authorization": f"Bearer {JUDGE_TOKEN}"},
+        _audit_entry = _audit_create(
+            "", "", JUDGE_MODEL, f"{_ollama_base}/api/chat",
+            "judge_background", _payload,
+        )
+        try:
+            async with httpx.AsyncClient(timeout=JUDGE_TIMEOUT) as _hc:
+                _r = await _hc.post(
+                    f"{_ollama_base}/api/chat", json=_payload,
+                    headers={"Authorization": f"Bearer {JUDGE_TOKEN}"},
+                )
+            _r.raise_for_status()
+            _data = _r.json()
+            await _audit_complete(
+                _audit_entry, _data,
+                _data.get("prompt_eval_count"), _data.get("eval_count"),
             )
-        _r.raise_for_status()
-        _data = _r.json()
+        except asyncio.CancelledError:
+            await _audit_cancel(_audit_entry)
+            raise
+        except Exception as exc:
+            await _audit_complete(
+                _audit_entry, {"error": str(exc)}, None, None, "error"
+            )
+            raise
         return SimpleNamespace(
-            content=_data.get("message", {}).get("content", ""),
+            content=_ollama_answer_content(_data),
             usage_metadata={
                 "input_tokens":  int(_data.get("prompt_eval_count", 0)),
                 "output_tokens": int(_data.get("eval_count", 0)),
             },
         )
-    return await judge_llm.ainvoke(prompt)
+    return await _audited_ainvoke(
+        judge_llm,
+        prompt,
+        endpoint=JUDGE_URL,
+        model=JUDGE_MODEL,
+        stage="judge_background",
+    )
+
+
+async def ainvoke_guard_llm(
+    user_input: str,
+    guard_model: str = "",
+    guard_url: str = "",
+    guard_token: str = "",
+    policy_context: str = "",
+    session_id: str = "",
+    request_id: str = "",
+) -> tuple[bool, str]:
+    """Compatibility wrapper returning ``(is_unsafe, category)``.
+
+    The graph uses :func:`ainvoke_guard_decision` directly so it can distinguish
+    a real safe verdict from an operational fail-open.
+    """
+    decision = await ainvoke_guard_decision(
+        user_input,
+        guard_model=guard_model,
+        guard_url=guard_url,
+        guard_token=guard_token,
+        policy_context=policy_context,
+        session_id=session_id,
+        request_id=request_id,
+    )
+    return decision.is_unsafe, decision.category
+
+
+@dataclass(frozen=True)
+class GuardDecision:
+    """Result of a guard invocation, including its operational state."""
+
+    is_unsafe: bool
+    category: str = ""
+    status: str = "safe"
+
+
+def _ollama_model_is_loaded(payload: dict, requested_model: str) -> bool:
+    """Return whether Ollama reports the exact requested model as resident."""
+    requested = requested_model.strip()
+    requested_latest = requested if ":" in requested else f"{requested}:latest"
+    for item in payload.get("models") or []:
+        loaded = str(item.get("name") or item.get("model") or "").strip()
+        loaded_latest = loaded if ":" in loaded else f"{loaded}:latest"
+        if loaded == requested or loaded_latest == requested_latest:
+            return True
+    return False
+
+
+async def ainvoke_guard_decision(
+    user_input: str,
+    guard_model: str = "",
+    guard_url: str = "",
+    guard_token: str = "",
+    policy_context: str = "",
+    session_id: str = "",
+    request_id: str = "",
+    deadline_state: Optional[dict] = None,
+) -> GuardDecision:
+    """Classify input and expose safe/unsafe/fail-open as distinct outcomes.
+
+    Fail-open by design: any error (timeout, unreachable endpoint, unconfigured
+    guard, unexpected model output) proceeds normally. With
+    ``GUARD_WARM_ONLY=true`` a short ``/api/ps`` probe prevents a cold guard
+    model from evicting or starving planner/expert workloads on shared Ollama
+    endpoints. These operational fallbacks are audited and returned as explicit
+    ``fail_open_*`` statuses rather than being mistaken for safe classifications.
+
+    Uses Llama Guard's own built-in Ollama chat template (Meta's fixed
+    MLCommons-hazard-taxonomy classification format, e.g. output "safe" or
+    "unsafe\\nS9") — no custom SYSTEM prompt override, since Llama Guard 3 expects
+    its trained format, not an arbitrary role-play system prompt like the other
+    MoE Sovereign experts. `policy_context` (from a template's guardrail_prompt,
+    if set) is prepended as plain context ahead of the user's message instead.
+    """
+    from config import (
+        GUARD_URL,
+        GUARD_MODEL,
+        GUARD_TOKEN,
+        GUARD_TIMEOUT,
+        GUARD_WARM_ONLY,
+        GUARD_PROBE_TIMEOUT,
+        GUARD_KEEP_ALIVE,
+    )
+
+    _gm = guard_model or GUARD_MODEL
+    _gu = (guard_url or GUARD_URL or "").rstrip("/")
+    _gt = guard_token or GUARD_TOKEN
+    if not _gm or not _gu or _url_api_type(_gu) != "ollama":
+        return GuardDecision(False, status="disabled")
+
+    _ollama_base = _gu.removesuffix("/v1")
+    _content = f"{policy_context}\n\n{user_input}" if policy_context else user_input
+    _payload: dict = {
+        "model":      _gm,
+        "messages":   [{"role": "user", "content": _content}],
+        "stream":     False,
+        "keep_alive": GUARD_KEEP_ALIVE,
+    }
+    _audit_entry = _audit_create(
+        session_id,
+        request_id,
+        _gm,
+        f"{_ollama_base}/api/chat",
+        "guard",
+        _payload,
+    )
+    try:
+        async with httpx.AsyncClient() as _hc:
+            if GUARD_WARM_ONLY:
+                _probe_timeout = remaining_timeout(
+                    deadline_state,
+                    GUARD_PROBE_TIMEOUT,
+                    stage="guard_probe",
+                )
+                _ps = await _hc.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {_gt}"},
+                    timeout=_probe_timeout,
+                )
+                _ps.raise_for_status()
+                if not _ollama_model_is_loaded(_ps.json(), _gm):
+                    await _audit_complete(
+                        _audit_entry,
+                        {
+                            "error": "guard_model_not_warm",
+                            "fail_open": True,
+                        },
+                        None,
+                        None,
+                        "error",
+                    )
+                    logger.info(
+                        "🛡️ Guard model '%s' is not resident — failing open "
+                        "without a cold model load",
+                        _gm,
+                    )
+                    return GuardDecision(False, status="fail_open_not_warm")
+            _guard_timeout = remaining_timeout(
+                deadline_state,
+                GUARD_TIMEOUT,
+                stage="guard",
+            )
+            _r = await _hc.post(
+                f"{_ollama_base}/api/chat", json=_payload,
+                headers={"Authorization": f"Bearer {_gt}"},
+                timeout=_guard_timeout,
+            )
+        _r.raise_for_status()
+        _data = _r.json()
+        await _audit_complete(
+            _audit_entry,
+            _data,
+            _data.get("prompt_eval_count"),
+            _data.get("eval_count"),
+        )
+        _result = (_data.get("message", {}).get("content", "") or "").strip()
+    except asyncio.CancelledError:
+        await _audit_cancel(_audit_entry)
+        raise
+    except RequestDeadlineExceeded:
+        await _audit_cancel(_audit_entry)
+        raise
+    except Exception as e:
+        await _audit_complete(
+            _audit_entry,
+            {"error": str(e)},
+            None,
+            None,
+            "error",
+        )
+        logger.warning(
+            "⚠️ Guard: classification call failed [%s] (%s) — failing open",
+            type(e).__name__, str(e)[:120],
+        )
+        return GuardDecision(False, status="fail_open_error")
+
+    if _result.lower().startswith("unsafe"):
+        _lines = _result.splitlines()
+        _category = _lines[1].strip() if len(_lines) > 1 else "unspecified"
+        return GuardDecision(True, _category, "unsafe")
+    return GuardDecision(False, status="safe")
 
 
 class _OllamaAwareJudgeLLM:
@@ -771,15 +1196,34 @@ async def _invoke_planner_with_retry(
         if local_llm is not None:
             try:
                 logger.info("🤖 Executing local GGUF planner (in-process)...")
+                _local_audit = _audit_create(
+                    state.get("session_id", ""),
+                    state.get("response_id", ""),
+                    PLANNER_MODEL or "local-gguf",
+                    f"file://{PLANNER_LOCAL_GGUF_PATH}",
+                    "planner",
+                    {"prompt": prompt, "local_runtime": "llama-cpp"},
+                )
                 def _run_local():
                     return local_llm(
                         prompt=prompt,
                         max_tokens=MAX_PLANNER_TOKENS,
                         temperature=temperature if temperature is not None else 0.2,
                     )
-                _res = await asyncio.to_thread(_run_local)
+                _res = await wait_for_budget(
+                    asyncio.to_thread(_run_local),
+                    state,
+                    PLANNER_TIMEOUT,
+                    stage="planner_local",
+                )
                 _content = _res["choices"][0]["text"].strip()
                 _usage = _res.get("usage", {})
+                await _audit_complete(
+                    _local_audit,
+                    {"content": _content},
+                    _usage.get("prompt_tokens"),
+                    _usage.get("completion_tokens"),
+                )
                 if _content:
                     return _NS(
                         content=_content,
@@ -788,7 +1232,23 @@ async def _invoke_planner_with_retry(
                             "output_tokens": int(_usage.get("completion_tokens", 0)),
                         },
                     ), False
+            except asyncio.CancelledError:
+                if "_local_audit" in locals():
+                    await _audit_cancel(_local_audit)
+                raise
+            except RequestDeadlineExceeded:
+                if "_local_audit" in locals():
+                    await _audit_cancel(_local_audit)
+                raise
             except Exception as e:
+                if "_local_audit" in locals():
+                    await _audit_complete(
+                        _local_audit,
+                        {"error": str(e)},
+                        None,
+                        None,
+                        "error",
+                    )
                 logger.warning("⚠️ Local in-process GGUF planner failed: %s", e)
 
     _pm = (state.get("planner_model_override") or "").strip() or (PLANNER_MODEL or "")
@@ -804,9 +1264,26 @@ async def _invoke_planner_with_retry(
     _p_url_base = (_pu or "").rstrip("/")
     _p_api_type = _url_api_type(_p_url_base)
 
+    # Sovereignty guard — same reasoning as _invoke_judge_with_retry: covers
+    # both the native-Ollama branch below and the ChatOpenAI/
+    # _invoke_llm_with_fallback branch further down, both of which dispatch
+    # to this resolved _p_url_base.
+    from services.sovereignty import assert_egress_allowed
+    assert_egress_allowed(_p_url_base, bool(state.get("local_only_routing")))
+
     if _p_api_type == "ollama" and _pm and _p_url_base and not _endpoint_is_degraded(_p_url_base):
         _ollama_base = _p_url_base.removesuffix("/v1")
         _ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or _static_ctx(_pm)
+        _planner_output_limit = bounded_output_tokens(
+            state,
+            MAX_PLANNER_TOKENS,
+            minimum_internal=256,
+        )
+        _ctx = adaptive_context_window(
+            _ctx,
+            prompt,
+            _planner_output_limit,
+        )
         if PLANNER_NUM_CTX > 0 and _ctx > PLANNER_NUM_CTX:
             _ctx = PLANNER_NUM_CTX
         # Never downgrade a warm model — same reasoning and pattern as the judge
@@ -835,37 +1312,59 @@ async def _invoke_planner_with_retry(
             pass  # non-fatal — fall through to the configured num_ctx
         if _ctx >= 65536:
             await _evict_competing_models(_ollama_base, _pm, ctx=_ctx)
-        _opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
+        _opts: dict = {"num_predict": _planner_output_limit}
         if _ctx > 0:
             _opts["num_ctx"] = _ctx
         if temperature is not None:
             _opts["temperature"] = temperature
+        _planner_schema = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "category": {"type": "string"},
+                },
+                "required": ["task", "category"],
+            },
+        }
         _payload: dict = {
             "model":      _pm,
             "messages":   [{"role": "user", "content": prompt}],
             "stream":     False,
+            "think":      PLANNER_THINKING_ENABLED,
             "keep_alive": "5m",
             "options":    _opts,
-            "format": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "task": {"type": "string"},
-                        "category": {"type": "string"}
-                    },
-                    "required": ["task", "category"]
-                }
-            }
         }
+        _payload = apply_ollama_structured_capability(
+            _payload, _pm, _planner_schema
+        )
+        logger.debug("model=%s caps=%s", _pm, get_model_caps(_pm))
+        _audit_entry = _audit_create(
+            state.get("session_id", ""),
+            state.get("response_id", ""),
+            _pm,
+            f"{_ollama_base}/api/chat",
+            "planner",
+            _payload,
+        )
         try:
-            async with httpx.AsyncClient(timeout=PLANNER_TIMEOUT) as _hc:
+            _planner_timeout = remaining_timeout(
+                state,
+                PLANNER_TIMEOUT,
+                stage="planner",
+            )
+            async with httpx.AsyncClient(timeout=_planner_timeout) as _hc:
                 _r = await _hc.post(
                     f"{_ollama_base}/api/chat", json=_payload,
                     headers={"Authorization": f"Bearer {_pt}"},
                 )
             _r.raise_for_status()
             _data = _r.json()
+            await _audit_complete(
+                _audit_entry, _data,
+                _data.get("prompt_eval_count"), _data.get("eval_count"),
+            )
             _content = _data.get("message", {}).get("content", "")
             if _content and _content.strip():
                 return _NS(
@@ -876,7 +1375,16 @@ async def _invoke_planner_with_retry(
                     },
                 ), False
             logger.warning("⚠️ Planner: empty response from native /api/chat — falling back")
+        except asyncio.CancelledError:
+            await _audit_cancel(_audit_entry)
+            raise
+        except RequestDeadlineExceeded:
+            await _audit_cancel(_audit_entry)
+            raise
         except Exception as e:
+            await _audit_complete(
+                _audit_entry, {"error": str(e)}, None, None, "error"
+            )
             logger.warning(
                 "⚠️ Planner: native /api/chat failed [%s] (%s) — falling back",
                 type(e).__name__, str(e)[:120],
@@ -886,14 +1394,52 @@ async def _invoke_planner_with_retry(
     # Bind extra_body so Ollama honours num_ctx — the OpenAI-compat endpoint silently drops
     # the options dict unless it is sent as extra_body at the top level of the request.
     llm = await _get_planner_llm(state)
+    llm = llm.bind(
+        max_tokens=bounded_output_tokens(
+            state,
+            MAX_PLANNER_TOKENS,
+            minimum_internal=256,
+        )
+    )
     if _p_api_type == "ollama":
         # Re-derive ctx here; _ctx may be unbound when endpoint was degraded/skipped.
         _fb_ctx = int(state.get("planner_num_ctx") or 0) or PLANNER_NUM_CTX or 0
+        _fb_ctx = adaptive_context_window(
+            _fb_ctx,
+            prompt,
+            bounded_output_tokens(
+                state,
+                MAX_PLANNER_TOKENS,
+                minimum_internal=256,
+            ),
+        )
+        _planner_extra_body: dict = {
+            "think": PLANNER_THINKING_ENABLED,
+        }
         if _fb_ctx > 0:
-            llm = llm.bind(extra_body={"options": {"num_ctx": _fb_ctx}})
+            _planner_extra_body["options"] = {"num_ctx": _fb_ctx}
+        llm = llm.bind(extra_body=_planner_extra_body)
+    _planner_schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string"},
+                "category": {"type": "string"},
+            },
+            "required": ["task", "category"],
+        },
+    }
+    _response_format = openai_response_format(_pm, _planner_schema)
+    if _response_format:
+        llm = llm.bind(response_format=_response_format)
     if temperature is not None:
         llm = llm.bind(temperature=temperature)
-    return await _invoke_llm_with_fallback(llm, _p_url_base, prompt, timeout=PLANNER_TIMEOUT, label="Planner")
+    return await _invoke_llm_with_fallback(
+        llm, _p_url_base, prompt, timeout=PLANNER_TIMEOUT,
+        label="Planner", audit_context=state,
+        audit_stage="planner", model=_pm,
+    )
 
 
 def _inject_habe_prefix_embeddings(opts: dict, state_: Optional[dict] = None) -> None:
@@ -1048,56 +1594,17 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)
     try:
-        res = await llm.ainvoke(messages)
+        res = await _audited_ainvoke(
+            llm,
+            messages,
+            endpoint=url,
+            model=best_expert["model"],
+            stage="expert_refinement",
+            context=state,
+        )
         return res.content[:MAX_EXPERT_OUTPUT_CHARS] if res.content else None
     except Exception as e:
         logger.warning(f"⚠️ Refinement Expert [{cat}]: {e}")
-        return None
-
-
-async def _invoke_council_expert(
-    category: str, task_text: str, user_experts: Optional[dict],
-    excluded_node: str, tool_model: str,
-) -> Optional[tuple[str, str]]:
-    """Invoke the best-scored expert for `category` as a Claude Code council member.
-
-    Best-effort: returns None on any failure so a missing council member
-    never blocks the Claude Code response (Piece A of the CC expert council).
-    """
-    from config import EXPERTS
-    from main import _get_expert_prompt
-
-    experts_for_cat = EXPERTS.get(category, [])
-    if not experts_for_cat:
-        return None
-    try:
-        scored = [(await _get_expert_score(e["model"], category), e) for e in experts_for_cat]
-        scored.sort(key=lambda x: -x[0])
-        best_expert = scored[0][1]
-        endpoints = best_expert.get("endpoints") or [best_expert.get("endpoint", "")]
-        if not endpoints or endpoints == [""]:
-            endpoints = [s["name"] for s in INFERENCE_SERVERS_LIST]
-        endpoints = _filter_endpoints_excluding_node(endpoints, excluded_node, tool_model, best_expert["model"])
-        node = await _select_node(best_expert["model"], endpoints)
-        url     = node.get("url") or URL_MAP.get(node["name"])
-        token   = node.get("token", "ollama")
-        timeout = float(node.get("timeout", EXPERT_TIMEOUT))
-        sys_prompt = _get_expert_prompt(category, user_experts)
-        messages = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user",   "content": task_text},
-        ]
-        extra: dict = {}
-        if token == "ollama":
-            extra = {"extra_body": {"options": {"num_ctx": int(JUDGE_NUM_CTX or 32768)}}}
-        llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
-                         timeout=timeout, **extra)
-        res = await llm.ainvoke(messages)
-        if not res.content:
-            return None
-        return category, res.content[:MAX_EXPERT_OUTPUT_CHARS]
-    except Exception as e:
-        logger.warning(f"⚠️ Council expert [{category}]: {e}")
         return None
 
 
@@ -1187,50 +1694,6 @@ def _node_vram_by_url(base_url: str) -> float:
         if srv.get("url", "").rstrip("/") == url:
             return float(srv.get("vram_gb", 0))
     return 0.0
-
-
-def _can_coexist_on_node(model_a: str, model_b: str, node_vram_gb: float) -> bool:
-    """Return True if both models fit simultaneously in node_vram_gb.
-
-    Used before proactively unloading a model: if both models fit, let Ollama
-    manage VRAM naturally instead of evicting a warm model unnecessarily.
-    Returns False (conservative — unload) when any estimate is unavailable.
-    """
-    if node_vram_gb <= 0:
-        return False
-    est_a = _estimate_model_vram_gb(model_a)
-    est_b = _estimate_model_vram_gb(model_b)
-    if est_a <= 0 or est_b <= 0:
-        return False  # unknown size → don't risk it
-    fits = (est_a + est_b) <= node_vram_gb
-    if fits:
-        logger.debug(
-            "🔵 VRAM coexist: %s (%.1fGB) + %s (%.1fGB) = %.1fGB ≤ %.0fGB — skip unload",
-            model_a, est_a, model_b, est_b, est_a + est_b, node_vram_gb,
-        )
-    return fits
-
-
-def _filter_endpoints_excluding_node(
-    candidate_endpoints: List[str], excluded_node: str,
-    tool_model: str, council_model: str,
-) -> List[str]:
-    """Drop excluded_node from candidate_endpoints unless tool_model and
-    council_model both fit on it simultaneously.
-
-    Keeps council experts off the node serving Claude Code's own tool model,
-    preventing the council call from queuing behind that model's generation
-    (the same Ollama-scheduler serialization pattern that caused the
-    SEMANTIC_MEMORY_EMBED_URL ReadTimeout incident).
-    """
-    if not excluded_node or excluded_node not in candidate_endpoints:
-        return candidate_endpoints
-    node_vram = _node_vram_by_url(URL_MAP.get(excluded_node, ""))
-    if _can_coexist_on_node(tool_model, council_model, node_vram):
-        return candidate_endpoints
-    filtered = [ep for ep in candidate_endpoints if ep != excluded_node]
-    # Liveness over isolation: if excluding leaves nothing, keep the original pool.
-    return filtered or candidate_endpoints
 
 
 async def _select_node(model_name: str, allowed_endpoints: List[str],
@@ -1480,12 +1943,3 @@ async def _record_expert_outcome(model: str, category: str, positive: bool) -> N
 
 # _extract_usage, _extract_json, _parse_expert_confidence,
 # _parse_expert_gaps, _expert_category — see parsing.py
-
-def _infer_tier(model_name: str) -> int:
-    """Derives expert tier from model size in the name. T1 ≤20B, T2 >20B.
-    Kept for backward compatibility with raw EXPERTS env var entries that lack
-    an explicit '_tier' field. New code uses explicit role→_tier mapping in templates."""
-    m = re.search(r':(\d+(?:\.\d+)?)b', model_name, re.I)
-    if not m:
-        return 1
-    return 1 if float(m.group(1)) <= EXPERT_TIER_BOUNDARY_B else 2

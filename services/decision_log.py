@@ -72,7 +72,13 @@ def log_decision(
     # Primary: emit to Kafka asynchronously
     try:
         from services.kafka import _kafka_publish
-        asyncio.create_task(_kafka_publish(KAFKA_TOPIC_DECISIONS, entry))
+        # Resolve the loop before creating the coroutine. Passing
+        # ``_kafka_publish(...)`` directly to asyncio.create_task constructs a
+        # coroutine first; when no loop exists create_task raises and leaves
+        # that coroutine un-awaited, producing RuntimeWarning and losing the
+        # intended publish.
+        loop = asyncio.get_running_loop()
+        loop.create_task(_kafka_publish(KAFKA_TOPIC_DECISIONS, entry))
     except RuntimeError:
         # No running event loop (e.g. during sync test) — skip Kafka
         pass

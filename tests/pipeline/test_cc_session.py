@@ -218,6 +218,49 @@ def test_expert_template_id_empty_when_no_profile():
 
 @patch("services.pipeline.cc_session._server_info", return_value={})
 @patch("services.pipeline.cc_session._resolve_template_prompts", return_value=_FAKE_PLANNER)
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value=_FAKE_EXPERTS)
+@patch("services.pipeline.cc_session._resolve_template_selection", return_value={
+    "id": "owned-template-id",
+    "template": {"name": "owned-template"},
+    "source": "owned",
+    "authorized": True,
+})
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_explicit_authorized_model_selects_same_template_on_messages_facade(
+    mock_profiles, mock_selection, mock_experts, mock_prompts, mock_srv
+):
+    session = _resolve_cc_session(
+        _make_ctx(),
+        profile_ids=[],
+        requested_model="owned-template",
+    )
+
+    assert session.expert_template_id == "owned-template-id"
+    assert session.experts == _FAKE_EXPERTS
+    assert mock_experts.call_args.kwargs["override_tmpl_id"] == "owned-template-id"
+    assert mock_prompts.call_args.kwargs["override_tmpl_id"] == "owned-template-id"
+
+
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts", return_value=_FAKE_PLANNER)
+@patch("services.pipeline.cc_session._resolve_user_experts", return_value=_FAKE_EXPERTS)
+@patch("services.pipeline.cc_session._resolve_template_selection", return_value={
+    "id": None, "template": None, "source": None, "authorized": False,
+})
+@patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
+def test_unknown_claude_alias_keeps_default_cc_template_resolution(
+    mock_profiles, mock_selection, mock_experts, mock_prompts, mock_srv
+):
+    session = _resolve_cc_session(
+        _make_ctx(), profile_ids=[], requested_model="claude-sonnet-4-6"
+    )
+
+    assert session.expert_template_id == ""
+    assert mock_experts.call_args.kwargs.get("override_tmpl_id") is None
+
+
+@patch("services.pipeline.cc_session._server_info", return_value={})
+@patch("services.pipeline.cc_session._resolve_template_prompts", return_value=_FAKE_PLANNER)
 @patch("services.pipeline.cc_session._resolve_user_experts", side_effect=[None, _FAKE_EXPERTS])
 @patch("services.pipeline.cc_session._read_cc_profiles", return_value=[])
 def test_missing_template_falls_back_gracefully(mock_profiles, mock_experts, mock_prompts, mock_srv):

@@ -65,6 +65,19 @@ class StructuredFailure:
     def max_retries(self) -> int:
         return _MAX_RETRIES
 
+    def as_dict(self) -> dict:
+        """JSON-safe representation suitable for AgentState/checkpoints."""
+        return {
+            "failure_kind": self.failure_kind.value,
+            "model": self.model,
+            "fallback_model": self.fallback_model,
+            "stage": self.stage,
+            "message": self.message,
+            "raw_text": self.raw_text,
+            "retry_round": self.retry_round,
+            "allowed_actions": [action.value for action in self.allowed_actions],
+        }
+
 
 def classify_failure(error: Exception, raw_text: str = "") -> StructuredFailureKind:
     """Classify *error* into a StructuredFailureKind by regex on message + raw_text."""
