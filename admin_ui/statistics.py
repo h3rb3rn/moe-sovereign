@@ -4,7 +4,7 @@ Pulls from:
 - Prometheus (live gauges + range queries)
 - Orchestrator's /v1/admin/knowledge-stats (Neo4j snapshot)
 - Valkey cache (healer run history: moe:maintenance:ontology:runs)
-- Gap-healer snapshot files (/opt/moe-infra/gap-healer-stats/*.json) if mounted
+- Gap-healer snapshot files (/opt/moe-sovereign/gap-healer-stats/*.json) if mounted
 
 All functions are safe to call — they swallow upstream errors and return
 partial data with an ``errors`` list so the UI can still render.

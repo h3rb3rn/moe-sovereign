@@ -39,7 +39,7 @@ p.add_argument("--min-answer-chars", type=int, default=400)
 p.add_argument("--days", type=int, default=30)
 args = p.parse_args()
 
-log_dir = Path(os.getenv("CONVERSATION_LOG_DIR", "/opt/moe-infra/user-audit-logs"))
+log_dir = Path(os.getenv("CONVERSATION_LOG_DIR", "/opt/moe-sovereign/user-audit-logs"))
 cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
 
 # Optional quality filter from WP3

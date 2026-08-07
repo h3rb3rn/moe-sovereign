@@ -8,7 +8,7 @@ Trigger:
 
 Storage (dual, for persistence):
   - Redis: Key "moe:few_shot:{category}" → LPUSH, max 20 entries (LRU rotation via LTRIM)
-  - File: /opt/moe-infra/few_shot_examples/{category}.md (append-only, readable for sync agent)
+  - File: /opt/moe-sovereign/few_shot_examples/{category}.md (append-only, readable for sync agent)
 
 Retrieval:
   get_few_shot_context(category, redis_client) → str for planner prompt injection

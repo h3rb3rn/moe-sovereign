@@ -4,15 +4,15 @@
 #
 #  Usage: bash scripts/sync-to-publish.sh [--dry-run]
 #
-#  Copies all code from the dev repo (/opt/moe-infra)
-#  to the GitHub publish repo (/opt/deployment/Github/moe-sovereign),
+#  Copies all code from the dev repo (/opt/moe-sovereign)
+#  to the GitHub publish repo (/opt/moe-sovereign),
 #  excluding sensitive files, runtime data, and local configuration.
 #  After sync, sanitizes hardcoded paths and checks for leaked secrets.
 # =============================================================================
 set -euo pipefail
 
-DEV_DIR="/opt/moe-infra"
-PUB_DIR="/opt/deployment/Github/moe-sovereign"
+DEV_DIR="/opt/moe-sovereign"
+PUB_DIR="/opt/moe-sovereign"
 DRY_RUN=false
 
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -63,6 +63,17 @@ RSYNC_EXCLUDES=(
   --exclude='tmp/'
   --exclude='tmp_install/'
   --exclude='prometheus/*_targets.yml'
+  # These mirror repo-root .gitignore entries that rsync (unlike git) does not
+  # honor on its own — without them the sync copies multi-GB local artifacts
+  # into the public repo. train_venv/ (~5.2G) has no .gitignore entry of its
+  # own at the top level (it self-ignores via a nested train_venv/.gitignore,
+  # which rsync also does not read); the models/ entries mirror the exact
+  # paths .gitignore already excludes (habe_vocab.json alone is ~1.1G).
+  --exclude='train_venv/'
+  --exclude='site/'
+  --exclude='models/habe_vocab.json'
+  --exclude='models/habe_vector.bin.npy'
+  --exclude='models/habe_vector.npy'
 )
 
 echo ""
@@ -81,7 +92,8 @@ fi
 echo "[2/4] Sanitizing hardcoded paths..."
 
 SANITIZE_PATTERNS=(
-  "/opt/moe-infra|/opt/moe-infra|*.py,*.sh,*.service"
+  "/opt/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
+  "/opt/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
   "/opt/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
 )
 
