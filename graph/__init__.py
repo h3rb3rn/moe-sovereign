@@ -60,6 +60,7 @@ from graph.synthesis import (
     quality_gate_node,
 )
 from graph.strategy_review_node import strategy_review_node
+from graph.hypothesis_verifier import hypothesis_verifier_node, _route_after_strategy_review
 
 # Deterministic direct rendering + final evidence binding
 from graph.precision import (
