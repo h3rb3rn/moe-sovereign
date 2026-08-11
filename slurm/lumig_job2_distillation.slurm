@@ -75,7 +75,7 @@ srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/
     --epochs 3 \
     --micro-batch 2 \
     --grad-accum 16 \
-    --max-seq-len 8192 \
+    --max-seq-len 32768 \
     --lr 2e-4
 
 echo "JOB COMPLETED SUCCESSFULLY AT $(date)"
