@@ -71,6 +71,7 @@ srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/
     --model-id "Qwen/Qwen3.5-3B-Instruct" \
     --dataset "/scratch/project_465003058/hornphil/datasets/moe_system_knowledge_sft.jsonl" \
     --output-dir "$CHECKPOINT_DIR" \
+    --deepspeed "/scratch/project_465003058/hornphil/moe-sovereign/scripts/deepspeed_zero3.json" \
     --epochs 3 \
     --micro-batch 2 \
     --grad-accum 16 \

@@ -60,6 +60,7 @@ srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/
     --model-id "/scratch/project_465003058/hornphil/checkpoints/moe_3b_distilled" \
     --dataset "$RL_DATASET" \
     --output-dir "$CHECKPOINT_DIR" \
+    --deepspeed "/scratch/project_465003058/hornphil/moe-sovereign/scripts/deepspeed_zero3.json" \
     --epochs 3 \
     --micro-batch 2 \
     --grad-accum 16 \
