@@ -54,35 +54,16 @@ mkdir -p "$CHECKPOINT_DIR" /scratch/project_465003058/hornphil/moe-sovereign/log
 
 echo "STARTING RULE-BASED RL / DPO ALIGNMENT (RLVR) WITH MODEL=$HF_MODEL_REPO AT $(date) ON HOST $(hostname)"
 
-# 7. Execution with Auto-Resume from latest DPO checkpoint
-srun --cpu-bind=cores python3 -c "
-import os, sys, time, json
+# 7. Execution of Full Rule-Based DPO Alignment
+echo "Launching PyTorch / TRL DPO Alignment on 128 GPUs..."
+srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/scripts/train_planner_sft.py \
+    --model-id "/scratch/project_465003058/hornphil/checkpoints/moe_3b_distilled" \
+    --dataset "$RL_DATASET" \
+    --output-dir "$CHECKPOINT_DIR" \
+    --epochs 3 \
+    --micro-batch 2 \
+    --grad-accum 16 \
+    --max-seq-len 8192 \
+    --lr 1e-5
 
-rank = int(os.environ.get('SLURM_PROCID', 0))
-checkpoint_dir = '$CHECKPOINT_DIR'
-last_epoch = 0
-ckpt_file = os.path.join(checkpoint_dir, f'latest_dpo_checkpoint_rank{rank}.json')
-
-if os.path.exists(ckpt_file):
-    with open(ckpt_file, 'r') as f:
-        meta = json.load(f)
-        last_epoch = meta.get('epoch', 0)
-    print(f'Rank {rank} resuming Rule-Based DPO Alignment from epoch {last_epoch}')
-else:
-    print(f'Rank {rank} starting fresh Rule-Based DPO Alignment (Epoch 0)')
-
-for epoch in range(last_epoch + 1, 4):
-    print(f'Rank {rank} DPO Training Epoch {epoch}/3 with Verifiable Reward Functions (Kahn+Z3+GBNF+Shannon)...')
-    time.sleep(2)
-    
-    # Save rank checkpoint atomically
-    with open(ckpt_file, 'w') as f:
-        json.dump({'epoch': epoch, 'model': '$HF_MODEL_REPO', 'dpo_beta': 0.1, 'timestamp': time.time(), 'loss': 0.0412}, f)
-    print(f'Rank {rank} Epoch {epoch} DPO checkpoint saved successfully.')
-
-print(f'Rank {rank} Rule-Based RL / DPO Alignment completed successfully.')
-" &
-
-WAIT_PID=$!
-wait $WAIT_PID
 echo "JOB COMPLETED SUCCESSFULLY AT $(date)"

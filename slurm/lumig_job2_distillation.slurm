@@ -65,35 +65,16 @@ snapshot_download(repo_id='$HF_TEACHER_REPO', cache_dir='$TRANSFORMERS_CACHE', l
 " || echo "Note: Teacher model download attempt registered. Using cached weights or fallback."
 fi
 
-# 8. Execution with Auto-Resume from latest DeepSpeed checkpoint
-srun --cpu-bind=cores python3 -c "
-import os, sys, time, json
+# 8. Execution of Full DeepSpeed ZeRO-3 SFT Training
+echo "Launching PyTorch / TRL SFT Trainer on 128 GPUs..."
+srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/scripts/train_planner_sft.py \
+    --model-id "Qwen/Qwen2.5-3B-Instruct" \
+    --dataset "/scratch/project_465003058/hornphil/datasets/moe_system_knowledge_sft.jsonl" \
+    --output-dir "$CHECKPOINT_DIR" \
+    --epochs 3 \
+    --micro-batch 2 \
+    --grad-accum 16 \
+    --max-seq-len 8192 \
+    --lr 2e-4
 
-rank = int(os.environ.get('SLURM_PROCID', 0))
-checkpoint_dir = '$CHECKPOINT_DIR'
-last_epoch = 0
-ckpt_file = os.path.join(checkpoint_dir, f'latest_checkpoint_rank{rank}.json')
-
-if os.path.exists(ckpt_file):
-    with open(ckpt_file, 'r') as f:
-        meta = json.load(f)
-        last_epoch = meta.get('epoch', 0)
-    print(f'Rank {rank} resuming DeepSpeed Distillation from epoch {last_epoch}')
-else:
-    print(f'Rank {rank} starting fresh DeepSpeed Distillation from HF Teacher $HF_TEACHER_REPO (Epoch 0)')
-
-for epoch in range(last_epoch + 1, 4):
-    print(f'Rank {rank} Training Epoch {epoch}/3 with HF Teacher=$HF_TEACHER_REPO...')
-    time.sleep(2)
-    
-    # Save rank checkpoint atomically
-    with open(ckpt_file, 'w') as f:
-        json.dump({'epoch': epoch, 'hf_teacher': '$HF_TEACHER_REPO', 'max_seq_len': 32768, 'timestamp': time.time(), 'loss': 0.0872}, f)
-    print(f'Rank {rank} Epoch {epoch} checkpoint saved successfully.')
-
-print(f'Rank {rank} Teacher-Student Distillation completed successfully.')
-" &
-
-WAIT_PID=$!
-wait $WAIT_PID
 echo "JOB COMPLETED SUCCESSFULLY AT $(date)"
