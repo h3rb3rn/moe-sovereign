@@ -68,7 +68,7 @@ fi
 # 8. Execution of Full DeepSpeed ZeRO-3 SFT Training
 echo "Launching PyTorch / TRL SFT Trainer on 128 GPUs..."
 srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/scripts/train_planner_sft.py \
-    --model-id "Qwen/Qwen3.5-3B-Instruct" \
+    --model-id "Qwen/Qwen3.6-3B-Instruct" \
     --dataset "/scratch/project_465003058/hornphil/datasets/moe_system_knowledge_sft.jsonl" \
     --output-dir "$CHECKPOINT_DIR" \
     --deepspeed "/scratch/project_465003058/hornphil/moe-sovereign/scripts/deepspeed_zero3.json" \
