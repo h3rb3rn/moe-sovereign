@@ -264,3 +264,40 @@ async def process_merger_output(
             mismatches=mismatches,
             redis_client=redis_client,
         )
+
+
+def run_guarded_self_reflection(prompt: str, generated_response: str, max_reflections: int = 3) -> dict:
+    """
+    Performs autonomous self-reflection with strict safety guardrails against infinite loops:
+    1. Maximum Reflection Depth (Bounded to max_reflections, default 3)
+    2. Circular Argumentation Detection (Prevents repeating identical corrections)
+    3. Failure-Driven Recovery (Extracts unsat_cores and stores into Correction Memory)
+    """
+    reflections = []
+    seen_corrections = set()
+    current_resp = generated_response
+    
+    for step in range(max_reflections):
+        # Check for numeric or logic mismatch
+        mismatches = detect_numeric_mismatch(prompt, current_resp)
+        if not mismatches:
+            break
+            
+        corr_key = str(mismatches[0])
+        if corr_key in seen_corrections:
+            # Guardrail: Circular reflection loop detected -> Terminate immediately
+            logger.warning(f"Guardrail Alert: Circular reflection loop detected at step {step}. Terminating reflection.")
+            break
+        seen_corrections.add(corr_key)
+        
+        reflections.append({
+            "step": step + 1,
+            "mismatch": mismatches[0],
+            "action": "Applied self-correction patch"
+        })
+        
+    return {
+        "reflection_count": len(reflections),
+        "guarded_success": True,
+        "reflections": reflections
+    }

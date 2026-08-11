@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from services.deliberation.capacity import CapacityInputs, plan_deliberation_capacity
+from services.deliberation.capacity import (
+    CapacityInputs,
+    _dependency_depth,
+    plan_deliberation_capacity,
+)
 from services.deliberation.contracts import (
     DeliberationPolicy,
     DeliberationPolicyError,
@@ -155,3 +159,88 @@ def test_legacy_policy_preserves_three_call_micro_debate():
     assert enabled.mode == "micro"
     assert enabled.max_model_calls == 3
     assert disabled.activation == "disabled"
+
+
+# ── depends_on resolution (regression: description-prefix form) ──────────────
+# The planner's trained system prompt documents depends_on as
+# "<prior task description prefix>"; "id" is optional and, measured over 2,000
+# real training samples, emitted by only 3% of plans while 15% emit depends_on.
+# Resolving ids alone pinned dependency_depth at 1 for virtually every real
+# plan and silently disabled the dependency_depth branch of adaptive activation.
+
+def _prefix_plan() -> list[dict]:
+    """A chain in the shape the trained planner actually emits: no ids."""
+    return [
+        {"category": "research", "task": "Recherchiere die Tetris-Regeln"},
+        {
+            "category": "code_reviewer",
+            "task": "Implementiere Tetris in Python",
+            "depends_on": ["Recherchiere die Tetris-Regeln"],
+        },
+        {
+            "category": "technical_support",
+            "task": "Beschreibe das Deployment",
+            "depends_on": ["Implementiere Tetris"],
+        },
+    ]
+
+
+def test_dependency_depth_resolves_description_prefixes():
+    assert _dependency_depth(_prefix_plan()) == 3
+
+
+def test_dependency_depth_still_resolves_explicit_ids():
+    assert _dependency_depth(_complex_plan()) == 3
+
+
+def test_dependency_depth_ignores_ambiguous_prefix():
+    plan = [
+        {"category": "general", "task": "Analysiere den Vertrag Teil A"},
+        {"category": "general", "task": "Analysiere den Vertrag Teil B"},
+        {
+            "category": "legal_advisor",
+            "task": "Fasse zusammen",
+            "depends_on": ["Analysiere den Vertrag"],  # matches both → no edge
+        },
+    ]
+    assert _dependency_depth(plan) == 1
+
+
+def test_dependency_depth_ignores_self_and_unresolvable_reference():
+    plan = [
+        {"category": "general", "task": "Erkläre X", "depends_on": ["Erkläre X"]},
+        {"category": "general", "task": "Erkläre Y", "depends_on": ["gibt es nicht"]},
+    ]
+    assert _dependency_depth(plan) == 1
+
+
+def test_dependency_depth_survives_cycles():
+    plan = [
+        {"id": "a", "category": "general", "task": "A", "depends_on": ["b"]},
+        {"id": "b", "category": "general", "task": "B", "depends_on": ["a"]},
+    ]
+    assert _dependency_depth(plan) >= 1  # terminates, no recursion error
+
+
+def test_prefix_dependency_chain_scales_deliberation_rounds():
+    """The real behavioural effect of the fix: depth scales rounds.
+
+    dependency_depth >= 2 is redundant inside the adaptive-activation OR chain
+    (any plan deep enough to reach 2 already satisfies task_count >= 2). Where
+    the value genuinely decides something is round scaling: with depth pinned to
+    1 by id-only resolution, a three-stage dependent plan deliberated for as
+    many rounds as a flat one.
+    """
+    capacity = plan_deliberation_capacity(
+        DeliberationPolicy(activation="required", mode="moderated"),
+        CapacityInputs(
+            complexity_level="moderate",
+            cynefin_domain="COMPLICATED",
+            plan=_prefix_plan(),  # depth 3, description-prefix deps, no ids
+            remaining_seconds=600,
+            available_models=4,
+        ),
+    )
+    assert capacity.dependency_depth == 3
+    assert capacity.active is True
+    assert capacity.initial_rounds == 3  # was 2 while depth was pinned to 1
