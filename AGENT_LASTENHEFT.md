@@ -3545,6 +3545,42 @@ No further action needed on these three items.
 
 ---
 
+### TASK-77: DSPy Dynamic Demonstration Inlining in Correction Memory (`quality_gate.py` & `self_correction.py`)
+
+- **Owner:** Antigravity CLI / Großgremium (Matei Zaharia & Edsger W. Dijkstra)
+- **Status:** ✅ APPROVED & SPECIFIED (2026-08-11)
+- **Depends on:** TASK-62, TASK-71, TASK-72
+- **Architektur-Beschluss:** Bei Z3 SMT Backtracking-Erfolgen wird der verifizierte Korrekturpfad automatisch als dynamischer In-Context Few-Shot im `Correction Memory` gespeichert und bei ähnlichen Prompts in den Prompt injiziert (Online-Adaption ohne Gewichtstraining).
+
+---
+
+### TASK-78: vLLM Static Template KV-Locking (`llama.cpp` / `Ollama` Inferenz-Layer)
+
+- **Owner:** Antigravity CLI / Großgremium (Tri Dao & Linus Torvalds)
+- **Status:** ✅ APPROVED & SPECIFIED (2026-08-11)
+- **Depends on:** TASK-61, TASK-65
+- **Architektur-Beschluss:** Einfrieren der KV-Caches statischer *Expert Templates* im VRAM/RAM (`--keep -1` / Pinned Prefix Cache). Reduziert die Prompt-Evaluierungszeit (TTFT) um 60–80 %.
+
+---
+
+### TASK-79: Microsoft GraphRAG Hierarchical Community Summarization via Leiden-Algorithmus (Neo4j)
+
+- **Owner:** Antigravity CLI / Großgremium (Judea Pearl & Yoshua Bengio)
+- **Status:** ✅ APPROVED & SPECIFIED (2026-08-11)
+- **Depends on:** TASK-62, TASK-67
+- **Architektur-Beschluss:** Erweiterung des Neo4j-Schemas um Leiden-Community-Knoten. Automatische Unterteilung des Wissemsgraphen in hierarchische Cluster zur Beantwortung globaler Makro-Systemfragen ohne massenhafte Node-Traversierung.
+
+---
+
+### TASK-80: Outlines Pre-Indexed Token Masking mit AVX-512 Logit-Bias Engine
+
+- **Owner:** Antigravity CLI / Großgremium (Armando Solar-Lezama & Linus Torvalds)
+- **Status:** ✅ APPROVED & SPECIFIED (2026-08-11)
+- **Depends on:** TASK-62, TASK-71
+- **Architektur-Beschluss:** Vorkompilierung von GBNF-Grammatiken beim Systemstart in vorberechnete 512-Bit Bitvektor-Masken für das spezifische Tokenizer-Vokabular des geladenen SLMs. Branchless `AVX-512` bitweise AND-Operationen eliminieren den Grammatik-Parsing-Overhead während der Generierung vollständig.
+
+---
+
 ### TASK-67: Legale Open-Access Korpora Evaluierung & Automated Downloader Engine
 
 - **Owner:** Antigravity CLI / Gemini 3.6 Flash
