@@ -88,6 +88,7 @@ INFERENCE_SERVERS_LIST = [s for s in INFERENCE_SERVERS_LIST if s.get("enabled", 
 URL_MAP      = {s["name"]: s["url"]                 for s in INFERENCE_SERVERS_LIST if s.get("url")}
 TOKEN_MAP    = {s["name"]: s.get("token", "ollama")  for s in INFERENCE_SERVERS_LIST}
 API_TYPE_MAP = {s["name"]: s.get("api_type", "ollama") for s in INFERENCE_SERVERS_LIST}
+TIMEOUT_MAP  = {s["name"]: s.get("timeout", 300)     for s in INFERENCE_SERVERS_LIST}
 
 JUDGE_ENDPOINT_NAME = os.getenv("JUDGE_ENDPOINT", "")
 JUDGE_URL           = URL_MAP.get(JUDGE_ENDPOINT_NAME) if JUDGE_ENDPOINT_NAME else None

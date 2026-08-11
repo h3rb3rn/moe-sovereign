@@ -1805,8 +1805,9 @@ async def _stream_native_llm(
                             except Exception:
                                 continue
         except Exception as _e:
-            logger.warning(f"Native LLM proxy error: {_e}")
-            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': f'[Error: {_e}]'}, 'finish_reason': 'stop'}]})}\n\n"
+            _err_msg = str(_e) or type(_e).__name__
+            logger.warning(f"Native LLM proxy error: {_err_msg}")
+            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': f'[Error: {_err_msg}]'}, 'finish_reason': 'stop'}]})}\n\n"
 
         # Usage + token speed (extended Ollama/Open-WebUI format)
         _t_end        = time.monotonic()
