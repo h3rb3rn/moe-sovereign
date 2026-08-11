@@ -1486,6 +1486,8 @@ def _planner_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict]
     opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
         opts["num_ctx"] = ctx
+    if state_ and (state_.get("pin_prefix_cache") or state_.get("template_prefix_locked")):
+        opts["keep_alive"] = -1  # Static Template KV-Locking (vLLM/Ollama Pinned Prefix Cache)
     if state_ and state_.get("enable_habe"):
         _inject_habe_prefix_embeddings(opts, state_)
     out["extra_body"] = {"options": opts}
