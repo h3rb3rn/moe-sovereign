@@ -1591,7 +1591,7 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     ]
     _refine_extra: dict = {}
     if token == "ollama":
-        _refine_num_ctx = int(JUDGE_NUM_CTX or 32768)
+        _refine_num_ctx = int(JUDGE_NUM_CTX or 262144)
         _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)

@@ -214,14 +214,14 @@ MAX_JUDGE_TOKENS          = int(os.getenv("MAX_JUDGE_TOKENS",           "32768")
 MAX_PLANNER_TOKENS        = int(os.getenv("MAX_PLANNER_TOKENS",         "16384"))
 # Ollama num_ctx for judge and planner — 0 means auto-detect from static model table.
 # Set explicitly when the auto-detected value differs from Ollama's actual allocation.
-JUDGE_NUM_CTX   = int(os.getenv("JUDGE_NUM_CTX",   "0"))
+JUDGE_NUM_CTX   = int(os.getenv("JUDGE_NUM_CTX",   "262144"))
 PLANNER_NUM_CTX = int(os.getenv("PLANNER_NUM_CTX", "0"))
 # ── Agentic loop token budgets ────────────────────────────────────────────────
 # Gap detection and working-memory extraction are skipped when accumulated token
 # usage exceeds these thresholds. Default matches practical qwen3.6:35b limits;
 # raise when using a model+node with larger context windows.
-AGENTIC_GAP_THRESHOLD_TOKENS    = int(os.getenv("AGENTIC_GAP_THRESHOLD_TOKENS",    "80000"))
-WM_EXTRACT_THRESHOLD_TOKENS     = int(os.getenv("WM_EXTRACT_THRESHOLD_TOKENS",     "90000"))
+AGENTIC_GAP_THRESHOLD_TOKENS    = int(os.getenv("AGENTIC_GAP_THRESHOLD_TOKENS",    "200000"))
+WM_EXTRACT_THRESHOLD_TOKENS     = int(os.getenv("WM_EXTRACT_THRESHOLD_TOKENS",     "220000"))
 
 # ── Chain-of-Thought trigger thresholds ───────────────────────────────────────
 # CoT reasoning is activated when the plan has at least this many distinct
