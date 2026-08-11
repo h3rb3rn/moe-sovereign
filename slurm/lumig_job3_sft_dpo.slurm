@@ -46,7 +46,7 @@ export FLASH_ATTENTION_FORCE_BUILD=0
 export USE_ROCM=1
 
 # 6. Flagship Model & Rule-Based RL Config
-HF_MODEL_REPO="Qwen/Qwen3.6-35B-A3B-Instruct"
+HF_MODEL_REPO="Qwen/Qwen2.5-32B-Instruct"
 RL_DATASET="/scratch/project_465003058/hornphil/datasets/moe_rule_based_rl_dpo.jsonl"
 CHECKPOINT_DIR="/scratch/project_465003058/hornphil/checkpoints/moe_3b_rl_dpo_aligned"
 

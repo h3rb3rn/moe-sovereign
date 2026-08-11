@@ -46,7 +46,7 @@ export FLASH_ATTENTION_FORCE_BUILD=0
 export USE_ROCM=1
 
 # 6. HuggingFace Teacher Model Repo
-HF_TEACHER_REPO="Qwen/Qwen3.6-35B-A3B-Instruct"
+HF_TEACHER_REPO="Qwen/Qwen2.5-32B-Instruct"
 MAX_SEQ_LEN=32768
 PER_DEVICE_BATCH_SIZE=2
 GRADIENT_ACCUMULATION_STEPS=16
@@ -68,7 +68,7 @@ fi
 # 8. Execution of Full DeepSpeed ZeRO-3 SFT Training
 echo "Launching PyTorch / TRL SFT Trainer on 128 GPUs..."
 srun --cpu-bind=cores python3 /scratch/project_465003058/hornphil/moe-sovereign/scripts/train_planner_sft.py \
-    --model-id "Qwen/Qwen3.6-3B-Instruct" \
+    --model-id "Qwen/Qwen2.5-3B-Instruct" \
     --dataset "/scratch/project_465003058/hornphil/datasets/moe_system_knowledge_sft.jsonl" \
     --output-dir "$CHECKPOINT_DIR" \
     --deepspeed "/scratch/project_465003058/hornphil/moe-sovereign/scripts/deepspeed_zero3.json" \
