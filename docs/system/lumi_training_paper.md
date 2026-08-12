@@ -128,4 +128,4 @@ Available as part of the MoE Sovereign project.
 - [EuroHPC Training Concept](eurohpc_training_concept.md) — the original grant proposal and distillation plan
 - [Hardware](hardware.md) — local GPU cluster (`N04-RTX`, `ollama-rgtx`)
 - [Intelligence & Learning](intelligence/index.md) — RL Flywheel, Agentic Re-Planning Loop, Causal Learning
-- [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) — full system whitepaper
+- [Whitepaper (EN)](../assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) — full system whitepaper (v2.8, PDF)

@@ -17,6 +17,7 @@
 | **Intelligence** | [Agentic Loop](system/intelligence/agentic_loop.md) · [7B Ensemble](system/intelligence/7b_ensemble_capability.md) · [Causal Learning](system/intelligence/causal_learning.md) | Agentic re-planning, ensemble benchmarks, knowledge accumulation |
 | **Reference** | [Authentication](reference/auth.md) · [Expert Prompts](reference/expert-prompts.md) · [Import/Export](reference/import-export.md) | API reference, system prompts, schemas |
 | **FAQ** | [FAQ](faq.md) | Common questions about Claude Code, API, troubleshooting |
+| **Publications** | [Whitepaper EN/DE · LUMI-G Paper](publications.md) | All PDFs in this repository |
 | **Changelog** | [Changelog](changelog.md) | Version history of all releases |
 
 ---
