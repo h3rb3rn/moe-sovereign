@@ -21,7 +21,7 @@ Debian 11 (bullseye), 12 (bookworm), and 13 (trixie) are supported. Other Linux 
 Run this on a fresh Debian system as root or with sudo:
 
 ```bash
-curl -sSL https://moe-sovereign.org/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh | bash
 ```
 
 ## macOS

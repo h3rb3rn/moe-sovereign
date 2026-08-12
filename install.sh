@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  MoE Sovereign — One-Line Installer
-#  Usage: curl -sSL https://moe-sovereign.org/install.sh | bash
+#  Usage: curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh | bash
 #         or: bash install.sh
 #
 #  Supported OS: Debian 11 (bullseye), 12 (bookworm), 13 (trixie)

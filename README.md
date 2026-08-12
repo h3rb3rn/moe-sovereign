@@ -302,7 +302,7 @@ flowchart LR
 ### One-Line Install
 
 ```bash
-curl -sSL https://moe-sovereign.org/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh | bash
 ```
 
 ### Manual Setup
