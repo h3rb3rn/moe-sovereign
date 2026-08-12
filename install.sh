@@ -1005,6 +1005,23 @@ elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
 
 fi
 
+# ── NVIDIA Container Toolkit & GPG Keyring Setup ────────────────────────────
+if command -v nvidia-smi &>/dev/null || [[ -e /dev/nvidia0 ]]; then
+  echo "  NVIDIA GPU detected — configuring NVIDIA Container Toolkit repository & GPG keyring..."
+  _sudo install -m 0755 -d /etc/apt/keyrings
+  if curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | _sudo gpg --dearmor -o /etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null; then
+    _sudo chmod a+r /etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/etc/apt/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      | _sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+    _sudo apt-get update -qq
+    _sudo apt-get install -y --no-install-recommends nvidia-container-toolkit 2>/dev/null || true
+    echo "  NVIDIA Container Toolkit repository + GPG keyring configured ✓"
+  else
+    echo "  [!] Could not fetch NVIDIA GPG key — skipping repository configuration."
+  fi
+fi
+
 # podman-compose does not support --quiet; docker compose does.
 [[ "$CONTAINER_RUNTIME" == "docker" ]] && _Q="--quiet" || _Q=""
 
@@ -1199,7 +1216,14 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
   fi
 else
   echo "  Cloning repository to ${INSTALL_DIR}..."
-  _git_as_user clone "${MOE_REPO_URL}" "${INSTALL_DIR}"
+  if ! _git_as_user clone "${MOE_REPO_URL}" "${INSTALL_DIR}" 2>/dev/null; then
+    echo "  [!] Target directory '${INSTALL_DIR}' exists — initializing repository in-place..."
+    _git_as_user -C "${INSTALL_DIR}" init -q
+    _git_as_user -C "${INSTALL_DIR}" remote add origin "${MOE_REPO_URL}" 2>/dev/null || \
+      _git_as_user -C "${INSTALL_DIR}" remote set-url origin "${MOE_REPO_URL}"
+    _git_as_user -C "${INSTALL_DIR}" fetch origin -q
+    _git_as_user -C "${INSTALL_DIR}" checkout -B main origin/main --force
+  fi
 fi
 
 # Postgres mounts ./scripts/postgres-init as docker-entrypoint-initdb.d:ro.
