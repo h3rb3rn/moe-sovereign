@@ -1,10 +1,18 @@
-# Reinforcement Learning Flywheel
+# Adaptive Feedback Loop (RL Flywheel)
 
 ## Overview
 
-MoE Sovereign uses a three-stage incremental reinforcement learning loop that
+MoE Sovereign uses a three-stage incremental adaptive feedback loop that
 improves routing quality and expert accuracy over time — without external
 training infrastructure, GPU allocation, or new services.
+
+The loop is informally called the "RL Flywheel" throughout the codebase and
+documentation, but it does not implement policy-gradient reinforcement learning.
+The core scoring mechanism is a **Laplace-smoothed Bayesian posterior mean**
+over a Beta-Binomial model: after M successes in N observations the routing
+score is `(M+1)/(N+2)`. An optional Thompson Sampling exploration mode
+(`THOMPSON_SAMPLING_ENABLED=true`) draws from the full Beta posterior instead
+of the mean, trading lower variance for exploration breadth.
 
 All three stages reuse existing components (Redis, Neo4j, PostgreSQL) and are
 individually toggleable via environment variables.
@@ -15,8 +23,8 @@ flowchart LR
         A[API Request] --> B[Routing Decision]
         B --> C[routing_telemetry\nPostgreSQL]
     end
-    subgraph "Stage 2: Explore"
-        D[Expert Selection] --> E[Thompson Sampling\nBeta distribution]
+    subgraph "Stage 2: Bayesian Expert Scoring"
+        D[Expert Selection] --> E[Posterior Mean\nor optional TS sample]
         E --> F[Redis moe:perf]
     end
     subgraph "Stage 3: Correct"
@@ -68,50 +76,60 @@ GROUP BY template_name, planner_plan ORDER BY count DESC;
 
 ---
 
-## Stage 2: Thompson Sampling
+## Stage 2: Bayesian Expert Scoring
 
-Replaces the static Laplace-smoothed expert scoring with stochastic Beta
-distribution sampling for natural exploration.
+Assigns each `(model, category)` pair a routing score derived from accumulated
+outcome observations, using a Laplace-smoothed Beta-Binomial posterior mean as
+the default and an optional Thompson Sampling exploration mode.
 
 ### How It Works
 
-**Before (Laplace point estimate):**
+**Default mode — Laplace-smoothed posterior mean:**
 ```
 score = (positive + 1) / (total + 2)
 ```
-Always returns the same score for the same data — pure exploitation.
+This is the Bayesian posterior mean under a uniform Beta(1,1) prior.
+It is deterministic: the same observation history always produces the same score.
+New experts start at 0.5 and move toward their true success rate as evidence
+accumulates, without ever collapsing to 0 or 1 on sparse data.
 
-**After (Thompson Sampling):**
+**Optional exploration mode — Thompson Sampling (`THOMPSON_SAMPLING_ENABLED=true`):**
 ```
-α = positive + 1    (successes + prior)
-β = (total - positive) + 1    (failures + prior)
+α = positive + 1          # successes + prior
+β = (total - positive) + 1  # failures + prior
 score = random.betavariate(α, β)
 ```
-Each call draws a different sample. Experts with fewer observations have wider
-variance and occasionally score higher than their point estimate.
+Each call draws a stochastic sample from the Beta posterior. Experts with fewer
+observations have wider variance and occasionally outscore their mean estimate,
+enabling natural exploration of less-tried experts on unfamiliar query types.
 
-### Why This Is Better
+**Distinction:** the default mode is a deterministic routing rule; Thompson
+Sampling is a full Bayesian exploration-exploitation strategy. Both use the
+same Beta-Binomial model and the same Redis counters — only the score
+computation differs.
 
-- **Natural exploration:** An expert with 5/5 successes occasionally scores lower
-  than one with 50/55 — giving the weaker expert a chance to prove itself on
-  unfamiliar query types.
-- **Convergence:** As data accumulates, the Beta distribution narrows. After
-  ~100 observations, Thompson Sampling and Laplace produce nearly identical rankings.
-- **Zero migration:** Same Redis structure (`moe:perf:{model}:{category}` with
-  positive/negative/total fields). No schema changes.
+### Why the Posterior Mean is the Default
+
+- **Reproducibility:** identical request history produces identical routing
+  decisions, which simplifies debugging and audit trails.
+- **Convergence:** after ~100 observations, Thompson Sampling and the posterior
+  mean produce nearly identical rankings. Exploration is most valuable early
+  in deployment.
+- **Low-variance for critical paths:** routing decisions for medical, legal, and
+  precision-tool categories benefit from determinism over stochastic exploration.
 
 ### Configuration
 
 | Env var | Default | Effect |
 |---|---|---|
-| `THOMPSON_SAMPLING_ENABLED` | `true` | Set to `false` for instant rollback to Laplace |
-| `EXPERT_MIN_DATAPOINTS` | `5` | Below this threshold: return 0.5 (neutral) regardless of method |
+| `THOMPSON_SAMPLING_ENABLED` | `false` | Set to `true` to enable Beta-posterior sampling for exploration |
+| `EXPERT_MIN_DATAPOINTS` | `5` | Below this threshold: return 0.5 (neutral) regardless of mode |
 
 ### Monitoring
 
-Prometheus histogram `moe_thompson_sample` tracks sampled score distribution.
-Compare with the theoretical Laplace point estimates in Grafana to visualize
-exploration breadth over time.
+Prometheus histogram `moe_thompson_sample` tracks sampled score distribution
+when exploration mode is active. Compare with the deterministic Laplace
+estimates in Grafana to visualise exploration breadth over time.
 
 ---
 

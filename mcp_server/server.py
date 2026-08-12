@@ -2785,6 +2785,83 @@ def python_sandbox(code: str) -> str:
         )
 
 
+_ARC_COLOR_NAMES: dict[int, tuple[str, str]] = {
+    0: ("black",   "·"),
+    1: ("blue",    "B"),
+    2: ("red",     "R"),
+    3: ("green",   "G"),
+    4: ("yellow",  "Y"),
+    5: ("grey",    "Z"),
+    6: ("pink",    "P"),
+    7: ("orange",  "O"),
+    8: ("azure",   "A"),
+    9: ("maroon",  "M"),
+}
+
+
+def grid_repr(data: str, label: str = "") -> str:
+    """Render a 2-D integer grid as annotated ASCII art with a colour legend.
+
+    Designed for ARC-AGI grids (values 0–9) but works for any integer matrix.
+    Values 0–9 use the standard ARC colour palette; values outside that range
+    are shown as their decimal digit string.
+
+    data:  JSON-encoded 2-D list, e.g. '[[0,1,2],[3,0,1]]'
+    label: optional title printed above the grid (e.g. 'input' or 'output')
+
+    Returns a compact ASCII block suitable for injection into a model prompt.
+    """
+    import json as _json
+
+    try:
+        grid = _json.loads(data)
+    except _json.JSONDecodeError:
+        return f"[GRID_ERROR] Invalid JSON: {data[:120]}"
+
+    if not isinstance(grid, list) or not grid:
+        return "[GRID_ERROR] data must be a non-empty list of rows"
+
+    rows: list[list[int]] = []
+    for r, row in enumerate(grid):
+        if not isinstance(row, list):
+            return f"[GRID_ERROR] Row {r} is not a list"
+        rows.append([int(v) for v in row])
+
+    n_rows = len(rows)
+    n_cols = max((len(r) for r in rows), default=0)
+
+    # Determine symbol width (values outside 0-9 need more chars)
+    all_vals: set[int] = {v for row in rows for v in row}
+    sym_width = max((len(str(v)) if v not in _ARC_COLOR_NAMES else 1) for v in all_vals) if all_vals else 1
+
+    def sym(v: int) -> str:
+        if v in _ARC_COLOR_NAMES:
+            return _ARC_COLOR_NAMES[v][1]
+        return str(v)
+
+    col_labels = "  " + "  ".join(f"c{c:<{sym_width - 1}}" for c in range(n_cols))
+    lines: list[str] = []
+    if label:
+        lines.append(f"── {label} ({n_rows}×{n_cols}) ──")
+    else:
+        lines.append(f"Grid ({n_rows}×{n_cols}):")
+    lines.append(col_labels)
+    for r, row in enumerate(rows):
+        cells = "  ".join(f"{sym(v):>{sym_width}}" for v in row)
+        lines.append(f"r{r:<2} {cells}")
+
+    present = sorted(all_vals)
+    legend_parts: list[str] = []
+    for v in present:
+        if v in _ARC_COLOR_NAMES:
+            name, s = _ARC_COLOR_NAMES[v]
+            legend_parts.append(f"{s}={name}({v})")
+        else:
+            legend_parts.append(str(v))
+    lines.append("Legend: " + "  ".join(legend_parts))
+    return "\n".join(lines)
+
+
 def wikipedia_get_section(title: str = "", section: str = "", lang: str = "en", article: str = "") -> str:
     """Fetch a section of a Wikipedia article via the MediaWiki API.
 
@@ -4421,6 +4498,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "github_get_issue":      github_get_issue,
     "wikipedia_get_section": wikipedia_get_section,
     "python_sandbox":        python_sandbox,
+    "grid_repr":             grid_repr,
     # External data sources (added for adaptive deep research)
     "web_search_domain":       web_search_domain,
     "youtube_transcript":      youtube_transcript,
@@ -4497,6 +4575,7 @@ _TOOL_DESCRIPTIONS = {
     "github_get_issue":      "Fetch a GitHub issue (title, state, body, labels, comment count) via the public API",
     "wikipedia_get_section": "Fetch a specific section of a Wikipedia article as plain text (e.g. 'Discography', 'Filmography'). Use this whenever a question references a Wikipedia article.",
     "python_sandbox":        "Run a small Python snippet for exact numerical calculations: probability trees (use Fraction!), Markov chains, combinatorics. Use print() for output. NEVER write simulation/Monte Carlo code — always use exact Fraction arithmetic. Allowed modules: math, fractions, itertools, collections, decimal, statistics, random.",
+    "grid_repr":             "Render a 2-D integer grid as annotated ASCII art with a colour legend. Pass data as a JSON 2-D list string (e.g. '[[0,1,2],[3,0,1]]'). Values 0–9 use the ARC colour palette (0=black, 1=blue, 2=red, 3=green, 4=yellow, 5=grey, 6=pink, 7=orange, 8=azure, 9=maroon). Use this to visualise ARC-AGI grids or any integer matrix before reasoning about it.",
     # External data sources
     "web_search_domain":       "Domain-restricted web search via SearXNG (site:github.com, site:arxiv.org, site:wikipedia.org, etc.). Use when general search fails and you need data from a specific known website.",
     "youtube_transcript":      "Fetch captions/transcript of a YouTube video by URL or video ID. Use for questions about video content, interviews, documentaries, lectures.",
@@ -4567,8 +4646,9 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "duckduckgo_search": "search", "web_browser": "search",
     "wayback_fetch": "search", "crossref_lookup": "search",
     "openalex_search": "search",
-    # Code execution
+    # Code execution / local computation
     "python_sandbox": "execute",
+    "grid_repr":      "read",
     # Chess — chess_analyze_position calls the external Lichess cloud-eval API;
     # chess_legal_moves is local python-chess computation
     "chess_analyze_position": "search", "chess_legal_moves": "read",

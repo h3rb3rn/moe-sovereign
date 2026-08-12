@@ -714,6 +714,7 @@ from graph import (
     precision_slot_prepare_node,
     _route_quality_gate, response_commit_node,
     strategy_review_node,
+    hypothesis_verifier_node, _route_after_strategy_review,
 )
 
 async def _init_graph_rag() -> None:
@@ -1107,6 +1108,7 @@ builder.add_node("merger",             merger_node)
 builder.add_node("resolve_conflicts",  resolve_conflicts_node)
 builder.add_node("self_critique",      self_critique_node)
 builder.add_node("strategy_review",    strategy_review_node)
+builder.add_node("hypothesis_verifier", hypothesis_verifier_node)
 builder.add_node("critic",             critic_node)
 builder.add_node("quality_gate",       quality_gate_node)
 builder.add_node("response_commit",    response_commit_node)
@@ -1140,8 +1142,13 @@ builder.add_edge(
 builder.add_edge("precision_slots", "research_fallback")
 builder.add_edge("research_fallback", "thinking")
 builder.add_edge("thinking", "strategy_review")
-# strategy_review is a pass-through when STRATEGY_REVIEW_ENABLED is not set
-builder.add_edge("strategy_review", "merger")
+# strategy_review routes to hypothesis_verifier when an oracle is present,
+# otherwise passes directly to merger (no-oracle fast path).
+builder.add_conditional_edges(
+    "strategy_review", _route_after_strategy_review,
+    {"hypothesis_verifier": "hypothesis_verifier", "merger": "merger"},
+)
+builder.add_edge("hypothesis_verifier", "merger")
 builder.add_conditional_edges(
     "merger", _should_replan,
     {"planner": "planner", "critic": "resolve_conflicts", "self_critique": "self_critique"},
@@ -1236,6 +1243,13 @@ async def lifespan(app_: FastAPI):
         _seed_task_type_prototypes(),
         _init_enterprise_stack(),
     )
+    # Pre-warm the BGE embedding model so the first user request never hits a cold load.
+    # Fire-and-forget: failure is logged in prewarm_bge_model but never raises.
+    async def _prewarm_bge() -> None:
+        from services.dynamic_router import prewarm_bge_model
+        await prewarm_bge_model()
+    asyncio.create_task(_prewarm_bge())
+
     # Kafka Consumer as persistent background task
     consumer_task  = asyncio.create_task(_kafka_consumer_loop())
     gauge_task     = asyncio.create_task(_gauge_updater_loop())
@@ -1791,8 +1805,9 @@ async def _stream_native_llm(
                             except Exception:
                                 continue
         except Exception as _e:
-            logger.warning(f"Native LLM proxy error: {_e}")
-            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': f'[Error: {_e}]'}, 'finish_reason': 'stop'}]})}\n\n"
+            _err_msg = str(_e) or type(_e).__name__
+            logger.warning(f"Native LLM proxy error: {_err_msg}")
+            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': endpoint['model'], 'choices': [{'index': 0, 'delta': {'content': f'[Error: {_err_msg}]'}, 'finish_reason': 'stop'}]})}\n\n"
 
         # Usage + token speed (extended Ollama/Open-WebUI format)
         _t_end        = time.monotonic()
@@ -1977,7 +1992,9 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
                  "response_commit_key": "",
                  "response_commit_sinks": {},
                  "response_commit_errors": [],
-                 "strategy_feedback": ""},
+                 "strategy_feedback": "",
+                 "verification_oracle": [],
+                 "verification_result": {}},
                 config,
                 ),
                 timeout=max(

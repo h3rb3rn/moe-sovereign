@@ -828,7 +828,48 @@ async def planner_node(state_: AgentState):
         _advice_items = "\n".join(f"- {rule}" for rule in _advice_list)
         _advice_block = f"\n\n[DECLARATIVE CONSTRAINTS / RULES - you must follow these!]\n{_advice_items}\n"
 
-    prompt = f"""{_planner_role}{_context_toc_block}{_advice_block}{_agentic_context_block}
+    # Pick an LLM-expert category for prompt examples so the example never
+    # names a category absent from VALID CATEGORIES, which confuses the model.
+    _example_cat = next(
+        (c for c in expert_categories if c in {"technical_support", "general_assistant", "general"}),
+        expert_categories[0] if expert_categories else "general",
+    )
+
+    # For trivial (non-agentic) requests, use a compact prompt to avoid
+    # overwhelming the planner model with irrelevant instructions.
+    if _complexity == "trivial" and not _is_agentic_replan:
+        prompt = (
+            f"{_planner_role}"
+            f"{_context_toc_block}"
+            f"{_advice_block}"
+            f"\n\nIMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. "
+            f"No text, no explanations, no markdown.\n"
+            f"Each object MUST have \"task\" (string) and \"category\" (string).\n"
+            f"TASK BUDGET: exactly 1 task.\n\n"
+            f"VALID CATEGORIES FOR LLM EXPERTS: {expert_categories}\n"
+            f"NOTE: \"precision_tools\" is ALWAYS a valid category for any calculation "
+            f"or exact tool call — it is NOT listed above. "
+            f"MANDATORY for arithmetic, dates, units, subnet, conversions.\n\n"
+            f"PRECISION TOOLS:\n"
+            f"  - calculate: arithmetic and math\n"
+            f"  - date_diff: date calculations\n"
+            f"  - calendar_facts: weekday, ISO calendar facts\n"
+            f"  - unit_convert: unit conversions\n"
+            f"Format: {{\"task\": \"...\", \"category\": \"precision_tools\", "
+            f"\"mcp_tool\": \"<tool>\", \"mcp_args\": {{...}}}}\n\n"
+            f"EXAMPLE arithmetic:\n"
+            f"Request: \"What is 47+53?\"\n"
+            f"Correct: [{{\"task\": \"Calculate 47+53\", \"category\": \"precision_tools\", "
+            f"\"mcp_tool\": \"calculate\", \"mcp_args\": {{\"expression\": \"47+53\"}}}}]\n\n"
+            f"EXAMPLE general question:\n"
+            f"Request: \"What is Docker?\"\n"
+            f"Correct: [{{\"task\": \"Explain what Docker is and what it is used for\", "
+            f"\"category\": \"{_example_cat}\"}}]\n\n"
+            f"Request: {state_['input']}\n\n"
+            f"JSON array:"
+        )
+    else:
+        prompt = f"""{_planner_role}{_context_toc_block}{_advice_block}{_agentic_context_block}
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).
@@ -841,6 +882,7 @@ Combine compatible non-precision work when necessary, but never omit a
 separately requested outcome or remove/downgrade a required precision tool.
 
 VALID CATEGORIES FOR LLM EXPERTS: {expert_categories}
+NOTE: "precision_tools" is ALWAYS a valid category for any calculation or tool call — it is NOT an LLM expert and is NOT listed above. You MUST use it for arithmetic, dates, units, etc.
 
 DYNAMIC EXPERT — for highly specialised domains not covered by the categories above:
 Use "dynamic" when the task requires deep domain expertise in a field absent from the standard expert list
@@ -862,7 +904,7 @@ Use for: game rules · algorithm specifications · protocols/standards · anythi
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False)) if state_.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - calendar_facts: weekday and ISO calendar facts  - unit_convert: unit conversions"}
+{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False))}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
@@ -897,7 +939,12 @@ RULES:
   Example: {{"task": "...", "category": "code_reviewer", "metadata_filters": {{"expert_domain": "code_reviewer", "project": "frontend"}}}}
 {_build_skill_catalog()}
 {_quality_hint}{success_hint}{_few_shot_hint}
-EXAMPLE calculation:
+EXAMPLE arithmetic:
+Request: "What is 47+53?"
+Correct: [{{"task": "Calculate 47+53", "category": "precision_tools", "mcp_tool": "calculate", "mcp_args": {{"expression": "47+53"}}}}]
+WRONG:   [{{"task": "Berechne 47+53", "category": "math"}}]
+
+EXAMPLE subnet calculation:
 Request: "What subnet mask for 10.42.155.160/27 with 14 hosts?"
 Correct: [{{"task": "Subnet info for 10.42.155.160/27", "category": "precision_tools", "mcp_tool": "subnet_calc", "mcp_args": {{"cidr": "10.42.155.160/27"}}}}]
 WRONG:   [{{"task": "Calculate subnet mask", "category": "technical_support"}}]
@@ -913,7 +960,7 @@ WRONG: [{{"task": "Implement HTML5 base structure", "category": "code_reviewer"}
 
 EXAMPLE simple request:
 Request: "What is Docker?"
-Correct: [{{"task": "Explain what Docker is and what it is used for", "category": "technical_support"}}]
+Correct: [{{"task": "Explain what Docker is and what it is used for", "category": "{_example_cat}"}}]
 WRONG:   ["Docker", "Container", "Virtualization"]
 
 Request: {state_['input']}
@@ -1192,6 +1239,15 @@ JSON array:"""
         ),
     )
 
+    # Validate DAG using Kahn's algorithm
+    if plan and isinstance(plan, list):
+        dag_dict = {
+            t["id"]: [t["depends_on"]] if t.get("depends_on") else []
+            for t in plan if isinstance(t, dict) and t.get("id")
+        }
+        if not validate_dag_kahn(dag_dict):
+            logger.warning("planner_node: Generated plan contains cycles according to Kahn's algorithm")
+
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
         asyncio.create_task(state.redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))
@@ -1279,3 +1335,78 @@ def _inject_prior_results(task: dict, prior_outputs: dict[str, str]) -> dict:
             out[field] = {k: _sub(v) if isinstance(v, str) else v
                           for k, v in out[field].items()}
     return out
+
+def validate_dag_kahn(dag_dict: dict) -> bool:
+    """
+    Validates whether an execution plan represented as an adjacency dictionary
+    is a cycle-free Directed Acyclic Graph (DAG) using Kahn's Algorithm.
+    
+    Args:
+        dag_dict: Adjacency dict (e.g. {'node_a': ['node_b'], 'node_b': []})
+        
+    Returns:
+        True if valid (no cycles), False otherwise.
+    """
+    import collections
+    
+    in_degree = {u: 0 for u in dag_dict}
+    for u in dag_dict:
+        for v in dag_dict[u]:
+            if v not in in_degree:
+                in_degree[v] = 0
+            in_degree[v] += 1
+            
+    queue = collections.deque([u for u in in_degree if in_degree[u] == 0])
+    visited_count = 0
+    
+    while queue:
+        u = queue.popleft()
+        visited_count += 1
+        
+        for v in dag_dict.get(u, []):
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                queue.append(v)
+                
+    return visited_count == len(in_degree)
+
+def verify_cot_step_z3(step_context: str, deduction: str) -> dict:
+    """
+    Lightweight rule-based heuristic to check if a Chain-of-Thought
+    deduction logically fits the context.
+    
+    Args:
+        step_context: The context string.
+        deduction: The deduction string to check.
+        
+    Returns:
+        dict with 'is_valid', 'step', and 'diagnostic_error'
+    """
+    ctx_lower = step_context.lower()
+    ded_lower = deduction.lower()
+    
+    # Extract key terms from context (words with length > 4)
+    key_terms = [w.strip('.,!?') for w in ctx_lower.split() if len(w.strip('.,!?')) > 4]
+    
+    # Check if any key term is referenced
+    references_context = any(term in ded_lower for term in key_terms)
+    if not references_context and key_terms:
+        return {
+            'is_valid': False,
+            'step': deduction,
+            'diagnostic_error': 'Deduction does not reference context keywords.'
+        }
+        
+    # Check for simple negation contradictions
+    if "not" in ded_lower.split() and "not" not in ctx_lower.split():
+        return {
+            'is_valid': False,
+            'step': deduction,
+            'diagnostic_error': 'Contradiction: negation found.'
+        }
+                
+    return {
+        'is_valid': True,
+        'step': deduction,
+        'diagnostic_error': None
+    }

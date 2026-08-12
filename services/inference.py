@@ -1486,6 +1486,8 @@ def _planner_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict]
     opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
         opts["num_ctx"] = ctx
+    if state_ and (state_.get("pin_prefix_cache") or state_.get("template_prefix_locked")):
+        opts["keep_alive"] = -1  # Static Template KV-Locking (vLLM/Ollama Pinned Prefix Cache)
     if state_ and state_.get("enable_habe"):
         _inject_habe_prefix_embeddings(opts, state_)
     out["extra_body"] = {"options": opts}
@@ -1589,7 +1591,7 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     ]
     _refine_extra: dict = {}
     if token == "ollama":
-        _refine_num_ctx = int(JUDGE_NUM_CTX or 32768)
+        _refine_num_ctx = int(JUDGE_NUM_CTX or 262144)
         _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)

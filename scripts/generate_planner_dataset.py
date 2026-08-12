@@ -15,8 +15,16 @@ Teacher model: meta-llama/Meta-Llama-3.1-405B-Instruct  (Llama-3.1-405B, 10/10 q
 
 Generates (query, plan) training pairs that burn in the full MoE Sovereign
 workflow, routing rules, tool catalog, and decision patterns into the planner SLM.
-The training system prompt matches the inference prompt structure so the
-fine-tuned model generalises correctly at serving time.
+
+Taxonomy handling (revised 2026-08-11): the category list is VARIED per sample
+rather than fixed. The earlier assumption recorded here — "the training system
+prompt matches the inference prompt structure so the fine-tuned model
+generalises correctly at serving time" — was measured false: all 14 live expert
+templates define categories absent from the static list (1-5 each), including
+near-misses of canonical names (creative_writing/creative_writer,
+data_analysis/data_analyst). A model trained on one fixed list memorises it and
+competes with the orchestrator's runtime category block instead of following it.
+Varying the taxonomy teaches taxonomy-FOLLOWING; see sample_taxonomy().
 
 Guard routines (prevent GPU time waste on LUMI-G):
   CircuitBreaker   — suspends generation after N consecutive API failures
@@ -279,7 +287,7 @@ async def preflight_check(
 # This prompt is used verbatim as the "system" role message in every training pair.
 # It must remain in sync with the inference prompt structure in graph/planner.py.
 # When DEFAULT_PLANNER_ROLE or the tool catalog changes, update this constant too.
-PLANNER_SYSTEM_PROMPT = """\
+_PLANNER_PROMPT_TEMPLATE = """\
 You are the orchestrator of MoE Sovereign, a Mixture-of-Experts AI system.
 Decompose the user request into 1–4 subtasks. Each subtask is routed to a \
 specialist expert or tool.
@@ -307,21 +315,7 @@ already gathered.
 ──────────────────────────────────────────────────────────────────
 LLM EXPERT CATEGORIES
 ──────────────────────────────────────────────────────────────────
-"general"            General questions, explanations, summaries
-"technical_support"  Troubleshooting, installation, config, DevOps, networking
-                     (NOT for any arithmetic — use precision_tools!)
-"code_reviewer"      Code generation, review, debugging, refactoring
-"math"               Mathematical proofs, derivations, theoretical mathematics
-                     (NOT for arithmetic — use precision_tools!)
-"data_analyst"       Data analysis, statistics interpretation, ML model selection
-"science"            Physics, chemistry, biology, research methodology
-"creative_writer"    Stories, poems, creative content, worldbuilding
-"medical_consult"    Medical questions, symptoms, drugs (NOT diagnoses)
-"legal_advisor"      Legal interpretation — ALWAYS after legal_get_paragraph for §-queries
-"translation"        Text translation between languages
-"reasoning"          Logic puzzles, argumentation, deductive reasoning
-"vision"             Image/photo/diagram/PDF analysis — ONLY with [IMAGE INPUT present]
-"agentic_coder"      Multi-file software projects requiring iterative development
+__LLM_EXPERT_CATEGORIES__
 "dynamic"            On-demand specialist expert for niche domains NOT covered by the
                      categories above (e.g. building physics, geotechnics, GMP/pharma,
                      maritime law, forestry, control engineering, environmental law).
@@ -512,6 +506,133 @@ Request: "Erkläre hydraulischen Grundbruch und den Sicherheitsnachweis nach DIN
 ──────────────────────────────────────────────────────────────────
 """
 
+
+# ── Taxonomy variation ─────────────────────────────────────────────────────────
+# The planner must learn to FOLLOW the category list it is given, not to memorise
+# one fixed list. Measured against the 14 live expert templates on 2026-08-11,
+# every single one uses categories absent from a static taxonomy (1–5 per
+# template), and three are near-misses of canonical names — creative_writing vs.
+# creative_writer, data_analysis vs. data_analyst, web_researcher vs. research.
+# A model trained on one hardcoded list has ~260k samples pulling it toward the
+# wrong variant against a single in-context line telling it the right one; that
+# is exactly the regime where a fine-tune fights the runtime instruction instead
+# of helping it. Varying the taxonomy per sample teaches taxonomy-following and
+# makes future template changes a non-event instead of a retraining trigger.
+#
+# "dynamic", "research" and "precision_tools" are deliberately NOT varied: they
+# are structural, wired in code (expert_builder / MCP dispatch) and described by
+# the orchestrator's own runtime prompt scaffolding rather than by the template.
+
+_CATEGORY_COLUMN = 21  # description column in the rendered block
+
+_CANONICAL_LLM_CATEGORIES: dict[str, list[str]] = {
+    "general":           ["General questions, explanations, summaries"],
+    "technical_support": ["Troubleshooting, installation, config, DevOps, networking",
+                          "(NOT for any arithmetic — use precision_tools!)"],
+    "code_reviewer":     ["Code generation, review, debugging, refactoring"],
+    "math":              ["Mathematical proofs, derivations, theoretical mathematics",
+                          "(NOT for arithmetic — use precision_tools!)"],
+    "data_analyst":      ["Data analysis, statistics interpretation, ML model selection"],
+    "science":           ["Physics, chemistry, biology, research methodology"],
+    "creative_writer":   ["Stories, poems, creative content, worldbuilding"],
+    "medical_consult":   ["Medical questions, symptoms, drugs (NOT diagnoses)"],
+    "legal_advisor":     ["Legal interpretation — ALWAYS after legal_get_paragraph for §-queries"],
+    "translation":       ["Text translation between languages"],
+    "reasoning":         ["Logic puzzles, argumentation, deductive reasoning"],
+    "vision":            ["Image/photo/diagram/PDF analysis — ONLY with [IMAGE INPUT present]"],
+    "agentic_coder":     ["Multi-file software projects requiring iterative development"],
+}
+
+# Alternative spellings for the same role. The first entry of each list is a
+# name actually observed in a live template; the others are synthetic but
+# plausible, because two real renames alone would not teach generalisation.
+#
+# Deliberately NOT renamed: "code_reviewer" and "legal_advisor" are referenced
+# by name inside score_plan() (RESEARCH-BEFORE-CODE and the §-pattern rule).
+# Renaming them would silently disable those quality checks for exactly the
+# samples that exercise the new behaviour. "general" is the routing fallback and
+# is handled separately below.
+_CATEGORY_RENAMES: dict[str, list[str]] = {
+    "creative_writer":   ["creative_writing", "content_writer"],   # observed
+    "data_analyst":      ["data_analysis", "analytics"],           # observed
+    "technical_support": ["it_support", "helpdesk"],
+    "medical_consult":   ["medical_advisor"],
+    "translation":       ["translator"],
+    "science":           ["scientific_analysis"],
+}
+
+# Extra roles observed in live templates that no static taxonomy contains.
+_NOVEL_CATEGORIES: dict[str, list[str]] = {
+    "long_context":      ["Very long documents/transcripts requiring a large context window"],
+    "security_analysis": ["Security review, threat modelling, vulnerability assessment"],
+    "web_researcher":    ["Open web investigation and source synthesis"],
+    "knowledge_healing": ["Repairing and reconciling inconsistent stored knowledge"],
+    "tool_agent":        ["Multi-step tool orchestration on behalf of the user"],
+    "mail_classify":     ["Email triage, classification and routing"],
+    "skill_detector":    ["Detecting which capability or skill a request needs"],
+    "memory_recall":     ["Retrieving previously stored conversation or project memory"],
+    "devops_sre":        ["CI/CD, observability, incident response, infrastructure as code"],
+}
+
+STRUCTURAL_CATEGORIES = {"research", "precision_tools", "dynamic"}
+
+_MIN_LLM_CATEGORIES = 3      # smallest live template has 3 LLM experts
+_RENAME_PROBABILITY = 0.35
+_NOVEL_PROBABILITY  = 0.30
+_GENERAL_KEEP_PROBABILITY = 0.92  # 13 of 14 live templates expose "general"
+
+
+def _render_category_block(categories: dict[str, list[str]]) -> str:
+    """Render {name: [description lines]} in the prompt's aligned two-column form."""
+    lines: list[str] = []
+    for name, description in categories.items():
+        head, *rest = description
+        lines.append(f'"{name}"'.ljust(_CATEGORY_COLUMN) + head)
+        lines.extend(" " * _CATEGORY_COLUMN + line for line in rest)
+    return "\n".join(lines)
+
+
+def sample_taxonomy(rng: random.Random | None = None) -> tuple[str, set[str]]:
+    """Draw one plausible per-template taxonomy.
+
+    Returns (rendered category block, valid category names incl. structural ones).
+    Order is shuffled on purpose so the model cannot memorise positions either.
+    """
+    r = rng or random
+    pool: dict[str, list[str]] = dict(_CANONICAL_LLM_CATEGORIES)
+
+    for source, alternatives in _CATEGORY_RENAMES.items():
+        if source in pool and r.random() < _RENAME_PROBABILITY:
+            pool[r.choice(alternatives)] = pool.pop(source)
+
+    for name, description in _NOVEL_CATEGORIES.items():
+        if name not in pool and r.random() < _NOVEL_PROBABILITY:
+            pool[name] = description
+
+    names = list(pool)
+    r.shuffle(names)
+    keep = r.randint(min(_MIN_LLM_CATEGORIES, len(names)), len(names))
+    chosen = names[:keep]
+
+    # "general" is the routing fallback; live templates almost always expose it.
+    if "general" in pool and "general" not in chosen and r.random() < _GENERAL_KEEP_PROBABILITY:
+        chosen[-1] = "general"
+
+    selected = {name: pool[name] for name in chosen}
+    return _render_category_block(selected), set(chosen) | STRUCTURAL_CATEGORIES
+
+
+def render_system_prompt(category_block: str) -> str:
+    """Insert a taxonomy into the planner prompt template."""
+    return _PLANNER_PROMPT_TEMPLATE.replace("__LLM_EXPERT_CATEGORIES__", category_block)
+
+
+# Canonical rendering — the full static taxonomy. Used by probes, by the default
+# path and as the base for the five framing variants below.
+PLANNER_SYSTEM_PROMPT = render_system_prompt(
+    _render_category_block(_CANONICAL_LLM_CATEGORIES)
+)
+
 # ── System prompt variants ─────────────────────────────────────────────────────
 # Five semantically equivalent framings of the same planner role.
 # Rotating them across samples prevents the model from memorising the fixed
@@ -540,9 +661,37 @@ PLANNER_SYSTEM_PROMPT_VARIANTS: list[str] = [
 
 
 def _pick_system_prompt(rng: random.Random | None = None) -> str:
-    """Return a randomly selected system prompt variant."""
+    """Return a randomly selected system prompt variant (canonical taxonomy)."""
     r = rng or random
     return r.choice(PLANNER_SYSTEM_PROMPT_VARIANTS)
+
+
+# The preamble of each framing variant, i.e. everything before "MANDATORY:".
+# Kept separate so framing and taxonomy can be varied independently instead of
+# multiplying into a fixed cross-product of pre-rendered strings.
+_PROMPT_PREAMBLES: list[str] = [
+    variant[: variant.index("MANDATORY:")] for variant in PLANNER_SYSTEM_PROMPT_VARIANTS
+]
+
+
+def sample_planner_prompt(
+    rng: random.Random | None = None,
+    vary_taxonomy: bool = True,
+) -> tuple[str, set[str]]:
+    """Draw one (system prompt, valid categories) pair for a training sample.
+
+    Varies the framing AND the category taxonomy. The returned category set must
+    be handed to score_plan(), otherwise renamed/novel categories are scored as
+    unknown and every varied sample is discarded.
+    """
+    r = rng or random
+    if not vary_taxonomy:
+        return _pick_system_prompt(r), set(VALID_CATEGORIES)
+
+    block, valid = sample_taxonomy(r)
+    suffix = render_system_prompt(block)
+    suffix = suffix[suffix.index("MANDATORY:"):]
+    return r.choice(_PROMPT_PREAMBLES) + suffix, valid
 
 
 # ── Valid categories ────────────────────────────────────────────────────────────
@@ -976,14 +1125,24 @@ _IMPL_DOMAIN_RE = re.compile(
 )
 
 
-def score_plan(query: str, plan: object) -> tuple[int, list[str], bool]:
+def score_plan(
+    query: str,
+    plan: object,
+    valid_categories: set[str] | None = None,
+) -> tuple[int, list[str], bool]:
     """Return (score 0-7, issues, hard_reject).
 
     hard_reject=True means a critical routing rule was violated and the sample
     must be discarded regardless of total score.  Critical rules:
       - Arithmetic / subnet / hash queries routed to an LLM category (not precision_tools).
       - §-queries without the mandatory legal_get_paragraph + legal_advisor pair.
+
+    ``valid_categories`` is the taxonomy the teacher was actually shown for this
+    sample (see sample_taxonomy). It must be passed whenever the taxonomy was
+    varied — otherwise every renamed or novel category is scored as unknown and
+    the sample is rejected, which would silently undo the variation.
     """
+    allowed = valid_categories if valid_categories is not None else VALID_CATEGORIES
     issues: list[str] = []
     hard_reject = False
 
@@ -1005,7 +1164,7 @@ def score_plan(query: str, plan: object) -> tuple[int, list[str], bool]:
             all_ok = False
             issues.append("task missing or empty")
             break
-        if t.get("category") not in VALID_CATEGORIES:
+        if t.get("category") not in allowed:
             all_ok = False
             issues.append(f"unknown category: {t.get('category')!r}")
             break
@@ -1169,6 +1328,7 @@ async def process_query(
     query: str,
     min_score: int = 5,
     system_prompt: str | None = None,
+    valid_categories: set[str] | None = None,
 ) -> tuple[dict | None, bool]:
     """Generate and validate one (query → plan) pair.
 
@@ -1190,7 +1350,7 @@ async def process_query(
     if plan is None:
         return None, False  # LLM responded but output is not parseable JSON
 
-    score, issues, hard_reject = score_plan(query, plan)
+    score, issues, hard_reject = score_plan(query, plan, valid_categories)
     plan_str = json.dumps(plan, ensure_ascii=False)
     latency_s = round(time.monotonic() - t0, 2)
 
@@ -1376,6 +1536,13 @@ async def main_async() -> None:
     parser.add_argument(
         "--seed", type=int, default=42,
         help="Random seed for reproducibility"
+    )
+    parser.add_argument(
+        "--no-taxonomy-variation", action="store_true",
+        help="Keep the canonical category list in every sample. Only for "
+             "reproducing the pre-2026-08 dataset — a model trained this way "
+             "memorises one taxonomy and fights the orchestrator's runtime "
+             "category list (see sample_taxonomy docstring)."
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -1570,8 +1737,11 @@ async def main_async() -> None:
                 logger.warning("CircuitBreaker open — waiting %.0fs before retry …", wait)
                 await asyncio.sleep(max(wait, 1.0))
 
-            # Pick a random system prompt variant for this sample
-            chosen_prompt = _pick_system_prompt()
+            # Draw framing AND taxonomy for this sample. The category set must
+            # travel with the prompt into scoring — see sample_planner_prompt.
+            chosen_prompt, chosen_categories = sample_planner_prompt(
+                vary_taxonomy=not args.no_taxonomy_variation,
+            )
 
             async with sem:
                 if generated >= args.target or quality_monitor.emergency_stop:
@@ -1580,6 +1750,7 @@ async def main_async() -> None:
                     client, args.api_url, teacher, query,
                     min_score=args.min_score,
                     system_prompt=chosen_prompt,
+                    valid_categories=chosen_categories,
                 )
 
             # Feed circuit breaker
@@ -1628,7 +1799,11 @@ async def main_async() -> None:
                         correct_plan = json.loads(sample["plan_json"])
                         wrong_plan = _make_wrong_plan(sample["query"], correct_plan)
                         if wrong_plan is not None:
-                            neg_prompt = _pick_system_prompt()
+                            # Reuse THIS sample's prompt: the wrong plan is derived
+                            # from a plan produced under that sample's taxonomy, so
+                            # drawing a fresh variant would show the model a
+                            # correction against a category list it was never given.
+                            neg_prompt = sample.get("system_prompt") or _pick_system_prompt()
                             neg_s = to_negative_chat_sample(
                                 sample["query"], wrong_plan, sample["plan_json"], neg_prompt
                             )

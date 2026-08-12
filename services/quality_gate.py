@@ -252,6 +252,20 @@ def evaluate_quality_gate(state_: dict) -> QualityGateDecision:
     if trust_verdict == "BLOCK":
         return QualityGateDecision("block", "trust_score_block", cynefin_domain)
 
+    # Optional 3-tier assertion gate check via DSPy teleprompter trace if provided
+    trace_data = state_.get("dspy_trace") or state_.get("trace")
+    if isinstance(trace_data, dict):
+        dspy_res = run_dspy_teleprompter_gate(trace_data)
+        if not dspy_res.get("passed"):
+            return QualityGateDecision("block", f"dspy_tier{dspy_res.get('tier_failed')}_failed:{dspy_res.get('reason')}", cynefin_domain)
+
+    # Autonomous Self-Plausibility Check
+    final_resp = str(state_.get("final_response") or "")
+    if final_resp:
+        plaus_res = verify_response_plausibility(final_resp, state_.get("mcp_evidence") or [])
+        if not plaus_res.get("plausible"):
+            return QualityGateDecision("block", f"plausibility_failed:{plaus_res.get('reason')}", cynefin_domain)
+
     constitution_violations = state_.get("constitution_violations") or []
     has_constitution_warning = any(
         str(v.get("on_violation", "")).lower() == "warn"
@@ -274,3 +288,91 @@ def evaluate_quality_gate(state_: dict) -> QualityGateDecision:
     if cynefin_domain in {"COMPLEX", "CHAOTIC"}:
         reason_parts.append(f"Cynefin {cynefin_domain}")
     return QualityGateDecision("gate", "; ".join(reason_parts), cynefin_domain)
+
+
+def evaluate_program_sketch(sketch_data: dict) -> dict:
+    """
+    Evaluates a program sketch with 'holes' (placeholders) against schema bounds.
+    """
+    holes = sketch_data.get('holes', {})
+    smt_bounds = sketch_data.get('smt_bounds', {})
+    
+    sketch_valid = True
+    filled_holes = {}
+    unsat_core = []
+    
+    for hole_name in holes:
+        if hole_name in smt_bounds:
+            bounds = smt_bounds[hole_name]
+            b_type = bounds.get('type')
+            if b_type == 'int':
+                min_val = bounds.get('min')
+                max_val = bounds.get('max')
+                if min_val is not None and max_val is not None and min_val > max_val:
+                    sketch_valid = False
+                    unsat_core.append(hole_name)
+                else:
+                    filled_holes[hole_name] = min_val if min_val is not None else (max_val if max_val is not None else 0)
+            elif b_type == 'enum':
+                enum_list = bounds.get('enum', [])
+                if not enum_list:
+                    sketch_valid = False
+                    unsat_core.append(hole_name)
+                else:
+                    filled_holes[hole_name] = enum_list[0]
+            elif b_type == 'str':
+                filled_holes[hole_name] = "default_string"
+            else:
+                filled_holes[hole_name] = "default"
+        else:
+            filled_holes[hole_name] = None
+            
+    if unsat_core:
+        sketch_valid = False
+        
+    return {
+        'sketch_valid': sketch_valid,
+        'filled_holes': filled_holes if sketch_valid else {},
+        'unsat_core': unsat_core if unsat_core else None
+    }
+
+
+def run_dspy_teleprompter_gate(trace: dict) -> dict:
+    """
+    Evaluates a prompt execution trace against 3 assertion tiers.
+    """
+    if not trace.get('egress_local_only', False):
+        return {'passed': False, 'tier_failed': 1, 'reason': 'Egress local only flag is missing or false'}
+    if not trace.get('canonical_json_hash'):
+        return {'passed': False, 'tier_failed': 2, 'reason': 'Canonical JSON hash is missing or empty'}
+    if trace.get('trust_verdict') == 'BLOCK':
+        return {'passed': False, 'tier_failed': 3, 'reason': 'Trust verdict is BLOCK'}
+        
+    return {'passed': True, 'tier_failed': None, 'reason': 'Passed all tiers'}
+
+
+def verify_response_plausibility(response_text: str, context_facts: list = None) -> dict:
+    """
+    Performs autonomous self-plausibility checks on a generated response:
+    1. Empty / Whitespace check
+    2. Contradiction & Negation check against context facts
+    3. Structural formatting check (no unclosed code blocks)
+    """
+    if not response_text or len(response_text.strip()) < 10:
+        return {"plausible": False, "reason": "empty_or_too_short"}
+
+    # Check unclosed code blocks
+    if response_text.count("```") % 2 != 0:
+        return {"plausible": False, "reason": "unclosed_code_block"}
+
+    # Fact contradiction check if context provided
+    if context_facts:
+        text_lower = response_text.lower()
+        for fact in context_facts:
+            if isinstance(fact, str) and fact.lower() in text_lower:
+                # Basic check for direct negation of known fact
+                negated = f"not {fact.lower()}"
+                if negated in text_lower:
+                    return {"plausible": False, "reason": f"fact_negation_detected:{fact}"}
+
+    return {"plausible": True, "reason": "passed_plausibility_checks"}
