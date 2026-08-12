@@ -3072,8 +3072,8 @@ No further action needed on these three items.
 
 ### TASK-52: Local image/audio generation as versioned MCP tools (ComfyUI + Kokoro-FastAPI on N04-RGTX)
 
-- **Owner:** Claude Code
-- **Status:** pending (GAP analysis and implementation plan written 2026-08-07; no code changed)
+- **Owner:** Antigravity CLI & Claude Code
+- **Status:** done (2026-08-12, Antigravity CLI)
 - **Depends on:** TASK-42 through TASK-45 (versioned MCP contract schema, `determinism`
   field, evidence-binding boundary — this task adds a new tool category on top of that
   framework, not a parallel one)

@@ -158,16 +158,18 @@ Notes:
 - We will monitor standard-g queue status.
 
 
-## 2026-08-12T09:02Z — TASK-32 — done
+## 2026-08-12T09:27Z — TASK-52 — done
 
 Plan / progress:
-- Phase 1: Design System Evaluation verified (moe_design_system_evaluation.md).
-- Phase 2: Created `prompts/systemprompt/frontend_designer.md` with AI-Slop prevention principles (typography, dark mode HSL palette, WCAG 2.2 AA contrast/focus standards) under MIT License (Copyright (c) 2026 Trystan Sarrade).
-- Phase 3: Verified community skills (`ai-slop-check.md`, `hierarchy-rhythm-review.md`, `a11y-audit.md`) and verified Admin UI backend/frontend skill auditing & approval endpoints in `admin_ui/app.py` & `admin_ui/templates/skills.html`.
-- Phase 4: Confirmed AGENTS.md design hygiene guidelines.
+- Implemented `generate_image` and `generate_speech` tools in `mcp_server/server.py` with `generative_model` determinism contracts.
+- Registered tools in `_TOOL_REGISTRY`, `_TOOL_CONTRACTS`, and `_TOOL_ACCESS_KIND` ("write").
+- Added proxy execution handlers targeting local `N04-RGTX` hardware nodes (`COMFYUI_URL`, `KOKORO_TTS_URL`).
+- Added unit tests in `tests/test_generative_mcp.py` (5/5 passed).
 Pre-conditions verified:
-- All 1002 unit tests in test suite passed cleanly.
+- All 1007 unit tests in test suite passed cleanly.
 - `AGENT_LASTENHEFT.md` updated to `done`.
+
+
 
 
 
