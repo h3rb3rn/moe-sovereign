@@ -53,8 +53,9 @@ OUTPUT_DIR="${SCRATCH}/checkpoints/${TRAIN_RUN}"
 # ── Hyperparameters ──────────────────────────────────────────────────────────
 # DPO alignment uses a lower learning rate than SFT to preserve learned knowledge
 EPOCHS=3
-MICRO_BATCH=4
-GRAD_ACCUM=4
+# micro_batch=2 and --no-packing: proven stable in Job 2 (#21032430)
+MICRO_BATCH=2
+GRAD_ACCUM=8
 MAX_SEQ_LEN=4096
 LR="1e-5"
 LORA_R=16
@@ -156,6 +157,7 @@ singularity exec \
         --save-steps     "$SAVE_STEPS" \
         --hf-cache       "$HF_CACHE" \
         --val-split      0.005 \
+        --no-packing \
         --no-4bit
 
 DPO_EXIT=$?
