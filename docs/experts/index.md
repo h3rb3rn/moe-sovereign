@@ -1,6 +1,6 @@
 # Expert Overview
 
-*15 experts — updated: 2026-08-12 07:30*
+*16 experts — updated: 2026-08-12 09:30*
 
 | Expert | Description | Page |
 |--------|-------------|------|
@@ -8,6 +8,7 @@
 | **code_reviewer** | Senior SWE — OWASP / code quality | [code_reviewer.md](code_reviewer.md) |
 | **creative_writer** | Skilled author (multi-language) | [creative_writer.md](creative_writer.md) |
 | **data_analyst** | Data science / statistics | [data_analyst.md](data_analyst.md) |
+| **frontend_designer** | — | [frontend_designer.md](frontend_designer.md) |
 | **general** | Generalist expert for general requests | [general.md](general.md) |
 | **judge** | MoE orchestrator synthesizer | [judge.md](judge.md) |
 | **legal_advisor** | Legal advisor (German law) | [legal_advisor.md](legal_advisor.md) |

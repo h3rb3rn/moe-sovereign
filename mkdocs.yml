@@ -135,6 +135,7 @@ nav:
     - Data Flow: system/dataflow.md
     - Infrastructure: system/infrastructure.md
     - Hardware: system/hardware.md
+    - LUMI-G Training Paper: system/lumi_training_paper.md
     - Tool Stack:
       - system/toolstack/index.md
       - LangGraph: system/toolstack/langgraph.md
@@ -183,6 +184,7 @@ nav:
     - Claude Code Profile: guide/de/claude-code-profiles.md
     - GPU-Monitoring: deployment/de/gpu-monitoring.md
     - Import & Export: reference/de/import-export.md
+    - LUMI-G Trainingsbericht: system/de/lumi_training_paper.md
   - Changelog: changelog.md
   - Legal:
     - Privacy & Data Handling: PRIVACY.md
