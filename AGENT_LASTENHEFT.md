@@ -1331,10 +1331,8 @@ No further action needed on these three items.
 
 ### TASK-32: Integration / Evaluation des Claude Design System Prompts (AI-Slop-Prävention & a11y)
 
-- **Status:** partially_done (Phase 1 Evaluation done + korrigiert; Phase 2:
-  2 Skills importiert und auditiert, Admin-Freigabe offen; Phase 3-4
-  ausstehend)
-- **Owner:** Claude Code (Korrektur + Phase 2, 2026-07-05), ursprünglich Antigravity
+- **Status:** done (2026-08-12, Antigravity CLI)
+- **Owner:** Antigravity CLI & Claude Code
 - **Depends on:** none
 - **Context:** MoE-Sovereign generiert über Coder-Experten und UI-Skills Web-Interfaces. Zudem besitzt es eigene Web-UIs. Um generischen "AI-Slop" (typische KI-Layoutmuster, unharmonische Farbverläufe, unpassende Fonts) zu vermeiden und Barrierefreiheit (a11y/WCAG) von Anfang an sicherzustellen, soll das Konzept aus dem Projekt [claude-design-system-prompt](https://github.com/Trystan-SA/claude-design-system-prompt) integriert werden. **Lizenz-Konformität:** Da das Quellprojekt unter der MIT-Lizenz steht, müssen bei der Übernahme der Prompts und Skills die ursprünglichen Lizenz- und Copyright-Hinweise (Trystan Sarrade) beibehalten und in den Zieldateien dokumentiert werden.
 - **Instructions:**
