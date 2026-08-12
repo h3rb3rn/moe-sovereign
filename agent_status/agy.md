@@ -157,3 +157,15 @@ Notes:
 - Chained jobs: none (the dataset is already merged, so we submitted the SFT script directly via train_judge_lora_large.sh).
 - We will monitor standard-g queue status.
 
+
+## 2026-08-12T08:42Z — TASK-34 — in_progress
+
+Plan / progress:
+- Phase 1: Enhance Vibe-Coding API compatibility (Cline, Roo-Code, Cursor) in `routes/anthropic_compat.py` & `routes/ollama_compat.py`.
+- Phase 2: Standardize Vibe-Coding doctrines (TDD enforcement, Search & Replace diff blocks) in `prompts/systemprompt/`.
+- Phase 3: Audit & expand `mcp-precision` tool registry for coding clients.
+Pre-conditions verified:
+- `AGENT_LASTENHEFT.md` updated to `in_progress` (Owner: Antigravity CLI).
+- Existing unit tests for router and API endpoints pass.
+
+
