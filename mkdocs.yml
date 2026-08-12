@@ -185,7 +185,6 @@ nav:
     - GPU-Monitoring: deployment/de/gpu-monitoring.md
     - Import & Export: reference/de/import-export.md
     - LUMI-G Trainingsbericht: system/de/lumi_training_paper.md
-  - Publications: publications.md
   - Changelog: changelog.md
   - Legal:
     - Privacy & Data Handling: PRIVACY.md
