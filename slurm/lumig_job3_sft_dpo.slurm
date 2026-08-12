@@ -44,10 +44,9 @@ HF_TOKEN="$(cat ~/.cache/huggingface/token 2>/dev/null || echo '')"
 
 # ── Model & Training Config ─────────────────────────────────────────────────
 # Use the distilled student checkpoint from Job 2 as base model
-# Changed: model-id points to the merged/final adapter output of the distillation job
-MODEL_ID="${SCRATCH}/checkpoints/moe_3b_distilled"
+MODEL_ID="${SCRATCH}/checkpoints/moe_qwen35_4b_distilled"
 DATASET="${SCRATCH}/datasets/moe_rule_based_rl_dpo.jsonl"
-TRAIN_RUN="moe_3b_rl_dpo_aligned"
+TRAIN_RUN="moe_qwen35_4b_dpo_aligned"
 OUTPUT_DIR="${SCRATCH}/checkpoints/${TRAIN_RUN}"
 
 # ── Hyperparameters ──────────────────────────────────────────────────────────
@@ -121,12 +120,15 @@ export OMP_NUM_THREADS=7
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export TOKENIZERS_PARALLELISM=false
+export PYTHONUSERBASE="${SCRATCH}/.user_site"
+mkdir -p "$PYTHONUSERBASE"
 
 # ── DPO Alignment starten ───────────────────────────────────────────────────
 echo "[$(date +%H:%M:%S)] Starting DPO alignment (run: $TRAIN_RUN) ..."
 
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
+    --env PYTHONUSERBASE="$PYTHONUSERBASE" \
     --env HF_HOME="$HF_CACHE" \
     --env HUGGING_FACE_HUB_TOKEN="$HF_TOKEN" \
     --env ROCR_VISIBLE_DEVICES="$ROCR_VISIBLE_DEVICES" \
