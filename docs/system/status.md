@@ -3,7 +3,7 @@
 !!! info "Auto-generated"
     This page is updated every 15 minutes by the `moe-docs-sync` service.
 
-*Last updated: **2026-08-12 09:30***
+*Last updated: **2026-08-12 12:16***
 
 ## Metrics
 
@@ -29,7 +29,6 @@
 | moe-dozzle | running | 9999→8080/tcp |
 | moe-embed | running | — |
 | moe-grafana | running | 3001→3000/tcp |
-| moe-jupyterlab | running | 8899→8888/tcp |
 | moe-kafka | running | 9092→9092/tcp |
 | moe-maintenance | running | — |
 | moe-prometheus | running | 9090→9090/tcp |

@@ -11,8 +11,8 @@
 # =============================================================================
 set -euo pipefail
 
-DEV_DIR="/opt/moe-sovereign"
-PUB_DIR="/opt/moe-sovereign"
+DEV_DIR="/opt/deployment/moe-sovereign/moe-infra"
+PUB_DIR="/opt/deployment/Github/moe-sovereign"
 DRY_RUN=false
 
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -92,9 +92,8 @@ fi
 echo "[2/4] Sanitizing hardcoded paths..."
 
 SANITIZE_PATTERNS=(
-  "/opt/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
-  "/opt/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
-  "/opt/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
+  "/opt/deployment/moe-sovereign/moe-infra|/opt/moe-sovereign|*.py,*.sh,*.service"
+  "/opt/deployment/Github/moe-sovereign|/opt/moe-sovereign|*.py,*.sh,*.service"
 )
 
 if ! $DRY_RUN; then
