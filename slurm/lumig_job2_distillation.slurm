@@ -105,9 +105,11 @@ fi
 
 # ── Model Cache ──────────────────────────────────────────────────────────────
 # Resolve student model to local cached path (avoids download inside container)
-MODEL_CACHE_DIR="$HF_CACHE/models--${MODEL_ID//\//-}"
+# HuggingFace Hub replaces "/" with "--" in cache directory names
+HF_CACHE_NAME="$(echo "$MODEL_ID" | sed 's|/|--|g')"
+MODEL_CACHE_DIR="$HF_CACHE/models--${HF_CACHE_NAME}"
 if [ -d "$MODEL_CACHE_DIR/snapshots" ]; then
-    LOCAL_MODEL="$(ls -d $MODEL_CACHE_DIR/snapshots/*/ 2>/dev/null | head -1)"
+    LOCAL_MODEL="$(ls -d ${MODEL_CACHE_DIR}/snapshots/*/ 2>/dev/null | head -1)"
     LOCAL_MODEL="${LOCAL_MODEL%/}"
     echo "Using cached student model: $LOCAL_MODEL"
 else
@@ -125,8 +127,13 @@ p = snapshot_download('$MODEL_ID', token=token or None,
                       cache_dir='$HF_CACHE', ignore_patterns=['*.pt'])
 print(f'Downloaded in {(time.time()-t0)/60:.1f} min: {p}')
 "
-    LOCAL_MODEL="$(ls -d $MODEL_CACHE_DIR/snapshots/*/ 2>/dev/null | head -1)"
+    LOCAL_MODEL="$(ls -d ${MODEL_CACHE_DIR}/snapshots/*/ 2>/dev/null | head -1)"
     LOCAL_MODEL="${LOCAL_MODEL%/}"
+fi
+# Fallback: if cache resolution failed, use MODEL_ID directly (container will download)
+if [ -z "$LOCAL_MODEL" ]; then
+    echo "WARNING: Could not resolve local model path. Using MODEL_ID directly: $MODEL_ID"
+    LOCAL_MODEL="$MODEL_ID"
 fi
 echo "Model path: $LOCAL_MODEL"
 
