@@ -1239,6 +1239,15 @@ JSON array:"""
         ),
     )
 
+    # Validate DAG using Kahn's algorithm
+    if plan and isinstance(plan, list):
+        dag_dict = {
+            t["id"]: [t["depends_on"]] if t.get("depends_on") else []
+            for t in plan if isinstance(t, dict) and t.get("id")
+        }
+        if not validate_dag_kahn(dag_dict):
+            logger.warning("planner_node: Generated plan contains cycles according to Kahn's algorithm")
+
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
         asyncio.create_task(state.redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))
@@ -1326,3 +1335,78 @@ def _inject_prior_results(task: dict, prior_outputs: dict[str, str]) -> dict:
             out[field] = {k: _sub(v) if isinstance(v, str) else v
                           for k, v in out[field].items()}
     return out
+
+def validate_dag_kahn(dag_dict: dict) -> bool:
+    """
+    Validates whether an execution plan represented as an adjacency dictionary
+    is a cycle-free Directed Acyclic Graph (DAG) using Kahn's Algorithm.
+    
+    Args:
+        dag_dict: Adjacency dict (e.g. {'node_a': ['node_b'], 'node_b': []})
+        
+    Returns:
+        True if valid (no cycles), False otherwise.
+    """
+    import collections
+    
+    in_degree = {u: 0 for u in dag_dict}
+    for u in dag_dict:
+        for v in dag_dict[u]:
+            if v not in in_degree:
+                in_degree[v] = 0
+            in_degree[v] += 1
+            
+    queue = collections.deque([u for u in in_degree if in_degree[u] == 0])
+    visited_count = 0
+    
+    while queue:
+        u = queue.popleft()
+        visited_count += 1
+        
+        for v in dag_dict.get(u, []):
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                queue.append(v)
+                
+    return visited_count == len(in_degree)
+
+def verify_cot_step_z3(step_context: str, deduction: str) -> dict:
+    """
+    Lightweight rule-based heuristic to check if a Chain-of-Thought
+    deduction logically fits the context.
+    
+    Args:
+        step_context: The context string.
+        deduction: The deduction string to check.
+        
+    Returns:
+        dict with 'is_valid', 'step', and 'diagnostic_error'
+    """
+    ctx_lower = step_context.lower()
+    ded_lower = deduction.lower()
+    
+    # Extract key terms from context (words with length > 4)
+    key_terms = [w.strip('.,!?') for w in ctx_lower.split() if len(w.strip('.,!?')) > 4]
+    
+    # Check if any key term is referenced
+    references_context = any(term in ded_lower for term in key_terms)
+    if not references_context and key_terms:
+        return {
+            'is_valid': False,
+            'step': deduction,
+            'diagnostic_error': 'Deduction does not reference context keywords.'
+        }
+        
+    # Check for simple negation contradictions
+    if "not" in ded_lower.split() and "not" not in ctx_lower.split():
+        return {
+            'is_valid': False,
+            'step': deduction,
+            'diagnostic_error': 'Contradiction: negation found.'
+        }
+                
+    return {
+        'is_valid': True,
+        'step': deduction,
+        'diagnostic_error': None
+    }

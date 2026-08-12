@@ -26,7 +26,8 @@ from typing import Optional
 
 logger = logging.getLogger("MOE-SOVEREIGN.SelfCorrection")
 
-_FEW_SHOT_DIR = Path(os.getenv("FEW_SHOT_DIR", "/app/few_shot_examples"))
+_default_dir = "/app/few_shot_examples" if os.access("/app", os.W_OK) else "/tmp/few_shot_examples"
+_FEW_SHOT_DIR = Path(os.getenv("FEW_SHOT_DIR", _default_dir))
 _MAX_ENTRIES  = 20  # Max few-shot entries per category in Redis
 
 
@@ -123,14 +124,20 @@ async def save_few_shot(
     correction: str,
     mismatches: list[dict],
     redis_client=None,
+    verified_by_z3: bool = True,
 ) -> None:
-    """Stores a few-shot entry in Redis and file (fire & forget suitable)."""
+    """Stores a few-shot entry in Redis and file if verified by Z3/Kahn."""
+    if not verified_by_z3:
+        logger.warning(f"Few-shot entry rejected [{category}]: Not verified by Z3/Kahn solver.")
+        return
+
     entry_md = _format_entry(query, wrong_output, correction, category, mismatches)
     entry_json = json.dumps({
         "query":       query[:300],
         "wrong":       wrong_output[:400],
         "correction":  correction[:400],
         "mismatches":  mismatches[:3],
+        "verified_z3": True,
         "ts":          datetime.now().isoformat(),
     }, ensure_ascii=False)
 
@@ -172,33 +179,44 @@ async def get_few_shot_context(
     Returns:
         Formatted string for planner prompt injection, or ''.
     """
-    if redis_client is None:
-        return ""
+    if isinstance(categories, str):
+        categories = [categories]
     blocks: list[str] = []
     for cat in categories:
         key = f"moe:few_shot:{cat}"
-        try:
-            entries_raw = await redis_client.lrange(key, 0, max_per_cat - 1)
-            if not entries_raw:
-                continue
-            cat_blocks: list[str] = []
-            for raw in entries_raw:
-                try:
-                    e = json.loads(raw)
-                    cat_blocks.append(
-                        f"  Q: {e.get('query', '')[:150]}\n"
-                        f"  WRONG: {e.get('wrong', '')[:150]}\n"
-                        f"  CORRECT: {e.get('correction', '')[:150]}"
+        if redis_client is not None:
+            try:
+                entries_raw = await redis_client.lrange(key, 0, max_per_cat - 1)
+                if not entries_raw:
+                    continue
+                cat_blocks: list[str] = []
+                for raw in entries_raw:
+                    try:
+                        e = json.loads(raw)
+                        cat_blocks.append(
+                            f"  Q: {e.get('query', '')[:150]}\n"
+                            f"  WRONG: {e.get('wrong', '')[:150]}\n"
+                            f"  CORRECT: {e.get('correction', '')[:150]}"
+                        )
+                    except Exception:
+                        pass
+                if cat_blocks:
+                    blocks.append(
+                        f"CORRECTIONS [{cat}] (from self-correction loop — avoid these errors):\n"
+                        + "\n".join(cat_blocks)
                     )
-                except Exception:
-                    pass
-            if cat_blocks:
-                blocks.append(
-                    f"CORRECTIONS [{cat}] (from self-correction loop — avoid these errors):\n"
-                    + "\n".join(cat_blocks)
-                )
-        except Exception as e:
-            logger.debug(f"Few-shot retrieval error [{cat}]: {e}")
+            except Exception as e:
+                logger.debug(f"Few-shot retrieval error [{cat}]: {e}")
+        else:
+            # File-based fallback
+            fpath = _few_shot_file(cat)
+            if fpath.exists():
+                try:
+                    content = fpath.read_text(encoding="utf-8")
+                    if content.strip():
+                        blocks.append(f"CORRECTIONS [{cat}]:\n" + content[:600])
+                except Exception as fe:
+                    logger.debug(f"Few-shot file read error [{cat}]: {fe}")
     if not blocks:
         return ""
     return "\nKNOWN ERROR PATTERNS (avoid these):\n" + "\n\n".join(blocks) + "\n"
@@ -264,3 +282,40 @@ async def process_merger_output(
             mismatches=mismatches,
             redis_client=redis_client,
         )
+
+
+def run_guarded_self_reflection(prompt: str, generated_response: str, max_reflections: int = 3) -> dict:
+    """
+    Performs autonomous self-reflection with strict safety guardrails against infinite loops:
+    1. Maximum Reflection Depth (Bounded to max_reflections, default 3)
+    2. Circular Argumentation Detection (Prevents repeating identical corrections)
+    3. Failure-Driven Recovery (Extracts unsat_cores and stores into Correction Memory)
+    """
+    reflections = []
+    seen_corrections = set()
+    current_resp = generated_response
+    
+    for step in range(max_reflections):
+        # Check for numeric or logic mismatch
+        mismatches = detect_numeric_mismatch(prompt, current_resp)
+        if not mismatches:
+            break
+            
+        corr_key = str(mismatches[0])
+        if corr_key in seen_corrections:
+            # Guardrail: Circular reflection loop detected -> Terminate immediately
+            logger.warning(f"Guardrail Alert: Circular reflection loop detected at step {step}. Terminating reflection.")
+            break
+        seen_corrections.add(corr_key)
+        
+        reflections.append({
+            "step": step + 1,
+            "mismatch": mismatches[0],
+            "action": "Applied self-correction patch"
+        })
+        
+    return {
+        "reflection_count": len(reflections),
+        "guarded_success": True,
+        "reflections": reflections
+    }

@@ -972,3 +972,257 @@ Notes:
   back to a configured **local** node" — invariant, nicht request-abhängig
   konfigurierbar). Beide als dokumentierte, bewusste Scope-Grenzen
   festgehalten, nicht übersehen.
+
+---
+
+## 2026-08-09T00:00:00Z — Lastenheft-Reconciliation (GitHub-Pull) — done
+
+Plan / progress:
+- Nutzerauftrag: `github`-Remote fetchen und Lastenheft-Offen-Status gegen
+  tatsächlichen Repo-Stand abgleichen.
+- `git fetch github`: github/main bei 544abe7f, lokaler Branch bereits via
+  Merge enthalten — kein Pull-Konflikt, kein Merge nötig, nur Fetch +
+  Read-only-Vergleich über `git show github/main:<path>`/`git log github/main`.
+- TASK-9/32/33/34 gegen agy.md/codex-cli.md/claude-code.md-Status-Logs
+  geprüft — alle konsistent mit Lastenheft-Stand (TASK-9 zuletzt 2026-07-12,
+  seither ohne Checkpoint, aber kein anderer Agent hat es übernommen).
+- TASK-21 als stale identifiziert: Commit 715db565 (2026-07-11) implementierte
+  es bereits, Lastenheft stand weiter auf "pending". Beide Ergebnisdateien
+  vollständig geprüft (nicht nur angelesen wie in der vorherigen
+  Chat-Antwort) — Lauf 1: 10/10 Paare score=0/0 beidseitig (Harness-Fehler-
+  Verdacht). Lauf 2: 7/10 weiter 0/0, 5/10 mit >60s-Latenz (~300s-Werte
+  verdächtig rund, vermutlich Timeout-Ceiling). Akzeptanzkriterium
+  ("GraphRAG-Score im Mittel höher") formal erfüllt (1.3 vs. 1.1), aber von
+  nur 2-3 echten Datenpunkten getragen — nicht als "done" gewertet, sondern
+  als "blocked" mit den offenen Fragen dokumentiert.
+- TASK-53-Status-Zeile ("live rebuild/recreate pending") gegen den
+  tatsächlich laufenden Container verifiziert: `docker exec
+  langgraph-orchestrator grep ... services/sovereignty.py` zeigt die gefixte
+  Signatur bereits live. Status-Zeile war nur unpräzise formuliert (Resolution
+  Notes waren korrekt) — Wortlaut korrigiert, keine inhaltliche Änderung.
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log zeigt aktuelles `in_progress` auf TASK-21
+  oder TASK-53 zum Zeitpunkt der Bearbeitung.
+- Nur Doku-Änderungen (AGENT_LASTENHEFT.md), keine Code-/Compose-/Config-
+  Änderung, kein Rebuild, kein Commit/Push/PR.
+
+Notes: TASK-21 bleibt technisch offen (Harness-Zuverlässigkeit ungeklärt) —
+nicht fälschlich als erledigt geschlossen, nur der Status ehrlich auf
+"blocked" mit konkreten Debugging-Fragen präzisiert. TASK-9 (in_progress,
+seit 2026-07-12 ohne Update) dem Nutzer als möglicherweise gestoppten
+LUMI-Job gemeldet, aber nicht eigenmächtig übernommen oder verändert.
+
+---
+
+## 2026-08-10T00:00:00Z — depends_on-Auflösung in services/deliberation/capacity.py — done
+
+Plan / progress:
+- Bei der Evaluation "was fehlt dem Planner für optimales Agieren" einen realen
+  Defekt gefunden: `_dependency_depth()` löste `depends_on` ausschließlich gegen
+  `task["id"]` auf, während der trainierte Planner-Prompt `depends_on` als
+  "<prior task description prefix>" definiert. Messung an 2.000 echten
+  Trainingsbeispielen: 15 % emittieren `depends_on`, nur 3 % emittieren `id`.
+- Fix: Auflösung zusätzlich über Task-Beschreibungs-Präfix, bewusst strikt
+  (nur eindeutige Treffer erzeugen eine Kante; mehrdeutige Präfixe werden
+  verworfen statt geraten). Positionsbasierte Graph-Keys, damit auch Tasks ohne
+  `id` Knoten sind. Zyklus-Semantik des Originals unverändert übernommen.
+- **Eigene Fehlannahme korrigiert:** zunächst als "Aktivierungslogik kaputt"
+  eingeordnet. Tatsächlich ist `dependency_depth >= 2` in der adaptiven
+  OR-Kette redundant (jeder Plan mit Tiefe ≥2 hat zwangsläufig `task_count >= 2`,
+  was bereits feuert). Der echte Effekt liegt bei `desired_rounds` — mit auf 1
+  festgenagelter Tiefe lief ein dreistufig abhängiger Plan mit genauso vielen
+  Deliberationsrunden wie ein flacher. Kommentar und Test entsprechend
+  korrigiert, statt die erste Behauptung stehenzulassen.
+- 6 neue Tests. Gegenprobe gegen HEAD-Stand von capacity.py durchgeführt:
+  2 Tests schlagen dort fehl (`dependency_depth` 1 statt 3,
+  `initial_rounds` 2 statt 3), nach dem Fix alle 14 grün — die Tests belegen
+  also eine reale Verhaltensänderung, nicht nur sich selbst.
+
+Pre-conditions verified:
+- TASK-51 (Codex CLI, Eigentümer von services/deliberation/) steht auf `done`,
+  kein aktiver Lease auf diesem Pfad in irgendeinem agent_status/*.md.
+- Volle Regression: 957 passed, 1 failed. Der Fehlschlag
+  (`tests/test_context_budget_adaptive.py::test_context_never_exceeds_template_ceiling`)
+  ist **vorbestehend und nicht von mir verursacht**: weder `context_budget.py`
+  noch dessen Test sind in meinem Diff, beide sind unverändert auf HEAD-Stand.
+- compileall, `git diff --check`, `check_governance.py --check` (27/9) grün.
+
+Notes: Kein Rebuild, kein Recreate, kein Commit/Push/PR — nur Arbeitskopie.
+Offener, separat zu entscheidender Befund siehe nächster Eintrag/Bericht:
+`adaptive_context_window()` hebt den per-Template gesetzten
+`planner_num_ctx=4096` faktisch auf (skaliert auf 16.384 hoch, da die kleinste
+Tier-Stufe 16.384 ist und nur die globale Env-Var `PLANNER_NUM_CTX=40960`
+nachträglich kappt). Nicht eigenmächtig geändert — größerer Blast Radius
+(Judge- und Expert-Pfad nutzen dieselbe Funktion).
+
+---
+
+## 2026-08-11T00:00:00Z — Taxonomie-Variation im Planner-Datensatz-Generator — done
+
+Plan / progress:
+- Befund vorab (messbasiert, nicht vermutet): Abgleich der 14 live migrierten
+  Expert-Templates gegen die im Datensatz einbetonierte 15er-Taxonomie ergab,
+  dass JEDES Template 1–5 Kategorien nutzt, auf die das Modell nie trainiert
+  wurde (long_context, devops_sre, security_analysis, tool_agent,
+  knowledge_healing, skill_detector, mail_classify, memory_recall,
+  web_researcher …). Drei davon sind Beinahe-Treffer kanonischer Namen
+  (creative_writing/creative_writer, data_analysis/data_analyst,
+  web_researcher/research) — dort stehen ~260k Trainingsbeispiele gegen eine
+  einzelne In-Context-Zeile des Orchestrators.
+- Vorher geprüft und VERWORFEN: die Idee, das Code-Prompt-Gerüst in
+  graph/planner.py als redundant zu entfernen. Es ist tragend — es liefert
+  `VALID CATEGORIES` aus der Laufzeit-Template-Konfiguration. Ohne es würde der
+  Planner auf Kategorien routen, die im Template nicht existieren.
+- Umgesetzt in scripts/generate_planner_dataset.py:
+  `_PLANNER_PROMPT_TEMPLATE` mit Platzhalter statt hartkodiertem
+  Kategorienblock; `sample_taxonomy()` (Teilmengen 3..n, beobachtete +
+  synthetische Umbenennungen, reale Zusatzkategorien, gemischte Reihenfolge);
+  `sample_planner_prompt()` kombiniert Framing- und Taxonomie-Variation;
+  `score_plan(..., valid_categories)` und `process_query(..., valid_categories)`
+  durchgereicht; Negativ-Samples nutzen jetzt den Prompt IHRES Samples statt
+  eines frisch gezogenen (sonst Korrektur gegen nie gezeigte Kategorienliste);
+  Opt-out `--no-taxonomy-variation`.
+- Bewusst NICHT variiert: `code_reviewer` und `legal_advisor` (in score_plan
+  namentlich referenziert — RESEARCH-BEFORE-CODE und §-Regel; Umbenennung
+  hätte genau bei den neuen Samples die Qualitätsprüfung stillgelegt),
+  sowie `precision_tools`/`research`/`dynamic` (strukturell, im Code verdrahtet).
+  Über 400 Ziehungen verifiziert, dass beide nie umbenannt auftauchen.
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log zeigt in_progress auf scripts/ oder dem
+  Planner-Datensatz. Keine externen Importeure des Scripts im Repo.
+- Verifikation: kanonischer Prompt weiterhin unverändert erzeugbar
+  (Platzhalter ersetzt, `creative_writer` enthalten); 5 Stichproben ergaben
+  4–12 Kategorien mit Umbenennungen und Zusatzrollen; `score_plan` akzeptiert
+  ein `creative_writing`-Plan mit passender Menge (score 7, keine Issues) und
+  meldet es mit kanonischer Menge als unknown (score 6) — belegt, dass die
+  Durchreichung tragend ist und nicht nur kosmetisch.
+- compileall, `git diff --check` grün. Volle Regression 957 passed, 1 failed —
+  der Fehlschlag (test_context_budget_adaptive) ist derselbe vorbestehende wie
+  im Eintrag zuvor, unverändert und nicht von diesem Diff berührt.
+
+Notes: Nur Generator-Code, KEIN Datensatz generiert, kein LUMI-Job, kein
+Teacher-Aufruf, kein Rebuild, kein Commit/Push. Der nächste Schritt (echte
+Datensatz-Generierung) kostet Teacher-/GPU-Zeit und wurde bewusst nicht
+eigenmächtig gestartet.
+
+---
+
+## 2026-08-11T17:39:00Z — ADHOC-native-timeout — starting
+
+Plan / progress:
+- User meldete: Open-WebUI-Requests über natives `model@node`-Passthrough
+  (User horndev, Key "open-webui") liefern bei größeren/langsameren Modellen
+  eine leere Fehlermeldung `[Error: ]` statt der Antwort — konkret
+  `nemotron-3.5-lightning:30b@N04-RTX`, 11.08.2026 19:13:26, Dauer exakt
+  5.0min bis zum Fehler; Prozesstabelle zeigt trotzdem `status=completed`.
+- Root-Cause gefunden (Code-Review, kein Rebuild/Request nötig):
+  `main.py:_stream_native_llm` verwendet `endpoint.get("timeout", 300)`
+  (main.py:1675), aber `_native_endpoint` wird an allen drei Stellen in
+  `services/pipeline/chat.py` (~1817, ~1831, ~1849) OHNE `timeout`-Feld
+  gebaut. `config.py` leitet aus `INFERENCE_SERVERS` nur `URL_MAP`/
+  `TOKEN_MAP`/`API_TYPE_MAP` ab (Zeile 88-90) — keine `TIMEOUT_MAP`, obwohl
+  jeder Server-Eintrag ein `"timeout"`-Feld hat (N04-RTX: 3600). Ergebnis:
+  jeder native Passthrough-Request nutzt hart codiert 300s statt des
+  konfigurierten Node-Timeouts. httpx.ReadTimeout hat i.d.R. eine leere
+  `str()`-Repräsentation → `except Exception as _e: yield f'[Error: {_e}]'`
+  (main.py:1807-1809) ergibt `[Error: ]`. Die Exception wird verschluckt,
+  danach läuft der Generator normal bis `[DONE]` weiter → daher
+  `status=completed` im Prozess-Log trotz Fehlschlag für den Nutzer.
+  Nutzer hat den zweiten, in der Prozesstabelle genannten Fall
+  (`muse-glimmer:30b-q4_K_M-dflash@N04-RTX`, 16:02:46, 42.3s) selbst um
+  16:02 Uhr abgebrochen, weil auf dem Inferenzserver keine Aktivität
+  sichtbar war — vermutlich reguläre Modell-Ladezeit (VRAM-Swap auf
+  demselben physischen Host wie N04-RTX/N04-RGTX/N04-TESLA, siehe TASK-52-
+  Eintrag oben), nicht dasselbe Timeout-Problem; nicht weiter verfolgt, da
+  vom Nutzer selbst erklärt und kein Fehlerhinweis im Log dazu vorliegt.
+- Ursprünglich vermuteter zweiter Bug ("Antwortinhalt wirkt wie
+  qwen3.6:35b trotz korrektem Modell-Log") vom Nutzer auf denselben
+  nemotron-Request zurückgeführt — keine separate Ursache, durch den
+  `[Error: ]`-Fund erklärt.
+- Geplanter Fix: `TIMEOUT_MAP` in `config.py` analog zu `URL_MAP`/
+  `TOKEN_MAP` ergänzen; an allen drei `_native_endpoint`-Konstruktions-
+  stellen in `chat.py` durchreichen (inkl. User-Connections-Fallback mit
+  eigenem Default); leere Error-Message in `main.py:1809` gegen
+  `str(_e) or type(_e).__name__` absichern, damit künftige Fehler dieser
+  Art nicht mehr wortlos sind.
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log zeigt `in_progress` auf `config.py`,
+  `services/pipeline/chat.py` oder `main.py`.
+- Working Tree hat vorbestehende unstaged Änderungen von TASK
+  "Taxonomie-Variation im Planner-Datensatz-Generator" (AGENT_LASTENHEFT.md,
+  agent_status/claude-code.md, docs/experts/index.md, docs/system/status.md,
+  graph/planner.py, scripts/generate_planner_dataset.py,
+  services/decision_log.py, services/deliberation/capacity.py,
+  services/quality_gate.py, services/sovereignty.py, tests/
+  test_deliberation_capacity.py) — nicht berührt, keine Überschneidung mit
+  den für diesen Fix vorgesehenen Dateien.
+
+Notes: Kein Rebuild/Recreate/Commit/Push bisher. Fix wird auf separatem
+Feature-Branch umgesetzt, um die bestehenden unstaged Änderungen nicht zu
+vermischen.
+
+---
+
+## 2026-08-11T17:52:00Z — ADHOC-native-timeout — done
+
+Plan / progress:
+- Implementiert wie geplant:
+  - `config.py:91` — neue `TIMEOUT_MAP = {s["name"]: s.get("timeout", 300)
+    for s in INFERENCE_SERVERS_LIST}`, analog zu `URL_MAP`/`TOKEN_MAP`/
+    `API_TYPE_MAP`.
+  - `services/pipeline/chat.py` — `TIMEOUT_MAP` importiert; an allen drei
+    `_native_endpoint`-Konstruktionsstellen ein `"timeout"`-Feld ergänzt
+    (globaler URL_MAP-Pfad: `TIMEOUT_MAP.get(_ep_node, 300)`; beide
+    User-Connection-Fallback-Pfade: `_uc.get("timeout", 300)`, da
+    User-Connections kein Timeout-Feld im Schema haben). Zusätzlich die
+    beiden non-streaming nativen `httpx.AsyncClient(timeout=300)`-Aufrufe
+    (Zeile ~2403, ~2504 — selbe Bug-Klasse, war beim Review zusätzlich
+    aufgefallen) auf `timeout=float(_native_endpoint.get("timeout", 300))`
+    umgestellt.
+  - `main.py:1807-1810` — leere Exception-Messages abgesichert:
+    `_err_msg = str(_e) or type(_e).__name__`, sowohl im Log als auch im
+    an den Client gestreamten `[Error: ...]`-Chunk verwendet. Künftige
+    Fehler dieser Klasse zeigen jetzt mindestens den Exception-Typnamen
+    (z.B. `[Error: ReadTimeout]`) statt `[Error: ]`.
+- Neuer Test `tests/test_native_timeout_map.py` (3 Tests): TIMEOUT_MAP-
+  Default-Fallback auf 300 für Server ohne explizites Timeout-Feld,
+  korrekte Übernahme eines konfigurierten Timeouts, Vollständigkeits-Check
+  (jeder `URL_MAP`-Eintrag hat einen `TIMEOUT_MAP`-Eintrag).
+- Verifikation:
+  - `python3 -c "import ast; ast.parse(...)"` für alle 3 geänderten Dateien
+    — OK.
+  - `pytest tests/test_native_timeout_map.py tests/test_routing.py
+    tests/test_jmoe_debate_judge.py tests/test_sovereignty.py
+    tests/test_dynamic_router.py -q` → 63 passed.
+  - Volle Regression `pytest tests/ -q` → 987 passed, 1 failed. Der
+    Fehlschlag (`test_context_budget_adaptive.py::
+    test_context_never_exceeds_template_ceiling`) ist derselbe
+    vorbestehende, dokumentierte Fehler aus dem Taxonomie-Variation-Eintrag
+    weiter oben in dieser Datei — unverändert, nicht von diesem Diff
+    berührt.
+  - Kein Live-E2E-Test gegen N04-RTX durchgeführt (würde einen >300s
+    laufenden Request auf dem produktiven Node erfordern, um den
+    ursprünglichen Timeout-Fall real zu reproduzieren — bewusst nicht
+    unternommen, um keine unnötige GPU-Zeit/Störung auf einem produktiven
+    Node zu verursachen; die Config-Propagation ist stattdessen per Review
+    + Unit-Test verifiziert, dass `_native_endpoint["timeout"]` jetzt in
+    JEDEM Codepfad, der einen httpx-Timeout für native Requests setzt,
+    ankommt).
+
+Pre-conditions verified:
+- Arbeit auf eigenem Branch `fix/native-timeout-propagation` (von
+  `fix/planner-schema-output` abgezweigt), um nicht mit der dort laufenden,
+  unstaged Taxonomie-Variation-Arbeit zu vermischen. Nur die 3 Ziel-Dateien
+  + der neue Testfile wurden verändert.
+
+Notes: Kein Rebuild/Recreate von `langgraph-app`, kein Commit, kein Push —
+auf explizite Nutzerentscheidung wartend. Die eingangs vermutete zweite
+Ursache ("Antwortinhalt wirkt wie qwen3.6:35b") wurde vom Nutzer auf
+denselben nemotron-Request zurückgeführt und ist damit durch diesen Fix
+erklärt, nicht separat zu beheben. Der zweite gemeldete Fall
+(muse-glimmer, 16:02 Uhr, vom Nutzer selbst wegen fehlender sichtbarer
+Serveraktivität abgebrochen) bleibt als vermutete reguläre Modell-
+Ladezeit unklassifiziert — kein Fehlerindiz im Log, nicht weiter verfolgt.

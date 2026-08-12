@@ -47,7 +47,7 @@ def _host_is_local(host: str) -> bool:
     return bool(infos)
 
 
-def assert_egress_allowed(url: str, local_only: bool) -> None:
+def assert_egress_allowed(url: str, local_only: bool, payload_text: str = "") -> None:
     """Raise EgressDenied when local_only is set and url is not private/allowlisted."""
     if not local_only:
         return
@@ -57,6 +57,8 @@ def assert_egress_allowed(url: str, local_only: bool) -> None:
         raise EgressDenied(
             f"local_only routing: endpoint '{host}' is not a local/allowlisted host"
         )
+    if payload_text:
+        assert_egress_entropy_safe(payload_text)
 
 
 def resolve_local_only(user_perms: dict | None, user_ctx: dict | None) -> bool:
@@ -73,3 +75,31 @@ def resolve_local_only(user_perms: dict | None, user_ctx: dict | None) -> bool:
     if (user_ctx or {}).get("local_only_routing") == "1":
         return True
     return os.getenv("LOCAL_ONLY_COMPLIANCE", "false").lower() in ("1", "true", "yes")
+
+
+import math
+import collections
+
+def calculate_shannon_entropy(text: str) -> float:
+    """Calculate the empirical Shannon entropy H(X) in bits per character."""
+    if not text:
+        return 0.0
+    counter = collections.Counter(text)
+    length = len(text)
+    entropy = 0.0
+    for count in counter.values():
+        probability = count / length
+        entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def assert_egress_entropy_safe(payload_text: str, max_entropy: float = 5.6) -> bool:
+    """Check if the Shannon entropy of a payload is below the threshold.
+    
+    Raises EgressDenied if H(X) > max_entropy, indicating potential steganography.
+    Returns True if safe.
+    """
+    entropy = calculate_shannon_entropy(payload_text)
+    if entropy > max_entropy:
+        raise EgressDenied(f"Payload entropy {entropy:.2f} exceeds threshold {max_entropy}")
+    return True

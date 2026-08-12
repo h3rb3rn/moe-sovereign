@@ -8,6 +8,47 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) — semantic ve
 
 ---
 
+## 2026-08-12 — Whitepaper v2.8 & Documentation Scientific Review
+
+> `impact: minor` · `breaking: no` · `domain: docs, whitepaper, scientific-claims`
+
+### Changed
+
+- **Whitepaper v2.8:** Comprehensive scientific peer-review revision (GPT-5 + Gemini reviews).
+  All six mandatory corrections applied before academic submission:
+  - Abstract: capability hypothesis qualified — "approach frontier-model quality … with
+    internal evidence" (not a confirmed result pending controlled external validation)
+  - Bayesian formula: "Laplace-smoothed MLE" corrected to "Bayesian posterior mean under
+    a uniform Beta(1,1) prior" (MLE ≠ posterior mean)
+  - Graph/LongMemEval claims: "primary driver" → "strongest observed factor";
+    "empirical proof" → "internal empirical evidence consistent with"
+  - Deployment taxonomy unified: production-tested (Compose/LXC), CI-validated (Helm/k8s),
+    environment-unvalidated (OpenShift) — consistently across all sections
+  - Component Contribution Analysis renamed to "Component Evidence Summary"; new
+    "Causal confidence" column; all Δ-values labelled as indicators, not causal facts
+  - `placeins` package added — Float barrier at section boundaries eliminates
+    table backlog in Conclusion chapter
+- **Documentation (MkDocs + README):**
+  - "Thompson Sampling" → "Bayesian Expert Scoring (Laplace posterior mean; optional
+    Thompson Sampling exploration mode)" in IMoE tables and capability descriptions
+  - "zero hallucination" → "eliminates hallucinations within the deterministic
+    computation boundary" (consistent with whitepaper precision)
+  - "Zero data egress is guaranteed" → "enforced" (guaranteed is too absolute
+    without auditing the full operator environment)
+  - "GPT-4o Class Performance" headline → "Internal Benchmark Results, Self-Hosted"
+  - GAIA results annotated with evaluation integrity disclosure (⚠ non-sovereign
+    inference used in the published run; clean sovereign run pending)
+  - Deployment table: K3s "Planned" → "CI-validated (Helm charts)";
+    OpenShift "Untested" → "Implemented, environment-unvalidated"
+  - LocalAI added as seventh column in competitive feature matrices (README + whitepaper)
+  - Accumulation speedup note clarified: cold/warm latency difference, not causal ablation
+  - Navigation: "Reinforcement Learning Flywheel" → "Adaptive Feedback Loop (RL Flywheel)"
+  - `rl_flywheel.md`: Stage 2 rewritten — default is deterministic posterior mean;
+    Thompson Sampling is the opt-in exploration mode; distinction made explicit
+  - Whitepaper page count updated: ~108 → ~116
+
+---
+
 ## 2026-08-02 — Evidence-bound Precision Platform Rollout
 
 > `impact: major` · `breaking: no` · `domain: mcp, orchestration, quality-gate, telemetry`
