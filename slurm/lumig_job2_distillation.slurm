@@ -54,8 +54,11 @@ OUTPUT_DIR="${SCRATCH}/checkpoints/${TRAIN_RUN}"
 
 # ── Hyperparameters ──────────────────────────────────────────────────────────
 EPOCHS=3
-MICRO_BATCH=4
-GRAD_ACCUM=4
+# micro_batch=4 caused OOM during backward pass (job 21021943: 15.75 GiB alloc,
+# 4.75 GiB free on 64 GiB MI250X). Reduced to 2; grad_accum raised to 8 to
+# maintain effective batch size of 128.
+MICRO_BATCH=2
+GRAD_ACCUM=8
 MAX_SEQ_LEN=4096
 LR="2e-4"
 LORA_R=16
@@ -185,6 +188,7 @@ singularity exec \
         --save-steps     "$SAVE_STEPS" \
         --hf-cache       "$HF_CACHE" \
         --val-split      0.005 \
+        --no-packing \
         --no-4bit
 
 SFT_EXIT=$?
