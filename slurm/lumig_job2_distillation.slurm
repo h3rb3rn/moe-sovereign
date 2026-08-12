@@ -1,18 +1,17 @@
 #!/bin/bash
 # slurm/lumig_job2_distillation.slurm
-# SLURM job: Teacher-Student Distillation — SFT fine-tuning of Qwen2.5-3B
+# SLURM job: Teacher-Student Distillation — SFT fine-tuning of Qwen3.5-4B
 #
 # Architecture:
-#   Teacher: Qwen/Qwen2.5-32B-Instruct (locally cached on Lustre scratch)
-#   Student: Qwen/Qwen2.5-3B-Instruct  (downloaded on first run)
+#   Teacher: Qwen/Qwen3.5-35B-A3B (official HuggingFace repo)
+#   Student: Qwen/Qwen3.5-4B     (locally cached on Lustre scratch)
 #   Framework: TRL SFTTrainer + PEFT LoRA + DeepSpeed ZeRO-2 BF16
 #   Runtime: Singularity container (lumi-multitorch-latest.sif) — LUMI-G
-#            system Python is 3.6.15 and cannot run the training script.
 #
 # Usage:
 #   sbatch slurm/lumig_job2_distillation.slurm
 
-#SBATCH --job-name=moe_distill_student
+#SBATCH --job-name=moe_qwen35_4b_distill
 #SBATCH --account=project_465003058
 #SBATCH --partition=small-g
 #SBATCH --nodes=1
@@ -44,19 +43,14 @@ HF_CACHE="${SCRATCH}/hf_cache"
 HF_TOKEN="$(cat ~/.cache/huggingface/token 2>/dev/null || echo '')"
 
 # ── Model & Training Config ─────────────────────────────────────────────────
-# Teacher model for distillation data generation (locally cached on Lustre)
-HF_TEACHER_REPO="Qwen/Qwen2.5-32B-Instruct"
-# Student model to fine-tune via SFT
-MODEL_ID="Qwen/Qwen2.5-3B-Instruct"
+HF_TEACHER_REPO="Qwen/Qwen3.5-35B-A3B"
+MODEL_ID="Qwen/Qwen3.5-4B"
 DATASET="${SCRATCH}/datasets/moe_system_knowledge_sft.jsonl"
-TRAIN_RUN="moe_3b_distilled"
+TRAIN_RUN="moe_qwen35_4b_distilled"
 OUTPUT_DIR="${SCRATCH}/checkpoints/${TRAIN_RUN}"
 
 # ── Hyperparameters ──────────────────────────────────────────────────────────
 EPOCHS=3
-# micro_batch=4 caused OOM during backward pass (job 21021943: 15.75 GiB alloc,
-# 4.75 GiB free on 64 GiB MI250X). Reduced to 2; grad_accum raised to 8 to
-# maintain effective batch size of 128.
 MICRO_BATCH=2
 GRAD_ACCUM=8
 MAX_SEQ_LEN=4096
@@ -107,8 +101,6 @@ else
 fi
 
 # ── Model Cache ──────────────────────────────────────────────────────────────
-# Resolve student model to local cached path (avoids download inside container)
-# HuggingFace Hub replaces "/" with "--" in cache directory names
 HF_CACHE_NAME="$(echo "$MODEL_ID" | sed 's|/|--|g')"
 MODEL_CACHE_DIR="$HF_CACHE/models--${HF_CACHE_NAME}"
 if [ -d "$MODEL_CACHE_DIR/snapshots" ]; then
@@ -133,7 +125,7 @@ print(f'Downloaded in {(time.time()-t0)/60:.1f} min: {p}')
     LOCAL_MODEL="$(ls -d ${MODEL_CACHE_DIR}/snapshots/*/ 2>/dev/null | head -1)"
     LOCAL_MODEL="${LOCAL_MODEL%/}"
 fi
-# Fallback: if cache resolution failed, use MODEL_ID directly (container will download)
+
 if [ -z "$LOCAL_MODEL" ]; then
     echo "WARNING: Could not resolve local model path. Using MODEL_ID directly: $MODEL_ID"
     LOCAL_MODEL="$MODEL_ID"
@@ -148,13 +140,12 @@ export NCCL_NET_GDR_LEVEL=3
 export MASTER_ADDR=$(hostname)
 export MASTER_PORT=29500
 export OMP_NUM_THREADS=7
-# expandable_segments: prevents fragmentation OOM on MI250X
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export TOKENIZERS_PARALLELISM=false
 
 # ── Training starten ─────────────────────────────────────────────────────────
-echo "[$(date +%H:%M:%S)] Starting SFT distillation (run: $TRAIN_RUN) ..."
+echo "[$(date +%H:%M:%S)] Starting SFT distillation for Qwen3.5-4B (run: $TRAIN_RUN) ..."
 
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
@@ -192,7 +183,7 @@ singularity exec \
         --no-4bit
 
 SFT_EXIT=$?
-echo "[$(date +%H:%M:%S)] Distillation SFT exited with code $SFT_EXIT"
+echo "[$(date +%H:%M:%S)] Qwen3.5-4B Distillation SFT exited with code $SFT_EXIT"
 
 echo "========================================"
 if [ $SFT_EXIT -eq 0 ]; then
