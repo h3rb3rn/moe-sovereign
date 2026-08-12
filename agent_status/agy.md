@@ -157,3 +157,19 @@ Notes:
 - Chained jobs: none (the dataset is already merged, so we submitted the SFT script directly via train_judge_lora_large.sh).
 - We will monitor standard-g queue status.
 
+
+## 2026-08-12T09:27Z — TASK-52 — done
+
+Plan / progress:
+- Implemented `generate_image` and `generate_speech` tools in `mcp_server/server.py` with `generative_model` determinism contracts.
+- Registered tools in `_TOOL_REGISTRY`, `_TOOL_CONTRACTS`, and `_TOOL_ACCESS_KIND` ("write").
+- Added proxy execution handlers targeting local `N04-RGTX` hardware nodes (`COMFYUI_URL`, `KOKORO_TTS_URL`).
+- Added unit tests in `tests/test_generative_mcp.py` (5/5 passed).
+Pre-conditions verified:
+- All 1007 unit tests in test suite passed cleanly.
+- `AGENT_LASTENHEFT.md` updated to `done`.
+
+
+
+
+
