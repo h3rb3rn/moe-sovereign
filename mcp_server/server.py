@@ -4453,9 +4453,106 @@ async def pm_search_tasks(query: str, limit: int = 10) -> str:
     return await _pm.search_tasks(query, limit)
 
 
+# ─── Generative Tools (TASK-52: N04-RGTX Hardware Offloading) ─────────────
+
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://192.168.155.224:8188")
+KOKORO_TTS_URL = os.getenv("KOKORO_TTS_URL", "http://192.168.155.224:8880")
+
+
+@mcp.tool()
+async def generate_image(prompt: str, size: str = "1024x1024", model: str = "flux-schnell") -> Dict[str, Any]:
+    """Generate an image using local ComfyUI API endpoint on N04-RGTX.
+
+    prompt: Detailed text description of the image to generate.
+    size: Image dimensions, e.g. '1024x1024', '512x512', or '1280x720'.
+    model: Checkpoint model name, defaults to 'flux-schnell'.
+    """
+    if not prompt or not prompt.strip():
+        return {"error": "Prompt cannot be empty", "error_code": "invalid_prompt"}
+
+    parts = size.split("x") if "x" in size else [1024, 1024]
+    try:
+        width = int(parts[0])
+        height = int(parts[1]) if len(parts) > 1 else int(parts[0])
+    except ValueError:
+        width, height = 1024, 1024
+
+    payload = {
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "model": model,
+    }
+
+    url = f"{COMFYUI_URL.rstrip('/')}/v1/images/generations"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return resp.json()
+            return {
+                "error": f"ComfyUI HTTP {resp.status_code}: {resp.text[:300]}",
+                "error_code": "comfyui_error",
+                "status_code": resp.status_code,
+            }
+    except Exception as exc:
+        return {
+            "error": f"Failed to connect to ComfyUI backend at {url}: {exc}",
+            "error_code": "backend_unreachable",
+            "target_url": url,
+            "gpu_node": "N04-RGTX",
+        }
+
+
+@mcp.tool()
+async def generate_speech(text: str, voice: str = "af_heart", model: str = "kokoro") -> Dict[str, Any]:
+    """Generate speech audio using local Kokoro-TTS API endpoint on N04-RGTX.
+
+    text: Text content to convert into spoken audio.
+    voice: Voice profile, defaults to 'af_heart'.
+    model: TTS model name, defaults to 'kokoro'.
+    """
+    if not text or not text.strip():
+        return {"error": "Text cannot be empty", "error_code": "invalid_text"}
+
+    payload = {
+        "input": text,
+        "voice": voice,
+        "model": model,
+        "response_format": "mp3",
+    }
+
+    url = f"{KOKORO_TTS_URL.rstrip('/')}/v1/audio/speech"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return {
+                    "ok": True,
+                    "voice": voice,
+                    "model": model,
+                    "audio_bytes_length": len(resp.content),
+                    "content_type": resp.headers.get("content-type", "audio/mpeg"),
+                }
+            return {
+                "error": f"Kokoro TTS HTTP {resp.status_code}: {resp.text[:300]}",
+                "error_code": "kokoro_error",
+                "status_code": resp.status_code,
+            }
+    except Exception as exc:
+        return {
+            "error": f"Failed to connect to Kokoro TTS backend at {url}: {exc}",
+            "error_code": "backend_unreachable",
+            "target_url": url,
+            "gpu_node": "N04-RGTX",
+        }
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
+    "generate_image": generate_image,
+    "generate_speech": generate_speech,
     "calculate": calculate,
     "solve_equation": solve_equation,
     "date_diff": date_diff,
@@ -4615,6 +4712,8 @@ _TOOL_DESCRIPTIONS = {
 _DEFAULT_ACCESS_KIND = "read"
 
 _TOOL_ACCESS_KIND: Dict[str, str] = {
+    # Generative AI tools (local hardware offloading on N04-RGTX)
+    "generate_image": "write", "generate_speech": "write",
     # Math/utility — local computation only
     "calculate": "read", "solve_equation": "read", "date_diff": "read",
     "date_add": "read", "calendar_facts": "read", "time_facts": "read",
@@ -4867,6 +4966,58 @@ _STRUCTURED_VALIDATE_OUTPUT_SCHEMA: Dict[str, Any] = {
 
 
 _TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
+    "generate_image": {
+        "contract_id": "moe.generative.generate_image",
+        "contract_version": "1.0.0",
+        "determinism": "generative_model",
+        "source_policy": {"kind": "comfyui_api", "node": "N04-RGTX"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "size": {"type": "string", "default": "1024x1024"},
+                "model": {"type": "string", "default": "flux-schnell"},
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "created": {"type": "integer"},
+                "data": {"type": "array"},
+                "error": {"type": "string"},
+                "error_code": {"type": "string"},
+            },
+        },
+    },
+    "generate_speech": {
+        "contract_id": "moe.generative.generate_speech",
+        "contract_version": "1.0.0",
+        "determinism": "generative_model",
+        "source_policy": {"kind": "kokoro_tts_api", "node": "N04-RGTX"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1, "maxLength": 10000},
+                "voice": {"type": "string", "default": "af_heart"},
+                "model": {"type": "string", "default": "kokoro"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "voice": {"type": "string"},
+                "model": {"type": "string"},
+                "audio_bytes_length": {"type": "integer"},
+                "error": {"type": "string"},
+                "error_code": {"type": "string"},
+            },
+        },
+    },
     "calendar_facts": {
         "contract_id": "moe.precision.calendar_facts",
         "contract_version": "1.0.0",

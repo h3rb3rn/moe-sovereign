@@ -293,7 +293,7 @@ flowchart LR
 | **69 LLM Model Test** | **phi4:14b** | Best planner/judge from 69 models tested |
 | **Accumulation Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache); cold/warm latency difference, not a controlled causal ablation |
 
-> ⚠ **GAIA evaluation integrity note:** One evaluation run inadvertently used non-sovereign (cloud) inference for the Planner/Judge nodes. The results above reflect that run. A controlled sovereign GAIA run is pending. See [whitepaper Section 14](https://moe-sovereign.org/whitepaper-en.pdf) for full disclosure.
+> ⚠ **GAIA evaluation integrity note:** One evaluation run inadvertently used non-sovereign (cloud) inference for the Planner/Judge nodes. The results above reflect that run. A controlled sovereign GAIA run is pending. See [whitepaper Section 14](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) for full disclosure.
 
 ---
 
@@ -437,8 +437,9 @@ Full documentation: **[docs.moe-sovereign.org](https://docs.moe-sovereign.org)**
 | [API Reference](https://docs.moe-sovereign.org/guide/api/) | Full endpoint documentation |
 | [Maintenance & Disk Management](https://docs.moe-sovereign.org/admin/maintenance/) | Cleanup Manager, TTL configuration, checkpoint archiving |
 | [Palantir Comparison](https://docs.moe-sovereign.org/system/palantir_comparison/) | Honest architectural assessment — where the approaches converge and where the gap remains |
-| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | Full technical whitepaper (PDF) |
-| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | Vollständiges technisches Whitepaper (PDF) |
+| [Whitepaper (EN)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) | Full technical whitepaper v2.8 (PDF) |
+| [Whitepaper (DE)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-de-v2.8.pdf) | Vollständiges technisches Whitepaper v2.8 (PDF) |
+| [LUMI-G Training Paper](https://docs.moe-sovereign.org/system/lumi_training_paper/) | EuroHPC empirical training report (HTML + PDF) |
 
 Local preview: `pip install mkdocs-material && mkdocs serve`
 
@@ -448,9 +449,10 @@ Local preview: `pip install mkdocs-material && mkdocs serve`
 
 | Document | Format | Pages |
 |---|---|---|
-| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | PDF | ~116 |
-| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | PDF | ~118 |
+| [Whitepaper (EN)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) | PDF v2.8 | ~116 |
+| [Whitepaper (DE)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-de-v2.8.pdf) | PDF v2.8 | ~116 |
 | [arXiv Paper (IEEE format)](https://moe-sovereign.org/arxiv-paper.pdf) | PDF | ~12 |
+| [LUMI-G Training Paper](docs/system/lumi_training_paper.md) | HTML + [PDF](docs/assets/papers/moe-sovereign-lumi-paper.pdf) | 23 |
 
 ---
 
@@ -482,6 +484,15 @@ cloud teacher — the same fail-open principle already used for expert routing.
 Details: [CHANGELOG.md](CHANGELOG.md) (v2.7.1) and the
 [arXiv paper](https://moe-sovereign.org/arxiv-paper.pdf), Section
 "Funded Research: EuroHPC LUMI-G SLM Distillation Programme".
+
+**Training Results (August 2026):** The complete empirical campaign — including
+Judge training (deployed 2026-07-19), Planner v4 six-job SLURM chain, and the
+teacher-student distillation pipeline — is documented in the
+[LUMI-G Training Paper](docs/system/lumi_training_paper.md)
+([PDF](docs/assets/papers/moe-sovereign-lumi-paper.pdf), 23 pages).
+Key finding: reducing `max_seq_len` 8192→4096 yields only **1.2× speedup** with
+`--no-packing` (not the expected 4×); packing must be enabled to realise the
+quadratic attention savings.
 
 ---
 

@@ -260,9 +260,7 @@ def adaptive_context_window(
     required = estimated_input_tokens + max(1, int(output_tokens or 0)) + 1024
     tiers = (16_384, 32_768, 65_536, 131_072, 262_144)
     selected = next((tier for tier in tiers if tier >= required), requested)
-    if selected <= requested:
-        # Prompt fits: reduce to the smallest sufficient tier (save VRAM).
-        return max(4_096, selected)
+    return min(requested, selected)
     # Prompt is too large for the requested window: expand to the required tier.
     # The caller is responsible for capping at the hard env-var maximum.
     return max(4_096, selected)
