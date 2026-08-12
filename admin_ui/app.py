@@ -10452,7 +10452,15 @@ async def toggle_starfleet_feature(name: str, request: Request):
                 json={"enabled": enabled},
             )
         if r.status_code >= 400:
-            detail = r.json().get("detail", r.text[:200])
+            detail = ""
+            try:
+                data = r.json()
+                if isinstance(data, dict):
+                    detail = str(data.get("detail") or "").strip()
+            except Exception:
+                pass
+            if not detail:
+                detail = r.text[:200].strip() or f"Orchestrator returned HTTP {r.status_code}"
             raise HTTPException(status_code=r.status_code, detail=detail)
         return r.json()
     except HTTPException:
