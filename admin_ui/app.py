@@ -4987,6 +4987,100 @@ async def api_knowledge_validate(request: Request):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+# ─── Document Upload & Scheduled Cron Ingestion ───────────────────────────────
+
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/app/data/user_uploads"))
+MANIFEST_FILE = UPLOADS_DIR / ".ingestion_manifest.json"
+
+def _load_upload_manifest() -> dict:
+    if MANIFEST_FILE.exists():
+        try:
+            with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_upload_manifest(manifest: dict):
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+
+@app.get("/api/knowledge/documents", dependencies=[Depends(require_login)])
+async def api_list_uploaded_documents():
+    """List all user uploaded documents and their cron ingestion status."""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    manifest = _load_upload_manifest()
+    
+    docs = []
+    for f in sorted(UPLOADS_DIR.iterdir()):
+        if f.is_file() and not f.name.startswith("."):
+            rec = manifest.get(f.name, {})
+            docs.append({
+                "file_name": f.name,
+                "size_bytes": f.stat().st_size,
+                "upload_time": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(),
+                "status": rec.get("status", "pending"),
+                "ingested_at": rec.get("ingested_at"),
+                "error": rec.get("error")
+            })
+    return {"documents": docs, "total": len(docs)}
+
+
+@app.post("/api/knowledge/documents/upload", dependencies=[Depends(require_login)])
+async def api_upload_knowledge_document(file: UploadFile = File(...)):
+    """Upload a document (PDF, TXT, JSON, JSONL, MD) for cron batch ingestion."""
+    ext = Path(file.filename).suffix.lower()
+    allowed_exts = {".pdf", ".txt", ".json", ".jsonl", ".md"}
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"File extension {ext} not allowed. Supported: {', '.join(allowed_exts)}")
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    target_path = UPLOADS_DIR / file.filename
+    
+    content = await file.read()
+    with open(target_path, "wb") as f:
+        f.write(content)
+
+    manifest = _load_upload_manifest()
+    manifest[file.filename] = {
+        "file_name": file.filename,
+        "size_bytes": len(content),
+        "status": "pending",
+        "uploaded_at": datetime.now(timezone.utc).isoformat()
+    }
+    _save_upload_manifest(manifest)
+
+    logger.info("Uploaded document %s for scheduled cron ingestion", file.filename)
+    return {"ok": True, "file_name": file.filename, "size_bytes": len(content), "status": "pending"}
+
+
+@app.post("/api/knowledge/documents/trigger-cron", dependencies=[Depends(require_login)])
+async def api_trigger_cron_ingestion(background_tasks: BackgroundTasks):
+    """Trigger immediate execution of the cron knowledge ingestion worker."""
+    def _run_worker():
+        cmd = [sys.executable, "/app/scripts/cron_knowledge_ingestion.py"]
+        subprocess.run(cmd, capture_output=True, text=True)
+
+    background_tasks.add_task(_run_worker)
+    return {"ok": True, "message": "Cron knowledge ingestion triggered in background"}
+
+
+@app.delete("/api/knowledge/documents/{filename}", dependencies=[Depends(require_login)])
+async def api_delete_knowledge_document(filename: str):
+    """Delete an uploaded document file and remove it from manifest."""
+    target_path = UPLOADS_DIR / filename
+    if target_path.exists():
+        target_path.unlink()
+
+    manifest = _load_upload_manifest()
+    manifest.pop(filename, None)
+    _save_upload_manifest(manifest)
+
+    return {"ok": True, "deleted": filename}
+
+
 # ─── Federation (MoE Libris) ─────────────────────────────────────────────────
 
 @app.get("/federation", response_class=HTMLResponse)

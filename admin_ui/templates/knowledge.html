@@ -124,6 +124,59 @@
       </div>
     </div>
   </div>
+
+  <!-- DOCUMENT UPLOAD & CRON INGESTION CARD -->
+  <div class="col-12 mt-3">
+    <div class="card border-info">
+      <div class="card-header bg-info bg-opacity-10 d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 text-info-emphasis fw-bold">
+          <i class="bi bi-file-earmark-arrow-up me-2"></i>Document Knowledge Upload & Cron Batch Ingest (PDF, TXT, JSON, JSONL, MD)
+        </h6>
+        <span class="badge bg-info text-dark"><i class="bi bi-clock-history me-1"></i>Scheduled Cron Ingestion</span>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">Upload developer documentation, PDFs, tutorials, or JSON knowledge bases. Uploaded files are automatically extracted and batch-ingested into <strong>Neo4j Knowledge Graph</strong> & <strong>ChromaDB Vector Store</strong> via periodic Cron background tasks.</p>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-8">
+            <label class="form-label fw-bold">Select Document File</label>
+            <div class="input-group input-group-sm">
+              <input type="file" id="doc-upload-file" class="form-control" accept=".pdf,.txt,.json,.jsonl,.md">
+              <button class="btn btn-info text-white" onclick="uploadDocFile()">
+                <i class="bi bi-cloud-upload me-1"></i>Upload Document
+              </button>
+            </div>
+            <div class="form-text">Supported formats: <code>.pdf</code>, <code>.txt</code>, <code>.json</code>, <code>.jsonl</code>, <code>.md</code></div>
+          </div>
+
+          <div class="col-md-4 d-flex align-items-end justify-content-end">
+            <button class="btn btn-outline-primary btn-sm w-100" onclick="triggerCronIngestion()">
+              <i class="bi bi-play-circle me-1"></i>Trigger Cron Batch Import Now
+            </button>
+          </div>
+        </div>
+
+        <!-- STATUS TABLE -->
+        <div class="table-responsive mt-3">
+          <table class="table table-sm table-hover align-middle small">
+            <thead class="table-dark">
+              <tr>
+                <th>File Name</th>
+                <th>Size</th>
+                <th>Upload Date</th>
+                <th>Status</th>
+                <th>Ingested At</th>
+                <th class="text-end">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="doc-status-tbody">
+              <tr><td colspan="6" class="text-center text-muted py-3">Loading uploaded documents...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- BUNDLE PREVIEW -->
@@ -257,5 +310,97 @@ async function executeImport() {
     }
   } catch(e) { alert('Import failed: ' + e.message); }
 }
+
+async function loadUploadedDocs() {
+  try {
+    const res = await fetch('/api/knowledge/documents');
+    const data = await res.json();
+    const tbody = document.getElementById('doc-status-tbody');
+    if (!data.documents || data.documents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No uploaded documents yet. Upload a PDF, TXT, or JSON file above.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.documents.map(d => {
+      let badge = '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split me-1"></i>Pending Cron</span>';
+      if (d.status === 'ingested') {
+        badge = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Ingested</span>';
+      } else if (d.status === 'error') {
+        badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>Error</span>`;
+      }
+      const sizeKB = (d.size_bytes / 1024).toFixed(1) + ' KB';
+      const uploadTime = d.upload_time ? new Date(d.upload_time).toLocaleString() : '-';
+      const ingestedAt = d.ingested_at ? new Date(d.ingested_at).toLocaleString() : '-';
+      return `
+        <tr>
+          <td class="fw-bold">${d.file_name}</td>
+          <td>${sizeKB}</td>
+          <td>${uploadTime}</td>
+          <td>${badge}</td>
+          <td>${ingestedAt}</td>
+          <td class="text-end">
+            <button class="btn btn-outline-danger btn-sm py-0 px-2" onclick="deleteDocFile('${d.file_name}')">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('Error loading documents:', e);
+  }
+}
+
+async function uploadDocFile() {
+  const fileInput = document.getElementById('doc-upload-file');
+  if (!fileInput.files || fileInput.files.length === 0) {
+    alert('Please select a file to upload first.');
+    return;
+  }
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+
+  try {
+    const res = await fetch('/api/knowledge/documents/upload', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (res.ok) {
+      fileInput.value = '';
+      loadUploadedDocs();
+    } else {
+      alert('Upload failed: ' + (data.detail || data.error));
+    }
+  } catch (e) {
+    alert('Error uploading file: ' + e);
+  }
+}
+
+async function triggerCronIngestion() {
+  try {
+    const res = await fetch('/api/knowledge/documents/trigger-cron', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      alert('Cron Batch Ingestion triggered! Processing in background...');
+      setTimeout(loadUploadedDocs, 2000);
+    }
+  } catch (e) {
+    alert('Error triggering cron ingestion: ' + e);
+  }
+}
+
+async function deleteDocFile(filename) {
+  if (!confirm(`Delete ${filename}?`)) return;
+  try {
+    const res = await fetch(`/api/knowledge/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    if (res.ok) {
+      loadUploadedDocs();
+    }
+  } catch (e) {
+    alert('Error deleting document: ' + e);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadUploadedDocs);
 </script>
 {% endblock %}
