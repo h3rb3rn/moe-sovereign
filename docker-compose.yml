@@ -373,6 +373,7 @@ services:
   moe-prometheus:
     image: prom/prometheus:latest
     container_name: moe-prometheus
+    profiles: [monitoring]
     restart: always
     ports:
       - "127.0.0.1:${PROMETHEUS_HOST_PORT}:9090"
@@ -462,8 +463,6 @@ services:
     depends_on:
       langgraph-app:
         condition: service_started
-      moe-prometheus:
-        condition: service_started
       terra_cache:
         condition: service_started
       terra_checkpoints:
@@ -491,6 +490,7 @@ services:
   moe-grafana:
     image: grafana/grafana:latest
     container_name: moe-grafana
+    profiles: [monitoring]
     restart: always
     ports:
       - "${GRAFANA_HOST_PORT}:3000"
@@ -520,6 +520,7 @@ services:
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
+    profiles: [monitoring]
     restart: always
     ports:
       - "127.0.0.1:${NODE_EXPORTER_HOST_PORT}:9100"
@@ -549,6 +550,7 @@ services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: cadvisor
+    profiles: [monitoring]
     restart: unless-stopped
     ports:
       - "127.0.0.1:${CADVISOR_HOST_PORT}:8080"
@@ -618,6 +620,7 @@ services:
   # --- Dozzle Init (generates bcrypt users.yml from .env credentials) ---
   moe-dozzle-init:
     image: python:3.12-alpine
+    profiles: [monitoring]
     restart: "no"
     env_file:
       - .env
@@ -632,6 +635,7 @@ services:
   moe-dozzle:
     image: amir20/dozzle:latest
     container_name: moe-dozzle
+    profiles: [monitoring]
     restart: unless-stopped
     env_file:
       - .env
@@ -650,6 +654,32 @@ services:
         limits:
           cpus: "0.3"
           memory: 128M
+
+  # --- AKHQ (Apache Kafka GUI for topic, lag, and event debugging) ---
+  moe-akhq:
+    image: tchiotludo/akhq:latest
+    container_name: moe-akhq
+    profiles: [monitoring, akhq]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            moe-kafka:
+              properties:
+                bootstrap.servers: "moe-kafka:9092"
+    ports:
+      - "127.0.0.1:${AKHQ_HOST_PORT:-8085}:8080"
+    depends_on:
+      moe-kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
 
   # --- Splash — JavaScript-capable headless browser for MCP web_browser tool ---
   # Renders JS-heavy pages (BBC scripts, British Museum collection, GitHub issues)
