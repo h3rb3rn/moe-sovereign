@@ -320,21 +320,34 @@ async function loadUploadedDocs() {
       tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No uploaded documents yet. Upload a PDF, TXT, or JSON file above.</td></tr>';
       return;
     }
-    tbody.innerHTML = data.documents.map(d => {
-      let badge = '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split me-1"></i>Pending Cron</span>';
+
+    // Sort documents so currently processing files appear AT THE VERY TOP of the table!
+    const sortedDocs = [...data.documents].sort((a, b) => {
+      if (a.status === 'processing') return -1;
+      if (b.status === 'processing') return 1;
+      return 0;
+    });
+
+    tbody.innerHTML = sortedDocs.map(d => {
+      let badge = '<span class="badge bg-secondary"><i class="bi bi-hourglass-split me-1"></i>In Warteschlange</span>';
+      let rowClass = '';
+      
       if (d.status === 'processing') {
-        badge = '<span class="badge bg-info text-dark"><span class="spinner-border spinner-border-sm me-1"></span>Processing...</span>';
+        badge = '<span class="badge bg-primary text-white p-2 shadow-sm"><span class="spinner-border spinner-border-sm me-1" role="status"></span>⚙️ Importiert gerade...</span>';
+        rowClass = 'table-primary bg-primary bg-opacity-10 fw-bold border-start border-4 border-primary';
       } else if (d.status === 'ingested') {
-        badge = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Ingested</span>';
+        badge = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Importiert</span>';
       } else if (d.status === 'error') {
-        badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>Error</span>`;
+        badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>Fehler</span>`;
       }
-      const sizeKB = (d.size_bytes / 1024).toFixed(1) + ' KB';
+      const sizeKB = (d.size_bytes / (1024 * 1024) > 1) 
+        ? (d.size_bytes / (1024 * 1024)).toFixed(1) + ' MB' 
+        : (d.size_bytes / 1024).toFixed(1) + ' KB';
       const uploadTime = d.upload_time ? new Date(d.upload_time).toLocaleString() : '-';
       const ingestedAt = d.ingested_at ? new Date(d.ingested_at).toLocaleString() : '-';
       return `
-        <tr>
-          <td class="fw-bold">${d.file_name}</td>
+        <tr class="${rowClass}">
+          <td class="fw-bold text-truncate" style="max-width: 350px;" title="${d.file_name}">${d.file_name}</td>
           <td>${sizeKB}</td>
           <td>${uploadTime}</td>
           <td>${badge}</td>
@@ -405,6 +418,9 @@ async function deleteDocFile(filename) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', loadUploadedDocs);
+document.addEventListener('DOMContentLoaded', () => {
+  loadUploadedDocs();
+  setInterval(loadUploadedDocs, 4000);
+});
 </script>
 {% endblock %}
