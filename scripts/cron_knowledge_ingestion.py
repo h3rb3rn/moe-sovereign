@@ -36,8 +36,15 @@ def load_manifest() -> dict:
 
 def save_manifest(manifest: dict):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    try:
+        with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        try:
+            os.chmod(MANIFEST_FILE, 0o666)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("Failed to save manifest file: %s", e)
 
 def run_ingestion_for_file(file_path: Path) -> dict:
     """Invokes the appropriate ingestion script depending on file extension."""

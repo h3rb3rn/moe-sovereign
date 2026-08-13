@@ -5003,8 +5003,15 @@ def _load_upload_manifest() -> dict:
 
 def _save_upload_manifest(manifest: dict):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    try:
+        with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        try:
+            os.chmod(MANIFEST_FILE, 0o666)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("Failed to save manifest file: %s", e)
 
 
 @app.get("/api/knowledge/documents", dependencies=[Depends(require_login)])
