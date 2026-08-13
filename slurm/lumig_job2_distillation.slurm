@@ -142,22 +142,15 @@ export MASTER_PORT=29500
 export OMP_NUM_THREADS=7
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
-export TOKENIZERS_PARALLELISM=false
-export PYTHONUSERBASE="${SCRATCH}/.user_site"
-mkdir -p "$PYTHONUSERBASE"
-
-echo "[$(date +%H:%M:%S)] Upgrading transformers in user site package for Qwen3.5 support..."
-singularity exec \
-    --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONUSERBASE="$PYTHONUSERBASE" \
-    "$CONTAINER" python3 -m pip install --upgrade --user git+https://github.com/huggingface/transformers.git
+export CUSTOM_SITE="${SCRATCH}/.user_site"
+mkdir -p "$CUSTOM_SITE"
 
 # ── Training starten ─────────────────────────────────────────────────────────
 echo "[$(date +%H:%M:%S)] Starting SFT distillation for Qwen3.5-4B (run: $TRAIN_RUN) ..."
 
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONUSERBASE="$PYTHONUSERBASE" \
+    --env PYTHONPATH="$CUSTOM_SITE" \
     --env HF_HOME="$HF_CACHE" \
     --env HUGGING_FACE_HUB_TOKEN="$HF_TOKEN" \
     --env ROCR_VISIBLE_DEVICES="$ROCR_VISIBLE_DEVICES" \

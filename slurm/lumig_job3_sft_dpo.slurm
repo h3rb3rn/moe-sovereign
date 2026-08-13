@@ -119,16 +119,15 @@ export OMP_NUM_THREADS=7
 # expandable_segments: prevents fragmentation OOM on MI250X
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
-export TOKENIZERS_PARALLELISM=false
-export PYTHONUSERBASE="${SCRATCH}/.user_site"
-mkdir -p "$PYTHONUSERBASE"
+export CUSTOM_SITE="${SCRATCH}/.user_site"
+mkdir -p "$CUSTOM_SITE"
 
 # ── DPO Alignment starten ───────────────────────────────────────────────────
 echo "[$(date +%H:%M:%S)] Starting DPO alignment (run: $TRAIN_RUN) ..."
 
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONUSERBASE="$PYTHONUSERBASE" \
+    --env PYTHONPATH="$CUSTOM_SITE" \
     --env HF_HOME="$HF_CACHE" \
     --env HUGGING_FACE_HUB_TOKEN="$HF_TOKEN" \
     --env ROCR_VISIBLE_DEVICES="$ROCR_VISIBLE_DEVICES" \
