@@ -453,6 +453,7 @@ services:
       - ./admin_ui/app.py:/app/app.py:ro
       - ./admin_ui/database.py:/app/database.py:ro
       - ./admin_ui/templates:/app/templates:ro
+      - ./admin_ui/lang:/app/lang:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
