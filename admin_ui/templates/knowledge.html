@@ -335,16 +335,29 @@ async function loadUploadedDocs() {
   try {
     const res = await fetch('/api/knowledge/documents');
     const data = await res.json();
+    const tbody = document.getElementById('doc-status-tbody');
+    if (!tbody) return;
+
     if (data.summary) {
       const banner = document.getElementById('ingestion-forecast-banner');
-      banner.style.display = 'block';
-      document.getElementById('forecast-speed').textContent = `⚡ ${data.summary.speed_mb_per_min} MB/min`;
-      document.getElementById('forecast-eta').textContent = `⏱️ ${data.summary.eta_formatted}`;
-      document.getElementById('forecast-files-cnt').textContent = `${data.summary.ingested_files} / ${data.summary.total_files} Dateien (${data.summary.ingested_mb} / ${data.summary.total_mb} MB)`;
+      if (banner) banner.style.display = 'block';
+      const elSpeed = document.getElementById('forecast-speed');
+      if (elSpeed) elSpeed.textContent = `⚡ ${data.summary.speed_mb_per_min} MB/min`;
+      const elEta = document.getElementById('forecast-eta');
+      if (elEta) elEta.textContent = `⏱️ ${data.summary.eta_formatted}`;
+      const elCnt = document.getElementById('forecast-files-cnt');
+      if (elCnt) elCnt.textContent = `${data.summary.ingested_files} / ${data.summary.total_files} Dateien (${data.summary.ingested_mb} / ${data.summary.total_mb} MB)`;
       
       const pbar = document.getElementById('forecast-progressbar');
-      pbar.style.width = `${data.summary.pct_complete}%`;
-      pbar.setAttribute('aria-valuenow', data.summary.pct_complete);
+      if (pbar) {
+        pbar.style.width = `${data.summary.pct_complete}%`;
+        pbar.setAttribute('aria-valuenow', data.summary.pct_complete);
+      }
+    }
+
+    if (!data.documents || data.documents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No uploaded documents yet. Upload a PDF, TXT, or JSON file above.</td></tr>';
+      return;
     }
 
     // Sort documents so currently processing files appear AT THE VERY TOP of the table!
