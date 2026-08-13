@@ -230,10 +230,13 @@ services:
       - GRAPH_DECAY_APPLY=${GRAPH_DECAY_APPLY:-0}
       - EURISKO_SCHEDULER_ENABLED=${EURISKO_SCHEDULER_ENABLED:-0}
       - EURISKO_INTERVAL_SECONDS=${EURISKO_INTERVAL_SECONDS:-21600}
+      - KNOWLEDGE_INGESTION_SCHEDULER_ENABLED=${KNOWLEDGE_INGESTION_SCHEDULER_ENABLED:-1}
+      - KNOWLEDGE_INGESTION_INTERVAL_SECONDS=${KNOWLEDGE_INGESTION_INTERVAL_SECONDS:-300}
       - MAINTENANCE_INITIAL_DELAY_SECONDS=${MAINTENANCE_INITIAL_DELAY_SECONDS:-30}
       - MAINTENANCE_STATUS_FILE=/app/logs/maintenance-status.json
     volumes:
       - ./.env:/app/.env:ro
+      - ./scripts:/app/scripts:ro
       - ./models:/app/models:rw
       - ./data:/app/data:rw
       - ${MOE_DATA_ROOT}/agent-logs:/app/logs:rw
