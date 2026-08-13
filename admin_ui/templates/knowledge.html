@@ -139,14 +139,14 @@
 
         <div class="row g-3 mb-3">
           <div class="col-md-8">
-            <label class="form-label fw-bold">Select Document File</label>
+            <label class="form-label fw-bold">Select Document Files (Multi-Select Enabled)</label>
             <div class="input-group input-group-sm">
-              <input type="file" id="doc-upload-file" class="form-control" accept=".pdf,.txt,.json,.jsonl,.md">
+              <input type="file" id="doc-upload-file" class="form-control" accept=".pdf,.txt,.json,.jsonl,.md" multiple>
               <button class="btn btn-info text-white" onclick="uploadDocFile()">
-                <i class="bi bi-cloud-upload me-1"></i>Upload Document
+                <i class="bi bi-cloud-upload me-1"></i>Upload Document(s)
               </button>
             </div>
-            <div class="form-text">Supported formats: <code>.pdf</code>, <code>.txt</code>, <code>.json</code>, <code>.jsonl</code>, <code>.md</code></div>
+            <div class="form-text">Supported formats: <code>.pdf</code>, <code>.txt</code>, <code>.json</code>, <code>.jsonl</code>, <code>.md</code>. Hold Ctrl / Shift to select multiple files.</div>
           </div>
 
           <div class="col-md-4 d-flex align-items-end justify-content-end">
@@ -353,11 +353,13 @@ async function loadUploadedDocs() {
 async function uploadDocFile() {
   const fileInput = document.getElementById('doc-upload-file');
   if (!fileInput.files || fileInput.files.length === 0) {
-    alert('Please select a file to upload first.');
+    alert('Please select one or more files to upload first.');
     return;
   }
   const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
+  for (let i = 0; i < fileInput.files.length; i++) {
+    formData.append('files', fileInput.files[i]);
+  }
 
   try {
     const res = await fetch('/api/knowledge/documents/upload', {
@@ -372,7 +374,7 @@ async function uploadDocFile() {
       alert('Upload failed: ' + (data.detail || data.error));
     }
   } catch (e) {
-    alert('Error uploading file: ' + e);
+    alert('Error uploading files: ' + e);
   }
 }
 
