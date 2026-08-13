@@ -146,6 +146,25 @@ export TOKENIZERS_PARALLELISM=false
 export CUSTOM_SITE="${SCRATCH}/.user_site"
 mkdir -p "$CUSTOM_SITE"
 
+# ── Pre-Flight Check ──────────────────────────────────────────────────────────
+echo "[$(date +%H:%M:%S)] Executing Pre-Flight Validation Check ..."
+singularity exec \
+    --bind /scratch/project_465003058:/scratch/project_465003058 \
+    --env PYTHONPATH="$CUSTOM_SITE" \
+    --env HF_HOME="$HF_CACHE" \
+    "$CONTAINER" \
+    python3 "$SCRIPT_DIR/lumig_preflight_check.py" \
+        --model-id   "$LOCAL_MODEL" \
+        --dataset    "$DATASET" \
+        --deepspeed  "$SCRIPT_DIR/deepspeed_zero2_qwen3.json" \
+        --max-seq-len "$MAX_SEQ_LEN"
+
+PREFLIGHT_EXIT=$?
+if [ $PREFLIGHT_EXIT -ne 0 ]; then
+    echo "ERROR: Pre-Flight Check failed with code $PREFLIGHT_EXIT — aborting before training!"
+    exit $PREFLIGHT_EXIT
+fi
+
 # ── Training starten ─────────────────────────────────────────────────────────
 echo "[$(date +%H:%M:%S)] Starting SFT distillation for Qwen3.5-4B (run: $TRAIN_RUN) ..."
 
