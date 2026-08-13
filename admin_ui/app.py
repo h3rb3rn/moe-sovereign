@@ -5068,9 +5068,11 @@ async def api_list_uploaded_documents():
             })
 
     # Speed & ETA Calculation
+    lang = get_lang(request)
+    t_func = make_t(lang)
     speed_mb_min = 0.0
     eta_minutes = 0
-    eta_formatted = "Warte auf Ingestion..."
+    eta_formatted = t_func("knowledge.eta_waiting")
 
     if ingested_bytes > 0 and first_ingested_ts and last_ingested_ts:
         duration_min = max(0.5, (last_ingested_ts - first_ingested_ts) / 60.0)
@@ -5080,11 +5082,11 @@ async def api_list_uploaded_documents():
             eta_minutes = int(pending_mb / speed_mb_min)
             hours = eta_minutes // 60
             mins = eta_minutes % 60
-            eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M MESZ")
+            eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M UTC")
             if hours > 0:
-                eta_formatted = f"ca. {hours} Std. {mins} Min. (ETA ~{eta_time})"
+                eta_formatted = t_func("knowledge.eta_format_hours", hours=hours, mins=mins, eta_time=eta_time)
             else:
-                eta_formatted = f"ca. {mins} Min. (ETA ~{eta_time})"
+                eta_formatted = t_func("knowledge.eta_format_mins", mins=mins, eta_time=eta_time)
     elif processing_count > 0 or pending_count > 0:
         # Fallback speed estimation (~25 MB/min for PDF text extraction & embedding)
         estimated_speed = 25.0
@@ -5092,8 +5094,11 @@ async def api_list_uploaded_documents():
         eta_minutes = int(pending_mb / estimated_speed)
         hours = eta_minutes // 60
         mins = eta_minutes % 60
-        eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M MESZ")
-        eta_formatted = f"ca. {hours}h {mins}m (ETA ~{eta_time})" if hours > 0 else f"ca. {mins}m (ETA ~{eta_time})"
+        eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M UTC")
+        if hours > 0:
+            eta_formatted = t_func("knowledge.eta_format_hours", hours=hours, mins=mins, eta_time=eta_time)
+        else:
+            eta_formatted = t_func("knowledge.eta_format_mins", mins=mins, eta_time=eta_time)
         speed_mb_min = estimated_speed
 
     summary = {
