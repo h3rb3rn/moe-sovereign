@@ -340,7 +340,7 @@ def main() -> None:
         optim="adamw_torch",
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=args.warmup_ratio,
+        warmup_steps=max(1, int(total_steps * args.warmup_ratio)),
         weight_decay=0.0,
         max_grad_norm=1.0,
 
