@@ -5029,31 +5029,37 @@ async def api_list_uploaded_documents():
 
 
 @app.post("/api/knowledge/documents/upload", dependencies=[Depends(require_login)])
-async def api_upload_knowledge_document(file: UploadFile = File(...)):
-    """Upload a document (PDF, TXT, JSON, JSONL, MD) for cron batch ingestion."""
-    ext = Path(file.filename).suffix.lower()
+async def api_upload_knowledge_documents(files: list[UploadFile] = File(...)):
+    """Upload one or multiple documents (PDF, TXT, JSON, JSONL, MD) for cron batch ingestion."""
     allowed_exts = {".pdf", ".txt", ".json", ".jsonl", ".md"}
-    if ext not in allowed_exts:
-        raise HTTPException(status_code=400, detail=f"File extension {ext} not allowed. Supported: {', '.join(allowed_exts)}")
-
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    target_path = UPLOADS_DIR / file.filename
-    
-    content = await file.read()
-    with open(target_path, "wb") as f:
-        f.write(content)
-
     manifest = _load_upload_manifest()
-    manifest[file.filename] = {
-        "file_name": file.filename,
-        "size_bytes": len(content),
-        "status": "pending",
-        "uploaded_at": datetime.now(timezone.utc).isoformat()
-    }
-    _save_upload_manifest(manifest)
+    
+    uploaded_records = []
+    errors = []
 
-    logger.info("Uploaded document %s for scheduled cron ingestion", file.filename)
-    return {"ok": True, "file_name": file.filename, "size_bytes": len(content), "status": "pending"}
+    for file in files:
+        ext = Path(file.filename).suffix.lower()
+        if ext not in allowed_exts:
+            errors.append(f"{file.filename}: Extension {ext} not allowed")
+            continue
+
+        target_path = UPLOADS_DIR / file.filename
+        content = await file.read()
+        with open(target_path, "wb") as f:
+            f.write(content)
+
+        manifest[file.filename] = {
+            "file_name": file.filename,
+            "size_bytes": len(content),
+            "status": "pending",
+            "uploaded_at": datetime.now(timezone.utc).isoformat()
+        }
+        uploaded_records.append({"file_name": file.filename, "size_bytes": len(content)})
+        logger.info("Uploaded document %s for scheduled cron ingestion", file.filename)
+
+    _save_upload_manifest(manifest)
+    return {"ok": True, "uploaded": uploaded_records, "count": len(uploaded_records), "errors": errors}
 
 
 @app.post("/api/knowledge/documents/trigger-cron", dependencies=[Depends(require_login)])
