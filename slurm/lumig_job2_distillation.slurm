@@ -142,6 +142,7 @@ export MASTER_PORT=29500
 export OMP_NUM_THREADS=7
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+export TOKENIZERS_PARALLELISM=false
 export CUSTOM_SITE="${SCRATCH}/.user_site"
 mkdir -p "$CUSTOM_SITE"
 
