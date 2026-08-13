@@ -226,6 +226,19 @@ def main() -> None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    # Enforce TRL 1.4 training-compatible chat template with {% generation %} tags
+    tokenizer.chat_template = (
+        "{% for message in messages %}"
+        "{% if message['role'] == 'system' %}"
+        "{{ '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}"
+        "{% elif message['role'] == 'user' %}"
+        "{{ '<|im_start|>user\n' + message['content'] + '<|im_end|>\n' }}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{{ '<|im_start|>assistant\n' }}{% generation %}{{ message['content'] + '<|im_end|>\n' }}{% endgeneration %}"
+        "{% endif %}"
+        "{% endfor %}"
+    )
+
     # ── Preprocessing: keep native conversational format ────────────────────────
     # `messages` is passed through unmodified (no flattening to a "text" field) so
     # SFTTrainer recognises the dataset as conversational and assistant_only_loss=True
