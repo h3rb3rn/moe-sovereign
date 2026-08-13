@@ -119,9 +119,13 @@ _write_services_manifest() {
   _renv_local() { grep -E "^${1}=" "$_env" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'"; }
 
   local _profiles; _profiles="$(_renv_local COMPOSE_PROFILES)"
-  local _neo4j=false;  echo "$_profiles" | grep -q "neo4j"    && _neo4j=true
-  local _caddy=false;  echo "$_profiles" | grep -q "caddy"    && _caddy=true
-  local _auth=false;   echo "$_profiles" | grep -q "authentik" && _auth=true
+  local _neo4j=false;      echo "$_profiles" | grep -q "neo4j"      && _neo4j=true
+  local _caddy=false;      echo "$_profiles" | grep -q "caddy"      && _caddy=true
+  local _auth=false;       echo "$_profiles" | grep -q "authentik"  && _auth=true
+  local _monitoring=false; echo "$_profiles" | grep -q "monitoring" && _monitoring=true
+  if [[ -z "$_profiles" ]] && [[ "$(_renv_local INSTALL_MONITORING)" != "false" ]]; then
+    _monitoring=true
+  fi
 
   local _codex=false
   [[ "$(_renv_local INSTALL_CODEX)" == "true" ]] && _codex=true
@@ -136,9 +140,11 @@ _write_services_manifest() {
     "neo4j":                 ${_neo4j},
     "caddy":                 ${_caddy},
     "authentik":             ${_auth},
-    "dozzle":                true,
+    "monitoring":            ${_monitoring},
+    "akhq":                  ${_monitoring},
+    "dozzle":                ${_monitoring},
     "docs":                  true,
-    "prometheus_stack":      true,
+    "prometheus_stack":      ${_monitoring},
     "codex": ${_codex}
   }
 }
@@ -1469,6 +1475,22 @@ while true; do
   case "${_neo4j_choice,,}" in
     y|yes) INSTALL_NEO4J="true";  break ;;
     n|no)  INSTALL_NEO4J="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+
+# Monitoring Tools (Prometheus, Grafana, Dozzle, AKHQ)
+echo ""
+echo "  Monitoring tools provide Prometheus metrics, Grafana dashboards,"
+echo "  Dozzle log viewer, and AKHQ Kafka event inspection."
+echo "  Adds ~500 MB RAM. Recommended for observability and topic debugging."
+INSTALL_MONITORING="true"
+while true; do
+  read -rp "  Install Monitoring Tools (Prometheus, Grafana, Dozzle, AKHQ)? [Y/n]: " _mon_choice < /dev/tty
+  _mon_choice="${_mon_choice:-Y}"
+  case "${_mon_choice,,}" in
+    y|yes) INSTALL_MONITORING="true";  break ;;
+    n|no)  INSTALL_MONITORING="false"; break ;;
     *) echo "  Please enter y or n." ;;
   esac
 done
