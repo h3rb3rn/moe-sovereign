@@ -1137,6 +1137,9 @@ _chown_for_container 0 0 "${MOE_DATA_ROOT}/neo4j-data"              # neo4j entr
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/neo4j-logs"              # neo4j entrypoint:    chown → neo4j (7474)
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-data"             # chromadb: runs as root, needs writable /data
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-onnx-cache"       # chromadb: ONNX model cache
+_sudo chmod -R 777 "${MOE_DATA_ROOT}/chroma-onnx-cache" 2>/dev/null || true
+_sudo mkdir -p "${MOE_DATA_ROOT}/chroma-onnx-cache/onnx_models" 2>/dev/null || true
+_sudo chmod -R 777 "${MOE_DATA_ROOT}/chroma-onnx-cache/onnx_models" 2>/dev/null || true
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/garage/meta"             # garage: distroless, runs as root
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/garage/data"             # garage: distroless, runs as root
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/jupyterlab"              # jupyter: user:root + CHOWN_HOME
