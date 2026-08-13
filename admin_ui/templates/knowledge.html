@@ -156,6 +156,26 @@
           </div>
         </div>
 
+        <!-- LIVE INGESTION SPEED & ETA FORECAST BANNER -->
+        <div id="ingestion-forecast-banner" class="card bg-dark text-white p-3 mb-3 border-secondary" style="display:none">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <div>
+              <span class="fw-bold text-info"><i class="bi bi-speedometer2 me-1"></i>Geschwindigkeit:</span>
+              <span id="forecast-speed" class="badge bg-info text-dark ms-1">⚡ 0.0 MB/min</span>
+            </div>
+            <div>
+              <span class="fw-bold text-warning"><i class="bi bi-hourglass-bottom me-1"></i>Prognose Fertigstellung:</span>
+              <span id="forecast-eta" class="badge bg-warning text-dark ms-1">⏱️ Berechne...</span>
+            </div>
+            <div>
+              <span class="text-muted small" id="forecast-files-cnt">0 / 0 Dateien importiert</span>
+            </div>
+          </div>
+          <div class="progress" style="height: 10px;">
+            <div id="forecast-progressbar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%"></div>
+          </div>
+        </div>
+
         <!-- STATUS TABLE -->
         <div class="table-responsive mt-3">
           <table class="table table-sm table-hover align-middle small">
@@ -315,10 +335,16 @@ async function loadUploadedDocs() {
   try {
     const res = await fetch('/api/knowledge/documents');
     const data = await res.json();
-    const tbody = document.getElementById('doc-status-tbody');
-    if (!data.documents || data.documents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No uploaded documents yet. Upload a PDF, TXT, or JSON file above.</td></tr>';
-      return;
+    if (data.summary) {
+      const banner = document.getElementById('ingestion-forecast-banner');
+      banner.style.display = 'block';
+      document.getElementById('forecast-speed').textContent = `⚡ ${data.summary.speed_mb_per_min} MB/min`;
+      document.getElementById('forecast-eta').textContent = `⏱️ ${data.summary.eta_formatted}`;
+      document.getElementById('forecast-files-cnt').textContent = `${data.summary.ingested_files} / ${data.summary.total_files} Dateien (${data.summary.ingested_mb} / ${data.summary.total_mb} MB)`;
+      
+      const pbar = document.getElementById('forecast-progressbar');
+      pbar.style.width = `${data.summary.pct_complete}%`;
+      pbar.setAttribute('aria-valuenow', data.summary.pct_complete);
     }
 
     // Sort documents so currently processing files appear AT THE VERY TOP of the table!

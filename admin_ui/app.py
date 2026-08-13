@@ -5009,23 +5009,101 @@ def _save_upload_manifest(manifest: dict):
 
 @app.get("/api/knowledge/documents", dependencies=[Depends(require_login)])
 async def api_list_uploaded_documents():
-    """List all user uploaded documents and their cron ingestion status."""
+    """List all user uploaded documents with live ingestion stats, speed, and ETA forecast."""
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     manifest = _load_upload_manifest()
     
     docs = []
+    total_bytes = 0
+    ingested_bytes = 0
+    pending_bytes = 0
+    ingested_count = 0
+    pending_count = 0
+    processing_count = 0
+
+    first_ingested_ts = None
+    last_ingested_ts = None
+
     for f in sorted(UPLOADS_DIR.iterdir()):
         if f.is_file() and not f.name.startswith("."):
             rec = manifest.get(f.name, {})
+            sz = f.stat().st_size
+            status = rec.get("status", "pending")
+            total_bytes += sz
+            
+            ingested_at = rec.get("ingested_at")
+            if status == "ingested":
+                ingested_bytes += sz
+                ingested_count += 1
+                if ingested_at:
+                    try:
+                        ts = datetime.fromisoformat(ingested_at.replace("Z", "+00:00")).timestamp()
+                        if first_ingested_ts is None or ts < first_ingested_ts:
+                            first_ingested_ts = ts
+                        if last_ingested_ts is None or ts > last_ingested_ts:
+                            last_ingested_ts = ts
+                    except Exception:
+                        pass
+            elif status in ("pending", "processing"):
+                pending_bytes += sz
+                if status == "processing":
+                    processing_count += 1
+                else:
+                    pending_count += 1
+
             docs.append({
                 "file_name": f.name,
-                "size_bytes": f.stat().st_size,
+                "size_bytes": sz,
                 "upload_time": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(),
-                "status": rec.get("status", "pending"),
-                "ingested_at": rec.get("ingested_at"),
+                "status": status,
+                "ingested_at": ingested_at,
                 "error": rec.get("error")
             })
-    return {"documents": docs, "total": len(docs)}
+
+    # Speed & ETA Calculation
+    speed_mb_min = 0.0
+    eta_minutes = 0
+    eta_formatted = "Warte auf Ingestion..."
+
+    if ingested_bytes > 0 and first_ingested_ts and last_ingested_ts:
+        duration_min = max(0.5, (last_ingested_ts - first_ingested_ts) / 60.0)
+        speed_mb_min = round((ingested_bytes / (1024 * 1024)) / duration_min, 1)
+        if speed_mb_min > 0 and pending_bytes > 0:
+            pending_mb = pending_bytes / (1024 * 1024)
+            eta_minutes = int(pending_mb / speed_mb_min)
+            hours = eta_minutes // 60
+            mins = eta_minutes % 60
+            eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M MESZ")
+            if hours > 0:
+                eta_formatted = f"ca. {hours} Std. {mins} Min. (ETA ~{eta_time})"
+            else:
+                eta_formatted = f"ca. {mins} Min. (ETA ~{eta_time})"
+    elif processing_count > 0 or pending_count > 0:
+        # Fallback speed estimation (~25 MB/min for PDF text extraction & embedding)
+        estimated_speed = 25.0
+        pending_mb = pending_bytes / (1024 * 1024)
+        eta_minutes = int(pending_mb / estimated_speed)
+        hours = eta_minutes // 60
+        mins = eta_minutes % 60
+        eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M MESZ")
+        eta_formatted = f"ca. {hours}h {mins}m (ETA ~{eta_time})" if hours > 0 else f"ca. {mins}m (ETA ~{eta_time})"
+        speed_mb_min = estimated_speed
+
+    summary = {
+        "total_files": len(docs),
+        "ingested_files": ingested_count,
+        "pending_files": pending_count,
+        "processing_files": processing_count,
+        "total_mb": round(total_bytes / (1024 * 1024), 1),
+        "ingested_mb": round(ingested_bytes / (1024 * 1024), 1),
+        "pending_mb": round(pending_bytes / (1024 * 1024), 1),
+        "pct_complete": int((ingested_bytes / total_bytes * 100)) if total_bytes > 0 else 0,
+        "speed_mb_per_min": speed_mb_min,
+        "eta_minutes": eta_minutes,
+        "eta_formatted": eta_formatted
+    }
+
+    return {"documents": docs, "summary": summary, "total": len(docs)}
 
 
 @app.post("/api/knowledge/documents/upload", dependencies=[Depends(require_login)])
