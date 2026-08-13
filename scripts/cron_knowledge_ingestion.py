@@ -88,6 +88,10 @@ def run_cron_cycle():
             continue
             
         logger.info("Starting scheduled ingestion for: %s", fname)
+        manifest[fname] = manifest.get(fname, {})
+        manifest[fname]["status"] = "processing"
+        save_manifest(manifest)
+
         result = run_ingestion_for_file(file_path)
         
         manifest[fname] = {
@@ -97,9 +101,9 @@ def run_cron_cycle():
             "ingested_at": result.get("ingested_at"),
             "error": result.get("error")
         }
+        save_manifest(manifest)
         processed += 1
 
-    save_manifest(manifest)
     logger.info("Cron ingestion cycle finished. Processed %d file(s).", processed)
 
 def main():

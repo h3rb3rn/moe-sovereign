@@ -322,7 +322,9 @@ async function loadUploadedDocs() {
     }
     tbody.innerHTML = data.documents.map(d => {
       let badge = '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split me-1"></i>Pending Cron</span>';
-      if (d.status === 'ingested') {
+      if (d.status === 'processing') {
+        badge = '<span class="badge bg-info text-dark"><span class="spinner-border spinner-border-sm me-1"></span>Processing...</span>';
+      } else if (d.status === 'ingested') {
         badge = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Ingested</span>';
       } else if (d.status === 'error') {
         badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>Error</span>`;
