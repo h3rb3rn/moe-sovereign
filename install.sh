@@ -2217,6 +2217,17 @@ while true; do
 done
 
 # =============================================================================
+#  SECTION 12b: Seed Knowledge Graph & Vector Store from data/corpora/
+# =============================================================================
+if [[ -f "${INSTALL_DIR}/scripts/ingest_corpora_batch.py" ]]; then
+  echo ""
+  echo "[12b/13] Seeding Knowledge Graph & Vector Store from data/corpora/ ..."
+  if command -v python3 &>/dev/null; then
+    python3 "${INSTALL_DIR}/scripts/ingest_corpora_batch.py" --corpora-dir "${INSTALL_DIR}/data/corpora" || echo "  [!] Knowledge ingestion skipped (will resume on stack start)"
+  fi
+fi
+
+# =============================================================================
 #  SECTION 13: Success banner
 # =============================================================================
 echo ""
