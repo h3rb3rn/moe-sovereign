@@ -130,28 +130,28 @@
     <div class="card border-info">
       <div class="card-header bg-info bg-opacity-10 d-flex align-items-center justify-content-between">
         <h6 class="mb-0 text-info-emphasis fw-bold">
-          <i class="bi bi-file-earmark-arrow-up me-2"></i>Document Knowledge Upload & Cron Batch Ingest (PDF, TXT, JSON, JSONL, MD)
+          <i class="bi bi-file-earmark-arrow-up me-2"></i>{{ t(request, 'knowledge.upload_card_title') }}
         </h6>
-        <span class="badge bg-info text-dark"><i class="bi bi-clock-history me-1"></i>Scheduled Cron Ingestion</span>
+        <span class="badge bg-info text-dark"><i class="bi bi-clock-history me-1"></i>{{ t(request, 'knowledge.upload_cron_badge') }}</span>
       </div>
       <div class="card-body">
-        <p class="text-muted small">Upload developer documentation, PDFs, tutorials, or JSON knowledge bases. Uploaded files are automatically extracted and batch-ingested into <strong>Neo4j Knowledge Graph</strong> & <strong>ChromaDB Vector Store</strong> via periodic Cron background tasks.</p>
+        <p class="text-muted small">{{ t(request, 'knowledge.upload_card_desc') }}</p>
 
         <div class="row g-3 mb-3">
           <div class="col-md-8">
-            <label class="form-label fw-bold">Select Document Files (Multi-Select Enabled)</label>
+            <label class="form-label fw-bold">{{ t(request, 'knowledge.select_files_lbl') }}</label>
             <div class="input-group input-group-sm">
               <input type="file" id="doc-upload-file" class="form-control" accept=".pdf,.txt,.json,.jsonl,.md" multiple>
               <button class="btn btn-info text-white" onclick="uploadDocFile()">
-                <i class="bi bi-cloud-upload me-1"></i>Upload Document(s)
+                <i class="bi bi-cloud-upload me-1"></i>{{ t(request, 'knowledge.upload_btn') }}
               </button>
             </div>
-            <div class="form-text">Supported formats: <code>.pdf</code>, <code>.txt</code>, <code>.json</code>, <code>.jsonl</code>, <code>.md</code>. Hold Ctrl / Shift to select multiple files.</div>
+            <div class="form-text">{{ t(request, 'knowledge.supported_formats_hint') }}</div>
           </div>
 
           <div class="col-md-4 d-flex align-items-end justify-content-end">
             <button class="btn btn-outline-primary btn-sm w-100" onclick="triggerCronIngestion()">
-              <i class="bi bi-play-circle me-1"></i>Trigger Cron Batch Import Now
+              <i class="bi bi-play-circle me-1"></i>{{ t(request, 'knowledge.trigger_cron_btn') }}
             </button>
           </div>
         </div>
@@ -160,15 +160,15 @@
         <div id="ingestion-forecast-banner" class="card bg-dark text-white p-3 mb-3 border-secondary" style="display:none">
           <div class="d-flex align-items-center justify-content-between mb-2">
             <div>
-              <span class="fw-bold text-info"><i class="bi bi-speedometer2 me-1"></i>Geschwindigkeit:</span>
+              <span class="fw-bold text-info"><i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'knowledge.lbl_speed') }}</span>
               <span id="forecast-speed" class="badge bg-info text-dark ms-1">⚡ 0.0 MB/min</span>
             </div>
             <div>
-              <span class="fw-bold text-warning"><i class="bi bi-hourglass-bottom me-1"></i>Prognose Fertigstellung:</span>
-              <span id="forecast-eta" class="badge bg-warning text-dark ms-1">⏱️ Berechne...</span>
+              <span class="fw-bold text-warning"><i class="bi bi-hourglass-bottom me-1"></i>{{ t(request, 'knowledge.lbl_eta') }}</span>
+              <span id="forecast-eta" class="badge bg-warning text-dark ms-1">⏱️ {{ t(request, 'knowledge.lbl_calculating') }}</span>
             </div>
             <div>
-              <span class="text-muted small" id="forecast-files-cnt">0 / 0 Dateien importiert</span>
+              <span class="text-muted small" id="forecast-files-cnt"></span>
             </div>
           </div>
           <div class="progress" style="height: 10px;">
@@ -181,16 +181,16 @@
           <table class="table table-sm table-hover align-middle small">
             <thead class="table-dark">
               <tr>
-                <th>File Name</th>
-                <th>Size</th>
-                <th>Upload Date</th>
-                <th>Status</th>
-                <th>Ingested At</th>
-                <th class="text-end">Actions</th>
+                <th>{{ t(request, 'knowledge.th_file_name') }}</th>
+                <th>{{ t(request, 'knowledge.th_size') }}</th>
+                <th>{{ t(request, 'knowledge.th_upload_date') }}</th>
+                <th>{{ t(request, 'knowledge.th_status') }}</th>
+                <th>{{ t(request, 'knowledge.th_ingested_at') }}</th>
+                <th class="text-end">{{ t(request, 'knowledge.th_actions') }}</th>
               </tr>
             </thead>
             <tbody id="doc-status-tbody">
-              <tr><td colspan="6" class="text-center text-muted py-3">Loading uploaded documents...</td></tr>
+              <tr><td colspan="6" class="text-center text-muted py-3">{{ t(request, 'knowledge.no_docs_msg') }}</td></tr>
             </tbody>
           </table>
         </div>
@@ -331,6 +331,14 @@ async function executeImport() {
   } catch(e) { alert('Import failed: ' + e.message); }
 }
 
+const JS_KNOWLEDGE_LANG = {
+  statusQueue: "{{ t(request, 'knowledge.status_queue') }}",
+  statusProcessing: "{{ t(request, 'knowledge.status_processing') }}",
+  statusImported: "{{ t(request, 'knowledge.status_imported') }}",
+  statusError: "{{ t(request, 'knowledge.status_error') }}",
+  noDocs: "{{ t(request, 'knowledge.no_docs_msg') }}"
+};
+
 async function loadUploadedDocs() {
   try {
     const res = await fetch('/api/knowledge/documents');
@@ -346,7 +354,7 @@ async function loadUploadedDocs() {
       const elEta = document.getElementById('forecast-eta');
       if (elEta) elEta.textContent = `⏱️ ${data.summary.eta_formatted}`;
       const elCnt = document.getElementById('forecast-files-cnt');
-      if (elCnt) elCnt.textContent = `${data.summary.ingested_files} / ${data.summary.total_files} Dateien (${data.summary.ingested_mb} / ${data.summary.total_mb} MB)`;
+      if (elCnt) elCnt.textContent = `${data.summary.ingested_files} / ${data.summary.total_files} (${data.summary.ingested_mb} / ${data.summary.total_mb} MB)`;
       
       const pbar = document.getElementById('forecast-progressbar');
       if (pbar) {
@@ -356,7 +364,7 @@ async function loadUploadedDocs() {
     }
 
     if (!data.documents || data.documents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No uploaded documents yet. Upload a PDF, TXT, or JSON file above.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">${JS_KNOWLEDGE_LANG.noDocs}</td></tr>`;
       return;
     }
 
@@ -368,16 +376,16 @@ async function loadUploadedDocs() {
     });
 
     tbody.innerHTML = sortedDocs.map(d => {
-      let badge = '<span class="badge bg-secondary"><i class="bi bi-hourglass-split me-1"></i>In Warteschlange</span>';
+      let badge = `<span class="badge bg-secondary"><i class="bi bi-hourglass-split me-1"></i>${JS_KNOWLEDGE_LANG.statusQueue}</span>`;
       let rowClass = '';
       
       if (d.status === 'processing') {
-        badge = '<span class="badge bg-primary text-white p-2 shadow-sm"><span class="spinner-border spinner-border-sm me-1" role="status"></span>⚙️ Importiert gerade...</span>';
+        badge = `<span class="badge bg-primary text-white p-2 shadow-sm"><span class="spinner-border spinner-border-sm me-1" role="status"></span>⚙️ ${JS_KNOWLEDGE_LANG.statusProcessing}</span>`;
         rowClass = 'table-primary bg-primary bg-opacity-10 fw-bold border-start border-4 border-primary';
       } else if (d.status === 'ingested') {
-        badge = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Importiert</span>';
+        badge = `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>${JS_KNOWLEDGE_LANG.statusImported}</span>`;
       } else if (d.status === 'error') {
-        badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>Fehler</span>`;
+        badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>${JS_KNOWLEDGE_LANG.statusError}</span>`;
       }
       const sizeKB = (d.size_bytes / (1024 * 1024) > 1) 
         ? (d.size_bytes / (1024 * 1024)).toFixed(1) + ' MB' 
