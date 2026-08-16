@@ -1146,6 +1146,8 @@ _chown_for_container 0 0 "${MOE_DATA_ROOT}/chroma-onnx-cache"       # chromadb: 
 _sudo chmod -R 777 "${MOE_DATA_ROOT}/chroma-onnx-cache" 2>/dev/null || true
 _sudo mkdir -p "${MOE_DATA_ROOT}/chroma-onnx-cache/onnx_models" 2>/dev/null || true
 _sudo chmod -R 777 "${MOE_DATA_ROOT}/chroma-onnx-cache/onnx_models" 2>/dev/null || true
+_sudo mkdir -p "${MOE_DATA_ROOT}/ollama-models" 2>/dev/null || true
+_chown_for_container 0 0 "${MOE_DATA_ROOT}/ollama-models"             # ollama: model cache
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/garage/meta"             # garage: distroless, runs as root
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/garage/data"             # garage: distroless, runs as root
 _chown_for_container 0 0 "${MOE_DATA_ROOT}/jupyterlab"              # jupyter: user:root + CHOWN_HOME
@@ -1622,7 +1624,86 @@ export INSTALL_CODEX
 echo ""
 
 # =============================================================================
-#  SECTION 8c: RAM check — warn if host memory is below stack requirements
+#  SECTION 8c: Optional Local Ollama Inference Engine & Model Pulling
+# =============================================================================
+echo "=========================================================================="
+echo "  Optional: Local Ollama Inference Engine"
+echo "=========================================================================="
+echo ""
+echo "  Deploy a dedicated local Ollama container for LLM inference directly on"
+echo "  this host (CPU or NVIDIA GPU). Default: No (use existing cluster/endpoints)."
+echo ""
+INSTALL_OLLAMA="false"
+OLLAMA_GPU_ENABLED="false"
+PULL_PLANNER_MODEL="false"
+PULL_JUDGE_MODEL="false"
+PULL_EXPERT_MODEL="false"
+
+while true; do
+  read -rp "  Deploy local Ollama instance (Docker container)? [y/N]: " _ollama_choice < /dev/tty
+  _ollama_choice="${_ollama_choice:-N}"
+  case "${_ollama_choice,,}" in
+    y|yes) INSTALL_OLLAMA="true"; break ;;
+    n|no)  INSTALL_OLLAMA="false"; break ;;
+    *) echo "  Please enter y or n." ;;
+  esac
+done
+
+if [[ "$INSTALL_OLLAMA" == "true" ]]; then
+  echo ""
+  # Detect NVIDIA GPU on host
+  _has_nvidia=false
+  if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+    _has_nvidia=true
+  fi
+  if [[ "$_has_nvidia" == "true" ]]; then
+    echo "  NVIDIA GPU detected on this host."
+    read -rp "  Enable NVIDIA GPU acceleration for Ollama? [Y/n]: " _gpu_choice < /dev/tty
+    _gpu_choice="${_gpu_choice:-Y}"
+    case "${_gpu_choice,,}" in
+      n|no) OLLAMA_GPU_ENABLED="false" ;;
+      *)    OLLAMA_GPU_ENABLED="true" ;;
+    esac
+  else
+    echo "  No NVIDIA GPU detected — Ollama will run in CPU mode."
+    read -rp "  Enable NVIDIA GPU container passthrough anyway? [y/N]: " _gpu_choice < /dev/tty
+    _gpu_choice="${_gpu_choice:-N}"
+    case "${_gpu_choice,,}" in
+      y|yes) OLLAMA_GPU_ENABLED="true" ;;
+      *)     OLLAMA_GPU_ENABLED="false" ;;
+    esac
+  fi
+
+  echo ""
+  echo "  --- Model Pulling Options (Individual Confirmation) ---"
+  echo "  You can optionally pre-pull Sovereign models into the local Ollama instance:"
+  
+  read -rp "  Pull Sovereign Planner LLM (moe-sovereign-student:4b from HuggingFace)? [y/N]: " _p_choice < /dev/tty
+  _p_choice="${_p_choice:-N}"
+  case "${_p_choice,,}" in
+    y|yes) PULL_PLANNER_MODEL="true" ;;
+    *)     PULL_PLANNER_MODEL="false" ;;
+  esac
+
+  read -rp "  Pull Sovereign Judge & Refiner LLM (sovereign-judge:35b-q4km from HuggingFace)? [y/N]: " _j_choice < /dev/tty
+  _j_choice="${_j_choice:-N}"
+  case "${_j_choice,,}" in
+    y|yes) PULL_JUDGE_MODEL="true" ;;
+    *)     PULL_JUDGE_MODEL="false" ;;
+  esac
+
+  read -rp "  Pull General 35B Expert LLM (qwen3.6:35b)? [y/N]: " _e_choice < /dev/tty
+  _e_choice="${_e_choice:-N}"
+  case "${_e_choice,,}" in
+    y|yes) PULL_EXPERT_MODEL="true" ;;
+    *)     PULL_EXPERT_MODEL="false" ;;
+  esac
+fi
+export INSTALL_OLLAMA OLLAMA_GPU_ENABLED PULL_PLANNER_MODEL PULL_JUDGE_MODEL PULL_EXPERT_MODEL
+echo ""
+
+# =============================================================================
+#  SECTION 8d: RAM check — warn if host memory is below stack requirements
 # =============================================================================
 _ram_total_mb=0
 if [[ -r /proc/meminfo ]]; then
@@ -1807,8 +1888,12 @@ fi
   [[ "$INSTALL_NEO4J"     == "true" ]] && _env_profiles+=(neo4j)
   [[ "$INSTALL_CADDY"     == "true" ]] && _env_profiles+=(caddy)
   [[ "$INSTALL_AUTHENTIK" == "true" ]] && _env_profiles+=(authentik)
+  [[ "${INSTALL_OLLAMA:-false}" == "true" ]] && _env_profiles+=(ollama)
   printf 'COMPOSE_PROFILES=%s\n' "$(IFS=,; echo "${_env_profiles[*]}")"
   printf 'INSTALL_CODEX=%s\n' "${INSTALL_CODEX:-false}"
+  printf 'INSTALL_OLLAMA=%s\n' "${INSTALL_OLLAMA:-false}"
+  printf 'OLLAMA_GPU_ENABLED=%s\n' "${OLLAMA_GPU_ENABLED:-false}"
+  printf 'OLLAMA_HOST_PORT=%s\n' "${OLLAMA_HOST_PORT:-11434}"
   echo ""
   echo "# --- Container runtime socket + storage paths ---"
   echo "# Docker: DOCKER_SOCKET=/var/run/docker.sock, CONTAINER_STORAGE_ROOT=/var/lib/docker"
@@ -2228,6 +2313,40 @@ if [[ -f "${INSTALL_DIR}/scripts/ingest_corpora_batch.py" ]]; then
 fi
 
 # =============================================================================
+#  SECTION 12c: Pull confirmed models to local Ollama container
+# =============================================================================
+if [[ "${INSTALL_OLLAMA:-false}" == "true" ]]; then
+  echo ""
+  echo "[12c/13] Checking local Ollama inference service..."
+  _ollama_ready=false
+  for _try in {1..30}; do
+    if curl -sf "http://127.0.0.1:${OLLAMA_HOST_PORT:-11434}/api/tags" >/dev/null 2>&1; then
+      _ollama_ready=true
+      break
+    fi
+    sleep 2
+  done
+
+  if [[ "$_ollama_ready" == "true" ]]; then
+    echo "  Local Ollama service is online ✓"
+    if [[ "${PULL_PLANNER_MODEL:-false}" == "true" ]]; then
+      echo "  Pulling Planner LLM: hf.co/h3rb3rn/moe-sovereign-student-4b:latest ..."
+      _compose exec -T moe-ollama ollama pull hf.co/h3rb3rn/moe-sovereign-student-4b:latest || true
+    fi
+    if [[ "${PULL_JUDGE_MODEL:-false}" == "true" ]]; then
+      echo "  Pulling Judge LLM: hf.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGUF:sovereign-judge-35b-q4_k_m.gguf ..."
+      _compose exec -T moe-ollama ollama pull hf.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGUF:sovereign-judge-35b-q4_k_m.gguf || true
+    fi
+    if [[ "${PULL_EXPERT_MODEL:-false}" == "true" ]]; then
+      echo "  Pulling Expert LLM: qwen3.6:35b ..."
+      _compose exec -T moe-ollama ollama pull qwen3.6:35b || true
+    fi
+  else
+    echo "  [!] Local Ollama container did not report healthy in time — skipping pre-pull."
+  fi
+fi
+
+# =============================================================================
 #  SECTION 13: Success banner
 # =============================================================================
 echo ""
@@ -2285,7 +2404,13 @@ echo ""
 echo "  NEXT STEPS:"
 echo "  1. Open the Admin UI and complete the Setup Wizard"
 echo "  2. Add at least one inference server (Ollama, OpenAI, LiteLLM, etc.)"
-echo "  3. Configure Judge and Planner models"
+echo "  3. Pull Sovereign Planner & Judge LLMs from HuggingFace:"
+echo "     • Planner (4.2B Student):"
+echo "       https://huggingface.co/h3rb3rn/moe-sovereign-student-4b"
+echo "       ollama run hf.co/h3rb3rn/moe-sovereign-student-4b:latest"
+echo "     • Judge & Refiner (35B Sovereign Judge v3 GGUF):"
+echo "       https://huggingface.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGUF"
+echo "       ollama run hf.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGUF:sovereign-judge-35b-q4_k_m.gguf"
 echo "  4. Start chatting at your Open WebUI instance"
 echo ""
 echo "  Logs:    sudo ${COMPOSE} logs -f"
@@ -2294,6 +2419,7 @@ echo "  Stop:    sudo ${COMPOSE} down"
 echo ""
 echo "  Project: https://github.com/h3rb3rn/moe-sovereign"
 echo "  Docs:    https://docs.moe-sovereign.org"
+echo "  Models:  https://huggingface.co/h3rb3rn"
 echo ""
 echo "=========================================================================="
 echo ""

@@ -145,10 +145,11 @@ def _sanitize_plan(raw: list, fallback_input: str,
         if not isinstance(item, dict):
             logger.warning(f"⚠️ Planner: invalid task entry skipped: {item!r}")
             continue
-        task_text = item.get("task", "").strip()
+        task_text = (item.get("task") or item.get("task_description") or item.get("instruction") or item.get("description") or "").strip()
         if not task_text:
             continue
-        cat = item.get("category", "general")
+        item["task"] = task_text
+        cat = item.get("category") or item.get("task_type") or item.get("type") or "general"
         if cat not in valid_cats:
             logger.warning(f"⚠️ Planner: unknown category '{cat}' → 'general'")
             cat = "general"
@@ -1023,7 +1024,9 @@ JSON array:"""
             # Use the shared tolerant contract parser; it accepts an array or
             # {"tasks": [...]} and preserves task-specific routing fields.
             _plan_text = res.content.strip()
+            logger.info("PLANNER RAW OUTPUT: %r", _plan_text)
             _contract_plan = _parse_plan_contract(_plan_text)
+            logger.info("CONTRACT PLAN VALID: %s, TASKS: %d", _contract_plan.valid, len(_contract_plan.tasks))
             if not _contract_plan.valid:
                 raw, _explicit_recovery_events = (
                     _recover_explicit_supported_plan(

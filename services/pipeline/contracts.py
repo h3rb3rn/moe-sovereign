@@ -146,12 +146,20 @@ def parse_plan(raw: str) -> PlannerPlan:
     tasks = obj.get("tasks") if isinstance(obj, dict) else obj
     if isinstance(tasks, list):
         for t in tasks:
-            if isinstance(t, dict) and (t.get("category") or t.get("instruction") or t.get("task")):
-                plan.tasks.append(PlanTask(
-                    category=str(t.get("category", "general")),
-                    instruction=str(t.get("instruction") or t.get("task") or ""),
-                    payload=dict(t),
-                ))
+            if isinstance(t, dict):
+                cat = str(t.get("category") or t.get("task_type") or t.get("type") or "general")
+                instruction = str(t.get("instruction") or t.get("task") or t.get("task_description") or t.get("description") or "")
+                if cat or instruction:
+                    payload = dict(t)
+                    if "task" not in payload and instruction:
+                        payload["task"] = instruction
+                    if "category" not in payload and cat:
+                        payload["category"] = cat
+                    plan.tasks.append(PlanTask(
+                        category=cat,
+                        instruction=instruction,
+                        payload=payload,
+                    ))
         plan.valid = bool(plan.tasks)
     if not plan.valid and os.getenv("MOE_STRICT_CONTRACTS", "0") == "1":
         logger.error("contracts: planner output failed schema parse (chars=%d)", len(raw or ""))

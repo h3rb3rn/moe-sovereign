@@ -373,6 +373,26 @@ services:
           cpus: '${EMBED_CPU_LIMIT:-2.0}'
           memory: 2G
 
+  # --- Local Inference Engine (Ollama) ---
+  moe-ollama:
+    image: ollama/ollama:latest
+    container_name: moe-ollama
+    profiles: [ollama]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OLLAMA_HOST_PORT:-11434}:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-24h}
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ${MOE_DATA_ROOT}/ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   # --- Prometheus (Metriken-Scraper) ---
   moe-prometheus:
     image: prom/prometheus:latest

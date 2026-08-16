@@ -50,6 +50,8 @@ from services.deadline import (
     wait_for_budget,
 )
 
+_DEFAULT_OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "24h")
+
 
 def _ollama_answer_content(response: dict) -> str:
     """Return public answer content, never Ollama's private thinking trace."""
@@ -788,9 +790,7 @@ async def _invoke_judge_with_retry(
                     "messages":   [{"role": "user", "content": prompt}],
                     "stream":     False,
                     "think":      JUDGE_THINKING_ENABLED,
-                    # Short lease: frees VRAM within 5m after pipeline completes so expert/planner
-                    # models can load without eviction.
-                    "keep_alive": "5m",
+                    "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
                 }
                 _payload["stream"] = enforce_streaming_capability(
                     _jm, bool(_payload["stream"])
@@ -925,7 +925,7 @@ async def ainvoke_judge_llm(prompt):
             "messages":   _messages,
             "stream":     False,
             "think":      JUDGE_THINKING_ENABLED,
-            "keep_alive": "5m",
+            "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
         }
         _payload["stream"] = enforce_streaming_capability(
             JUDGE_MODEL, bool(_payload["stream"])
@@ -1333,7 +1333,7 @@ async def _invoke_planner_with_retry(
             "messages":   [{"role": "user", "content": prompt}],
             "stream":     False,
             "think":      PLANNER_THINKING_ENABLED,
-            "keep_alive": "5m",
+            "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
             "options":    _opts,
         }
         _payload = apply_ollama_structured_capability(
