@@ -33,7 +33,20 @@ library_name: transformers
 
 **`moe-expert-precision-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Qwen2.5-Math-72B**, **Nvidia Nemotron-70B**, and **Ground-Truth Z3 Formal Proof Oracles** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI architecture, this model serves as the **Formal Reasoning, SMT Constraint Formulation, and Numerical Precision Expert**. Rather than relying purely on probabilistic floating-point intuition, it translates complex quantitative problems into structured mathematical proofs, exact dimensional steps, and executable formal constraints (Z3 SMT, SymPy, and MCP precision tool invocations).
+Within the MoE Sovereign compound AI architecture, this model serves as the **Formal Reasoning, SMT Constraint Formulation, and Numerical Precision Expert**. The core architectural design enforces a clean separation of concerns:
+
+```
+  +-----------------------------------+       +-----------------------------------+
+  |    moe-expert-precision-4b (SLM)  |       |   Deterministic Solvers & Tools   |
+  |  (Probabilistic SLM Intelligence) |       |  (Z3 SMT, SymPy, Calculator MCP)  |
+  |                                   |       |                                   |
+  |  - Interprets Natural Language    | ----> |  - Solves SMT Constraints         |
+  |  - Formulates Stepwise Lemmas     |       |  - Computes Exact Arithmetic      |
+  |  - Generates Z3 / SMT Constraints | <---- |  - Formally Verifies Soundness    |
+  +-----------------------------------+       +-----------------------------------+
+```
+
+Rather than relying purely on probabilistic floating-point intuition, it translates quantitative problems into structured mathematical proofs and executable formal constraints for downstream solver verification.
 
 ---
 
@@ -46,7 +59,20 @@ Within the MoE Sovereign compound AI architecture, this model serves as the **Fo
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-precision-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Arithmetic Reliability** | Prone to off-by-one errors and floating-point drift | **Formalized Step Invariants**; invokes precision tool contracts for arithmetic |
+| **Formal Logic** | Hand-waves proof steps; often asserts conclusions without proof | **Deductive Proof Chains** with explicit lemmas and SMT-compatible formulations |
+| **Network Math** | Hallucinates broadcast addresses on non-standard CIDR bounds | **Exact Bitwise Subnet Math** with network IDs, host ranges, and broadcast bounds |
+| **Units & Dimensions** | Conflates units (e.g. bits vs bytes, metric vs imperial) | **Strict Dimensional Tracking** throughout all conversion steps |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 formal precision & mathematical tasks** with zero training contamination, validated by Z3 SMT solver execution and exact algebraic check:
 
@@ -60,17 +86,6 @@ Evaluated on a held-out benchmark suite of **1,000 formal precision & mathematic
 | **Formal Logic Soundness (No Fallacies)** | 66.8 % | **92.3 %** | **+25.5 %** |
 
 *Note: Evaluated with greedy decoding (`temperature=0.0`) across 3 independent seeds. Z3 solver timeout set to 5.0 seconds per constraint system.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-precision-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Arithmetic Reliability** | Prone to off-by-one errors and floating-point drift | **Formalized Step Invariants**; invokes precision tool contracts for arithmetic |
-| **Formal Logic** | Hand-waves proof steps; often asserts conclusions without proof | **Deductive Proof Chains** with explicit lemmas and SMT-compatible formulations |
-| **Network Math** | Hallucinates broadcast addresses on non-standard CIDR bounds | **Exact Bitwise Subnet Math** with network IDs, host ranges, and broadcast bounds |
-| **Units & Dimensions** | Conflates units (e.g. bits vs bytes, metric vs imperial) | **Strict Dimensional Tracking** throughout all conversion steps |
 
 ---
 

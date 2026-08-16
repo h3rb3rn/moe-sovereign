@@ -28,7 +28,7 @@ library_name: transformers
 
 ---
 
-## 📌 Executive Summary
+## 📌 Executive Summary & Architectural Role
 
 **`sovereign-judge-27b`** is a high-capacity 27-billion parameter verification and evaluation model distilled from **Meta-Llama-3.1-405B-Instruct**, **Nvidia Nemotron-70B**, and **Z3 SMT Formal Proof Oracles** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
@@ -45,7 +45,7 @@ Within the MoE Sovereign compound AI system, `sovereign-judge-27b` serves as the
 
 ---
 
-## 🔬 Behavioral Comparison: Stock Qwen 3.5 27B vs. Sovereign Judge
+## 🎯 Training Objectives & Intended Behavioral Specialization
 
 | Capability | Base Stock Qwen 3.5 27B | `sovereign-judge-27b` (Distilled) |
 | :--- | :--- | :--- |
@@ -53,6 +53,12 @@ Within the MoE Sovereign compound AI system, `sovereign-judge-27b` serves as the
 | **Consensus Handling** | Simple majority vote or averaging | **Paraconsistent Logic Filter:** Detects contradictions without exploding the reasoning space |
 | **Self-Correction** | Generates generic instructions to "try again" | **Surgical Failure Analysis:** Identifies the exact violated invariant and provides actionable remediation |
 | **Memory Extraction** | No memory abstraction capabilities | **Automated Correction Memory Extraction:** Generalizes runtime errors into reusable patterns |
+
+---
+
+## 📊 Empirical Evaluation
+
+> ℹ️ **Evaluation Status:** Currently undergoing final SFT convergence training on LUMI-G (Job `#21191994`). Comprehensive multi-aspect validation figures and Held-Out Deliberation Benchmark scores will be published upon checkpoint finalization and GGUF quantization.
 
 ---
 
@@ -117,7 +123,7 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True
 )
 
-prompt = "<|im_start|>user\nEvaluate the following candidate DAG execution plan and determine whether it satisfies paraconsistent consensus and GDPR boundary rules.<|im_end|>\n<|im_start|>assistant\n"
+prompt = "<|im_start|>user\nArbitrate between these two conflicting expert responses regarding database isolation levels and identify the formal contradiction.<|im_end|>\n<|im_start|>assistant\n"
 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.05)
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
@@ -130,7 +136,7 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ```bibtex
 @misc{moe_sovereign_2026_judge27b,
   author = {Horn, Philipp and MoE Sovereign Core AI Team},
-  title = {MoE Sovereign Judge 27B: Paraconsistent Consensus & Self-Correction Oracle},
+  title = {MoE Sovereign Judge 27B: Paraconsistent Consensus & Formal Verification Oracle},
   year = {2026},
   publisher = {Hugging Face},
   howpublished = {\url{https://huggingface.co/h3rb3rn/sovereign-judge-27b}},

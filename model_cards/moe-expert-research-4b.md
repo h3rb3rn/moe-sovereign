@@ -46,7 +46,20 @@ Within the MoE Sovereign compound AI architecture, this model serves as the **Ev
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-research-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Citation Grounding** | Invents non-existent DOIs, authors, or paper titles | **Strict In-Context Provenance**; cites exact document tags and section anchors |
+| **Trade-Off Analysis** | Generic pros/cons lists ("Fast but complex") | **Quantitative Multi-Axis Trade-Offs** (Latency, O(N) complexity, memory bounds) |
+| **Information Extraction**| Omits key technical nuances and quantitative metrics | **Systematic Benchmark Extraction** (Dataset, Sample Size, CI, Hardware) |
+| **Synthesis Coherence** | Disjointed paragraph dumps | **Hierarchical Technical Architecture** with clear structural transitions |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 multi-document research synthesis tasks** with zero training contamination, evaluated across factual entailment (NLI) and citation verification:
 
@@ -60,17 +73,6 @@ Evaluated on a held-out benchmark suite of **1,000 multi-document research synth
 | **Long-Context Context Span Retrieval** | 63.5 % | **93.2 %** | **+29.7 %** |
 
 *Note: Evaluated at `temperature=0.15` across 3 independent seeds. Citation precision measures the percentage of generated citations that accurately point to supporting evidence in the source text.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-research-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Citation Grounding** | Invents non-existent DOIs, authors, or paper titles | **Strict In-Context Provenance**; cites exact document tags and section anchors |
-| **Trade-Off Analysis** | Generic pros/cons lists ("Fast but complex") | **Quantitative Multi-Axis Trade-Offs** (Latency, O(N) complexity, memory bounds) |
-| **Information Extraction**| Omits key technical nuances and quantitative metrics | **Systematic Benchmark Extraction** (Dataset, Sample Size, CI, Hardware) |
-| **Synthesis Coherence** | Disjointed paragraph dumps | **Hierarchical Technical Architecture** with clear structural transitions |
 
 ---
 

@@ -75,7 +75,20 @@ Traditional monolithic AI paradigms force massive 70B–400B models to act simul
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-sovereign-student-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Output Discipline** | Generates conversational preambles and explanations around JSON | **Pure JSON Task Array**; zero preamble, zero postamble markdown |
+| **Task Granularity** | Over-plans into 10+ vague tasks or under-plans into 1 generic prompt | **Optimal Bounded DAG** (1–4 discrete, machine-executable subtasks) |
+| **Tool Parameterization**| Invents non-existent parameters or misses required schemas | **Exact MCP Schema Conformance** matching registered tool signatures |
+| **Epistemic Modesty** | Attempts to answer complex math/code directly with hallucinations | **Delegates to Specialized Experts** and deterministic precision tools |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 multi-step planning and orchestration tasks** across multidisciplinary engineering problems with zero training contamination:
 
@@ -89,17 +102,6 @@ Evaluated on a held-out benchmark suite of **1,000 multi-step planning and orche
 | **Mean Planning Latency (TTFT)** | 1,420 ms | **185 ms** | **-87.0 %** |
 
 *Note: Evaluated at `temperature=0.0` across 3 independent seeds. Latency measured on single RTX 3060 (12GB) with batch size 1.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-sovereign-student-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Output Discipline** | Generates conversational preambles and explanations around JSON | **Pure JSON Task Array**; zero preamble, zero postamble markdown |
-| **Task Granularity** | Over-plans into 10+ vague tasks or under-plans into 1 generic prompt | **Optimal Bounded DAG** (1–4 discrete, machine-executable subtasks) |
-| **Tool Parameterization**| Invents non-existent parameters or misses required schemas | **Exact MCP Schema Conformance** matching registered tool signatures |
-| **Epistemic Modesty** | Attempts to answer complex math/code directly with hallucinations | **Delegates to Specialized Experts** and deterministic precision tools |
 
 ---
 

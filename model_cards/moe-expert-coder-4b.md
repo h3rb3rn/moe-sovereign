@@ -34,7 +34,7 @@ library_name: transformers
 
 **`moe-expert-coder-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-Coder-V2 (236B)** and **DeepSeek-V3** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI system, this model serves as the **High-Assurance Systems Programming & Code Synthesis Expert**. It is purpose-tuned not to act as a general conversational agent, but to produce precise, syntactically verified code, atomic unified diffs, and AST-compliant implementations for concurrent systems, systems-level tooling (Rust, C++, Python, Go), and low-latency algorithms.
+Within the MoE Sovereign compound AI system, this model serves as the **High-Assurance Systems Programming & Code Synthesis Expert**. It is purpose-tuned not to act as a general conversational agent, but to produce precise code, atomic unified diffs, and AST-compliant implementations for concurrent systems, systems-level tooling (Rust, C++, Python, Go), and low-latency algorithms.
 
 ---
 
@@ -47,7 +47,20 @@ Within the MoE Sovereign compound AI system, this model serves as the **High-Ass
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-coder-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Output Style** | Verbose conversational explanations with markdown blocks | **Direct Code & Atomic Diffs**; minimal commentary, maximal type clarity |
+| **Memory Semantics**| Often defaults to relaxed/ad-hoc concurrency | **Explicit Atomic Orderings** (`AcqRel`, `SeqCst`) with thread-safety justification |
+| **Diff Accuracy** | Frequently hallucinated line numbers and fuzzy anchors | **Exact Line Anchors** with intact unified diff headers (`--- a/`, `+++ b/`) |
+| **Type Discipline** | Missing optional/generic constraints in complex types | **Strict Type Invariants** (Rust lifetimes, C++20 concepts, Python TypeVars) |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out test split of **1,000 multi-language software engineering tasks** with zero training overlap, verified against native compiler pipelines (`rustc 1.85`, `clang 19`, `python 3.13` with `mypy`):
 
@@ -57,21 +70,10 @@ Evaluated on a held-out test split of **1,000 multi-language software engineerin
 | **AST Parse Rate** | 78.1 % | **98.9 %** | **+20.8 %** |
 | **Strict Linter Pass Rate (`clippy`/`ruff`)** | 64.3 % | **95.2 %** | **+30.9 %** |
 | **Unified Diff Application Success** | 71.0 % | **97.8 %** | **+26.8 %** |
-| **Memory Safety Invariant Verification (Rust/C++)** | 56.4 % | **91.5 %** | **+35.1 %** |
+| **Memory Safety Invariant Hold (Rust/C++)** | 56.4 % | **91.5 %** | **+35.1 %** |
 | **Functional Correctness (Unit Tests)** | 51.8 % | **79.4 %** | **+27.6 %** |
 
 *Note: All tests were evaluated at `temperature=0.05` across 3 independent seeds with 95% confidence intervals within $\pm 0.8\%$.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-coder-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Output Style** | Verbose conversational explanations with markdown blocks | **Direct Code & Atomic Diffs**; minimal commentary, maximal type clarity |
-| **Memory Semantics**| Often defaults to relaxed/ad-hoc concurrency | **Explicit Atomic Orderings** (`AcqRel`, `SeqCst`) with thread-safety justification |
-| **Diff Accuracy** | Frequently hallucinated line numbers and fuzzy anchors | **Exact Line Anchors** with intact unified diff headers (`--- a/`, `+++ b/`) |
-| **Type Discipline** | Missing optional/generic constraints in complex types | **Strict Type Invariants** (Rust lifetimes, C++20 concepts, Python TypeVars) |
 
 ---
 

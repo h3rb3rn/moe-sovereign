@@ -46,7 +46,20 @@ Within the MoE Sovereign compound AI system, it functions as the **Cybersecurity
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-security-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Vulnerability Precision** | High rate of false alarms on benign code patterns | **Deterministic CWE Classification** with verifiable exploitation vectors |
+| **Secret Detection** | Misses obfuscated or fragmented credentials | **High-Entropy Token & Key Detection** with regex and entropy validation |
+| **Hardening Directives**| Generic recommendations ("use HTTPS", "sanitize input") | **Production Hardening Manifests** (Seccomp JSON, SELinux, CSP headers) |
+| **Threat Modeling** | Ad-hoc lists of general security risks | **Structured STRIDE Matrix** mapped directly to system trust boundaries |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 cybersecurity and vulnerability audit tasks** (derived from CVE corpora and synthetic vulnerability benchmarks) with zero training overlap:
 
@@ -60,17 +73,6 @@ Evaluated on a held-out benchmark suite of **1,000 cybersecurity and vulnerabili
 | **Valid Hardening Policy Syntax (Seccomp/AppArmor)** | 52.6 % | **96.4 %** | **+43.8 %** |
 
 *Note: Evaluated at `temperature=0.05` across 3 independent seeds. Precision/Recall evaluated on a balanced dataset of 500 vulnerable/secret-containing snippets and 500 benign snippets.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-security-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Vulnerability Precision** | High rate of false alarms on benign code patterns | **Deterministic CWE Classification** with verifiable exploitation vectors |
-| **Secret Detection** | Misses obfuscated or fragmented credentials | **High-Entropy Token & Key Detection** with regex and entropy validation |
-| **Hardening Directives**| Generic recommendations ("use HTTPS", "sanitize input") | **Production Hardening Manifests** (Seccomp JSON, SELinux, CSP headers) |
-| **Threat Modeling** | Ad-hoc lists of general security risks | **Structured STRIDE Matrix** mapped directly to system trust boundaries |
 
 ---
 

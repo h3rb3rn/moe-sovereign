@@ -34,20 +34,33 @@ library_name: transformers
 
 **`moe-expert-governance-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Mistral-Large-2407** and **DeepSeek-V3** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI architecture, this model serves as the **Regulatory Compliance, Privacy-by-Design & Data Sovereignty Policy Engine**. Rather than acting as an autonomous legal oracle, it functions as a policy reasoning engine over authoritative regulatory knowledge bases (EU GDPR/DSGVO, EU AI Act, BSI IT-Grundschutz, ISO 27001, HIPAA). It evaluates data flows, assesses system boundaries, and synthesizes structured compliance audit trails.
+Within the MoE Sovereign compound AI architecture, this model serves as the **Regulatory Policy Reasoning & Privacy-by-Design Expert**. Rather than acting as an autonomous legal decider, it **assists in evidence-grounded compliance analysis against versioned regulatory and policy sources** (EU GDPR/DSGVO, EU AI Act, BSI IT-Grundschutz, ISO 27001, HIPAA). It evaluates data flows, assesses system boundaries, and synthesizes structured compliance audit trails based on verified statutory documents supplied by the knowledge infrastructure.
 
 ---
 
 ## 🎯 Functional Scope & Capabilities
 
-1. **EU-GDPR / DSGVO Technical Policy Audits:** Evaluates data minimization (Art. 5(1)(c)), purpose limitation, technical and organizational measures (TOMs, Art. 32), and DPIA risk factors.
+1. **EU-GDPR / DSGVO Technical Policy Auditing:** Evaluates data minimization (Art. 5(1)(c)), purpose limitation, technical and organizational measures (TOMs, Art. 32), and DPIA risk factors.
 2. **EU AI Act Risk Classification:** Categorizes AI workflows into risk tiers (Prohibited, High Risk, Specific Transparency, Minimal Risk) based on statutory definitions and annexes.
 3. **BSI IT-Grundschutz & ISO 27001 Control Mapping:** Audits architecture components against standard security and confidentiality modules (e.g. INF.1, CON.2, OPS.1).
 4. **Structured Audit Trail Generation:** Produces JSON/Markdown governance reports mapping data pipelines to statutory requirements.
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-governance-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Legal Citation** | Hallucinates fictitious GDPR sub-clauses or non-existent AI Act articles | **Exact Statutory Alignment**; cites authoritative articles, recitals, and annexes |
+| **Risk Categorization** | Vague assertions ("This might be risky") | **Rigorous Classification Trees** (e.g. AI Act Annex III criteria with justification) |
+| **Technical Measures** | Generic suggestions ("Use encryption") | **Concrete TOMs** (e.g. TLS 1.3, AES-256-GCM, pseudonymization pipelines, RBAC) |
+| **Auditing Clarity** | Unstructured narrative essays | **Auditable Matrix Formats** (Statutory Requirement $\to$ Technical Control $\to$ Status) |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 regulatory compliance and architectural audit scenarios** with zero training contamination:
 
@@ -61,17 +74,6 @@ Evaluated on a held-out benchmark suite of **1,000 regulatory compliance and arc
 | **Hallucinated Legal Citation Rate** | 18.5 % | **1.8 %** | **-16.7 %** |
 
 *Note: Evaluated at `temperature=0.05` across 3 independent seeds. Audits were scored against gold-standard legal compliance matrices prepared by privacy and cybersecurity engineers.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-governance-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Legal Citation** | Hallucinates fictitious GDPR sub-clauses or non-existent AI Act articles | **Exact Statutory Alignment**; cites authoritative articles, recitals, and annexes |
-| **Risk Categorization** | Vague assertions ("This might be risky") | **Rigorous Classification Trees** (e.g. AI Act Annex III criteria with justification) |
-| **Technical Measures** | Generic suggestions ("Use encryption") | **Concrete TOMs** (e.g. TLS 1.3, AES-256-GCM, pseudonymization pipelines, RBAC) |
-| **Auditing Clarity** | Unstructured narrative essays | **Auditable Matrix Formats** (Statutory Requirement $\to$ Technical Control $\to$ Status) |
 
 ---
 

@@ -47,7 +47,20 @@ Within the MoE Sovereign compound AI architecture, this model serves as the **Kn
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-graphrag-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Cypher Syntax** | Uses outdated syntax, invalid aggregations, or missing variable projections | **Modern Neo4j 5.x Cypher** with parameterized inputs and efficient index hints |
+| **Entity Resolution** | Hallucinates plausible but non-existent entity IDs | **Strict Grounding in Schema**; applies fuzzy matching with distance thresholds |
+| **Multi-Hop Traversal**| Struggles beyond 1-hop relationships; gets stuck in recursive loops | **Precise Path Traversal** (`(a)-[:REL*1..3]->(b)`) with bounded depth |
+| **Graph Triples** | Produces arbitrary natural language labels without ontology bounds | **Ontology-Constrained Triples** mapped directly to domain schema nodes |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 graph retrieval and Cypher generation tasks** verified against a live Neo4j 5.25 graph instance with zero training contamination:
 
@@ -61,17 +74,6 @@ Evaluated on a held-out benchmark suite of **1,000 graph retrieval and Cypher ge
 | **Triplet Extraction F1 Score** | 63.8 % | **94.2 %** | **+30.4 %** |
 
 *Note: Evaluated at `temperature=0.0` across 3 independent seeds. Executable queries were executed directly against a multi-tenant enterprise ontology graph.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-graphrag-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Cypher Syntax** | Uses outdated syntax, invalid aggregations, or missing variable projections | **Modern Neo4j 5.x Cypher** with parameterized inputs and efficient index hints |
-| **Entity Resolution** | Hallucinates plausible but non-existent entity IDs | **Strict Grounding in Schema**; applies fuzzy matching with distance thresholds |
-| **Multi-Hop Traversal**| Struggles beyond 1-hop relationships; gets stuck in recursive loops | **Precise Path Traversal** (`(a)-[:REL*1..3]->(b)`) with bounded depth |
-| **Graph Triples** | Produces arbitrary natural language labels without ontology bounds | **Ontology-Constrained Triples** mapped directly to domain schema nodes |
 
 ---
 

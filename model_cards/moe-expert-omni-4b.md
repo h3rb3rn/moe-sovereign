@@ -65,7 +65,20 @@ Within the MoE Sovereign compound AI architecture, this model serves strictly as
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-omni-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Multi-Agent Merging** | Concatenates or overwrites domain expert outputs arbitrarily | **Harmonizes Contracts & Interfaces** while preserving domain guarantees |
+| **Contradiction Handling**| Ignores security/governance constraints to satisfy code prompt | **Explicitly Flags Conflicts** between security/legal policies and code |
+| **Domain Boundary** | Tries to hallucinate complex SQL or Z3 proofs itself | **Integrates Expert Solutions** without inventing unverified domain facts |
+| **Architecture Output** | High-level vague prose | **Executable Blueprints** (OpenAPI, Mermaid, Docker Compose topologies) |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 multi-expert synthesis and system integration tasks** with zero training overlap:
 
@@ -79,17 +92,6 @@ Evaluated on a held-out benchmark suite of **1,000 multi-expert synthesis and sy
 | **OpenAPI 3.1 Syntax & Schema Validity** | 68.2 % | **97.4 %** | **+29.2 %** |
 
 *Note: Evaluated at `temperature=0.1` across 3 independent seeds. Evaluated on multi-agent merge tasks combining 2 to 6 disparate domain expert outputs.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-omni-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Multi-Agent Merging** | Concatenates or overwrites domain expert outputs arbitrarily | **Harmonizes Contracts & Interfaces** while preserving domain guarantees |
-| **Contradiction Handling**| Ignores security/governance constraints to satisfy code prompt | **Explicitly Flags Conflicts** between security/legal policies and code |
-| **Domain Boundary** | Tries to hallucinate complex SQL or Z3 proofs itself | **Integrates Expert Solutions** without inventing unverified domain facts |
-| **Architecture Output** | High-level vague prose | **Executable Blueprints** (OpenAPI, Mermaid, Docker Compose topologies) |
 
 ---
 
@@ -129,7 +131,7 @@ Evaluated on a held-out benchmark suite of **1,000 multi-expert synthesis and sy
 
 1. **Not a Standalone Domain Specialist:** Omni should not be called in isolation for deep mathematical proofs, raw kernel driver writing, or standalone regulatory audits without expert inputs.
 2. **Upstream Contradiction Resolution:** When two expert outputs present an irreconcilable factual stalemate, Omni surfaces the dispute for the **Sovereign Judge (Belnap-Dunn consensus)** rather than making an arbitrary decision.
-3. **Scaling Beyond 8 Domain Tracks:** For architectures involving more than 8 simultaneous expert tracks, two-pass hierarchical synthesis in the orchestrator is recommended.
+3. **Context Length Handling:** Trained for multi-turn context maintenance at context lengths up to 256k; for architectures involving more than 8 simultaneous expert tracks, two-pass hierarchical synthesis in the orchestrator is recommended.
 
 ---
 

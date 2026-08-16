@@ -48,7 +48,20 @@ Within the MoE Sovereign compound AI architecture, this model operates as the **
 
 ---
 
+## 🎯 Training Objectives & Intended Behavioral Specialization
+
+| Capability | Base Stock Qwen 3.5 4B | `moe-expert-datainfra-4b` (Distilled) |
+| :--- | :--- | :--- |
+| **Query Tuning** | Recommends generic indexes without column selectivity analysis | **Targeted Composite / Covering Indexes** (`INCLUDE`), partial indexes, and join order tuning |
+| **Schema Migrations**| Employs destructive DDL (`ALTER TABLE ... ADD CONSTRAINT` with table locks) | **Zero-Downtime DDL** (`CONCURRENTLY`, `NOT VALID` followed by `VALIDATE CONSTRAINT`) |
+| **Analytical SQL** | Prone to syntax hallucinations on OLAP-specific ClickHouse/DuckDB functions | **Dialect-Specific Idioms** (e.g. ClickHouse `ARRAY JOIN`, DuckDB Parquet scans) |
+| **Performance Modeling**| Hand-waves execution costs | **Concrete Cost Estimations** mapped to buffer page hits and memory limits |
+
+---
+
 ## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
 
 Evaluated on a held-out benchmark suite of **1,000 data infrastructure & SQL optimization tasks** executed directly against live PostgreSQL 16, DuckDB 1.1, and ClickHouse 24.8 engines with zero training overlap:
 
@@ -62,17 +75,6 @@ Evaluated on a held-out benchmark suite of **1,000 data infrastructure & SQL opt
 | **Analytical Window Function Correctness** | 62.5 % | **93.8 %** | **+31.3 %** |
 
 *Note: Evaluated at `temperature=0.05` across 3 independent seeds. Query plan optimization win rate measures the percentage of suggested query rewrites that measurably reduced cost / buffer reads in `EXPLAIN (ANALYZE, BUFFERS)`.*
-
----
-
-## 🔬 Behavioral Comparison
-
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-datainfra-4b` (Distilled) |
-| :--- | :--- | :--- |
-| **Query Tuning** | Recommends generic indexes without column selectivity analysis | **Targeted Composite / Covering Indexes** (`INCLUDE`), partial indexes, and join order tuning |
-| **Schema Migrations**| Employs destructive DDL (`ALTER TABLE ... ADD CONSTRAINT` with table locks) | **Zero-Downtime DDL** (`CONCURRENTLY`, `NOT VALID` followed by `VALIDATE CONSTRAINT`) |
-| **Analytical SQL** | Prone to syntax hallucinations on OLAP-specific ClickHouse/DuckDB functions | **Dialect-Specific Idioms** (e.g. ClickHouse `ARRAY JOIN`, DuckDB Parquet scans) |
-| **Performance Modeling**| Hand-waves execution costs | **Concrete Cost Estimations** mapped to buffer page hits and memory limits |
 
 ---
 
