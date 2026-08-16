@@ -132,10 +132,6 @@ singularity exec \
 
 # ── STAGE 3: GGUF Q8_0 & Q4_K_M Quantization ──────────────────────────────
 echo "[$(date +%H:%M:%S)] === STAGE 3: GGUF Quantization (Q8_0 & Q4_K_M) ==="
-singularity exec \
-    --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TRITON_CACHE_DIR="${SCRATCH}/cache/triton",TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions",TMPDIR="${SCRATCH}/tmp" \
-    "$CONTAINER" \
-    bash "${SCRIPT_DIR}/export_expert_gguf_array.sh" "$ROLE" "$MERGE_OUT_DIR" "$EXPORT_DIR"
+bash "${SCRIPT_DIR}/export_expert_gguf_array.sh" "$ROLE" "$MERGE_OUT_DIR" "$EXPORT_DIR"
 
 echo "[$(date +%H:%M:%S)] 🎉 PIPELINE COMPLETED SUCCESSFULLY FOR [moe-${ROLE}]!"

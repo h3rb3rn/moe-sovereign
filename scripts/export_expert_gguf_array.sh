@@ -49,17 +49,23 @@ else
     QUANTIZE_BIN="llama-quantize"
 fi
 
-# 1. Convert HuggingFace model to F16 GGUF
-echo "⏳ Converting HuggingFace model to F16 GGUF..."
-python3 "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" "$MERGED_DIR" \
-    --outfile "$F16_GGUF" \
-    --outtype f16
+CONTAINER="${SCRATCH}/lumi-multitorch-latest.sif"
 
-# 2. Quantize to Q8_0 (Reference)
+# 1. Convert HuggingFace model to F16 GGUF (inside Singularity container for PyTorch/Transformers)
+echo "⏳ Converting HuggingFace model to F16 GGUF..."
+singularity exec \
+    --bind /scratch/project_465003058:/scratch/project_465003058 \
+    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TMPDIR="${SCRATCH}/tmp" \
+    "$CONTAINER" \
+    python3 "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" "$MERGED_DIR" \
+        --outfile "$F16_GGUF" \
+        --outtype f16
+
+# 2. Quantize to Q8_0 (High Precision Reference, native on host)
 echo "⏳ Quantizing to Q8_0 (High Precision Reference)..."
 "$QUANTIZE_BIN" "$F16_GGUF" "$Q8_GGUF" Q8_0
 
-# 3. Quantize to Q4_K_M (Production Target)
+# 3. Quantize to Q4_K_M (Production Target, native on host)
 echo "⏳ Quantizing to Q4_K_M (Production Target)..."
 "$QUANTIZE_BIN" "$F16_GGUF" "$Q4_GGUF" Q4_K_M
 
