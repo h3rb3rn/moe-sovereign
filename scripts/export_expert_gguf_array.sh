@@ -7,9 +7,10 @@
 
 set -euo pipefail
 
+SCRATCH="${SCRATCH:-/scratch/project_465003058/hornphil}"
 ROLE="${1:-coder}"
-MERGED_DIR="${2:-/scratch/project_465003058/hornphil/checkpoints/merged_expert_${ROLE}}"
-EXPORT_DIR="${3:-/scratch/project_465003058/hornphil/exports/moe-expert-${ROLE}-4b}"
+MERGED_DIR="${2:-${SCRATCH}/checkpoints/merged_expert_${ROLE}}"
+EXPORT_DIR="${3:-${SCRATCH}/exports/moe-expert-${ROLE}-4b}"
 
 echo "================================================================================"
 echo "📦 GGUF EXPORT & QUANTIZATION PIPELINE: [moe-${ROLE}]"
