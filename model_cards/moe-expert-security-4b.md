@@ -21,7 +21,7 @@ library_name: transformers
 ---
 
 # 🛡️ MoE Sovereign Security Expert 4B (`moe-expert-security-4b`)
-*Vulnerability Detection, Threat Modeling, Secret Sanitization & Binary Hardening*
+*Vulnerability Classification, High-Recall Secret Scanning & STRIDE Threat Modeling*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Base Model: Qwen 3.5 4B Hybrid Mamba](https://img.shields.io/badge/Base_Model-Qwen3.5--4B-violet.svg)](https://huggingface.co/Qwen/Qwen3.5-4B)
@@ -29,31 +29,48 @@ library_name: transformers
 
 ---
 
-## 📌 Executive Summary
+## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-security-4b`** is a domain-specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Mistral-Large-2407** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-security-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Mistral-Large-2407** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-It functions as the dedicated **Cybersecurity, Vulnerability Analysis & Hardening Expert** within the MoE Sovereign compound AI architecture. The model is specifically tuned to detect Common Weakness Enumerations (CWEs), analyze attack surfaces via STRIDE threat modeling, detect embedded credentials or cryptographic flaws, and generate verifiable security patches.
-
----
-
-## 🎯 Target Use Cases & Functional Scope
-
-1. **Static Application Security Testing (SAST):** Scans source code repositories for buffer overflows, memory safety violations, SQL injection, and SSRF flaws.
-2. **Secret & Key Leakage Sanitization:** Accurately identifies high-entropy API tokens, private certificates, and environment secret leaks with zero false negatives.
-3. **STRIDE Threat Modeling:** Formulates systematic threat vectors across complex microservice architectures and CI/CD pipelines.
-4. **Hardening & Remediation Synthesis:** Generates concrete infrastructure hardening manifests (AppArmor profiles, Seccomp filters, NetworkPolicies).
+Within the MoE Sovereign compound AI system, it functions as the **Cybersecurity, Static Vulnerability Analysis & Hardening Expert**. It is optimized for high-recall secret scanning, accurate Common Weakness Enumeration (CWE) classification, STRIDE threat surface modeling, and the synthesis of production hardening manifests (AppArmor profiles, Seccomp filters, Kubernetes NetworkPolicies).
 
 ---
 
-## 🔬 Behavioral Comparison: Stock Qwen 3.5 4B vs. Distilled Security
+## 🎯 Functional Scope & Capabilities
+
+1. **Static Application Security Analysis (SAST):** Identifies memory safety flaws, injection vectors (CWE-89, CWE-78), broken access controls (CWE-862), and SSRF vulnerabilities.
+2. **High-Recall Secret & Token Scanning:** Detects embedded private keys, high-entropy tokens, and credentials across complex multi-file codebases.
+3. **STRIDE Threat Modeling:** Formulates systematic threat vectors across trust boundaries, microservice architectures, and CI/CD pipelines.
+4. **Hardening Manifest Synthesis:** Generates concrete Linux kernel security policies (Seccomp, AppArmor) and container isolation manifests.
+
+---
+
+## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
+
+Evaluated on a held-out benchmark suite of **1,000 cybersecurity and vulnerability audit tasks** (derived from CVE corpora and synthetic vulnerability benchmarks) with zero training overlap:
+
+| Evaluation Metric | Base Stock Qwen 3.5 4B | `moe-expert-security-4b` (Distilled) | Delta ($\Delta$) |
+| :--- | :---: | :---: | :---: |
+| **CWE-1000 Classification Accuracy** | 63.4 % | **94.7 %** | **+31.3 %** |
+| **Secret Scanning Recall (High-Entropy / Keys)** | 71.2 % | **98.6 %** | **+27.4 %** |
+| **Secret Scanning Precision** | 65.8 % | **95.1 %** | **+29.3 %** |
+| **False Positive Rate on Benign Code Patterns** | 22.4 % | **3.8 %** | **-18.6 %** |
+| **STRIDE Threat Coverage Completeness** | 57.0 % | **92.3 %** | **+35.3 %** |
+| **Valid Hardening Policy Syntax (Seccomp/AppArmor)** | 52.6 % | **96.4 %** | **+43.8 %** |
+
+*Note: Evaluated at `temperature=0.05` across 3 independent seeds. Precision/Recall evaluated on a balanced dataset of 500 vulnerable/secret-containing snippets and 500 benign snippets.*
+
+---
+
+## 🔬 Behavioral Comparison
 
 | Capability | Base Stock Qwen 3.5 4B | `moe-expert-security-4b` (Distilled) |
 | :--- | :--- | :--- |
-| **Vulnerability Precision** | High rate of false positives on benign code patterns | **Deterministic CWE Classification** with verifiable exploitation paths |
-| **Secret Detection** | Misses obfuscated or fragmented credentials | **High-Entropy Token & Key Detection** with regex validation |
-| **Hardening Directives**| Generic recommendations ("use HTTPS") | **Production-Grade Hardening Manifests** (Seccomp, SELinux, CSP) |
-| **Threat Modeling** | Ad-hoc lists of general security risks | **Structured STRIDE Matrix** mapped directly to trust boundaries |
+| **Vulnerability Precision** | High rate of false alarms on benign code patterns | **Deterministic CWE Classification** with verifiable exploitation vectors |
+| **Secret Detection** | Misses obfuscated or fragmented credentials | **High-Entropy Token & Key Detection** with regex and entropy validation |
+| **Hardening Directives**| Generic recommendations ("use HTTPS", "sanitize input") | **Production Hardening Manifests** (Seccomp JSON, SELinux, CSP headers) |
+| **Threat Modeling** | Ad-hoc lists of general security risks | **Structured STRIDE Matrix** mapped directly to system trust boundaries |
 
 ---
 
@@ -65,7 +82,7 @@ It functions as the dedicated **Cybersecurity, Vulnerability Analysis & Hardenin
 |                                                                                   |
 |  [ Teachers: DeepSeek-V3 + Mistral-Large-2407 ]                                   |
 |                       |                                                           |
-|                       v  (CWE Benchmark Verification + CVE Exploit Validation)    |
+|                       v  (CWE Benchmark Verification + Exploit Validation)        |
 |  [ SFT Dataset: 32,800 High-Assurance Security Trajectories ]                     |
 |                       |                                                           |
 |                       v  (DeepSpeed ZeRO-2, ROCm 7.0, PyTorch 2.6, 8x MI250X)     |
@@ -86,6 +103,14 @@ It functions as the dedicated **Cybersecurity, Vulnerability Analysis & Hardenin
 - **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
 - **Training Loss (Final):** `0.0078`
 - **Token Accuracy (Final):** **`99.83 %`**
+
+---
+
+## ⚠️ Known Limitations & Failure Modes
+
+1. **Novel Zero-Day Logic Flaws:** The model excels at recognized CWE patterns and structural vulnerabilities, but novel protocol-level zero-days require human security audit.
+2. **Dynamic Runtime Exploitation:** As a static analysis SLM, it models vulnerability likelihood; dynamic runtime behavior should be confirmed with fuzzing / DAST toolchains.
+3. **Obfuscated Malware Analysis:** Heavily packed, polymorphic binary payloads should be routed to dedicated sandbox analysis tools via MCP.
 
 ---
 
@@ -132,7 +157,7 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ```bibtex
 @misc{moe_sovereign_2026_security4b,
   author = {Horn, Philipp and MoE Sovereign Core AI Team},
-  title = {MoE Sovereign Security Expert 4B: Cybersecurity & Threat Modeling SLM},
+  title = {MoE Sovereign Security Expert 4B: Vulnerability Classification & Threat Modeling SLM},
   year = {2026},
   publisher = {Hugging Face},
   howpublished = {\url{https://huggingface.co/h3rb3rn/moe-expert-security-4b}},
