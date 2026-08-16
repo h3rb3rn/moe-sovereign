@@ -20,7 +20,7 @@ from transformers import (
     TrainingArguments
 )
 from peft import LoraConfig, get_peft_model, TaskType
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train MoE Sovereign SLM Expert Pipeline on LUMI-G")
@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument("--grad-accum", type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument("--learning-rate", type=float, default=1.5e-5, help="Learning rate")
     parser.add_argument("--max-seq-len", type=int, default=4096, help="Maximum sequence length")
+    parser.add_argument("--max-steps", type=int, default=-1, help="Max steps for training (override epochs)")
     parser.add_argument("--deepspeed", type=str, default="/scratch/project_465003058/hornphil/configs/ds_zero2_bf16.json", help="Path to DeepSpeed config")
     return parser.parse_args()
 
@@ -82,16 +83,19 @@ def main():
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
     
-    training_args = TrainingArguments(
+    sft_config = SFTConfig(
         output_dir=str(output_path),
+        dataset_text_field="text",
+        max_length=args.max_seq_len,
         num_train_epochs=args.epochs,
+        max_steps=args.max_steps,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.learning_rate,
         lr_scheduler_type="cosine",
         warmup_steps=50,
         logging_steps=10,
-        save_strategy="epoch",
+        save_strategy="epoch" if args.max_steps <= 0 else "no",
         save_total_limit=2,
         bf16=True,
         gradient_checkpointing=True,
@@ -102,10 +106,8 @@ def main():
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
-        args=training_args,
-        dataset_text_field="text",
-        max_seq_length=args.max_seq_len,
-        tokenizer=tokenizer
+        args=sft_config,
+        processing_class=tokenizer
     )
     
     print("🔥 Starting training execution...")
