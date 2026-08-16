@@ -40,6 +40,12 @@ DATASET_FILE=$(ls "${DATASET_DIR}/dataset_expert_${ROLE}_"*.jsonl 2>/dev/null | 
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:512
 export PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}"
+export HF_HOME="${SCRATCH}/cache/huggingface"
+export XDG_CACHE_HOME="${SCRATCH}/cache"
+export TRITON_CACHE_DIR="${SCRATCH}/cache/triton"
+export TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions"
+export TMPDIR="${SCRATCH}/tmp"
+mkdir -p "${SCRATCH}/cache/huggingface" "${SCRATCH}/cache/triton" "${SCRATCH}/cache/torch_extensions" "${SCRATCH}/tmp"
 
 if [ "$ROLE" == "judge" ]; then
     BASE_MODEL="Qwen/Qwen3.8-27B"
@@ -93,7 +99,7 @@ mkdir -p "$TRAIN_OUT_DIR" "$MERGE_OUT_DIR" "$EXPORT_DIR" "${SCRATCH}/moe-soverei
 echo "[$(date +%H:%M:%S)] === STAGE 1: Distributed SFT Training on 8x MI250X (Torchrun) ==="
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}" \
+    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TRITON_CACHE_DIR="${SCRATCH}/cache/triton",TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions",TMPDIR="${SCRATCH}/tmp" \
     "$CONTAINER" \
     torchrun --standalone --nproc_per_node=8 \
         "${SCRIPT_DIR}/train_expert_slm_pipeline.py" \
@@ -117,7 +123,7 @@ fi
 echo "[$(date +%H:%M:%S)] === STAGE 2: CPU-BF16 LoRA Merge ==="
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}" \
+    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TRITON_CACHE_DIR="${SCRATCH}/cache/triton",TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions",TMPDIR="${SCRATCH}/tmp" \
     "$CONTAINER" \
     python3 "${SCRIPT_DIR}/merge_expert_lora_cpu.py" \
         --base-model "$BASE_MODEL" \
@@ -128,7 +134,7 @@ singularity exec \
 echo "[$(date +%H:%M:%S)] === STAGE 3: GGUF Quantization (Q8_0 & Q4_K_M) ==="
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}" \
+    --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TRITON_CACHE_DIR="${SCRATCH}/cache/triton",TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions",TMPDIR="${SCRATCH}/tmp" \
     "$CONTAINER" \
     bash "${SCRIPT_DIR}/export_expert_gguf_array.sh" "$ROLE" "$MERGE_OUT_DIR" "$EXPORT_DIR"
 

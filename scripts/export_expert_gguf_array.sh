@@ -38,6 +38,17 @@ F16_GGUF="${EXPORT_DIR}/${MODEL_NAME}-F16.gguf"
 Q8_GGUF="${EXPORT_DIR}/${MODEL_NAME}-Q8_0.gguf"
 Q4_GGUF="${EXPORT_DIR}/${MODEL_NAME}-Q4_K_M.gguf"
 
+# Find quantize binary
+if [ -x "${LLAMA_CPP_DIR}/build/bin/llama-quantize" ]; then
+    QUANTIZE_BIN="${LLAMA_CPP_DIR}/build/bin/llama-quantize"
+elif [ -x "${LLAMA_CPP_DIR}/llama-quantize" ]; then
+    QUANTIZE_BIN="${LLAMA_CPP_DIR}/llama-quantize"
+elif [ -x "/scratch/project_465003058/hornphil/llama_cpp_tools/llama-quantize" ]; then
+    QUANTIZE_BIN="/scratch/project_465003058/hornphil/llama_cpp_tools/llama-quantize"
+else
+    QUANTIZE_BIN="llama-quantize"
+fi
+
 # 1. Convert HuggingFace model to F16 GGUF
 echo "⏳ Converting HuggingFace model to F16 GGUF..."
 python3 "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" "$MERGED_DIR" \
@@ -46,11 +57,11 @@ python3 "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" "$MERGED_DIR" \
 
 # 2. Quantize to Q8_0 (Reference)
 echo "⏳ Quantizing to Q8_0 (High Precision Reference)..."
-"${LLAMA_CPP_DIR}/llama-quantize" "$F16_GGUF" "$Q8_GGUF" Q8_0
+"$QUANTIZE_BIN" "$F16_GGUF" "$Q8_GGUF" Q8_0
 
 # 3. Quantize to Q4_K_M (Production Target)
 echo "⏳ Quantizing to Q4_K_M (Production Target)..."
-"${LLAMA_CPP_DIR}/llama-quantize" "$F16_GGUF" "$Q4_GGUF" Q4_K_M
+"$QUANTIZE_BIN" "$F16_GGUF" "$Q4_GGUF" Q4_K_M
 
 # 4. Cleanup raw F16 GGUF to save scratch disk space
 rm -f "$F16_GGUF"
