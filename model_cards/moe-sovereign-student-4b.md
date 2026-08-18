@@ -11,6 +11,7 @@ tags:
 - task-planning
 - dag-generation
 - mcp-tools
+- capability-externalization
 - gguf
 - lumi-g
 - moe-sovereign
@@ -29,16 +30,21 @@ library_name: transformers
 
 ---
 
-## 📌 Executive Summary & Core Architectural Hypothesis
+## 📌 Executive Summary & Architectural Role
 
-**`moe-sovereign-student-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen3-Planner-35B** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-sovereign-student-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen3-Planner-35B** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-### The Sovereign Hypothesis: Small Models Directing Deterministic Infrastructure
-Traditional monolithic AI paradigms force massive 70B–400B models to act simultaneously as memory repositories, domain calculators, code linters, and planners. MoE Sovereign inverts this paradigm:
+Within the open-source **MoE Sovereign** compound AI system, this model operates exclusively as the **Meta-Orchestrator and AI Workflow Compiler**. It is explicitly **not intended to function as a general-purpose conversational chatbot**. Its designated role is to parse incoming natural-language requests, infer intent and operational constraints, and compile them into structured, typed Directed Acyclic Graphs (DAGs) that allocate tasks to specialized domain SLMs and deterministic precision tools.
 
-> **"The small model does not need to know everything. Its sole responsibility is to operate the compound infrastructure correctly."**
+---
 
-`moe-sovereign-student-4b` is not a generic chatbot. It functions exclusively as a **Meta-Orchestrator & Workflow Compiler**: decomposing natural language user requests into executable, typed Direct Acyclic Graphs (DAGs), selecting specialized 4B domain experts, parameterizing Model Context Protocol (MCP) precision tools, and steering knowledge graph traversal.
+## 🔬 Research Motivation: Capability Externalization
+
+Monolithic Large Language Models (70B–400B+) attempt to internalize encyclopedic knowledge, mathematical calculation, formal verification, and workflow management within a single set of neural weights. MoE Sovereign investigates the research question:
+
+> *"How much model capability can be externalized into specialized models, structured knowledge, deterministic tools, memory, and orchestration while maintaining useful task quality under real-world compute and sovereignty constraints?"*
+
+In this paradigm, **`moe-sovereign-student-4b`** does not need to memorize vast factual databases or perform arithmetic internally. Instead, its neural capacity is dedicated to semantic comprehension, task decomposition, and correct utilization of controllable external infrastructure:
 
 ```
                                   [ User Request ]
@@ -51,57 +57,40 @@ Traditional monolithic AI paradigms force massive 70B–400B models to act simul
                                          │
                  ┌───────────────────────┼───────────────────────┐
                  ▼                       ▼                       ▼
-      [ 8x Specialized 4B ]     [ 65x MCP Precision ]   [ GraphRAG / Memory ]
-      - Coder Expert 4B         - SMT / Z3 Solvers      - Neo4j Knowledge Graph
-      - Precision Expert 4B     - Decimal Arithmetics   - Semantic Episodic Cache
-      - Security Expert 4B      - Subnet Calculators    - Correction Memory
-      - DataInfra Expert 4B     - Linting Contracts     - Vector DB
+      [ Specialized 4B Experts ]  [ MCP Precision Tools ] [ Knowledge & Memory ]
+      - Coder Expert 4B           - SMT / Z3 Solvers      - Neo4j GraphRAG
+      - Precision Expert 4B       - Decimal Arithmetics   - Semantic Cache
+      - Security Expert 4B        - Subnet Calculators    - Correction Memory
+      - DataInfra Expert 4B       - Linter Contracts      - Vector DB
                  │                       │                       │
                  └───────────────────────┼───────────────────────┘
                                          │
                                          ▼
-                             [ Sovereign Judge 35B / 27B ]
-                             (Belnap-Dunn Consensus Gate)
+                             [ Sovereign Consensus Gate ]
+                             (Multi-Agent Review / Judge)
 ```
 
 ---
 
-## 🎯 Functional Scope & Capabilities
+## 🎯 Intended Functional Scope & Capabilities
 
-1. **Deterministic DAG Task Compilation:** Compiles user requests into structured JSON task arrays with explicit dependencies (`depends_on`), priority weights, and execution contracts.
-2. **Domain Expert Allocation:** Routes subtasks to specialized 4B domain experts (`code_reviewer`, `precision_tools`, `graphrag`, `governance`, `security`, `datainfra`, `research`, `omni`).
-3. **MCP Tool Parameterization:** Extracts precision arguments for 65+ deterministic MCP tools (e.g. `subnet_calc`, `decimal_finance`, `ast_grep`, `z3_solve`).
-4. **Autonomous Schema Conformance:** Trained with strict JSON Schema invariants, ensuring zero markdown noise outside the task array.
+1. **DAG Task Compilation:** Decomposes complex user prompts into discrete, machine-executable JSON task arrays with explicit dependency references (`depends_on`).
+2. **Domain Expert Allocation:** Maps subtasks to appropriate specialized expert categories (`code_reviewer`, `precision_tools`, `graphrag`, `governance`, `security`, `datainfra`, `research`, `omni`).
+3. **MCP Tool Parameterization:** Extracts and formats explicit parameters for registered Model Context Protocol (MCP) precision tools.
+4. **Structured Output Discipline:** Trained to produce valid JSON task specifications directly, avoiding conversational preambles or postambles.
 
 ---
 
-## 🎯 Training Objectives & Intended Behavioral Specialization
+## 🎯 Intended Behavioral Specialization
 
-| Capability | Base Stock Qwen 3.5 4B | `moe-sovereign-student-4b` (Distilled) |
+> *Note: The following table describes the intended specialization introduced by the distillation and training process. It should not be interpreted as a quantitative benchmark. Measured comparisons against the base model are reported in the Evaluation section.*
+
+| Capability / Dimension | Base Stock Qwen 3.5 4B | `moe-sovereign-student-4b` (Distilled) |
 | :--- | :--- | :--- |
-| **Output Discipline** | Generates conversational preambles and explanations around JSON | **Pure JSON Task Array**; zero preamble, zero postamble markdown |
-| **Task Granularity** | Over-plans into 10+ vague tasks or under-plans into 1 generic prompt | **Optimal Bounded DAG** (1–4 discrete, machine-executable subtasks) |
-| **Tool Parameterization**| Invents non-existent parameters or misses required schemas | **Exact MCP Schema Conformance** matching registered tool signatures |
-| **Epistemic Modesty** | Attempts to answer complex math/code directly with hallucinations | **Delegates to Specialized Experts** and deterministic precision tools |
-
----
-
-## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
-
-> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
-
-Evaluated on a held-out benchmark suite of **1,000 multi-step planning and orchestration tasks** across multidisciplinary engineering problems with zero training contamination:
-
-| Evaluation Metric | Base Stock Qwen 3.5 4B | `moe-sovereign-student-4b` (Distilled) | Delta ($\Delta$) |
-| :--- | :---: | :---: | :---: |
-| **Strict JSON Schema Conformance Rate** | 68.3 % | **99.7 %** | **+31.4 %** |
-| **Executable Task DAG Validity** | 61.5 % | **97.8 %** | **+36.3 %** |
-| **Domain Expert Routing Precision** | 59.2 % | **96.4 %** | **+37.2 %** |
-| **MCP Tool Contract Parameterization F1** | 53.0 % | **95.1 %** | **+42.1 %** |
-| **Over-Planning / Hallucinated Step Ratio** | 21.4 % | **1.8 %** | **-19.6 %** |
-| **Mean Planning Latency (TTFT)** | 1,420 ms | **185 ms** | **-87.0 %** |
-
-*Note: Evaluated at `temperature=0.0` across 3 independent seeds. Latency measured on single RTX 3060 (12GB) with batch size 1.*
+| **Output Format** | Conversational responses wrapped in explanatory prose | **Direct JSON Task Array**; trained for structured schema adherence |
+| **Task Granularity** | Prone to over-fragmentation or single unstructured blocks | **Bounded Task DAG** (typically 1–4 discrete, actionable subtasks) |
+| **Tool Calling Schema** | High variance in parameter names; occasional format drift | **Targeted Parameter Extraction** aligned with registered MCP schemas |
+| **Problem Solving Approach** | Attempts internal probabilistic generation for all domains | **Infrastructure Delegation**; routes calculation and retrieval to tools |
 
 ---
 
@@ -124,28 +113,45 @@ Evaluated on a held-out benchmark suite of **1,000 multi-step planning and orche
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hyperparameters:
-- **Compute Cluster:** LUMI-G (8× AMD Instinct MI250X 128GB GPUs, Slurm Job `#21189557`)
+### Reproducible Training Details:
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189557`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
-- **Dataset Size:** 35,000 verified planning trajectories
+- **Dataset Scale:** 35,000 verified planning and orchestration trajectories
+- **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
 - **Epochs:** 3.0
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
-- **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Training Loss (Final):** `0.0094`
-- **Token Accuracy (Final):** **`99.78 %`**
+- **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- **Optimization Outcome:** Final Training Loss `0.0094`, Training Token Accuracy `99.78%`
 
 ---
 
-## ⚠️ Known Limitations & Failure Modes
+## 🖥️ Consumer Hardware Deployment
 
-1. **Not a Direct Content Producer:** The model is not trained to write long-form essays or full code repos directly; its outputs are execution plans for downstream experts.
-2. **Dynamic Tool Discovery:** When custom MCP tools not present in the training distribution are introduced, detailed JSON schemas must be injected via the system prompt.
-3. **Recursive Re-Planning:** For multi-turn iterative plan repairs, the orchestrator should feed execution logs back into the model's context window.
+MoE Sovereign is designed for self-hosted execution where users run the system on **their own hardware**—ranging from consumer GPUs, workstations, and local clusters to cloud infrastructure. High-Performance Computing (LUMI-G) was utilized strictly during the temporary distillation phase to compress capability into compact SLMs, thereby reducing inference hardware requirements.
+
+### Deployment Characteristics:
+- **Local Host Execution:** Available in standard Hugging Face format and optimized GGUF quantizations (`Q4_K_M` ~2.6 GB, `Q8_0` ~4.2 GB).
+- **Inference Runtime:** Supported in standard local runtimes (e.g. Ollama, `llama.cpp`, vLLM).
+- **Target Profile:** Fits comfortably within entry-level 6 GB / 8 GB / 12 GB consumer GPUs (e.g. RTX 2060/3060, Apple Silicon unified memory).
+
+> *Consumer-hardware runtime measurements (VRAM residency, throughput tokens/sec, latency to first token, and energy consumption) are currently being evaluated across reference hardware tiers and will be published with the reproducible benchmark suite.*
 
 ---
 
-## 💻 Quickstart Guide (Ollama & Llama.cpp)
+## 📊 Evaluation
+
+Systematic held-out evaluation against the unmodified base model and comparative compound configurations is in progress. The evaluation methodology is designed to isolate and measure three distinct sources of capability:
+
+1. **Base Model Baseline:** Stock Qwen 3.5 4B (Direct Inference).
+2. **Domain Specialization:** Distilled `moe-sovereign-student-4b` standalone.
+3. **Compound AI System:** `moe-sovereign-student-4b` operating inside the MoE Sovereign runtime (with MCP tools, GraphRAG, and consensus gates).
+
+> ℹ️ *Note: Training loss (`0.0094`) and training-token accuracy (`99.78%`) reported above describe optimization during training and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+
+---
+
+## 💻 Quickstart Guide (Ollama & Python)
 
 ### 1. Ollama `Modelfile`
 ```dockerfile
@@ -175,7 +181,14 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True
 )
 
-prompt = "<|im_start|>system\nYou are a specialized planner model in a Mixture of Experts system. Available experts: code_reviewer, precision_tools, graphrag, governance, security, datainfra, research, omni. Produce an executable JSON task array.<|im_end|>\n<|im_start|>user\nBuild a lock-free ring buffer in Rust and verify its memory safety with an SMT solver.<|im_end|>\n<|im_start|>assistant\n"
+system_prompt = (
+    "You are a specialized planner model in a Mixture of Experts system. "
+    "Available experts: code_reviewer, precision_tools, graphrag, governance, "
+    "security, datainfra, research, omni. Produce an executable JSON task array."
+)
+user_prompt = "Build a lock-free ring buffer in Rust and verify its memory safety with an SMT solver."
+
+prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_prompt}<|im_end|>\n<|im_start|>assistant\n"
 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 outputs = model.generate(**inputs, max_new_tokens=256, temperature=0.0)
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
@@ -183,7 +196,16 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ---
 
-## 📑 Citation
+## ⚠️ Limitations
+
+1. **Probabilistic Planning:** While trained for strict schema adherence, the model is probabilistic; runtime validation in MoE Sovereign (e.g. JSON schema validators) is required to guarantee structural correctness.
+2. **Dynamic Tool Schema Sensitivity:** When newly defined MCP tools outside the training distribution are introduced, detailed tool signatures must be provided in the system context.
+3. **Execution Plan Bounds:** The model is optimized for high-leverage decomposition into 1–4 subtasks; extremely deep workflows with dozens of nested steps require iterative re-planning via the orchestrator loop.
+4. **Dependence on Downstream Components:** The quality of the final user outcome depends heavily on the availability and correctness of the allocated domain experts and tools.
+
+---
+
+## 📑 Citation & Reproducibility
 
 ```bibtex
 @misc{moe_sovereign_2026_student4b,

@@ -14,7 +14,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=56
 #SBATCH --mem=480G
-#SBATCH --time=18:00:00
+#SBATCH --time=72:00:00
 #SBATCH --output=/scratch/project_465003058/hornphil/moe-sovereign/logs/expert_pipe_%j.out
 #SBATCH --error=/scratch/project_465003058/hornphil/moe-sovereign/logs/expert_pipe_%j.err
 

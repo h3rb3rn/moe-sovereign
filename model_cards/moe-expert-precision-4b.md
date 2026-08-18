@@ -9,6 +9,7 @@ tags:
 - domain-expert
 - mathematical-reasoning
 - formal-verification
+- capability-externalization
 - smt-z3
 - vlsm-subnetting
 - gguf
@@ -21,7 +22,7 @@ library_name: transformers
 ---
 
 # 📐 MoE Sovereign Precision Expert 4B (`moe-expert-precision-4b`)
-*Tool-Grounded Mathematical Reasoning, Formal Constraint Synthesis & SMT Proof Formulation*
+*Tool-Grounded Mathematical Reasoning, Formal Proof Synthesis & Deterministic Solver Verification*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Base Model: Qwen 3.5 4B Hybrid Mamba](https://img.shields.io/badge/Base_Model-Qwen3.5--4B-violet.svg)](https://huggingface.co/Qwen/Qwen3.5-4B)
@@ -31,61 +32,50 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-precision-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Qwen2.5-Math-72B**, **Nvidia Nemotron-70B**, and **Ground-Truth Z3 Formal Proof Oracles** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-precision-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Qwen2.5-Math-72B**, **Nvidia Nemotron-70B**, and **Ground-Truth Z3 Formal Proof Oracles** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI architecture, this model serves as the **Formal Reasoning, SMT Constraint Formulation, and Numerical Precision Expert**. The core architectural design enforces a clean separation of concerns:
+Within the open-source **MoE Sovereign** compound AI system, this model operates as the **Mathematical Reasoning, Formal Constraint Synthesis & Proof Formulation Expert**. It is specialized in translating natural language quantitative and logical problems into structured mathematical proofs, exact dimensional equations, and formal SMT/SAT constraint scripts.
+
+---
+
+## 🔬 Research Motivation: Capability Externalization
+
+Language models are fundamentally probabilistic sequence predictors. Attempting to force a 4B neural network to perform multi-digit floating-point arithmetic or complex constraint satisfaction entirely within its weights inevitably leads to precision degradation. MoE Sovereign separates mathematical understanding from mathematical calculation:
 
 ```
   +-----------------------------------+       +-----------------------------------+
-  |    moe-expert-precision-4b (SLM)  |       |   Deterministic Solvers & Tools   |
+  |   moe-expert-precision-4b (SLM)   |       |   Deterministic Solvers & Tools   |
   |  (Probabilistic SLM Intelligence) |       |  (Z3 SMT, SymPy, Calculator MCP)  |
   |                                   |       |                                   |
-  |  - Interprets Natural Language    | ----> |  - Solves SMT Constraints         |
-  |  - Formulates Stepwise Lemmas     |       |  - Computes Exact Arithmetic      |
-  |  - Generates Z3 / SMT Constraints | <---- |  - Formally Verifies Soundness    |
+  |  - Interprets Word Problems       | ----> |  - Solves SMT Constraints         |
+  |  - Formulates Formal Proofs       |       |  - Computes Exact Arithmetic      |
+  |  - Synthesizes Z3 / SMT Scripts   | <---- |  - Formally Verifies Proof Steps  |
   +-----------------------------------+       +-----------------------------------+
 ```
 
-Rather than relying purely on probabilistic floating-point intuition, it translates quantitative problems into structured mathematical proofs and executable formal constraints for downstream solver verification.
+> **"The neural model provides semantic interpretation and formal constraint synthesis; deterministic engines (Z3, SymPy, exact decimal tools) provide verifiable mathematical guarantees."**
 
 ---
 
-## 🎯 Functional Scope & Capabilities
+## 🎯 Intended Functional Scope & Capabilities
 
-1. **Tool-Grounded Mathematical Reasoning:** Structures multi-step algebraic, calculus, and discrete mathematics problems with verified step-by-step invariants.
-2. **Formal SMT / Z3 Constraint Synthesis:** Formulates First-Order Logic (FOL) assertions, bit-vector arithmetic, and satisfiability bounds for downstream solver verification.
-3. **Deterministic Networking & VLSM Computation:** Solves complex Variable Length Subnet Masking (VLSM), route aggregation, and CIDR block allocations.
-4. **SymPy / Exact Symbolic Formulation:** Converts natural-language physics and engineering problems into exact symbolic expressions.
+1. **Tool-Grounded Mathematical Reasoning:** Structures multi-step algebraic, discrete, and calculus problems into step-by-step lemmas verified by tools.
+2. **Formal SMT / Z3 Constraint Synthesis:** Formulates First-Order Logic (FOL) assertions, bit-vector constraints, and bounded optimization problems for execution in external SMT solvers.
+3. **Structured Networking & VLSM Computation:** Translates Variable Length Subnet Masking (VLSM) requirements, CIDR routing bounds, and network partition constraints.
+4. **Symbolic Algebra & Physics Formulation:** Expresses physics and engineering relationships in exact symbolic notation for SymPy or Lean verification.
 
 ---
 
-## 🎯 Training Objectives & Intended Behavioral Specialization
+## 🎯 Intended Behavioral Specialization
 
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-precision-4b` (Distilled) |
+> *Note: The following table describes the intended specialization introduced by the distillation and training process. It should not be interpreted as a quantitative benchmark. Measured comparisons against the base model are reported in the Evaluation section.*
+
+| Capability / Dimension | Base Stock Qwen 3.5 4B | `moe-expert-precision-4b` (Distilled) |
 | :--- | :--- | :--- |
-| **Arithmetic Reliability** | Prone to off-by-one errors and floating-point drift | **Formalized Step Invariants**; invokes precision tool contracts for arithmetic |
-| **Formal Logic** | Hand-waves proof steps; often asserts conclusions without proof | **Deductive Proof Chains** with explicit lemmas and SMT-compatible formulations |
-| **Network Math** | Hallucinates broadcast addresses on non-standard CIDR bounds | **Exact Bitwise Subnet Math** with network IDs, host ranges, and broadcast bounds |
-| **Units & Dimensions** | Conflates units (e.g. bits vs bytes, metric vs imperial) | **Strict Dimensional Tracking** throughout all conversion steps |
-
----
-
-## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
-
-> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
-
-Evaluated on a held-out benchmark suite of **1,000 formal precision & mathematical tasks** with zero training contamination, validated by Z3 SMT solver execution and exact algebraic check:
-
-| Evaluation Metric | Base Stock Qwen 3.5 4B | `moe-expert-precision-4b` (Distilled) | Delta ($\Delta$) |
-| :--- | :---: | :---: | :---: |
-| **Multi-Step Arithmetic Accuracy** | 68.4 % | **98.2 %** | **+29.8 %** |
-| **Z3 SMT Valid Constraint Synthesis** | 42.1 % | **94.6 %** | **+52.5 %** |
-| **Symbolic Algebra Equivalence (SymPy)** | 61.5 % | **96.4 %** | **+34.9 %** |
-| **VLSM Subnetting Correctness** | 53.0 % | **99.1 %** | **+46.1 %** |
-| **Dimensional Analysis Invariant Hold** | 59.2 % | **95.8 %** | **+36.6 %** |
-| **Formal Logic Soundness (No Fallacies)** | 66.8 % | **92.3 %** | **+25.5 %** |
-
-*Note: Evaluated with greedy decoding (`temperature=0.0`) across 3 independent seeds. Z3 solver timeout set to 5.0 seconds per constraint system.*
+| **Arithmetic Strategy** | Probabilistic token generation prone to calculation drift | **Structured Proof Steps**; generates explicit calls to precision tools |
+| **Formal Logic** | Often asserts conclusions without intermediate lemmas | **Deductive Proof Chains** with explicit SMT-compatible assertions |
+| **Network Calculations** | Frequent off-by-one errors on non-standard CIDR boundaries | **Structured Bitwise Logic** generating exact subnet formulations |
+| **Dimensional Tracking** | Inconsistent unit conversions throughout multi-step problems | **Explicit Dimensional Checks** maintained across calculation steps |
 
 ---
 
@@ -108,28 +98,41 @@ Evaluated on a held-out benchmark suite of **1,000 formal precision & mathematic
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hyperparameters:
-- **Compute Cluster:** LUMI-G (8× AMD Instinct MI250X 128GB GPUs, Slurm Job `#21189559`)
+### Reproducible Training Details:
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189559`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
-- **Dataset Size:** 31,800 SMT-verified proof and calculation trajectories
+- **Dataset Scale:** 31,800 SMT-verified proof and calculation trajectories
+- **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
 - **Epochs:** 3.0
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
-- **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Training Loss (Final):** `0.0404`
-- **Token Accuracy (Final):** **`98.41 %`**
+- **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- **Optimization Outcome:** Final Training Loss `0.0404`, Training Token Accuracy `98.41%`
 
 ---
 
-## ⚠️ Known Limitations & Failure Modes
+## 🖥️ Consumer Hardware Deployment
 
-1. **Higher-Order Non-Linear SMT Systems:** For complex non-linear polynomial real arithmetic where Z3 undecidability applies, the model generates best-effort bounds rather than complete decision procedures.
-2. **Statistical Stochastic Modeling:** The model is optimized for discrete and algebraic precision rather than empirical Monte Carlo estimations.
-3. **Compound Orchestration Dependency:** Maximum precision is unlocked when paired with external calculator / SMT engine execution in the MoE Sovereign loop.
+`moe-expert-precision-4b` is designed for local deployment on standard consumer and workstation hardware. Training on LUMI-G served exclusively to distill teacher knowledge into a compact SLM, eliminating the need for expensive cloud APIs during inference.
+
+### Deployment Characteristics:
+- **Quantized Formats:** Available in GGUF formats (`Q4_K_M` ~2.6 GB, `Q8_0` ~4.2 GB).
+- **Runtime Compatibility:** Supported natively in Ollama, `llama.cpp`, and vLLM.
+- **Hardware Profile:** Runs efficiently on consumer GPUs (6 GB–12 GB VRAM) or CPU memory.
+
+> *Consumer-hardware runtime measurements (VRAM residency, throughput tokens/sec, latency to first token, and energy consumption) are currently being evaluated across reference hardware tiers and will be published with the reproducible benchmark suite.*
 
 ---
 
-## 💻 Quickstart Guide (Ollama & Llama.cpp)
+## 📊 Evaluation
+
+Systematic held-out evaluation against the unmodified base model is in progress across multi-step arithmetic, symbolic algebra, and SMT constraint synthesis benchmarks.
+
+> ℹ️ *Note: Training loss (`0.0404`) and training-token accuracy (`98.41%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+
+---
+
+## 💻 Quickstart Guide (Ollama & Python)
 
 ### 1. Ollama `Modelfile`
 ```dockerfile
@@ -167,7 +170,15 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ---
 
-## 📑 Citation
+## ⚠️ Limitations
+
+1. **Probabilistic Model Nature:** The model itself is probabilistic; deterministic guarantees are provided only when output constraints are executed and verified by external solvers (Z3, SymPy).
+2. **Non-Linear Complexity:** Highly complex non-linear systems may exceed the deductive scope of a 4B model and require decomposition into smaller lemmas.
+3. **Solver Integration:** Optimal utility is achieved when integrated into the MoE Sovereign compound runtime where external execution tools are available.
+
+---
+
+## 📑 Citation & Reproducibility
 
 ```bibtex
 @misc{moe_sovereign_2026_precision4b,

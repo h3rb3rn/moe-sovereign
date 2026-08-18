@@ -10,6 +10,7 @@ tags:
 - regulatory-compliance
 - gdpr-dsgvo
 - eu-ai-act
+- capability-externalization
 - bsi-it-grundschutz
 - hipaa
 - gguf
@@ -22,7 +23,7 @@ library_name: transformers
 ---
 
 # ⚖️ MoE Sovereign Governance Expert 4B (`moe-expert-governance-4b`)
-*Policy Reasoning Engine over Authoritative Regulatory Evidence (EU-GDPR, AI Act, BSI IT-Grundschutz)*
+*Evidence-Grounded Policy Analysis, Privacy Engineering & Technical Control Mapping*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Base Model: Qwen 3.5 4B Hybrid Mamba](https://img.shields.io/badge/Base_Model-Qwen3.5--4B-violet.svg)](https://huggingface.co/Qwen/Qwen3.5-4B)
@@ -32,48 +33,41 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-governance-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Mistral-Large-2407** and **DeepSeek-V3** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-governance-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Mistral-Large-2407** and **DeepSeek-V3** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI architecture, this model serves as the **Regulatory Policy Reasoning & Privacy-by-Design Expert**. Rather than acting as an autonomous legal decider, it **assists in evidence-grounded compliance analysis against versioned regulatory and policy sources** (EU GDPR/DSGVO, EU AI Act, BSI IT-Grundschutz, ISO 27001, HIPAA). It evaluates data flows, assesses system boundaries, and synthesizes structured compliance audit trails based on verified statutory documents supplied by the knowledge infrastructure.
-
----
-
-## 🎯 Functional Scope & Capabilities
-
-1. **EU-GDPR / DSGVO Technical Policy Auditing:** Evaluates data minimization (Art. 5(1)(c)), purpose limitation, technical and organizational measures (TOMs, Art. 32), and DPIA risk factors.
-2. **EU AI Act Risk Classification:** Categorizes AI workflows into risk tiers (Prohibited, High Risk, Specific Transparency, Minimal Risk) based on statutory definitions and annexes.
-3. **BSI IT-Grundschutz & ISO 27001 Control Mapping:** Audits architecture components against standard security and confidentiality modules (e.g. INF.1, CON.2, OPS.1).
-4. **Structured Audit Trail Generation:** Produces JSON/Markdown governance reports mapping data pipelines to statutory requirements.
+Within the open-source **MoE Sovereign** compound AI architecture, this model operates as the **Regulatory Policy Reasoning & Privacy Engineering Specialist**. It is designed to assist in evaluating data flows, architecture specifications, and data retention policies against technical controls derived from regulatory frameworks (EU GDPR/DSGVO, EU AI Act, BSI IT-Grundschutz, ISO 27001, HIPAA).
 
 ---
 
-## 🎯 Training Objectives & Intended Behavioral Specialization
+## 🔬 Research Motivation: Capability Externalization
 
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-governance-4b` (Distilled) |
+In regulatory and compliance engineering, legal statutes are versioned and subject to administrative interpretation:
+
+> **"The language model does not act as an autonomous legal authority; instead, it performs policy reasoning over authoritative regulatory texts and system documentation supplied by controlled knowledge infrastructure."**
+
+This externalized approach ensures that compliance evaluations can be audited, cited, and updated whenever statutory guidelines or internal corporate policies evolve.
+
+---
+
+## 🎯 Intended Functional Scope & Capabilities
+
+1. **Evidence-Grounded Policy Analysis:** Evaluates data minimization (GDPR Art. 5), purpose limitation, and technical and organizational measures (TOMs, Art. 32) against system design documents.
+2. **AI Act Technical Risk Categorization:** Assists in mapping AI workflows to statutory risk tiers (Prohibited, High Risk, Specific Transparency, Minimal Risk) based on statutory definitions.
+3. **Control Mapping (BSI IT-Grundschutz / ISO 27001):** Maps architecture components to standard security modules (e.g. INF.1, CON.2, OPS.1).
+4. **Audit Trail Documentation:** Synthesizes structured compliance matrices linking statutory requirements to technical controls.
+
+---
+
+## 🎯 Intended Behavioral Specialization
+
+> *Note: The following table describes the intended specialization introduced by the distillation and training process. It should not be interpreted as a quantitative benchmark. Measured comparisons against the base model are reported in the Evaluation section.*
+
+| Capability / Dimension | Base Stock Qwen 3.5 4B | `moe-expert-governance-4b` (Distilled) |
 | :--- | :--- | :--- |
-| **Legal Citation** | Hallucinates fictitious GDPR sub-clauses or non-existent AI Act articles | **Exact Statutory Alignment**; cites authoritative articles, recitals, and annexes |
-| **Risk Categorization** | Vague assertions ("This might be risky") | **Rigorous Classification Trees** (e.g. AI Act Annex III criteria with justification) |
-| **Technical Measures** | Generic suggestions ("Use encryption") | **Concrete TOMs** (e.g. TLS 1.3, AES-256-GCM, pseudonymization pipelines, RBAC) |
-| **Auditing Clarity** | Unstructured narrative essays | **Auditable Matrix Formats** (Statutory Requirement $\to$ Technical Control $\to$ Status) |
-
----
-
-## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
-
-> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
-
-Evaluated on a held-out benchmark suite of **1,000 regulatory compliance and architectural audit scenarios** with zero training contamination:
-
-| Evaluation Metric | Base Stock Qwen 3.5 4B | `moe-expert-governance-4b` (Distilled) | Delta ($\Delta$) |
-| :--- | :---: | :---: | :---: |
-| **GDPR Article & Requirement Mapping Precision** | 66.2 % | **96.3 %** | **+30.1 %** |
-| **EU AI Act Risk Tier Classification Accuracy** | 58.7 % | **94.8 %** | **+36.1 %** |
-| **BSI IT-Grundschutz Control Coverage** | 51.4 % | **92.5 %** | **+41.1 %** |
-| **Privacy-by-Design Gap Detection** | 62.0 % | **95.2 %** | **+33.2 %** |
-| **Structured Compliance Matrix Formatting** | 71.8 % | **98.4 %** | **+26.6 %** |
-| **Hallucinated Legal Citation Rate** | 18.5 % | **1.8 %** | **-16.7 %** |
-
-*Note: Evaluated at `temperature=0.05` across 3 independent seeds. Audits were scored against gold-standard legal compliance matrices prepared by privacy and cybersecurity engineers.*
+| **Statutory Alignment** | Prone to citing non-existent articles or generic legal concepts | **Authoritative Article Citation** grounded in provided statutory text |
+| **Risk Categorization** | Qualitative impressions ("seems risky") | **Structured Criteria Trees** referencing statutory classification annexes |
+| **Technical Measures** | High-level non-technical suggestions | **Concrete Technical Controls** (encryption standards, RBAC, access logging) |
+| **Output Formats** | Narrative essays without audit structure | **Auditable Matrix Formats** (Requirement $\to$ Control $\to$ Assessment) |
 
 ---
 
@@ -96,28 +90,41 @@ Evaluated on a held-out benchmark suite of **1,000 regulatory compliance and arc
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hyperparameters:
-- **Compute Cluster:** LUMI-G (8× AMD Instinct MI250X 128GB GPUs, Slurm Job `#21189562`)
+### Reproducible Training Details:
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189562`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
-- **Dataset Size:** 33,600 legal-engineering compliance trajectories
+- **Dataset Scale:** 33,600 legal-engineering compliance trajectories
+- **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
 - **Epochs:** 3.0
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
-- **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Training Loss (Final):** `0.0076`
-- **Token Accuracy (Final):** **`99.82 %`**
+- **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- **Optimization Outcome:** Final Training Loss `0.0076`, Training Token Accuracy `99.82%`
 
 ---
 
-## ⚠️ Known Limitations & Failure Modes
+## 🖥️ Consumer Hardware Deployment
 
-1. **Not a Substitute for Legal Counsel:** The model provides technical architectural auditing and policy alignment; it does not furnish formal legal advice or substitute for licensed legal counsel.
-2. **Jurisdiction-Specific Precedents:** Highly localized case law (e.g. specific regional court rulings in individual German Bundesländer) should be supplemented via GraphRAG retrieval.
-3. **Dynamic Legislative Changes:** New statutory updates enacted after training cutoff must be supplied via the MoE Sovereign regulatory knowledge base.
+`moe-expert-governance-4b` is designed for on-premise deployment, ensuring that sensitive organizational architectures and compliance documents remain strictly within the sovereign enterprise environment.
+
+### Deployment Characteristics:
+- **Quantized Formats:** Available in GGUF formats (`Q4_K_M` ~2.6 GB, `Q8_0` ~4.2 GB).
+- **Runtime Compatibility:** Supported natively in Ollama, `llama.cpp`, and vLLM.
+- **Hardware Profile:** Runs efficiently on consumer GPUs (6 GB–12 GB VRAM) or CPU memory.
+
+> *Consumer-hardware runtime measurements (VRAM residency, throughput tokens/sec, latency to first token, and energy consumption) are currently being evaluated across reference hardware tiers and will be published with the reproducible benchmark suite.*
 
 ---
 
-## 💻 Quickstart Guide (Ollama & Llama.cpp)
+## 📊 Evaluation
+
+Systematic held-out evaluation against the unmodified base model is in progress across statutory mapping precision, AI Act risk tier classification consistency, and control gap identification.
+
+> ℹ️ *Note: Training loss (`0.0076`) and training-token accuracy (`99.82%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+
+---
+
+## 💻 Quickstart Guide (Ollama & Python)
 
 ### 1. Ollama `Modelfile`
 ```dockerfile
@@ -147,7 +154,7 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True
 )
 
-prompt = "<|im_start|>user\nEvaluate a proposed biometric access control AI system under the EU AI Act risk categories and list required compliance mandates.<|im_end|>\n<|im_start|>assistant\n"
+prompt = "<|im_start|>user\nEvaluate a proposed biometric access control AI system under the EU AI Act risk categories and list required technical controls.<|im_end|>\n<|im_start|>assistant\n"
 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.05)
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
@@ -155,7 +162,15 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ---
 
-## 📑 Citation
+## ⚠️ Limitations
+
+1. **No Legal Advice:** The model provides technical architectural auditing and policy mapping; it does **not** provide legal advice, legal opinions, or authoritative compliance certification.
+2. **Jurisdiction Nuances:** Regional case law and member-state specifics must be supplied via context documents.
+3. **Statutory Cutoff:** Regulatory updates occurring after model training must be provided via the external knowledge base.
+
+---
+
+## 📑 Citation & Reproducibility
 
 ```bibtex
 @misc{moe_sovereign_2026_governance4b,

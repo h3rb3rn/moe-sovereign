@@ -143,7 +143,10 @@ def parse_plan(raw: str) -> PlannerPlan:
     plan = PlannerPlan(raw=raw or "")
     cleaned = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
     obj = _first_json(cleaned)
-    tasks = obj.get("tasks") if isinstance(obj, dict) else obj
+    if isinstance(obj, dict) and "tasks" not in obj and ("task" in obj or "category" in obj or "instruction" in obj or "description" in obj or "mcp_tool" in obj):
+        tasks = [obj]
+    else:
+        tasks = obj.get("tasks") if isinstance(obj, dict) else obj
     if isinstance(tasks, list):
         for t in tasks:
             if isinstance(t, dict):

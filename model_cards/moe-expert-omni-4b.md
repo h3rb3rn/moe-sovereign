@@ -9,6 +9,7 @@ tags:
 - domain-expert
 - architectural-synthesis
 - interface-harmonization
+- capability-externalization
 - cross-domain-integration
 - gguf
 - lumi-g
@@ -30,9 +31,9 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-omni-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen2.5-72B-Instruct** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-omni-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen2.5-72B-Instruct** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI architecture, this model serves strictly as the **Architectural Synthesizer & Cross-Domain Interface Harmonizer**. It is **not a generalist model designed to replace domain specialists**. Instead, its explicit design role is to take structured outputs from multiple specialized experts (Coder, Security, DataInfra, Governance, Precision, GraphRAG), resolve cross-domain interface mismatches, flag semantic tensions, and compile them into a unified, coherent system architecture.
+Within the open-source **MoE Sovereign** compound AI system, this model operates strictly as the **Architectural Synthesizer & Cross-Domain Interface Harmonizer**. It is explicitly **not designed to replace individual domain specialists**. Instead, its role is to take specialized candidate outputs from peer models (Coder, Security, DataInfra, Governance, Precision, GraphRAG), identify cross-domain interface mismatches, detect semantic tensions, and compile them into a unified system specification.
 
 ```
   +------------------+    +-------------------+    +-------------------+
@@ -44,54 +45,47 @@ Within the MoE Sovereign compound AI architecture, this model serves strictly as
                                     v
                  +--------------------------------------+
                  |      moe-expert-omni-4b (SLM)        |
-                 |  - Reconciles Interface Contracts    |
+                 |  - Harmonizes Interface Contracts    |
                  |  - Flags Cross-Domain Contradictions |
-                 |  - Compiles Unified System Arch      |
-                 |  * NEVER invents missing domain facts|
+                 |  - Compiles Unified System Blueprint |
+                 |  * Synthesizer, not domain oracle    |
                  +--------------------------------------+
                                     |
                                     v
-                       [ Sovereign Judge 35B / 27B ]
+                       [ Sovereign Consensus Gate ]
 ```
 
 ---
 
-## 🎯 Functional Scope & Capabilities
+## 🔬 Research Motivation: Capability Externalization
 
-1. **Cross-Domain Interface Harmonization:** Aligns REST/gRPC contracts, database schemas, security contexts, and regulatory tags into unified specification documents.
-2. **Structural Conflict Flagging:** Detects semantic contradictions between expert proposals (e.g. Coder proposing in-memory caching while Governance mandates zero-persistence for PII).
-3. **End-to-End System Blueprinting:** Produces clean architecture diagrams (Mermaid), API specifications (OpenAPI 3.1), and sequence flows combining multi-expert inputs.
-4. **Strict Epistemic Discipline:** Prohibited from generating ungrounded domain claims; defers missing technical facts back to domain specialists.
+In compound AI systems, subtasks are executed by domain-focused specialists. However, domain solutions often interact at shared boundaries:
+
+> **"`moe-expert-omni-4b` specializes in the synthesis problem: reconciling interfaces, resolving naming discrepancies, and highlighting policy-versus-implementation trade-offs without needing to reproduce the deep domain capabilities of each specialist."**
+
+This allows the compound AI system to maintain narrow, high-assurance expert models while still presenting a cohesive, holistic solution to the user.
 
 ---
 
-## 🎯 Training Objectives & Intended Behavioral Specialization
+## 🎯 Intended Functional Scope & Capabilities
 
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-omni-4b` (Distilled) |
+1. **Cross-Domain Interface Harmonization:** Aligns REST/gRPC contracts, database models, and security RBAC definitions into consistent specification files (e.g. OpenAPI 3.1).
+2. **Structural Contradiction Flagging:** Identifies conflicts between domain recommendations (e.g. performance optimizations in code that conflict with regulatory data-retention rules).
+3. **System Architecture Blueprinting:** Synthesizes multi-component architecture diagrams (Mermaid format), deployment manifests (Docker Compose), and workflow sequence charts.
+4. **Epistemic Discipline:** Trained to integrate provided specialist findings rather than inventing unverified domain facts.
+
+---
+
+## 🎯 Intended Behavioral Specialization
+
+> *Note: The following table describes the intended specialization introduced by the distillation and training process. It should not be interpreted as a quantitative benchmark. Measured comparisons against the base model are reported in the Evaluation section.*
+
+| Capability / Dimension | Base Stock Qwen 3.5 4B | `moe-expert-omni-4b` (Distilled) |
 | :--- | :--- | :--- |
-| **Multi-Agent Merging** | Concatenates or overwrites domain expert outputs arbitrarily | **Harmonizes Contracts & Interfaces** while preserving domain guarantees |
-| **Contradiction Handling**| Ignores security/governance constraints to satisfy code prompt | **Explicitly Flags Conflicts** between security/legal policies and code |
-| **Domain Boundary** | Tries to hallucinate complex SQL or Z3 proofs itself | **Integrates Expert Solutions** without inventing unverified domain facts |
-| **Architecture Output** | High-level vague prose | **Executable Blueprints** (OpenAPI, Mermaid, Docker Compose topologies) |
-
----
-
-## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
-
-> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
-
-Evaluated on a held-out benchmark suite of **1,000 multi-expert synthesis and system integration tasks** with zero training overlap:
-
-| Evaluation Metric | Base Stock Qwen 3.5 4B | `moe-expert-omni-4b` (Distilled) | Delta ($\Delta$) |
-| :--- | :---: | :---: | :---: |
-| **API / Interface Contract Harmonization Rate** | 64.1 % | **96.2 %** | **+32.1 %** |
-| **Cross-Domain Conflict Detection (Recall)** | 52.8 % | **94.5 %** | **+41.7 %** |
-| **Architectural Coherence & Consistency** | 67.5 % | **95.8 %** | **+28.3 %** |
-| **Synthesized Mermaid Diagram Validity** | 71.0 % | **98.7 %** | **+27.7 %** |
-| **Epistemic Discipline (No Fact Hallucination)** | 60.3 % | **96.1 %** | **+35.8 %** |
-| **OpenAPI 3.1 Syntax & Schema Validity** | 68.2 % | **97.4 %** | **+29.2 %** |
-
-*Note: Evaluated at `temperature=0.1` across 3 independent seeds. Evaluated on multi-agent merge tasks combining 2 to 6 disparate domain expert outputs.*
+| **Multi-Agent Merging** | Arbitrarily concatenates or overwrites domain outputs | **Harmonizes Interfaces & Contracts** while preserving domain constraints |
+| **Conflict Detection** | Frequently overlooks subtle cross-domain tensions | **Explicitly Flags Contradictions** between security/legal policies and code |
+| **Domain Scope** | Attempts to generate complex SQL or Z3 proofs itself | **Integrates Specialist Outputs** without fabricating missing facts |
+| **Architecture Output** | High-level vague prose descriptions | **Structured System Specifications** (OpenAPI, Mermaid topologies) |
 
 ---
 
@@ -114,28 +108,41 @@ Evaluated on a held-out benchmark suite of **1,000 multi-expert synthesis and sy
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hyperparameters:
-- **Compute Cluster:** LUMI-G (8× AMD Instinct MI250X 128GB GPUs, Slurm Job `#21189565`)
+### Reproducible Training Details:
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189565`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
-- **Dataset Size:** 35,000 multi-expert synthesis trajectories
+- **Dataset Scale:** 35,000 multi-expert synthesis and harmonization trajectories
+- **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
 - **Epochs:** 3.0
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
-- **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Training Loss (Final):** `0.0075`
-- **Token Accuracy (Final):** **`99.82 %`**
+- **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- **Optimization Outcome:** Final Training Loss `0.0075`, Training Token Accuracy `99.82%`
 
 ---
 
-## ⚠️ Known Limitations & Failure Modes
+## 🖥️ Consumer Hardware Deployment
 
-1. **Not a Standalone Domain Specialist:** Omni should not be called in isolation for deep mathematical proofs, raw kernel driver writing, or standalone regulatory audits without expert inputs.
-2. **Upstream Contradiction Resolution:** When two expert outputs present an irreconcilable factual stalemate, Omni surfaces the dispute for the **Sovereign Judge (Belnap-Dunn consensus)** rather than making an arbitrary decision.
-3. **Context Length Handling:** Trained for multi-turn context maintenance at context lengths up to 256k; for architectures involving more than 8 simultaneous expert tracks, two-pass hierarchical synthesis in the orchestrator is recommended.
+`moe-expert-omni-4b` is designed for local deployment, providing fast architectural synthesis on commodity workstations.
+
+### Deployment Characteristics:
+- **Quantized Formats:** Available in GGUF formats (`Q4_K_M` ~2.6 GB, `Q8_0` ~4.2 GB).
+- **Runtime Compatibility:** Supported natively in Ollama, `llama.cpp`, and vLLM.
+- **Hardware Profile:** Operates with low memory overhead on consumer GPUs (6 GB–12 GB VRAM) or CPU memory.
+
+> *Consumer-hardware runtime measurements (VRAM residency, throughput tokens/sec, latency to first token, and energy consumption) are currently being evaluated across reference hardware tiers and will be published with the reproducible benchmark suite.*
 
 ---
 
-## 💻 Quickstart Guide (Ollama & Llama.cpp)
+## 📊 Evaluation
+
+Systematic held-out evaluation against the unmodified base model is in progress across cross-domain interface contract harmonization, multi-agent conflict detection, and architectural diagram syntax validity.
+
+> ℹ️ *Note: Training loss (`0.0075`) and training-token accuracy (`99.82%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+
+---
+
+## 💻 Quickstart Guide (Ollama & Python)
 
 ### 1. Ollama `Modelfile`
 ```dockerfile
@@ -173,7 +180,15 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ---
 
-## 📑 Citation
+## ⚠️ Limitations
+
+1. **Not a Standalone Specialist:** Omni is designed to integrate specialized inputs; querying it for deep specialized calculations or low-level kernel drivers without domain specialist inputs is out of scope.
+2. **Context Capacity:** Designed and trained for multi-turn context maintenance across long context windows up to the supported window; very large inputs should be structured hierarchically.
+3. **Conflict Arbitration:** When two expert outputs present an irreconcilable factual contradiction, Omni flags the tension for upstream consensus arbitration rather than making arbitrary unilateral decisions.
+
+---
+
+## 📑 Citation & Reproducibility
 
 ```bibtex
 @misc{moe_sovereign_2026_omni4b,

@@ -8,6 +8,7 @@ tags:
 - compound-ai
 - judge
 - paraconsistent-consensus
+- capability-externalization
 - verification-oracle
 - self-correction
 - gguf
@@ -30,35 +31,41 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`sovereign-judge-27b`** is a high-capacity 27-billion parameter verification and evaluation model distilled from **Meta-Llama-3.1-405B-Instruct**, **Nvidia Nemotron-70B**, and **Z3 SMT Formal Proof Oracles** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`sovereign-judge-27b`** is a high-capacity 27-billion parameter verification and evaluation model distilled from **Meta-Llama-3.1-405B-Instruct**, **Nvidia Nemotron-70B**, and **Z3 SMT Formal Proof Oracles** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI system, `sovereign-judge-27b` serves as the top-level **Quality Gatekeeper, Self-Correction Oracle, and Paraconsistent Consensus Arbitrator**. When 4B domain SLMs generate candidate solutions or when multi-agent debates produce conflicting propositions, `sovereign-judge-27b` evaluates formal consistency, detects logical contradictions, checks regulatory alignment, and decides whether an output passes the strict 66% consensus threshold or requires bounded self-correction.
+Within the open-source **MoE Sovereign** compound AI system, `sovereign-judge-27b` operates as the top-level **Quality Gatekeeper, Self-Correction Oracle, and Consensus Arbitrator**. When 4B domain SLMs generate candidate solutions or when multi-agent debates produce conflicting propositions, `sovereign-judge-27b` evaluates formal consistency, detects logical contradictions, checks regulatory alignment, and decides whether an output passes the consensus threshold or requires bounded self-correction.
 
 ---
 
-## 🎯 Target Use Cases & Functional Scope
+## 🔬 Research Motivation: Capability Externalization
 
-1. **Paraconsistent Consensus Arbitration:** Analyzes conflicting outputs from peer domain models, filtering out outliers and calculating calibrated consensus scores.
+In high-assurance compound AI systems, quality control is separated from task execution:
+
+> **"Instead of keeping a massive 405B model continuously active in the hot path of every user request, MoE Sovereign delegates execution to lightweight 4B domain specialists and routes results to `sovereign-judge-27b` only when multi-expert arbitration, contradiction resolution, or quality gating is required."**
+
+This architectural gating ensures that large compute resources are invoked selectively, maintaining high throughput and energy efficiency for standard requests.
+
+---
+
+## 🎯 Intended Functional Scope & Capabilities
+
+1. **Consensus Arbitration:** Evaluates outputs from peer domain models, filtering out outliers and calculating calibrated consensus scores.
 2. **Formal Self-Correction Triggering:** When an execution plan or code artifact fails validation gates, generates minimal, surgical correction directives for the Planner.
 3. **Multi-Aspect Quality Scoring:** Evaluates candidate responses along 5 rigorous axes: Factual Grounding, Security Hardening, Syntactic Validity, Regulatory Compliance, and Efficiency.
 4. **Correction Memory Ingestion:** Extracts detected failure patterns, abstracts the underlying anti-pattern, and formats new entries for persistent Correction Memory.
 
 ---
 
-## 🎯 Training Objectives & Intended Behavioral Specialization
+## 🎯 Intended Behavioral Specialization
 
-| Capability | Base Stock Qwen 3.5 27B | `sovereign-judge-27b` (Distilled) |
+> *Note: The following table describes the intended specialization introduced by the distillation and training process. It should not be interpreted as a quantitative benchmark. Measured comparisons against the base model are reported in the Evaluation section.*
+
+| Capability / Dimension | Base Stock Qwen 3.5 27B | `sovereign-judge-27b` (Distilled) |
 | :--- | :--- | :--- |
-| **Evaluation Stance** | Lenient, sycophantic rating of AI outputs | **Strict, Adversarial Verification**; flags all logic flaws and subtle hallucinations |
-| **Consensus Handling** | Simple majority vote or averaging | **Paraconsistent Logic Filter:** Detects contradictions without exploding the reasoning space |
-| **Self-Correction** | Generates generic instructions to "try again" | **Surgical Failure Analysis:** Identifies the exact violated invariant and provides actionable remediation |
-| **Memory Extraction** | No memory abstraction capabilities | **Automated Correction Memory Extraction:** Generalizes runtime errors into reusable patterns |
-
----
-
-## 📊 Empirical Evaluation
-
-> ℹ️ **Evaluation Status:** Currently undergoing final SFT convergence training on LUMI-G (Job `#21191994`). Comprehensive multi-aspect validation figures and Held-Out Deliberation Benchmark scores will be published upon checkpoint finalization and GGUF quantization.
+| **Evaluation Stance** | Lenient, sycophantic rating of AI outputs | **Strict Verification**; flags logic flaws, missing bounds, and hallucinations |
+| **Consensus Handling** | Simple majority vote or naive averaging | **Contradiction-Filtering Logic:** Evaluates conflicting propositions without logic explosion |
+| **Self-Correction** | Generates generic instructions to "try again" | **Surgical Failure Analysis:** Identifies specific violated invariants and actionable remediation |
+| **Memory Extraction** | No automated memory abstraction | **Correction Memory Extraction:** Generalizes runtime errors into reusable patterns |
 
 ---
 
@@ -81,19 +88,41 @@ Within the MoE Sovereign compound AI system, `sovereign-judge-27b` serves as the
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hyperparameters:
-- **Compute Cluster:** LUMI-G (8× AMD Instinct MI250X 128GB GPUs, Slurm Job `#21191994`)
+### Reproducible Training Details:
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21191994`)
 - **Base Architecture:** Qwen3.5-27B in BF16
-- **Dataset Size:** 40,000 validated evaluation & arbitration trajectories
+- **Dataset Scale:** 40,000 validated evaluation & arbitration trajectories
+- **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
 - **Epochs:** 3.0
 - **Effective Batch Size:** 128 (Micro-batch 2 × 8 GPUs × Gradient Accumulation 8)
 - **Learning Rate:** $1.0 \times 10^{-5}$ with Cosine Decay and Warmup
-- **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
 - **Training Precision:** Pure BF16 with DeepSpeed ZeRO-2
 
 ---
 
-## 💻 Quickstart Guide (Ollama & Llama.cpp)
+## 🖥️ Consumer Hardware Deployment
+
+While 27B models are larger than 4B domain SLMs, `sovereign-judge-27b` is optimized for local execution via quantization. In typical multi-GPU workstation setups, the judge can be hosted on a dedicated workstation GPU (e.g. RTX 3090/4090 24GB or dual 12GB cards) or offloaded to CPU memory, as it is invoked only for gated arbitration rounds.
+
+### Deployment Characteristics:
+- **Quantized Formats:** Available in GGUF formats (`Q4_K_M` ~16.5 GB, `Q8_0` ~29 GB).
+- **Runtime Compatibility:** Supported natively in Ollama, `llama.cpp`, and vLLM.
+- **Hardware Profile:** Operates within 24GB VRAM workstation GPUs or shared host RAM.
+
+> *Consumer-hardware runtime measurements (VRAM residency, throughput tokens/sec, latency to first token, and energy consumption) are currently being evaluated across reference hardware tiers and will be published with the reproducible benchmark suite.*
+
+---
+
+## 📊 Evaluation
+
+Systematic held-out evaluation against the unmodified base model is in progress across multi-agent arbitration benchmarks, formal contradiction detection, and self-correction effectiveness.
+
+> ℹ️ *Note: Full evaluation benchmarks will be published upon completion of training and quantization.*
+
+---
+
+## 💻 Quickstart Guide (Ollama & Python)
 
 ### 1. Ollama `Modelfile`
 ```dockerfile
@@ -131,12 +160,20 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ---
 
-## 📑 Citation
+## ⚠️ Limitations
+
+1. **Probabilistic Judgment:** While specialized for arbitration, the judge model remains a probabilistic model; formal assertions should be backed by deterministic tooling where possible.
+2. **Compute Profile:** At 27B parameters, inference latency is higher than for 4B domain specialists; the orchestrator should invoke the judge conditionally based on task complexity.
+3. **Domain Stalemate:** When multiple experts provide completely ungrounded or out-of-distribution proposals, the judge may reject all proposals and request complete re-planning.
+
+---
+
+## 📑 Citation & Reproducibility
 
 ```bibtex
 @misc{moe_sovereign_2026_judge27b,
   author = {Horn, Philipp and MoE Sovereign Core AI Team},
-  title = {MoE Sovereign Judge 27B: Paraconsistent Consensus & Formal Verification Oracle},
+  title = {MoE Sovereign Judge 27B: Paraconsistent Consensus & Output Verifier SLM},
   year = {2026},
   publisher = {Hugging Face},
   howpublished = {\url{https://huggingface.co/h3rb3rn/sovereign-judge-27b}},

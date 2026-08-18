@@ -6,6 +6,7 @@ Supports:
   - 4B Student SLM Base (Qwen3.5 Linear Attention + Mamba Hybrid)
   - 27B Sovereign-Judge Base (Qwen3.8:27b with 262k native context)
   - 8x AMD MI250X with Torchrun Distributed DeepSpeed ZeRO-2/3 BF16
+  - Robust Automatic Checkpoint Resumption
 """
 
 import os
@@ -37,12 +38,23 @@ def parse_args():
     parser.add_argument("--max-seq-len", type=int, default=4096, help="Maximum sequence length")
     parser.add_argument("--max-steps", type=int, default=-1, help="Max steps for training (override epochs)")
     parser.add_argument("--deepspeed", type=str, default="/scratch/project_465003058/hornphil/configs/ds_zero2_bf16.json", help="Path to DeepSpeed config")
+    parser.add_argument("--save-steps", type=int, default=200, help="Save checkpoint every N steps (0 to save by epoch)")
+    parser.add_argument("--resume", action="store_true", default=True, help="Auto-resume from latest checkpoint if available")
     return parser.parse_args()
 
 def main():
     args = parse_args()
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Check if a checkpoint exists in output directory
+    checkpoints = list(output_path.glob("checkpoint-*"))
+    has_checkpoint = len(checkpoints) > 0 and args.resume
+    latest_checkpoint = None
+    if has_checkpoint:
+        # Sort by step number
+        checkpoints.sort(key=lambda x: int(x.name.split("-")[-1]) if x.name.split("-")[-1].isdigit() else 0)
+        latest_checkpoint = str(checkpoints[-1])
     
     print("=" * 80)
     print(f"🚀 LUMI-G SFT TRAINING: [moe-{args.role}]")
@@ -51,6 +63,10 @@ def main():
     print(f"Output Directory: {args.output_dir}")
     print(f"Sequence Length : {args.max_seq_len} (Guarantees zero truncation)")
     print(f"DeepSpeed Config: {args.deepspeed}")
+    if latest_checkpoint:
+        print(f"🔄 Auto-Resume  : YES -> Resuming from {latest_checkpoint}")
+    else:
+        print(f"🔄 Auto-Resume  : No previous checkpoint found. Starting from scratch.")
     print("=" * 80)
     
     print("⏳ Loading tokenizer...")
@@ -95,8 +111,9 @@ def main():
         lr_scheduler_type="cosine",
         warmup_steps=50,
         logging_steps=10,
-        save_strategy="epoch" if args.max_steps <= 0 else "no",
-        save_total_limit=2,
+        save_strategy="steps" if args.save_steps > 0 else "epoch",
+        save_steps=args.save_steps if args.save_steps > 0 else 500,
+        save_total_limit=3,
         bf16=True,
         gradient_checkpointing=True,
         deepspeed=args.deepspeed if Path(args.deepspeed).exists() else None,
@@ -111,7 +128,11 @@ def main():
     )
     
     print("🔥 Starting training execution...")
-    trainer.train()
+    if latest_checkpoint:
+        print(f"⏩ Resuming trainer from {latest_checkpoint}...")
+        trainer.train(resume_from_checkpoint=latest_checkpoint)
+    else:
+        trainer.train()
     
     print(f"💾 Saving final LoRA adapter to {output_path / 'final_adapter'}...")
     trainer.model.save_pretrained(str(output_path / "final_adapter"))

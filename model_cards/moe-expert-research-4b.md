@@ -10,6 +10,7 @@ tags:
 - research
 - evidence-synthesis
 - citation-grounding
+- capability-externalization
 - literature-review
 - gguf
 - lumi-g
@@ -21,7 +22,7 @@ library_name: transformers
 ---
 
 # 📚 MoE Sovereign Research Expert 4B (`moe-expert-research-4b`)
-*Evidence-Grounded Literature Review, Technical Trade-Off Synthesis & Citation Verification*
+*Evidence-Grounded Synthesis, Technical Trade-Off Analysis & Provenance Grounding*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Base Model: Qwen 3.5 4B Hybrid Mamba](https://img.shields.io/badge/Base_Model-Qwen3.5--4B-violet.svg)](https://huggingface.co/Qwen/Qwen3.5-4B)
@@ -31,48 +32,41 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-research-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Moonshot Kimi-k3** and **Nvidia Nemotron-70B** on the **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-research-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Moonshot Kimi-k3** and **Nvidia Nemotron-70B** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
 
-Within the MoE Sovereign compound AI architecture, this model serves as the **Evidence Synthesis, Literature Analysis, and Citation Verification Expert**. It is trained to perform comparative document analysis, extract empirical metrics from research benchmarks, evaluate engineering trade-offs, and produce structured analytical syntheses where every substantive claim is tightly bounded to retrieved context spans.
-
----
-
-## 🎯 Functional Scope & Capabilities
-
-1. **Evidence-Grounded Synthesis:** Compiles multi-document source texts into cohesive comparative analyses without introducing ungrounded external claims.
-2. **Constrained Citation Generation:** Formulates references and factual attributions anchored exclusively to provided source spans (`[Doc ID: Section]`).
-3. **Engineering Trade-Off Evaluation:** Structures multi-dimensional trade-off matrices (Latency vs. Throughput, Consistency vs. Availability, Memory vs. Compute).
-4. **State-of-the-Art Surveying:** Summarizes architectural evolutions across computer science, distributed systems, and AI systems research.
+Within the open-source **MoE Sovereign** compound AI architecture, this model operates as the **Evidence Synthesis, Literature Analysis & Provenance Grounding Expert**. It is trained to perform comparative document analysis, extract empirical metrics from research literature, evaluate engineering trade-offs, and produce structured analytical reviews where claims are linked to retrieved context spans.
 
 ---
 
-## 🎯 Training Objectives & Intended Behavioral Specialization
+## 🔬 Research Motivation: Capability Externalization
 
-| Capability | Base Stock Qwen 3.5 4B | `moe-expert-research-4b` (Distilled) |
+A central challenge in language modeling is hallucination during factual summarization:
+
+> **"Rather than asking the neural weights to store the scientific literature, MoE Sovereign externalizes document storage into verified vector and document indexes; `moe-expert-research-4b` specializes in synthesizing provided evidence without extrapolating unverified claims."**
+
+This enables research teams to maintain an auditable provenance chain from raw source documents to final synthesized reports.
+
+---
+
+## 🎯 Intended Functional Scope & Capabilities
+
+1. **Evidence-Grounded Synthesis:** Compiles multi-document source texts into structured comparative analyses constrained to supplied context.
+2. **Provenance-Aware Attribution:** Formulates citations linked to specific source tags (`[Doc ID: Section]`) present in the input prompt.
+3. **Engineering Trade-Off Evaluation:** Formulates structured trade-off matrices (e.g. latency vs. throughput, consistency vs. partition tolerance).
+4. **Empirical Literature Surveying:** Extracts methodology, sample size ($N$), hardware environments, and confidence intervals from technical literature.
+
+---
+
+## 🎯 Intended Behavioral Specialization
+
+> *Note: The following table describes the intended specialization introduced by the distillation and training process. It should not be interpreted as a quantitative benchmark. Measured comparisons against the base model are reported in the Evaluation section.*
+
+| Capability / Dimension | Base Stock Qwen 3.5 4B | `moe-expert-research-4b` (Distilled) |
 | :--- | :--- | :--- |
-| **Citation Grounding** | Invents non-existent DOIs, authors, or paper titles | **Strict In-Context Provenance**; cites exact document tags and section anchors |
-| **Trade-Off Analysis** | Generic pros/cons lists ("Fast but complex") | **Quantitative Multi-Axis Trade-Offs** (Latency, O(N) complexity, memory bounds) |
-| **Information Extraction**| Omits key technical nuances and quantitative metrics | **Systematic Benchmark Extraction** (Dataset, Sample Size, CI, Hardware) |
-| **Synthesis Coherence** | Disjointed paragraph dumps | **Hierarchical Technical Architecture** with clear structural transitions |
-
----
-
-## 📊 Empirical Evaluation (Held-Out Benchmark Suite)
-
-> ℹ️ **Evaluation Status:** Evaluated on held-out validation splits ($N=1,000$, zero training contamination). Full cross-architecture ablation suites across Compound AI vs. Monolithic LLMs are undergoing active execution in the Sovereign Scientific Benchmark Suite v1.
-
-Evaluated on a held-out benchmark suite of **1,000 multi-document research synthesis tasks** with zero training contamination, evaluated across factual entailment (NLI) and citation verification:
-
-| Evaluation Metric | Base Stock Qwen 3.5 4B | `moe-expert-research-4b` (Distilled) | Delta ($\Delta$) |
-| :--- | :---: | :---: | :---: |
-| **Citation Precision (Valid Provenance)** | 62.1 % | **96.8 %** | **+34.7 %** |
-| **Claim-Evidence Entailment (NLI Hold)** | 69.4 % | **95.1 %** | **+25.7 %** |
-| **Hallucinated Fact Ratio** | 16.8 % | **2.4 %** | **-14.4 %** |
-| **Multi-Source Trade-Off Completeness** | 58.0 % | **91.4 %** | **+33.4 %** |
-| **Structured Matrix Formatting Fidelity** | 74.2 % | **98.0 %** | **+23.8 %** |
-| **Long-Context Context Span Retrieval** | 63.5 % | **93.2 %** | **+29.7 %** |
-
-*Note: Evaluated at `temperature=0.15` across 3 independent seeds. Citation precision measures the percentage of generated citations that accurately point to supporting evidence in the source text.*
+| **Citation Attribution** | Tendency to invent plausibly sounding authors, titles, or DOIs | **Strict In-Context Provenance**; limits citations to provided document tags |
+| **Trade-Off Analysis** | Generic pros/cons lists without operational context | **Multi-Dimensional Technical Trade-Offs** (complexity bounds, resource overhead) |
+| **Information Extraction**| Frequently glosses over experimental parameters and constraints | **Systematic Extraction** of benchmarks, datasets, and hardware baselines |
+| **Synthesis Structure** | Disjointed narrative text blocks | **Hierarchical Technical Reviews** with structured comparative sections |
 
 ---
 
@@ -95,28 +89,41 @@ Evaluated on a held-out benchmark suite of **1,000 multi-document research synth
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hyperparameters:
-- **Compute Cluster:** LUMI-G (8× AMD Instinct MI250X 128GB GPUs, Slurm Job `#21189560`)
+### Reproducible Training Details:
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189560`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
-- **Dataset Size:** 34,200 verified literature and synthesis trajectories
+- **Dataset Scale:** 34,200 verified literature review and synthesis trajectories
+- **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
 - **Epochs:** 3.0
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
-- **LoRA Configuration:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Training Loss (Final):** `0.0072`
-- **Token Accuracy (Final):** **`99.84 %`**
+- **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- **Optimization Outcome:** Final Training Loss `0.0072`, Training Token Accuracy `99.84%`
 
 ---
 
-## ⚠️ Known Limitations & Failure Modes
+## 🖥️ Consumer Hardware Deployment
 
-1. **Closed-World Retrieval Constraint:** When zero retrieval context is provided, the model explicitly acknowledges lack of evidence rather than generating probabilistic general-knowledge claims.
-2. **Conflicting Primary Sources:** When input documents present mutually contradictory empirical findings, the model highlights the contradiction for the Judge oracle rather than attempting unilateral arbitration.
-3. **Context Length Budgeting:** For document corpora exceeding 64k tokens, iterative chunking via the MoE Sovereign compound pipeline is recommended for maximum extraction recall.
+`moe-expert-research-4b` is intended for local execution on commodity hardware, enabling researchers to process internal documents privately without transmitting proprietary data to external APIs.
+
+### Deployment Characteristics:
+- **Quantized Formats:** Available in GGUF formats (`Q4_K_M` ~2.6 GB, `Q8_0` ~4.2 GB).
+- **Runtime Compatibility:** Supported natively in Ollama, `llama.cpp`, and vLLM.
+- **Hardware Profile:** Runs efficiently on consumer GPUs (6 GB–12 GB VRAM) or CPU memory.
+
+> *Consumer-hardware runtime measurements (VRAM residency, throughput tokens/sec, latency to first token, and energy consumption) are currently being evaluated across reference hardware tiers and will be published with the reproducible benchmark suite.*
 
 ---
 
-## 💻 Quickstart Guide (Ollama & Llama.cpp)
+## 📊 Evaluation
+
+Systematic held-out evaluation against the unmodified base model is in progress across citation accuracy, claim-evidence entailment (NLI), and multi-document synthesis fidelity.
+
+> ℹ️ *Note: Training loss (`0.0072`) and training-token accuracy (`99.84%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+
+---
+
+## 💻 Quickstart Guide (Ollama & Python)
 
 ### 1. Ollama `Modelfile`
 ```dockerfile
@@ -146,7 +153,7 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True
 )
 
-prompt = "<|im_start|>user\nSynthesize the technical trade-offs between Raft and Paxos based on the provided papers, with exact citation tags.<|im_end|>\n<|im_start|>assistant\n"
+prompt = "<|im_start|>user\nSynthesize the trade-offs between Raft and Paxos based on the provided papers, with exact citation tags.<|im_end|>\n<|im_start|>assistant\n"
 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.15)
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
@@ -154,7 +161,15 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 
 ---
 
-## 📑 Citation
+## ⚠️ Limitations
+
+1. **Retrieval Grounding Dependency:** When no source documents are provided in context, the model explicitly acknowledges the absence of evidence rather than generating unsubstantiated claims.
+2. **Conflicting Primary Sources:** When input documents contain conflicting claims, the model highlights the divergence for upstream consensus arbitration rather than unilaterally deciding truth.
+3. **Context Length Management:** For document sets exceeding context capacity, hierarchical retrieval and chunking via the MoE Sovereign compound pipeline is recommended.
+
+---
+
+## 📑 Citation & Reproducibility
 
 ```bibtex
 @misc{moe_sovereign_2026_research4b,
