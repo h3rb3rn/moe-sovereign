@@ -47,20 +47,13 @@ OLLAMA_RTX_URL = os.environ.get("MOE_JUDGE_OLLAMA_URL", "http://192.168.155.224:
 JUDGE_MODEL = os.environ.get("MOE_JUDGE_MODEL", "sovereign-judge:27b")
 NATIVE_MODEL = "qwen3.8:27b"
 
-SUITE = os.environ.get("BENCHMARK_SUITE", "frontier")
+SUITE = os.environ.get("BENCHMARK_SUITE", "sovereign")
 
-if SUITE == "frontier":
-    TEMPLATES = {
-        "compound_ai": "moe-frontier-expert-ensemble",
-        "compound_ai_debate": "moe-frontier-ensemble-deliberation",
-        "ablation_no_graphrag": "moe-frontier-ensemble-no-graphrag",
-    }
-else:
-    TEMPLATES = {
-        "compound_ai": "moe-sovereign-scientific-benchmark",
-        "compound_ai_debate": "moe-sovereign-benchmark-deliberation",
-        "ablation_no_graphrag": "moe-sovereign-benchmark-no-graphrag",
-    }
+TEMPLATES = {
+    "compound_ai": "moe-sovereign-scientific-benchmark",
+    "compound_ai_debate": "moe-sovereign-benchmark-deliberation",
+    "ablation_no_graphrag": "moe-sovereign-benchmark-no-graphrag",
+}
 
 # ---------------------------------------------------------------------------
 # Direct Inferences & API Calls
