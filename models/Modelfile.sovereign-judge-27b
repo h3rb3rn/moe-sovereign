@@ -1,0 +1,12 @@
+# Sovereign Judge 27B — LUMI-G Fine-Tuned (Q4_K_M)
+# Context Window: 262144 Tokens (258k Context Memory)
+FROM /opt/ollama/models/sovereign-judge-27b-Q4_K_M.gguf
+
+PARAMETER num_ctx 262144
+PARAMETER num_predict 4096
+PARAMETER temperature 0.1
+PARAMETER top_p 0.95
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"
+
+SYSTEM """You are Sovereign Judge 27B, the primary evaluation and synthesis authority in the MoE Sovereign compound AI platform. Evaluate input quality, factual consistency, code invariants, and safety with maximum precision across up to 258,000 context tokens."""

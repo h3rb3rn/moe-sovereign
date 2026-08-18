@@ -36,8 +36,15 @@ if [ -z "$ADAPTER_PATH" ]; then
     exit 1
 fi
 
-SNAPSHOT=$(ls "${HF_CACHE}/models--Qwen--Qwen3-8B/snapshots/" 2>/dev/null | head -1)
-BASE_MODEL="${HF_CACHE}/models--Qwen--Qwen3-8B/snapshots/${SNAPSHOT}"
+if [ -f "${ADAPTER_PATH}/adapter_config.json" ]; then
+    BASE_MODEL=$(python3 -c "import json; print(json.load(open('${ADAPTER_PATH}/adapter_config.json')).get('base_model_name_or_path', ''))" 2>/dev/null || true)
+fi
+
+if [ -z "${BASE_MODEL:-}" ] || [ ! -d "${BASE_MODEL:-}" ]; then
+    SNAPSHOT=$(ls "${HF_CACHE}/models--Qwen--Qwen3.5-4B/snapshots/" 2>/dev/null | head -1)
+    BASE_MODEL="${HF_CACHE}/models--Qwen--Qwen3.5-4B/snapshots/${SNAPSHOT}"
+fi
+
 MERGED_PATH="${ADAPTER_PATH%/final_adapter}/merged"
 
 echo "========================================"

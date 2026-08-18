@@ -71,6 +71,8 @@ skills/community/.skillssh_audits.json
 models/habe_vocab.json
 models/habe_vector.bin.npy
 models/habe_vector.npy
+*.gguf
+models/*.gguf
 
 # Publish credentials
 .env.publish

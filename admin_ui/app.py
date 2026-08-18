@@ -403,6 +403,7 @@ async def _poll_and_record_gpu_history() -> None:
 async def lifespan(app: FastAPI):
     await db.init_db()
     await db.seed_initial_admin()
+    await db.seed_default_admin_templates()
     logger.info(f"User DB initialized: {db.DB_PATH}")
     # Migrate expert templates from .env to database (one-time) and populate cache
     await refresh_expert_templates_cache()
@@ -5015,7 +5016,7 @@ def _save_upload_manifest(manifest: dict):
 
 
 @app.get("/api/knowledge/documents", dependencies=[Depends(require_login)])
-async def api_list_uploaded_documents():
+async def api_list_uploaded_documents(request: Request):
     """List all user uploaded documents with live ingestion stats, speed, and ETA forecast."""
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     manifest = _load_upload_manifest()
