@@ -1917,6 +1917,34 @@ def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
         logger.debug("Hallucination-check decision log failed: %s", _e)
 
 
+_CRITIC_TRAILING_CONFIRMED_RE = re.compile(r'\bCONFIRMED\b\s*$', re.IGNORECASE)
+
+
+def _critic_is_noncompliant_confirmation(critic_out: str, original: str) -> bool:
+    """Detect a judge reply that reached a CONFIRMED verdict without the
+    required "start with CONFIRMED, no preamble" format.
+
+    critic_node's prompt requires either the bare word CONFIRMED or a direct
+    corrected answer with zero preamble. A judge that free-associates a long
+    deliberation and only concludes CONFIRMED at the very end fails the
+    ``.startswith("CONFIRMED")`` check below, so without this guard the
+    entire deliberation trace silently replaces the real answer. Observed
+    live: a correct Rust implementation replaced by an ~800-word internal
+    monologue about whether the claim counts as "unsupported", ending in a
+    bare "CONFIRMED" instead of a corrected answer.
+    """
+    stripped = critic_out.strip()
+    if _CRITIC_TRAILING_CONFIRMED_RE.search(stripped):
+        return True
+    # A real correction of a code answer still contains code. A reply with
+    # none, while the original clearly had some, is deliberation/meta-
+    # commentary rather than a replacement answer.
+    _CODE_MARKERS = ("```", "<!DOCTYPE", "<html", "def ", "function ", "class ", "import ", "setInterval")
+    if any(m in original for m in _CODE_MARKERS) and not any(m in critic_out for m in _CODE_MARKERS):
+        return True
+    return False
+
+
 async def critic_node(state_: AgentState):
     """
     Fact-check pass over the merger answer. Two independent triggers:
@@ -2124,6 +2152,24 @@ async def critic_node(state_: AgentState):
             await _report("✅ Critic: answer confirmed correct")
             await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
+            if hallucination_risk and not active:
+                _log_hallucination_check(state_, corrected=False)
+            return {"final_response": final_response, **usage}
+
+        if _critic_is_noncompliant_confirmation(critic_out, final_response):
+            logger.warning(
+                "⚠️ Critic: non-compliant judge format (CONFIRMED reached without "
+                "the required leading format, or code dropped from the reply) — "
+                "preserving merger answer instead of overwriting it with the "
+                "judge's deliberation trace"
+            )
+            await _report(
+                "⚠️ Critic: judge reply was a non-compliant deliberation, not a "
+                "correction — merger answer preserved"
+            )
+            await _record_stage(
+                state_.get("response_id", ""), "critic", "confirmed", "non_compliant_format"
+            )
             if hallucination_risk and not active:
                 _log_hallucination_check(state_, corrected=False)
             return {"final_response": final_response, **usage}
