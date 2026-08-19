@@ -836,17 +836,22 @@ async def planner_node(state_: AgentState):
         expert_categories[0] if expert_categories else "general",
     )
 
-    # For trivial (non-agentic) requests, use a compact prompt to avoid
-    # overwhelming the planner model with irrelevant instructions.
-    if _complexity == "trivial" and not _is_agentic_replan:
-        prompt = (
+    # Compact prompt: the full instruction set below (category rules, dynamic-expert
+    # guidance, legal-research pattern, vision rules, skill catalog, 5 worked examples)
+    # reliably overwhelms small planner models. Used for trivial requests, and reused
+    # on retry for non-trivial requests -- see the retry loop below, where reusing the
+    # full prompt verbatim across all attempts has been observed to make output *worse*
+    # rather than better (the model pattern-matches on prompt structure instead of the
+    # actual task; see agent_status/claude-code.md, FINDING-planner-nontrivial-retry-prompt).
+    def _build_compact_prompt(task_budget_text: str) -> str:
+        return (
             f"{_planner_role}"
             f"{_context_toc_block}"
             f"{_advice_block}"
             f"\n\nIMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. "
             f"No text, no explanations, no markdown.\n"
             f"Each object MUST have \"task\" (string) and \"category\" (string).\n"
-            f"TASK BUDGET: exactly 1 task.\n\n"
+            f"TASK BUDGET: {task_budget_text}.\n\n"
             f"VALID CATEGORIES FOR LLM EXPERTS: {expert_categories}\n"
             f"NOTE: \"precision_tools\" is ALWAYS a valid category for any calculation "
             f"or exact tool call — it is NOT listed above. "
@@ -869,6 +874,11 @@ async def planner_node(state_: AgentState):
             f"Request: {state_['input']}\n\n"
             f"JSON array:"
         )
+
+    # For trivial (non-agentic) requests, use the compact prompt from the start to
+    # avoid overwhelming the planner model with irrelevant instructions.
+    if _complexity == "trivial" and not _is_agentic_replan:
+        prompt = _build_compact_prompt("exactly 1 task")
     else:
         prompt = f"""{_planner_role}{_context_toc_block}{_advice_block}{_agentic_context_block}
 
@@ -1006,7 +1016,19 @@ JSON array:"""
             }
         res = None
         try:
-            _attempt_prompt = prompt + _contract_repair_hint
+            # On retry, non-trivial requests switch to the compact prompt too: reusing
+            # the full prompt verbatim (just growing it with a repair hint) has been
+            # observed to make a small planner model's output worse, not better -- see
+            # _build_compact_prompt above. Trivial requests already use it from attempt 0.
+            _is_compact_already = _complexity == "trivial" and not _is_agentic_replan
+            if attempt >= 1 and not _is_compact_already:
+                _retry_task_budget = (
+                    f"aim for at most {_routing['max_tasks']} executable tasks, "
+                    f"never exceed {PLANNER_MAX_TASKS}"
+                )
+                _attempt_prompt = _build_compact_prompt(_retry_task_budget) + _contract_repair_hint
+            else:
+                _attempt_prompt = prompt + _contract_repair_hint
             res, _planner_fb = await _invoke_planner_with_retry(
                 _attempt_state,
                 _attempt_prompt,
