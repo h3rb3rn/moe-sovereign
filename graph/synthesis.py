@@ -2011,9 +2011,14 @@ _CRITIC_TRAILING_CONFIRMED_RE = re.compile(r'\bCONFIRMED\b\s*$', re.IGNORECASE)
 # confirming, it's diagnosing without delivering a fix, which the pure
 # code-marker check below can miss when the diagnosis quotes fragments of
 # the original code (e.g. inline `tail_` CAS mentions or a fenced excerpt of
-# the flawed snippet), making it look like "code is still present".
+# the flawed snippet), making it look like "code is still present". A fifth
+# variant quotes the prompt's own "ANSWER TO CHECK:" section header back
+# verbatim, optionally in quotes ('The provided "ANSWER TO CHECK" is
+# severely corrupted...') instead of using a plain noun -- the quote
+# handling and the "to check" suffix below cover it.
 _CRITIC_PREAMBLE_RE = re.compile(
-    r'^\s*the\s+(provided\s+|given\s+)?(answer|response|implementation|code)\b'
+    r'^\s*the\s+(provided\s+|given\s+)?["“]?'
+    r'(answer(\s+to\s+check)?|response|implementation|code)["”]?\b'
     r'|^\s*(unsupported|incorrect|critical)\s+(claim|flaw|error)\b',
     re.IGNORECASE,
 )
