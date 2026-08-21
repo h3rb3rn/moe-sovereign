@@ -320,14 +320,35 @@ async def merger_node(state_: AgentState):
         _max_refine = 0
     elif state_.get("complexity_level") in ("trivial", "moderate"):
         _max_refine = min(1, JUDGE_REFINE_MAX_ROUNDS)
+    # Categories with an unresolved paraconsistent conflict (_new_conflicts,
+    # collected above) get folded into this same refinement loop, for ANY
+    # category -- not just _SAFETY_CRITICAL_CATS. Two experts disagreeing is
+    # itself worth Judge attention regardless of domain: the chain shouldn't
+    # end at "Judge observes and logs a dismissed conflict" when the exact
+    # mechanism to feed a verdict back into a real re-generation already
+    # exists (this loop). Previously, resolve_conflicts_node (which runs
+    # AFTER this node has already synthesized final_response -- too late to
+    # help) only arbitrated safety-critical conflicts and only ever recorded
+    # the verdict as an audit trail, never regenerating anything; everything
+    # else was silently dismissed ("Strategy C: no LLM cost warranted"),
+    # which let contradicting expert answers erode Trust-Score round after
+    # round with nothing ever correcting them.
+    _pending_conflict_cats = {
+        c["category"] for c in _new_conflicts if c.get("resolution") == "pending"
+    }
     if _max_refine > 0 and expert_results:
         for _refine_round in range(_max_refine):
             low_conf_list = [r for r in expert_results if _parse_expert_confidence(r) == "low"]
-            if not low_conf_list:
+            conflict_list = [
+                r for r in expert_results
+                if _expert_category(r) in _pending_conflict_cats and r not in low_conf_list
+            ]
+            refine_list = low_conf_list + conflict_list
+            if not refine_list:
                 break
-            _judge_refined_cats.update(_expert_category(r) for r in low_conf_list)
+            _judge_refined_cats.update(_expert_category(r) for r in refine_list)
             await _report(f"🔄 Refinement round {_refine_round + 1}/{_max_refine}: "
-                          f"{len(low_conf_list)} low-confidence experts")
+                          f"{len(low_conf_list)} low-confidence, {len(conflict_list)} conflicted experts")
             # Judge generates feedback — enriched with web/graph context
             _ctx_snippet = ""
             _jbudget = _judge_ctx_budget(state_.get("judge_num_ctx", 0))
@@ -335,11 +356,31 @@ async def merger_node(state_: AgentState):
                 _ctx_snippet += f"\nWEB CONTEXT (excerpt):\n{web[:_jbudget['web_context']]}"
             if graph_ctx:
                 _ctx_snippet += f"\nGRAPH KNOWLEDGE (excerpt):\n{graph_ctx[:_jbudget['graph_context']]}"
+            _conflict_cats_this_round = {_expert_category(r) for r in conflict_list}
+            _conflict_section = ""
+            if _conflict_cats_this_round:
+                _conflict_parts = [
+                    f"[{c['category']}] Two experts disagree:\n"
+                    f"PROPOSITION A:\n{c['proposition_a']}\n\n"
+                    f"PROPOSITION B:\n{c['proposition_b']}\n"
+                    "Determine which approach is technically correct (or synthesize "
+                    "the correct answer if both are partially right/wrong), and give "
+                    "the expert concrete corrective guidance to produce the right "
+                    "implementation."
+                    for c in _new_conflicts
+                    if c.get("resolution") == "pending" and c["category"] in _conflict_cats_this_round
+                ]
+                _conflict_section = (
+                    "\n\nADDITIONALLY, arbitrate these expert disagreements and "
+                    "include your arbitration guidance in the same [CATEGORY]: <...> "
+                    "format below:\n\n" + "\n\n".join(_conflict_parts)
+                )
             gap_prompt = (
                 "Analyze these expert responses with CONFIDENCE: low and formulate "
                 "concrete, specific improvement hints for each category (max. 3 sentences). "
                 "Use available context to directly name missing facts:\n\n"
-                + "\n\n".join(low_conf_list)
+                + ("\n\n".join(low_conf_list) if low_conf_list else "(none)")
+                + _conflict_section
                 + _ctx_snippet
                 + "\n\nFormat: [CATEGORY]: <improvement hints with concrete facts>"
             )
@@ -354,10 +395,10 @@ async def merger_node(state_: AgentState):
             except Exception as _ge:
                 logger.warning(f"⚠️ Refinement judge feedback round {_refine_round + 1}: {_ge}")
                 break
-            # Per low-confidence category: re-invoke the best expert
+            # Per low-confidence/conflicted category: re-invoke the best expert
             any_improvement = False
             new_expert_results = list(expert_results)
-            for old_result in low_conf_list:
+            for old_result in refine_list:
                 _cat = _expert_category(old_result)
                 # Extract category-specific feedback
                 cat_feedback = gap_feedback_text
@@ -391,6 +432,17 @@ async def merger_node(state_: AgentState):
                             "correction_source": "judge_refinement",
                             "tenant_id": ",".join(state_.get("tenant_ids", [])),
                         })
+                    if _cat in _pending_conflict_cats:
+                        # Mutating the dicts in _new_conflicts in place is
+                        # sufficient: that same list object is returned
+                        # verbatim as conflict_registry below, and
+                        # resolve_conflicts_node only re-arbitrates entries
+                        # still marked "pending".
+                        for _c in _new_conflicts:
+                            if _c.get("resolution") == "pending" and _c["category"] == _cat:
+                                _c["resolution"] = "resolved"
+                                _c["resolved_by"] = "merger_refine_arbitration"
+                        _pending_conflict_cats.discard(_cat)
             expert_results = new_expert_results
             if not any_improvement:
                 await _report(f"⏹️ Refinement stopped: no significant improvement "
@@ -989,8 +1041,36 @@ async def merger_node(state_: AgentState):
                 prompt,
                 max_retries=1,
                 temperature=state_.get("query_temperature"),
+                # Discourage degenerate repetition loops: observed live, the
+                # merger synthesis call fell into repeating a single line
+                # ("// I will output the SPSC code.") dozens of times instead
+                # of emitting the actual answer, cutting the response off
+                # mid code-fence. repeat_last_n widens the lookback window so
+                # a repeated multi-token phrase (not just a single token) is
+                # penalized too.
+                repeat_penalty=1.3,
+                repeat_last_n=256,
             )
-            break
+            from services.quality_gate import verify_response_plausibility
+            _plausibility = verify_response_plausibility(res.content or "")
+            if _plausibility["plausible"]:
+                break
+            logger.warning(
+                "Merger synthesis attempt %d/%d failed plausibility check: %s",
+                _sf_attempt + 1, _structured_attempts, _plausibility["reason"],
+            )
+            _last_judge_error = RuntimeError(
+                f"implausible response: {_plausibility['reason']}"
+            )
+            if _sf_attempt + 1 >= _structured_attempts:
+                # Attempts exhausted -- keep the last (implausible) result
+                # rather than discarding it silently. Downstream checks
+                # (quality_gate_node's own plausibility gate, Constitution
+                # enforcement) still see it and can reject it properly;
+                # this loop's job is only to reduce how OFTEN that happens,
+                # not to guarantee it never does.
+                break
+            continue
         except RequestDeadlineExceeded:
             _degraded = _validated_degraded_candidate(
                 "merger_deadline_exceeded"
@@ -1917,6 +1997,56 @@ def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
         logger.debug("Hallucination-check decision log failed: %s", _e)
 
 
+_CRITIC_TRAILING_CONFIRMED_RE = re.compile(r'\bCONFIRMED\b\s*$', re.IGNORECASE)
+
+# The critic prompt explicitly bans opening with meta-commentary and names
+# "Factual errors were found"/"The answer contains mistakes" as examples of
+# what NOT to write. Observed live, twice, across unrelated tasks: the judge
+# opens a "corrected answer" with exactly this banned pattern ("The answer
+# contains a critical factual error regarding the Rust implementation...",
+# "The answer contains a critical technical error in its reasoning
+# regarding memory orderings...") and then never gets around to providing a
+# complete replacement -- just an analysis of what's wrong. This is a
+# distinct failure mode from the trailing-CONFIRMED case: the model isn't
+# confirming, it's diagnosing without delivering a fix, which the pure
+# code-marker check below can miss when the diagnosis quotes fragments of
+# the original code (e.g. inline `tail_` CAS mentions or a fenced excerpt of
+# the flawed snippet), making it look like "code is still present".
+_CRITIC_PREAMBLE_RE = re.compile(
+    r'^\s*the\s+(provided\s+|given\s+)?(answer|response|implementation|code)\b'
+    r'|^\s*(unsupported|incorrect|critical)\s+(claim|flaw|error)\b',
+    re.IGNORECASE,
+)
+
+
+def _critic_is_noncompliant_confirmation(critic_out: str, original: str) -> bool:
+    """Detect a judge reply that either reached a CONFIRMED verdict, or
+    diagnosed a problem, without the required "start with CONFIRMED, or a
+    direct corrected answer, no preamble" format.
+
+    critic_node's prompt requires either the bare word CONFIRMED or a direct
+    corrected answer with zero preamble. A judge that free-associates a long
+    deliberation and only concludes CONFIRMED at the very end fails the
+    ``.startswith("CONFIRMED")`` check below, so without this guard the
+    entire deliberation trace silently replaces the real answer. Observed
+    live: a correct Rust implementation replaced by an ~800-word internal
+    monologue about whether the claim counts as "unsupported", ending in a
+    bare "CONFIRMED" instead of a corrected answer.
+    """
+    stripped = critic_out.strip()
+    if _CRITIC_TRAILING_CONFIRMED_RE.search(stripped):
+        return True
+    if _CRITIC_PREAMBLE_RE.match(stripped):
+        return True
+    # A real correction of a code answer still contains code. A reply with
+    # none, while the original clearly had some, is deliberation/meta-
+    # commentary rather than a replacement answer.
+    _CODE_MARKERS = ("```", "<!DOCTYPE", "<html", "def ", "function ", "class ", "import ", "setInterval")
+    if any(m in original for m in _CODE_MARKERS) and not any(m in critic_out for m in _CODE_MARKERS):
+        return True
+    return False
+
+
 async def critic_node(state_: AgentState):
     """
     Fact-check pass over the merger answer. Two independent triggers:
@@ -2124,6 +2254,24 @@ async def critic_node(state_: AgentState):
             await _report("✅ Critic: answer confirmed correct")
             await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
+            if hallucination_risk and not active:
+                _log_hallucination_check(state_, corrected=False)
+            return {"final_response": final_response, **usage}
+
+        if _critic_is_noncompliant_confirmation(critic_out, final_response):
+            logger.warning(
+                "⚠️ Critic: non-compliant judge format (CONFIRMED reached without "
+                "the required leading format, or code dropped from the reply) — "
+                "preserving merger answer instead of overwriting it with the "
+                "judge's deliberation trace"
+            )
+            await _report(
+                "⚠️ Critic: judge reply was a non-compliant deliberation, not a "
+                "correction — merger answer preserved"
+            )
+            await _record_stage(
+                state_.get("response_id", ""), "critic", "confirmed", "non_compliant_format"
+            )
             if hallucination_risk and not active:
                 _log_hallucination_check(state_, corrected=False)
             return {"final_response": final_response, **usage}
