@@ -103,6 +103,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import (
+    _audit_cancel,
     _audit_complete,
     _audit_create,
     _get_available_models as _get_available_models_svc,
@@ -2399,13 +2400,21 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "native_direct",
                 _ns_payload,
             )
-            try:
+            async def _ns_do_post() -> httpx.Response:
+                # Shielded: a client disconnect must not cancel an in-flight
+                # model load on the shared Ollama node. Ollama's GPU-discovery
+                # startup does not handle a cancelled load cleanly and gets
+                # stuck ("GPU discovery watchdog timed out") for every
+                # subsequent request until the container is restarted -- this
+                # keeps our own cancellation from ever triggering that.
                 async with httpx.AsyncClient(timeout=float(_native_endpoint.get("timeout", 300))) as _hc:
-                    _nr = await _hc.post(
+                    return await _hc.post(
                         _ns_base + "/api/chat",
                         headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
                         json=_ns_payload,
                     )
+            try:
+                _nr = await asyncio.shield(_ns_do_post())
                 _nr.raise_for_status()
                 _rdata = _nr.json()
                 await _audit_complete(
@@ -2414,6 +2423,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                     _rdata.get("prompt_eval_count"),
                     _rdata.get("eval_count"),
                 )
+            except asyncio.CancelledError:
+                await _audit_cancel(_native_audit)
+                raise
             except Exception as _native_exc:
                 await _audit_complete(
                     _native_audit,
@@ -2500,13 +2512,18 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "native_direct",
                 _native_oai_payload,
             )
-            try:
+            async def _native_oai_do_post() -> httpx.Response:
+                # Shielded for the same reason as the native-Ollama branch
+                # above: a client disconnect must not cancel an in-flight
+                # model load on the shared node.
                 async with httpx.AsyncClient(timeout=float(_native_endpoint.get("timeout", 300))) as _hc:
-                    _nr = await _hc.post(
+                    return await _hc.post(
                         _native_oai_url,
                         headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
                         json=_native_oai_payload,
                     )
+            try:
+                _nr = await asyncio.shield(_native_oai_do_post())
                 _nr.raise_for_status()
                 _nj = _nr.json()
                 _native_usage = _nj.get("usage") or {}
@@ -2516,6 +2533,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                     _native_usage.get("prompt_tokens"),
                     _native_usage.get("completion_tokens"),
                 )
+            except asyncio.CancelledError:
+                await _audit_cancel(_native_audit)
+                raise
             except Exception as _native_exc:
                 await _audit_complete(
                     _native_audit,
