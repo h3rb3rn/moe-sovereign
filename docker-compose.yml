@@ -108,6 +108,44 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASS=${NEO4J_PASS}
       - ORCHESTRATOR_URL=http://langgraph-orchestrator:8000
+      - RUST_COMPILE_SANDBOX_URL=http://rust-compile-sandbox:8080
+    networks:
+      - default                  # internet egress for its own tools (Wikipedia, PubMed, etc.)
+      - rust_compile_internal    # reach rust-compile-sandbox on its egress-blocked network
+
+  # Isolated, egress-blocked Rust type/borrow-check sandbox for the
+  # rust_compile_check precision tool -- compiles untrusted, model-generated
+  # source with `rustc --emit=metadata` (analysis only, no codegen/link, and
+  # the compiled artifact is never executed). See docs/experiments/
+  # lumig_posttraining_candidates.md for the motivating evidence.
+  rust-compile-sandbox:
+    build:
+      context: .
+      dockerfile: services/rust_compile_sandbox/Dockerfile
+    container_name: rust-compile-sandbox
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    # No .env, no network egress: this service only ever sees a source-code
+    # string over HTTP from mcp-precision and never needs external state.
+    networks:
+      - rust_compile_internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
@@ -906,5 +944,12 @@ networks:
     # internal=true removes the gateway, so the chromadb server cannot reach the
     # internet to download a malicious model repo (the RCE's delivery step).
     # Only services also attached here (the orchestrator) can talk to it.
+    internal: true
+    driver: bridge
+  rust_compile_internal:
+    # Egress-blocked network for rust-compile-sandbox: internal=true removes
+    # the gateway, so a compiler invocation on untrusted, model-generated
+    # source can never reach the internet. Only mcp-precision (also attached
+    # here) can reach it, by its `rust-compile-sandbox` DNS name.
     internal: true
     driver: bridge
