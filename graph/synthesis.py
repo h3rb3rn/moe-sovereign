@@ -1989,11 +1989,17 @@ def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
     decision type."""
     try:
         from services.decision_log import log_decision, DecisionType
+        _prior_verdict = (state_.get("trust_verdict") or "").upper()
+        _verdict_note = (
+            "upgraded a stale BLOCK to PROCEED_WITH_ASSUMPTION"
+            if _prior_verdict == "BLOCK"
+            else f"Trust-Score stayed {_prior_verdict or 'PROCEED_WITH_ASSUMPTION'}"
+        )
         log_decision(
             DecisionType.HALLUCINATION_CHECK,
             state_.get("response_id", ""),
             rationale=(
-                f"Trust-Score stayed PROCEED_WITH_ASSUMPTION — claim check "
+                f"{_verdict_note} — claim check "
                 f"against retrieved sources {'found and corrected unsupported claims' if corrected else 'found no unsupported claims'}"
             ),
             metadata={
@@ -2270,6 +2276,15 @@ async def critic_node(state_: AgentState):
             logger.info("✅ Critic: no errors found")
             if hallucination_risk and not active:
                 _log_hallucination_check(state_, corrected=False)
+                # The unsupported-claims check that just ran is exactly what
+                # a BLOCK verdict challenges (see the "else" critic_prompt
+                # branch above, which fires specifically because trust stayed
+                # low after self-critique). Finding no unsupported claims
+                # addresses that reason, so a stale BLOCK from an earlier
+                # merger round must not keep quality_gate_node blocking a
+                # response the fact-check just cleared.
+                if trust_verdict == "BLOCK":
+                    return {"final_response": final_response, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
             return {"final_response": final_response, **usage}
 
         if _critic_is_noncompliant_confirmation(critic_out, final_response):
@@ -2295,6 +2310,12 @@ async def critic_node(state_: AgentState):
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         if hallucination_risk and not active:
             _log_hallucination_check(state_, corrected=True)
+            # See the CONFIRMED branch above: the critic just grounded the
+            # unsupported claims that a stale BLOCK verdict was flagging, so
+            # let the corrected response through instead of quality_gate_node
+            # discarding it based on a trust_verdict computed before this fix.
+            if trust_verdict == "BLOCK":
+                return {"final_response": critic_out, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
         return {"final_response": critic_out, **usage}
     except Exception as e:
         logger.warning(f"Critic node error: {e}")
