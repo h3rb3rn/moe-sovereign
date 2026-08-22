@@ -1052,7 +1052,7 @@ async def merger_node(state_: AgentState):
                 repeat_last_n=256,
             )
             from services.quality_gate import verify_response_plausibility
-            _plausibility = verify_response_plausibility(res.content or "")
+            _plausibility = verify_response_plausibility(res.content or "", task_text=state_.get("input"))
             if _plausibility["plausible"]:
                 break
             logger.warning(
