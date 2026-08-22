@@ -1048,7 +1048,16 @@ async def merger_node(state_: AgentState):
                 # mid code-fence. repeat_last_n widens the lookback window so
                 # a repeated multi-token phrase (not just a single token) is
                 # penalized too.
-                repeat_penalty=1.3,
+                # 1.3 was too aggressive: on a code-generation task, observed
+                # live (4 separate runs) to push the model into a different
+                # degenerate mode instead -- a multi-thousand-token chain of
+                # loosely associated, topically unrelated words that reads as
+                # fluent prose and produces zero actual code, one run growing
+                # past 22k tokens before being manually aborted. Lowered to
+                # 1.15, still enough to suppress verbatim repetition without
+                # penalizing recently-used *concepts* so hard that the model
+                # is forced to keep hunting for novel (unrelated) vocabulary.
+                repeat_penalty=1.15,
                 repeat_last_n=256,
             )
             from services.quality_gate import verify_response_plausibility
