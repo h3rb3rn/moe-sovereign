@@ -373,7 +373,19 @@ class GraphRAGManager:
         )
         found: Dict[str, Any] = {}
         async with self.driver.session() as session:
-            for term in terms[:3]:
+            # terms[:6] (not [:3]) and LIMIT 2 (not 1) per term, [..25]/[..10]
+            # (not [..6]/[..4]) on the collected relationships: a well-curated
+            # hub entity easily accumulates more than 6 REQUIRES-style facts
+            # as knowledge is added over time (observed live: 22 facts on one
+            # entity after 5 curation rounds) -- the old caps silently dropped
+            # most of them, in Neo4j's internal (not relevance-ordered)
+            # collection order, so newly curated facts had no reliable chance
+            # of ever being retrieved regardless of the model's actual need
+            # for them. This only widens what reaches query_context(); the
+            # actual prompt-facing selection is relevance-ranked there
+            # (_score_relation_relevance) rather than left to arrive in
+            # whatever order Neo4j happens to return.
+            for term in terms[:6]:
                 result = await session.run(
                     f"""
                     MATCH (e:Entity)
@@ -381,7 +393,7 @@ class GraphRAGManager:
                         OR toLower(e.aliases_str) CONTAINS toLower($term))
                     {type_filter}
                     {tenant_filter}
-                    WITH e LIMIT 1
+                    WITH e LIMIT 2
                     OPTIONAL MATCH (e)-[r1]->(n1:Entity)
                     OPTIONAL MATCH (n1)-[r2]->(n2:Entity)
                     RETURN
@@ -394,13 +406,13 @@ class GraphRAGManager:
                             source_model: r1.source_model,
                             confidence:   r1.confidence,
                             version:      r1.version
-                        }})[..6] AS direct,
+                        }})[..25] AS direct,
                         collect(DISTINCT {{
                             via:    n1.name,
                             rel:    type(r2),
                             target: n2.name,
                             ttype:  n2.type
-                        }})[..4] AS indirect
+                        }})[..10] AS indirect
                     """,
                     {
                         "term":          term,
@@ -555,12 +567,22 @@ class GraphRAGManager:
         lines = ["[Knowledge Graph]"]
         for entity, data in found.items():
             etype = data["type"]
-            rels = data["direct"]
+            # Rank by relevance to the actual query before truncating, instead
+            # of keeping whichever [..25] happened to survive the Neo4j
+            # collection order (see _match_terms_to_entities) -- a hub entity
+            # can carry far more facts than fit in a prompt, and the ones
+            # actually relevant to this request must not lose to older or
+            # unrelated ones purely by arrival order.
+            rels = sorted(
+                data["direct"],
+                key=lambda r: self._score_relation_relevance(terms, r),
+                reverse=True,
+            )[:8]
             indirect = data["indirect"]
 
             if rels:
                 rel_parts = []
-                for r in rels[:4]:
+                for r in rels:
                     part = f"{r['rel']} {r['target']}"
                     conf = r.get("confidence")
                     src  = r.get("source_model")
@@ -701,6 +723,25 @@ class GraphRAGManager:
         # silently dropped when the graph is sparse on a topic — the term match alone
         # is enough evidence if the overlap is high.
         return min(1.0, overlap_score * 0.75 + avg_confidence * 0.25)
+
+    @staticmethod
+    def _score_relation_relevance(terms: List[str], rel: Dict[str, Any]) -> float:
+        """Score one entity's direct relation/fact against the query terms, so
+        query_context() can keep the most relevant facts when an entity has
+        more than fit in the prompt, instead of an arbitrary Neo4j collection
+        order silently dropping newer or more relevant ones. Mirrors
+        _corrective_relevance_score's term-overlap approach at the
+        individual-fact level rather than the whole-entity level.
+        """
+        target_lower = (rel.get("target") or "").lower()
+        if not terms or not target_lower:
+            return rel.get("confidence") or 0.5
+        terms_lower = [t.lower() for t in terms]
+        hits = sum(1 for t in terms_lower if t in target_lower)
+        overlap = hits / len(terms_lower)
+        confidence = rel.get("confidence")
+        confidence = confidence if confidence is not None else 0.5
+        return overlap * 0.8 + confidence * 0.2
 
     async def _text_to_cypher(
         self,
