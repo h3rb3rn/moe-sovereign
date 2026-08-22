@@ -1982,17 +1982,21 @@ async def self_critique_node(state_: AgentState):
     return {"self_critique_round": round_num}
 
 
-def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
+def _log_hallucination_check(state_: AgentState, corrected: bool, upgraded: bool = False) -> None:
     """Decision-log entry for the critic_node's hallucination-risk trigger
     (see critic_node docstring) — separate from the pre-existing
     safety-critical fact-check path, which isn't logged as a distinct
-    decision type."""
+    decision type. `upgraded` must reflect what the caller's return value
+    actually does to trust_verdict, not be re-derived here from the prior
+    verdict alone -- a non-compliant critic reply also has a prior BLOCK
+    verdict but performs no upgrade, and the two must not read the same in
+    the log."""
     try:
         from services.decision_log import log_decision, DecisionType
         _prior_verdict = (state_.get("trust_verdict") or "").upper()
         _verdict_note = (
             "upgraded a stale BLOCK to PROCEED_WITH_ASSUMPTION"
-            if _prior_verdict == "BLOCK"
+            if upgraded
             else f"Trust-Score stayed {_prior_verdict or 'PROCEED_WITH_ASSUMPTION'}"
         )
         log_decision(
@@ -2275,7 +2279,6 @@ async def critic_node(state_: AgentState):
             await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
             if hallucination_risk and not active:
-                _log_hallucination_check(state_, corrected=False)
                 # The unsupported-claims check that just ran is exactly what
                 # a BLOCK verdict challenges (see the "else" critic_prompt
                 # branch above, which fires specifically because trust stayed
@@ -2283,7 +2286,9 @@ async def critic_node(state_: AgentState):
                 # addresses that reason, so a stale BLOCK from an earlier
                 # merger round must not keep quality_gate_node blocking a
                 # response the fact-check just cleared.
-                if trust_verdict == "BLOCK":
+                _will_upgrade = trust_verdict == "BLOCK"
+                _log_hallucination_check(state_, corrected=False, upgraded=_will_upgrade)
+                if _will_upgrade:
                     return {"final_response": final_response, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
             return {"final_response": final_response, **usage}
 
@@ -2309,12 +2314,13 @@ async def critic_node(state_: AgentState):
         await _record_stage(state_.get("response_id", ""), "critic", "corrected")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         if hallucination_risk and not active:
-            _log_hallucination_check(state_, corrected=True)
             # See the CONFIRMED branch above: the critic just grounded the
             # unsupported claims that a stale BLOCK verdict was flagging, so
             # let the corrected response through instead of quality_gate_node
             # discarding it based on a trust_verdict computed before this fix.
-            if trust_verdict == "BLOCK":
+            _will_upgrade = trust_verdict == "BLOCK"
+            _log_hallucination_check(state_, corrected=True, upgraded=_will_upgrade)
+            if _will_upgrade:
                 return {"final_response": critic_out, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
         return {"final_response": critic_out, **usage}
     except Exception as e:
