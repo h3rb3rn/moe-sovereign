@@ -373,16 +373,27 @@ class GraphRAGManager:
         )
         found: Dict[str, Any] = {}
         async with self.driver.session() as session:
-            # terms[:6] (not [:3]) and LIMIT 2 (not 1) per term, [..25]/[..10]
-            # (not [..6]/[..4]) on the collected relationships: a well-curated
-            # hub entity easily accumulates more than 6 REQUIRES-style facts
-            # as knowledge is added over time (observed live: 22 facts on one
-            # entity after 5 curation rounds) -- the old caps silently dropped
-            # most of them, in Neo4j's internal (not relevance-ordered)
-            # collection order, so newly curated facts had no reliable chance
-            # of ever being retrieved regardless of the model's actual need
-            # for them. This only widens what reaches query_context(); the
-            # actual prompt-facing selection is relevance-ranked there
+            # terms[:6] (not [:3]) and LIMIT 10 (not 1, then not 2) per term,
+            # [..25]/[..10] (not [..6]/[..4]) on the collected relationships:
+            # a well-curated hub entity easily accumulates more than 6
+            # REQUIRES-style facts as knowledge is added over time (observed
+            # live: 22 facts on one entity after 5 curation rounds) -- the
+            # old caps silently dropped most of them, in Neo4j's internal
+            # (not relevance-ordered) collection order, so newly curated
+            # facts had no reliable chance of ever being retrieved regardless
+            # of the model's actual need for them.
+            #
+            # LIMIT 2 (the first fix) was still not enough: a common domain
+            # term like "eBPF" or "XDP" matches 7-15 distinct entities in a
+            # graph that accumulates auto-extracted nodes over time (not just
+            # curated ones), so a curated hub entity competing against that
+            # many same-term matches had no reliable chance of being one of
+            # the first 2 in Neo4j's arbitrary order either -- observed live:
+            # a Round 10 eBPF fact never reached the prompt because "eBPF and
+            # XDP programming" placed outside the top 2 of 7-15 matches for
+            # every term that should have found it. Widened further to 10;
+            # this only widens what reaches query_context(), the actual
+            # prompt-facing selection is relevance-ranked there
             # (_score_relation_relevance) rather than left to arrive in
             # whatever order Neo4j happens to return.
             for term in terms[:6]:
@@ -393,7 +404,7 @@ class GraphRAGManager:
                         OR toLower(e.aliases_str) CONTAINS toLower($term))
                     {type_filter}
                     {tenant_filter}
-                    WITH e LIMIT 2
+                    WITH e LIMIT 10
                     OPTIONAL MATCH (e)-[r1]->(n1:Entity)
                     OPTIONAL MATCH (n1)-[r2]->(n2:Entity)
                     RETURN
@@ -563,6 +574,23 @@ class GraphRAGManager:
             if not found:
                 logger.debug("GraphRAG corrective gate: all results below threshold — returning empty")
                 return ""
+
+        # Cap the number of entities actually rendered, ranked by the same
+        # relevance score the gate just used -- widening the per-term match
+        # limit above (2 -> 10) casts a wider net to make sure a curated hub
+        # isn't excluded by sheer number of same-term matches, but without a
+        # final cap that same widening could inject dozens of entities into
+        # the prompt. Keep the most relevant ones, not just however many
+        # survived the threshold.
+        _max_entities = int(os.getenv("GRAPHRAG_MAX_ENTITIES", "15"))
+        if len(found) > _max_entities:
+            found = dict(
+                sorted(
+                    found.items(),
+                    key=lambda kv: self._corrective_relevance_score(terms, kv[0], kv[1]),
+                    reverse=True,
+                )[:_max_entities]
+            )
 
         lines = ["[Knowledge Graph]"]
         for entity, data in found.items():
