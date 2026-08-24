@@ -666,7 +666,10 @@ async def planner_node(state_: AgentState):
     try:
         from self_correction import get_few_shot_context as _get_fsc
         _plan_categories = list(EXPERTS.keys())  # All categories as hint sources
-        _few_shot_hint = await _get_fsc(_plan_categories, state.redis_client, max_per_cat=2)
+        _few_shot_hint = await _get_fsc(
+            _plan_categories, state.redis_client, max_per_cat=2,
+            query=state_.get("input", ""),
+        )
     except Exception:
         pass
 
