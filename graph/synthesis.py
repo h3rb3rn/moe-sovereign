@@ -121,6 +121,36 @@ from graph.research import _rerank_graph_context, _compress_graph_context_llm
 from services.deadline import RequestDeadlineExceeded, remaining_timeout
 from episodic_memory import log_episode
 
+_RUST_CODE_FENCE_RE = re.compile(r"```rust\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+_RUST_COMPILE_CHECK_CATEGORIES = {"systems_programming", "code_reviewer"}
+_RUST_COMPILE_CHECK_TIMEOUT_S = 20.0
+
+
+async def _call_rust_compile_check(source: str) -> dict:
+    """Call the rust_compile_check MCP precision tool directly via HTTP,
+    bypassing the planner-mediated dispatch (mirrors graph/hypothesis_verifier.py's
+    _call_sandbox pattern for python_sandbox). Fail-open: any sandbox/transport
+    error returns compiles=None rather than raising, since this check is a
+    quality improvement, not a hard gate, in this first increment.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_COMPILE_CHECK_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{MCP_URL}/invoke",
+                json={"tool": "rust_compile_check", "args": {"source": source}},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        result_str = payload.get("result") if isinstance(payload, dict) else None
+        if not result_str:
+            return {"compiles": None}
+        return json.loads(result_str)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug("rust_compile_check call failed (fail-open): %s", exc)
+        return {"compiles": None}
+
 
 async def merger_node(state_: AgentState):
     from datetime import datetime
@@ -1027,6 +1057,8 @@ async def merger_node(state_: AgentState):
     res = None
     _last_judge_error: Optional[Exception] = None
     _retry_model_override = ""
+    _current_prompt = prompt
+    _code_categories_present = {_expert_category(r) for r in expert_results} & _RUST_COMPILE_CHECK_CATEGORIES
     for _sf_attempt in range(_structured_attempts):
         _attempt_state = state_
         _using_fallback = bool(_retry_model_override)
@@ -1038,7 +1070,7 @@ async def merger_node(state_: AgentState):
         try:
             res = await _invoke_judge_with_retry(
                 _attempt_state,
-                prompt,
+                _current_prompt,
                 max_retries=1,
                 temperature=state_.get("query_temperature"),
                 # Discourage degenerate repetition loops: observed live, the
@@ -1063,6 +1095,40 @@ async def merger_node(state_: AgentState):
             from services.quality_gate import verify_response_plausibility
             _plausibility = verify_response_plausibility(res.content or "", task_text=state_.get("input"))
             if _plausibility["plausible"]:
+                # Deterministic ground-truth check on top of the plausibility
+                # heuristic: for code-generation categories, actually
+                # type/borrow-check any Rust code fence via the isolated
+                # rust_compile_check sandbox, instead of relying solely on
+                # LLM self-review to catch lifetime/ownership/interior-
+                # mutability defects (see docs/experiments/
+                # lumig_posttraining_candidates.md for the motivating,
+                # repeatedly-observed evidence). Fail-open on sandbox errors
+                # (compiles is None) -- this is a quality improvement, not a
+                # hard gate, in this first increment.
+                _rust_match = _RUST_CODE_FENCE_RE.search(res.content or "") if _code_categories_present else None
+                if _rust_match:
+                    _compile_result = await _call_rust_compile_check(_rust_match.group(1))
+                    if _compile_result.get("compiles") is False:
+                        _diag_lines = [
+                            f"  line {d.get('line')}: {d.get('message')}"
+                            for d in (_compile_result.get("diagnostics") or [])[:10]
+                        ]
+                        logger.warning(
+                            "Merger synthesis attempt %d/%d: Rust code fence does not compile:\n%s",
+                            _sf_attempt + 1, _structured_attempts, "\n".join(_diag_lines),
+                        )
+                        _last_judge_error = RuntimeError("rust_compile_check: does not compile")
+                        if _sf_attempt + 1 < _structured_attempts:
+                            _current_prompt = (
+                                prompt
+                                + "\n\nYour previous answer's Rust code does not compile. "
+                                "Fix these exact compiler errors and provide a corrected, "
+                                "complete answer:\n" + "\n".join(_diag_lines)
+                            )
+                            continue
+                        # Attempts exhausted -- fall through and keep the last
+                        # (non-compiling) result, same policy as the
+                        # plausibility check below.
                 break
             logger.warning(
                 "Merger synthesis attempt %d/%d failed plausibility check: %s",
@@ -1982,18 +2048,28 @@ async def self_critique_node(state_: AgentState):
     return {"self_critique_round": round_num}
 
 
-def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
+def _log_hallucination_check(state_: AgentState, corrected: bool, upgraded: bool = False) -> None:
     """Decision-log entry for the critic_node's hallucination-risk trigger
     (see critic_node docstring) — separate from the pre-existing
     safety-critical fact-check path, which isn't logged as a distinct
-    decision type."""
+    decision type. `upgraded` must reflect what the caller's return value
+    actually does to trust_verdict, not be re-derived here from the prior
+    verdict alone -- a non-compliant critic reply also has a prior BLOCK
+    verdict but performs no upgrade, and the two must not read the same in
+    the log."""
     try:
         from services.decision_log import log_decision, DecisionType
+        _prior_verdict = (state_.get("trust_verdict") or "").upper()
+        _verdict_note = (
+            "upgraded a stale BLOCK to PROCEED_WITH_ASSUMPTION"
+            if upgraded
+            else f"Trust-Score stayed {_prior_verdict or 'PROCEED_WITH_ASSUMPTION'}"
+        )
         log_decision(
             DecisionType.HALLUCINATION_CHECK,
             state_.get("response_id", ""),
             rationale=(
-                f"Trust-Score stayed PROCEED_WITH_ASSUMPTION — claim check "
+                f"{_verdict_note} — claim check "
                 f"against retrieved sources {'found and corrected unsupported claims' if corrected else 'found no unsupported claims'}"
             ),
             metadata={
@@ -2269,7 +2345,17 @@ async def critic_node(state_: AgentState):
             await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
             if hallucination_risk and not active:
-                _log_hallucination_check(state_, corrected=False)
+                # The unsupported-claims check that just ran is exactly what
+                # a BLOCK verdict challenges (see the "else" critic_prompt
+                # branch above, which fires specifically because trust stayed
+                # low after self-critique). Finding no unsupported claims
+                # addresses that reason, so a stale BLOCK from an earlier
+                # merger round must not keep quality_gate_node blocking a
+                # response the fact-check just cleared.
+                _will_upgrade = trust_verdict == "BLOCK"
+                _log_hallucination_check(state_, corrected=False, upgraded=_will_upgrade)
+                if _will_upgrade:
+                    return {"final_response": final_response, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
             return {"final_response": final_response, **usage}
 
         if _critic_is_noncompliant_confirmation(critic_out, final_response):
@@ -2294,7 +2380,14 @@ async def critic_node(state_: AgentState):
         await _record_stage(state_.get("response_id", ""), "critic", "corrected")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         if hallucination_risk and not active:
-            _log_hallucination_check(state_, corrected=True)
+            # See the CONFIRMED branch above: the critic just grounded the
+            # unsupported claims that a stale BLOCK verdict was flagging, so
+            # let the corrected response through instead of quality_gate_node
+            # discarding it based on a trust_verdict computed before this fix.
+            _will_upgrade = trust_verdict == "BLOCK"
+            _log_hallucination_check(state_, corrected=True, upgraded=_will_upgrade)
+            if _will_upgrade:
+                return {"final_response": critic_out, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
         return {"final_response": critic_out, **usage}
     except Exception as e:
         logger.warning(f"Critic node error: {e}")

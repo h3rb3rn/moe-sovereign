@@ -909,6 +909,11 @@ add a "research" task BEFORE the dynamic task so the expert receives fresh web c
 [{{"task": "Aktuelle ImmoWertV Richtlinien und Sachwertfaktoren recherchieren", "category": "research", "search_query": "ImmoWertV 2024 Sachwertfaktoren aktuell"}},
  {{"task": "Verkehrswert berechnen...", "category": "dynamic", "domain": "Immobilienwertermittlung", "requires": ["math"]}}]
 
+KNOWLEDGE STORAGE / MEMORY REQUESTS — when the user asks to store, persist, register, or remember information in the knowledge graph:
+Do NOT hand-encode the data as a JSON string inside "task", and do NOT invent extra fields for this. Every committed response is automatically fact-extracted and written to the knowledge graph in the background — a single plain-language task that restates and acknowledges the information is sufficient and correct.
+Format: {{"task": "Acknowledge the following information and confirm it is noted: <restate the key facts in plain prose, not JSON>", "category": "{_example_cat}"}}
+WRONG: a task whose "task" field contains escaped JSON, code fences, or a nested string re-encoding the input.
+
 WEB RESEARCH — for current/external info OR for domain specifications in implementation tasks:
 {{"task": "task description", "category": "research", "search_query": "short optimized search term"}}
 Use for: game rules · algorithm specifications · protocols/standards · anything where correct logic is critical for implementation.
@@ -917,6 +922,13 @@ PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!)
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
 {_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False))}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
+
+CHAINED CALCULATIONS — when one calculation needs the RESULT of a PREVIOUS calculation (e.g. multi-year escalation, running totals):
+Give each precision_tools task a stable "id" and reference an earlier task's result as {{"$task_result": "<id>"}} instead of computing or guessing the intermediate value yourself.
+Example: "Tariff is 0.10 EUR in year 1, +5% in year 2":
+[{{"id": "year1", "task": "Year 1 tariff", "category": "precision_tools", "mcp_tool": "decimal_finance", "mcp_args": {{"operation": "add", "operands": ["0.10", "0"], "currency": "EUR", "scale": 4, "rounding": "half_even"}}}},
+ {{"id": "year2", "task": "Year 2 tariff (+5% on year 1)", "category": "precision_tools", "mcp_tool": "decimal_finance", "mcp_args": {{"operation": "percentage", "operands": [{{"$task_result": "year1"}}, "105"], "currency": "EUR", "scale": 4, "rounding": "half_even"}}}}]
+A reference MUST point to an earlier task in the same list — never to itself or to a later task.
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
 Use the legal_* tools to retrieve exact legal texts; ALWAYS combine with legal_advisor expert for interpretation.

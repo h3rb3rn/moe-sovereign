@@ -96,6 +96,7 @@ from services.pipeline.contracts import (
     canonical_json_hash,
     precision_evidence_input,
     precision_args_match,
+    resolve_task_result_refs,
     tool_schema_contract_hash,
 )
 
@@ -230,6 +231,61 @@ def _validate_structured_mcp_result(
     return True, "", payload
 
 
+def _task_result_ref_ids(args: dict) -> list[str]:
+    """Collect every ``$task_result`` reference's task id inside ``args``."""
+    ids: list[str] = []
+    for value in args.values():
+        if isinstance(value, dict) and isinstance(value.get("$task_result"), str):
+            ids.append(value["$task_result"])
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict) and isinstance(item.get("$task_result"), str):
+                    ids.append(item["$task_result"])
+    return ids
+
+
+def _topological_batches(
+    precision_tasks: list[dict],
+) -> tuple[list[list[dict]], list[dict]]:
+    """Order tasks into dependency-respecting batches (Kahn's algorithm).
+
+    A task with no ``$task_result`` reference lands in batch 0 — for a plan
+    without any chaining this degenerates to a single batch identical to the
+    previous unconditional parallel dispatch. Returns ``(batches,
+    unscheduled)``: any remaining cycle (should already be rejected by
+    contract validation, but checked defensively here) leaves the offending
+    tasks in ``unscheduled`` instead of a batch; the caller must treat them
+    as failed rather than silently dropping them.
+    """
+    by_id = {
+        task.get("id"): task
+        for task in precision_tasks
+        if isinstance(task.get("id"), str)
+    }
+    remaining = list(precision_tasks)
+    scheduled_ids: set[str] = set()
+    batches: list[list[dict]] = []
+    while remaining:
+        ready_ids = {
+            id(task)
+            for task in remaining
+            if all(
+                ref_id in scheduled_ids or ref_id not in by_id
+                for ref_id in _task_result_ref_ids(task.get("mcp_args") or {})
+            )
+        }
+        if not ready_ids:
+            break
+        ready = [task for task in remaining if id(task) in ready_ids]
+        batches.append(ready)
+        for task in ready:
+            task_id = task.get("id")
+            if isinstance(task_id, str):
+                scheduled_ids.add(task_id)
+        remaining = [task for task in remaining if id(task) not in ready_ids]
+    return batches, remaining
+
+
 async def mcp_node(state_: AgentState):
     """Executes precision tool calls via MCP server — all in parallel."""
     if state_.get("cache_hit"):
@@ -306,7 +362,9 @@ async def mcp_node(state_: AgentState):
     _failures: list = list(state_.get("tool_failures") or [])
     _ts_now = lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    async def call_tool(client: httpx.AsyncClient, task: dict) -> dict:
+    async def call_tool(
+        client: httpx.AsyncClient, task: dict, resolved_results: dict
+    ) -> dict:
         tool = task.get("mcp_tool")
         args = dict(task.get("mcp_args") or {})
         desc = task.get("task", tool)
@@ -334,8 +392,17 @@ async def mcp_node(state_: AgentState):
             structured_result: dict | None = None,
         ) -> dict:
             structured = structured_result or {}
+            result_facts = None
+            if status == "completed" and result:
+                try:
+                    parsed_result = json.loads(result)
+                except (json.JSONDecodeError, TypeError):
+                    parsed_result = None
+                if isinstance(parsed_result, dict):
+                    result_facts = parsed_result
             return {
                 "text": text,
+                "result_facts": result_facts,
                 "event": {
                     "task_id": task_id,
                     "category": "precision_tools",
@@ -400,6 +467,18 @@ async def mcp_node(state_: AgentState):
             _schema = _snapshot
         elif isinstance(_schema, dict):
             contract_hash = tool_schema_contract_hash(_schema)
+
+        _chained_args = resolve_task_result_refs(args, resolved_results)
+        if _chained_args is None:
+            error = "upstream_task_result_unavailable"
+            logger.error("MCP chained-args resolution failed for %s", tool)
+            return _outcome(
+                "failed",
+                f"[{safe_desc}] MCP contract error: {error}",
+                used_args=args,
+                error=error,
+            )
+        args = _chained_args
 
         args = _normalize_tool_args(args, _schema)
         valid_args, args_error = _validate_tool_args(args, _schema)
@@ -605,8 +684,32 @@ async def mcp_node(state_: AgentState):
             )
 
     _mcp_timeout = remaining_timeout(state_, 30.0, stage="mcp")
+    _resolved_task_results: dict = {}
+    _results_by_id: dict = {}
+    _batches, _unscheduled = _topological_batches(precision_tasks)
+    if _unscheduled:
+        # Defensive only: a dependency cycle should already have been
+        # rejected by contract validation before the plan reached this
+        # node. Running these tasks anyway (instead of dropping them) still
+        # produces a deterministic per-task failure, since their reference
+        # can never resolve from `_resolved_task_results`.
+        logger.error(
+            "MCP precision task graph left %d task(s) unscheduled (cycle?)",
+            len(_unscheduled),
+        )
+        _batches = _batches + [_unscheduled]
     async with httpx.AsyncClient(timeout=_mcp_timeout) as client:
-        results = await asyncio.gather(*[call_tool(client, t) for t in precision_tasks])
+        for _batch in _batches:
+            _batch_results = await asyncio.gather(
+                *[call_tool(client, t, _resolved_task_results) for t in _batch]
+            )
+            for _task, _result in zip(_batch, _batch_results):
+                _results_by_id[id(_task)] = _result
+                _task_id = _task.get("id")
+                _facts = _result.get("result_facts")
+                if isinstance(_task_id, str) and isinstance(_facts, dict):
+                    _resolved_task_results[_task_id] = _facts
+    results = [_results_by_id[id(t)] for t in precision_tasks]
     from services.precision_telemetry import record_precision_event
     precision_mode = str(state_.get("precision_contract_mode") or "enforce")
     for task, result in zip(precision_tasks, results):
