@@ -1635,6 +1635,35 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     _refine_extra: dict = {}
     if token == "ollama":
         _refine_num_ctx = int(JUDGE_NUM_CTX or 262144)
+        # Never downgrade (or needlessly upgrade) a warm model: this call
+        # previously always requested a fixed, large ctx regardless of what
+        # was already resident, forcing an unload+reload whenever the model
+        # was already loaded at a smaller context -- the same bug class
+        # already fixed at the judge/planner/expert call sites (see
+        # agent_status/claude-code.md, feedback_ollama_num_ctx_reuse_pattern
+        # in project memory). Reuse the loaded context if it's already large
+        # enough instead of forcing a resize.
+        try:
+            _ollama_base = url.rstrip("/").removesuffix("/v1")
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = best_expert["model"].split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _refine_num_ctx:
+                        logger.info(
+                            "expert refinement: reusing warm model ctx=%d "
+                            "(requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _refine_num_ctx, best_expert["model"],
+                        )
+                        _refine_num_ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)
