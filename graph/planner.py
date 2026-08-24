@@ -899,6 +899,11 @@ add a "research" task BEFORE the dynamic task so the expert receives fresh web c
 [{{"task": "Aktuelle ImmoWertV Richtlinien und Sachwertfaktoren recherchieren", "category": "research", "search_query": "ImmoWertV 2024 Sachwertfaktoren aktuell"}},
  {{"task": "Verkehrswert berechnen...", "category": "dynamic", "domain": "Immobilienwertermittlung", "requires": ["math"]}}]
 
+KNOWLEDGE STORAGE / MEMORY REQUESTS — when the user asks to store, persist, register, or remember information in the knowledge graph:
+Do NOT hand-encode the data as a JSON string inside "task", and do NOT invent extra fields for this. Every committed response is automatically fact-extracted and written to the knowledge graph in the background — a single plain-language task that restates and acknowledges the information is sufficient and correct.
+Format: {{"task": "Acknowledge the following information and confirm it is noted: <restate the key facts in plain prose, not JSON>", "category": "{_example_cat}"}}
+WRONG: a task whose "task" field contains escaped JSON, code fences, or a nested string re-encoding the input.
+
 WEB RESEARCH — for current/external info OR for domain specifications in implementation tasks:
 {{"task": "task description", "category": "research", "search_query": "short optimized search term"}}
 Use for: game rules · algorithm specifications · protocols/standards · anything where correct logic is critical for implementation.
