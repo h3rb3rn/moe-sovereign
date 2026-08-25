@@ -355,6 +355,16 @@ services:
     # the server is bound to loopback only (see ports below) and is not reverse-proxied,
     # so the unauthenticated endpoint is unreachable from outside the host. Revisit
     # the pin once upstream ships a patched release.
+    #
+    # Two further unfixed advisories affect this pin, both about ChromaDB's own
+    # multi-tenant RBAC: SimpleRBACAuthorizationProvider doesn't scope a permission to
+    # the tenant/database/collection it was granted for, and an authenticated caller
+    # can read/write/update/delete data in any tenant's collection. Neither is
+    # exploitable here: the app never uses ChromaDB's tenant/database feature (every
+    # call goes through `default_tenant`/`default_database`; tenant isolation is
+    # enforced at the application layer via `tenant_id` filtering instead), and the
+    # network isolation below means the only caller who could reach the API at all
+    # is the orchestrator itself.
     image: chromadb/chroma:1.5.9
     container_name: chromadb-vector
     restart: always
