@@ -67,6 +67,71 @@ class PlannerContractError(ValueError):
         )
 
 
+def is_task_result_ref(value: Any) -> bool:
+    """Return True for an explicit chained-operand reference object.
+
+    A reference is ``{"$task_result": "<task_id>", "field": "<optional>"}``.
+    ``field`` defaults to ``"result"`` when absent, matching the field name
+    every precision tool's structured facts use for its primary output.
+    """
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("$task_result"), str)
+        and value.get("$task_result").strip() != ""
+    )
+
+
+def resolve_task_result_refs(
+    args: Mapping[str, Any],
+    resolved_results: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Substitute ``$task_result`` references with already-produced facts.
+
+    Returns ``None`` (fail-closed) the moment any reference cannot be
+    resolved — a partially substituted argument set is never handed to a
+    tool, since that would silently run the calculation with a missing or
+    guessed operand.
+    """
+    resolved: dict[str, Any] = {}
+    for key, value in args.items():
+        if is_task_result_ref(value):
+            task_id = str(value["$task_result"])
+            field = str(value.get("field") or "result")
+            facts = resolved_results.get(task_id)
+            if not isinstance(facts, Mapping) or field not in facts:
+                return None
+            resolved[key] = facts[field]
+        elif isinstance(value, list):
+            new_list = []
+            for item in value:
+                if is_task_result_ref(item):
+                    task_id = str(item["$task_result"])
+                    field = str(item.get("field") or "result")
+                    facts = resolved_results.get(task_id)
+                    if not isinstance(facts, Mapping) or field not in facts:
+                        return None
+                    new_list.append(facts[field])
+                else:
+                    new_list.append(item)
+            resolved[key] = new_list
+        else:
+            resolved[key] = value
+    return resolved
+
+
+def _find_task_result_ref_ids(args: Mapping[str, Any]) -> list[str]:
+    """Collect every ``$task_result`` reference's task id inside ``args``."""
+    ids: list[str] = []
+    for value in args.values():
+        if is_task_result_ref(value):
+            ids.append(str(value["$task_result"]))
+        elif isinstance(value, list):
+            for item in value:
+                if is_task_result_ref(item):
+                    ids.append(str(item["$task_result"]))
+    return ids
+
+
 @dataclass(frozen=True)
 class RequiredPrecisionIntent:
     """One explicit input operation that must retain deterministic routing."""
@@ -1106,6 +1171,11 @@ def validate_plan_tasks(
         )
 
     schemas = tool_schemas or {}
+    _task_id_positions = {
+        task.get("id"): position
+        for position, task in enumerate(tasks)
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
     for index, task in enumerate(tasks):
         if not isinstance(task, dict):
             issues.append(
@@ -1220,6 +1290,47 @@ def validate_plan_tasks(
                     "mcp_args",
                 )
             )
+
+        for ref_task_id in _find_task_result_ref_ids(args):
+            if ref_task_id == task.get("id"):
+                issues.append(
+                    PlannerContractIssue(
+                        index,
+                        "task_result_reference_cycle",
+                        f"task references its own result ('{ref_task_id}')",
+                        "mcp_args",
+                    )
+                )
+                continue
+            ref_index = _task_id_positions.get(ref_task_id)
+            if ref_index is None or ref_index >= index:
+                issues.append(
+                    PlannerContractIssue(
+                        index,
+                        "invalid_task_result_reference",
+                        f"'{ref_task_id}' must reference an earlier "
+                        "precision_tools task in the same plan",
+                        "mcp_args",
+                    )
+                )
+                continue
+            ref_task = tasks[ref_index]
+            ref_tool = ref_task.get("mcp_tool") if isinstance(ref_task, dict) else None
+            if (
+                not isinstance(ref_task, dict)
+                or ref_task.get("category") != "precision_tools"
+                or not isinstance(ref_tool, str)
+                or not ref_tool.strip()
+            ):
+                issues.append(
+                    PlannerContractIssue(
+                        index,
+                        "invalid_task_result_reference",
+                        f"'{ref_task_id}' does not identify a "
+                        "precision_tools task with a resolved mcp_tool",
+                        "mcp_args",
+                    )
+                )
 
     if input_query:
         issues.extend(

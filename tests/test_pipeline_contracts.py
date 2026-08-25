@@ -6,9 +6,11 @@ from services.pipeline.contracts import (
     PlannerContractError,
     assign_stable_task_ids,
     detect_required_precision_intents,
+    is_task_result_ref,
     parse_plan,
     recover_explicit_supported_plan,
     repair_precision_task_contracts,
+    resolve_task_result_refs,
     validate_plan_or_raise,
     validate_plan_tasks,
     validate_required_precision_intents,
@@ -571,3 +573,175 @@ def test_ollama_public_answer_excludes_private_thinking_and_keeps_judge_usage():
         "res = _StrResult(_judge_raw)"
     )
     assert usage_capture < content_wrapper
+
+
+_DECIMAL_FINANCE_SCHEMA = {
+    "required": ["operation", "operands", "currency", "scale", "rounding"],
+    "args": {},
+}
+
+
+def test_is_task_result_ref_recognizes_reference_object_only():
+    assert is_task_result_ref({"$task_result": "year1"}) is True
+    assert is_task_result_ref({"$task_result": "year1", "field": "result"}) is True
+    assert is_task_result_ref({"$task_result": ""}) is False
+    assert is_task_result_ref("year1") is False
+    assert is_task_result_ref(42) is False
+
+
+def test_resolve_task_result_refs_substitutes_nested_list_operand():
+    resolved = resolve_task_result_refs(
+        {
+            "operation": "percentage",
+            "operands": [{"$task_result": "year1"}, "105"],
+            "currency": "EUR",
+        },
+        {"year1": {"result": "0.1000"}},
+    )
+
+    assert resolved == {
+        "operation": "percentage",
+        "operands": ["0.1000", "105"],
+        "currency": "EUR",
+    }
+
+
+def test_resolve_task_result_refs_fails_closed_when_unresolvable():
+    assert resolve_task_result_refs(
+        {"operands": [{"$task_result": "missing"}, "105"]},
+        {"year1": {"result": "0.1000"}},
+    ) is None
+    assert resolve_task_result_refs(
+        {"operands": [{"$task_result": "year1", "field": "calculation_value"}]},
+        {"year1": {"result": "0.1000"}},
+    ) is None
+
+
+def test_chained_precision_task_accepts_backward_task_result_reference():
+    issues = validate_plan_tasks(
+        [
+            {
+                "id": "year1",
+                "task": "Year 1 tariff",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "add", "operands": ["0.10", "0"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+            {
+                "id": "year2",
+                "task": "Year 2 tariff (+5%)",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "percentage",
+                    "operands": [{"$task_result": "year1"}, "105"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+        ],
+        {"decimal_finance": _DECIMAL_FINANCE_SCHEMA},
+    )
+
+    assert issues == []
+
+
+def test_chained_precision_task_rejects_forward_reference():
+    issues = validate_plan_tasks(
+        [
+            {
+                "id": "year1",
+                "task": "Year 1 tariff",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "percentage",
+                    "operands": [{"$task_result": "year2"}, "105"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+            {
+                "id": "year2",
+                "task": "Year 2 tariff",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "add", "operands": ["0.10", "0"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+        ],
+        {"decimal_finance": _DECIMAL_FINANCE_SCHEMA},
+    )
+
+    assert [issue.code for issue in issues] == ["invalid_task_result_reference"]
+
+
+def test_chained_precision_task_rejects_self_reference():
+    issues = validate_plan_tasks(
+        [
+            {
+                "id": "year1",
+                "task": "Year 1 tariff",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "percentage",
+                    "operands": [{"$task_result": "year1"}, "105"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+        ],
+        {"decimal_finance": _DECIMAL_FINANCE_SCHEMA},
+    )
+
+    assert [issue.code for issue in issues] == ["task_result_reference_cycle"]
+
+
+def test_chained_precision_task_rejects_unknown_task_id():
+    issues = validate_plan_tasks(
+        [
+            {
+                "id": "year1",
+                "task": "Year 1 tariff",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "percentage",
+                    "operands": [{"$task_result": "does-not-exist"}, "105"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+        ],
+        {"decimal_finance": _DECIMAL_FINANCE_SCHEMA},
+    )
+
+    assert [issue.code for issue in issues] == ["invalid_task_result_reference"]
+
+
+def test_chained_precision_task_rejects_reference_to_non_precision_task():
+    issues = validate_plan_tasks(
+        [
+            {
+                "id": "note",
+                "task": "Explain the tariff structure",
+                "category": "code_reviewer",
+            },
+            {
+                "id": "year2",
+                "task": "Year 2 tariff",
+                "category": "precision_tools",
+                "mcp_tool": "decimal_finance",
+                "mcp_args": {
+                    "operation": "percentage",
+                    "operands": [{"$task_result": "note"}, "105"],
+                    "currency": "EUR", "scale": 4, "rounding": "half_even",
+                },
+            },
+        ],
+        {"decimal_finance": _DECIMAL_FINANCE_SCHEMA},
+    )
+
+    assert [issue.code for issue in issues] == ["invalid_task_result_reference"]

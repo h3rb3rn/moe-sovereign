@@ -696,7 +696,8 @@ def _url_api_type(url: str) -> str:
 
 
 async def _invoke_judge_with_retry(
-    state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None
+    state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None,
+    repeat_penalty: float | None = None, repeat_last_n: int | None = None,
 ):
     """Invoke the judge LLM with retry logic for empty/failed responses.
     On failure: waits 5s (model reload time), re-discovers the node, retries.
@@ -708,6 +709,13 @@ async def _invoke_judge_with_retry(
     (Ollama ≤0.30.6), causing the model to reload at ctx=8192 on every judge call.
 
     temperature: when set, overrides the default judge sampling temperature.
+    repeat_penalty/repeat_last_n: when set, passed through as Ollama sampling
+    options to discourage degenerate repetition loops (observed live: a
+    merger synthesis call fell into repeating "// I will output the SPSC
+    code." dozens of times instead of emitting real code, cutting the
+    response off mid code-fence). Left unset (Ollama defaults) for callers
+    that don't pass them, to avoid changing behavior for stages that never
+    exhibited this failure mode.
     """
     from types import SimpleNamespace as _NS
     last_error = None
@@ -785,6 +793,10 @@ async def _invoke_judge_with_retry(
                     _opts["num_predict"] = _judge_output_limit
                 if temperature is not None:
                     _opts["temperature"] = temperature
+                if repeat_penalty is not None:
+                    _opts["repeat_penalty"] = repeat_penalty
+                if repeat_last_n is not None:
+                    _opts["repeat_last_n"] = repeat_last_n
                 _payload: dict = {
                     "model":      _jm,
                     "messages":   [{"role": "user", "content": prompt}],
