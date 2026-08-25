@@ -35,6 +35,37 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI  # noqa: F811 — type hints only
 
+# The judge previously used a separate Ollama tag ("sovereign-judge:27b") whose
+# only functional difference from the "qwen3.8:27b" expert weights was this
+# system prompt plus a few sampling params (all already set explicitly per
+# request below). Ollama tracks loaded-model identity by tag name, not by the
+# underlying weight blob -- two tags sharing byte-identical weights still
+# forced a full unload+reload every time a request alternated between an
+# expert call and a judge call on the same node. Both tags now resolve to
+# "qwen3.8:27b"; this prompt is injected explicitly so judge behavior is
+# unchanged, and Ollama can keep the already-resident model warm across the
+# expert<->judge switch. See agent_status/claude-code.md,
+# FIX-judge-expert-shared-model-reload.
+JUDGE_SYSTEM_PROMPT = (
+    "You are Sovereign Judge 27B (Qwen3.8-27B fine-tuned), the primary "
+    "evaluation and synthesis authority in the MoE Sovereign compound AI "
+    "platform. Evaluate input quality, factual consistency, code invariants, "
+    "and safety with maximum precision across up to 258,000 context tokens."
+)
+
+
+def _judge_messages(prompt) -> list[dict]:
+    """Build the judge's message list with its identity system prompt inlined."""
+    if isinstance(prompt, list):
+        if prompt and prompt[0].get("role") == "system":
+            return prompt
+        return [{"role": "system", "content": JUDGE_SYSTEM_PROMPT}, *prompt]
+    return [
+        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+
 from services.llm_instances import judge_llm, planner_llm
 from services.model_capabilities import (
     apply_ollama_structured_capability,
@@ -799,7 +830,7 @@ async def _invoke_judge_with_retry(
                     _opts["repeat_last_n"] = repeat_last_n
                 _payload: dict = {
                     "model":      _jm,
-                    "messages":   [{"role": "user", "content": prompt}],
+                    "messages":   _judge_messages(prompt),
                     "stream":     False,
                     "think":      JUDGE_THINKING_ENABLED,
                     "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
@@ -931,7 +962,7 @@ async def ainvoke_judge_llm(prompt):
             _opts["num_ctx"] = _ctx
         if MAX_JUDGE_TOKENS > 0:
             _opts["num_predict"] = MAX_JUDGE_TOKENS
-        _messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
+        _messages = _judge_messages(prompt)
         _payload: dict = {
             "model":      JUDGE_MODEL,
             "messages":   _messages,
@@ -1604,6 +1635,35 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     _refine_extra: dict = {}
     if token == "ollama":
         _refine_num_ctx = int(JUDGE_NUM_CTX or 262144)
+        # Never downgrade (or needlessly upgrade) a warm model: this call
+        # previously always requested a fixed, large ctx regardless of what
+        # was already resident, forcing an unload+reload whenever the model
+        # was already loaded at a smaller context -- the same bug class
+        # already fixed at the judge/planner/expert call sites (see
+        # agent_status/claude-code.md, feedback_ollama_num_ctx_reuse_pattern
+        # in project memory). Reuse the loaded context if it's already large
+        # enough instead of forcing a resize.
+        try:
+            _ollama_base = url.rstrip("/").removesuffix("/v1")
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = best_expert["model"].split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _refine_num_ctx:
+                        logger.info(
+                            "expert refinement: reusing warm model ctx=%d "
+                            "(requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _refine_num_ctx, best_expert["model"],
+                        )
+                        _refine_num_ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)
