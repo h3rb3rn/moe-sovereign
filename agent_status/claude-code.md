@@ -2838,3 +2838,53 @@ zugrunde liegenden Plausibility-Gate-Verhaltens selbst vorgenommen (Inhalt
 der geblockten Antwort ist nicht persistiert/rekonstruierbar — nächster
 Vorkommensfall liefert dank dieses Fixes den Grund direkt im Log).
 2026-08-25T00:59:24Z
+
+---
+
+**2026-08-25T~05:50Z — claude-code — KRITISCH: 3 Session-Fixes waren nie deployed, jetzt gemergt+live**
+
+Bei der Untersuchung eines weiteren Planner-Fabrikations-Falls (Task 6,
+sci-precision-02-ast-financial-arithmetic, `compound_ai`: Planner-Output
+bestand aus 39x wiederholten, komplett themenfremden `code_reviewer`/
+pytest-Korrektur-Few-Shot-Einträgen statt einer Energiekosten-Berechnung)
+wurde festgestellt: der laufende Container basierte auf Branch
+`docs/graphrag-experiment-and-session-status`, der KEINEN der drei in
+dieser Session entwickelten, getesteten und auf `origin` gepushten Fixes
+enthielt (`fix/few-shot-context-topic-contamination`,
+`fix/judge-expert-shared-model-reload` Teil 1+2 — `git merge-base
+--is-ancestor` bestätigte für alle drei: nicht gemerged). Alle bisherigen
+Aussagen dieser Session zu "Fix wirkt teilweise" / "Restursache trotz Fix"
+beruhten auf dieser falschen Prämisse — die Fixes liefen nie im
+produktiven Pfad.
+
+User-Entscheidung (AskUserQuestion): Fixes mergen + neu bauen, aber mit
+aktuellem Checkpoint fortsetzen (Runde 1 + Teil von Runde 2 bleiben im
+Datensatz, liefen aber vor den Fixes — nicht direkt mit späteren Runden
+vergleichbar).
+
+**Durchgeführt:** Benchmark gestoppt (PID 2943720, Checkpoint erhalten).
+Vor dem Merge wurde ein erheblicher, vorher unkommitteter WIP-Stand im
+Haupt-Checkout entdeckt (27 Dateien, u.a. Rust-Compile-Check-Sandbox-
+Integration, Critic-Non-Compliance-Erkennung, Konflikt-Arbitrierung im
+Merger — nicht von mir in dieser Session erstellt). Per `git stash push -u`
+gesichert, beide Fix-Branches sauber gemerged (`ba851208`, `d426f295`),
+Stash zurückgeholt (1 echter Konflikt in `graph_rag/manager.py` — LIMIT-10-
+vs-LIMIT-2-Iteration desselben Fixes, neuere Version behalten), alles in
+`33eb2a2f` committed. **Bonus-Fund:** der Merge brachte auch bereits
+fertigen, getesteten Code für die `$task_result`-Verkettung bei
+`precision_tools` mit (`services/pipeline/contracts.py`,
+`graph/tool_nodes.py`, `mcp_server/server.py`, `services/rust_compile_sandbox/`)
+— das war der offene Plan zu GAP 3 aus einer früheren Session-Phase, ebenfalls
+nie deployed. 1021/1021 Tests grün. `langgraph-app` UND neuer Service
+`rust-compile-sandbox` gebaut + deployed, beide Health-Checks ok, alle 4
+Fixes im laufenden Container per `grep` verifiziert (`_is_topically_relevant`,
+`JUDGE_SYSTEM_PROMPT`, `Quality gate blocked req=`, `_topological_batches`/
+`is_task_result_ref`).
+
+Benchmark neu gestartet als PID 3631235
+(`full_scientific_benchmark_20260825-074600_resume9.log`), resumed von
+Checkpoint mit 29 gültigen Läufen (Runde 1 komplett, alle ungefixt gelaufen
+— im wissenschaftlichen Bericht entsprechend kennzeichnen). Ab jetzt laufen
+alle weiteren Bedingungen/Runden mit allen vier Fixes aktiv, inkl. der
+ersten echten Chance, GAP 3 (decimal_finance-Verkettung) zu testen.
+2026-08-25T05:46:43Z
