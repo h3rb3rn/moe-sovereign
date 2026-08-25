@@ -32,7 +32,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-sovereign-student-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen3-Planner-35B** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-sovereign-student-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen3-Planner-35B** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI system, this model operates exclusively as the **Meta-Orchestrator and AI Workflow Compiler**. It is explicitly **not intended to function as a general-purpose conversational chatbot**. Its designated role is to parse incoming natural-language requests, infer intent and operational constraints, and compile them into structured, typed Directed Acyclic Graphs (DAGs) that allocate tasks to specialized domain SLMs and deterministic precision tools.
 
@@ -114,7 +114,7 @@ In this paradigm, **`moe-sovereign-student-4b`** does not need to memorize vast 
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189557`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21189555`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 35,000 verified planning and orchestration trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -122,7 +122,7 @@ In this paradigm, **`moe-sovereign-student-4b`** does not need to memorize vast 
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0094`, Training Token Accuracy `99.78%`
+- **Optimization Outcome:** Final Training Loss `0.0454`, Training Token Accuracy `99.71%`
 
 ---
 
@@ -147,7 +147,7 @@ Systematic held-out evaluation against the unmodified base model and comparative
 2. **Domain Specialization:** Distilled `moe-sovereign-student-4b` standalone.
 3. **Compound AI System:** `moe-sovereign-student-4b` operating inside the MoE Sovereign runtime (with MCP tools, GraphRAG, and consensus gates).
 
-> ℹ️ *Note: Training loss (`0.0094`) and training-token accuracy (`99.78%`) reported above describe optimization during training and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.0454`) and training-token accuracy (`99.71%`) reported above describe optimization during training and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 

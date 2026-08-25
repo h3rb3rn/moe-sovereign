@@ -2405,3 +2405,436 @@ critic-preamble-Variante-5-Fix, Hallucination-Check-Stale-BLOCK-Fix,
 native-passthrough-Cancellation-Shield, rust_compile_check. Keiner davon
 gemerged/auf main -- alle als separate Feature-Branches gepusht, MRs
 verlinkt in den jeweiligen FIX/FEATURE-Einträgen oben.
+
+---
+
+## 2026-08-23 — Großer Benchmark gestoppt, GraphRAG-Retrieval-Cap Iteration 2 gefixt, Wissensrunde 10 importiert — done
+
+Auf User-Anweisung ("stoppe den Benchmark und fixe die systemrelevanten
+GAPs") den laufenden vollen Scientific-Benchmark gestoppt (PID 860395
+gekillt, Monitor beendet), da beim eBPF/XDP-Task (Runde 1, Task 2) der
+erste GAP dieses Laufs auftrat.
+
+**Wissensrunde 10 importiert** (`graph_rag/curated/
+systems_programming_reference.cypher`), reale externe Quellen:
+- "XDP/eBPF must check IP protocol before parsing transport header"
+  (Quelle: docs.ebpf.io), verknüpft an Hub-Entity "eBPF and XDP
+  programming".
+- "Raft election restriction compares last-log-entry term, not current
+  term" (Quelle: raft.github.io/raft.pdf, Section 5.4.1), verknüpft an die
+  bestehende, dünne auto-extrahierte Hub-Entity "Raft Consensus" (per
+  MATCH, nicht MERGE -- bestehender Knoten bewusst unangetastet gelassen).
+
+**GraphRAG-Retrieval-Cap-Bug, Iteration 2** (neuer, eigenständiger
+Infra-Bug, nicht derselbe wie der bereits gemergte Fix vom Vortag):
+Verifikation der Runde-10-Fakten zeigte, dass der eBPF-Fakt trotz des
+bereits gepushten Fixes (`fix/graphrag-retrieval-relevance-cap`,
+`0d21f7cd`: `terms[:6]`, `LIMIT 2`, `[..25]`/`[..10]`) NICHT im Prompt
+ankam. Root Cause direkt per Cypher verifiziert: Die Suchbegriffe "eBPF"
+und "XDP" sind so verbreitet, dass sie 7 bzw. 15 unterschiedliche
+Entitäten im Graphen treffen (nicht nur 1-2) -- die kuratierte Hub-Entity
+landete damit außerhalb der ersten 2 in Neo4js beliebiger
+Rückgabereihenfolge pro Suchbegriff. Das ist ein systemischer Bug
+(betrifft jeden häufigen Fachbegriff, nicht nur diesen einen Fakt) --
+Fix in `graph_rag/manager.py` (Branch
+`fix/graphrag-entity-match-ranking`, Commit `93e20e7a`, gepusht):
+- `_match_terms_to_entities()`: per-Term-Entity-Limit `LIMIT 2` →
+  `LIMIT 10`.
+- Neue finale Absicherung in `query_context()`: nach dem bestehenden
+  Corrective-RAG-Gate werden die gefundenen Entitäten zusätzlich auf die
+  Top `GRAPHRAG_MAX_ENTITIES` (Default 15, env-konfigurierbar) nach
+  `_corrective_relevance_score()` sortiert gekappt -- verhindert, dass
+  das breitere Netz (bis zu 6 Terme x 10 Entitäten) den Prompt mit zu
+  vielen, wenig relevanten Entitäten flutet.
+
+Verifiziert nach Rebuild+Redeploy (`langgraph-orchestrator`, Image
+`sha256:c3746ca0...`, healthy):
+- eBPF-Fakt: bereits vor dem Rebuild per Hot-Swap (`docker cp`) bestätigt,
+  nach dem Rebuild erneut über den realen Container-Pfad bestätigt.
+- Raft-Fakt: `query_context("Raft leader election restriction comparing
+  log terms", categories=["distributed_systems"])` enthält den neuen
+  Fakt-Knoten "Raft election restriction compares last-log-entry term,
+  not current term" als REQUIRES-Relation von "Raft Consensus".
+
+Committed (93e20e7a) und gepusht zu
+origin/fix/graphrag-entity-match-ranking. MR:
+https://git.4noobs.de/h3rb3rn/moe-infra/-/merge_requests/new?merge_request%5Bsource_branch%5D=fix%2Fgraphrag-entity-match-ranking
+
+**GAP 3 (Precision-Tool, Mehrschritt-/kumulative Finanzberechnungen,
+`sci-precision-02-ast-financial-arithmetic`)**: untersucht, NICHT
+gefixt. `services/pipeline/contracts.py::_infer_precision_contracts()`
+hat keine Erkennungslogik für mehrjährige/eskalierende Szenarien
+(kein Treffer auf "escalat"/"compound"/mehrjährige Tarif-Muster); das
+`decimal_finance`-MCP-Tool unterstützt nur einzelne atomare Operationen
+(add/subtract/multiply/divide/percentage/simple_interest/
+compound_interest mit festen Operanden-Contracts je Aufruf), keine
+automatische Verkettung mehrerer abhängiger Schritte. Ein echter Fix
+bräuchte entweder eine unsichere Prompt-Ebene-Heuristik oder eine
+größere Decompose-/Orchestrierungs-Erweiterung des Precision-Contract-
+Mechanismus -- das ist eine Architekturentscheidung, keine
+Vor-Ort-Korrektur, daher an den User zur Entscheidung zurückgegeben statt
+stillschweigend umgesetzt.
+
+Der "Sovereign Knowledge Base"-GAP wurde wie vom User explizit angewiesen
+NICHT angefasst (Benchmark-Datensatz-Artefakt, nicht systemrelevant).
+
+Nächster Schritt: Benchmark-Checkpoint auf die 4 gültigen
+`r1_sci-sysprog-01-lockfree-ringbuffer_*`-Einträge trimmen und den großen
+Benchmark im Resume-Modus ab Task 2 (eBPF/XDP) neu starten.
+
+---
+
+## 2026-08-23 — Eigener Fehler: Container-Recreate hat laufenden Benchmark abgeschossen — behoben, kein Datenverlust
+
+Während der Implementierung von GAP 3 (Precision-Tool-Verkettung, siehe
+nächster Eintrag) wurde `langgraph-orchestrator` per `docker compose up -d
+--no-deps --force-recreate` neu gebaut, OHNE zu prüfen, dass der zuvor neu
+gestartete große Benchmark (ab eBPF/XDP-Task) währenddessen aktiv gegen
+genau diesen Container lief. Die ~15-20s Downtime beim Recreate ließ alle
+offenen Judge-Calls über alle verbleibenden Task/Bedingungs-Kombinationen
+hinweg mit "All connection attempts failed" fehlschlagen; der
+Benchmark-Prozess (PID 2363376) hat danach NICHT weiter gewartet/
+retried, sondern ist durch den kompletten restlichen Lauf mit
+0-Token-Garbage-Ergebnissen (Score 3.0/10 quer über alle Bedingungen,
+Score-Wert kommt nur vom Fallback-Pfad) durchgelaufen und hat sich mit
+einem verfälschten Summary-Report normal beendet.
+
+**Kein Datenverlust**: `_result_is_valid()` verlangt `total_tokens>0` —
+alle Garbage-Ergebnisse hatten 0 Tokens und wurden korrekt NICHT in
+`checkpoint_scientific_benchmark.json` übernommen (weiterhin nur die 4
+gültigen `sci-sysprog-01-lockfree-ringbuffer`-Einträge). Die beiden
+unconditional geschriebenen Abschluss-Dateien
+(`eval_scientific_benchmark_20260823-163507.json`,
+`run_scientific_benchmark_20260823-163507.json`) sowie der
+`latest_scientific_benchmark.json`-Zeiger enthielten jedoch die
+Garbage-Werte und wären als echtes Ergebnis irreführend gewesen — nach
+`benchmarks/results/invalidated_by_container_restart_20260823/`
+verschoben statt gelöscht (Vorfall-Nachweis, kein Ergebnis).
+
+**Lehre / Prozessänderung für den Rest dieser Session**: keine
+`--force-recreate`/Rebuild-Aktion auf `langgraph-orchestrator` mehr,
+solange der Benchmark aktiv läuft. GAP-3-Implementierung wird
+vollständig fertiggestellt (Code + Unit-Tests + ein finaler
+Rebuild/Redeploy + Integrationstest), BEVOR der Benchmark erneut
+gestartet wird — damit es nur noch einen einzigen Redeploy-Zeitpunkt vor
+dem finalen Neustart gibt, nicht mehrere überlappende.
+
+## 2026-08-23 — GAP 3: Precision-Tool-Verkettung (`$task_result`) implementiert — in_progress
+
+Auf User-Entscheidung ("Decompose-/Orchestrierungs-Erweiterung", nach
+AskUserQuestion mit 3 Optionen) GAP 3 umgesetzt: mehrjährige/verkettete
+Finanzberechnungen (`sci-precision-02-ast-financial-arithmetic`) waren
+bisher nicht ausführbar, weil `validate_plan_tasks()` literale `mcp_args`
+verlangte und `mcp_node()` alle `precision_tools`-Tasks blind parallel
+ausführte (kein Mechanismus, das Ergebnis einer Task als Operand einer
+anderen zu nutzen). Plan approved unter
+`/home/philipp/.claude/plans/zazzy-beaming-koala.md`.
+
+**Implementiert** (Branch `feat/precision-task-result-chaining`, Worktree
+`moe-infra-worktree-merger-repetition`, noch nicht committed):
+- `services/pipeline/contracts.py`: `is_task_result_ref()`,
+  `resolve_task_result_refs()` (fail-closed bei jeder nicht auflösbaren
+  Referenz), `_find_task_result_ref_ids()`; `validate_plan_tasks()` prüft
+  jede `{"$task_result": "<id>"}`-Referenz auf Rückwärtsreferenz (striktes
+  "nur früher in der Liste"), Existenz und Ziel-Task
+  `category=="precision_tools"` mit gesetztem `mcp_tool` — neue Issue-Codes
+  `invalid_task_result_reference`, `task_result_reference_cycle`.
+- `graph/tool_nodes.py`: `_topological_batches()` (Kahn-Algorithmus über
+  die `$task_result`-Kanten, reiner/testbarer Helper), `mcp_node()`-Dispatch
+  läuft jetzt batch-weise statt einem einzigen `asyncio.gather` über alle
+  Tasks; `call_tool()` löst Referenzen vor dem Dispatch über ein
+  wachsendes `resolved_task_results`-Dict auf (befüllt aus dem geparsten
+  JSON-Textergebnis jeder abgeschlossenen Task, kein Extra-Contract-Feld
+  nötig); nicht auflösbare Referenz → deterministischer
+  `upstream_task_result_unavailable`-Fehler, kein Raten. Pläne ohne
+  Referenzen bleiben binär identisch zum bisherigen Verhalten (ein Batch =
+  alle Tasks).
+- `graph/planner.py`: neue Formatregel + ein Beispiel (2-stufige
+  Tarif-Eskalation) direkt bei den bestehenden `precision_tools`-Regeln.
+- Tests: `tests/test_pipeline_contracts.py` (8 neue Tests: Referenz-
+  Erkennung, Auflösung inkl. Fail-Closed, gültige Kette, Vorwärts-/Selbst-
+  /unbekannte-/Nicht-Precision-Referenz abgelehnt),
+  `tests/test_tool_nodes_precision_chaining.py` (neu, 4 Tests für
+  `_topological_batches`: unabhängige Tasks in einem Batch, lineare Kette,
+  gemischter Fall, Zyklus bleibt unscheduled).
+
+**Verifiziert**: `pytest tests/test_pipeline_contracts.py
+tests/test_tool_nodes_precision_chaining.py tests/test_precision_preflight.py
+tests/test_precision_rollout.py tests/test_precision_benchmark_harness.py
+tests/test_response_commit.py -q` → alle grün (74 Tests), keine Regression
+für unverkettete Pläne bestätigt.
+
+**Abgeschlossen**: In-Container-Integrationstest gegen den bereits
+neu gebauten `langgraph-orchestrator` durchgeführt — 3 echte verkettete
+`decimal_finance`-Calls über den vollen `mcp_node()`-Dispatch-Pfad
+(nicht nur direkt gegen `mcp-precision`), Tarif-Kette 0.1850 → 0.1933 →
+0.2006 EUR (Jahr1 → +4.5% → +3.8%) korrekt berechnet. Zweiter Testlauf
+bestätigt: eine fehlschlagende Upstream-Task lässt abhängige Tasks
+deterministisch mit `upstream_task_result_unavailable` fehlschlagen statt
+zu raten. Committed (`46d2d6d3`) und gepusht auf
+`feat/precision-task-result-chaining`. MR:
+https://git.4noobs.de/h3rb3rn/moe-infra/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat%2Fprecision-task-result-chaining
+
+Kein separater End-to-End-Lauf des vollen
+`sci-precision-02-ast-financial-arithmetic`-Prompts durch die komplette
+Pipeline (Planner→Merger) durchgeführt — das hängt vom 4B-Planner ab, der
+laut Prompt-Regel die Kette selbst korrekt zerlegen muss; dieser Beweis
+wird über den bereits laufenden großen Benchmark erbracht (der Task läuft
+dort ohnehin in Runde 1 mit).
+
+---
+
+## 2026-08-24 — Planner-JSON-Malformation bei Wissens-Speicher-Anfragen gefixt — done
+
+Auf User-Anweisung ("gehe bei allen neuen GAPs die sich lösen lassen so
+vor: Benchmark unterbrechen, debuggen und fixen, Neustart") den bei
+`sci-graphrag-01-topology-cascade`/`sci-graphrag-02-paraconsistent-
+reconciliation` beobachteten Planner-Crash gefixt (siehe
+`docs/experiments/lumig_posttraining_candidates.md` Kandidat 4, dort mit
+beiden ursprünglichen Beobachtungen dokumentiert).
+
+**Root Cause:** Der Planner hatte keinerlei Prompt-Anleitung für "speichere
+dies im Knowledge Graph"-Anfragen und improvisierte deshalb (erfundene
+"dynamic"-Task mit frei erfundenen Feldern, Versuch, die Nutzdaten als
+JSON-String in "task" zu re-encodieren) — genau das produzierte das
+fehlerhaft verschachtelte/escapte JSON. Tatsächlich existiert dafür
+bereits ein vollautomatischer Mechanismus: `services/response_commit.py`
+published jede committete Antwort nach `KAFKA_TOPIC_INGEST`, ein
+Background-Consumer (`main.py`) ruft darauf automatisch
+`graph_manager.extract_and_ingest()` auf Input/Antwort-Paar auf. Der
+Planner muss dafür gar nichts Besonderes tun.
+
+**Fix** (`graph/planner.py`, Branch
+`fix/planner-knowledge-storage-json-malformation`, Commit `44675d9f`):
+neue kompakte Regel + Beispiel direkt beim bestehenden DYNAMIC-EXPERT-Block
+— bei Speicher-/Merk-Anfragen reicht eine einzelne, in natürlicher
+Sprache formulierte Bestätigungs-Task, kein JSON-Hand-Encoding, keine
+erfundenen Felder. Nutzt denselben `_example_cat`-Mechanismus wie an
+anderer Stelle im Prompt (verhindert erneut die bereits einmal gefixte
+Bug-Klasse: eine hartkodierte, zur Laufzeit ungültige Kategorie im
+Beispiel).
+
+**Verifiziert:** zwei Live-Replays (mit `no_cache: true`, um den
+Valkey-Plan-Cache zu umgehen — erster Replay-Versuch traf versehentlich
+einen Cache-Hit und war dadurch kein echter Test) gegen den neu gebauten
+Container:
+1. Apex-Central-Topologie-Prompt (Turn 1 von `sci-graphrag-01`) — vorher 3x
+   gescheitert, jetzt valider Plan im 1. Versuch.
+2. Directive-2026-S-Amendment-Prompt (Turn 2 von `sci-graphrag-02`) —
+   vorher 3x gescheitert, jetzt valider Plan im 1. Versuch (4 Tasks).
+
+Nebenbefund bei Replay 2: der erzeugte Plan war syntaktisch valide, aber
+inhaltlich komplett themenfremd (Docker-Compose-Netzwerkmodi statt
+Telemetrie-Direktive) — das ist NICHT ein Rückfall dieses Fixes, sondern
+eine weitere unabhängige Beobachtung des bereits dokumentierten,
+separaten Planner-Task-Fabrikation-Befunds (`lumig_posttraining_
+candidates.md`, Kandidat 2).
+
+Committed (`44675d9f`) und gepusht auf
+origin/fix/planner-knowledge-storage-json-malformation. MR:
+https://git.4noobs.de/h3rb3rn/moe-infra/-/merge_requests/new?merge_request%5Bsource_branch%5D=fix%2Fplanner-knowledge-storage-json-malformation
+
+`langgraph-orchestrator` bereits mit diesem Fix neu gebaut+deployed
+(erforderlich für die Live-Verifikation oben). Benchmark wird jetzt im
+Resume-Modus fortgesetzt.
+
+---
+
+## 2026-08-24 — Few-Shot-Kontext-Kontamination gefixt, aber Planner-Fabrikation nur teilweise erklärt — done (mit offenem Rest)
+
+Bei der Root-Cause-Suche für die wiederholte komplette Themenersetzung des
+Planners bei `sci-precision-02-ast-financial-arithmetic` (Task 7 des
+großen Benchmarks, 3 von 4 Bedingungen betroffen) einen echten,
+verifizierten Code-Bug gefunden und gefixt — der aber, ehrlich
+offengelegt, die Fabrikation NICHT vollständig erklärt.
+
+**Gefundener und gefixter Bug:** `get_few_shot_context()`
+(`self_correction.py`) injiziert bei jedem Planner-Aufruf ungefiltert die
+wörtlichen "falschen" Antworttexte früherer Self-Correction-Einträge aus
+**allen** Experten-Kategorien (`graph/planner.py`: `list(EXPERTS.keys())`)
+als "KNOWN ERROR PATTERNS" in den Prompt — ohne jede Relevanzprüfung zur
+aktuellen Anfrage. Direkt im laufenden Container nachgewiesen: die
+fabrizierten "Apex-Central"-Topologie- und "Directive 2024-B"-Texte aus
+früheren, unabhängigen Tasks dieses Benchmarks lagen im Few-Shot-Store und
+waren für jede beliebige künftige "general"-Kategorie-Anfrage abrufbar.
+
+**Fix** (`self_correction.py`, `graph/planner.py`, Branch
+`fix/few-shot-context-topic-contamination`, Commit `0d0f72e9`): neues
+Relevanz-Gate `_is_topically_relevant()` — ein gespeicherter Eintrag wird
+nur noch angezeigt, wenn seine eigene Query mindestens 3 signifikante
+(≥5 Zeichen) Tokens mit der aktuellen Anfrage teilt. `get_few_shot_context()`
+bekam einen neuen `query`-Parameter (Default `""` erhält das alte
+Verhalten für bestehende Aufrufer), Planner-Call-Site übergibt jetzt
+`state_["input"]`. 4 neue Unit-Tests, alle grün, keine Regression in den
+bestehenden 52 Tests.
+
+**Live verifiziert:** `get_few_shot_context()` liefert für den exakten
+Energie-Tarif-Prompt jetzt eine leere Zeichenkette (vorher wäre die
+Apex-Central/Directive-2024-B-Kontamination eligible gewesen).
+
+**Ehrlich offengelegter Rest-Befund:** Ein Live-Replay desselben Prompts
+NACH Deploy dieses Fixes produzierte trotzdem einen fabrizierten,
+themenfremden Plan (diesmal: "grep print()-Aufrufe / karpathy-compliance"
+statt der Energie-Rechnung). Als alternative Live-Injektionsquellen für
+genau diesen Fall direkt ausgeschlossen:
+- `moe:planner_success` (Redis-Key leer)
+- `semantic_router_node` (kein sicherer Treffer diesmal, echter
+  Planner-LLM-Call bestätigt via Log)
+- `get_active_advice()` (liefert 0 aktive Regeln für diese Anfrage)
+
+Die verbleibende Fabrikation ist damit keinem im Code auffindbaren
+Live-Retrieval-Mechanismus zuzuordnen — deckt sich mit der bereits
+dokumentierten Einordnung in `lumig_posttraining_candidates.md` Kandidat 2
+(Trainingsdaten-/Distillations-Artefakt des 4B-Planners), nicht mit einem
+weiteren Infra-Fix in dieser Session behebbar.
+
+Committed (`0d0f72e9`) und gepusht auf
+origin/fix/few-shot-context-topic-contamination. MR:
+https://git.4noobs.de/h3rb3rn/moe-infra/-/merge_requests/new?merge_request%5Bsource_branch%5D=fix%2Ffew-shot-context-topic-contamination
+
+`langgraph-orchestrator` neu gebaut+deployed. Benchmark wird trotz des
+offenen Rest-Befunds neu gestartet (der Few-Shot-Fix ist ein eigenständig
+korrekter, verifizierter Systemfix und wird das Kontaminationsrisiko für
+alle künftigen Tasks senken, auch wenn er GAP 3 für Task 7 evtl. nicht
+allein rettet).
+
+Später außerdem entdeckt: Task 7 wäre beim Neustart stillschweigend aus
+dem VOR-dem-Fix-Checkpoint übernommen worden (alte fabrizierte Det:0.0-
+Ergebnisse gelten technisch als "valide"). Die 4 Task-7-Einträge gezielt
+aus dem Checkpoint entfernt (Backup angelegt), Benchmark erneut neu
+gestartet — Task 7 läuft jetzt tatsächlich frisch mit dem Fix.
+
+---
+
+## 2026-08-24 — Judge/Experte-Reload-Problem gefixt (systemweite DB-Änderung) — done
+
+Auf explizite User-Nachfrage ("gibt es sonst noch GAPs die gefixt werden
+können?") das zuvor gefundene, aber zurückgestellte Judge/Experte-Reload-
+Problem (siehe früherer Eintrag: gemeinsame Gewichte unter zwei Ollama-
+Tags erzwingen Neuladen bei jedem Wechsel) doch umgesetzt — es stellte
+sich als kleiner umsetzbar heraus als ursprünglich gedacht.
+
+**Root Cause (bestätigt via Ollama-Manifest-Digest-Vergleich auf
+N04-RTX):** `sovereign-judge:27b` und `qwen3.8:27b` referenzieren
+denselben Gewichts-Blob (`sha256:f5f1dd89...`, 16,81 GB), unterscheiden
+sich nur in einem kurzen System-Prompt + wenigen Sampling-Parametern
+(`temperature=0.1` statt `1`, `num_ctx`, `num_predict`, `stop`-Tokens —
+alle bereits explizit pro Request im Code gesetzt). Ollama trackt
+geladene Modelle nach Tag-Name, nicht nach Gewichts-Inhalt — jeder Wechsel
+zwischen Experten-Call (`qwen3.8:27b`) und Judge-Call
+(`sovereign-judge:27b`) auf demselben Knoten erzwang ein volles
+Entladen+Neuladen.
+
+**Scope-Erweiterung während der Umsetzung entdeckt:** `judge_model` ist
+NICHT nur eine Umgebungsvariable, sondern pro Template in Postgres
+gespeichert (`admin_expert_templates.config_json`) — betrifft alle 27
+aktiven Zeilen, inklusive des produktiven `tmpl-sovereign-compound-ai`.
+User-Entscheidung (AskUserQuestion): "Alle Templates umstellen, inkl.
+Produktion".
+
+**Fix** (Branch `fix/judge-expert-shared-model-reload`, Commit
+`69dabad7`):
+- `services/inference.py`: neue Konstante `JUDGE_SYSTEM_PROMPT` +
+  Helper `_judge_messages()` — sendet den Judge-System-Prompt jetzt
+  explizit pro Request statt über den separaten Ollama-Tag. Beide
+  Judge-Call-Stellen (Haupt-Pfad `_invoke_judge_with_retry`,
+  Floating-Judge-Pfad) aktualisiert.
+- Postgres: alle 27 Zeilen mit `judge_model` enthaltend
+  `sovereign-judge:27b` per gezieltem JSON-Feld-Update (kein blinder
+  String-Replace) auf `qwen3.8:27b` umgestellt, `@N04-RTX`-Suffix wo
+  vorhanden erhalten. Betrifft 7 benannte Templates (inkl. Produktion)
+  + 20 dynamisch generierte Templates.
+- `admin_ui/database.py`: Seed-Defaults für 4 Templates ebenfalls
+  aktualisiert (Konsistenz bei künftiger Neu-Initialisierung).
+
+**Verifiziert:** Ein Testrequest mit 2 Experten-Calls + 5 Judge-Calls
+(Self-Critique-Schleife) über ~5,5 Minuten erzeugte in Ollamas eigenen
+Logs auf N04-RTX genau **1** Ladevorgang (vorher: alle ~2,5-3 Min. ein
+Reload). Jeder Judge-Call loggt "reusing warm model ... no reload needed,
+model=qwen3.8:27b".
+
+Committed (`69dabad7`) und gepusht auf
+origin/fix/judge-expert-shared-model-reload. MR:
+https://git.4noobs.de/h3rb3rn/moe-infra/-/merge_requests/new?merge_request%5Bsource_branch%5D=fix%2Fjudge-expert-shared-model-reload
+
+`langgraph-orchestrator` neu gebaut+deployed. Benchmark wird jetzt neu
+gestartet — sollte ab hier spürbar schneller laufen, da der
+Reload-Overhead pro Pipeline-Stufen-Wechsel entfällt.
+
+**Nachtrag, auf explizite Nachfrage ("Funktioniert der Fix nachweislich?")
+nachgemessen:** Fix wirkt nur teilweise. In den 2 Stunden Live-Betrieb
+nach dem Fix traten weiterhin 23 Ladevorgänge auf (besser als vorher,
+aber nicht null). Root-Cause-Analyse eines konkreten Reload-Ereignisses
+per Zeitstempel-Korrelation zwischen Ollama-Log (N04-RTX) und
+Orchestrator-Log ergab eine **dritte, unabhängige Instanz derselben
+bereits mehrfach behobenen Bug-Klasse** (siehe Projekt-Memory
+`feedback_ollama_num_ctx_reuse_pattern`): `_refine_expert_response()`
+(`services/inference.py`, vom Judge-Refinement-Loop in
+`graph/synthesis.py` aufgerufen) forderte **immer** eine feste, große
+Kontextgröße (262144) an, ohne vorher per `/api/ps` zu prüfen, was
+bereits geladen ist — im Gegensatz zu allen anderen Call-Sites in dieser
+Datei (Judge, Planner, Haupt-Experten-Pfad), die diesen Reuse-Check
+bereits hatten.
+
+**Fix** (derselbe Branch `fix/judge-expert-shared-model-reload`, Commit
+`0a10c003`): denselben Reuse-Check-Pattern auch hier ergänzt. Tests grün,
+Container neu gebaut+deployed. Noch keine erneute Langzeit-Messung nach
+diesem zweiten Teil-Fix durchgeführt — sollte bei der nächsten
+periodischen Prüfung mit erfasst werden.
+
+---
+
+**2026-08-25T~01:55Z — claude-code — Runde 1, Task 9 `sci-governance-01-technical-sovereignty`, `compound_ai`: analysiert, kein Fix (bestätigt fail-closed korrekt)**
+
+Log: `full_scientific_benchmark_20260824-201838_resume7.log`. Ergebnis
+`Score: 3.0/10 (Det: 0.0, Judge: 5.0) | 774.16s | 0 tok` (HTTP 422 nach
+initialem Aufruf). Root-Cause per Container-Log + Redis-Stage-Trace
+(`moe:active:{chat_id}:trace`) + Decision-Log (`/app/logs/decision_log.jsonl`)
+nachverfolgt: Planner fabrizierte eine themenfremde Task ("DHS Tier 3 Small
+Entity RCE... session_9b... Diga/Feedzup/DNS log gaps") ohne jeden Bezug
+zum echten Hospital-Compound-AI-Prompt — weitere bestätigte Instanz von
+LUMI-G-Kandidat 2 (`docs/experiments/lumig_posttraining_candidates.md`),
+siehe dort für Details. Diesmal produzierte der Experten-Knoten dadurch
+0 Ergebnisse, Trust-Score sofort BLOCK, 2 Self-Critique-Runden hoben ihn
+nur auf 0.1. Critic-Node versuchte danach den bekannten
+trust_verdict-Upgrade auf `PROCEED_WITH_ASSUMPTION`
+(`graph/synthesis.py:2387-2390`), aber `evaluate_quality_gate()`s
+`incomplete_plan_tasks()`-Check (`services/quality_gate.py:209`, läuft VOR
+dem trust_verdict-Check) blockte trotzdem korrekt — die ursprüngliche
+Plan-Task wurde nie real ausgeführt, das kann ein nachträglicher
+Critic-Fix nicht überschreiben. Kein Bug: Fail-Closed-Verhalten wie in
+AGENTS.md gefordert. Benchmark-Harness verwirft das Ergebnis bereits
+korrekt aus dem Checkpoint (`_result_is_valid()`: `total_tokens==0`).
+Keine Code-Änderung. Benchmark läuft unverändert weiter (kein Stopp
+nötig, da kein Fix).
+2026-08-25T00:03:48Z
+
+---
+
+**2026-08-25T~03:00Z — claude-code — Observability-Fix: quality_gate-Block-Gründe geloggt (kein Verhaltensänderung)**
+
+Anlass: Runde 2, Task 1 (Lock-Free MPSC Ring Buffer), `compound_ai` erneut
+mit `422`/`0 tok` — diesmal KEIN Planner-Fabrikations-Fall (trust_verdict
+erreichte sauber `PROCEED_WITH_ASSUMPTION` nach 2 Self-Critique-Runden,
+Critic bestätigte "no unsupported claims"). `quality_gate | blocked` im
+Redis-Stage-Trace bestätigt, aber der tatsächliche `decision.reason` wurde
+nirgends geloggt (`_record_stage(..., "blocked")` ohne `detail`-Argument,
+`quality_gate_node` in `graph/synthesis.py`) — nicht diagnostizierbar ohne
+denselben Redis/Decision-Log-Aufwand wie beim vorherigen Fall.
+
+**Fix** (`graph/synthesis.py::quality_gate_node`, Zeilen ~2441-2460 und
+~2489-2500): `logger.warning("Quality gate blocked req=%s reason=%s", ...)`
+bzw. `"HITL gate storage unavailable req=%s reason=%s"` ergänzt, sowie
+`decision.reason`/`reason` als `detail`-Parameter an `_record_stage`
+durchgereicht. Rein additiv, keine Logik-/Verhaltensänderung. Tests
+(`tests/test_response_commit.py`, 8/8) grün. Container `langgraph-app`
+neu gebaut + `--force-recreate`, Health-Check ok, neue Log-Zeilen im
+Container-Code verifiziert (`grep` auf `/app/graph/synthesis.py`).
+
+Benchmark gestoppt (alte PID 1971660), neu gestartet als PID 2943720
+(`full_scientific_benchmark_20260825-025900_resume8.log`), resumed von
+Checkpoint mit 27 gültigen Läufen — keine Daten verloren. Kein Fix des
+zugrunde liegenden Plausibility-Gate-Verhaltens selbst vorgenommen (Inhalt
+der geblockten Antwort ist nicht persistiert/rekonstruierbar — nächster
+Vorkommensfall liefert dank dieses Fixes den Grund direkt im Log).
+2026-08-25T00:59:24Z

@@ -32,7 +32,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-security-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Mistral-Large-2407** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-security-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Mistral-Large-2407** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI architecture, this model operates as the **Static Security Analysis, Threat Surface Modeling & Hardening Expert**. It is trained for detecting credential and secret leaks, classifying Common Weakness Enumeration (CWE) patterns, formulating STRIDE threat models, and synthesizing production Linux security profiles (Seccomp, AppArmor, Kubernetes NetworkPolicies).
 
@@ -90,7 +90,7 @@ This hybrid architecture provides defense-in-depth while keeping model execution
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189561`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21189561`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 32,800 validated security audit and vulnerability trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -98,7 +98,7 @@ This hybrid architecture provides defense-in-depth while keeping model execution
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0078`, Training Token Accuracy `99.83%`
+- **Optimization Outcome:** Final Training Loss `0.04654`, Training Token Accuracy `99.83%`
 
 ---
 
@@ -119,7 +119,7 @@ This hybrid architecture provides defense-in-depth while keeping model execution
 
 Systematic held-out evaluation against the unmodified base model is in progress across CWE-1000 classification accuracy, secret detection recall/precision on synthetic corpora, and false-positive rates on benign code.
 
-> ℹ️ *Note: Training loss (`0.0078`) and training-token accuracy (`99.83%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.04654`) and training-token accuracy (`99.83%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 

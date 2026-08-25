@@ -2439,7 +2439,8 @@ async def quality_gate_node(state_: AgentState):
         }
 
     if decision.action == "block":
-        await _record_stage(request_id, "quality_gate", "blocked")
+        logger.warning("Quality gate blocked req=%s reason=%s", request_id, decision.reason)
+        await _record_stage(request_id, "quality_gate", "blocked", str(decision.reason))
         _record_precision_quality("blocked")
         if required_precision and str(decision.reason).startswith("precision_"):
             from services.precision_telemetry import record_precision_event
@@ -2488,7 +2489,8 @@ async def quality_gate_node(state_: AgentState):
 
     if not gate_id:
         # A required human gate may never fail open by releasing the draft.
-        await _record_stage(request_id, "quality_gate", "storage_unavailable")
+        logger.warning("HITL gate storage unavailable req=%s reason=%s", request_id, reason)
+        await _record_stage(request_id, "quality_gate", "storage_unavailable", str(reason))
         _record_precision_quality("blocked")
         return {
             "final_response": "",

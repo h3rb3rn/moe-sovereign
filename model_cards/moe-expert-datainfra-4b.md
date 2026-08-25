@@ -34,7 +34,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-datainfra-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen2.5-72B-Instruct** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-datainfra-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-V3** and **Qwen2.5-72B-Instruct** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI architecture, this model operates as the **Data Engineering, Analytical SQL & Storage Engine Expert**. It is purpose-built for synthesizing complex SQL (PostgreSQL, DuckDB, ClickHouse), diagnosing execution bottlenecks from `EXPLAIN ANALYZE` outputs, recommending composite and covering indexes, and generating zero-downtime DDL schema migrations.
 
@@ -92,7 +92,7 @@ By coupling SLM reasoning with live query execution plan analysis in the MoE Sov
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189564`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21189562`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 33,200 database engineering and query optimization trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -100,7 +100,7 @@ By coupling SLM reasoning with live query execution plan analysis in the MoE Sov
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0079`, Training Token Accuracy `99.82%`
+- **Optimization Outcome:** Final Training Loss `0.05286`, Training Token Accuracy `99.82%`
 
 ---
 
@@ -121,7 +121,7 @@ By coupling SLM reasoning with live query execution plan analysis in the MoE Sov
 
 Systematic held-out evaluation against the unmodified base model is in progress across multi-dialect SQL syntax validity, executable schema compliance, and measured execution cost reduction on standard database benchmarks (e.g. TPC-H query variations).
 
-> ℹ️ *Note: Training loss (`0.0079`) and training-token accuracy (`99.82%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.05286`) and training-token accuracy (`99.82%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 

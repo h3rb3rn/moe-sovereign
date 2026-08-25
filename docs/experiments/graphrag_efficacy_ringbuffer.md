@@ -499,3 +499,41 @@ Entscheidung über Phase 2 (Miri/ThreadSanitizer) des Compiler-Checks.
   Wikipedia (Sentinel value — Semipredicate-Problem, Option-Type-
   Alternative).
 - Status: läuft (zwanzigster Versuch).
+
+## Nachtrag: Wissensrunde 10 + zweiter Retrieval-Cap-Bug (2026-08-23, aus dem großen Benchmark)
+
+Die isolierte Phase war mit Runde 9 formal abgeschlossen (siehe oben). Beim
+anschließend gestarteten vollen Scientific-Benchmark trat beim
+eBPF/XDP-Task (Runde 1, Task 2) der erste GAP dieses Laufs auf — auf
+User-Anweisung ("stoppe den Benchmark und fixe die systemrelevanten GAPs")
+wurde er behoben, bevor der Benchmark fortgesetzt wurde:
+
+- **Wissensrunde 10 importiert** (`curated_set:
+  systems_programming_v10_ebpf_xdp_and_raft`): "XDP/eBPF must check IP
+  protocol before parsing transport header" (Quelle: docs.ebpf.io) und
+  "Raft election restriction compares last-log-entry term, not current
+  term" (Quelle: raft.github.io/raft.pdf, Section 5.4.1).
+- **Zweiter, eigenständiger Retrieval-Cap-Bug entdeckt**: der bereits
+  gemergte Fix (`terms[:6]`, `LIMIT 2` pro Term) reichte für verbreitete
+  Fachbegriffe nicht aus — "eBPF" trifft 7, "XDP" 15 unterschiedliche
+  Entitäten im Graphen, sodass die kuratierte Hub-Entity trotzdem
+  außerhalb der ersten 2 landete. Systemischer Bug (jeder häufige
+  Fachbegriff betroffen, nicht nur dieser eine Fakt). Fix: `LIMIT 2` →
+  `LIMIT 10` pro Term plus eine neue finale Top-15-Relevanz-Kappung
+  (`GRAPHRAG_MAX_ENTITIES`) in `query_context()`, um die dadurch breitere
+  Treffermenge wieder zu begrenzen. Details siehe
+  `agent_status/claude-code.md`, Eintrag "GraphRAG-Retrieval-Cap Iteration
+  2" (2026-08-23), Commit `93e20e7a` auf
+  `fix/graphrag-entity-match-ranking`.
+- Verifiziert nach Rebuild+Redeploy: sowohl der eBPF- als auch der
+  Raft-Fakt sind über `query_context()` für ihre jeweiligen
+  Benchmark-Task-Anfragen abrufbar.
+- Gleichzeitig als NICHT systemrelevant identifiziert und explizit nicht
+  gefixt: der "Sovereign Knowledge Base"-GAP (Benchmark-Datensatz-Artefakt)
+  sowie GAP 3 (Precision-Tool-Mehrschrittverkettung, siehe
+  `agent_status/claude-code.md` für die Architektur-Begründung — braucht
+  eine Nutzerentscheidung, keine Vor-Ort-Korrektur).
+
+Der große Benchmark wird im Resume-Modus ab Runde 1/Task 2 (eBPF/XDP)
+fortgesetzt, damit dieser und alle folgenden Tasks unter den heute
+gefixten Ständen neu laufen.

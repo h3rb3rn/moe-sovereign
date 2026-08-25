@@ -31,7 +31,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`sovereign-judge-27b`** is a high-capacity 27-billion parameter verification and evaluation model distilled from **Meta-Llama-3.1-405B-Instruct**, **Nvidia Nemotron-70B**, and **Z3 SMT Formal Proof Oracles** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`sovereign-judge-27b`** is a high-capacity 27-billion parameter verification and evaluation model distilled from **Meta-Llama-3.1-405B-Instruct**, **Nvidia Nemotron-70B**, and **Z3 SMT Formal Proof Oracles** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI system, `sovereign-judge-27b` operates as the top-level **Quality Gatekeeper, Self-Correction Oracle, and Consensus Arbitrator**. When 4B domain SLMs generate candidate solutions or when multi-agent debates produce conflicting propositions, `sovereign-judge-27b` evaluates formal consistency, detects logical contradictions, checks regulatory alignment, and decides whether an output passes the consensus threshold or requires bounded self-correction.
 
@@ -89,7 +89,7 @@ This architectural gating ensures that large compute resources are invoked selec
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21191994`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21263413`)
 - **Base Architecture:** Qwen3.5-27B in BF16
 - **Dataset Scale:** 40,000 validated evaluation & arbitration trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0

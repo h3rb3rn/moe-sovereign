@@ -50,7 +50,7 @@ This model directly replaces the previous `sovereign-judge:35b-q4km` checkpoint,
 * **Job Execution:** Slurm Job ID `21263413` (`moe_expert_ensemble_pipeline`)
 * **Training Duration:** 24 hours, 39 minutes, 57 seconds (`1-00:39:57`)
 * **Training Methodology:** Supervised Fine-Tuning (SFT) + Direct Preference Optimization (DPO) on verified MoE Sovereign execution traces.
-* **Format & Quantization:** GGUF (`Q4_K_M`), 40960 context length.
+* **Format & Quantization:** GGUF (`Q4_K_M`), 262144 context length.
 
 ---
 
@@ -86,7 +86,7 @@ TEMPLATE """{{ if .System }}<|im_start|>system
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"
 PARAMETER temperature 0.1
-PARAMETER num_ctx 40960
+PARAMETER num_ctx 262144
 PARAMETER num_predict 512
 
 SYSTEM """You are the MoE Sovereign Scientific Quality Judge. Evaluate the provided solution strictly against factual, technical, and mathematical correctness requirements. Respond ONLY with a valid JSON object."""
