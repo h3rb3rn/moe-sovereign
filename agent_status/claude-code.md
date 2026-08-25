@@ -2888,3 +2888,28 @@ Checkpoint mit 29 gültigen Läufen (Runde 1 komplett, alle ungefixt gelaufen
 alle weiteren Bedingungen/Runden mit allen vier Fixes aktiv, inkl. der
 ersten echten Chance, GAP 3 (decimal_finance-Verkettung) zu testen.
 2026-08-25T05:46:43Z
+
+---
+
+**2026-08-25T~08:31Z — claude-code — Task 6 (GAP 3): veraltete vor-Fix-Checkpoint-Einträge entfernt und neu gestartet**
+
+Beim ersten Durchlauf nach dem Fix-Deploy (PID 3631235) wurden Task 6
+(`sci-precision-02-ast-financial-arithmetic`) `compound_ai`/
+`compound_ai_debate` als `[RESUMED]` aus dem Checkpoint wiederverwendet —
+das waren die VOR dem heutigen Merge/Deploy entstandenen, durch
+Planner-Fabrikation verfälschten Ergebnisse (284/213 Tokens, Det:0.0, die
+"47+53"-Fehlplanung). `_result_is_valid()` prüft nur Format (tokens>0,
+gültiges Judge-Verdict, turns ok), nicht inhaltliche Qualität — genau die
+schon einmal dokumentierte Falle (siehe früherer Eintrag zu Task 7 in
+dieser Datei). Ohne Eingriff hätten diese beiden Zellen die eigentliche
+GAP-3-Verifikation für Runde 1 verhindert.
+
+**Fix:** Benchmark gestoppt (PID 3631235), Checkpoint gesichert
+(`checkpoint_scientific_benchmark.json.bak_pre_task6_refix_20260825-063049`),
+die 2 betroffenen Einträge entfernt (native_baseline für Task 6 blieb
+unangetastet — läuft ohne Planner/Experten-Pipeline, ist von keinem der
+4 Fixes betroffen). Neu gestartet als PID 3740559
+(`full_scientific_benchmark_20260825-083130_resume10.log`), 27 gültige
+Läufe im Checkpoint. compound_ai/compound_ai_debate für Task 6 laufen
+jetzt live mit allen Fixes aktiv.
+2026-08-25T06:31:12Z

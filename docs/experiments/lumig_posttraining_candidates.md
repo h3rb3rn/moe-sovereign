@@ -122,6 +122,55 @@ Pipeline-Kontext. Weitere Runden (2-5) bieten neue Gelegenheiten.
 
 *(wird laufend aktualisiert, sobald sich ein Muster wiederholt)*
 
+**Nachtrag nach Fix-Deploy, zweiter Runde-1-Durchlauf (2026-08-25,
+10:11-10:52 CEST):** Nachdem die drei Session-Fixes (Few-Shot-Filter,
+Judge/Experten-Reload, `$task_result`-Verkettung) tatsächlich deployed
+waren (vorher versehentlich nie live, siehe `agent_status/claude-code.md`
+Eintrag `~05:50Z`), liefen alle 4 Bedingungen für Task 6 erneut — diesmal
+ohne Themenfabrikation, aber GAP 3 wurde wieder nicht demonstriert, aus
+einem dritten, neuen Grund:
+
+- `compound_ai` (Score 3.0, Det=0.0): Planner wählte Kategorie
+  `reasoning` statt `precision_tools` — der Experte soll die gesamte
+  Rechnung selbst in Prosa durchführen, kein MCP-Tool-Zugriff.
+- `compound_ai_debate` (Score 3.6, Det=0.0): kein eigener Planner-Aufruf —
+  `Planner cache hit (Valkey) — skipping LLM` übernahm 1:1 denselben
+  `reasoning`-Plan von `compound_ai`. **Neuer Befund:** der Planner-Cache
+  ist offenbar promptbasiert und conditionsübergreifend geteilt (nicht pro
+  Template/Bedingung isoliert) — sobald eine Bedingung eine
+  Kategorie-Entscheidung trifft, erben andere Bedingungen desselben
+  Tasks/Runde denselben (ggf. suboptimalen) Plan, ohne selbst eine
+  Chance auf `precision_tools`-Routing zu bekommen.
+- `ablation_no_graphrag` (Score 3.3, Det=0.0): **kein Cache-Hit**, eigener
+  Planner-Lauf, wählte diesmal korrekt `category: "precision_tools"` und
+  dispatchte tatsächlich ein MCP-Tool (`calculate`,
+  `840 * 8760 / 1000 = 7358.4`) — exakt der erwartete `annual_mwh`-Wert,
+  live per Container-Log verifiziert (`MCP: ... 840 * 8760 / 1000 =
+  7358.4`). **Aber:** der Plan enthielt nur diese EINE atomare
+  Berechnung, keine Verkettung der restlichen Schritte (Tarifeskalation,
+  Jahreskosten, kumulierte Summe, CO2) über `$task_result`. Trust-Score
+  bewertete das trotzdem als "100% deterministic task coverage" (0.870,
+  PROCEED) und übersprang sogar den Thinking-Schritt
+  ("complete deterministic evidence and <=1 non-precision task") — die
+  fehlenden ~9 weiteren Rechenschritte wurden der Merger-LLM zur freien
+  Prosa-Schätzung überlassen, was den Det=0.0 erklärt.
+- `native_baseline` (Score 1.2, Det=0.0): unverändert aus Vorlauf
+  übernommen (kein Planner/Pipeline, von keinem Fix betroffen).
+
+**Einordnung:** Die `$task_result`-Infrastruktur selbst ist nachweislich
+erreichbar und funktionsfähig (der `calculate`-Dispatch beweist das) — das
+eigentliche verbleibende Problem ist, dass der 4B-Planner mehrstufige
+numerische Aufgaben systematisch UNTER-dekomponiert (1 Task statt der
+nötigen ~10 verketteten) und die Trust-Score-Bewertung diese
+Unter-Deckung nicht erkennt, solange die wenigen geplanten Tasks selbst
+erfolgreich ausgeführt wurden. Das ist ein neuer, eigenständiger
+Kandidat für Nachtraining (Planner-Zerlegungstiefe bei mehrstufigen
+Rechenaufgaben) UND ein möglicher kleiner Infra-Punkt (Trust-Score-
+Deterministic-Coverage-Metrik prüft nur "sind die geplanten Tasks
+erledigt", nicht "deckt der Plan die tatsächlich im Prompt geforderten
+Werte ab") — letzterer nicht in dieser Session umgesetzt, da außerhalb
+des ursprünglich vereinbarten GAP-3-Scopes und ohne Rücksprache.
+
 ## Explizit ausgeschlossen (als Wissens-Gap identifiziert und importiert, kein Finetuning-Kandidat)
 
 - Rust `thread::spawn` `'static`-Bound (Runde 4) — nach Import nicht mehr
