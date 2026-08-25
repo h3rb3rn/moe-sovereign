@@ -666,7 +666,10 @@ async def planner_node(state_: AgentState):
     try:
         from self_correction import get_few_shot_context as _get_fsc
         _plan_categories = list(EXPERTS.keys())  # All categories as hint sources
-        _few_shot_hint = await _get_fsc(_plan_categories, state.redis_client, max_per_cat=2)
+        _few_shot_hint = await _get_fsc(
+            _plan_categories, state.redis_client, max_per_cat=2,
+            query=state_.get("input", ""),
+        )
     except Exception:
         pass
 
@@ -1152,9 +1155,25 @@ JSON array:"""
                 "structured_failure": _failure.as_dict(),
                 "structured_failure_round": attempt + 1,
             }
+            # Contract failures used to get exactly one repair retry
+            # (gated on _contract_repair_used) regardless of the remaining
+            # _structured_attempts budget, so two consecutive hallucinated
+            # non-JSON replies exhausted recovery after only 2 of the 3
+            # configured attempts and raised (-> HTTP 500) even though a
+            # third, still-budgeted attempt was available. Observed live: a
+            # complex eBPF/XDP task failed this way -- attempt 1 (full
+            # prompt) echoed the planner's own category-reference catalog
+            # instead of a task list, attempt 2 (compact retry prompt)
+            # produced a different but equally non-JSON reply, and recovery
+            # gave up rather than trying a 3rd time. temperature=0.7 makes
+            # attempts genuinely stochastic, so spending the full configured
+            # budget before giving up (same bound already used for
+            # non-contract failures) meaningfully raises the chance of
+            # eventually getting valid JSON, without changing the
+            # deliberate "raise rather than silently mask" behavior once
+            # that full budget is actually exhausted (see below).
             _can_retry_contract = (
                 _is_contract_failure
-                and not _contract_repair_used
                 and attempt + 1 < _structured_attempts
             )
             _can_retry_other = (
@@ -1162,7 +1181,7 @@ JSON array:"""
                 and attempt + 1 < _structured_attempts
             )
             if _can_retry_contract or _can_retry_other:
-                if _is_contract_failure:
+                if _is_contract_failure and not _contract_repair_used:
                     _contract_repair_used = True
                     _contract_repair_hint = exc.repair_instruction()
                 _next_action = (

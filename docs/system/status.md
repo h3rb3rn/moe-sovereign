@@ -3,16 +3,16 @@
 !!! info "Auto-generated"
     This page is updated every 15 minutes by the `moe-docs-sync` service.
 
-*Last updated: **2026-08-18 18:41***
+*Last updated: **2026-08-25 05:38***
 
 ## Metrics
 
 | Metric | Value |
 |--------|-------|
-| Neo4j Entities | 18371 |
-| Neo4j Relations | 226088 |
-| ChromaDB Documents | 3659 |
-| Total Requests | ? |
+| Neo4j Entities | 19038 |
+| Neo4j Relations | 227570 |
+| ChromaDB Documents | 3883 |
+| Total Requests | 11 |
 
 ## Docker Containers
 
@@ -37,6 +37,7 @@
 | moe-storage-garage | running | 3900→3900/tcp, 3903→3903/tcp |
 | neo4j-knowledge | running | 7474→7474/tcp, 7687→7687/tcp |
 | node-exporter | running | 9100→9100/tcp |
+| rust-compile-sandbox | running | — |
 | terra_cache | running | — |
 | terra_checkpoints | running | — |
 

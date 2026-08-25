@@ -32,7 +32,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-research-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Moonshot Kimi-k3** and **Nvidia Nemotron-70B** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-research-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Moonshot Kimi-k3** and **Nvidia Nemotron-70B** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI architecture, this model operates as the **Evidence Synthesis, Literature Analysis & Provenance Grounding Expert**. It is trained to perform comparative document analysis, extract empirical metrics from research literature, evaluate engineering trade-offs, and produce structured analytical reviews where claims are linked to retrieved context spans.
 
@@ -90,7 +90,7 @@ This enables research teams to maintain an auditable provenance chain from raw s
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189560`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21189560`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 34,200 verified literature review and synthesis trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -98,7 +98,7 @@ This enables research teams to maintain an auditable provenance chain from raw s
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0072`, Training Token Accuracy `99.84%`
+- **Optimization Outcome:** Final Training Loss `0.04652`, Training Token Accuracy `99.83%`
 
 ---
 
@@ -119,7 +119,7 @@ This enables research teams to maintain an auditable provenance chain from raw s
 
 Systematic held-out evaluation against the unmodified base model is in progress across citation accuracy, claim-evidence entailment (NLI), and multi-document synthesis fidelity.
 
-> ℹ️ *Note: Training loss (`0.0072`) and training-token accuracy (`99.84%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.04652`) and training-token accuracy (`99.83%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 

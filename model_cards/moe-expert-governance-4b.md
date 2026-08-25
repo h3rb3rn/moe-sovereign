@@ -33,7 +33,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-governance-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Mistral-Large-2407** and **DeepSeek-V3** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-governance-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Mistral-Large-2407** and **DeepSeek-V3** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI architecture, this model operates as the **Regulatory Policy Reasoning & Privacy Engineering Specialist**. It is designed to assist in evaluating data flows, architecture specifications, and data retention policies against technical controls derived from regulatory frameworks (EU GDPR/DSGVO, EU AI Act, BSI IT-Grundschutz, ISO 27001, HIPAA).
 
@@ -91,7 +91,7 @@ This externalized approach ensures that compliance evaluations can be audited, c
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189562`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21189559`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 33,600 legal-engineering compliance trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -99,7 +99,7 @@ This externalized approach ensures that compliance evaluations can be audited, c
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0076`, Training Token Accuracy `99.82%`
+- **Optimization Outcome:** Final Training Loss `0.04639`, Training Token Accuracy `99.85%`
 
 ---
 
@@ -120,7 +120,7 @@ This externalized approach ensures that compliance evaluations can be audited, c
 
 Systematic held-out evaluation against the unmodified base model is in progress across statutory mapping precision, AI Act risk tier classification consistency, and control gap identification.
 
-> ℹ️ *Note: Training loss (`0.0076`) and training-token accuracy (`99.82%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.04639`) and training-token accuracy (`99.85%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 

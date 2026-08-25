@@ -453,3 +453,50 @@ MERGE (mq)-[r38:REQUIRES]->(f22) ON CREATE SET r38.source_model = "doc.rust-lang
 MERGE (mq2)-[r39:REQUIRES]->(f22) ON CREATE SET r39.source_model = "doc.rust-lang.org std::cell::UnsafeCell", r39.confidence = 0.95, r39.version = 1;
 
 RETURN "systems_programming_v9_unsafe_block_dereference curated import complete" AS status;
+
+// ═════════════════════════════════════════════════════════════════════════
+// ROUND 10 — full scientific benchmark, first pass (2026-08-23)
+//
+// User-authorized full-suite benchmark (8 tasks x 4 conditions x 5 rounds)
+// surfaced two new, general, system-relevant (not benchmark-specific) gaps
+// in round 1, each confirmed across multiple independent conditions of the
+// SAME task (not a single-sample fluke):
+//
+// (a) sci-sysprog-02-ebpf-xdp-packet-filter: 3 of 4 conditions parsed the
+//     TCP header without first checking ip->protocol == IPPROTO_TCP --
+//     reads garbage as TCP fields for non-TCP packets. Distinct from the
+//     Round 1 eBPF facts (verifier loop/safety, BPF map concurrency, XDP
+//     action codes), which don't cover this specific header-parsing order
+//     requirement.
+// (b) sci-reasoning-01-distributed-consensus-safety: 2 of 4 conditions
+//     misapplied Raft's election restriction by comparing candidates'
+//     CURRENT terms instead of the term of each log's LAST ENTRY (per Raft
+//     paper Section 5.4.1).
+//
+// A third finding (sci-graphrag-01/02: missing a benchmark-fictional
+// "Sovereign Knowledge Base") was explicitly excluded per user instruction
+// -- it is a benchmark-dataset artifact, not a general system gap, so no
+// import for it.
+// ═════════════════════════════════════════════════════════════════════════
+
+MERGE (f23:Entity {name: "XDP/eBPF must check IP protocol before parsing transport header"})
+ON CREATE SET f23.type = "Tech_Concept", f23.source = "curated_literature",
+  f23.curated_set = "systems_programming_v10_ebpf_protocol_check",
+  f23.domain = "systems_programming", f23.expert_domain = "systems_programming",
+  f23.description = "An XDP/eBPF packet-filter program must check the IP header's protocol field (ip->protocol == IPPROTO_TCP, or the IPv6 next-header equivalent) BEFORE parsing a TCP (or any other transport-layer) header -- never unconditionally. A UDP or ICMP packet's payload does not have TCP's field layout; reading it as a TCP header interprets unrelated bytes as source/destination port, flags, etc., producing nonsensical filtering decisions, and complicates the verifier's ability to prove the subsequent bounds-checked access is safe for every packet the program can receive. The correct order is: parse Ethernet -> parse IP -> branch on ip->protocol -> only then parse the matching transport header.";
+
+MERGE (f24:Entity {name: "Raft election restriction compares last-log-entry term, not current term"})
+ON CREATE SET f24.type = "Tech_Concept", f24.source = "curated_literature",
+  f24.curated_set = "systems_programming_v10_raft_election_restriction",
+  f24.domain = "systems_programming", f24.expert_domain = "systems_programming",
+  f24.description = "Raft's election restriction (paper Section 5.4.1) decides whether a candidate's log is 'at least as up-to-date' as a voter's by comparing the TERM OF EACH LOG'S LAST ENTRY (the log with the later last-entry term is more up-to-date; if those terms are equal, the longer log is more up-to-date) -- never by comparing the candidate's and voter's current election term directly. A voter denies its vote whenever this last-entry-based comparison says the candidate is behind, regardless of what term number the election itself is running under. Confusing 'current term of the election' with 'term of the last entry in each server's log' produces an election restriction that neither matches the paper nor actually preserves the Leader Completeness Property it is meant to guarantee.";
+
+MATCH (hub_ebpf:Entity {name: "eBPF and XDP programming"})
+MATCH (f23:Entity {name: "XDP/eBPF must check IP protocol before parsing transport header"})
+MERGE (hub_ebpf)-[r40:REQUIRES]->(f23) ON CREATE SET r40.source_model = "docs.ebpf.io: The BPF Verifier", r40.confidence = 0.95, r40.version = 1;
+
+MATCH (hub_raft:Entity {name: "Raft Consensus"})
+MATCH (f24:Entity {name: "Raft election restriction compares last-log-entry term, not current term"})
+MERGE (hub_raft)-[r41:REQUIRES]->(f24) ON CREATE SET r41.source_model = "raft.github.io: In Search of an Understandable Consensus Algorithm (Ongaro & Ousterhout), Section 5.4.1", r41.confidence = 0.95, r41.version = 1;
+
+RETURN "systems_programming_v10_ebpf_protocol_check_and_raft_election_restriction curated import complete" AS status;

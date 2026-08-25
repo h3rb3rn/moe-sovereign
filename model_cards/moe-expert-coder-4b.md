@@ -33,7 +33,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-coder-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-Coder-V2 (236B)** and **DeepSeek-V3** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-coder-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **DeepSeek-Coder-V2 (236B)** and **DeepSeek-V3** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI system, this model operates as the **Systems Programming, Code Synthesis & Refactoring Expert**. Rather than acting as a general-purpose conversational assistant, it is specialized for generating typed systems code, atomic unified diffs, and AST-compliant implementations in languages such as Rust, C++, Python, and Go.
 
@@ -91,7 +91,7 @@ This architectural separation enables a compact 4B model to achieve high develop
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189558`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21190761`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 32,500 curated, compiler-filtered programming trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -99,7 +99,7 @@ This architectural separation enables a compact 4B model to achieve high develop
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0106`, Training Token Accuracy `99.62%`
+- **Optimization Outcome:** Final Training Loss `0.03638`, Training Token Accuracy `99.58%`
 
 ---
 
@@ -124,7 +124,7 @@ Systematic held-out evaluation against the unmodified base model is in progress.
 - Static analysis pass rates against strict linter rulesets
 - Functional correctness on isolated unit test suites
 
-> ℹ️ *Note: Training loss (`0.0106`) and training-token accuracy (`99.62%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.03638`) and training-token accuracy (`99.58%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 

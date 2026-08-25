@@ -32,7 +32,7 @@ library_name: transformers
 
 ## 📌 Executive Summary & Architectural Role
 
-**`moe-expert-precision-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Qwen2.5-Math-72B**, **Nvidia Nemotron-70B**, and **Ground-Truth Z3 Formal Proof Oracles** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X 128GB GPUs).
+**`moe-expert-precision-4b`** is a specialized 4-billion parameter Small Language Model (SLM) distilled from **Qwen2.5-Math-72B**, **Nvidia Nemotron-70B**, and **Ground-Truth Z3 Formal Proof Oracles** on the EuroHPC **LUMI-G Supercomputer** (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD)).
 
 Within the open-source **MoE Sovereign** compound AI system, this model operates as the **Mathematical Reasoning, Formal Constraint Synthesis & Proof Formulation Expert**. It is specialized in translating natural language quantitative and logical problems into structured mathematical proofs, exact dimensional equations, and formal SMT/SAT constraint scripts.
 
@@ -99,7 +99,7 @@ Language models are fundamentally probabilistic sequence predictors. Attempting 
 ```
 
 ### Reproducible Training Details:
-- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X 128GB GPUs, Slurm Job `#21189559`)
+- **Compute Infrastructure:** EuroHPC LUMI-G (8× AMD Instinct™ MI250X GCDs (4× physical modules, 64GB HBM2e per GCD), Slurm Job `#21189557`)
 - **Base Architecture:** Qwen3.5-4B (Hybrid Linear Attention + Mamba in BF16)
 - **Dataset Scale:** 31,800 SMT-verified proof and calculation trajectories
 - **Optimization Strategy:** DeepSpeed ZeRO-2, PyTorch 2.6, ROCm 7.0
@@ -107,7 +107,7 @@ Language models are fundamentally probabilistic sequence predictors. Attempting 
 - **Effective Batch Size:** 128 (Micro-batch 4 × 8 GPUs × Gradient Accumulation 4)
 - **Learning Rate:** $1.5 \times 10^{-5}$ with Cosine Decay and Warmup
 - **LoRA Hyperparameters:** $r=16$, $\alpha=32$, Dropout $0.05$, Target Modules: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
-- **Optimization Outcome:** Final Training Loss `0.0404`, Training Token Accuracy `98.41%`
+- **Optimization Outcome:** Final Training Loss `0.0515`, Training Token Accuracy `98.38%`
 
 ---
 
@@ -128,7 +128,7 @@ Language models are fundamentally probabilistic sequence predictors. Attempting 
 
 Systematic held-out evaluation against the unmodified base model is in progress across multi-step arithmetic, symbolic algebra, and SMT constraint synthesis benchmarks.
 
-> ℹ️ *Note: Training loss (`0.0404`) and training-token accuracy (`98.41%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
+> ℹ️ *Note: Training loss (`0.0515`) and training-token accuracy (`98.38%`) reported above describe optimization progress on the training split and must not be interpreted as held-out capability benchmarks. Empirical held-out benchmark results with dataset versions, sample counts ($N$), and confidence intervals will be released in the project's technical report.*
 
 ---
 
