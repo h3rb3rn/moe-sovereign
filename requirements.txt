@@ -16,7 +16,12 @@ python-dotenv
 
 # --- Datenbanken & Mathe ---
 redis>=5.0.0
-chromadb>=1.5.9  # CVE-2026-45829: ALL >=1.0.0 affected, no patch yet — mitigated by loopback-only server binding (docker-compose.yml), not by version
+chromadb>=1.5.9  # CVE-2026-45829 (pre-auth code injection, ALL >=1.0.0 affected, no patch yet) plus two RBAC advisories
+                 # (SimpleRBACAuthorizationProvider does not scope permissions to a tenant/database/collection; an
+                 # authenticated caller can read/write/delete across tenants). None fixed by this version pin — all
+                 # three are mitigated at the network layer instead: no host port, chroma_internal is `internal: true`
+                 # (egress-blocked), and the orchestrator is the only client with network reach to the server at all
+                 # (see docker-compose.yml chromadb-vector). Revisit once upstream ships patched releases.
 numpy>=1.26.0,<2.0.0
 sympy==1.12
 neo4j>=5.0.0
