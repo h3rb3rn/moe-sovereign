@@ -2913,3 +2913,15 @@ unangetastet — läuft ohne Planner/Experten-Pipeline, ist von keinem der
 Läufe im Checkpoint. compound_ai/compound_ai_debate für Task 6 laufen
 jetzt live mit allen Fixes aktiv.
 2026-08-25T06:31:12Z
+
+---
+
+**2026-08-28 — claude-code — starting: K8s/K3s service-status monitoring support**
+
+Owner: claude-code. Files: `admin_ui/app.py` (container status/monitoring
+section only). Scope: extend the Docker/Podman-only service-status check
+(`get_container_status()`) to also work when the admin UI runs inside
+Kubernetes, so the K3s deployment's Config Dashboard shows real pod status
+instead of failing against a nonexistent Docker socket. Branch:
+`feat/k8s-service-monitoring` (worktree at
+`/opt/deployment/moe-sovereign/moe-infra-k8s-monitoring`).

@@ -146,6 +146,37 @@ _OPTIONAL_CONTAINERS: dict[str, list[str]] = {
     "prometheus_stack": ["moe-grafana", "moe-prometheus", "node-exporter", "cadvisor"],
 }
 
+# Container name → Kubernetes label selector, used only when running inside
+# a cluster (KUBERNETES_SERVICE_HOST set). Scoped to the admin pod's own
+# namespace — cross-namespace pod visibility would need broader RBAC than
+# this deployment is granted. A name with no entry here (e.g. moe-kafka
+# when the Kafka subchart is disabled, or authentik-server/-worker which
+# run in a separate "authentik" namespace on the moe-sovereign Helm chart)
+# reports "not found", matching Docker mode's behavior for an optional
+# container that was never started.
+_K8S_LABEL_SELECTORS: dict[str, str] = {
+    "langgraph-orchestrator": "app.kubernetes.io/component=orchestrator",
+    "mcp-precision":          "app.kubernetes.io/component=mcp",
+    "moe-admin":              "app.kubernetes.io/component=admin",
+    "terra_cache":            "app.kubernetes.io/name=valkey",
+    "chromadb-vector":        "app=chromadb",
+}
+
+_K8S_API_SERVER = "https://kubernetes.default.svc"
+_K8S_SA_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+
+
+def _k8s_available() -> bool:
+    """True when running as a Kubernetes pod with a mounted API token."""
+    return bool(os.getenv("KUBERNETES_SERVICE_HOST")) and (_K8S_SA_DIR / "token").exists()
+
+
+def _k8s_namespace() -> str:
+    try:
+        return (_K8S_SA_DIR / "namespace").read_text().strip()
+    except OSError:
+        return "default"
+
 
 def _get_monitored_containers() -> list[str]:
     """Return the container list filtered by the services manifest.
@@ -1306,7 +1337,11 @@ def rebuild_custom_prompts(form, all_cats: list) -> dict:
     return result
 
 
-# ─── Docker helpers ──────────────────────────────────────────────────────────
+# ─── Docker / Kubernetes helpers ─────────────────────────────────────────────
+# get_container_status() supports both runtimes; restart_orchestrator() below
+# is still Docker/Podman-only (fails safe — logs and no-ops — on Kubernetes,
+# since a rolling restart there needs a "patch deployment" RBAC grant this
+# admin UI is not given by default).
 
 def restart_orchestrator() -> None:
     try:
@@ -1343,7 +1378,101 @@ def _calc_mem_str(stats: dict) -> str:
     return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
 
 
+async def _get_k8s_container_status(names: list[str]) -> dict:
+    """Kubernetes equivalent of the Docker/Podman fetch below.
+
+    One list-pods call covers every monitored name (cheaper than N
+    label-selector queries), matched client-side via _K8S_LABEL_SELECTORS.
+    CPU/mem come from metrics.k8s.io on a best-effort basis — that API
+    requires metrics-server, which is not guaranteed to be installed, so any
+    failure there is swallowed exactly like the Docker path swallows a
+    failed `stats()` call.
+    """
+    token = (_K8S_SA_DIR / "token").read_text().strip()
+    ca_path = str(_K8S_SA_DIR / "ca.crt")
+    namespace = _k8s_namespace()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        async with httpx.AsyncClient(verify=ca_path, timeout=5.0) as client:
+            r = await client.get(
+                f"{_K8S_API_SERVER}/api/v1/namespaces/{namespace}/pods",
+                headers=headers,
+            )
+            r.raise_for_status()
+            pods = r.json().get("items", [])
+    except Exception as e:
+        logger.warning("K8s pod list failed: %s", e)
+        pods = []
+
+    result: dict = {}
+    pod_name_by_container: dict[str, str] = {}
+    for name in names:
+        selector = _K8S_LABEL_SELECTORS.get(name)
+        if not selector:
+            result[name] = {"status": "not found", "running": False}
+            continue
+        label_key, _, label_val = selector.partition("=")
+        pod = next(
+            (p for p in pods if p.get("metadata", {}).get("labels", {}).get(label_key) == label_val),
+            None,
+        )
+        if not pod:
+            result[name] = {"status": "not found", "running": False}
+            continue
+        status = pod.get("status", {})
+        phase = status.get("phase", "Unknown")
+        ready = any(
+            c.get("type") == "Ready" and c.get("status") == "True"
+            for c in status.get("conditions", [])
+        )
+        info: dict = {"status": phase.lower(), "running": phase == "Running" and ready}
+        started = status.get("startTime")
+        if started:
+            try:
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                uptime_sec = int((datetime.now(timezone.utc) - started_dt).total_seconds())
+                info["uptime"] = _fmt_uptime(uptime_sec)
+            except ValueError:
+                pass
+        result[name] = info
+        pod_name_by_container[pod.get("metadata", {}).get("name", "")] = name
+
+    try:
+        async with httpx.AsyncClient(verify=ca_path, timeout=3.0) as client:
+            r = await client.get(
+                f"{_K8S_API_SERVER}/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods",
+                headers=headers,
+            )
+            if r.status_code == 200:
+                for item in r.json().get("items", []):
+                    name = pod_name_by_container.get(item.get("metadata", {}).get("name", ""))
+                    if not name:
+                        continue
+                    cpu_nano = sum(
+                        int(c["usage"]["cpu"][:-1]) for c in item.get("containers", [])
+                        if c.get("usage", {}).get("cpu", "").endswith("n")
+                    )
+                    mem_ki = sum(
+                        int(c["usage"]["memory"][:-2]) for c in item.get("containers", [])
+                        if c.get("usage", {}).get("memory", "").endswith("Ki")
+                    )
+                    if cpu_nano:
+                        result[name]["cpu_pct"] = round(cpu_nano / 1e7, 1)  # nanocores -> %
+                    if mem_ki:
+                        mb = mem_ki / 1024
+                        result[name]["mem"] = f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+    except Exception:
+        pass  # metrics-server not installed or unreachable — status without cpu/mem is still useful
+
+    return result
+
+
 async def get_container_status() -> dict:
+    names = _get_monitored_containers()
+    if _k8s_available():
+        return await _get_k8s_container_status(names)
+
     def _fetch(name: str):
         try:
             dc = docker.from_env()
@@ -1367,7 +1496,7 @@ async def get_container_status() -> dict:
         except Exception:
             return name, {"status": "error", "running": False}
 
-    pairs = await asyncio.gather(*[asyncio.to_thread(_fetch, n) for n in _get_monitored_containers()])
+    pairs = await asyncio.gather(*[asyncio.to_thread(_fetch, n) for n in names])
     return dict(pairs)
 
 
