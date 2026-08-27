@@ -1051,16 +1051,21 @@ async def _gauge_updater_loop():
                                     PROM_SERVER_LOADED_MODELS.labels(server=_sname).set(0)
                                     PROM_SERVER_VRAM_BYTES.labels(server=_sname).set(0)
                             else:
-                                _tok = _srv.get("token", "")
-                                _hdr = {"Authorization": f"Bearer {_tok}"} if _tok and _tok != "ollama" else {}
-                                _r = await _hc.get(f"{_surl}/models", headers=_hdr)
-                                if _r.status_code == 200:
-                                    _models = _r.json().get("data", [])
-                                    PROM_SERVER_UP.labels(server=_sname).set(1)
-                                    PROM_SERVER_MODELS.labels(server=_sname).set(len(_models))
+                                if _srv.get("no_auto_fallback"):
+                                    # Explicit-routing-only nodes are not polled automatically.
+                                    # Their Prometheus state stays at whatever was last set.
+                                    pass
                                 else:
-                                    PROM_SERVER_UP.labels(server=_sname).set(0)
-                                    PROM_SERVER_MODELS.labels(server=_sname).set(0)
+                                    _tok = _srv.get("token", "")
+                                    _hdr = {"Authorization": f"Bearer {_tok}"} if _tok and _tok != "ollama" else {}
+                                    _r = await _hc.get(f"{_surl}/models", headers=_hdr)
+                                    if _r.status_code == 200:
+                                        _models = _r.json().get("data", [])
+                                        PROM_SERVER_UP.labels(server=_sname).set(1)
+                                        PROM_SERVER_MODELS.labels(server=_sname).set(len(_models))
+                                    else:
+                                        PROM_SERVER_UP.labels(server=_sname).set(0)
+                                        PROM_SERVER_MODELS.labels(server=_sname).set(0)
                         except Exception:
                             PROM_SERVER_UP.labels(server=_sname).set(0)
                             PROM_SERVER_MODELS.labels(server=_sname).set(0)
