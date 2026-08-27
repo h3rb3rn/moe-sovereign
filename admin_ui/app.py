@@ -2992,6 +2992,8 @@ async def _fetch_available_llms() -> list[str]:
     results: set[str] = set()
     async with httpx.AsyncClient(timeout=3.0) as client:
         for srv in servers:
+            if srv.get("no_auto_fallback"):
+                continue
             try:
                 api_type = srv.get("api_type", "ollama")
                 token    = srv.get("token", "ollama")
