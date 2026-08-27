@@ -12,6 +12,12 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("MOE-SOVEREIGN")
 
+# Per-node model-listing cache: {node: (monotonic_ts, [model_ids])}
+# Shared across all /v1/models requests so wildcard node listings are not
+# re-fetched on every call — particularly important for paid cloud endpoints.
+_node_listing_cache: dict = {}
+_NODE_LISTING_TTL = 60.0  # seconds
+
 from config import (
     CLAUDE_CODE_MODELS, CLAUDE_CODE_TOOL_MODEL,
     INFERENCE_SERVERS_LIST, URL_MAP, TOKEN_MAP,
@@ -268,23 +274,30 @@ async def list_models(raw_request: Request):
                     _api_type = _api_type_map.get(node, "ollama")
                     _wc_base  = URL_MAP[node].rstrip("/").removesuffix("/v1")
                     _wc_token = TOKEN_MAP.get(node, "ollama")
-                    async with httpx.AsyncClient(timeout=5) as _wc_client:
-                        if _api_type == "ollama":
-                            _r = await _wc_client.get(
-                                f"{_wc_base}/api/tags",
-                                headers={"Authorization": f"Bearer {_wc_token}"},
-                            )
-                            _wc_models = [
-                                m["name"] for m in (_r.json().get("models") or [])
-                            ] if _r.status_code == 200 else []
-                        else:
-                            _r = await _wc_client.get(
-                                f"{_wc_base}/v1/models",
-                                headers={"Authorization": f"Bearer {_wc_token}"},
-                            )
-                            _wc_models = [
-                                m["id"] for m in (_r.json().get("data") or [])
-                            ] if _r.status_code == 200 else []
+                    # 60s cache: avoid re-fetching node model lists on every /v1/models call
+                    _now_wc = time.monotonic()
+                    _cached = _node_listing_cache.get(node)
+                    if _cached and (_now_wc - _cached[0]) < _NODE_LISTING_TTL:
+                        _wc_models = _cached[1]
+                    else:
+                        async with httpx.AsyncClient(timeout=5) as _wc_client:
+                            if _api_type == "ollama":
+                                _r = await _wc_client.get(
+                                    f"{_wc_base}/api/tags",
+                                    headers={"Authorization": f"Bearer {_wc_token}"},
+                                )
+                                _wc_models = [
+                                    m["name"] for m in (_r.json().get("models") or [])
+                                ] if _r.status_code == 200 else []
+                            else:
+                                _r = await _wc_client.get(
+                                    f"{_wc_base}/v1/models",
+                                    headers={"Authorization": f"Bearer {_wc_token}"},
+                                )
+                                _wc_models = [
+                                    m["id"] for m in (_r.json().get("data") or [])
+                                ] if _r.status_code == 200 else []
+                        _node_listing_cache[node] = (_now_wc, _wc_models)
                     for _wc_m in _wc_models:
                         mid = f"{_wc_m}@{node}"
                         if mid not in seen and mid not in existing_ids:
