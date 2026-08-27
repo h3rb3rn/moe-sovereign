@@ -581,9 +581,16 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       fi
     done
 
+    # Opt out of the bake backend on Docker >= v2.37 when COMPOSE_BAKE is not
+    # already set — bake requires --allow=network.host if any build block had
+    # "network: host", which we no longer ship but guard here defensively.
+    if [[ "${_upd_rt[0]}" == "docker" ]] && [[ "${COMPOSE_BAKE:-}" != "0" ]] && [[ "${COMPOSE_BAKE:-}" != "1" ]]; then
+      _upd_compose_minor=$(docker compose version --short 2>/dev/null | cut -d. -f2 || echo "0")
+      [[ "${_upd_compose_minor:-0}" -ge 37 ]] && export COMPOSE_BAKE=0
+    fi
     if [[ -n "$_upd_group" ]] && ! id -Gn 2>/dev/null | tr ' ' '\n' | grep -qx "$_upd_group"; then
       if command -v sg &>/dev/null; then
-        sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
+        sg "$_upd_group" -c "COMPOSE_BAKE=${COMPOSE_BAKE:-} ${_upd_rt[*]} ${_upd_profiles[*]} build ${_upd_q}"
         sg "$_upd_group" -c "${_upd_rt[*]} ${_upd_profiles[*]} up -d"
       else
         _sudo "${_upd_rt[@]}" "${_upd_profiles[@]}" build ${_upd_q}
@@ -2253,6 +2260,26 @@ _PROFILE_ARGS=()
 [[ "$INSTALL_NEO4J"     == "true" ]] && _PROFILE_ARGS+=(--profile neo4j)
 [[ "$INSTALL_CADDY"     == "true" ]] && _PROFILE_ARGS+=(--profile caddy)
 [[ "$INSTALL_AUTHENTIK" == "true" ]] && _PROFILE_ARGS+=(--profile authentik)
+
+# Docker Compose >= v2.37 defaults to the BuildKit bake backend, which requires
+# explicit --allow=network.host when any build block carries "network: host".
+# We removed those entries from docker-compose.yml, but as a safety net we also
+# opt out of the bake backend when it would otherwise block the build.
+# COMPOSE_BAKE=0 falls back to the classic sequential docker-build path.
+if [[ "$CONTAINER_RUNTIME" == "docker" ]] && [[ "${COMPOSE_BAKE:-}" != "0" ]]; then
+  _bake_blocked=0
+  if docker buildx bake --help 2>&1 | grep -q "network.host" 2>/dev/null; then
+    _bake_blocked=1
+  elif docker compose build --help 2>&1 | grep -q "bake" 2>/dev/null; then
+    _compose_ver=$(docker compose version --short 2>/dev/null || echo "0")
+    _compose_minor=$(echo "$_compose_ver" | cut -d. -f2)
+    [[ "${_compose_minor:-0}" -ge 37 ]] && _bake_blocked=1
+  fi
+  if [[ "$_bake_blocked" -eq 1 ]] && [[ "${COMPOSE_BAKE:-}" != "1" ]]; then
+    export COMPOSE_BAKE=0
+    echo "  [info] COMPOSE_BAKE=0 — using classic build backend (BuildKit bake requires --allow=network.host on this Docker version)"
+  fi
+fi
 
 _compose "${_PROFILE_ARGS[@]}" pull ${_Q} 2>/dev/null || true
 _compose "${_PROFILE_ARGS[@]}" build ${_Q}

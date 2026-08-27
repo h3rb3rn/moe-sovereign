@@ -60,7 +60,9 @@ CLOUD_ENDPOINTS: list[dict] = [
         "token": s.get("token", ""),
     }
     for s in INFERENCE_SERVERS_LIST
-    if s.get("api_type", "ollama") != "ollama" and s.get("enabled", True)
+    if s.get("api_type", "ollama") != "ollama"
+    and s.get("enabled", True)
+    and not s.get("no_auto_fallback")
 ]
 
 # Heuristic helpers to generate training targets and fallbacks

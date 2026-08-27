@@ -1834,8 +1834,9 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
                 logger.info(f"🔒 VRAM filter: {model_name} needs ~{est_vram:.1f}GB — excluded {excluded}")
             candidates = vram_ok
         else:
-            # Hard filter: only keep nodes WITHOUT a vram_gb limit (cloud/external)
-            no_limit = [s for s in candidates if not s.get("vram_gb")]
+            # Hard filter: only keep nodes WITHOUT a vram_gb limit (cloud/external).
+            # Nodes with no_auto_fallback:true are excluded — they require explicit routing.
+            no_limit = [s for s in candidates if not s.get("vram_gb") and not s.get("no_auto_fallback")]
             if no_limit:
                 logger.warning(f"⚠️ No local node has enough VRAM for {model_name} (~{est_vram:.1f}GB) — using cloud/external nodes only")
                 candidates = no_limit
