@@ -12,6 +12,30 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# --- Interactive-terminal detection ------------------------------------------
+# Every prompt below reads from /dev/tty explicitly (not stdin), because under
+# `curl | bash` stdin is the script itself, not the user's keyboard. That
+# requires an actual controlling terminal to exist. When one doesn't — no pty
+# at all (some CI runners, `ssh host cmd` without -t, certain sandboxed/
+# automation shells) — opening /dev/tty for the redirect fails outright, and
+# under `set -e` that aborted the entire install at the very first prompt
+# with a bare "/dev/tty: No such device or address". Detect that once, up
+# front, and fall back to accepting every default non-interactively instead
+# of crashing. All prompts below already have a sensible `${var:-default}`
+# fallback for exactly this case (a real user just pressing ENTER).
+if exec 3<>/dev/tty 2>/dev/null; then
+  exec 3<&-
+  HAS_TTY="1"
+else
+  HAS_TTY="0"
+  echo "  [!] No controlling terminal detected — installing non-interactively" >&2
+  echo "      and accepting every default shown below. To customize the" >&2
+  echo "      installation, either run this script from a real terminal" >&2
+  echo "      (download it first: 'curl -O .../install.sh && bash install.sh')" >&2
+  echo "      or pre-set the relevant environment variables before running it." >&2
+  echo "" >&2
+fi
+
 # --- Configurable defaults (override via environment) -----------------------
 MOE_REPO_URL="${MOE_REPO_URL:-https://github.com/h3rb3rn/moe-sovereign.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/moe-sovereign}"
@@ -192,7 +216,7 @@ echo "  Press ENTER to accept the default shown in [brackets]."
 echo ""
 
 _default_install="${INSTALL_DIR:-/opt/moe-sovereign}"
-read -rp "  App installation directory [${_default_install}]: " _tmp_install < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  App installation directory [${_default_install}]: " _tmp_install < /dev/tty
 INSTALL_DIR="${_tmp_install:-${_default_install}}"
 MOE_ENV_FILE="${INSTALL_DIR}/.env"
 
@@ -344,7 +368,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         echo "    s) Stash changes, then pull  (recommended — changes are saved)"
         echo "    k) Keep changes — skip git pull"
         echo "    a) Abort update"
-        read -rp "  Choice [s/k/a] (default: s): " _pull_choice < /dev/tty
+        [[ "$HAS_TTY" == "1" ]] && read -rp "  Choice [s/k/a] (default: s): " _pull_choice < /dev/tty
         _pull_choice="${_pull_choice:-s}"
         case "${_pull_choice,,}" in
           s|stash)
@@ -379,7 +403,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
           echo "    r) Reset to origin  (discards local commits — data volumes are safe)"
           echo "    k) Keep current code — skip pull"
           echo "    a) Abort"
-          read -rp "  Choice [r/k/a] (default: k): " _ff_choice < /dev/tty
+          [[ "$HAS_TTY" == "1" ]] && read -rp "  Choice [r/k/a] (default: k): " _ff_choice < /dev/tty
           _ff_choice="${_ff_choice:-k}"
           case "${_ff_choice,,}" in
             r|reset)
@@ -772,7 +796,7 @@ else
   echo "  2) Podman     — daemonless, rootless OCI runtime, drop-in compatible"
   echo ""
   while true; do
-    read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Your choice [1/2, default 1]: " _rt_choice < /dev/tty
     _rt_choice="${_rt_choice:-1}"
     case "${_rt_choice}" in
       1) CONTAINER_RUNTIME="docker"; COMPOSE="docker compose"; COMPOSE_CMD=(docker compose); break ;;
@@ -1068,10 +1092,10 @@ if [[ -f "${MOE_ENV_FILE}" ]]; then
   [[ -n "$_prev_graf" ]] && _graf_default="$_prev_graf"
 fi
 
-read -rp "  Persistent data directory   [${_data_default}]: " _tmp_data < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  Persistent data directory   [${_data_default}]: " _tmp_data < /dev/tty
 MOE_DATA_ROOT="${_tmp_data:-${_data_default}}"
 
-read -rp "  Grafana data directory      [${_graf_default}]: " _tmp_graf < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  Grafana data directory      [${_graf_default}]: " _tmp_graf < /dev/tty
 GRAFANA_DATA_ROOT="${_tmp_graf:-${_graf_default}}"
 
 echo "  Data root:   ${MOE_DATA_ROOT}"
@@ -1301,6 +1325,19 @@ prompt_input() {
     fi
   fi
 
+  if [[ "$HAS_TTY" != "1" ]]; then
+    # No controlling terminal — can't prompt, let alone re-prompt on a
+    # validation failure. Accept the default silently; only a required
+    # field with no default has no sane non-interactive outcome.
+    if [[ -z "$default_val" && "$required" == "true" ]]; then
+      echo "  [!] '${prompt_text}' has no default and requires a terminal to set." >&2
+      echo "      Re-run from a real terminal, or pre-set its environment variable." >&2
+      exit 1
+    fi
+    printf -v "${varname}" '%s' "${default_val}"
+    return
+  fi
+
   while true; do
     if [[ "$is_secret" == "true" ]]; then
       read -rsp "  ${prompt_text}${display_default}: " input_val < /dev/tty
@@ -1417,7 +1454,7 @@ prompt_password() {
   if [[ -n "$existing" ]]; then
     # Update path — keep existing unless user types a replacement
     while true; do
-      read -rsp "  Admin password (ENTER keeps existing): " _pw1 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Admin password (ENTER keeps existing): " _pw1 < /dev/tty; echo ""
       if [[ -z "$_pw1" ]]; then
         printf -v "${varname}" '%s' "${existing}"
         break
@@ -1426,7 +1463,7 @@ prompt_password() {
         echo "  [!] Password must be at least 10 characters. Try again."
         continue
       fi
-      read -rsp "  Confirm new password: " _pw2 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Confirm new password: " _pw2 < /dev/tty; echo ""
       if [[ "$_pw1" != "$_pw2" ]]; then
         echo "  [!] Passwords do not match. Try again."
         continue
@@ -1437,7 +1474,7 @@ prompt_password() {
   else
     # Fresh install — require confirmation and enforce minimum strength
     while true; do
-      read -rsp "  Admin password (min 10 chars): " _pw1 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Admin password (min 10 chars): " _pw1 < /dev/tty; echo ""
       if [[ -z "$_pw1" ]]; then
         echo "  [!] Password is required."
         continue
@@ -1446,7 +1483,7 @@ prompt_password() {
         echo "  [!] Password must be at least 10 characters (got ${#_pw1}). Try again."
         continue
       fi
-      read -rsp "  Confirm password: " _pw2 < /dev/tty; echo ""
+      [[ "$HAS_TTY" == "1" ]] && read -rsp "  Confirm password: " _pw2 < /dev/tty; echo ""
       if [[ "$_pw1" != "$_pw2" ]]; then
         echo "  [!] Passwords do not match. Try again."
         continue
@@ -1479,7 +1516,7 @@ echo "  Neo4j powers GraphRAG (knowledge-graph enrichment) and the ontology cura
 echo "  Adds ~1.5 GB RAM (raises minimum from 4 GB → 6 GB). Skip on small VMs."
 INSTALL_NEO4J="true"
 while true; do
-  read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Install Neo4j GraphRAG? [Y/n]: " _neo4j_choice < /dev/tty
   _neo4j_choice="${_neo4j_choice:-Y}"
   case "${_neo4j_choice,,}" in
     y|yes) INSTALL_NEO4J="true";  break ;;
@@ -1495,7 +1532,7 @@ echo "  Dozzle log viewer, and AKHQ Kafka event inspection."
 echo "  Adds ~500 MB RAM. Recommended for observability and topic debugging."
 INSTALL_MONITORING="true"
 while true; do
-  read -rp "  Install Monitoring Tools (Prometheus, Grafana, Dozzle, AKHQ)? [Y/n]: " _mon_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Install Monitoring Tools (Prometheus, Grafana, Dozzle, AKHQ)? [Y/n]: " _mon_choice < /dev/tty
   _mon_choice="${_mon_choice:-Y}"
   case "${_mon_choice,,}" in
     y|yes) INSTALL_MONITORING="true";  break ;;
@@ -1510,7 +1547,7 @@ echo "  Caddy is a built-in TLS reverse proxy for this stack."
 echo "  Skip if you already run Nginx, Traefik, or another proxy in front."
 INSTALL_CADDY="false"
 while true; do
-  read -rp "  Install Caddy reverse proxy? [y/N]: " _caddy_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Install Caddy reverse proxy? [y/N]: " _caddy_choice < /dev/tty
   _caddy_choice="${_caddy_choice:-N}"
   case "${_caddy_choice,,}" in
     y|yes) INSTALL_CADDY="true";  break ;;
@@ -1542,7 +1579,7 @@ INSTALL_AUTHENTIK="false"
 AUTHENTIK_BOOTSTRAP_EMAIL_INPUT=""
 AUTHENTIK_BOOTSTRAP_PASSWORD_INPUT=""
 while true; do
-  read -rp "  Deploy Authentik SSO server? [y/N]: " _authentik_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Deploy Authentik SSO server? [y/N]: " _authentik_choice < /dev/tty
   _authentik_choice="${_authentik_choice:-N}"
   case "${_authentik_choice,,}" in
     y|yes) INSTALL_AUTHENTIK="true";  break ;;
@@ -1575,7 +1612,7 @@ if [[ "$INSTALL_AUTHENTIK" == "true" ]]; then
 else
   echo "  Configure OIDC against an existing Authentik (or other IdP)?"
   while true; do
-    read -rp "  Configure Authentik/OIDC SSO? [y/N]: " _sso_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Configure Authentik/OIDC SSO? [y/N]: " _sso_choice < /dev/tty
     _sso_choice="${_sso_choice:-N}"
     case "${_sso_choice,,}" in
       y|yes) INSTALL_SSO="true";  break ;;
@@ -1621,7 +1658,7 @@ echo "  OpenLineage audit tracking, and lakeFS data versioning (Git for data)."
 echo ""
 echo "  Requires approx. 8.5 GB additional RAM (NiFi JVM + Marquez + lakeFS + JupyterLab)."
 echo ""
-read -rp "  Install MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
+[[ "$HAS_TTY" == "1" ]] && read -rp "  Install MoE Codex (JupyterLab, NiFi, Marquez, lakeFS)? [y/N]: " _eds_choice < /dev/tty
 _eds_choice="${_eds_choice:-N}"
 case "${_eds_choice,,}" in
   y|yes) INSTALL_CODEX=true  ;;
@@ -1647,7 +1684,7 @@ PULL_JUDGE_MODEL="false"
 PULL_EXPERT_MODEL="false"
 
 while true; do
-  read -rp "  Deploy local Ollama instance (Docker container)? [y/N]: " _ollama_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Deploy local Ollama instance (Docker container)? [y/N]: " _ollama_choice < /dev/tty
   _ollama_choice="${_ollama_choice:-N}"
   case "${_ollama_choice,,}" in
     y|yes) INSTALL_OLLAMA="true"; break ;;
@@ -1665,7 +1702,7 @@ if [[ "$INSTALL_OLLAMA" == "true" ]]; then
   fi
   if [[ "$_has_nvidia" == "true" ]]; then
     echo "  NVIDIA GPU detected on this host."
-    read -rp "  Enable NVIDIA GPU acceleration for Ollama? [Y/n]: " _gpu_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Enable NVIDIA GPU acceleration for Ollama? [Y/n]: " _gpu_choice < /dev/tty
     _gpu_choice="${_gpu_choice:-Y}"
     case "${_gpu_choice,,}" in
       n|no) OLLAMA_GPU_ENABLED="false" ;;
@@ -1673,7 +1710,7 @@ if [[ "$INSTALL_OLLAMA" == "true" ]]; then
     esac
   else
     echo "  No NVIDIA GPU detected — Ollama will run in CPU mode."
-    read -rp "  Enable NVIDIA GPU container passthrough anyway? [y/N]: " _gpu_choice < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Enable NVIDIA GPU container passthrough anyway? [y/N]: " _gpu_choice < /dev/tty
     _gpu_choice="${_gpu_choice:-N}"
     case "${_gpu_choice,,}" in
       y|yes) OLLAMA_GPU_ENABLED="true" ;;
@@ -1685,21 +1722,21 @@ if [[ "$INSTALL_OLLAMA" == "true" ]]; then
   echo "  --- Model Pulling Options (Individual Confirmation) ---"
   echo "  You can optionally pre-pull Sovereign models into the local Ollama instance:"
   
-  read -rp "  Pull Sovereign Planner LLM (moe-sovereign-student:4b from HuggingFace)? [y/N]: " _p_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Pull Sovereign Planner LLM (moe-sovereign-student:4b from HuggingFace)? [y/N]: " _p_choice < /dev/tty
   _p_choice="${_p_choice:-N}"
   case "${_p_choice,,}" in
     y|yes) PULL_PLANNER_MODEL="true" ;;
     *)     PULL_PLANNER_MODEL="false" ;;
   esac
 
-  read -rp "  Pull Sovereign Judge & Refiner LLM (sovereign-judge:35b-q4km from HuggingFace)? [y/N]: " _j_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Pull Sovereign Judge & Refiner LLM (sovereign-judge:35b-q4km from HuggingFace)? [y/N]: " _j_choice < /dev/tty
   _j_choice="${_j_choice:-N}"
   case "${_j_choice,,}" in
     y|yes) PULL_JUDGE_MODEL="true" ;;
     *)     PULL_JUDGE_MODEL="false" ;;
   esac
 
-  read -rp "  Pull General 35B Expert LLM (qwen3.6:35b)? [y/N]: " _e_choice < /dev/tty
+  [[ "$HAS_TTY" == "1" ]] && read -rp "  Pull General 35B Expert LLM (qwen3.6:35b)? [y/N]: " _e_choice < /dev/tty
   _e_choice="${_e_choice:-N}"
   case "${_e_choice,,}" in
     y|yes) PULL_EXPERT_MODEL="true" ;;
@@ -1746,7 +1783,7 @@ if [[ "${_ram_total_mb}" -gt 0 ]]; then
       echo "        - Skipping Neo4j (-1.5 GB)"
     echo "        - Adding swap space as emergency buffer"
     echo ""
-    read -rp "  Continue anyway? [y/N]: " _ram_cont < /dev/tty
+    [[ "$HAS_TTY" == "1" ]] && read -rp "  Continue anyway? [y/N]: " _ram_cont < /dev/tty
     [[ "${_ram_cont,,}" == "y" || "${_ram_cont,,}" == "yes" ]] || { echo "  Aborted."; exit 1; }
   elif [[ "${_ram_total_mb}" -lt "${_ram_rec_mb}" ]]; then
     echo "  [!] Note: ${_ram_rec_gb} GB recommended for this stack — performance may vary."
