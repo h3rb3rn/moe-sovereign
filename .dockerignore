@@ -20,6 +20,32 @@ models/
 logs/
 checkpoint-archives/
 benchmarks/results/
+# install.sh's INSTALL_DIR and MOE_DATA_ROOT default to the same path
+# (/opt/moe-sovereign), so on an unmodified install these bind-mount data
+# directories (see install.sh's `mkdir -p .../<name>` list and the
+# `_upd_chown` calls in its update path) live inside this build context.
+# Several are chowned to a restrictive non-root uid (e.g. langgraph-
+# checkpoints -> 70:70, mode 0700 for Postgres); buildx's context sender
+# then fails with "permission denied" for whichever user invoked the
+# build, aborting the update entirely. Keep this list in sync with
+# install.sh's directory list.
+kafka-data/
+neo4j-data/
+neo4j-logs/
+agent-logs/
+user-audit-logs/
+chroma-onnx-cache/
+chroma-data/
+redis-data/
+prometheus-data/
+admin-logs/
+userdb/
+few-shot/
+generated/
+langgraph-checkpoints/
+gap-healer-stats/
+jupyterlab/
+garage/
 site/
 skills-upstream/
 legacy_root_modules/
