@@ -260,6 +260,7 @@ async def planner_node(state_: AgentState):
         PlannerContractError as _PlannerContractError,
         PlannerContractIssue as _PlannerContractIssue,
         assign_stable_task_ids as _assign_stable_task_ids,
+        normalize_task_dependencies as _normalize_task_dependencies,
         canonical_tool_catalog_hash as _canonical_tool_catalog_hash,
         parse_plan as _parse_plan_contract,
         recover_explicit_supported_plan as _recover_explicit_supported_plan,
@@ -302,6 +303,12 @@ async def planner_node(state_: AgentState):
                 json.dumps(deterministic_repairs, ensure_ascii=False),
             )
         prepared = _assign_stable_task_ids(tasks)
+        prepared, _dep_repairs = _normalize_task_dependencies(prepared)
+        if _dep_repairs:
+            logger.info(
+                "Planner depends_on normalized: %s",
+                json.dumps(_dep_repairs, ensure_ascii=False),
+            )
         _validate_plan_or_raise(
             prepared,
             _handoff_tool_schemas,

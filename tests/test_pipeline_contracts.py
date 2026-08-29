@@ -7,6 +7,7 @@ from services.pipeline.contracts import (
     assign_stable_task_ids,
     detect_required_precision_intents,
     is_task_result_ref,
+    normalize_task_dependencies,
     parse_plan,
     recover_explicit_supported_plan,
     repair_precision_task_contracts,
@@ -487,6 +488,70 @@ def test_assign_stable_task_ids_preserves_unique_explicit_ids():
     )
 
     assert [task["id"] for task in tasks] == ["research", "task-2", "task-3"]
+
+
+def test_normalize_task_dependencies_repairs_text_reference():
+    """Planner emitted the prior task's description instead of its id — the
+    observed real-world failure (services/dor_check.py's unresolved_dependency
+    rule string-matches depends_on against working_memory keys, which are
+    ids, not descriptions)."""
+    tasks = assign_stable_task_ids(
+        [
+            {"task": "Trace cascading failure sequence for network partition", "category": "dynamic"},
+            {"task": "Determine operational state at t=100s", "category": "dynamic",
+             "depends_on": "Trace cascading failure sequence for network partition"},
+        ]
+    )
+    tasks, repairs = normalize_task_dependencies(tasks)
+
+    assert tasks[1]["depends_on"] == "task-1"
+    assert repairs == [{"task_id": "task-2", "from": tasks[0]["task"], "to": "task-1"}]
+
+
+def test_normalize_task_dependencies_drops_unresolvable_reference():
+    tasks = assign_stable_task_ids(
+        [
+            {"task": "Write eBPF program", "category": "code_reviewer"},
+            {"task": "Explain BPF verifier safety", "category": "technical_support",
+             "depends_on": "something the planner invented that matches nothing"},
+        ]
+    )
+    tasks, repairs = normalize_task_dependencies(tasks)
+
+    assert tasks[1]["depends_on"] == ""
+    assert repairs == [{
+        "task_id": "task-2",
+        "from": "something the planner invented that matches nothing",
+        "to": "",
+    }]
+
+
+def test_normalize_task_dependencies_drops_forward_and_self_reference():
+    tasks = assign_stable_task_ids(
+        [
+            {"id": "task-1", "task": "First", "category": "general", "depends_on": "task-1"},
+            {"id": "task-2", "task": "Second", "category": "general", "depends_on": "task-3"},
+            {"id": "task-3", "task": "Third", "category": "general"},
+        ]
+    )
+    tasks, repairs = normalize_task_dependencies(tasks)
+
+    assert tasks[0]["depends_on"] == ""   # self-reference dropped
+    assert tasks[1]["depends_on"] == ""   # forward reference dropped
+    assert {r["task_id"] for r in repairs} == {"task-1", "task-2"}
+
+
+def test_normalize_task_dependencies_leaves_valid_id_reference_untouched():
+    tasks = assign_stable_task_ids(
+        [
+            {"id": "task-1", "task": "First", "category": "general"},
+            {"id": "task-2", "task": "Second", "category": "general", "depends_on": "task-1"},
+        ]
+    )
+    tasks, repairs = normalize_task_dependencies(tasks)
+
+    assert tasks[1]["depends_on"] == "task-1"
+    assert repairs == []
 
 
 def test_nonstream_timeout_budget_includes_preprocessing():

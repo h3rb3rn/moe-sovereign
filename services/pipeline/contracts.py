@@ -7,6 +7,7 @@ before the plan can be handed to LangGraph.
 """
 
 import copy
+import difflib
 import hashlib
 import json
 import logging
@@ -249,6 +250,68 @@ def assign_stable_task_ids(tasks: list[dict]) -> list[dict]:
         task["id"] = task_id
         used.add(task_id)
     return tasks
+
+
+_DEP_MATCH_THRESHOLD = 0.6  # difflib.SequenceMatcher ratio for fuzzy depends_on repair
+
+
+def normalize_task_dependencies(tasks: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Repair or drop planner-emitted `depends_on` values, in place.
+
+    The planner is instructed to reference a prior task's `id` in
+    `depends_on`, but sometimes emits that task's natural-language `task`
+    description instead (or, less often, a forward reference to a task that
+    has not run yet). Neither form resolves against `working_memory` at
+    dispatch time (see services/dor_check.py, rule "unresolved_dependency"),
+    and a single unresolved dependency currently causes the *entire* plan to
+    be reported as incomplete downstream (services/quality_gate.py,
+    incomplete_plan_tasks) — one bad depends_on field blocks the whole
+    response, not just the dependent task.
+
+    Must run after assign_stable_task_ids() so every task already has its
+    final `id`. Repairs a depends_on value that fuzzy-matches an *earlier*
+    task's description to that task's id; drops (clears) a depends_on value
+    that cannot be resolved to any earlier task, so the task is scheduled as
+    independent instead of being treated as permanently not-ready.
+
+    Returns (tasks, repairs) — repairs is a list of
+    {"task_id", "from", "to"} dicts for logging (to == "" means dropped).
+    """
+    repairs: list[dict] = []
+    known_ids = {str(t.get("id") or "") for t in tasks}
+    for index, task in enumerate(tasks):
+        dep = str(task.get("depends_on") or "").strip()
+        if not dep:
+            continue
+        if dep in known_ids:
+            # Guard against a self-reference or a forward reference — both
+            # are unresolvable at dispatch time regardless of the id being
+            # syntactically valid.
+            earlier_ids = {str(t.get("id") or "") for t in tasks[:index]}
+            if dep in earlier_ids:
+                continue
+            repairs.append({"task_id": task.get("id"), "from": dep, "to": ""})
+            task["depends_on"] = ""
+            continue
+
+        best_id, best_ratio = "", 0.0
+        dep_norm = dep.casefold().strip()
+        for earlier in tasks[:index]:
+            candidate_text = str(earlier.get("task") or "").casefold().strip()
+            if not candidate_text:
+                continue
+            if dep_norm == candidate_text or dep_norm in candidate_text or candidate_text in dep_norm:
+                best_id, best_ratio = str(earlier.get("id") or ""), 1.0
+                break
+            ratio = difflib.SequenceMatcher(None, dep_norm, candidate_text).ratio()
+            if ratio > best_ratio:
+                best_id, best_ratio = str(earlier.get("id") or ""), ratio
+
+        resolved = best_id if best_ratio >= _DEP_MATCH_THRESHOLD else ""
+        if resolved != dep:
+            repairs.append({"task_id": task.get("id"), "from": dep, "to": resolved})
+            task["depends_on"] = resolved
+    return tasks, repairs
 
 
 def _infer_precision_contracts(text: str) -> list[tuple[str, dict]]:
