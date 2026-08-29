@@ -1610,7 +1610,14 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     from config import EXPERTS, EXPERT_TIMEOUT
     from main import _get_expert_prompt
 
-    experts_for_cat = EXPERTS.get(cat, [])
+    # Template-scoped experts take precedence over the global fallback — same
+    # precedence used everywhere else this state key is consulted (see
+    # graph/expert.py and services/routing.py._get_template_expert_catalog).
+    # Without this, a refinement round silently ignores the active template's
+    # per-category endpoint pinning and can dispatch to a stale global
+    # endpoint the template never authorized.
+    _user_experts = state.get("user_experts") or {}
+    experts_for_cat = _user_experts.get(cat) or EXPERTS.get(cat, [])
     if not experts_for_cat:
         return None
     scored = [(await _get_expert_score(e["model"], cat), e) for e in experts_for_cat]
