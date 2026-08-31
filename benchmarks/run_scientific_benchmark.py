@@ -69,6 +69,7 @@ TEMPLATES = {
 VALID_VERDICTS = {"EXCELLENT", "PASS", "DEFICIENT", "FAIL"}
 
 JUDGE_EVAL_MAX_ATTEMPTS = int(os.environ.get("MOE_JUDGE_EVAL_MAX_ATTEMPTS", "3"))
+MAX_BACKFILL_ATTEMPTS = int(os.environ.get("MOE_BENCHMARK_MAX_BACKFILL_ATTEMPTS", "2"))
 
 
 def _extract_json_candidates(text: str) -> List[str]:
@@ -146,6 +147,64 @@ def _result_is_valid(res: Dict[str, Any]) -> bool:
         return False
     return all(t.get("ok", True) for t in res.get("turns", []))
 
+
+def _classify_error_response(status_code: int, text: str) -> Dict[str, Any]:
+    """Best-effort structured error classification for a non-2xx orchestrator
+    response. Never raises: a malformed/non-JSON error body (e.g. an nginx/
+    proxy HTML error page) must not crash the benchmark run.
+
+    The MoE API returns a structured {"error": {message, type, code,
+    request_id}} body for its own errors (services/pipeline/chat.py), but a
+    transport-level failure upstream of that layer can return arbitrary text.
+    """
+    try:
+        body = json.loads(text)
+        err = body.get("error", {}) if isinstance(body, dict) else {}
+        return {
+            "error_type": err.get("type"),
+            "error_code": err.get("code"),
+            "error_message": err.get("message"),
+            "request_id": err.get("request_id"),
+            "parsed": True,
+        }
+    except Exception:
+        return {
+            "error_type": None,
+            "error_code": None,
+            "error_message": text[:300],
+            "request_id": None,
+            "parsed": False,
+        }
+
+
+def _append_jsonl_record(path: pathlib.Path, record: Dict[str, Any]) -> None:
+    """Best-effort JSONL append. Failures are logged, never raised -- a sidecar/
+    error log is diagnostic, not load-bearing, and must never abort a run."""
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception as e:
+        logger.warning("Failed writing record to %s: %s", path, e)
+
+
+def _persist_checkpoint(
+    checkpoint_file: pathlib.Path,
+    checkpoint_data: Dict[str, Any],
+    completed_runs: Dict[str, Any],
+    run_key: str,
+    res: Dict[str, Any],
+) -> None:
+    """Record one valid run in the checkpoint dict and flush it to disk.
+    Callers must only invoke this for a run that already passed
+    _result_is_valid -- this function does not re-check validity."""
+    completed_runs[run_key] = res
+    checkpoint_data["completed_runs"] = completed_runs
+    checkpoint_data["last_updated"] = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        checkpoint_file.write_text(json.dumps(checkpoint_data, indent=2, ensure_ascii=False))
+    except Exception as e_cp:
+        logger.warning("Failed writing checkpoint: %s", e_cp)
+
 # ---------------------------------------------------------------------------
 # Direct Inferences & API Calls
 # ---------------------------------------------------------------------------
@@ -195,11 +254,13 @@ async def query_moe_orchestrator(
         payload["max_tokens"] = max_tokens
 
     t0 = time.perf_counter()
+    start_ts = datetime.datetime.utcnow().isoformat() + "Z"
     _touch_heartbeat()
     try:
         # User Directive: Keep timeout at 18000.0s for consumer hardware
         resp = await client.post(url, json=payload, headers=headers, timeout=18000.0)
         wall_clock = time.perf_counter() - t0
+        end_ts = datetime.datetime.utcnow().isoformat() + "Z"
         if resp.status_code == 200:
             data = resp.json()
             choice = (data.get("choices") or [{}])[0]
@@ -210,6 +271,9 @@ async def query_moe_orchestrator(
                 "ok": True,
                 "content": content,
                 "wall_clock_s": round(wall_clock, 3),
+                "start_ts_utc": start_ts,
+                "end_ts_utc": end_ts,
+                "chatcmpl_id": data.get("id"),
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
                 "total_tokens": usage.get("total_tokens", 0),
@@ -243,6 +307,9 @@ async def query_moe_orchestrator(
                             "ok": True,
                             "content": content,
                             "wall_clock_s": round(wall_clock, 3),
+                            "start_ts_utc": start_ts,
+                            "end_ts_utc": end_ts,
+                            "chatcmpl_id": (appr_resp.json().get("id") if appr_resp.status_code == 200 else data.get("id")),
                             "prompt_tokens": 0,
                             "completion_tokens": len(content.split()),
                             "total_tokens": len(content.split()),
@@ -253,31 +320,51 @@ async def query_moe_orchestrator(
             return {
                 "ok": False,
                 "error": f"HTTP 202: {resp.text[:300]}",
+                "http_status": 202,
                 "wall_clock_s": round(wall_clock, 3),
+                "start_ts_utc": start_ts,
+                "end_ts_utc": end_ts,
+                "chatcmpl_id": None,
                 "content": "",
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "total_tokens": 0,
+                **_classify_error_response(202, resp.text),
             }
         else:
             return {
                 "ok": False,
                 "error": f"HTTP {resp.status_code}: {resp.text[:300]}",
+                "http_status": resp.status_code,
                 "wall_clock_s": round(wall_clock, 3),
+                "start_ts_utc": start_ts,
+                "end_ts_utc": end_ts,
+                "chatcmpl_id": None,
                 "content": "",
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "total_tokens": 0,
+                **_classify_error_response(resp.status_code, resp.text),
             }
     except Exception as e:
+        _end_ts = datetime.datetime.utcnow().isoformat() + "Z"
         return {
             "ok": False,
             "error": str(e),
+            "http_status": None,
             "wall_clock_s": round(time.perf_counter() - t0, 3),
+            "start_ts_utc": start_ts,
+            "end_ts_utc": _end_ts,
+            "chatcmpl_id": None,
             "content": "",
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
+            "error_type": "transport_exception",
+            "error_code": type(e).__name__,
+            "error_message": str(e),
+            "request_id": None,
+            "parsed": False,
         }
 
 
@@ -533,7 +620,8 @@ async def run_single_test_condition(
     test_case: Dict[str, Any],
     condition_name: str,
     target_config: str,
-    round_num: int
+    round_num: int,
+    run_id: str,
 ) -> Dict[str, Any]:
     """Execute a single test case under a specific configuration condition."""
     test_id = test_case["id"]
@@ -547,6 +635,33 @@ async def run_single_test_condition(
     total_prompt_tok = 0
     total_comp_tok = 0
     total_time = 0.0
+    last_res: Dict[str, Any] = {}
+    sidecar_file = RESULTS_DIR / f"sidecar_{run_id}.jsonl"
+    errors_file = RESULTS_DIR / f"errors_{run_id}.jsonl"
+
+    def _record_request(turn_idx: int, res: Dict[str, Any]) -> None:
+        _append_jsonl_record(sidecar_file, {
+            "condition": condition_name,
+            "task_id": test_id,
+            "round": round_num,
+            "turn": turn_idx,
+            "chatcmpl_id": res.get("chatcmpl_id"),
+            "start_ts_utc": res.get("start_ts_utc"),
+            "end_ts_utc": res.get("end_ts_utc"),
+            "wall_clock_s": res.get("wall_clock_s"),
+        })
+        if not res.get("ok"):
+            _append_jsonl_record(errors_file, {
+                "condition": condition_name,
+                "task_id": test_id,
+                "round": round_num,
+                "turn": turn_idx,
+                "http_status": res.get("http_status"),
+                "error_type": res.get("error_type"),
+                "error_code": res.get("error_code"),
+                "error_message": res.get("error_message"),
+                "request_id": res.get("request_id"),
+            })
 
     if test_type == "single_turn":
         prompt = test_case["prompt"]
@@ -556,6 +671,8 @@ async def run_single_test_condition(
             res = await query_native_ollama(client, NATIVE_MODEL, messages)
         else:
             res = await query_moe_orchestrator(client, target_config, messages)
+        _record_request(1, res)
+        last_res = res
 
         final_response = res.get("content", "")
         total_prompt_tok = res.get("prompt_tokens", 0)
@@ -586,6 +703,8 @@ async def run_single_test_condition(
             else:
                 # MoE Sovereign receives session_id for persistent GraphRAG & memory context
                 res = await query_moe_orchestrator(client, target_config, conversation_history, session_id=session_id)
+            _record_request(turn_idx, res)
+            last_res = res
 
             t_content = res.get("content", "")
             conversation_history.append({"role": "assistant", "content": t_content})
@@ -617,6 +736,12 @@ async def run_single_test_condition(
     judge_score = float(judge_res.get("score") or judge_res.get("overall_score") or 5.0)
     combined_score = round(0.4 * det_score + 0.6 * judge_score, 2)
 
+    # Server-side self-critique/trust diagnostics, when present (additive
+    # response metadata -- see services/pipeline/chat.py::_build_diagnostic_metadata).
+    # Older orchestrator builds won't emit these; default to None/0 so a resumed
+    # checkpoint mixing old and new runs doesn't break downstream aggregation.
+    _diag_meta = (last_res.get("raw") or {}).get("metadata") or {}
+
     return {
         "test_id": test_id,
         "test_name": test_case["name"],
@@ -630,6 +755,9 @@ async def run_single_test_condition(
         "judge_score": judge_score,
         "judge_verdict": judge_res.get("verdict", "N/A"),
         "judge_reasoning": judge_res.get("reasoning", ""),
+        "self_critique_round": _diag_meta.get("self_critique_round", 0),
+        "trust_score": _diag_meta.get("trust_score"),
+        "trust_verdict": _diag_meta.get("trust_verdict"),
         "total_time_s": round(total_time, 2),
         "prompt_tokens": total_prompt_tok,
         "completion_tokens": total_comp_tok,
@@ -637,6 +765,84 @@ async def run_single_test_condition(
         "turns": turns_result,
         "final_response": final_response[:1000]
     }
+
+
+def _write_interim_reports(
+    run_id: str,
+    timestamp: str,
+    conditions: List[Any],
+    all_results: List[Dict[str, Any]],
+) -> None:
+    """Recompute the running per-condition summary and flush eval/run/latest
+    JSON reports. Shared by the main execution loop and the pair-coverage
+    backfill pass so both write identically-shaped interim artifacts."""
+    _summary_interim = {}
+    for c_n, _ in conditions:
+        _cr = [x for x in all_results if x["condition"] == c_n]
+        if _cr:
+            _s = [x["score"] for x in _cr]
+            _d = [x["deterministic_score"] for x in _cr]
+            _j = [x["judge_score"] for x in _cr]
+            _t = [x["total_time_s"] for x in _cr]
+            _k = [x["total_tokens"] for x in _cr]
+            _cats = sorted(list(set(x["category"] for x in _cr)))
+            _cb = {cat: round(sum([x["score"] for x in _cr if x["category"] == cat]) / len([x["score"] for x in _cr if x["category"] == cat]), 2) for cat in _cats}
+            _summary_interim[c_n] = {
+                "mean_overall_score": round(sum(_s) / len(_s), 2),
+                "mean_deterministic_score": round(sum(_d) / len(_d), 2),
+                "mean_judge_score": round(sum(_j) / len(_j), 2),
+                "mean_latency_s": round(sum(_t) / len(_t), 2),
+                "mean_tokens": round(sum(_k) / len(_k), 1),
+                "category_scores": _cb,
+                "total_evaluations": len(_cr)
+            }
+    _payload_interim = {
+        "run_id": run_id,
+        "timestamp": timestamp,
+        "dataset": DATASET_PATH.name,
+        "summary": _summary_interim,
+        "detailed_results": all_results
+    }
+    eval_file = RESULTS_DIR / f"eval_{run_id}.json"
+    run_file = RESULTS_DIR / f"run_{run_id}.json"
+    latest_file = RESULTS_DIR / "latest_scientific_benchmark.json"
+    eval_file.write_text(json.dumps(_payload_interim, indent=2, ensure_ascii=False))
+    run_file.write_text(json.dumps(_payload_interim, indent=2, ensure_ascii=False))
+    latest_file.write_text(json.dumps(_payload_interim, indent=2, ensure_ascii=False))
+
+
+async def _ensure_pair_coverage(
+    client: httpx.AsyncClient,
+    r: int,
+    tc: Dict[str, Any],
+    conditions: List[Any],
+    completed_runs: Dict[str, Any],
+    all_results: List[Dict[str, Any]],
+    checkpoint_file: pathlib.Path,
+    checkpoint_data: Dict[str, Any],
+    run_id: str,
+    timestamp: str,
+) -> None:
+    """After all conditions for one task/round have run, verify every active
+    condition has a valid checkpoint entry and backfill any that don't
+    (missing entirely, or discarded by _result_is_valid -- e.g. a 0-token
+    error response). Bounded by MAX_BACKFILL_ATTEMPTS: a condition that keeps
+    failing is logged and left for manual investigation, never retried
+    forever."""
+    for cond_name, target_cfg in conditions:
+        run_key = f"r{r}_{tc['id']}_{cond_name}"
+        attempts = 0
+        while not _result_is_valid(completed_runs.get(run_key, {})) and attempts < MAX_BACKFILL_ATTEMPTS:
+            attempts += 1
+            logger.warning("Backfilling missing/invalid run %s (attempt %d/%d)",
+                            run_key, attempts, MAX_BACKFILL_ATTEMPTS)
+            res = await run_single_test_condition(client, tc, cond_name, target_cfg, round_num=r, run_id=run_id)
+            all_results.append(res)
+            if _result_is_valid(res):
+                _persist_checkpoint(checkpoint_file, checkpoint_data, completed_runs, run_key, res)
+                _write_interim_reports(run_id, timestamp, conditions, all_results)
+        if not _result_is_valid(completed_runs.get(run_key, {})):
+            logger.error("Pair coverage FAILED after %d backfill attempt(s): %s", attempts, run_key)
 
 
 async def main():
@@ -755,54 +961,25 @@ async def main():
                         continue
 
                     print(f"  • Condition: {cond_name:22} ... ", end="", flush=True)
-                    res = await run_single_test_condition(client, tc, cond_name, target_cfg, round_num=r)
+                    res = await run_single_test_condition(client, tc, cond_name, target_cfg, round_num=r, run_id=run_id)
                     all_results.append(res)
                     print(f"Score: {res['score']:.1f}/10 (Det: {res['deterministic_score']:.1f}, Judge: {res['judge_score']:.1f}) | {res['total_time_s']}s | {res['total_tokens']} tok", flush=True)
 
                     # Update checkpoint only on genuinely valid (non-fallback, non-empty) responses
                     if _result_is_valid(res):
-                        completed_runs[run_key] = res
-                        checkpoint_data["completed_runs"] = completed_runs
-                        checkpoint_data["last_updated"] = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                        try:
-                            checkpoint_file.write_text(json.dumps(checkpoint_data, indent=2, ensure_ascii=False))
-                        except Exception as e_cp:
-                            logger.warning("Failed writing checkpoint: %s", e_cp)
+                        _persist_checkpoint(checkpoint_file, checkpoint_data, completed_runs, run_key, res)
 
                     # Incremental checkpoint save after every single test run
-                    _summary_interim = {}
-                    for c_n, _ in conditions:
-                        _cr = [x for x in all_results if x["condition"] == c_n]
-                        if _cr:
-                            _s = [x["score"] for x in _cr]
-                            _d = [x["deterministic_score"] for x in _cr]
-                            _j = [x["judge_score"] for x in _cr]
-                            _t = [x["total_time_s"] for x in _cr]
-                            _k = [x["total_tokens"] for x in _cr]
-                            _cats = sorted(list(set(x["category"] for x in _cr)))
-                            _cb = {cat: round(sum([x["score"] for x in _cr if x["category"] == cat]) / len([x["score"] for x in _cr if x["category"] == cat]), 2) for cat in _cats}
-                            _summary_interim[c_n] = {
-                                "mean_overall_score": round(sum(_s) / len(_s), 2),
-                                "mean_deterministic_score": round(sum(_d) / len(_d), 2),
-                                "mean_judge_score": round(sum(_j) / len(_j), 2),
-                                "mean_latency_s": round(sum(_t) / len(_t), 2),
-                                "mean_tokens": round(sum(_k) / len(_k), 1),
-                                "category_scores": _cb,
-                                "total_evaluations": len(_cr)
-                            }
-                    _payload_interim = {
-                        "run_id": run_id,
-                        "timestamp": timestamp,
-                        "dataset": DATASET_PATH.name,
-                        "summary": _summary_interim,
-                        "detailed_results": all_results
-                    }
-                    eval_file = RESULTS_DIR / f"eval_{run_id}.json"
-                    run_file = RESULTS_DIR / f"run_{run_id}.json"
-                    latest_file = RESULTS_DIR / "latest_scientific_benchmark.json"
-                    eval_file.write_text(json.dumps(_payload_interim, indent=2, ensure_ascii=False))
-                    run_file.write_text(json.dumps(_payload_interim, indent=2, ensure_ascii=False))
-                    latest_file.write_text(json.dumps(_payload_interim, indent=2, ensure_ascii=False))
+                    _write_interim_reports(run_id, timestamp, conditions, all_results)
+
+                # All conditions for this task/round have run (or were resumed from
+                # cache) -- verify every active condition landed a valid checkpoint
+                # entry and backfill any that didn't, so a paired-comparison analysis
+                # never silently ends up with a missing cell.
+                await _ensure_pair_coverage(
+                    client, r, tc, conditions, completed_runs, all_results,
+                    checkpoint_file, checkpoint_data, run_id, timestamp,
+                )
 
     # ---------------------------------------------------------------------------
     # Aggregation & Analysis
