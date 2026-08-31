@@ -955,7 +955,7 @@ _RUST_COMPILE_SANDBOX_URL = os.getenv(
     "RUST_COMPILE_SANDBOX_URL", "http://rust-compile-sandbox:8080"
 )
 _RUST_COMPILE_MAX_SOURCE_CHARS = 200_000
-_RUST_COMPILE_HTTP_TIMEOUT_S = 15.0
+_RUST_COMPILE_HTTP_TIMEOUT_S = 45.0  # PoC hardware -- must stay above rust_compile_sandbox's own _COMPILE_TIMEOUT_S (30s)
 
 
 @mcp.tool()
@@ -1003,7 +1003,7 @@ _RUST_LOOM_SANDBOX_URL = os.getenv(
     "RUST_LOOM_SANDBOX_URL", "http://rust-loom-sandbox:8080"
 )
 _RUST_LOOM_MAX_SOURCE_CHARS = 200_000
-_RUST_LOOM_HTTP_TIMEOUT_S = 60.0
+_RUST_LOOM_HTTP_TIMEOUT_S = 240.0  # PoC hardware -- must stay above rust_loom_sandbox's own _RUN_TIMEOUT_S (180s)
 
 
 @mcp.tool()
