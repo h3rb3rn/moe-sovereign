@@ -161,3 +161,52 @@ class TestCheckDiskSpace:
             state = {"last_alert_ts": {}, "restart_counts": {}}
             findings = vm.check_disk_space(state)
         assert findings == []
+
+
+class TestReadMeminfo:
+    def test_parses_kb_values(self, tmp_path):
+        path = tmp_path / "meminfo"
+        path.write_text("MemTotal:       35000000 kB\nSwapTotal:            0 kB\n")
+        result = vm._read_meminfo(str(path))
+        assert result == {"MemTotal": 35000000, "SwapTotal": 0}
+
+
+class TestCheckMemory:
+    def test_flags_critical_swap_usage(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vm, "ALERT_LOG", tmp_path / "alerts.jsonl")
+        fake = {"MemTotal": 35_000_000, "MemAvailable": 10_000_000, "SwapTotal": 1_000_000, "SwapFree": 20_000}
+        with patch.object(vm, "_read_meminfo", return_value=fake):
+            state = {"last_alert_ts": {}, "restart_counts": {}}
+            findings = vm.check_memory(state)
+        assert any(f["key"] == "swap_crit" for f in findings)
+
+    def test_flags_low_available_memory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vm, "ALERT_LOG", tmp_path / "alerts.jsonl")
+        fake = {"MemTotal": 35_000_000, "MemAvailable": 1_000_000, "SwapTotal": 1_000_000, "SwapFree": 1_000_000}
+        with patch.object(vm, "_read_meminfo", return_value=fake):
+            state = {"last_alert_ts": {}, "restart_counts": {}}
+            findings = vm.check_memory(state)
+        assert any(f["key"] == "mem_available_warn" for f in findings)
+
+    def test_healthy_memory_produces_no_finding(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vm, "ALERT_LOG", tmp_path / "alerts.jsonl")
+        fake = {"MemTotal": 35_000_000, "MemAvailable": 20_000_000, "SwapTotal": 1_000_000, "SwapFree": 900_000}
+        with patch.object(vm, "_read_meminfo", return_value=fake):
+            state = {"last_alert_ts": {}, "restart_counts": {}}
+            findings = vm.check_memory(state)
+        assert findings == []
+
+    def test_no_swap_configured_skips_swap_check(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vm, "ALERT_LOG", tmp_path / "alerts.jsonl")
+        fake = {"MemTotal": 35_000_000, "MemAvailable": 20_000_000, "SwapTotal": 0, "SwapFree": 0}
+        with patch.object(vm, "_read_meminfo", return_value=fake):
+            state = {"last_alert_ts": {}, "restart_counts": {}}
+            findings = vm.check_memory(state)  # must not raise (ZeroDivisionError guard)
+        assert findings == []
+
+    def test_missing_meminfo_does_not_raise(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vm, "ALERT_LOG", tmp_path / "alerts.jsonl")
+        with patch.object(vm, "_read_meminfo", side_effect=FileNotFoundError):
+            state = {"last_alert_ts": {}, "restart_counts": {}}
+            findings = vm.check_memory(state)  # must not raise
+        assert findings == []
