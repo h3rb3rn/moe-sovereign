@@ -123,6 +123,7 @@ class TestEnsurePairCoverage:
             checkpoint_data={},
             run_id="run-x",
             timestamp="ts-x",
+            permanently_failed={},
         )
         assert call_count["n"] == 2  # both conditions were missing, both backfilled once
 
@@ -147,6 +148,7 @@ class TestEnsurePairCoverage:
             lambda *a, **k: None,
         )
 
+        permanently_failed: dict = {}
         await _ensure_pair_coverage(
             client=AsyncMock(),
             r=1,
@@ -158,9 +160,11 @@ class TestEnsurePairCoverage:
             checkpoint_data={},
             run_id="run-x",
             timestamp="ts-x",
+            permanently_failed=permanently_failed,
         )
         assert attempts["n"] == MAX_BACKFILL_ATTEMPTS
         assert "r1_task-1_compound_ai" not in completed_runs
+        assert "r1_task-1_compound_ai" in permanently_failed
 
     async def test_skips_condition_already_valid_in_checkpoint(self, monkeypatch):
         conditions = [("compound_ai", "tmpl-a")]
@@ -185,5 +189,33 @@ class TestEnsurePairCoverage:
             checkpoint_data={},
             run_id="run-x",
             timestamp="ts-x",
+            permanently_failed={},
         )
         run_mock.assert_not_called()
+
+    async def test_skips_condition_already_permanently_failed(self, monkeypatch):
+        conditions = [("compound_ai", "tmpl-a")]
+        completed_runs: dict = {}
+        all_results: list = []
+        permanently_failed = {"r1_task-1_compound_ai": {"attempts": 2, "last_attempt_utc": "2026-09-01T00:00:00Z"}}
+
+        run_mock = AsyncMock()
+        monkeypatch.setattr(
+            "benchmarks.run_scientific_benchmark.run_single_test_condition",
+            run_mock,
+        )
+
+        await _ensure_pair_coverage(
+            client=AsyncMock(),
+            r=1,
+            tc={"id": "task-1"},
+            conditions=conditions,
+            completed_runs=completed_runs,
+            all_results=all_results,
+            checkpoint_file=None,
+            checkpoint_data={},
+            run_id="run-x",
+            timestamp="ts-x",
+            permanently_failed=permanently_failed,
+        )
+        run_mock.assert_not_called()  # never re-attempted, not even once

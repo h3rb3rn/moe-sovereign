@@ -205,6 +205,33 @@ def _persist_checkpoint(
     except Exception as e_cp:
         logger.warning("Failed writing checkpoint: %s", e_cp)
 
+
+def _persist_permanent_failure(
+    checkpoint_file: pathlib.Path,
+    checkpoint_data: Dict[str, Any],
+    permanently_failed: Dict[str, Any],
+    run_key: str,
+    attempts: int,
+) -> None:
+    """Record a run_key that exhausted MAX_BACKFILL_ATTEMPTS without ever
+    producing a valid result, so a future resume (including one forced by a
+    watchdog restart) recognizes it immediately instead of burning another
+    full MAX_BACKFILL_ATTEMPTS cycle on a cell that is known, from this same
+    checkpoint file, to be unwinnable right now. Cleared only by a --fresh
+    run, same as completed_runs -- this is deliberately not "forever": a
+    later code/model fix should get a clean re-attempt once the checkpoint
+    is reset.
+    """
+    permanently_failed[run_key] = {
+        "attempts": attempts,
+        "last_attempt_utc": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    checkpoint_data["permanently_failed"] = permanently_failed
+    try:
+        checkpoint_file.write_text(json.dumps(checkpoint_data, indent=2, ensure_ascii=False))
+    except Exception as e_cp:
+        logger.warning("Failed writing checkpoint (permanent-failure record): %s", e_cp)
+
 # ---------------------------------------------------------------------------
 # Direct Inferences & API Calls
 # ---------------------------------------------------------------------------
@@ -822,15 +849,24 @@ async def _ensure_pair_coverage(
     checkpoint_data: Dict[str, Any],
     run_id: str,
     timestamp: str,
+    permanently_failed: Dict[str, Any],
 ) -> None:
     """After all conditions for one task/round have run, verify every active
     condition has a valid checkpoint entry and backfill any that don't
     (missing entirely, or discarded by _result_is_valid -- e.g. a 0-token
     error response). Bounded by MAX_BACKFILL_ATTEMPTS: a condition that keeps
-    failing is logged and left for manual investigation, never retried
-    forever."""
+    failing is logged and recorded in permanently_failed instead of retried
+    forever -- without this, a cell already known (from this very checkpoint
+    file) to be unwinnable gets re-attempted from scratch on every process
+    restart, including watchdog restarts, silently burning hours without any
+    chance of a different outcome (observed live 2026-08-31/09-01 on
+    sci-graphrag-01-topology-cascade)."""
     for cond_name, target_cfg in conditions:
         run_key = f"r{r}_{tc['id']}_{cond_name}"
+        if run_key in permanently_failed:
+            logger.info("Skipping %s: already recorded as permanently failed (%s)",
+                        run_key, permanently_failed[run_key].get("last_attempt_utc", ""))
+            continue
         attempts = 0
         while not _result_is_valid(completed_runs.get(run_key, {})) and attempts < MAX_BACKFILL_ATTEMPTS:
             attempts += 1
@@ -842,7 +878,9 @@ async def _ensure_pair_coverage(
                 _persist_checkpoint(checkpoint_file, checkpoint_data, completed_runs, run_key, res)
                 _write_interim_reports(run_id, timestamp, conditions, all_results)
         if not _result_is_valid(completed_runs.get(run_key, {})):
-            logger.error("Pair coverage FAILED after %d backfill attempt(s): %s", attempts, run_key)
+            logger.error("Pair coverage FAILED after %d backfill attempt(s): %s -- recording as permanently failed",
+                         attempts, run_key)
+            _persist_permanent_failure(checkpoint_file, checkpoint_data, permanently_failed, run_key, attempts)
 
 
 async def main():
@@ -902,6 +940,15 @@ async def main():
         print("🧹 Fresh start requested: ignoring existing checkpoint.")
 
     completed_runs: Dict[str, Any] = checkpoint_data.get("completed_runs", {})
+    # Cells that already exhausted MAX_BACKFILL_ATTEMPTS in a previous process
+    # lifetime (this or an earlier run of this script) -- skipped outright
+    # instead of re-attempted, so a watchdog/deploy restart can never re-burn
+    # hours on a cell already known, from this same checkpoint, to be
+    # unwinnable right now. Cleared by --fresh, same as completed_runs.
+    permanently_failed: Dict[str, Any] = checkpoint_data.get("permanently_failed", {})
+    if permanently_failed:
+        print(f"⏭️  {len(permanently_failed)} cell(s) recorded as permanently failed, will be skipped: "
+              f"{', '.join(sorted(permanently_failed.keys()))}", flush=True)
     all_results: List[Dict[str, Any]] = []
 
     limits = httpx.Limits(max_keepalive_connections=5, max_connections=10, keepalive_expiry=30.0)
@@ -959,6 +1006,10 @@ async def main():
                         print(f"  • Condition: {cond_name:22} ... [RESUMED] Score: {cached['score']:.1f}/10 (Det: {cached['deterministic_score']:.1f}, Judge: {cached['judge_score']:.1f}) | {cached['total_time_s']}s | {cached['total_tokens']} tok", flush=True)
                         all_results.append(cached)
                         continue
+                    if run_key in permanently_failed:
+                        print(f"  • Condition: {cond_name:22} ... [SKIPPED] permanently failed as of "
+                              f"{permanently_failed[run_key].get('last_attempt_utc', '?')}", flush=True)
+                        continue
 
                     print(f"  • Condition: {cond_name:22} ... ", end="", flush=True)
                     res = await run_single_test_condition(client, tc, cond_name, target_cfg, round_num=r, run_id=run_id)
@@ -979,6 +1030,7 @@ async def main():
                 await _ensure_pair_coverage(
                     client, r, tc, conditions, completed_runs, all_results,
                     checkpoint_file, checkpoint_data, run_id, timestamp,
+                    permanently_failed,
                 )
 
     # ---------------------------------------------------------------------------
