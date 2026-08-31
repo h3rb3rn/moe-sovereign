@@ -311,7 +311,7 @@ CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD", 
 CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "8"))
 # Fallback delay (seconds) before the CC pre-analysis planner fires.
 # Overridden per-server via model_load_delay in Admin UI → Servers.
-CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
+CC_PREANALYSIS_DELAY_SECS = float(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 
 # Master kill-switch for the infrastructure-side "1M+ context" path on CC tool
 # requests: ChromaDB context indexing (Tier-3), Tier-2 semantic-memory injection
