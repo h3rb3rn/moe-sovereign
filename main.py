@@ -278,7 +278,7 @@ _TOOL_GROUP_RESEARCH = frozenset({
 _TOOL_GROUP_DATA = frozenset({
     "statistics_calc", "regex_extract", "json_query", "text_analyze",
     "hash_text", "base64_codec", "solve_equation", "gcd_lcm",
-    "prime_factorize", "roman_numeral", "subnet_calc", "day_of_week",
+    "prime_factorize", "roman_numeral", "subnet_calc", "vlsm_subnet_calc", "day_of_week",
 })
 # Legal: shown only for law/regulatory queries
 _TOOL_GROUP_LEGAL = frozenset({
@@ -850,6 +850,7 @@ async def _load_mcp_tool_descriptions():
             "  - base64_codec: Base64 encode/decode\n"
             "  - regex_extract: Regex pattern matching\n"
             "  - subnet_calc: IP/network calculations\n"
+            "  - vlsm_subnet_calc: VLSM allocation of multiple named subnets by host count\n"
             "  - text_analyze: Text metrics\n"
             "  - prime_factorize: Prime factorization\n"
             "  - gcd_lcm: GCD and LCM\n"
@@ -1889,6 +1890,8 @@ async def stream_response(user_input: str, chat_id: str, mode: str = "default",
     current_chat_id.set(chat_id)
     _deregistered = False
     config   = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    from services.langfuse_client import with_langfuse_callbacks
+    config   = with_langfuse_callbacks(config)
     created  = int(time.time())
     _t_start = time.monotonic()
 

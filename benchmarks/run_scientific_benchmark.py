@@ -181,6 +181,11 @@ async def query_moe_orchestrator(
         "model": template_name,
         "messages": messages,
         "stream": False,
+        # Bypass the Valkey planner/L0-LLM cache: without this, identical prompts
+        # across rounds/conditions silently reuse a previously cached plan instead
+        # of invoking the planner LLM fresh, which breaks round-to-round
+        # independence and can serve stale plans across a model config change.
+        "no_cache": True,
     }
     if session_id:
         payload["session_id"] = session_id

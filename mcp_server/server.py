@@ -1157,6 +1157,75 @@ def subnet_calc(cidr: str) -> str:
 
 
 @mcp.tool()
+def vlsm_subnet_calc(cidr: str, subnets: list[dict]) -> str:
+    """
+    Allocates Variable Length Subnet Masks (VLSM) for multiple named subnets
+    within one parent CIDR block, sized by required host count each.
+    subnets: list of {"id": <name>, "hosts": <required usable hosts>}.
+    Allocates largest subnets first (standard VLSM practice) to minimize
+    fragmentation, then reports each subnet in its original input order.
+    Example: vlsm_subnet_calc("10.180.0.0/19", [{"id": "A", "hosts": 2000},
+        {"id": "B", "hosts": 1000}, {"id": "C", "hosts": 250}])
+    """
+    try:
+        parent = ipaddress.ip_network(cidr, strict=False)
+        if parent.version != 4:
+            return "Error: VLSM allocation currently supports IPv4 only"
+        ordered = sorted(
+            enumerate(subnets),
+            key=lambda item: (-int(item[1]["hosts"]), item[0]),
+        )
+        next_addr = int(parent.network_address)
+        parent_end = int(parent.broadcast_address)
+        allocations: dict[int, dict] = {}
+        for orig_index, spec in ordered:
+            subnet_id = str(spec.get("id", orig_index))
+            hosts_needed = int(spec["hosts"])
+            needed = hosts_needed + 2  # network + broadcast address
+            prefix = 32
+            while prefix > 0 and (2 ** (32 - prefix)) < needed:
+                prefix -= 1
+            if prefix < parent.prefixlen:
+                return (
+                    f"Error: subnet '{subnet_id}' needs {hosts_needed} hosts — "
+                    f"no prefix fits within parent {cidr}"
+                )
+            block_size = 2 ** (32 - prefix)
+            aligned = -(-next_addr // block_size) * block_size
+            if aligned + block_size - 1 > parent_end:
+                return (
+                    f"Error: {cidr} is too small to also fit subnet '{subnet_id}' "
+                    f"({hosts_needed} hosts) after the previously allocated subnets"
+                )
+            sub_net = ipaddress.ip_network(
+                f"{ipaddress.ip_address(aligned)}/{prefix}", strict=True
+            )
+            host_list = list(sub_net.hosts())
+            allocations[orig_index] = {
+                "id": subnet_id,
+                "requested_hosts": hosts_needed,
+                "cidr": str(sub_net),
+                "netmask": str(sub_net.netmask),
+                "usable_hosts": len(host_list),
+                "first_host": str(host_list[0]) if host_list else "N/A",
+                "last_host": str(host_list[-1]) if host_list else "N/A",
+                "broadcast": str(sub_net.broadcast_address),
+            }
+            next_addr = aligned + block_size
+        lines = [f"VLSM allocation for {cidr}:"]
+        for i in range(len(subnets)):
+            a = allocations[i]
+            lines.append(
+                f"  {a['id']}: {a['cidr']} (mask {a['netmask']}) — "
+                f"{a['usable_hosts']} usable hosts (needed {a['requested_hosts']}), "
+                f"range {a['first_host']}–{a['last_host']}, broadcast {a['broadcast']}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
 def text_analyze(text: str) -> str:
     """
     Analyzes text for words, characters, sentences, paragraphs, reading time.
@@ -4619,6 +4688,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "base64_codec": base64_codec,
     "regex_extract": regex_extract,
     "subnet_calc": subnet_calc,
+    "vlsm_subnet_calc": vlsm_subnet_calc,
     "text_analyze": text_analyze,
     "prime_factorize": prime_factorize,
     "gcd_lcm": gcd_lcm,
@@ -4697,6 +4767,7 @@ _TOOL_DESCRIPTIONS = {
     "base64_codec": "Base64 encode/decode",
     "regex_extract": "Regex pattern matching and extraction",
     "subnet_calc": "IP/network calculations (CIDR, subnet mask, host range)",
+    "vlsm_subnet_calc": "VLSM allocation of multiple named subnets (by required host count) within one parent CIDR",
     "text_analyze": "Text metrics (words, characters, sentences, reading time)",
     "prime_factorize": "Prime factorization",
     "gcd_lcm": "GCD and LCM of two numbers",
@@ -4772,7 +4843,8 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "day_of_week": "read",
     "unit_convert": "read",
     "statistics_calc": "read", "hash_text": "read", "base64_codec": "read",
-    "regex_extract": "read", "subnet_calc": "read", "text_analyze": "read",
+    "regex_extract": "read", "subnet_calc": "read", "vlsm_subnet_calc": "read",
+    "text_analyze": "read",
     "prime_factorize": "read", "gcd_lcm": "read", "json_query": "read",
     "roman_numeral": "read",
     # Legal — internal DB lookups

@@ -42,6 +42,7 @@ from mcp_server.server import (
     hash_text,
     statistics_calc,
     subnet_calc,
+    vlsm_subnet_calc,
 )
 
 
@@ -495,3 +496,64 @@ def test_subnet_calc_invalid_cidr_returns_error():
 def test_subnet_calc_non_cidr_string_returns_error():
     result = subnet_calc("not-an-ip")
     assert result.startswith("Error") or result.startswith("Fehler")
+
+
+# ── vlsm_subnet_calc() ────────────────────────────────────────────────────────
+# Added after a live scientific-benchmark run showed the planner routing VLSM
+# ("split one CIDR into several named subnets by host count") to subnet_calc,
+# whose schema only accepts a single "cidr" — every such request failed with
+# `MCP contract drift for subnet_calc: pre_call_schema_invalid:args:additionalProperties`
+# (0 usable tokens, all three compound-AI conditions of that task discarded).
+
+
+def test_vlsm_subnet_calc_allocates_largest_first_textbook_case():
+    """10.180.0.0/19 split for A=2000, B=1000, C=250, D=250 hosts — the exact
+    request that failed live. Allocation order follows VLSM convention
+    (largest requirement first) regardless of input order."""
+    result = vlsm_subnet_calc(
+        "10.180.0.0/19",
+        [
+            {"id": "A", "hosts": 2000},
+            {"id": "B", "hosts": 1000},
+            {"id": "C", "hosts": 250},
+            {"id": "D", "hosts": 250},
+        ],
+    )
+    assert "A: 10.180.0.0/21" in result
+    assert "B: 10.180.8.0/22" in result
+    assert "C: 10.180.12.0/24" in result
+    assert "D: 10.180.13.0/24" in result
+    assert "2046 usable hosts (needed 2000)" in result
+    assert "254 usable hosts (needed 250)" in result
+
+
+def test_vlsm_subnet_calc_preserves_input_order_in_output():
+    """Allocation internally sorts largest-first, but the report must list
+    subnets in the order the caller supplied them."""
+    result = vlsm_subnet_calc(
+        "10.0.0.0/24",
+        [{"id": "small", "hosts": 10}, {"id": "big", "hosts": 100}],
+    )
+    assert result.index("small:") < result.index("big:")
+
+
+def test_vlsm_subnet_calc_parent_too_small_returns_error():
+    result = vlsm_subnet_calc(
+        "10.0.0.0/28",
+        [{"id": "A", "hosts": 100}],
+    )
+    assert result.startswith("Error")
+
+
+def test_vlsm_subnet_calc_second_subnet_does_not_fit_returns_error():
+    """First subnet fits; the parent has no room left for the second."""
+    result = vlsm_subnet_calc(
+        "10.0.0.0/24",
+        [{"id": "A", "hosts": 200}, {"id": "B", "hosts": 200}],
+    )
+    assert result.startswith("Error")
+
+
+def test_vlsm_subnet_calc_invalid_cidr_returns_error():
+    result = vlsm_subnet_calc("not-an-ip", [{"id": "A", "hosts": 10}])
+    assert result.startswith("Error")

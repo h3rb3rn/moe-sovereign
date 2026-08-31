@@ -260,6 +260,7 @@ async def planner_node(state_: AgentState):
         PlannerContractError as _PlannerContractError,
         PlannerContractIssue as _PlannerContractIssue,
         assign_stable_task_ids as _assign_stable_task_ids,
+        normalize_task_dependencies as _normalize_task_dependencies,
         canonical_tool_catalog_hash as _canonical_tool_catalog_hash,
         parse_plan as _parse_plan_contract,
         recover_explicit_supported_plan as _recover_explicit_supported_plan,
@@ -302,6 +303,12 @@ async def planner_node(state_: AgentState):
                 json.dumps(deterministic_repairs, ensure_ascii=False),
             )
         prepared = _assign_stable_task_ids(tasks)
+        prepared, _dep_repairs = _normalize_task_dependencies(prepared)
+        if _dep_repairs:
+            logger.info(
+                "Planner depends_on normalized: %s",
+                json.dumps(_dep_repairs, ensure_ascii=False),
+            )
         _validate_plan_or_raise(
             prepared,
             _handoff_tool_schemas,
@@ -955,7 +962,8 @@ VISION EXPERT — for image and document processing:
 RULES:
 - precision_tools has ABSOLUTE PRIORITY — NEVER use "math" or "technical_support" for calculations!
 - Legal questions → ALWAYS get legal_get_paragraph AND legal_advisor expert for interpretation
-- Subnet mask / IP / CIDR / gateway → ALWAYS subnet_calc, NEVER technical_support
+- Subnet mask / IP / CIDR / gateway for ONE network → ALWAYS subnet_calc, NEVER technical_support
+- VLSM: splitting ONE parent CIDR into MULTIPLE named subnets sized by required host counts → ALWAYS vlsm_subnet_calc with mcp_args {{"cidr": "...", "subnets": [{{"id": "...", "hosts": N}}, ...]}} — NEVER pass a "subnets" list to subnet_calc, it only accepts a single "cidr"
 - Regex extraction from text → ALWAYS regex_extract, NEVER technical_support
 - For implementations with domain-specific logic (games, algorithms, protocols): research task FIRST, then code tasks
 - Task descriptions for code experts MUST contain all known rules/specifications (logic, constraints, algorithm details) — experts only see their task description!
@@ -974,6 +982,12 @@ EXAMPLE subnet calculation:
 Request: "What subnet mask for 10.42.155.160/27 with 14 hosts?"
 Correct: [{{"task": "Subnet info for 10.42.155.160/27", "category": "precision_tools", "mcp_tool": "subnet_calc", "mcp_args": {{"cidr": "10.42.155.160/27"}}}}]
 WRONG:   [{{"task": "Calculate subnet mask", "category": "technical_support"}}]
+
+EXAMPLE VLSM (multiple named subnets from one parent block):
+Request: "Split 10.180.0.0/19 into subnets A(2000 hosts), B(1000 hosts), C(250 hosts)"
+Correct: [{{"task": "VLSM-allocate 10.180.0.0/19 for subnets A, B, C", "category": "precision_tools", "mcp_tool": "vlsm_subnet_calc", "mcp_args": {{"cidr": "10.180.0.0/19", "subnets": [{{"id": "A", "hosts": 2000}}, {{"id": "B", "hosts": 1000}}, {{"id": "C", "hosts": 250}}]}}}}]
+WRONG:   [{{"task": "...", "category": "precision_tools", "mcp_tool": "subnet_calc", "mcp_args": {{"cidr": "10.180.0.0/19", "subnets": [...]}}}}]
+← ERROR: subnet_calc's schema only accepts "cidr" — a "subnets" list is rejected (additionalProperties)
 
 EXAMPLE game implementation with domain logic:
 Request: "Create a Connect Four game as HTML5 page"
