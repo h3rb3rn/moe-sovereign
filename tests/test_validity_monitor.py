@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import pathlib
 from unittest.mock import patch
 
@@ -210,3 +211,49 @@ class TestCheckMemory:
             state = {"last_alert_ts": {}, "restart_counts": {}}
             findings = vm.check_memory(state)  # must not raise
         assert findings == []
+
+
+class TestLock:
+    """Found live 2026-09-01: under host swap pressure, a single pass's
+    sequential docker calls can outlast the 5-minute cron interval, and
+    without a guard the next cron tick starts a second overlapping instance
+    -- 12 consecutive ticks that night produced no log output at all."""
+
+    def test_acquires_when_no_lock_exists(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(vm, "LOCK_FILE", tmp_path / "monitor.lock")
+        assert vm._acquire_lock() is True
+        assert (tmp_path / "monitor.lock").read_text().strip() == str(os.getpid())
+
+    def test_refuses_when_another_instance_is_alive(self, tmp_path, monkeypatch):
+        lock = tmp_path / "monitor.lock"
+        monkeypatch.setattr(vm, "LOCK_FILE", lock)
+        lock.write_text("1")  # PID 1 (init) always exists and is never us
+        assert vm._acquire_lock() is False
+
+    def test_acquires_when_lock_is_stale(self, tmp_path, monkeypatch):
+        lock = tmp_path / "monitor.lock"
+        monkeypatch.setattr(vm, "LOCK_FILE", lock)
+        # A PID astronomically unlikely to be alive on this host.
+        lock.write_text("999999999")
+        assert vm._acquire_lock() is True
+        assert lock.read_text().strip() == str(os.getpid())
+
+    def test_acquires_when_lock_content_is_unparseable(self, tmp_path, monkeypatch):
+        lock = tmp_path / "monitor.lock"
+        monkeypatch.setattr(vm, "LOCK_FILE", lock)
+        lock.write_text("not-a-pid")
+        assert vm._acquire_lock() is True
+
+    def test_release_removes_own_lock(self, tmp_path, monkeypatch):
+        lock = tmp_path / "monitor.lock"
+        monkeypatch.setattr(vm, "LOCK_FILE", lock)
+        vm._acquire_lock()
+        vm._release_lock()
+        assert not lock.exists()
+
+    def test_release_does_not_remove_someone_elses_lock(self, tmp_path, monkeypatch):
+        lock = tmp_path / "monitor.lock"
+        monkeypatch.setattr(vm, "LOCK_FILE", lock)
+        lock.write_text("123456")  # not our PID
+        vm._release_lock()  # must not touch a lock it doesn't own
+        assert lock.exists()

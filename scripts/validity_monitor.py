@@ -65,6 +65,7 @@ DATA_DIR = BASE_DIR / "data"
 
 ALERT_LOG = Path(os.environ.get("VALIDITY_ALERT_LOG", DATA_DIR / "validity_monitor_alerts.jsonl"))
 STATE_FILE = Path(os.environ.get("VALIDITY_STATE_FILE", DATA_DIR / "validity_monitor_state.json"))
+LOCK_FILE = Path(os.environ.get("VALIDITY_LOCK_FILE", DATA_DIR / "validity_monitor.lock"))
 
 ALERT_COOLDOWN_S = int(os.environ.get("VALIDITY_ALERT_COOLDOWN_S", "3600"))
 LOG_LOOKBACK_S = int(os.environ.get("VALIDITY_LOG_LOOKBACK_S", "600"))
@@ -340,6 +341,44 @@ def run_once() -> list[dict[str, Any]]:
     return findings
 
 
+def _acquire_lock() -> bool:
+    """Best-effort single-instance guard so overlapping cron ticks never
+    stack up. Found live 2026-09-01: under heavy host swap pressure, a
+    single pass's sequential `docker logs`/`docker inspect` calls (each with
+    its own subprocess timeout) can outlast the 5-minute cron interval,
+    letting the next tick start before the previous one finished -- 12
+    consecutive ticks produced no log output at all that night, most likely
+    piled up behind each other instead of running one at a time. A stale
+    lock (recorded PID no longer alive) is treated as free, so a killed
+    process can never wedge this shut permanently."""
+    try:
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if LOCK_FILE.exists():
+            try:
+                old_pid = int(LOCK_FILE.read_text().strip())
+                os.kill(old_pid, 0)  # no exception => that PID is alive
+                return False  # another instance is genuinely still running
+            except ProcessLookupError:
+                pass  # PID no longer exists -- lock is stale, proceed
+            except PermissionError:
+                return False  # PID exists (owned by another user) -- still running
+            except (ValueError, OSError):
+                pass  # unparseable lock content -- treat as stale, proceed
+        LOCK_FILE.write_text(str(os.getpid()))
+        return True
+    except Exception as exc:
+        logger.debug("Lock acquisition failed (proceeding anyway): %s", exc)
+        return True
+
+
+def _release_lock() -> None:
+    try:
+        if LOCK_FILE.exists() and LOCK_FILE.read_text().strip() == str(os.getpid()):
+            LOCK_FILE.unlink()
+    except Exception as exc:
+        logger.debug("Lock release failed (next run's stale-PID check will clear it): %s", exc)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--loop", action="store_true", help="Run continuously instead of a single pass.")
@@ -355,17 +394,23 @@ def main() -> int:
             logger.info("OK -- no permission/health/disk issues detected.")
         return findings
 
-    if not args.loop:
-        _pass()
+    if not _acquire_lock():
+        logger.debug("Another validity_monitor instance is still running -- skipping this tick.")
         return 0
-
-    logger.info("Starting validity monitor loop (interval=%ds, alert log=%s)", args.interval, ALERT_LOG)
-    while True:
-        try:
+    try:
+        if not args.loop:
             _pass()
-        except Exception:
-            logger.exception("Unhandled error during a monitor pass -- continuing loop")
-        time.sleep(args.interval)
+            return 0
+
+        logger.info("Starting validity monitor loop (interval=%ds, alert log=%s)", args.interval, ALERT_LOG)
+        while True:
+            try:
+                _pass()
+            except Exception:
+                logger.exception("Unhandled error during a monitor pass -- continuing loop")
+            time.sleep(args.interval)
+    finally:
+        _release_lock()
 
 
 if __name__ == "__main__":
