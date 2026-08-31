@@ -12,6 +12,17 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The entire installer body lives inside this one function, called only on
+# the very last line of the file. `curl | bash` streams the download straight
+# into bash's parser as it arrives; without this wrapper, a connection that
+# drops partway through would let bash execute every top-level command it had
+# already parsed before hitting the cutoff — a truncated, partially-run
+# script. A function body has to be fully present (matching braces) before
+# bash will parse and run it at all, so a truncated download instead fails
+# to define the function (or the trailing call is simply never reached) and
+# nothing in it executes.
+moe_sovereign_install() {
+
 # --- Interactive-terminal detection ------------------------------------------
 # Every prompt below reads from /dev/tty explicitly (not stdin), because under
 # `curl | bash` stdin is the script itself, not the user's keyboard. That
@@ -2581,3 +2592,6 @@ echo "      Full firewall recipe (UFW / firewalld / iptables):"
 echo "      https://docs.moe-sovereign.org/deployment/firewall/"
 echo ""
 echo "=========================================================================="
+}
+
+moe_sovereign_install "$@"
