@@ -232,12 +232,13 @@ echo ""
 # their passwords into their data volumes on first init — regenerating .env
 # would lock every service out of its own data.
 #
-# Update mode runs 4 steps — git pull is FIRST so subsequent steps always
+# Update mode runs 5 steps — git pull is FIRST so subsequent steps always
 # work with the newest code and the newest .env.example:
 #   1. git pull                    (with dirty-tree guard and diverge recovery)
 #   2. .env migration              (add new keys from .env.example; skip secrets)
-#   3. Re-apply volume ownership   (fixes container UID mismatches)
-#   4. docker/podman compose build + up
+#   3. .env plausibility check     (self-heal blank non-secret keys; flag the rest)
+#   4. Re-apply volume ownership   (fixes container UID mismatches)
+#   5. docker/podman compose build + up
 # Use an array so "docker compose" is two words regardless of IFS=$'\n\t'.
 _upd_rt=()
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
@@ -319,6 +320,10 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     fi
   fi
   if [[ "${vol_count:-0}" -gt 0 ]]; then
+    # Run every remaining step from INSTALL_DIR — most operations below already
+    # use absolute paths, but compose itself needs its cwd to be the project
+    # directory. Doing this once, up front, means no step has to remember it.
+    cd "${INSTALL_DIR}"
 
     # ── Read current version before any changes ───────────────────────────────
     _upd_ver_before=""
@@ -392,7 +397,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       fi
 
       if [[ ${_skip_pull} -eq 0 ]]; then
-        echo "  [1/4] Pulling latest code..."
+        echo "  [1/5] Pulling latest code..."
         if ! git -C "${INSTALL_DIR}" pull --ff-only 2>&1; then
           # Fast-forward failed — branches may have diverged (e.g. force-push upstream)
           echo ""
@@ -429,12 +434,12 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         || git -C "${INSTALL_DIR}" log -1 --format='%h (%s)' 2>/dev/null \
         || echo "unknown")
       if [[ "${_upd_ver_before}" != "${_upd_ver_after}" ]]; then
-        echo "  [1/4] Code updated: ${_upd_ver_before} → ${_upd_ver_after} ✓"
+        echo "  [1/5] Code updated: ${_upd_ver_before} → ${_upd_ver_after} ✓"
       else
-        echo "  [1/4] Already at latest (${_upd_ver_after}) ✓"
+        echo "  [1/5] Already at latest (${_upd_ver_after}) ✓"
       fi
     else
-      echo "  [1/4] ${INSTALL_DIR} is not a git repo — skipping pull."
+      echo "  [1/5] ${INSTALL_DIR} is not a git repo — skipping pull."
       _upd_ver_after="${_upd_ver_before:-unknown}"
     fi
 
@@ -483,12 +488,82 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       done < "${_env_example}"
     fi
     if [[ ${_migrated} -gt 0 ]]; then
-      echo "  [2/4] .env migrated — ${_migrated} new key(s) added ✓"
+      echo "  [2/5] .env migrated — ${_migrated} new key(s) added ✓"
     else
-      echo "  [2/4] .env up to date ✓"
+      echo "  [2/5] .env up to date ✓"
     fi
 
-    # ── STEP 3: Re-apply container UID ownership ──────────────────────────────
+    # ── STEP 3: .env plausibility check ───────────────────────────────────────
+    # A blank value for a key is either (a) a credential the admin hasn't set
+    # yet — expected, nothing to do — or (b) a non-secret config key that
+    # ended up empty by accident (stale migration bug, manual edit gone
+    # wrong, ...). For (b) we self-heal from .env.example's own default,
+    # since that's exactly what Phase B above would have written had the key
+    # not already existed. We also catch the case where a key holds a value
+    # that doesn't parse where .env.example's default is a plain integer —
+    # that can't be auto-corrected (we don't know the intended number), so
+    # it's reported instead. Duplicate "${_ekey}=" lines (an artifact of
+    # earlier buggy runs appending a second, blank copy of a key that
+    # already existed) are collapsed into a single correct line; compose
+    # itself would otherwise silently use whichever duplicate comes last.
+    _plaus_fixed=0
+    _plaus_manual=()
+    if [[ -f "${_env_example}" ]]; then
+      while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${_line// }"            ]] && continue
+        _ekey="${_line%%=*}"
+        [[ -z "$_ekey"                 ]] && continue
+        _exval="${_line#*=}"
+        _dup_count="$(grep -cE "^${_ekey}=" "${MOE_ENV_FILE}" 2>/dev/null || echo 0)"
+        # Last *non-empty* occurrence wins here, not simply the last line: a
+        # stray blank duplicate appended after a real, user-customized value
+        # must not make us throw that value away in favor of the generic
+        # .env.example default. (Compose itself has no such preference — it
+        # always takes the literal last line — which is exactly why any
+        # duplicate at all needs collapsing below.)
+        _curval="$(awk -F= -v k="${_ekey}" \
+          'index($0, k "=") == 1 { v2 = substr($0, length(k) + 2); if (v2 != "") v = v2 } END { print v }' \
+          "${MOE_ENV_FILE}" 2>/dev/null)"
+
+        _newval=""; _reason=""
+        if [[ -z "${_curval}" ]]; then
+          # Credentials are meant to stay empty until the admin sets them —
+          # already communicated by Phase B, nothing more to check here.
+          echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|_PASS$|_KEY$|PRIVATE)' && continue
+          [[ -z "${_exval}" ]] && continue   # .env.example is blank too — intentionally optional
+          _newval="${_exval}"; _reason="was empty — restored default"
+        elif [[ "${_dup_count}" -gt 1 ]]; then
+          _newval="${_curval}"; _reason="had duplicate lines — collapsed to"
+        fi
+
+        if [[ -n "${_newval}" ]]; then
+          grep -vE "^${_ekey}=" "${MOE_ENV_FILE}" > "${MOE_ENV_FILE}.tmp"
+          printf '%s=%s\n' "${_ekey}" "${_newval}" >> "${MOE_ENV_FILE}.tmp"
+          mv "${MOE_ENV_FILE}.tmp" "${MOE_ENV_FILE}"
+          echo "  [plausibility-fix] ${_ekey} ${_reason} '${_newval}'"
+          (( _plaus_fixed++ )) || true
+        elif [[ "${_exval}" =~ ^-?[0-9]+$ ]] && ! [[ "${_curval}" =~ ^-?[0-9]+$ ]]; then
+          _plaus_manual+=("${_ekey}=${_curval}  (expected a whole number, e.g. ${_exval})")
+        fi
+      done < "${_env_example}"
+    fi
+    if [[ ${#_plaus_manual[@]} -gt 0 ]]; then
+      echo ""
+      echo "  [!] .env plausibility check found value(s) that need a human to fix:"
+      for _pm in "${_plaus_manual[@]}"; do
+        echo "      - ${_pm}"
+      done
+      echo "      Edit ${MOE_ENV_FILE}, then re-run: sudo ${_upd_rt[*]} up -d"
+      echo ""
+    fi
+    if [[ ${_plaus_fixed} -gt 0 ]]; then
+      echo "  [3/5] .env plausibility check — ${_plaus_fixed} value(s) restored ✓"
+    else
+      echo "  [3/5] .env plausibility check — no issues found ✓"
+    fi
+
+    # ── STEP 4: Re-apply container UID ownership ──────────────────────────────
     _sudo mkdir -p \
       "${_upd_data}/kafka-data"        "${_upd_data}/neo4j-data"     \
       "${_upd_data}/neo4j-logs"        "${_upd_data}/agent-logs"     \
@@ -540,11 +615,12 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     _upd_chown 1001 0      "${_upd_data}/checkpoint-archives"
     _upd_chown 472  472    "${_upd_graf}/data" "${_upd_graf}/dashboards"
 
-    echo "  [3/4] Volume permissions reset ✓"
+    echo "  [4/5] Volume permissions reset ✓"
 
-    # ── STEP 4: Rebuild and restart containers ────────────────────────────────
-    echo "  [4/4] Rebuilding containers..."
-    cd "${INSTALL_DIR}"
+    # ── STEP 5: Rebuild and restart containers ────────────────────────────────
+    # (already running from INSTALL_DIR — cd'd there as soon as the update was
+    # confirmed, see top of this block)
+    echo "  [5/5] Rebuilding containers..."
     _upd_group=""; [[ "${_upd_rt[0]}" == "docker" ]] && _upd_group="docker"
     _upd_q="";    [[ "${_upd_rt[0]}" == "docker" ]] && _upd_q="--quiet"
     # Read active compose profiles from .env so optional services (caddy, neo4j,
@@ -561,7 +637,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     # is removed cleanly before the new image is started.
     # Docker handles recreation in-place; the extra down is a no-op there.
     if [[ "${_upd_rt[0]}" == podman* ]]; then
-      echo "  [4/4] Stopping existing containers (Podman)..."
+      echo "  [5/5] Stopping existing containers (Podman)..."
       "${_upd_rt[@]}" "${_upd_profiles[@]}" down 2>/dev/null || true
 
       # After compose down, bind-mount data directories may be owned by UIDs
@@ -1129,6 +1205,11 @@ _sudo mkdir -p \
 
 # INSTALL_DIR is owned by the deploy user so git clone and .env writes work without sudo.
 _sudo chown "$DEPLOY_USER":"$DEPLOY_USER" "${INSTALL_DIR}"
+
+# Run every remaining step from INSTALL_DIR — most operations below already
+# use absolute paths, but compose itself needs its cwd to be the project
+# directory. Doing this once, up front, means no step has to remember it.
+cd "${INSTALL_DIR}"
 
 # Files that must exist as regular files (not directories) before the container
 # runtime mounts them.  Create them owned by the deploy user so rootless
@@ -2185,8 +2266,6 @@ echo "  Configuration written ✓"
 echo "[8/9] Building and starting MoE Sovereign..."
 echo "  This may take several minutes on first run (image pulls + builds)."
 echo ""
-
-cd "${INSTALL_DIR}"
 
 # Generate garage.toml if it does not exist yet.
 # Garage requires a static config file mounted at /etc/garage.toml:ro.
