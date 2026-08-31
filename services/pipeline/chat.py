@@ -1592,6 +1592,20 @@ async def _handle_tool_calls(
     )
 
 
+def _build_diagnostic_metadata(result: dict) -> dict:
+    """Additive, non-standard response metadata for benchmarking/observability.
+
+    Callers must merge this via resp.setdefault("metadata", {}).update(...),
+    never a direct assignment, so it can never clobber the "sources" or
+    "candidate" metadata keys set elsewhere in chat_completions().
+    """
+    return {
+        "self_critique_round": int(result.get("self_critique_round") or 0),
+        "trust_score": result.get("trust_score"),
+        "trust_verdict": result.get("trust_verdict") or None,
+    }
+
+
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     # The non-streaming orchestration timeout is an end-to-end request budget,
     # including auth, template resolution and dynamic routing before LangGraph.
@@ -3231,6 +3245,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             "status": "degraded",
             "reason": result.get("candidate_reason", ""),
         }
+    # Additive, non-standard diagnostic metadata for benchmarking/observability
+    # (self-critique round count, trust score/verdict). Merged via update() so
+    # it can never clobber the sources/candidate keys set above.
+    resp.setdefault("metadata", {}).update(_build_diagnostic_metadata(result))
     await _ol_complete(_ol_run_id, job_name="chat_completion",
                        outputs=[dataset_response(chat_id)])
     if _moe_resp_headers:
