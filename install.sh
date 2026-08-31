@@ -554,7 +554,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         fi
 
         if [[ -n "${_newval}" ]]; then
-          grep -vE "^${_ekey}=" "${MOE_ENV_FILE}" > "${MOE_ENV_FILE}.tmp"
+          grep -vE "^${_ekey}=" "${MOE_ENV_FILE}" > "${MOE_ENV_FILE}.tmp" || true
           printf '%s=%s\n' "${_ekey}" "${_newval}" >> "${MOE_ENV_FILE}.tmp"
           mv "${MOE_ENV_FILE}.tmp" "${MOE_ENV_FILE}"
           echo "  [plausibility-fix] ${_ekey} ${_reason} '${_newval}'"
@@ -575,7 +575,14 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
     if [[ -f "${_config_py}" ]]; then
       while IFS= read -r _ikey; do
         [[ -z "${_ikey}" ]] && continue
-        _curval="$(grep -E "^${_ikey}=" "${MOE_ENV_FILE}" 2>/dev/null | tail -1 | cut -d= -f2-)"
+        # awk, not grep|tail|cut: under `set -o pipefail`, a grep that matches
+        # nothing (any key config.py references but .env doesn't define yet)
+        # makes the whole pipeline's exit status non-zero, and `set -e` kills
+        # the script right here with no error message — awk's END block
+        # always runs and exits 0, match or no match.
+        _curval="$(awk -F= -v k="${_ikey}" \
+          'index($0, k "=") == 1 { v2 = substr($0, length(k) + 2); if (v2 != "") v = v2 } END { print v }' \
+          "${MOE_ENV_FILE}" 2>/dev/null)"
         [[ -z "${_curval}" ]] && continue                      # blank — already handled above
         [[ "${_curval}" =~ ^-?[0-9]+$ ]] && continue            # already a valid integer
         printf '%s\n' "${_plaus_manual[@]+"${_plaus_manual[@]}"}" | grep -qF "${_ikey}=" && continue  # already flagged above
