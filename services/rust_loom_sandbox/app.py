@@ -48,7 +48,8 @@ app = FastAPI(title="rust-loom-sandbox")
 # the same host-RAM-headroom reason.
 _RUN_SEMAPHORE = asyncio.Semaphore(1)
 
-_RUN_TIMEOUT_S = float(os.environ.get("RUST_LOOM_TIMEOUT_S", "45.0"))
+_RUN_TIMEOUT_S = float(os.environ.get("RUST_LOOM_TIMEOUT_S", "180.0"))  # PoC hardware, not enterprise -- Loom's
+                                                                         # state-space exploration needs headroom
 _MAX_SOURCE_BYTES = 200_000
 _SCAFFOLD_DIR = "/app/scaffold"
 _BUILD_ROOT = "/build"

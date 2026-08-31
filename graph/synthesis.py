@@ -123,7 +123,7 @@ from episodic_memory import log_episode
 
 _RUST_CODE_FENCE_RE = re.compile(r"```rust\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 _RUST_COMPILE_CHECK_CATEGORIES = {"systems_programming", "code_reviewer"}
-_RUST_COMPILE_CHECK_TIMEOUT_S = 20.0
+_RUST_COMPILE_CHECK_TIMEOUT_S = 60.0  # PoC hardware -- above mcp_server's own _RUST_COMPILE_HTTP_TIMEOUT_S (45s)
 
 # Loom (Phase 2) only makes sense for a response that is *already written*
 # as a loom-model test (a `#[test] fn` calling `loom::model(...)` against
@@ -136,7 +136,7 @@ _RUST_COMPILE_CHECK_TIMEOUT_S = 20.0
 # demonstrates concurrency verification, not on every concurrent-looking fence.
 _RUST_LOOM_CHECK_CATEGORIES = {"systems_programming"}
 _RUST_LOOM_MARKER_RE = re.compile(r"\bloom::")
-_RUST_LOOM_CHECK_TIMEOUT_S = 60.0
+_RUST_LOOM_CHECK_TIMEOUT_S = 280.0  # PoC hardware -- above mcp_server's own _RUST_LOOM_HTTP_TIMEOUT_S (240s)
 
 # Raw material for a future LUMI-G SFT/DPO pass on Candidate 1 (acquire-
 # release memory-ordering reasoning, docs/experiments/

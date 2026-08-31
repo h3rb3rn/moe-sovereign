@@ -32,7 +32,7 @@ app = FastAPI(title="rust-compile-sandbox")
 # intent even though each individually stays under it.
 _COMPILE_SEMAPHORE = asyncio.Semaphore(1)
 
-_COMPILE_TIMEOUT_S = 10.0
+_COMPILE_TIMEOUT_S = 30.0  # PoC hardware, not enterprise -- this host is often under concurrent load
 _MAX_SOURCE_BYTES = 200_000
 _SCRATCH_ROOT = "/tmp/rust-compile-sandbox"
 _ALLOWED_EDITIONS = {"2015", "2018", "2021", "2024"}

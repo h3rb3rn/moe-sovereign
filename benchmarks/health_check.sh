@@ -22,7 +22,10 @@ ALERT_LOG="$RESULTS_DIR/overnight_alert.log"
 CHECK_INTERVAL="${MOE_HEALTH_INTERVAL:-300}"     # 5 min
 WINDOW=10                                        # look at the last N results for invalid-rate
 INVALID_RATE_THRESHOLD=0.7                       # alert if >70% of the last WINDOW are invalid
-STALE_HEARTBEAT_ALERT_S=1800                     # 30 min with no heartbeat AND no watchdog recovery
+STALE_HEARTBEAT_ALERT_S="${MOE_HEALTH_STALE_S:-9000}"  # 2.5h: PoC hardware -- kept above watchdog.sh's own
+                                                        # STALE_HEARTBEAT_SECONDS (7200s) so this only fires when
+                                                        # the watchdog itself has failed to recover, not as a
+                                                        # duplicate of its own restart threshold
 
 ALERT_COOLDOWN_S=3600   # don't re-fire the same alert type more than once per hour
 declare -A _last_alert_ts

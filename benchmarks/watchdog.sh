@@ -17,7 +17,10 @@ RESTART_COUNT=0
 
 _log() { echo "[$(date '+%H:%M:%S')] [watchdog] $*" | tee -a "$WATCHDOG_LOG"; }
 
-STALE_HEARTBEAT_SECONDS="${MOE_WATCHDOG_STALE_SECONDS:-2400}"  # 40min: above every observed real single-call duration
+STALE_HEARTBEAT_SECONDS="${MOE_WATCHDOG_STALE_SECONDS:-7200}"  # 2h: PoC hardware, not enterprise -- single compound-AI
+                                                                # calls have been observed taking up to ~78min (4689s)
+                                                                # on this hardware; 2400s (40min) caused repeated
+                                                                # false-positive restarts mid-request (2026-08-31)
 
 _bench_pid() {
     # Never returns non-zero: under `set -e`, a bare `[[ cond ]] || return 1`
