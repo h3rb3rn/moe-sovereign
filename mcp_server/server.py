@@ -999,6 +999,59 @@ async def rust_compile_check(source: str, edition: str = "2021") -> str:
     return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+_RUST_LOOM_SANDBOX_URL = os.getenv(
+    "RUST_LOOM_SANDBOX_URL", "http://rust-loom-sandbox:8080"
+)
+_RUST_LOOM_MAX_SOURCE_CHARS = 200_000
+_RUST_LOOM_HTTP_TIMEOUT_S = 60.0
+
+
+@mcp.tool()
+async def rust_loom_check(source: str, edition: str = "2021") -> str:
+    """Model-check concurrent Rust source for memory-ordering bugs (data
+    races) using Loom, in an isolated sandbox that actually executes the
+    submitted code (unlike rust_compile_check, which never executes
+    anything).
+
+    A data race from incorrect atomic/lock ordering compiles cleanly -- it
+    is not a compile error, only a real concurrency-model checker can catch
+    it. `source` must be valid content for a Cargo lib.rs containing a
+    `#[test] fn ...` that calls `loom::model(|| { ... })`; only use this for
+    code that already passed rust_compile_check and involves shared-state
+    concurrency (Arc/Mutex/atomics/threads).
+    """
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source_must_be_non_empty_string")
+    if len(source) > _RUST_LOOM_MAX_SOURCE_CHARS:
+        raise ValueError("source_exceeds_size_limit")
+    if edition not in {"2021"}:
+        raise ValueError("unsupported_edition")
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_LOOM_HTTP_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{_RUST_LOOM_SANDBOX_URL}/loom-check",
+                json={"source": source, "edition": edition},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        logger.warning(f"rust_loom_check sandbox call failed: {exc}")
+        return json.dumps(
+            {"compiles": None, "passed": None, "output_tail": "", "duration_ms": 0,
+             "timed_out": False, "sandbox_error": str(exc)[:300]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+    facts = {
+        "compiles": result.get("compiles"),
+        "passed": result.get("passed"),
+        "output_tail": (result.get("output_tail") or "")[:4000],
+        "duration_ms": result.get("duration_ms"),
+        "timed_out": result.get("timed_out", False),
+        "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 @mcp.tool()
 def day_of_week(date_str: str) -> str:
     """
@@ -4681,6 +4734,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "exact_probability": exact_probability,
     "structured_validate": structured_validate,
     "rust_compile_check": rust_compile_check,
+    "rust_loom_check": rust_loom_check,
     "day_of_week": day_of_week,
     "unit_convert": unit_convert,
     "statistics_calc": statistics_calc,
@@ -4760,6 +4814,7 @@ _TOOL_DESCRIPTIONS = {
     "exact_probability": "Exact bounded rational probability and combinatorics with optional Decimal projection",
     "structured_validate": "Network-free bounded JSON, YAML, XML and CSV parser/validator",
     "rust_compile_check": "Type/borrow-check Rust source in an isolated, network-free sandbox (analysis only, never executes the code)",
+    "rust_loom_check": "Model-check concurrent Rust source for data races via Loom in an isolated, network-free sandbox (executes the submitted test)",
     "day_of_week": "Weekday, calendar week, day of year for a date",
     "unit_convert": "Physical unit conversion (km/h→m/s, °F→°C, etc.)",
     "statistics_calc": "Statistical measures for data sets (mean, median, stdev, etc.)",
@@ -4870,6 +4925,7 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     # Code execution / local computation
     "python_sandbox": "execute",
     "rust_compile_check": "execute",
+    "rust_loom_check": "execute",
     "grid_repr":      "read",
     # Chess — chess_analyze_position calls the external Lichess cloud-eval API;
     # chess_legal_moves is local python-chess computation
@@ -5113,6 +5169,22 @@ _RUST_COMPILE_CHECK_OUTPUT_SCHEMA: Dict[str, Any] = {
         "sandbox_error": {"type": "string"},
     },
     "required": ["compiles", "diagnostics"],
+    "additionalProperties": False,
+}
+
+
+_RUST_LOOM_CHECK_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "compiles": {"type": ["boolean", "null"]},
+        "passed": {"type": ["boolean", "null"]},
+        "output_tail": {"type": "string", "maxLength": 4000},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "timed_out": {"type": "boolean"},
+        "source_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "sandbox_error": {"type": "string"},
+    },
+    "required": ["compiles", "passed", "output_tail"],
     "additionalProperties": False,
 }
 
@@ -5377,6 +5449,31 @@ _TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
             "compile_timeout_s": _RUST_COMPILE_HTTP_TIMEOUT_S,
         },
     },
+    "rust_loom_check": {
+        "contract_id": "moe.precision.rust_loom_check",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "pinned_toolchain", "name": "rustc 1.98 + loom=0.7.2 (rust:1-slim image digest)"},
+        "evidence_policy": {
+            "redact_input_fields": ["source"],
+            "replacement": "sha256_and_utf8_bytes",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "minLength": 1, "maxLength": _RUST_LOOM_MAX_SOURCE_CHARS},
+                "edition": {"type": "string", "enum": ["2021"], "default": "2021"},
+            },
+            "required": ["source"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _RUST_LOOM_CHECK_OUTPUT_SCHEMA,
+        "limits": {
+            "max_result_chars": 32768,
+            "max_source_chars": _RUST_LOOM_MAX_SOURCE_CHARS,
+            "compile_timeout_s": _RUST_LOOM_HTTP_TIMEOUT_S,
+        },
+    },
     "gcd_lcm": {
         "contract_id": "moe.precision.gcd_lcm",
         "contract_version": "1.0.0",
@@ -5568,7 +5665,7 @@ def _structured_facts(name: str, args: Dict[str, Any], result: str) -> Dict[str,
     if name in {
         "calendar_facts", "time_facts", "timezone_convert",
         "decimal_finance", "exact_probability", "structured_validate",
-        "rust_compile_check",
+        "rust_compile_check", "rust_loom_check",
     }:
         facts = json.loads(result)
         if not isinstance(facts, dict):

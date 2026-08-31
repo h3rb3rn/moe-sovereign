@@ -109,9 +109,11 @@ services:
       - NEO4J_PASS=${NEO4J_PASS}
       - ORCHESTRATOR_URL=http://langgraph-orchestrator:8000
       - RUST_COMPILE_SANDBOX_URL=http://rust-compile-sandbox:8080
+      - RUST_LOOM_SANDBOX_URL=http://rust-loom-sandbox:8080
     networks:
       - default                  # internet egress for its own tools (Wikipedia, PubMed, etc.)
       - rust_compile_internal    # reach rust-compile-sandbox on its egress-blocked network
+      - rust_loom_internal       # reach rust-loom-sandbox on its egress-blocked network
 
   # Isolated, egress-blocked Rust type/borrow-check sandbox for the
   # rust_compile_check precision tool -- compiles untrusted, model-generated
@@ -146,6 +148,51 @@ services:
         limits:
           cpus: '1'
           memory: 512M
+
+  # Phase 2 of the Rust code-quality-in-the-loop feature: unlike
+  # rust-compile-sandbox (type/borrow-check only, never executes), this
+  # container actually RUNS the submitted code under Loom's concurrency
+  # model checker, which is the only way to catch a memory-ordering data
+  # race -- that class of bug still compiles cleanly (see docs/experiments/
+  # lumig_posttraining_candidates.md). Kept as its own container and network
+  # (not an extension of rust-compile-sandbox) specifically so a bug in this
+  # new, higher-risk execution path can never compromise the already-proven
+  # compile-only checker the rest of the system depends on.
+  rust-loom-sandbox:
+    build:
+      context: .
+      dockerfile: services/rust_loom_sandbox/Dockerfile
+    container_name: rust-loom-sandbox
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Unlike rust-compile-sandbox's tmpfs, this one must allow exec: Loom
+      # has to actually run the compiled test binary to explore interleavings,
+      # not just type-check it. size is generous because a `cargo test
+      # --release` build of even a tiny crate against the pre-cached loom
+      # dependency still produces a non-trivial target/ directory per request.
+      - /build:exec,nosuid,size=1024m
+    # No .env, no network egress: identical isolation posture to
+    # rust-compile-sandbox, just with an exec-capable scratch dir instead of
+    # a noexec one.
+    networks:
+      - rust_loom_internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+          pids: 128
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
@@ -958,5 +1005,12 @@ networks:
     # the gateway, so a compiler invocation on untrusted, model-generated
     # source can never reach the internet. Only mcp-precision (also attached
     # here) can reach it, by its `rust-compile-sandbox` DNS name.
+    internal: true
+    driver: bridge
+  rust_loom_internal:
+    # Egress-blocked network for rust-loom-sandbox, same rationale as
+    # rust_compile_internal above -- this one matters even more, since this
+    # container actually executes the submitted code instead of only
+    # type-checking it.
     internal: true
     driver: bridge

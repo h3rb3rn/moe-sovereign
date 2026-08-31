@@ -125,6 +125,19 @@ _RUST_CODE_FENCE_RE = re.compile(r"```rust\s*\n(.*?)\n```", re.DOTALL | re.IGNOR
 _RUST_COMPILE_CHECK_CATEGORIES = {"systems_programming", "code_reviewer"}
 _RUST_COMPILE_CHECK_TIMEOUT_S = 20.0
 
+# Loom (Phase 2) only makes sense for a response that is *already written*
+# as a loom-model test (a `#[test] fn` calling `loom::model(...)` against
+# loom's own Arc/Mutex/Atomic/thread shims) -- rust_compile_check's plain
+# "does it compile" fence can be arbitrary code, but feeding that same
+# arbitrary code straight into the loom sandbox would almost always fail to
+# compile there (no loom imports, no loom::model call) and generate a
+# meaningless "fix these errors" retry prompt. Gating on the literal `loom::`
+# marker means this only activates when the expert/merger response already
+# demonstrates concurrency verification, not on every concurrent-looking fence.
+_RUST_LOOM_CHECK_CATEGORIES = {"systems_programming"}
+_RUST_LOOM_MARKER_RE = re.compile(r"\bloom::")
+_RUST_LOOM_CHECK_TIMEOUT_S = 60.0
+
 
 async def _call_rust_compile_check(source: str) -> dict:
     """Call the rust_compile_check MCP precision tool directly via HTTP,
@@ -150,6 +163,33 @@ async def _call_rust_compile_check(source: str) -> dict:
     except Exception as exc:
         logger.debug("rust_compile_check call failed (fail-open): %s", exc)
         return {"compiles": None}
+
+
+async def _call_rust_loom_check(source: str) -> dict:
+    """Call the rust_loom_check MCP precision tool directly via HTTP, same
+    bypass pattern as _call_rust_compile_check above. Fail-open: any
+    sandbox/transport error (including the sandbox being stopped entirely)
+    returns compiles=None/passed=None rather than raising -- like the
+    compile check, this is a quality improvement on top of an already-passed
+    compile check, not a hard gate.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_LOOM_CHECK_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{MCP_URL}/invoke",
+                json={"tool": "rust_loom_check", "args": {"source": source}},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        result_str = payload.get("result") if isinstance(payload, dict) else None
+        if not result_str:
+            return {"compiles": None, "passed": None}
+        return json.loads(result_str)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug("rust_loom_check call failed (fail-open): %s", exc)
+        return {"compiles": None, "passed": None}
 
 
 async def merger_node(state_: AgentState):
@@ -1129,6 +1169,33 @@ async def merger_node(state_: AgentState):
                         # Attempts exhausted -- fall through and keep the last
                         # (non-compiling) result, same policy as the
                         # plausibility check below.
+                    elif (
+                        _code_categories_present & _RUST_LOOM_CHECK_CATEGORIES
+                        and _RUST_LOOM_MARKER_RE.search(_rust_match.group(1))
+                    ):
+                        # Compiled cleanly and is already written as a loom
+                        # test -- actually run it to catch a memory-ordering
+                        # data race, which compiling alone cannot (see
+                        # docs/experiments/lumig_posttraining_candidates.md).
+                        _loom_result = await _call_rust_loom_check(_rust_match.group(1))
+                        if _loom_result.get("passed") is False:
+                            logger.warning(
+                                "Merger synthesis attempt %d/%d: loom found a concurrency violation:\n%s",
+                                _sf_attempt + 1, _structured_attempts,
+                                (_loom_result.get("output_tail") or "")[-1500:],
+                            )
+                            _last_judge_error = RuntimeError("rust_loom_check: concurrency violation found")
+                            if _sf_attempt + 1 < _structured_attempts:
+                                _current_prompt = (
+                                    prompt
+                                    + "\n\nYour previous answer's Rust code compiles but Loom found a "
+                                    "concurrency/memory-ordering violation when actually running it. "
+                                    "Fix the synchronization and provide a corrected, complete answer:\n"
+                                    + (_loom_result.get("output_tail") or "")[-1500:]
+                                )
+                                continue
+                            # Attempts exhausted -- fall through and keep the
+                            # last (loom-failing) result, same policy as above.
                 break
             logger.warning(
                 "Merger synthesis attempt %d/%d failed plausibility check: %s",
