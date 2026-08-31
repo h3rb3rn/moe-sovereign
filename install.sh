@@ -474,7 +474,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         _ekey="${_line%%=*}"
         [[ -z "$_ekey"                 ]] && continue
         if ! grep -qE "^${_ekey}=" "${MOE_ENV_FILE}" 2>/dev/null; then
-          if echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|TOKEN|_PASS$|_KEY$|PRIVATE)'; then
+          if echo "$_ekey" | grep -qiE '(PASSWORD|SECRET|_PASS$|_KEY$|PRIVATE)'; then
             # Credential — leave empty; admin must set manually if needed
             printf '%s=\n' "${_ekey}" >> "${MOE_ENV_FILE}"
             echo "  [migrate] ${_ekey}= (credential — set manually if needed)"
