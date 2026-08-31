@@ -138,6 +138,53 @@ _RUST_LOOM_CHECK_CATEGORIES = {"systems_programming"}
 _RUST_LOOM_MARKER_RE = re.compile(r"\bloom::")
 _RUST_LOOM_CHECK_TIMEOUT_S = 60.0
 
+# Raw material for a future LUMI-G SFT/DPO pass on Candidate 1 (acquire-
+# release memory-ordering reasoning, docs/experiments/
+# lumig_posttraining_candidates.md) -- that document's own recommendation is
+# a compiler/sanitizer-verified reward signal instead of pure LLM-judge
+# feedback, which rust_loom_check now provides live. Written under data/
+# (bind-mounted, ./data:/app/data:rw in docker-compose.yml) rather than
+# docs/ or any other image-baked path, so entries survive a langgraph-app
+# rebuild instead of vanishing with the old container layer.
+_LOOM_TRAINING_EXAMPLES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "loom_training_examples.jsonl"
+)
+
+
+def _record_loom_training_example(
+    request_id: str, source: str, loom_result: dict, attempt: int, max_attempts: int,
+) -> None:
+    """Best-effort, append-only collection of real rust_loom_check outcomes.
+
+    Only records a determinate verdict (compiles is not None, not timed out)
+    -- a sandbox-unreachable/timeout result carries no training signal.
+    `request_id` lets a later curation pass group every attempt for the same
+    response and derive a (rejected, chosen) pair from a failing attempt
+    followed by the eventually-accepted corrected one. Never raises: this is
+    data collection, not a control path, and must never affect the actual
+    merger retry logic it sits alongside.
+    """
+    if loom_result.get("compiles") is None or loom_result.get("timed_out"):
+        return
+    try:
+        from datetime import datetime, timezone
+        record = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "request_id": request_id,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "source": source,
+            "compiles": loom_result.get("compiles"),
+            "passed": loom_result.get("passed"),
+            "output_tail": (loom_result.get("output_tail") or "")[-2000:],
+            "duration_ms": loom_result.get("duration_ms"),
+        }
+        os.makedirs(os.path.dirname(_LOOM_TRAINING_EXAMPLES_FILE), exist_ok=True)
+        with open(_LOOM_TRAINING_EXAMPLES_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.debug("Failed recording loom training example (non-fatal): %s", exc)
+
 
 async def _call_rust_compile_check(source: str) -> dict:
     """Call the rust_compile_check MCP precision tool directly via HTTP,
@@ -1178,6 +1225,10 @@ async def merger_node(state_: AgentState):
                         # data race, which compiling alone cannot (see
                         # docs/experiments/lumig_posttraining_candidates.md).
                         _loom_result = await _call_rust_loom_check(_rust_match.group(1))
+                        _record_loom_training_example(
+                            state_.get("response_id", ""), _rust_match.group(1),
+                            _loom_result, _sf_attempt + 1, _structured_attempts,
+                        )
                         if _loom_result.get("passed") is False:
                             logger.warning(
                                 "Merger synthesis attempt %d/%d: loom found a concurrency violation:\n%s",
