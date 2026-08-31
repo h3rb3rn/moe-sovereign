@@ -22,6 +22,10 @@ and get noticed late:
      "looping right now".
   3. Low local disk space on this deployment host, where Postgres/Valkey/
      Neo4j/Chroma/Kafka's bind-mounted volumes actually live.
+  4. Host RAM/swap pressure: found live 2026-08-31 with swap at 100% and
+     ~591MB RAM free on a 35GB shared host, with no OOM-kill yet -- a silent
+     precursor to one, showing up here before any single container's own
+     cgroup memory limit would trip.
 
 Escalation: a structured JSONL alert log (VALIDITY_ALERT_LOG) plus a stderr
 line, with a per-alert-key cooldown persisted to a state file (VALIDITY_STATE_FILE)
@@ -66,6 +70,13 @@ ALERT_COOLDOWN_S = int(os.environ.get("VALIDITY_ALERT_COOLDOWN_S", "3600"))
 LOG_LOOKBACK_S = int(os.environ.get("VALIDITY_LOG_LOOKBACK_S", "600"))
 DISK_WARN_PCT = float(os.environ.get("VALIDITY_DISK_WARN_PCT", "85"))
 DISK_CRIT_PCT = float(os.environ.get("VALIDITY_DISK_CRIT_PCT", "95"))
+# Found live 2026-08-31: swap at 100%, ~591MB free RAM on a 35GB shared host,
+# with zero OOM-kills yet -- a real, silent precursor to one. free/available
+# accounts for reclaimable page cache the way `free -h`'s "available" column
+# does; MemFree alone would false-alarm constantly on a healthy, cache-heavy host.
+MEM_AVAILABLE_WARN_PCT = float(os.environ.get("VALIDITY_MEM_AVAILABLE_WARN_PCT", "15"))
+SWAP_WARN_PCT = float(os.environ.get("VALIDITY_SWAP_WARN_PCT", "80"))
+SWAP_CRIT_PCT = float(os.environ.get("VALIDITY_SWAP_CRIT_PCT", "95"))
 
 # Defense-in-depth note: these patterns are matched against container stdout/
 # stderr, which is untrusted application output -- used only for substring/
@@ -245,6 +256,70 @@ def check_disk_space(state: dict[str, Any]) -> list[dict[str, Any]]:
     return findings
 
 
+def _read_meminfo(path: str = "/proc/meminfo") -> dict[str, int]:
+    """Parses /proc/meminfo into {key: value_kb}. Portable across the minimal
+    images/hosts this runs on without adding a psutil dependency."""
+    out: dict[str, int] = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            parts = line.split(":", 1)
+            if len(parts) != 2:
+                continue
+            key = parts[0].strip()
+            value = parts[1].strip().split()[0]  # drop the trailing "kB"
+            try:
+                out[key] = int(value)
+            except ValueError:
+                continue
+    return out
+
+
+def check_memory(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Category 3b: host RAM/swap pressure. A shared PoC host can run low on
+    memory well before any single container hits its own cgroup limit --
+    that shows up here first, as a precursor to an eventual OOM-kill."""
+    findings = []
+    try:
+        meminfo = _read_meminfo()
+    except Exception as exc:
+        logger.debug("Reading /proc/meminfo failed: %s", exc)
+        return findings
+
+    mem_total = meminfo.get("MemTotal", 0)
+    mem_available = meminfo.get("MemAvailable", 0)
+    if mem_total > 0:
+        avail_pct = 100.0 * mem_available / mem_total
+        if avail_pct <= MEM_AVAILABLE_WARN_PCT:
+            rec = _alert(
+                state, "mem_available_warn", "warning",
+                f"available RAM is {avail_pct:.1f}% ({mem_available / 1e6:.1f} GB) of {mem_total / 1e6:.1f} GB total "
+                f"-- at/below warning threshold {MEM_AVAILABLE_WARN_PCT}%",
+            )
+            if rec:
+                findings.append(rec)
+
+    swap_total = meminfo.get("SwapTotal", 0)
+    swap_free = meminfo.get("SwapFree", 0)
+    if swap_total > 0:
+        swap_used_pct = 100.0 * (swap_total - swap_free) / swap_total
+        if swap_used_pct >= SWAP_CRIT_PCT:
+            rec = _alert(
+                state, "swap_crit", "critical",
+                f"swap usage is {swap_used_pct:.1f}% of {swap_total / 1e6:.1f} GB -- at/above critical threshold "
+                f"{SWAP_CRIT_PCT}% (OOM-kill risk rises sharply once swap is exhausted)",
+            )
+            if rec:
+                findings.append(rec)
+        elif swap_used_pct >= SWAP_WARN_PCT:
+            rec = _alert(
+                state, "swap_warn", "warning",
+                f"swap usage is {swap_used_pct:.1f}% of {swap_total / 1e6:.1f} GB -- at/above warning threshold {SWAP_WARN_PCT}%",
+            )
+            if rec:
+                findings.append(rec)
+    return findings
+
+
 def run_once() -> list[dict[str, Any]]:
     state = _load_state()
     # Scoped to this Compose project's own containers -- this host runs
@@ -259,6 +334,7 @@ def run_once() -> list[dict[str, Any]]:
     findings += check_permissions(state, running)
     findings += check_container_health(state)
     findings += check_disk_space(state)
+    findings += check_memory(state)
 
     _save_state(state)
     return findings
