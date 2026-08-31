@@ -23,8 +23,13 @@ IFS=$'\n\t'
 # front, and fall back to accepting every default non-interactively instead
 # of crashing. All prompts below already have a sensible `${var:-default}`
 # fallback for exactly this case (a real user just pressing ENTER).
-if exec 3<>/dev/tty 2>/dev/null; then
-  exec 3<&-
+# IMPORTANT: the probe must run in a subshell. `exec 3<>/dev/tty` in the
+# current shell leaves bash's terminal handling in a state where every
+# later `read -p ... < /dev/tty` still reads input correctly but silently
+# stops printing its own prompt text — the exact "stdout looks broken,
+# have to guess what's being asked" bug. A subshell probes the same fd
+# without leaking that state back into the running installer.
+if (exec 3<>/dev/tty) 2>/dev/null; then
   HAS_TTY="1"
 else
   HAS_TTY="0"
