@@ -564,6 +564,25 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
         fi
       done < "${_env_example}"
     fi
+
+    # Cross-check against config.py's own int(os.getenv(...)) call sites too.
+    # .env.example's committed value is normally a reliable stand-in for the
+    # type config.py expects, but it can drift (e.g. config.py parsing a key
+    # with int() while .env.example — correctly — ships a fractional-seconds
+    # value for it): read the requirement from the code that actually does
+    # the parsing, not from the template.
+    _config_py="${INSTALL_DIR}/config.py"
+    if [[ -f "${_config_py}" ]]; then
+      while IFS= read -r _ikey; do
+        [[ -z "${_ikey}" ]] && continue
+        _curval="$(grep -E "^${_ikey}=" "${MOE_ENV_FILE}" 2>/dev/null | tail -1 | cut -d= -f2-)"
+        [[ -z "${_curval}" ]] && continue                      # blank — already handled above
+        [[ "${_curval}" =~ ^-?[0-9]+$ ]] && continue            # already a valid integer
+        printf '%s\n' "${_plaus_manual[@]+"${_plaus_manual[@]}"}" | grep -qF "${_ikey}=" && continue  # already flagged above
+        _plaus_manual+=("${_ikey}=${_curval}  (config.py requires a whole number)")
+      done < <(grep -oE 'int\(os\.getenv\("[A-Z0-9_]+"' "${_config_py}" | sed -E 's/^int\(os\.getenv\("//; s/"$//')
+    fi
+
     if [[ ${#_plaus_manual[@]} -gt 0 ]]; then
       echo ""
       echo "  [!] .env plausibility check found value(s) that need a human to fix:"
