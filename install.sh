@@ -654,7 +654,7 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       if [[ ${_elapsed} -ge ${_max_wait} ]]; then
         echo ""
         echo "  [!] API did not respond within ${_max_wait}s."
-        echo "      Check logs: sudo ${_upd_rt[*]} logs langgraph-app"
+        echo "      Check logs: cd ${INSTALL_DIR} && sudo ${_upd_rt[*]} logs langgraph-app"
         break
       fi
       printf "."
@@ -673,8 +673,8 @@ if [[ -f "${MOE_ENV_FILE}" ]] && [[ ${#_upd_rt[@]} -gt 0 ]]; then
       echo "  Version : ${_upd_ver_after:-unknown} (no code change)"
     fi
     echo ""
-    echo "  Logs:    sudo ${_upd_rt[*]} logs -f"
-    echo "  Status:  sudo ${_upd_rt[*]} ps"
+    echo "  Logs:    cd ${INSTALL_DIR} && sudo ${_upd_rt[*]} logs -f"
+    echo "  Status:  cd ${INSTALL_DIR} && sudo ${_upd_rt[*]} ps"
     echo "  =================================================================="
     echo ""
     exit 0
@@ -2355,7 +2355,7 @@ while true; do
   if [[ $ELAPSED -ge $MAX_WAIT ]]; then
     echo ""
     echo "  [!] API did not respond within ${MAX_WAIT}s."
-    echo "      Check logs with: sudo ${COMPOSE} -f ${INSTALL_DIR}/docker-compose.yml logs langgraph-app"
+    echo "      Check logs with: cd ${INSTALL_DIR} && sudo ${COMPOSE} logs langgraph-app"
     echo "      The rest of the stack may still be starting — this is normal"
     echo "      on first run while models and databases initialize."
     break
@@ -2477,9 +2477,9 @@ echo "       https://huggingface.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGU
 echo "       ollama run hf.co/h3rb3rn/Qwen3-MoE-35B-Sovereign-Judge-v3-GGUF:sovereign-judge-35b-q4_k_m.gguf"
 echo "  4. Start chatting at your Open WebUI instance"
 echo ""
-echo "  Logs:    sudo ${COMPOSE} logs -f"
-echo "  Status:  sudo ${COMPOSE} ps"
-echo "  Stop:    sudo ${COMPOSE} down"
+echo "  Logs:    cd ${INSTALL_DIR} && sudo ${COMPOSE} logs -f"
+echo "  Status:  cd ${INSTALL_DIR} && sudo ${COMPOSE} ps"
+echo "  Stop:    cd ${INSTALL_DIR} && sudo ${COMPOSE} down"
 echo ""
 echo "  Project: https://github.com/h3rb3rn/moe-sovereign"
 echo "  Docs:    https://docs.moe-sovereign.org"
