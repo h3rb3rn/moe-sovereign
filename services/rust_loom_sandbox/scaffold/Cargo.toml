@@ -1,0 +1,11 @@
+[package]
+name = "loom-scaffold"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+loom = "=0.7.2"
