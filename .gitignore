@@ -32,6 +32,11 @@ prometheus/node_targets.yml
 data/
 admin_ui/data/
 
+# Generated LUMI-G training datasets (local build artifacts, uploaded to
+# LUMI-G scratch storage for SLURM jobs -- not repo source, see
+# scripts/curate_coder_expert_dataset.py / extract_planner_grounding_pairs.py)
+datasets/
+
 # Benchmark results (contain server names, IPs)
 benchmarks/results/
 

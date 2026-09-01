@@ -134,7 +134,13 @@ _RUST_COMPILE_CHECK_TIMEOUT_S = 60.0  # PoC hardware -- above mcp_server's own _
 # meaningless "fix these errors" retry prompt. Gating on the literal `loom::`
 # marker means this only activates when the expert/merger response already
 # demonstrates concurrency verification, not on every concurrent-looking fence.
-_RUST_LOOM_CHECK_CATEGORIES = {"systems_programming"}
+#
+# Kept in sync with _RUST_COMPILE_CHECK_CATEGORIES: EXPERT_MODELS has no
+# "systems_programming" key, so a planner-assigned category of that name
+# falls back to the "general" expert at dispatch time (graph/expert.py) --
+# without "code_reviewer" here too, the gate would silently never fire for
+# the actual routed coder expert and this file would never collect examples.
+_RUST_LOOM_CHECK_CATEGORIES = {"systems_programming", "code_reviewer"}
 _RUST_LOOM_MARKER_RE = re.compile(r"\bloom::")
 _RUST_LOOM_CHECK_TIMEOUT_S = 280.0  # PoC hardware -- above mcp_server's own _RUST_LOOM_HTTP_TIMEOUT_S (240s)
 
