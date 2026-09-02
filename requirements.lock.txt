@@ -104,7 +104,7 @@ pydyf==0.12.1
 Pygments==2.20.0
 PyJWT==2.13.0
 pyphen==0.17.2
-pypdf==6.15.0
+pypdf==6.16.1
 PyPika==0.51.1
 pyproject_hooks==1.2.0
 python-dateutil==2.9.0.post0
