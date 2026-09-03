@@ -94,6 +94,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc, _get_expert_score
+from services.model_capabilities import model_supports_native_tool_calling
 from services.skills import _build_skill_catalog, _resolve_skill_secure
 from parsing import (
     _anthropic_content_to_text,
@@ -1355,8 +1356,17 @@ async def _anthropic_tool_handler(
         # contexts (50k+ tokens) where format-schema injection was frequently ignored.
         # During tool-call generation, Ollama streams empty content chunks → we send pings
         # to CC to keep the connection alive. Tool calls appear in the done chunk.
-        _text_mode = False
-        if oai_tools:
+        #
+        # Some models' Ollama grammar/sampler compiler cannot handle Claude Code's
+        # larger tool schemas (e.g. /init sends ~26 tools) and fail the whole request
+        # with HTTP 400 "Failed to initialize samplers: failed to parse grammar" before
+        # generation even starts. For those (flagged native_tool_calling: false in
+        # model_capabilities.yaml), omit `tools` entirely and fall back to text-mode:
+        # the model gets no native schema, but the existing JSON-in-text detection
+        # below (_apply_tool_candidates / bare-args fallback) still recovers tool calls
+        # from its free-text output.
+        _text_mode = bool(oai_tools) and not model_supports_native_tool_calling(effective_model)
+        if oai_tools and not _text_mode:
             _call_payload["tools"] = oai_tools
             _tool_names_log = [
                 ((_ot.get("function") or _ot).get("name", "?")) for _ot in oai_tools
@@ -1364,6 +1374,11 @@ async def _anthropic_tool_handler(
             logger.info(
                 "cc_tool: native tool calling — %d tools (names=%s)",
                 len(oai_tools), _tool_names_log,
+            )
+        elif _text_mode:
+            logger.info(
+                "cc_tool: text-mode tool calling (native_tool_calling=false for %s) — %d tools",
+                effective_model, len(oai_tools),
             )
         # Use Ollama's native think:false flag (Ollama ≥0.30) to disable thinking mode.
         # The previous /no_think prefix approach was unreliable — qwen3.6:35b ignored it
