@@ -60,12 +60,18 @@ print_banner() {
 EOF
 }
 
+to_lower() {
+  # macOS ships Bash 3.2, which does not support Bash 4's ${value,,} syntax.
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 prompt_yes_no() {
   local prompt="$1" default="$2" answer
   while true; do
     read -rp "  ${prompt} [${default}]: " answer < /dev/tty
     answer="${answer:-${default}}"
-    case "${answer,,}" in
+    answer="$(to_lower "$answer")"
+    case "$answer" in
       y|yes) printf 'true'; return 0 ;;
       n|no)  printf 'false'; return 0 ;;
       *) echo "  Please enter y or n." >&2 ;;
@@ -139,9 +145,10 @@ ensure_podman_machine() {
 }
 
 resolve_runtime() {
-  local choice
-  case "${RUNTIME_REQUESTED,,}" in
-    docker|podman) CONTAINER_RUNTIME="${RUNTIME_REQUESTED,,}" ;;
+  local choice requested_runtime
+  requested_runtime="$(to_lower "$RUNTIME_REQUESTED")"
+  case "$requested_runtime" in
+    docker|podman) CONTAINER_RUNTIME="$requested_runtime" ;;
     "")
       if docker_ready; then
         CONTAINER_RUNTIME="docker"
