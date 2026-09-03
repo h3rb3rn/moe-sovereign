@@ -83,11 +83,24 @@ def check_dataset(dataset_path: str, max_seq_len: int = 4096):
             return False
 
         first = ds[0]
-        if "messages" not in first:
-            logger.error("  ✗ Dataset missing 'messages' field in first record")
+        # train_planner_sft.py/train_judge_lora.py consume a "messages" chat
+        # array; train_expert_slm_pipeline.py (role-based expert/planner/judge
+        # SFT) consumes pre-formatted "text" instead -- both are valid
+        # dataset shapes for a LUMI-G training job, so detect rather than
+        # hard-require "messages" alone.
+        if "messages" in first:
+            detected_format = "messages"
+        elif "text" in first:
+            detected_format = "text"
+        else:
+            logger.error(
+                "  ✗ Dataset missing both 'messages' and 'text' fields in first record "
+                "(expected 'messages' for train_planner_sft.py/train_judge_lora.py, "
+                "or 'text' for train_expert_slm_pipeline.py)"
+            )
             return False
 
-        logger.info("  ✓ Dataset valid (%d samples)", len(ds))
+        logger.info("  ✓ Dataset valid (%d samples, detected format: '%s')", len(ds), detected_format)
         return True
     except Exception as e:
         logger.error("  ✗ Dataset parsing failed: %s", e)

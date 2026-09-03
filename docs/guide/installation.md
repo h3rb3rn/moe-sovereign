@@ -27,18 +27,22 @@ curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.s
 ## macOS
 
 `install.sh` is Linux-only (it uses `apt-get`). On macOS use the
-dedicated bootstrap script — it generates `.env` with random secrets
-and pre-creates the host directories under `$HOME`:
+dedicated installer. It configures Docker Desktop or a rootless Podman
+machine, generates `.env` with random secrets, creates the host directories
+under `$HOME`, validates Compose, and starts the stack:
 
 ```bash
 git clone https://github.com/h3rb3rn/moe-sovereign.git
 cd moe-sovereign
-bash scripts/bootstrap-macos.sh
-docker compose up -d
+bash install-macos.sh
 ```
 
-Full walkthrough including Docker Desktop File Sharing setup,
-Apple Silicon notes and host-side Ollama (Metal) tips:
+Use `bash install-macos.sh --runtime podman` to select Podman explicitly.
+The older `scripts/bootstrap-macos.sh` remains available for operators who
+only want to create `.env` and start Compose themselves.
+
+Full walkthrough including Docker Desktop / Podman setup, Apple Silicon notes
+and host-side Ollama (Metal) tips:
 [Deployment → macOS](../deployment/macos.md).
 
 The installer detects and uses whichever runtime is already present.

@@ -95,3 +95,23 @@ class TestRecordLoomTrainingExample:
             "req-7", "source", {"compiles": True, "passed": True}, attempt=1, max_attempts=3,
         )
         assert target.exists()
+
+
+class TestRustLoomCheckCategoryGate:
+    """EXPERT_MODELS has no "systems_programming" key -- a planner-assigned
+    category of that name falls back to the "general" expert at dispatch
+    time, while "code_reviewer" is the category actually routed to
+    moe-expert-coder-4b. _RUST_LOOM_CHECK_CATEGORIES must include
+    "code_reviewer", or the loom gate (and this collector) never fires for
+    real coder-expert responses.
+    """
+
+    def test_code_reviewer_is_gated_for_loom_check(self):
+        assert "code_reviewer" in synthesis._RUST_LOOM_CHECK_CATEGORIES
+
+    def test_loom_categories_are_a_subset_of_compile_check_categories(self):
+        # merger_node only ever evaluates the loom gate against
+        # _code_categories_present, which is itself already restricted to
+        # _RUST_COMPILE_CHECK_CATEGORIES -- a loom category outside that set
+        # could never be reached, so this invariant must hold.
+        assert synthesis._RUST_LOOM_CHECK_CATEGORIES <= synthesis._RUST_COMPILE_CHECK_CATEGORIES
