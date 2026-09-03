@@ -37,6 +37,12 @@ cd moe-sovereign
 bash install-macos.sh
 ```
 
+Alternatively, clone and install in one step (without `sudo`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install-macos.sh | bash
+```
+
 Use `bash install-macos.sh --runtime podman` to select Podman explicitly.
 The older `scripts/bootstrap-macos.sh` remains available for operators who
 only want to create `.env` and start Compose themselves.
