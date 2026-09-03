@@ -222,3 +222,10 @@ class AgentState(TypedDict):
     # ── 18. Structured-Output Failure Recovery (TASK-30) ─────────────────────
     structured_failure: dict            # Serialised StructuredFailure (None = no failure)
     structured_failure_round: int       # Current retry round (0 = first attempt)
+
+    # ── 19. Hypothesis verification ───────────────────────────────────────────
+    # Set by the caller, template, or planner to activate the verifier node.
+    # Each entry: {input: Any, expected: Any, description: str, entry_fn: str?}
+    # entry_fn names the function the expert must define (default "solve").
+    verification_oracle: List[Dict[str, Any]]
+    verification_result: Dict[str, Any]  # {passed, skipped?, failed_cases, code_used, error?}

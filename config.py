@@ -88,6 +88,7 @@ INFERENCE_SERVERS_LIST = [s for s in INFERENCE_SERVERS_LIST if s.get("enabled", 
 URL_MAP      = {s["name"]: s["url"]                 for s in INFERENCE_SERVERS_LIST if s.get("url")}
 TOKEN_MAP    = {s["name"]: s.get("token", "ollama")  for s in INFERENCE_SERVERS_LIST}
 API_TYPE_MAP = {s["name"]: s.get("api_type", "ollama") for s in INFERENCE_SERVERS_LIST}
+TIMEOUT_MAP  = {s["name"]: s.get("timeout", 300)     for s in INFERENCE_SERVERS_LIST}
 
 JUDGE_ENDPOINT_NAME = os.getenv("JUDGE_ENDPOINT", "")
 JUDGE_URL           = URL_MAP.get(JUDGE_ENDPOINT_NAME) if JUDGE_ENDPOINT_NAME else None
@@ -213,14 +214,14 @@ MAX_JUDGE_TOKENS          = int(os.getenv("MAX_JUDGE_TOKENS",           "32768")
 MAX_PLANNER_TOKENS        = int(os.getenv("MAX_PLANNER_TOKENS",         "16384"))
 # Ollama num_ctx for judge and planner — 0 means auto-detect from static model table.
 # Set explicitly when the auto-detected value differs from Ollama's actual allocation.
-JUDGE_NUM_CTX   = int(os.getenv("JUDGE_NUM_CTX",   "0"))
+JUDGE_NUM_CTX   = int(os.getenv("JUDGE_NUM_CTX",   "262144"))
 PLANNER_NUM_CTX = int(os.getenv("PLANNER_NUM_CTX", "0"))
 # ── Agentic loop token budgets ────────────────────────────────────────────────
 # Gap detection and working-memory extraction are skipped when accumulated token
 # usage exceeds these thresholds. Default matches practical qwen3.6:35b limits;
 # raise when using a model+node with larger context windows.
-AGENTIC_GAP_THRESHOLD_TOKENS    = int(os.getenv("AGENTIC_GAP_THRESHOLD_TOKENS",    "80000"))
-WM_EXTRACT_THRESHOLD_TOKENS     = int(os.getenv("WM_EXTRACT_THRESHOLD_TOKENS",     "90000"))
+AGENTIC_GAP_THRESHOLD_TOKENS    = int(os.getenv("AGENTIC_GAP_THRESHOLD_TOKENS",    "200000"))
+WM_EXTRACT_THRESHOLD_TOKENS     = int(os.getenv("WM_EXTRACT_THRESHOLD_TOKENS",     "220000"))
 
 # ── Chain-of-Thought trigger thresholds ───────────────────────────────────────
 # CoT reasoning is activated when the plan has at least this many distinct
@@ -310,7 +311,7 @@ CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD", 
 CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "8"))
 # Fallback delay (seconds) before the CC pre-analysis planner fires.
 # Overridden per-server via model_load_delay in Admin UI → Servers.
-CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
+CC_PREANALYSIS_DELAY_SECS = float(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 
 # Master kill-switch for the infrastructure-side "1M+ context" path on CC tool
 # requests: ChromaDB context indexing (Tier-3), Tier-2 semantic-memory injection

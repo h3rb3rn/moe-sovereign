@@ -94,7 +94,7 @@ flowchart TD
 | **1. Cache** | L0 query-hash (Valkey, 30 min TTL), L1 semantic similarity (ChromaDB, cosine &lt; 0.15), and a conservative **knowledge-bypass** tier: similar-but-not-exact queries skip the LLM when the prior answer was high-confidence and still fresh (cosine &lt; 0.25, confidence &ge; 0.85, within TTL) |
 | **2. Planner** | Decomposes request into 1--4 subtasks with expert category assignment |
 | **3. Experts** | T1 models (&le;20B) screen with confidence gating; T2 (24--80B) engage only on low confidence |
-| **4. Tools** | 28 MCP precision tools (math, subnet, date, legal, PPTX) via AST-whitelist --- zero hallucination |
+| **4. Tools** | 28 MCP precision tools (math, subnet, date, legal, PPTX) via AST-whitelist — eliminates hallucinations within the deterministic computation boundary |
 | **5. GraphRAG** | Neo4j context enrichment with domain-scoped entity filters and trust-score decay. CAG layer intercepts static compliance domains (BAIT, VAIT, DORA, KRITIS) before the Neo4j query and injects pre-loaded authoritative text directly. Corrective RAG gate (Yan et al. 2024) scores each retrieved entity for query relevance and discards low-signal results before injection. Episode hints from past similar tasks are appended as routing context |
 | **6. Judge** | Synthesises expert outputs, evaluates quality, retries on failure (up to 3 attempts) |
 | **7. Agentic Re-Plan** | Lightweight gap detector checks completeness; if unresolved, injects findings into a new planner round (up to 3 agentic iterations) |
@@ -193,7 +193,7 @@ The orchestrator started as an 11 190-line monolith in `main.py`. A 14-phase spl
 | **23** | Chess Analysis via Lichess | MCP tool `chess_analyze_position` queries Lichess cloud Stockfish (342M positions, depth 20–99) for best moves given a FEN string — no local engine required |
 | **25** | Formal Logic State Layer | Production uses a **paraconsistent** conflict registry and **fuzzy T-norm** routing (Gödel `min`, Łukasiewicz `max(0,a+b−1)`). Constructive/intuitionistic executor verification is explicitly research status and is not claimed as a deployed guarantee. |
 | **26** | AIC Complexity Estimation | zlib compressibility as a Kolmogorov complexity proxy (Kolmogorov 1965) acts as a tie-breaker in `estimate_complexity()` — information-dense prompts (ratio < 0.15, ≥ 35 words) are upgraded to `complex`; redundant short prompts downgraded to `trivial`, without any LLM call |
-| **27** | Infrastructure-Adaptive Expert Scoring | Thompson Sampling Beta prior adjusted by real-time node load from `_ps_cache`: busy inference nodes receive an inflated β parameter — steering expert selection toward idle hardware automatically, without manual configuration. The reward signal is **judge-aware**: a category the Judge had to refine counts as a negative outcome (güte over self-confidence), falling back to self-reported confidence only when refinement is disabled |
+| **27** | Infrastructure-Adaptive Expert Scoring | Laplace-smoothed Bayesian posterior mean (M+1)/(N+2) per (model, category), adjusted by real-time node load from `_ps_cache`: busy inference nodes receive an additive load penalty — steering expert selection toward idle hardware automatically. Optional Thompson Sampling exploration mode (`THOMPSON_SAMPLING_ENABLED=true`) draws from the Beta posterior instead of the mean. The reward signal is **judge-aware**: a category the Judge had to refine counts as a negative outcome, falling back to self-reported confidence only when refinement is disabled |
 | **28** | Fuzzy Graph Entity Deduplication | Before every Neo4j MERGE, incoming entity names are resolved via Ratcliff/Obershelp SequenceMatcher (threshold 0.82) against a prefix-batched index — alternate spellings across knowledge sources (`"Einstein, Albert"` ↔ `"Albert Einstein"`) map to one canonical node instead of creating duplicates |
 | **42** | Query Reformulation (Agentic RAG) | When term-matching returns nothing, a lightweight LLM generates up to 2 alternative query phrasings (shorter terms, English equivalents, abbreviations like BAIT/DORA) and retries term-matching before falling back to Text-to-Cypher. Implements iterative retrieval from Agentic RAG. Zero overhead when term-matching succeeds. Configurable via `GRAPHRAG_REFORMULATE_*` |
 | **43** | Confidence-Weighted Expert Synthesis | Expert responses are sorted high→low confidence before the judge prompt (primacy bias) and labelled `PRIMARY` / `SUPPORTING` / `BACKGROUND`. The merger instruction explicitly anchors on PRIMARY findings. No extra LLM call — uses the `CONFIDENCE:` field already in expert output |
@@ -283,15 +283,17 @@ flowchart LR
 
 | Benchmark | Score | Reference |
 |---|:---:|---|
-| **GAIA Level 1** | **60%** | GPT-4o: 33% &bull; Claude 3.7: 44% &bull; MoE Sovereign: **60%** (6/10, `moe-aihub-free-gremium-deep-wcc`, best run) |
-| **GAIA Level 2** | **50%** | GPT-4o Mini: &lt;30% &bull; MoE Sovereign: **50%** (5/10) — multi-hop database lookups, github issue events, Wikidata SPARQL |
-| **GAIA Level 3** | **40%** | MoE Sovereign: **40%** (4/10) — complex multi-step research chains |
-| **GAIA Overall** | **46.7%** | GPT-4o Mini reference: 44.8% &bull; MoE Sovereign best: **46.7%** (14/30) — 5 iterative runs 2026-04-25 |
+| **GAIA Level 1** | **60%** | GPT-4o: 33% &bull; Claude 3.7: 44% &bull; MoE Sovereign: **60%** (6/10, `moe-aihub-free-gremium-deep-wcc`, best run) ⚠ |
+| **GAIA Level 2** | **50%** | GPT-4o Mini: &lt;30% &bull; MoE Sovereign: **50%** (5/10) — multi-hop database lookups, github issue events, Wikidata SPARQL ⚠ |
+| **GAIA Level 3** | **40%** | MoE Sovereign: **40%** (4/10) — complex multi-step research chains ⚠ |
+| **GAIA Overall** | **46.7%** | GPT-4o Mini reference: 44.8% &bull; MoE Sovereign best: **46.7%** (14/30) — 5 iterative runs 2026-04-25 ⚠ |
 | **Math Precision (MCP)** | **10/10** | Deterministic AST computation, 0% variance |
 | **Security Code Review** | **9.0/10** | SQLi + XSS identified and fixed |
 | **Adversarial MCP** | **9/9 blocked** | All code injection attempts stopped by AST firewall |
 | **69 LLM Model Test** | **phi4:14b** | Best planner/judge from 69 models tested |
-| **Accumulation Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache) |
+| **Accumulation Effect** | **9.3&times;** | 707 s &rarr; 76 s over 5 epochs (GraphRAG + cache); cold/warm latency difference, not a controlled causal ablation |
+
+> ⚠ **GAIA evaluation integrity note:** One evaluation run inadvertently used non-sovereign (cloud) inference for the Planner/Judge nodes. The results above reflect that run. A controlled sovereign GAIA run is pending. See [whitepaper Section 14](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) for full disclosure.
 
 ---
 
@@ -300,7 +302,7 @@ flowchart LR
 ### One-Line Install
 
 ```bash
-curl -sSL https://moe-sovereign.org/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh | bash
 ```
 
 ### Manual Setup
@@ -346,8 +348,8 @@ flowchart LR
 | Docker Compose | **Tested** | `team` | `docker compose up -d` |
 | LXC / Proxmox | **Tested** | `solo` | `deploy/lxc/setup.sh` |
 | Podman (rootless) | **Tested** | `team` | `curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh \| bash` |
-| K3s / Kubernetes | Planned | `enterprise` | `helm install moe charts/moe-sovereign` |
-| OpenShift | Untested | `enterprise` | `helm install` with `openshift.enabled=true` |
+| K3s / Kubernetes | CI-validated (Helm charts) | `enterprise` | `helm install moe charts/moe-sovereign` |
+| OpenShift | Implemented, environment-unvalidated | `enterprise` | `helm install` with `openshift.enabled=true` |
 
 > All targets use the **same OCI image** --- no code forks, no feature loss.
 
@@ -383,18 +385,27 @@ flowchart LR
 
 ---
 
+## Ecosystem & Integrations
+
+- [openDesk Edu](https://github.com/opendesk-edu/opendesk-edu) —
+  Educational digital workplace for universities, with planned
+  integration of MoE Sovereign as a self-hosted AI orchestration layer.
+
+---
+
 ## Competitive Landscape
 
-| Feature | MoE Sovereign | Palantir AIP | Databricks | Glean | CrewAI | Ollama+WebUI |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Multi-expert routing | &check; | &check; | &check; | --- | ~ | --- |
-| Deterministic routing | &check; | &check; | --- | --- | --- | --- |
-| Knowledge graph | &check; | &check; | ~ | &check; | --- | --- |
-| VRAM-aware scheduling | &check; | --- | --- | --- | --- | ~ |
-| Knowledge export/import | &check; | --- | --- | --- | --- | --- |
-| Air-gap / fully local | &check; | ~ | --- | --- | &check; | &check; |
-| Open source | &check; | --- | ~ | --- | &check; | &check; |
-| Cost | Free | &gt;$1M/yr | Pay/DBU | $25+/user | Free | Free |
+| Feature | MoE Sovereign | Palantir AIP | Databricks | Glean | LocalAI | CrewAI | Ollama+WebUI |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Multi-expert routing | &check; | &check; | &check; | --- | ~ | ~ | --- |
+| Deterministic routing | &check; | &check; | --- | --- | --- | --- | --- |
+| Knowledge graph | &check; | &check; | ~ | &check; | --- | --- | --- |
+| VRAM-aware scheduling | &check; | --- | --- | --- | --- | --- | ~ |
+| Knowledge export/import | &check; | --- | --- | --- | --- | --- | --- |
+| MCP precision tools | &check; | --- | --- | --- | ~ | --- | --- |
+| Air-gap / fully local | &check; | ~ | --- | --- | &check; | &check; | &check; |
+| Open source | &check; | --- | ~ | --- | &check; | &check; | &check; |
+| Cost | Free | &gt;$1M/yr | Pay/DBU | $25+/user | Free | Free | Free |
 
 > **Note on Palantir comparison:** The table above compares technical feature *presence*, not product maturity or enterprise support depth. Palantir AIP is a commercially mature platform with thousands of engineers, extensive certifications, and a global support organisation. MoE Sovereign is an open-source project addressing the same architectural problem space — with full data sovereignty, zero licence cost, and complete code auditability as its differentiating properties. See [Palantir Comparison](docs/system/palantir_comparison.md) for a detailed assessment.
 
@@ -434,8 +445,9 @@ Full documentation: **[docs.moe-sovereign.org](https://docs.moe-sovereign.org)**
 | [API Reference](https://docs.moe-sovereign.org/guide/api/) | Full endpoint documentation |
 | [Maintenance & Disk Management](https://docs.moe-sovereign.org/admin/maintenance/) | Cleanup Manager, TTL configuration, checkpoint archiving |
 | [Palantir Comparison](https://docs.moe-sovereign.org/system/palantir_comparison/) | Honest architectural assessment — where the approaches converge and where the gap remains |
-| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | Full technical whitepaper (PDF) |
-| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | Vollständiges technisches Whitepaper (PDF) |
+| [Whitepaper (EN)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) | Full technical whitepaper v2.8 (PDF) |
+| [Whitepaper (DE)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-de-v2.8.pdf) | Vollständiges technisches Whitepaper v2.8 (PDF) |
+| [LUMI-G Training Paper](https://docs.moe-sovereign.org/system/lumi_training_paper/) | EuroHPC empirical training report (HTML + PDF) |
 
 Local preview: `pip install mkdocs-material && mkdocs serve`
 
@@ -445,9 +457,10 @@ Local preview: `pip install mkdocs-material && mkdocs serve`
 
 | Document | Format | Pages |
 |---|---|---|
-| [Whitepaper (EN)](https://moe-sovereign.org/whitepaper-en.pdf) | PDF | ~108 |
-| [Whitepaper (DE)](https://moe-sovereign.org/whitepaper-de.pdf) | PDF | ~118 |
+| [Whitepaper (EN)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-en-v2.8.pdf) | PDF v2.8 | ~116 |
+| [Whitepaper (DE)](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-whitepaper-de-v2.8.pdf) | PDF v2.8 | ~116 |
 | [arXiv Paper (IEEE format)](https://moe-sovereign.org/arxiv-paper.pdf) | PDF | ~12 |
+| [LUMI-G Training Paper](https://docs.moe-sovereign.org/system/lumi_training_paper/) | HTML + [PDF](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-lumi-paper.pdf) | 23 |
 
 ---
 
@@ -479,6 +492,15 @@ cloud teacher — the same fail-open principle already used for expert routing.
 Details: [CHANGELOG.md](CHANGELOG.md) (v2.7.1) and the
 [arXiv paper](https://moe-sovereign.org/arxiv-paper.pdf), Section
 "Funded Research: EuroHPC LUMI-G SLM Distillation Programme".
+
+**Training Results (August 2026):** The complete empirical campaign — including
+Judge training (deployed 2026-07-19), Planner v4 six-job SLURM chain, and the
+teacher-student distillation pipeline — is documented in the
+[LUMI-G Training Paper](https://docs.moe-sovereign.org/system/lumi_training_paper/)
+([PDF](https://docs.moe-sovereign.org/assets/papers/moe-sovereign-lumi-paper.pdf), 23 pages).
+Key finding: reducing `max_seq_len` 8192→4096 yields only **1.2× speedup** with
+`--no-packing` (not the expected 4×); packing must be enabled to realise the
+quadratic attention savings.
 
 ---
 

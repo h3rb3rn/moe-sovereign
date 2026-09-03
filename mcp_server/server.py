@@ -951,6 +951,107 @@ def structured_validate(
     return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+_RUST_COMPILE_SANDBOX_URL = os.getenv(
+    "RUST_COMPILE_SANDBOX_URL", "http://rust-compile-sandbox:8080"
+)
+_RUST_COMPILE_MAX_SOURCE_CHARS = 200_000
+_RUST_COMPILE_HTTP_TIMEOUT_S = 45.0  # PoC hardware -- must stay above rust_compile_sandbox's own _COMPILE_TIMEOUT_S (30s)
+
+
+@mcp.tool()
+async def rust_compile_check(source: str, edition: str = "2021") -> str:
+    """Type/borrow-check Rust source in an isolated, network-free sandbox.
+
+    Runs `rustc --emit=metadata` (analysis only -- no codegen, no linking,
+    the code is never executed) against the given source and returns
+    structured diagnostics. Use this to verify a Rust answer actually
+    compiles before presenting it as correct; it catches lifetime,
+    ownership, interior-mutability and type errors deterministically,
+    which LLM self-review misses or catches inconsistently.
+    """
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source_must_be_non_empty_string")
+    if len(source) > _RUST_COMPILE_MAX_SOURCE_CHARS:
+        raise ValueError("source_exceeds_size_limit")
+    if edition not in {"2015", "2018", "2021", "2024"}:
+        raise ValueError("unsupported_edition")
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_COMPILE_HTTP_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{_RUST_COMPILE_SANDBOX_URL}/compile-check",
+                json={"source": source, "edition": edition},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        logger.warning(f"rust_compile_check sandbox call failed: {exc}")
+        return json.dumps(
+            {"compiles": None, "diagnostics": [], "duration_ms": 0, "sandbox_error": str(exc)[:300]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+    facts = {
+        "compiles": result.get("compiles"),
+        "diagnostics": (result.get("diagnostics") or [])[:50],
+        "duration_ms": result.get("duration_ms"),
+        "timed_out": result.get("timed_out", False),
+        "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_RUST_LOOM_SANDBOX_URL = os.getenv(
+    "RUST_LOOM_SANDBOX_URL", "http://rust-loom-sandbox:8080"
+)
+_RUST_LOOM_MAX_SOURCE_CHARS = 200_000
+_RUST_LOOM_HTTP_TIMEOUT_S = 240.0  # PoC hardware -- must stay above rust_loom_sandbox's own _RUN_TIMEOUT_S (180s)
+
+
+@mcp.tool()
+async def rust_loom_check(source: str, edition: str = "2021") -> str:
+    """Model-check concurrent Rust source for memory-ordering bugs (data
+    races) using Loom, in an isolated sandbox that actually executes the
+    submitted code (unlike rust_compile_check, which never executes
+    anything).
+
+    A data race from incorrect atomic/lock ordering compiles cleanly -- it
+    is not a compile error, only a real concurrency-model checker can catch
+    it. `source` must be valid content for a Cargo lib.rs containing a
+    `#[test] fn ...` that calls `loom::model(|| { ... })`; only use this for
+    code that already passed rust_compile_check and involves shared-state
+    concurrency (Arc/Mutex/atomics/threads).
+    """
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source_must_be_non_empty_string")
+    if len(source) > _RUST_LOOM_MAX_SOURCE_CHARS:
+        raise ValueError("source_exceeds_size_limit")
+    if edition not in {"2021"}:
+        raise ValueError("unsupported_edition")
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_LOOM_HTTP_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{_RUST_LOOM_SANDBOX_URL}/loom-check",
+                json={"source": source, "edition": edition},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        logger.warning(f"rust_loom_check sandbox call failed: {exc}")
+        return json.dumps(
+            {"compiles": None, "passed": None, "output_tail": "", "duration_ms": 0,
+             "timed_out": False, "sandbox_error": str(exc)[:300]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+    facts = {
+        "compiles": result.get("compiles"),
+        "passed": result.get("passed"),
+        "output_tail": (result.get("output_tail") or "")[:4000],
+        "duration_ms": result.get("duration_ms"),
+        "timed_out": result.get("timed_out", False),
+        "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 @mcp.tool()
 def day_of_week(date_str: str) -> str:
     """
@@ -1104,6 +1205,75 @@ def subnet_calc(cidr: str) -> str:
             f"Last host IP: {hosts[-1] if hosts else 'N/A'}\n"
             f"Version: IPv{network.version}"
         )
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def vlsm_subnet_calc(cidr: str, subnets: list[dict]) -> str:
+    """
+    Allocates Variable Length Subnet Masks (VLSM) for multiple named subnets
+    within one parent CIDR block, sized by required host count each.
+    subnets: list of {"id": <name>, "hosts": <required usable hosts>}.
+    Allocates largest subnets first (standard VLSM practice) to minimize
+    fragmentation, then reports each subnet in its original input order.
+    Example: vlsm_subnet_calc("10.180.0.0/19", [{"id": "A", "hosts": 2000},
+        {"id": "B", "hosts": 1000}, {"id": "C", "hosts": 250}])
+    """
+    try:
+        parent = ipaddress.ip_network(cidr, strict=False)
+        if parent.version != 4:
+            return "Error: VLSM allocation currently supports IPv4 only"
+        ordered = sorted(
+            enumerate(subnets),
+            key=lambda item: (-int(item[1]["hosts"]), item[0]),
+        )
+        next_addr = int(parent.network_address)
+        parent_end = int(parent.broadcast_address)
+        allocations: dict[int, dict] = {}
+        for orig_index, spec in ordered:
+            subnet_id = str(spec.get("id", orig_index))
+            hosts_needed = int(spec["hosts"])
+            needed = hosts_needed + 2  # network + broadcast address
+            prefix = 32
+            while prefix > 0 and (2 ** (32 - prefix)) < needed:
+                prefix -= 1
+            if prefix < parent.prefixlen:
+                return (
+                    f"Error: subnet '{subnet_id}' needs {hosts_needed} hosts — "
+                    f"no prefix fits within parent {cidr}"
+                )
+            block_size = 2 ** (32 - prefix)
+            aligned = -(-next_addr // block_size) * block_size
+            if aligned + block_size - 1 > parent_end:
+                return (
+                    f"Error: {cidr} is too small to also fit subnet '{subnet_id}' "
+                    f"({hosts_needed} hosts) after the previously allocated subnets"
+                )
+            sub_net = ipaddress.ip_network(
+                f"{ipaddress.ip_address(aligned)}/{prefix}", strict=True
+            )
+            host_list = list(sub_net.hosts())
+            allocations[orig_index] = {
+                "id": subnet_id,
+                "requested_hosts": hosts_needed,
+                "cidr": str(sub_net),
+                "netmask": str(sub_net.netmask),
+                "usable_hosts": len(host_list),
+                "first_host": str(host_list[0]) if host_list else "N/A",
+                "last_host": str(host_list[-1]) if host_list else "N/A",
+                "broadcast": str(sub_net.broadcast_address),
+            }
+            next_addr = aligned + block_size
+        lines = [f"VLSM allocation for {cidr}:"]
+        for i in range(len(subnets)):
+            a = allocations[i]
+            lines.append(
+                f"  {a['id']}: {a['cidr']} (mask {a['netmask']}) — "
+                f"{a['usable_hosts']} usable hosts (needed {a['requested_hosts']}), "
+                f"range {a['first_host']}–{a['last_host']}, broadcast {a['broadcast']}"
+            )
+        return "\n".join(lines)
     except Exception as e:
         return f"Error: {e}"
 
@@ -2785,6 +2955,83 @@ def python_sandbox(code: str) -> str:
         )
 
 
+_ARC_COLOR_NAMES: dict[int, tuple[str, str]] = {
+    0: ("black",   "·"),
+    1: ("blue",    "B"),
+    2: ("red",     "R"),
+    3: ("green",   "G"),
+    4: ("yellow",  "Y"),
+    5: ("grey",    "Z"),
+    6: ("pink",    "P"),
+    7: ("orange",  "O"),
+    8: ("azure",   "A"),
+    9: ("maroon",  "M"),
+}
+
+
+def grid_repr(data: str, label: str = "") -> str:
+    """Render a 2-D integer grid as annotated ASCII art with a colour legend.
+
+    Designed for ARC-AGI grids (values 0–9) but works for any integer matrix.
+    Values 0–9 use the standard ARC colour palette; values outside that range
+    are shown as their decimal digit string.
+
+    data:  JSON-encoded 2-D list, e.g. '[[0,1,2],[3,0,1]]'
+    label: optional title printed above the grid (e.g. 'input' or 'output')
+
+    Returns a compact ASCII block suitable for injection into a model prompt.
+    """
+    import json as _json
+
+    try:
+        grid = _json.loads(data)
+    except _json.JSONDecodeError:
+        return f"[GRID_ERROR] Invalid JSON: {data[:120]}"
+
+    if not isinstance(grid, list) or not grid:
+        return "[GRID_ERROR] data must be a non-empty list of rows"
+
+    rows: list[list[int]] = []
+    for r, row in enumerate(grid):
+        if not isinstance(row, list):
+            return f"[GRID_ERROR] Row {r} is not a list"
+        rows.append([int(v) for v in row])
+
+    n_rows = len(rows)
+    n_cols = max((len(r) for r in rows), default=0)
+
+    # Determine symbol width (values outside 0-9 need more chars)
+    all_vals: set[int] = {v for row in rows for v in row}
+    sym_width = max((len(str(v)) if v not in _ARC_COLOR_NAMES else 1) for v in all_vals) if all_vals else 1
+
+    def sym(v: int) -> str:
+        if v in _ARC_COLOR_NAMES:
+            return _ARC_COLOR_NAMES[v][1]
+        return str(v)
+
+    col_labels = "  " + "  ".join(f"c{c:<{sym_width - 1}}" for c in range(n_cols))
+    lines: list[str] = []
+    if label:
+        lines.append(f"── {label} ({n_rows}×{n_cols}) ──")
+    else:
+        lines.append(f"Grid ({n_rows}×{n_cols}):")
+    lines.append(col_labels)
+    for r, row in enumerate(rows):
+        cells = "  ".join(f"{sym(v):>{sym_width}}" for v in row)
+        lines.append(f"r{r:<2} {cells}")
+
+    present = sorted(all_vals)
+    legend_parts: list[str] = []
+    for v in present:
+        if v in _ARC_COLOR_NAMES:
+            name, s = _ARC_COLOR_NAMES[v]
+            legend_parts.append(f"{s}={name}({v})")
+        else:
+            legend_parts.append(str(v))
+    lines.append("Legend: " + "  ".join(legend_parts))
+    return "\n".join(lines)
+
+
 def wikipedia_get_section(title: str = "", section: str = "", lang: str = "en", article: str = "") -> str:
     """Fetch a section of a Wikipedia article via the MediaWiki API.
 
@@ -4376,9 +4623,106 @@ async def pm_search_tasks(query: str, limit: int = 10) -> str:
     return await _pm.search_tasks(query, limit)
 
 
+# ─── Generative Tools (TASK-52: N04-RGTX Hardware Offloading) ─────────────
+
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://192.168.155.224:8188")
+KOKORO_TTS_URL = os.getenv("KOKORO_TTS_URL", "http://192.168.155.224:8880")
+
+
+@mcp.tool()
+async def generate_image(prompt: str, size: str = "1024x1024", model: str = "flux-schnell") -> Dict[str, Any]:
+    """Generate an image using local ComfyUI API endpoint on N04-RGTX.
+
+    prompt: Detailed text description of the image to generate.
+    size: Image dimensions, e.g. '1024x1024', '512x512', or '1280x720'.
+    model: Checkpoint model name, defaults to 'flux-schnell'.
+    """
+    if not prompt or not prompt.strip():
+        return {"error": "Prompt cannot be empty", "error_code": "invalid_prompt"}
+
+    parts = size.split("x") if "x" in size else [1024, 1024]
+    try:
+        width = int(parts[0])
+        height = int(parts[1]) if len(parts) > 1 else int(parts[0])
+    except ValueError:
+        width, height = 1024, 1024
+
+    payload = {
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "model": model,
+    }
+
+    url = f"{COMFYUI_URL.rstrip('/')}/v1/images/generations"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return resp.json()
+            return {
+                "error": f"ComfyUI HTTP {resp.status_code}: {resp.text[:300]}",
+                "error_code": "comfyui_error",
+                "status_code": resp.status_code,
+            }
+    except Exception as exc:
+        return {
+            "error": f"Failed to connect to ComfyUI backend at {url}: {exc}",
+            "error_code": "backend_unreachable",
+            "target_url": url,
+            "gpu_node": "N04-RGTX",
+        }
+
+
+@mcp.tool()
+async def generate_speech(text: str, voice: str = "af_heart", model: str = "kokoro") -> Dict[str, Any]:
+    """Generate speech audio using local Kokoro-TTS API endpoint on N04-RGTX.
+
+    text: Text content to convert into spoken audio.
+    voice: Voice profile, defaults to 'af_heart'.
+    model: TTS model name, defaults to 'kokoro'.
+    """
+    if not text or not text.strip():
+        return {"error": "Text cannot be empty", "error_code": "invalid_text"}
+
+    payload = {
+        "input": text,
+        "voice": voice,
+        "model": model,
+        "response_format": "mp3",
+    }
+
+    url = f"{KOKORO_TTS_URL.rstrip('/')}/v1/audio/speech"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                return {
+                    "ok": True,
+                    "voice": voice,
+                    "model": model,
+                    "audio_bytes_length": len(resp.content),
+                    "content_type": resp.headers.get("content-type", "audio/mpeg"),
+                }
+            return {
+                "error": f"Kokoro TTS HTTP {resp.status_code}: {resp.text[:300]}",
+                "error_code": "kokoro_error",
+                "status_code": resp.status_code,
+            }
+    except Exception as exc:
+        return {
+            "error": f"Failed to connect to Kokoro TTS backend at {url}: {exc}",
+            "error_code": "backend_unreachable",
+            "target_url": url,
+            "gpu_node": "N04-RGTX",
+        }
+
+
 # ─── Tool registry for REST shim ────────────────────────────────────────────
 
 _TOOL_REGISTRY: Dict[str, Any] = {
+    "generate_image": generate_image,
+    "generate_speech": generate_speech,
     "calculate": calculate,
     "solve_equation": solve_equation,
     "date_diff": date_diff,
@@ -4389,6 +4733,8 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "decimal_finance": decimal_finance,
     "exact_probability": exact_probability,
     "structured_validate": structured_validate,
+    "rust_compile_check": rust_compile_check,
+    "rust_loom_check": rust_loom_check,
     "day_of_week": day_of_week,
     "unit_convert": unit_convert,
     "statistics_calc": statistics_calc,
@@ -4396,6 +4742,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "base64_codec": base64_codec,
     "regex_extract": regex_extract,
     "subnet_calc": subnet_calc,
+    "vlsm_subnet_calc": vlsm_subnet_calc,
     "text_analyze": text_analyze,
     "prime_factorize": prime_factorize,
     "gcd_lcm": gcd_lcm,
@@ -4421,6 +4768,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "github_get_issue":      github_get_issue,
     "wikipedia_get_section": wikipedia_get_section,
     "python_sandbox":        python_sandbox,
+    "grid_repr":             grid_repr,
     # External data sources (added for adaptive deep research)
     "web_search_domain":       web_search_domain,
     "youtube_transcript":      youtube_transcript,
@@ -4465,6 +4813,8 @@ _TOOL_DESCRIPTIONS = {
     "decimal_finance": "Decimal-string finance arithmetic with explicit currency, scale and rounding",
     "exact_probability": "Exact bounded rational probability and combinatorics with optional Decimal projection",
     "structured_validate": "Network-free bounded JSON, YAML, XML and CSV parser/validator",
+    "rust_compile_check": "Type/borrow-check Rust source in an isolated, network-free sandbox (analysis only, never executes the code)",
+    "rust_loom_check": "Model-check concurrent Rust source for data races via Loom in an isolated, network-free sandbox (executes the submitted test)",
     "day_of_week": "Weekday, calendar week, day of year for a date",
     "unit_convert": "Physical unit conversion (km/h→m/s, °F→°C, etc.)",
     "statistics_calc": "Statistical measures for data sets (mean, median, stdev, etc.)",
@@ -4472,6 +4822,7 @@ _TOOL_DESCRIPTIONS = {
     "base64_codec": "Base64 encode/decode",
     "regex_extract": "Regex pattern matching and extraction",
     "subnet_calc": "IP/network calculations (CIDR, subnet mask, host range)",
+    "vlsm_subnet_calc": "VLSM allocation of multiple named subnets (by required host count) within one parent CIDR",
     "text_analyze": "Text metrics (words, characters, sentences, reading time)",
     "prime_factorize": "Prime factorization",
     "gcd_lcm": "GCD and LCM of two numbers",
@@ -4497,6 +4848,7 @@ _TOOL_DESCRIPTIONS = {
     "github_get_issue":      "Fetch a GitHub issue (title, state, body, labels, comment count) via the public API",
     "wikipedia_get_section": "Fetch a specific section of a Wikipedia article as plain text (e.g. 'Discography', 'Filmography'). Use this whenever a question references a Wikipedia article.",
     "python_sandbox":        "Run a small Python snippet for exact numerical calculations: probability trees (use Fraction!), Markov chains, combinatorics. Use print() for output. NEVER write simulation/Monte Carlo code — always use exact Fraction arithmetic. Allowed modules: math, fractions, itertools, collections, decimal, statistics, random.",
+    "grid_repr":             "Render a 2-D integer grid as annotated ASCII art with a colour legend. Pass data as a JSON 2-D list string (e.g. '[[0,1,2],[3,0,1]]'). Values 0–9 use the ARC colour palette (0=black, 1=blue, 2=red, 3=green, 4=yellow, 5=grey, 6=pink, 7=orange, 8=azure, 9=maroon). Use this to visualise ARC-AGI grids or any integer matrix before reasoning about it.",
     # External data sources
     "web_search_domain":       "Domain-restricted web search via SearXNG (site:github.com, site:arxiv.org, site:wikipedia.org, etc.). Use when general search fails and you need data from a specific known website.",
     "youtube_transcript":      "Fetch captions/transcript of a YouTube video by URL or video ID. Use for questions about video content, interviews, documentaries, lectures.",
@@ -4536,6 +4888,8 @@ _TOOL_DESCRIPTIONS = {
 _DEFAULT_ACCESS_KIND = "read"
 
 _TOOL_ACCESS_KIND: Dict[str, str] = {
+    # Generative AI tools (local hardware offloading on N04-RGTX)
+    "generate_image": "write", "generate_speech": "write",
     # Math/utility — local computation only
     "calculate": "read", "solve_equation": "read", "date_diff": "read",
     "date_add": "read", "calendar_facts": "read", "time_facts": "read",
@@ -4544,7 +4898,8 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "day_of_week": "read",
     "unit_convert": "read",
     "statistics_calc": "read", "hash_text": "read", "base64_codec": "read",
-    "regex_extract": "read", "subnet_calc": "read", "text_analyze": "read",
+    "regex_extract": "read", "subnet_calc": "read", "vlsm_subnet_calc": "read",
+    "text_analyze": "read",
     "prime_factorize": "read", "gcd_lcm": "read", "json_query": "read",
     "roman_numeral": "read",
     # Legal — internal DB lookups
@@ -4567,8 +4922,11 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "duckduckgo_search": "search", "web_browser": "search",
     "wayback_fetch": "search", "crossref_lookup": "search",
     "openalex_search": "search",
-    # Code execution
+    # Code execution / local computation
     "python_sandbox": "execute",
+    "rust_compile_check": "execute",
+    "rust_loom_check": "execute",
+    "grid_repr":      "read",
     # Chess — chess_analyze_position calls the external Lichess cloud-eval API;
     # chess_legal_moves is local python-chess computation
     "chess_analyze_position": "search", "chess_legal_moves": "read",
@@ -4786,7 +5144,104 @@ _STRUCTURED_VALIDATE_OUTPUT_SCHEMA: Dict[str, Any] = {
 }
 
 
+_RUST_COMPILE_CHECK_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "compiles": {"type": ["boolean", "null"]},
+        "diagnostics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "level": {"type": "string", "enum": ["error", "warning"]},
+                    "message": {"type": "string"},
+                    "line": {"type": ["integer", "null"], "minimum": 1},
+                    "column": {"type": ["integer", "null"], "minimum": 1},
+                },
+                "required": ["level", "message"],
+                "additionalProperties": False,
+            },
+            "maxItems": 50,
+        },
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "timed_out": {"type": "boolean"},
+        "source_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "sandbox_error": {"type": "string"},
+    },
+    "required": ["compiles", "diagnostics"],
+    "additionalProperties": False,
+}
+
+
+_RUST_LOOM_CHECK_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "compiles": {"type": ["boolean", "null"]},
+        "passed": {"type": ["boolean", "null"]},
+        "output_tail": {"type": "string", "maxLength": 4000},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "timed_out": {"type": "boolean"},
+        "source_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "sandbox_error": {"type": "string"},
+    },
+    "required": ["compiles", "passed", "output_tail"],
+    "additionalProperties": False,
+}
+
+
 _TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
+    "generate_image": {
+        "contract_id": "moe.generative.generate_image",
+        "contract_version": "1.0.0",
+        "determinism": "generative_model",
+        "source_policy": {"kind": "comfyui_api", "node": "N04-RGTX"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "size": {"type": "string", "default": "1024x1024"},
+                "model": {"type": "string", "default": "flux-schnell"},
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "created": {"type": "integer"},
+                "data": {"type": "array"},
+                "error": {"type": "string"},
+                "error_code": {"type": "string"},
+            },
+        },
+    },
+    "generate_speech": {
+        "contract_id": "moe.generative.generate_speech",
+        "contract_version": "1.0.0",
+        "determinism": "generative_model",
+        "source_policy": {"kind": "kokoro_tts_api", "node": "N04-RGTX"},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "minLength": 1, "maxLength": 10000},
+                "voice": {"type": "string", "default": "af_heart"},
+                "model": {"type": "string", "default": "kokoro"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "voice": {"type": "string"},
+                "model": {"type": "string"},
+                "audio_bytes_length": {"type": "integer"},
+                "error": {"type": "string"},
+                "error_code": {"type": "string"},
+            },
+        },
+    },
     "calendar_facts": {
         "contract_id": "moe.precision.calendar_facts",
         "contract_version": "1.0.0",
@@ -4967,6 +5422,56 @@ _TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
             "max_nodes": _STRUCTURED_MAX_NODES,
             "max_csv_rows": _STRUCTURED_MAX_CSV_ROWS,
             "max_csv_columns": _STRUCTURED_MAX_CSV_COLUMNS,
+        },
+    },
+    "rust_compile_check": {
+        "contract_id": "moe.precision.rust_compile_check",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "pinned_toolchain", "name": "rustc 1.98 (rust:1-slim image digest)"},
+        "evidence_policy": {
+            "redact_input_fields": ["source"],
+            "replacement": "sha256_and_utf8_bytes",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "minLength": 1, "maxLength": _RUST_COMPILE_MAX_SOURCE_CHARS},
+                "edition": {"type": "string", "enum": ["2015", "2018", "2021", "2024"], "default": "2021"},
+            },
+            "required": ["source"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _RUST_COMPILE_CHECK_OUTPUT_SCHEMA,
+        "limits": {
+            "max_result_chars": 32768,
+            "max_source_chars": _RUST_COMPILE_MAX_SOURCE_CHARS,
+            "compile_timeout_s": _RUST_COMPILE_HTTP_TIMEOUT_S,
+        },
+    },
+    "rust_loom_check": {
+        "contract_id": "moe.precision.rust_loom_check",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "pinned_toolchain", "name": "rustc 1.98 + loom=0.7.2 (rust:1-slim image digest)"},
+        "evidence_policy": {
+            "redact_input_fields": ["source"],
+            "replacement": "sha256_and_utf8_bytes",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "minLength": 1, "maxLength": _RUST_LOOM_MAX_SOURCE_CHARS},
+                "edition": {"type": "string", "enum": ["2021"], "default": "2021"},
+            },
+            "required": ["source"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _RUST_LOOM_CHECK_OUTPUT_SCHEMA,
+        "limits": {
+            "max_result_chars": 32768,
+            "max_source_chars": _RUST_LOOM_MAX_SOURCE_CHARS,
+            "compile_timeout_s": _RUST_LOOM_HTTP_TIMEOUT_S,
         },
     },
     "gcd_lcm": {
@@ -5160,6 +5665,7 @@ def _structured_facts(name: str, args: Dict[str, Any], result: str) -> Dict[str,
     if name in {
         "calendar_facts", "time_facts", "timezone_convert",
         "decimal_finance", "exact_probability", "structured_validate",
+        "rust_compile_check", "rust_loom_check",
     }:
         facts = json.loads(result)
         if not isinstance(facts, dict):

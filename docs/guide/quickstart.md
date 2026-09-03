@@ -134,7 +134,7 @@ curl http://localhost:8002/v1/models
 For a fresh **Debian or Ubuntu** server, the recommended approach is the one-line installer:
 
 ```bash
-curl -sSL https://moe-sovereign.org/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install.sh | bash
 ```
 
 The installer handles container runtime setup (Docker CE or Podman), directory

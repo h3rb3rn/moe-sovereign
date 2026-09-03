@@ -53,6 +53,24 @@ _GENERAL_ROLES: tuple[tuple[str, str], ...] = (
         "Identify safety, security, legal, operational, and failure-mode risks relevant to the task.",
     ),
     (
+        "counterexample_hunter",
+        (
+            "Actively try to falsify the proposed hypothesis or answer. Construct the smallest "
+            "concrete counterexample that breaks the stated rule or pattern. If no counterexample "
+            "can be found, explain why the hypothesis is falsification-resistant and what boundary "
+            "conditions protect it."
+        ),
+    ),
+    (
+        "simplicity_checker",
+        (
+            "Apply Occam's razor: is there a strictly simpler rule, transformation, or explanation "
+            "that accounts for all given examples with equal or better precision? Reject "
+            "overcomplicated solutions whenever a simpler one is sufficient. Flag any unnecessary "
+            "special cases or conjunctions that could be collapsed."
+        ),
+    ),
+    (
         "alternative_analyst",
         "Develop a materially different explanation or solution and compare its trade-offs.",
     ),

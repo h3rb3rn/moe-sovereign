@@ -124,6 +124,79 @@
       </div>
     </div>
   </div>
+
+  <!-- DOCUMENT UPLOAD & CRON INGESTION CARD -->
+  <div class="col-12 mt-3">
+    <div class="card border-info">
+      <div class="card-header bg-info bg-opacity-10 d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 text-info-emphasis fw-bold">
+          <i class="bi bi-file-earmark-arrow-up me-2"></i>{{ t(request, 'knowledge.upload_card_title') }}
+        </h6>
+        <span class="badge bg-info text-dark"><i class="bi bi-clock-history me-1"></i>{{ t(request, 'knowledge.upload_cron_badge') }}</span>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">{{ t(request, 'knowledge.upload_card_desc') }}</p>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-8">
+            <label class="form-label fw-bold">{{ t(request, 'knowledge.select_files_lbl') }}</label>
+            <div class="input-group input-group-sm">
+              <input type="file" id="doc-upload-file" class="form-control" accept=".pdf,.txt,.json,.jsonl,.md" multiple>
+              <button class="btn btn-info text-white" onclick="uploadDocFile()">
+                <i class="bi bi-cloud-upload me-1"></i>{{ t(request, 'knowledge.upload_btn') }}
+              </button>
+            </div>
+            <div class="form-text">{{ t(request, 'knowledge.supported_formats_hint') }}</div>
+          </div>
+
+          <div class="col-md-4 d-flex align-items-end justify-content-end">
+            <button class="btn btn-outline-primary btn-sm w-100" onclick="triggerCronIngestion()">
+              <i class="bi bi-play-circle me-1"></i>{{ t(request, 'knowledge.trigger_cron_btn') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- LIVE INGESTION SPEED & ETA FORECAST BANNER -->
+        <div id="ingestion-forecast-banner" class="card bg-dark text-white p-3 mb-3 border-secondary" style="display:none">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <div>
+              <span class="fw-bold text-info"><i class="bi bi-speedometer2 me-1"></i>{{ t(request, 'knowledge.lbl_speed') }}</span>
+              <span id="forecast-speed" class="badge bg-info text-dark ms-1">⚡ 0.0 MB/min</span>
+            </div>
+            <div>
+              <span class="fw-bold text-warning"><i class="bi bi-hourglass-bottom me-1"></i>{{ t(request, 'knowledge.lbl_eta') }}</span>
+              <span id="forecast-eta" class="badge bg-warning text-dark ms-1">⏱️ {{ t(request, 'knowledge.lbl_calculating') }}</span>
+            </div>
+            <div>
+              <span class="text-muted small" id="forecast-files-cnt"></span>
+            </div>
+          </div>
+          <div class="progress" style="height: 10px;">
+            <div id="forecast-progressbar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- STATUS TABLE -->
+        <div class="table-responsive mt-3">
+          <table class="table table-sm table-hover align-middle small">
+            <thead class="table-dark">
+              <tr>
+                <th>{{ t(request, 'knowledge.th_file_name') }}</th>
+                <th>{{ t(request, 'knowledge.th_size') }}</th>
+                <th>{{ t(request, 'knowledge.th_upload_date') }}</th>
+                <th>{{ t(request, 'knowledge.th_status') }}</th>
+                <th>{{ t(request, 'knowledge.th_ingested_at') }}</th>
+                <th class="text-end">{{ t(request, 'knowledge.th_actions') }}</th>
+              </tr>
+            </thead>
+            <tbody id="doc-status-tbody">
+              <tr><td colspan="6" class="text-center text-muted py-3">{{ t(request, 'knowledge.no_docs_msg') }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- BUNDLE PREVIEW -->
@@ -257,5 +330,144 @@ async function executeImport() {
     }
   } catch(e) { alert('Import failed: ' + e.message); }
 }
+
+const JS_KNOWLEDGE_LANG = {
+  statusQueue: "{{ t(request, 'knowledge.status_queue') }}",
+  statusProcessing: "{{ t(request, 'knowledge.status_processing') }}",
+  statusImported: "{{ t(request, 'knowledge.status_imported') }}",
+  statusError: "{{ t(request, 'knowledge.status_error') }}",
+  noDocs: "{{ t(request, 'knowledge.no_docs_msg') }}"
+};
+
+async function loadUploadedDocs() {
+  try {
+    const res = await fetch('/api/knowledge/documents');
+    const data = await res.json();
+    const tbody = document.getElementById('doc-status-tbody');
+    if (!tbody) return;
+
+    if (data.summary) {
+      const banner = document.getElementById('ingestion-forecast-banner');
+      if (banner) banner.style.display = 'block';
+      const elSpeed = document.getElementById('forecast-speed');
+      if (elSpeed) elSpeed.textContent = `⚡ ${data.summary.speed_mb_per_min} MB/min`;
+      const elEta = document.getElementById('forecast-eta');
+      if (elEta) elEta.textContent = `⏱️ ${data.summary.eta_formatted}`;
+      const elCnt = document.getElementById('forecast-files-cnt');
+      if (elCnt) elCnt.textContent = `${data.summary.ingested_files} / ${data.summary.total_files} (${data.summary.ingested_mb} / ${data.summary.total_mb} MB)`;
+      
+      const pbar = document.getElementById('forecast-progressbar');
+      if (pbar) {
+        pbar.style.width = `${data.summary.pct_complete}%`;
+        pbar.setAttribute('aria-valuenow', data.summary.pct_complete);
+      }
+    }
+
+    if (!data.documents || data.documents.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">${JS_KNOWLEDGE_LANG.noDocs}</td></tr>`;
+      return;
+    }
+
+    // Sort documents so currently processing files appear AT THE VERY TOP of the table!
+    const sortedDocs = [...data.documents].sort((a, b) => {
+      if (a.status === 'processing') return -1;
+      if (b.status === 'processing') return 1;
+      return 0;
+    });
+
+    tbody.innerHTML = sortedDocs.map(d => {
+      let badge = `<span class="badge bg-secondary"><i class="bi bi-hourglass-split me-1"></i>${JS_KNOWLEDGE_LANG.statusQueue}</span>`;
+      let rowClass = '';
+      
+      if (d.status === 'processing') {
+        badge = `<span class="badge bg-primary text-white p-2 shadow-sm"><span class="spinner-border spinner-border-sm me-1" role="status"></span>⚙️ ${JS_KNOWLEDGE_LANG.statusProcessing}</span>`;
+        rowClass = 'table-primary bg-primary bg-opacity-10 fw-bold border-start border-4 border-primary';
+      } else if (d.status === 'ingested') {
+        badge = `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>${JS_KNOWLEDGE_LANG.statusImported}</span>`;
+      } else if (d.status === 'error') {
+        badge = `<span class="badge bg-danger" title="${d.error || ''}"><i class="bi bi-exclamation-triangle me-1"></i>${JS_KNOWLEDGE_LANG.statusError}</span>`;
+      }
+      const sizeKB = (d.size_bytes / (1024 * 1024) > 1) 
+        ? (d.size_bytes / (1024 * 1024)).toFixed(1) + ' MB' 
+        : (d.size_bytes / 1024).toFixed(1) + ' KB';
+      const uploadTime = d.upload_time ? new Date(d.upload_time).toLocaleString() : '-';
+      const ingestedAt = d.ingested_at ? new Date(d.ingested_at).toLocaleString() : '-';
+      return `
+        <tr class="${rowClass}">
+          <td class="fw-bold text-truncate" style="max-width: 350px;" title="${d.file_name}">${d.file_name}</td>
+          <td>${sizeKB}</td>
+          <td>${uploadTime}</td>
+          <td>${badge}</td>
+          <td>${ingestedAt}</td>
+          <td class="text-end">
+            <button class="btn btn-outline-danger btn-sm py-0 px-2" onclick="deleteDocFile('${d.file_name}')">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('Error loading documents:', e);
+  }
+}
+
+async function uploadDocFile() {
+  const fileInput = document.getElementById('doc-upload-file');
+  if (!fileInput.files || fileInput.files.length === 0) {
+    alert('Please select one or more files to upload first.');
+    return;
+  }
+  const formData = new FormData();
+  for (let i = 0; i < fileInput.files.length; i++) {
+    formData.append('files', fileInput.files[i]);
+  }
+
+  try {
+    const res = await fetch('/api/knowledge/documents/upload', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (res.ok) {
+      fileInput.value = '';
+      loadUploadedDocs();
+    } else {
+      alert('Upload failed: ' + (data.detail || data.error));
+    }
+  } catch (e) {
+    alert('Error uploading files: ' + e);
+  }
+}
+
+async function triggerCronIngestion() {
+  try {
+    const res = await fetch('/api/knowledge/documents/trigger-cron', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      alert('Cron Batch Ingestion triggered! Processing in background...');
+      setTimeout(loadUploadedDocs, 2000);
+    }
+  } catch (e) {
+    alert('Error triggering cron ingestion: ' + e);
+  }
+}
+
+async function deleteDocFile(filename) {
+  if (!confirm(`Delete ${filename}?`)) return;
+  try {
+    const res = await fetch(`/api/knowledge/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    if (res.ok) {
+      loadUploadedDocs();
+    }
+  } catch (e) {
+    alert('Error deleting document: ' + e);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadUploadedDocs();
+  setInterval(loadUploadedDocs, 4000);
+});
 </script>
 {% endblock %}

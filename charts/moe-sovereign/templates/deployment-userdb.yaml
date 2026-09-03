@@ -1,0 +1,62 @@
+{{- if .Values.moeUserdb.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moe-userdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: userdb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moe-userdb
+  template:
+    metadata:
+      labels:
+        app: moe-userdb
+        {{- include "moe.labels" . | nindent 8 }}
+        app.kubernetes.io/component: userdb
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.moeUserdb.image }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.moeUserdb.user }}
+            - name: POSTGRES_DB
+              value: {{ .Values.moeUserdb.database }}
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: trust
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: moe-userdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: userdb
+spec:
+  selector:
+    app: moe-userdb
+  ports:
+    - port: 5432
+      targetPort: 5432
+{{- end -}}

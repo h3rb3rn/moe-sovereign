@@ -60,7 +60,9 @@ CLOUD_ENDPOINTS: list[dict] = [
         "token": s.get("token", ""),
     }
     for s in INFERENCE_SERVERS_LIST
-    if s.get("api_type", "ollama") != "ollama" and s.get("enabled", True)
+    if s.get("api_type", "ollama") != "ollama"
+    and s.get("enabled", True)
+    and not s.get("no_auto_fallback")
 ]
 
 # Heuristic helpers to generate training targets and fallbacks
@@ -222,22 +224,47 @@ def init_router():
 
 async def get_bge_embedding(prompt: str) -> Optional[np.ndarray]:
     embed_url = os.getenv("MOE_EMBED_URL", "http://moe-embed:11434").rstrip("/") + "/api/embed"
+    # CPU-only container (OLLAMA_NUM_GPU=0): bge-m3 cold-start takes up to ~60 s.
+    # keep_alive=-1 instructs Ollama to keep the model resident until process exit,
+    # preventing repeated evict/reload cycles across requests.
+    _BGE_TIMEOUT = float(os.getenv("MOE_BGE_TIMEOUT", "90"))
     try:
         async with httpx.AsyncClient() as client:
             payload = {
                 "model": "bge-m3",
-                "input": [prompt]
+                "input": [prompt],
+                "keep_alive": -1,
             }
-            response = await client.post(embed_url, json=payload, timeout=10.0)
+            response = await client.post(embed_url, json=payload, timeout=_BGE_TIMEOUT)
             if response.status_code == 200:
                 embeds = response.json().get("embeddings", [])
                 if embeds:
                     return np.array(embeds[0], dtype=np.float32)
             else:
-                logger.error(f"Failed to fetch BGE embedding: status={response.status_code}, response={response.text}")
+                logger.error(f"Failed to fetch BGE embedding: status={response.status_code}, response={response.text[:200]}")
     except Exception as e:
         logger.error(f"Exception fetching BGE embedding: {e}")
     return None
+
+
+async def prewarm_bge_model() -> None:
+    """Fire-and-forget startup task: load bge-m3 into memory before requests arrive.
+
+    Runs once during lifespan startup. Failure is logged but never raises so
+    the orchestrator starts normally even when moe-embed is temporarily down.
+    """
+    embed_url = os.getenv("MOE_EMBED_URL", "http://moe-embed:11434").rstrip("/") + "/api/embed"
+    _BGE_TIMEOUT = float(os.getenv("MOE_BGE_TIMEOUT", "90"))
+    try:
+        async with httpx.AsyncClient() as client:
+            payload = {"model": "bge-m3", "input": ["warmup"], "keep_alive": -1}
+            resp = await client.post(embed_url, json=payload, timeout=_BGE_TIMEOUT)
+            if resp.status_code == 200:
+                logger.info("✅ BGE model pre-warm complete (bge-m3 resident)")
+            else:
+                logger.warning("BGE pre-warm returned HTTP %d — model may be slow on first request", resp.status_code)
+    except Exception as exc:
+        logger.warning("BGE pre-warm failed (moe-embed unreachable?): %s", exc)
 
 
 async def _run_sovereign_classifier(prompt: str) -> Optional[dict]:
@@ -637,7 +664,7 @@ _CATEGORY_MCP_TOOLS: dict[str, list[str]] = {
     "science":          ["calculate", "unit_convert"],
     "data_analysis":    ["statistics_calc", "json_query", "calculate", "unit_convert"],
     "legal_advisor":    ["legal_get_paragraph", "legal_search_laws", "legal_get_law_overview"],
-    "technical_support":["subnet_calc", "hash_text", "regex_extract"],
+    "technical_support":["subnet_calc", "vlsm_subnet_calc", "hash_text", "regex_extract"],
     "code_reviewer":    ["regex_extract", "hash_text"],
     "vision":           ["text_analyze", "regex_extract"],
     "precision_tools":  ["calculate", "unit_convert", "date_diff", "date_add",
@@ -692,7 +719,14 @@ def _resolve_expert_skills_heuristic(category: str, prompt_hint: str = "") -> li
 def _generate_fallback_structured_prompts(prompt: str, active_experts: list) -> dict:
     """Generate structured/persona-based fallback system prompts with zero latency."""
     # 1. Base default prompts
-    planner_prompt = f"You are a specialized planner model in a Mixture of Experts (MoE) system. Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}."
+    _first_exp = active_experts[0] if active_experts else "general"
+    planner_prompt = (
+        f"You are a specialized planner model in a Mixture of Experts (MoE) system. "
+        f"Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}. "
+        f"You MUST always produce at least one task. "
+        f"NEVER return an empty JSON array. "
+        f'Minimum valid response: [{{"task": "<concrete description of what to do>", "category": "{_first_exp}"}}]'
+    )
     judge_prompt = f"You are a specialized synthesis judge. Consolidate and merge responses from the following expert models: {', '.join(active_experts)}. Resolve contradictions using paraconsistent logic rules and output a unified, high-quality answer."
     
     # Add prompt-specific guidance to planner/judge based on query content
@@ -1115,7 +1149,15 @@ async def get_dynamic_template(
         # Context-aware system prompts for planner and judge resolved dynamically
         planner_prompt = resolved_prompts.get("planner_prompt")
         if not planner_prompt:
-            planner_prompt = f"You are a specialized planner model in a Mixture of Experts (MoE) system. Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}."
+            _first_expert = active_experts[0] if active_experts else "general"
+            planner_prompt = (
+                f"You are a specialized planner model in a Mixture of Experts (MoE) system. "
+                f"Coordinate planning, tool execution, and task delegation for the following expert areas: {', '.join(active_experts)}. "
+                f"You MUST always produce at least one task. "
+                f"NEVER return an empty JSON array. "
+                f"Minimum valid response: "
+                f'[{{"task": "<concrete description of what to do>", "category": "{_first_expert}"}}]'
+            )
             
         judge_prompt = resolved_prompts.get("judge_prompt")
         if not judge_prompt:

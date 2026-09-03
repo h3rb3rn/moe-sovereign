@@ -145,10 +145,11 @@ def _sanitize_plan(raw: list, fallback_input: str,
         if not isinstance(item, dict):
             logger.warning(f"⚠️ Planner: invalid task entry skipped: {item!r}")
             continue
-        task_text = item.get("task", "").strip()
+        task_text = (item.get("task") or item.get("task_description") or item.get("instruction") or item.get("description") or "").strip()
         if not task_text:
             continue
-        cat = item.get("category", "general")
+        item["task"] = task_text
+        cat = item.get("category") or item.get("task_type") or item.get("type") or "general"
         if cat not in valid_cats:
             logger.warning(f"⚠️ Planner: unknown category '{cat}' → 'general'")
             cat = "general"
@@ -259,6 +260,7 @@ async def planner_node(state_: AgentState):
         PlannerContractError as _PlannerContractError,
         PlannerContractIssue as _PlannerContractIssue,
         assign_stable_task_ids as _assign_stable_task_ids,
+        normalize_task_dependencies as _normalize_task_dependencies,
         canonical_tool_catalog_hash as _canonical_tool_catalog_hash,
         parse_plan as _parse_plan_contract,
         recover_explicit_supported_plan as _recover_explicit_supported_plan,
@@ -301,6 +303,12 @@ async def planner_node(state_: AgentState):
                 json.dumps(deterministic_repairs, ensure_ascii=False),
             )
         prepared = _assign_stable_task_ids(tasks)
+        prepared, _dep_repairs = _normalize_task_dependencies(prepared)
+        if _dep_repairs:
+            logger.info(
+                "Planner depends_on normalized: %s",
+                json.dumps(_dep_repairs, ensure_ascii=False),
+            )
         _validate_plan_or_raise(
             prepared,
             _handoff_tool_schemas,
@@ -665,7 +673,10 @@ async def planner_node(state_: AgentState):
     try:
         from self_correction import get_few_shot_context as _get_fsc
         _plan_categories = list(EXPERTS.keys())  # All categories as hint sources
-        _few_shot_hint = await _get_fsc(_plan_categories, state.redis_client, max_per_cat=2)
+        _few_shot_hint = await _get_fsc(
+            _plan_categories, state.redis_client, max_per_cat=2,
+            query=state_.get("input", ""),
+        )
     except Exception:
         pass
 
@@ -828,7 +839,58 @@ async def planner_node(state_: AgentState):
         _advice_items = "\n".join(f"- {rule}" for rule in _advice_list)
         _advice_block = f"\n\n[DECLARATIVE CONSTRAINTS / RULES - you must follow these!]\n{_advice_items}\n"
 
-    prompt = f"""{_planner_role}{_context_toc_block}{_advice_block}{_agentic_context_block}
+    # Pick an LLM-expert category for prompt examples so the example never
+    # names a category absent from VALID CATEGORIES, which confuses the model.
+    _example_cat = next(
+        (c for c in expert_categories if c in {"technical_support", "general_assistant", "general"}),
+        expert_categories[0] if expert_categories else "general",
+    )
+
+    # Compact prompt: the full instruction set below (category rules, dynamic-expert
+    # guidance, legal-research pattern, vision rules, skill catalog, 5 worked examples)
+    # reliably overwhelms small planner models. Used for trivial requests, and reused
+    # on retry for non-trivial requests -- see the retry loop below, where reusing the
+    # full prompt verbatim across all attempts has been observed to make output *worse*
+    # rather than better (the model pattern-matches on prompt structure instead of the
+    # actual task; see agent_status/claude-code.md, FINDING-planner-nontrivial-retry-prompt).
+    def _build_compact_prompt(task_budget_text: str) -> str:
+        return (
+            f"{_planner_role}"
+            f"{_context_toc_block}"
+            f"{_advice_block}"
+            f"\n\nIMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. "
+            f"No text, no explanations, no markdown.\n"
+            f"Each object MUST have \"task\" (string) and \"category\" (string).\n"
+            f"TASK BUDGET: {task_budget_text}.\n\n"
+            f"VALID CATEGORIES FOR LLM EXPERTS: {expert_categories}\n"
+            f"NOTE: \"precision_tools\" is ALWAYS a valid category for any calculation "
+            f"or exact tool call — it is NOT listed above. "
+            f"MANDATORY for arithmetic, dates, units, subnet, conversions.\n\n"
+            f"PRECISION TOOLS:\n"
+            f"  - calculate: arithmetic and math\n"
+            f"  - date_diff: date calculations\n"
+            f"  - calendar_facts: weekday, ISO calendar facts\n"
+            f"  - unit_convert: unit conversions\n"
+            f"Format: {{\"task\": \"...\", \"category\": \"precision_tools\", "
+            f"\"mcp_tool\": \"<tool>\", \"mcp_args\": {{...}}}}\n\n"
+            f"EXAMPLE arithmetic:\n"
+            f"Request: \"What is 47+53?\"\n"
+            f"Correct: [{{\"task\": \"Calculate 47+53\", \"category\": \"precision_tools\", "
+            f"\"mcp_tool\": \"calculate\", \"mcp_args\": {{\"expression\": \"47+53\"}}}}]\n\n"
+            f"EXAMPLE general question:\n"
+            f"Request: \"What is Docker?\"\n"
+            f"Correct: [{{\"task\": \"Explain what Docker is and what it is used for\", "
+            f"\"category\": \"{_example_cat}\"}}]\n\n"
+            f"Request: {state_['input']}\n\n"
+            f"JSON array:"
+        )
+
+    # For trivial (non-agentic) requests, use the compact prompt from the start to
+    # avoid overwhelming the planner model with irrelevant instructions.
+    if _complexity == "trivial" and not _is_agentic_replan:
+        prompt = _build_compact_prompt("exactly 1 task")
+    else:
+        prompt = f"""{_planner_role}{_context_toc_block}{_advice_block}{_agentic_context_block}
 
 IMPORTANT: Answer EXCLUSIVELY with a JSON array of objects. No text, no explanations, no markdown.
 Each object MUST contain the fields "task" (string) and "category" (string).
@@ -841,6 +903,7 @@ Combine compatible non-precision work when necessary, but never omit a
 separately requested outcome or remove/downgrade a required precision tool.
 
 VALID CATEGORIES FOR LLM EXPERTS: {expert_categories}
+NOTE: "precision_tools" is ALWAYS a valid category for any calculation or tool call — it is NOT an LLM expert and is NOT listed above. You MUST use it for arithmetic, dates, units, etc.
 
 DYNAMIC EXPERT — for highly specialised domains not covered by the categories above:
 Use "dynamic" when the task requires deep domain expertise in a field absent from the standard expert list
@@ -856,14 +919,26 @@ add a "research" task BEFORE the dynamic task so the expert receives fresh web c
 [{{"task": "Aktuelle ImmoWertV Richtlinien und Sachwertfaktoren recherchieren", "category": "research", "search_query": "ImmoWertV 2024 Sachwertfaktoren aktuell"}},
  {{"task": "Verkehrswert berechnen...", "category": "dynamic", "domain": "Immobilienwertermittlung", "requires": ["math"]}}]
 
+KNOWLEDGE STORAGE / MEMORY REQUESTS — when the user asks to store, persist, register, or remember information in the knowledge graph:
+Do NOT hand-encode the data as a JSON string inside "task", and do NOT invent extra fields for this. Every committed response is automatically fact-extracted and written to the knowledge graph in the background — a single plain-language task that restates and acknowledges the information is sufficient and correct.
+Format: {{"task": "Acknowledge the following information and confirm it is noted: <restate the key facts in plain prose, not JSON>", "category": "{_example_cat}"}}
+WRONG: a task whose "task" field contains escaped JSON, code fences, or a nested string re-encoding the input.
+
 WEB RESEARCH — for current/external info OR for domain specifications in implementation tasks:
 {{"task": "task description", "category": "research", "search_query": "short optimized search term"}}
 Use for: game rules · algorithm specifications · protocols/standards · anything where correct logic is critical for implementation.
 
 PRECISION TOOLS — MANDATORY for all exact calculations (LLMs calculate WRONG!):
 REQUIRED for: arithmetic · subnet/IP/CIDR · date/time · units · hashes · regex · statistics
-{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False)) if state_.get("complexity_level") != "trivial" else "  - calculate: arithmetic and math  - date_diff: date calculations  - calendar_facts: weekday and ISO calendar facts  - unit_convert: unit conversions"}
+{_build_filtered_tool_desc(state_["input"], enable_graphrag=state_.get("enable_graphrag", False))}
 Format: {{"task": "task description", "category": "precision_tools", "mcp_tool": "<toolname>", "mcp_args": {{<args>}}}}
+
+CHAINED CALCULATIONS — when one calculation needs the RESULT of a PREVIOUS calculation (e.g. multi-year escalation, running totals):
+Give each precision_tools task a stable "id" and reference an earlier task's result as {{"$task_result": "<id>"}} instead of computing or guessing the intermediate value yourself.
+Example: "Tariff is 0.10 EUR in year 1, +5% in year 2":
+[{{"id": "year1", "task": "Year 1 tariff", "category": "precision_tools", "mcp_tool": "decimal_finance", "mcp_args": {{"operation": "add", "operands": ["0.10", "0"], "currency": "EUR", "scale": 4, "rounding": "half_even"}}}},
+ {{"id": "year2", "task": "Year 2 tariff (+5% on year 1)", "category": "precision_tools", "mcp_tool": "decimal_finance", "mcp_args": {{"operation": "percentage", "operands": [{{"$task_result": "year1"}}, "105"], "currency": "EUR", "scale": 4, "rounding": "half_even"}}}}]
+A reference MUST point to an earlier task in the same list — never to itself or to a later task.
 {_agentic_code_block}
 LEGAL RESEARCH — for questions about German law (laws, paragraphs, legal norms):
 Use the legal_* tools to retrieve exact legal texts; ALWAYS combine with legal_advisor expert for interpretation.
@@ -887,7 +962,8 @@ VISION EXPERT — for image and document processing:
 RULES:
 - precision_tools has ABSOLUTE PRIORITY — NEVER use "math" or "technical_support" for calculations!
 - Legal questions → ALWAYS get legal_get_paragraph AND legal_advisor expert for interpretation
-- Subnet mask / IP / CIDR / gateway → ALWAYS subnet_calc, NEVER technical_support
+- Subnet mask / IP / CIDR / gateway for ONE network → ALWAYS subnet_calc, NEVER technical_support
+- VLSM: splitting ONE parent CIDR into MULTIPLE named subnets sized by required host counts → ALWAYS vlsm_subnet_calc with mcp_args {{"cidr": "...", "subnets": [{{"id": "...", "hosts": N}}, ...]}} — NEVER pass a "subnets" list to subnet_calc, it only accepts a single "cidr"
 - Regex extraction from text → ALWAYS regex_extract, NEVER technical_support
 - For implementations with domain-specific logic (games, algorithms, protocols): research task FIRST, then code tasks
 - Task descriptions for code experts MUST contain all known rules/specifications (logic, constraints, algorithm details) — experts only see their task description!
@@ -897,10 +973,21 @@ RULES:
   Example: {{"task": "...", "category": "code_reviewer", "metadata_filters": {{"expert_domain": "code_reviewer", "project": "frontend"}}}}
 {_build_skill_catalog()}
 {_quality_hint}{success_hint}{_few_shot_hint}
-EXAMPLE calculation:
+EXAMPLE arithmetic:
+Request: "What is 47+53?"
+Correct: [{{"task": "Calculate 47+53", "category": "precision_tools", "mcp_tool": "calculate", "mcp_args": {{"expression": "47+53"}}}}]
+WRONG:   [{{"task": "Berechne 47+53", "category": "math"}}]
+
+EXAMPLE subnet calculation:
 Request: "What subnet mask for 10.42.155.160/27 with 14 hosts?"
 Correct: [{{"task": "Subnet info for 10.42.155.160/27", "category": "precision_tools", "mcp_tool": "subnet_calc", "mcp_args": {{"cidr": "10.42.155.160/27"}}}}]
 WRONG:   [{{"task": "Calculate subnet mask", "category": "technical_support"}}]
+
+EXAMPLE VLSM (multiple named subnets from one parent block):
+Request: "Split 10.180.0.0/19 into subnets A(2000 hosts), B(1000 hosts), C(250 hosts)"
+Correct: [{{"task": "VLSM-allocate 10.180.0.0/19 for subnets A, B, C", "category": "precision_tools", "mcp_tool": "vlsm_subnet_calc", "mcp_args": {{"cidr": "10.180.0.0/19", "subnets": [{{"id": "A", "hosts": 2000}}, {{"id": "B", "hosts": 1000}}, {{"id": "C", "hosts": 250}}]}}}}]
+WRONG:   [{{"task": "...", "category": "precision_tools", "mcp_tool": "subnet_calc", "mcp_args": {{"cidr": "10.180.0.0/19", "subnets": [...]}}}}]
+← ERROR: subnet_calc's schema only accepts "cidr" — a "subnets" list is rejected (additionalProperties)
 
 EXAMPLE game implementation with domain logic:
 Request: "Create a Connect Four game as HTML5 page"
@@ -913,7 +1000,7 @@ WRONG: [{{"task": "Implement HTML5 base structure", "category": "code_reviewer"}
 
 EXAMPLE simple request:
 Request: "What is Docker?"
-Correct: [{{"task": "Explain what Docker is and what it is used for", "category": "technical_support"}}]
+Correct: [{{"task": "Explain what Docker is and what it is used for", "category": "{_example_cat}"}}]
 WRONG:   ["Docker", "Container", "Virtualization"]
 
 Request: {state_['input']}
@@ -958,7 +1045,19 @@ JSON array:"""
             }
         res = None
         try:
-            _attempt_prompt = prompt + _contract_repair_hint
+            # On retry, non-trivial requests switch to the compact prompt too: reusing
+            # the full prompt verbatim (just growing it with a repair hint) has been
+            # observed to make a small planner model's output worse, not better -- see
+            # _build_compact_prompt above. Trivial requests already use it from attempt 0.
+            _is_compact_already = _complexity == "trivial" and not _is_agentic_replan
+            if attempt >= 1 and not _is_compact_already:
+                _retry_task_budget = (
+                    f"aim for at most {_routing['max_tasks']} executable tasks, "
+                    f"never exceed {PLANNER_MAX_TASKS}"
+                )
+                _attempt_prompt = _build_compact_prompt(_retry_task_budget) + _contract_repair_hint
+            else:
+                _attempt_prompt = prompt + _contract_repair_hint
             res, _planner_fb = await _invoke_planner_with_retry(
                 _attempt_state,
                 _attempt_prompt,
@@ -976,7 +1075,9 @@ JSON array:"""
             # Use the shared tolerant contract parser; it accepts an array or
             # {"tasks": [...]} and preserves task-specific routing fields.
             _plan_text = res.content.strip()
+            logger.info("PLANNER RAW OUTPUT: %r", _plan_text)
             _contract_plan = _parse_plan_contract(_plan_text)
+            logger.info("CONTRACT PLAN VALID: %s, TASKS: %d", _contract_plan.valid, len(_contract_plan.tasks))
             if not _contract_plan.valid:
                 raw, _explicit_recovery_events = (
                     _recover_explicit_supported_plan(
@@ -1068,9 +1169,25 @@ JSON array:"""
                 "structured_failure": _failure.as_dict(),
                 "structured_failure_round": attempt + 1,
             }
+            # Contract failures used to get exactly one repair retry
+            # (gated on _contract_repair_used) regardless of the remaining
+            # _structured_attempts budget, so two consecutive hallucinated
+            # non-JSON replies exhausted recovery after only 2 of the 3
+            # configured attempts and raised (-> HTTP 500) even though a
+            # third, still-budgeted attempt was available. Observed live: a
+            # complex eBPF/XDP task failed this way -- attempt 1 (full
+            # prompt) echoed the planner's own category-reference catalog
+            # instead of a task list, attempt 2 (compact retry prompt)
+            # produced a different but equally non-JSON reply, and recovery
+            # gave up rather than trying a 3rd time. temperature=0.7 makes
+            # attempts genuinely stochastic, so spending the full configured
+            # budget before giving up (same bound already used for
+            # non-contract failures) meaningfully raises the chance of
+            # eventually getting valid JSON, without changing the
+            # deliberate "raise rather than silently mask" behavior once
+            # that full budget is actually exhausted (see below).
             _can_retry_contract = (
                 _is_contract_failure
-                and not _contract_repair_used
                 and attempt + 1 < _structured_attempts
             )
             _can_retry_other = (
@@ -1078,7 +1195,7 @@ JSON array:"""
                 and attempt + 1 < _structured_attempts
             )
             if _can_retry_contract or _can_retry_other:
-                if _is_contract_failure:
+                if _is_contract_failure and not _contract_repair_used:
                     _contract_repair_used = True
                     _contract_repair_hint = exc.repair_instruction()
                 _next_action = (
@@ -1192,6 +1309,15 @@ JSON array:"""
         ),
     )
 
+    # Validate DAG using Kahn's algorithm
+    if plan and isinstance(plan, list):
+        dag_dict = {
+            t["id"]: [t["depends_on"]] if t.get("depends_on") else []
+            for t in plan if isinstance(t, dict) and t.get("id")
+        }
+        if not validate_dag_kahn(dag_dict):
+            logger.warning("planner_node: Generated plan contains cycles according to Kahn's algorithm")
+
     # Cache plan in Valkey for reuse (fail-safe)
     if state.redis_client is not None and plan:
         asyncio.create_task(state.redis_client.setex(_plan_cache_key, 1800, json.dumps(plan)))
@@ -1279,3 +1405,78 @@ def _inject_prior_results(task: dict, prior_outputs: dict[str, str]) -> dict:
             out[field] = {k: _sub(v) if isinstance(v, str) else v
                           for k, v in out[field].items()}
     return out
+
+def validate_dag_kahn(dag_dict: dict) -> bool:
+    """
+    Validates whether an execution plan represented as an adjacency dictionary
+    is a cycle-free Directed Acyclic Graph (DAG) using Kahn's Algorithm.
+    
+    Args:
+        dag_dict: Adjacency dict (e.g. {'node_a': ['node_b'], 'node_b': []})
+        
+    Returns:
+        True if valid (no cycles), False otherwise.
+    """
+    import collections
+    
+    in_degree = {u: 0 for u in dag_dict}
+    for u in dag_dict:
+        for v in dag_dict[u]:
+            if v not in in_degree:
+                in_degree[v] = 0
+            in_degree[v] += 1
+            
+    queue = collections.deque([u for u in in_degree if in_degree[u] == 0])
+    visited_count = 0
+    
+    while queue:
+        u = queue.popleft()
+        visited_count += 1
+        
+        for v in dag_dict.get(u, []):
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                queue.append(v)
+                
+    return visited_count == len(in_degree)
+
+def verify_cot_step_z3(step_context: str, deduction: str) -> dict:
+    """
+    Lightweight rule-based heuristic to check if a Chain-of-Thought
+    deduction logically fits the context.
+    
+    Args:
+        step_context: The context string.
+        deduction: The deduction string to check.
+        
+    Returns:
+        dict with 'is_valid', 'step', and 'diagnostic_error'
+    """
+    ctx_lower = step_context.lower()
+    ded_lower = deduction.lower()
+    
+    # Extract key terms from context (words with length > 4)
+    key_terms = [w.strip('.,!?') for w in ctx_lower.split() if len(w.strip('.,!?')) > 4]
+    
+    # Check if any key term is referenced
+    references_context = any(term in ded_lower for term in key_terms)
+    if not references_context and key_terms:
+        return {
+            'is_valid': False,
+            'step': deduction,
+            'diagnostic_error': 'Deduction does not reference context keywords.'
+        }
+        
+    # Check for simple negation contradictions
+    if "not" in ded_lower.split() and "not" not in ctx_lower.split():
+        return {
+            'is_valid': False,
+            'step': deduction,
+            'diagnostic_error': 'Contradiction: negation found.'
+        }
+                
+    return {
+        'is_valid': True,
+        'step': deduction,
+        'diagnostic_error': None
+    }

@@ -24,6 +24,11 @@ models:
     json_object: true
     stream: true
 
+  "qwen3.8:27b":
+    json_schema: true
+    json_object: true
+    stream: true
+
   "qwen2.5:32b":
     json_schema: true
     json_object: true
@@ -73,3 +78,18 @@ models:
     json_schema: false
     json_object: true
     stream: true
+
+  # Planner model: qwen3-based GGUF (q4km). Ollama's format:json suppresses
+  # its <think> reasoning and causes it to emit empty `{}` or `[]` responses.
+  # Removing the format constraint lets it use free-text generation, where it
+  # reliably produces the correct JSON array via prompt guidance alone.
+  "qwen3-planner:q4km":
+    json_schema: false
+    json_object: false
+    stream: true
+
+  "moe-sovereign-student:4b":
+    json_schema: false
+    json_object: false
+    stream: true
+

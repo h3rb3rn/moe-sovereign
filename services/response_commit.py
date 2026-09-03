@@ -155,9 +155,18 @@ def _cache_ids(payload: Mapping[str, Any]) -> tuple[str, str]:
 
 
 async def _read_journal(key: str) -> dict[str, Any]:
+    # Fail-open like every other Redis-backed feature in this codebase (rate
+    # limiter, planner cache, node reservation): a Redis outage must degrade
+    # dedup/idempotency, never take down an otherwise-complete response.
+    # commit_response_payload's callers already re-run sinks idempotently
+    # when the journal comes back empty, so "no journal" is a safe default.
     if state.redis_client is None:
         return {}
-    raw = await state.redis_client.get(key)
+    try:
+        raw = await state.redis_client.get(key)
+    except Exception as exc:
+        logger.debug("Response-commit journal read failed (fail-open): %s", exc)
+        return {}
     if not raw:
         return {}
     if isinstance(raw, bytes):
@@ -170,8 +179,12 @@ async def _read_journal(key: str) -> dict[str, Any]:
 
 
 async def _write_journal(key: str, journal: Mapping[str, Any]) -> None:
-    if state.redis_client is not None:
+    if state.redis_client is None:
+        return
+    try:
         await state.redis_client.set(key, json.dumps(journal, default=str), ex=604800)
+    except Exception as exc:
+        logger.debug("Response-commit journal write failed (fail-open): %s", exc)
 
 
 async def _run_learning_signals(payload: Mapping[str, Any]) -> None:
@@ -451,9 +464,19 @@ async def commit_response_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     lock_key = f"{journal_key}:lock"
     lock_token = uuid.uuid4().hex
     if state.redis_client is not None:
-        acquired = await state.redis_client.set(
-            lock_key, lock_token, nx=True, ex=_LOCK_TTL_SECONDS
-        )
+        # Fail-open: a Redis error here must not discard an otherwise-complete
+        # pipeline run (this node sits last before END, so raising here throws
+        # away already-finished planner/expert/merger/judge work). Without
+        # Redis to coordinate, we cannot detect a concurrent duplicate commit
+        # -- proceeding anyway (redundant idempotent sink writes) is far
+        # cheaper than losing the response outright.
+        try:
+            acquired = await state.redis_client.set(
+                lock_key, lock_token, nx=True, ex=_LOCK_TTL_SECONDS
+            )
+        except Exception as exc:
+            logger.debug("Response-commit lock acquisition failed (fail-open): %s", exc)
+            acquired = True
         if not acquired:
             journal = await _read_journal(journal_key)
             return {
@@ -503,11 +526,17 @@ async def commit_response_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         }
     finally:
         if state.redis_client is not None:
-            current = await state.redis_client.get(lock_key)
-            if isinstance(current, bytes):
-                current = current.decode("utf-8")
-            if current == lock_token:
-                await state.redis_client.delete(lock_key)
+            # Fail-open: the lock has _LOCK_TTL_SECONDS and will expire on its
+            # own; failing to release it early is a missed optimization, not
+            # a correctness issue, so it must not mask the return value above.
+            try:
+                current = await state.redis_client.get(lock_key)
+                if isinstance(current, bytes):
+                    current = current.decode("utf-8")
+                if current == lock_token:
+                    await state.redis_client.delete(lock_key)
+            except Exception as exc:
+                logger.debug("Response-commit lock release failed (fail-open, TTL will expire it): %s", exc)
 
 
 async def response_commit_node(state_: Mapping[str, Any]) -> dict[str, Any]:

@@ -108,6 +108,91 @@ services:
       - NEO4J_USER=neo4j
       - NEO4J_PASS=${NEO4J_PASS}
       - ORCHESTRATOR_URL=http://langgraph-orchestrator:8000
+      - RUST_COMPILE_SANDBOX_URL=http://rust-compile-sandbox:8080
+      - RUST_LOOM_SANDBOX_URL=http://rust-loom-sandbox:8080
+    networks:
+      - default                  # internet egress for its own tools (Wikipedia, PubMed, etc.)
+      - rust_compile_internal    # reach rust-compile-sandbox on its egress-blocked network
+      - rust_loom_internal       # reach rust-loom-sandbox on its egress-blocked network
+
+  # Isolated, egress-blocked Rust type/borrow-check sandbox for the
+  # rust_compile_check precision tool -- compiles untrusted, model-generated
+  # source with `rustc --emit=metadata` (analysis only, no codegen/link, and
+  # the compiled artifact is never executed). See docs/experiments/
+  # lumig_posttraining_candidates.md for the motivating evidence.
+  rust-compile-sandbox:
+    build:
+      context: .
+      dockerfile: services/rust_compile_sandbox/Dockerfile
+    container_name: rust-compile-sandbox
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    # No .env, no network egress: this service only ever sees a source-code
+    # string over HTTP from mcp-precision and never needs external state.
+    networks:
+      - rust_compile_internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  # Phase 2 of the Rust code-quality-in-the-loop feature: unlike
+  # rust-compile-sandbox (type/borrow-check only, never executes), this
+  # container actually RUNS the submitted code under Loom's concurrency
+  # model checker, which is the only way to catch a memory-ordering data
+  # race -- that class of bug still compiles cleanly (see docs/experiments/
+  # lumig_posttraining_candidates.md). Kept as its own container and network
+  # (not an extension of rust-compile-sandbox) specifically so a bug in this
+  # new, higher-risk execution path can never compromise the already-proven
+  # compile-only checker the rest of the system depends on.
+  rust-loom-sandbox:
+    build:
+      context: .
+      dockerfile: services/rust_loom_sandbox/Dockerfile
+    container_name: rust-loom-sandbox
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Unlike rust-compile-sandbox's tmpfs, this one must allow exec: Loom
+      # has to actually run the compiled test binary to explore interleavings,
+      # not just type-check it. size is generous because a `cargo test
+      # --release` build of even a tiny crate against the pre-cached loom
+      # dependency still produces a non-trivial target/ directory per request.
+      - /build:exec,nosuid,size=1024m
+    # No .env, no network egress: identical isolation posture to
+    # rust-compile-sandbox, just with an exec-capable scratch dir instead of
+    # a noexec one.
+    networks:
+      - rust_loom_internal
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+          pids: 128
 
   # --- LangGraph Orchestrator (Dein Kern-System) ---
   langgraph-app:
@@ -115,7 +200,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
     container_name: langgraph-orchestrator
     restart: always
     healthcheck:
@@ -188,6 +272,7 @@ services:
       # services/ with stale graph/, main.py or tool_injector.py caused live
       # import failures after otherwise successful planning.
       - ./data:/app/data:rw
+      - ./scripts:/app/scripts:ro
       - ${HERMES_KANBAN_WORKSPACES_HOST:-/tmp/moe-kanban-workspaces}:/app/hermes-workspaces:rw
       - ./models:/app/models:ro
       - ${MOE_DATA_ROOT}/cleanup-config.json:/app/cleanup-config.json:ro
@@ -214,7 +299,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      network: host
     container_name: moe-maintenance
     restart: unless-stopped
     command: ["python", "-u", "scripts/maintenance_scheduler.py"]
@@ -229,10 +313,13 @@ services:
       - GRAPH_DECAY_APPLY=${GRAPH_DECAY_APPLY:-0}
       - EURISKO_SCHEDULER_ENABLED=${EURISKO_SCHEDULER_ENABLED:-0}
       - EURISKO_INTERVAL_SECONDS=${EURISKO_INTERVAL_SECONDS:-21600}
+      - KNOWLEDGE_INGESTION_SCHEDULER_ENABLED=${KNOWLEDGE_INGESTION_SCHEDULER_ENABLED:-1}
+      - KNOWLEDGE_INGESTION_INTERVAL_SECONDS=${KNOWLEDGE_INGESTION_INTERVAL_SECONDS:-300}
       - MAINTENANCE_INITIAL_DELAY_SECONDS=${MAINTENANCE_INITIAL_DELAY_SECONDS:-30}
       - MAINTENANCE_STATUS_FILE=/app/logs/maintenance-status.json
     volumes:
       - ./.env:/app/.env:ro
+      - ./scripts:/app/scripts:ro
       - ./models:/app/models:rw
       - ./data:/app/data:rw
       - ${MOE_DATA_ROOT}/agent-logs:/app/logs:rw
@@ -313,6 +400,16 @@ services:
     # the server is bound to loopback only (see ports below) and is not reverse-proxied,
     # so the unauthenticated endpoint is unreachable from outside the host. Revisit
     # the pin once upstream ships a patched release.
+    #
+    # Two further unfixed advisories affect this pin, both about ChromaDB's own
+    # multi-tenant RBAC: SimpleRBACAuthorizationProvider doesn't scope a permission to
+    # the tenant/database/collection it was granted for, and an authenticated caller
+    # can read/write/update/delete data in any tenant's collection. Neither is
+    # exploitable here: the app never uses ChromaDB's tenant/database feature (every
+    # call goes through `default_tenant`/`default_database`; tenant isolation is
+    # enforced at the application layer via `tenant_id` filtering instead), and the
+    # network isolation below means the only caller who could reach the API at all
+    # is the orchestrator itself.
     image: chromadb/chroma:1.5.9
     container_name: chromadb-vector
     restart: always
@@ -369,10 +466,31 @@ services:
           cpus: '${EMBED_CPU_LIMIT:-2.0}'
           memory: 2G
 
+  # --- Local Inference Engine (Ollama) ---
+  moe-ollama:
+    image: ollama/ollama:latest
+    container_name: moe-ollama
+    profiles: [ollama]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OLLAMA_HOST_PORT:-11434}:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-24h}
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ${MOE_DATA_ROOT}/ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   # --- Prometheus (Metriken-Scraper) ---
   moe-prometheus:
     image: prom/prometheus:latest
     container_name: moe-prometheus
+    profiles: [monitoring]
     restart: always
     ports:
       - "127.0.0.1:${PROMETHEUS_HOST_PORT}:9090"
@@ -417,7 +535,6 @@ services:
     build:
       context: ./admin_ui
       dockerfile: Dockerfile
-      network: host
     container_name: moe-admin
     restart: always
     ports:
@@ -448,6 +565,7 @@ services:
       - ./admin_ui/app.py:/app/app.py:ro
       - ./admin_ui/database.py:/app/database.py:ro
       - ./admin_ui/templates:/app/templates:ro
+      - ./admin_ui/lang:/app/lang:ro
       - ${CLAUDE_SKILLS_DIR:-./skills}:/app/skills:rw
       - ./skills-upstream:/app/skills-upstream:rw
       - ${MOE_DATA_ROOT}/admin-logs:/app/logs:rw
@@ -461,8 +579,6 @@ services:
       - ${MOE_DATA_ROOT}/checkpoint-archives:/app/checkpoint-archives:rw
     depends_on:
       langgraph-app:
-        condition: service_started
-      moe-prometheus:
         condition: service_started
       terra_cache:
         condition: service_started
@@ -491,6 +607,7 @@ services:
   moe-grafana:
     image: grafana/grafana:latest
     container_name: moe-grafana
+    profiles: [monitoring]
     restart: always
     ports:
       - "${GRAFANA_HOST_PORT}:3000"
@@ -520,6 +637,7 @@ services:
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
+    profiles: [monitoring]
     restart: always
     ports:
       - "127.0.0.1:${NODE_EXPORTER_HOST_PORT}:9100"
@@ -549,6 +667,7 @@ services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: cadvisor
+    profiles: [monitoring]
     restart: unless-stopped
     ports:
       - "127.0.0.1:${CADVISOR_HOST_PORT}:8080"
@@ -618,6 +737,7 @@ services:
   # --- Dozzle Init (generates bcrypt users.yml from .env credentials) ---
   moe-dozzle-init:
     image: python:3.12-alpine
+    profiles: [monitoring]
     restart: "no"
     env_file:
       - .env
@@ -632,6 +752,7 @@ services:
   moe-dozzle:
     image: amir20/dozzle:latest
     container_name: moe-dozzle
+    profiles: [monitoring]
     restart: unless-stopped
     env_file:
       - .env
@@ -650,6 +771,32 @@ services:
         limits:
           cpus: "0.3"
           memory: 128M
+
+  # --- AKHQ (Apache Kafka GUI for topic, lag, and event debugging) ---
+  moe-akhq:
+    image: tchiotludo/akhq:latest
+    container_name: moe-akhq
+    profiles: [monitoring, akhq]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            moe-kafka:
+              properties:
+                bootstrap.servers: "moe-kafka:9092"
+    ports:
+      - "127.0.0.1:${AKHQ_HOST_PORT:-8085}:8080"
+    depends_on:
+      moe-kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
 
   # --- Splash — JavaScript-capable headless browser for MCP web_browser tool ---
   # Renders JS-heavy pages (BBC scripts, British Museum collection, GitHub issues)
@@ -851,5 +998,19 @@ networks:
     # internal=true removes the gateway, so the chromadb server cannot reach the
     # internet to download a malicious model repo (the RCE's delivery step).
     # Only services also attached here (the orchestrator) can talk to it.
+    internal: true
+    driver: bridge
+  rust_compile_internal:
+    # Egress-blocked network for rust-compile-sandbox: internal=true removes
+    # the gateway, so a compiler invocation on untrusted, model-generated
+    # source can never reach the internet. Only mcp-precision (also attached
+    # here) can reach it, by its `rust-compile-sandbox` DNS name.
+    internal: true
+    driver: bridge
+  rust_loom_internal:
+    # Egress-blocked network for rust-loom-sandbox, same rationale as
+    # rust_compile_internal above -- this one matters even more, since this
+    # container actually executes the submitted code instead of only
+    # type-checking it.
     internal: true
     driver: bridge

@@ -146,6 +146,37 @@ _OPTIONAL_CONTAINERS: dict[str, list[str]] = {
     "prometheus_stack": ["moe-grafana", "moe-prometheus", "node-exporter", "cadvisor"],
 }
 
+# Container name → Kubernetes label selector, used only when running inside
+# a cluster (KUBERNETES_SERVICE_HOST set). Scoped to the admin pod's own
+# namespace — cross-namespace pod visibility would need broader RBAC than
+# this deployment is granted. A name with no entry here (e.g. moe-kafka
+# when the Kafka subchart is disabled, or authentik-server/-worker which
+# run in a separate "authentik" namespace on the moe-sovereign Helm chart)
+# reports "not found", matching Docker mode's behavior for an optional
+# container that was never started.
+_K8S_LABEL_SELECTORS: dict[str, str] = {
+    "langgraph-orchestrator": "app.kubernetes.io/component=orchestrator",
+    "mcp-precision":          "app.kubernetes.io/component=mcp",
+    "moe-admin":              "app.kubernetes.io/component=admin",
+    "terra_cache":            "app.kubernetes.io/name=valkey",
+    "chromadb-vector":        "app=chromadb",
+}
+
+_K8S_API_SERVER = "https://kubernetes.default.svc"
+_K8S_SA_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+
+
+def _k8s_available() -> bool:
+    """True when running as a Kubernetes pod with a mounted API token."""
+    return bool(os.getenv("KUBERNETES_SERVICE_HOST")) and (_K8S_SA_DIR / "token").exists()
+
+
+def _k8s_namespace() -> str:
+    try:
+        return (_K8S_SA_DIR / "namespace").read_text().strip()
+    except OSError:
+        return "default"
+
 
 def _get_monitored_containers() -> list[str]:
     """Return the container list filtered by the services manifest.
@@ -403,6 +434,7 @@ async def _poll_and_record_gpu_history() -> None:
 async def lifespan(app: FastAPI):
     await db.init_db()
     await db.seed_initial_admin()
+    await db.seed_default_admin_templates()
     logger.info(f"User DB initialized: {db.DB_PATH}")
     # Migrate expert templates from .env to database (one-time) and populate cache
     await refresh_expert_templates_cache()
@@ -1305,7 +1337,11 @@ def rebuild_custom_prompts(form, all_cats: list) -> dict:
     return result
 
 
-# ─── Docker helpers ──────────────────────────────────────────────────────────
+# ─── Docker / Kubernetes helpers ─────────────────────────────────────────────
+# get_container_status() supports both runtimes; restart_orchestrator() below
+# is still Docker/Podman-only (fails safe — logs and no-ops — on Kubernetes,
+# since a rolling restart there needs a "patch deployment" RBAC grant this
+# admin UI is not given by default).
 
 def restart_orchestrator() -> None:
     try:
@@ -1342,7 +1378,101 @@ def _calc_mem_str(stats: dict) -> str:
     return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
 
 
+async def _get_k8s_container_status(names: list[str]) -> dict:
+    """Kubernetes equivalent of the Docker/Podman fetch below.
+
+    One list-pods call covers every monitored name (cheaper than N
+    label-selector queries), matched client-side via _K8S_LABEL_SELECTORS.
+    CPU/mem come from metrics.k8s.io on a best-effort basis — that API
+    requires metrics-server, which is not guaranteed to be installed, so any
+    failure there is swallowed exactly like the Docker path swallows a
+    failed `stats()` call.
+    """
+    token = (_K8S_SA_DIR / "token").read_text().strip()
+    ca_path = str(_K8S_SA_DIR / "ca.crt")
+    namespace = _k8s_namespace()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        async with httpx.AsyncClient(verify=ca_path, timeout=5.0) as client:
+            r = await client.get(
+                f"{_K8S_API_SERVER}/api/v1/namespaces/{namespace}/pods",
+                headers=headers,
+            )
+            r.raise_for_status()
+            pods = r.json().get("items", [])
+    except Exception as e:
+        logger.warning("K8s pod list failed: %s", e)
+        pods = []
+
+    result: dict = {}
+    pod_name_by_container: dict[str, str] = {}
+    for name in names:
+        selector = _K8S_LABEL_SELECTORS.get(name)
+        if not selector:
+            result[name] = {"status": "not found", "running": False}
+            continue
+        label_key, _, label_val = selector.partition("=")
+        pod = next(
+            (p for p in pods if p.get("metadata", {}).get("labels", {}).get(label_key) == label_val),
+            None,
+        )
+        if not pod:
+            result[name] = {"status": "not found", "running": False}
+            continue
+        status = pod.get("status", {})
+        phase = status.get("phase", "Unknown")
+        ready = any(
+            c.get("type") == "Ready" and c.get("status") == "True"
+            for c in status.get("conditions", [])
+        )
+        info: dict = {"status": phase.lower(), "running": phase == "Running" and ready}
+        started = status.get("startTime")
+        if started:
+            try:
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                uptime_sec = int((datetime.now(timezone.utc) - started_dt).total_seconds())
+                info["uptime"] = _fmt_uptime(uptime_sec)
+            except ValueError:
+                pass
+        result[name] = info
+        pod_name_by_container[pod.get("metadata", {}).get("name", "")] = name
+
+    try:
+        async with httpx.AsyncClient(verify=ca_path, timeout=3.0) as client:
+            r = await client.get(
+                f"{_K8S_API_SERVER}/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods",
+                headers=headers,
+            )
+            if r.status_code == 200:
+                for item in r.json().get("items", []):
+                    name = pod_name_by_container.get(item.get("metadata", {}).get("name", ""))
+                    if not name:
+                        continue
+                    cpu_nano = sum(
+                        int(c["usage"]["cpu"][:-1]) for c in item.get("containers", [])
+                        if c.get("usage", {}).get("cpu", "").endswith("n")
+                    )
+                    mem_ki = sum(
+                        int(c["usage"]["memory"][:-2]) for c in item.get("containers", [])
+                        if c.get("usage", {}).get("memory", "").endswith("Ki")
+                    )
+                    if cpu_nano:
+                        result[name]["cpu_pct"] = round(cpu_nano / 1e7, 1)  # nanocores -> %
+                    if mem_ki:
+                        mb = mem_ki / 1024
+                        result[name]["mem"] = f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+    except Exception:
+        pass  # metrics-server not installed or unreachable — status without cpu/mem is still useful
+
+    return result
+
+
 async def get_container_status() -> dict:
+    names = _get_monitored_containers()
+    if _k8s_available():
+        return await _get_k8s_container_status(names)
+
     def _fetch(name: str):
         try:
             dc = docker.from_env()
@@ -1366,7 +1496,7 @@ async def get_container_status() -> dict:
         except Exception:
             return name, {"status": "error", "running": False}
 
-    pairs = await asyncio.gather(*[asyncio.to_thread(_fetch, n) for n in _get_monitored_containers()])
+    pairs = await asyncio.gather(*[asyncio.to_thread(_fetch, n) for n in names])
     return dict(pairs)
 
 
@@ -2991,6 +3121,8 @@ async def _fetch_available_llms() -> list[str]:
     results: set[str] = set()
     async with httpx.AsyncClient(timeout=3.0) as client:
         for srv in servers:
+            if srv.get("no_auto_fallback"):
+                continue
             try:
                 api_type = srv.get("api_type", "ollama")
                 token    = srv.get("token", "ollama")
@@ -4985,6 +5117,196 @@ async def api_knowledge_validate(request: Request):
             return r.json()
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ─── Document Upload & Scheduled Cron Ingestion ───────────────────────────────
+
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/app/data/user_uploads"))
+MANIFEST_FILE = UPLOADS_DIR / ".ingestion_manifest.json"
+
+def _load_upload_manifest() -> dict:
+    if MANIFEST_FILE.exists():
+        try:
+            with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_upload_manifest(manifest: dict):
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        try:
+            os.chmod(MANIFEST_FILE, 0o666)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("Failed to save manifest file: %s", e)
+
+
+@app.get("/api/knowledge/documents", dependencies=[Depends(require_login)])
+async def api_list_uploaded_documents(request: Request):
+    """List all user uploaded documents with live ingestion stats, speed, and ETA forecast."""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    manifest = _load_upload_manifest()
+    
+    docs = []
+    total_bytes = 0
+    ingested_bytes = 0
+    pending_bytes = 0
+    ingested_count = 0
+    pending_count = 0
+    processing_count = 0
+
+    first_ingested_ts = None
+    last_ingested_ts = None
+
+    for f in sorted(UPLOADS_DIR.iterdir()):
+        if f.is_file() and not f.name.startswith("."):
+            rec = manifest.get(f.name, {})
+            sz = f.stat().st_size
+            status = rec.get("status", "pending")
+            total_bytes += sz
+            
+            ingested_at = rec.get("ingested_at")
+            if status == "ingested":
+                ingested_bytes += sz
+                ingested_count += 1
+                if ingested_at:
+                    try:
+                        ts = datetime.fromisoformat(ingested_at.replace("Z", "+00:00")).timestamp()
+                        if first_ingested_ts is None or ts < first_ingested_ts:
+                            first_ingested_ts = ts
+                        if last_ingested_ts is None or ts > last_ingested_ts:
+                            last_ingested_ts = ts
+                    except Exception:
+                        pass
+            elif status in ("pending", "processing"):
+                pending_bytes += sz
+                if status == "processing":
+                    processing_count += 1
+                else:
+                    pending_count += 1
+
+            docs.append({
+                "file_name": f.name,
+                "size_bytes": sz,
+                "upload_time": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(),
+                "status": status,
+                "ingested_at": ingested_at,
+                "error": rec.get("error")
+            })
+
+    # Speed & ETA Calculation
+    lang = get_lang(request)
+    t_func = make_t(lang)
+    speed_mb_min = 0.0
+    eta_minutes = 0
+    eta_formatted = t_func("knowledge.eta_waiting")
+
+    if ingested_bytes > 0 and first_ingested_ts and last_ingested_ts:
+        duration_min = max(0.5, (last_ingested_ts - first_ingested_ts) / 60.0)
+        speed_mb_min = round((ingested_bytes / (1024 * 1024)) / duration_min, 1)
+        if speed_mb_min > 0 and pending_bytes > 0:
+            pending_mb = pending_bytes / (1024 * 1024)
+            eta_minutes = int(pending_mb / speed_mb_min)
+            hours = eta_minutes // 60
+            mins = eta_minutes % 60
+            eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M UTC")
+            if hours > 0:
+                eta_formatted = t_func("knowledge.eta_format_hours", hours=hours, mins=mins, eta_time=eta_time)
+            else:
+                eta_formatted = t_func("knowledge.eta_format_mins", mins=mins, eta_time=eta_time)
+    elif processing_count > 0 or pending_count > 0:
+        # Fallback speed estimation (~25 MB/min for PDF text extraction & embedding)
+        estimated_speed = 25.0
+        pending_mb = pending_bytes / (1024 * 1024)
+        eta_minutes = int(pending_mb / estimated_speed)
+        hours = eta_minutes // 60
+        mins = eta_minutes % 60
+        eta_time = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes)).strftime("%H:%M UTC")
+        if hours > 0:
+            eta_formatted = t_func("knowledge.eta_format_hours", hours=hours, mins=mins, eta_time=eta_time)
+        else:
+            eta_formatted = t_func("knowledge.eta_format_mins", mins=mins, eta_time=eta_time)
+        speed_mb_min = estimated_speed
+
+    summary = {
+        "total_files": len(docs),
+        "ingested_files": ingested_count,
+        "pending_files": pending_count,
+        "processing_files": processing_count,
+        "total_mb": round(total_bytes / (1024 * 1024), 1),
+        "ingested_mb": round(ingested_bytes / (1024 * 1024), 1),
+        "pending_mb": round(pending_bytes / (1024 * 1024), 1),
+        "pct_complete": int((ingested_bytes / total_bytes * 100)) if total_bytes > 0 else 0,
+        "speed_mb_per_min": speed_mb_min,
+        "eta_minutes": eta_minutes,
+        "eta_formatted": eta_formatted
+    }
+
+    return {"documents": docs, "summary": summary, "total": len(docs)}
+
+
+@app.post("/api/knowledge/documents/upload", dependencies=[Depends(require_login)])
+async def api_upload_knowledge_documents(files: list[UploadFile] = File(...)):
+    """Upload one or multiple documents (PDF, TXT, JSON, JSONL, MD) for cron batch ingestion."""
+    allowed_exts = {".pdf", ".txt", ".json", ".jsonl", ".md"}
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    manifest = _load_upload_manifest()
+    
+    uploaded_records = []
+    errors = []
+
+    for file in files:
+        ext = Path(file.filename).suffix.lower()
+        if ext not in allowed_exts:
+            errors.append(f"{file.filename}: Extension {ext} not allowed")
+            continue
+
+        target_path = UPLOADS_DIR / file.filename
+        content = await file.read()
+        with open(target_path, "wb") as f:
+            f.write(content)
+
+        manifest[file.filename] = {
+            "file_name": file.filename,
+            "size_bytes": len(content),
+            "status": "pending",
+            "uploaded_at": datetime.now(timezone.utc).isoformat()
+        }
+        uploaded_records.append({"file_name": file.filename, "size_bytes": len(content)})
+        logger.info("Uploaded document %s for scheduled cron ingestion", file.filename)
+
+    _save_upload_manifest(manifest)
+    return {"ok": True, "uploaded": uploaded_records, "count": len(uploaded_records), "errors": errors}
+
+
+@app.post("/api/knowledge/documents/trigger-cron", dependencies=[Depends(require_login)])
+async def api_trigger_cron_ingestion(background_tasks: BackgroundTasks):
+    """Trigger immediate execution of the cron knowledge ingestion worker."""
+    def _run_worker():
+        cmd = [sys.executable, "/app/scripts/cron_knowledge_ingestion.py"]
+        subprocess.run(cmd, capture_output=True, text=True)
+
+    background_tasks.add_task(_run_worker)
+    return {"ok": True, "message": "Cron knowledge ingestion triggered in background"}
+
+
+@app.delete("/api/knowledge/documents/{filename}", dependencies=[Depends(require_login)])
+async def api_delete_knowledge_document(filename: str):
+    """Delete an uploaded document file and remove it from manifest."""
+    target_path = UPLOADS_DIR / filename
+    if target_path.exists():
+        target_path.unlink()
+
+    manifest = _load_upload_manifest()
+    manifest.pop(filename, None)
+    _save_upload_manifest(manifest)
+
+    return {"ok": True, "deleted": filename}
 
 
 # ─── Federation (MoE Libris) ─────────────────────────────────────────────────
@@ -10452,7 +10774,15 @@ async def toggle_starfleet_feature(name: str, request: Request):
                 json={"enabled": enabled},
             )
         if r.status_code >= 400:
-            detail = r.json().get("detail", r.text[:200])
+            detail = ""
+            try:
+                data = r.json()
+                if isinstance(data, dict):
+                    detail = str(data.get("detail") or "").strip()
+            except Exception:
+                pass
+            if not detail:
+                detail = r.text[:200].strip() or f"Orchestrator returned HTTP {r.status_code}"
             raise HTTPException(status_code=r.status_code, detail=detail)
         return r.json()
     except HTTPException:

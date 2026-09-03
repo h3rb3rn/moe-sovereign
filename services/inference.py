@@ -35,6 +35,37 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_openai import ChatOpenAI  # noqa: F811 — type hints only
 
+# The judge previously used a separate Ollama tag ("sovereign-judge:27b") whose
+# only functional difference from the "qwen3.8:27b" expert weights was this
+# system prompt plus a few sampling params (all already set explicitly per
+# request below). Ollama tracks loaded-model identity by tag name, not by the
+# underlying weight blob -- two tags sharing byte-identical weights still
+# forced a full unload+reload every time a request alternated between an
+# expert call and a judge call on the same node. Both tags now resolve to
+# "qwen3.8:27b"; this prompt is injected explicitly so judge behavior is
+# unchanged, and Ollama can keep the already-resident model warm across the
+# expert<->judge switch. See agent_status/claude-code.md,
+# FIX-judge-expert-shared-model-reload.
+JUDGE_SYSTEM_PROMPT = (
+    "You are Sovereign Judge 27B (Qwen3.8-27B fine-tuned), the primary "
+    "evaluation and synthesis authority in the MoE Sovereign compound AI "
+    "platform. Evaluate input quality, factual consistency, code invariants, "
+    "and safety with maximum precision across up to 258,000 context tokens."
+)
+
+
+def _judge_messages(prompt) -> list[dict]:
+    """Build the judge's message list with its identity system prompt inlined."""
+    if isinstance(prompt, list):
+        if prompt and prompt[0].get("role") == "system":
+            return prompt
+        return [{"role": "system", "content": JUDGE_SYSTEM_PROMPT}, *prompt]
+    return [
+        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+
+
 from services.llm_instances import judge_llm, planner_llm
 from services.model_capabilities import (
     apply_ollama_structured_capability,
@@ -49,6 +80,8 @@ from services.deadline import (
     sleep_with_budget,
     wait_for_budget,
 )
+
+_DEFAULT_OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "24h")
 
 
 def _ollama_answer_content(response: dict) -> str:
@@ -694,7 +727,8 @@ def _url_api_type(url: str) -> str:
 
 
 async def _invoke_judge_with_retry(
-    state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None
+    state: "AgentState", prompt: str, max_retries: int = 3, temperature: float | None = None,
+    repeat_penalty: float | None = None, repeat_last_n: int | None = None,
 ):
     """Invoke the judge LLM with retry logic for empty/failed responses.
     On failure: waits 5s (model reload time), re-discovers the node, retries.
@@ -706,6 +740,13 @@ async def _invoke_judge_with_retry(
     (Ollama ≤0.30.6), causing the model to reload at ctx=8192 on every judge call.
 
     temperature: when set, overrides the default judge sampling temperature.
+    repeat_penalty/repeat_last_n: when set, passed through as Ollama sampling
+    options to discourage degenerate repetition loops (observed live: a
+    merger synthesis call fell into repeating "// I will output the SPSC
+    code." dozens of times instead of emitting real code, cutting the
+    response off mid code-fence). Left unset (Ollama defaults) for callers
+    that don't pass them, to avoid changing behavior for stages that never
+    exhibited this failure mode.
     """
     from types import SimpleNamespace as _NS
     last_error = None
@@ -783,14 +824,16 @@ async def _invoke_judge_with_retry(
                     _opts["num_predict"] = _judge_output_limit
                 if temperature is not None:
                     _opts["temperature"] = temperature
+                if repeat_penalty is not None:
+                    _opts["repeat_penalty"] = repeat_penalty
+                if repeat_last_n is not None:
+                    _opts["repeat_last_n"] = repeat_last_n
                 _payload: dict = {
                     "model":      _jm,
-                    "messages":   [{"role": "user", "content": prompt}],
+                    "messages":   _judge_messages(prompt),
                     "stream":     False,
                     "think":      JUDGE_THINKING_ENABLED,
-                    # Short lease: frees VRAM within 5m after pipeline completes so expert/planner
-                    # models can load without eviction.
-                    "keep_alive": "5m",
+                    "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
                 }
                 _payload["stream"] = enforce_streaming_capability(
                     _jm, bool(_payload["stream"])
@@ -919,13 +962,13 @@ async def ainvoke_judge_llm(prompt):
             _opts["num_ctx"] = _ctx
         if MAX_JUDGE_TOKENS > 0:
             _opts["num_predict"] = MAX_JUDGE_TOKENS
-        _messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
+        _messages = _judge_messages(prompt)
         _payload: dict = {
             "model":      JUDGE_MODEL,
             "messages":   _messages,
             "stream":     False,
             "think":      JUDGE_THINKING_ENABLED,
-            "keep_alive": "5m",
+            "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
         }
         _payload["stream"] = enforce_streaming_capability(
             JUDGE_MODEL, bool(_payload["stream"])
@@ -1333,7 +1376,7 @@ async def _invoke_planner_with_retry(
             "messages":   [{"role": "user", "content": prompt}],
             "stream":     False,
             "think":      PLANNER_THINKING_ENABLED,
-            "keep_alive": "5m",
+            "keep_alive": _DEFAULT_OLLAMA_KEEP_ALIVE,
             "options":    _opts,
         }
         _payload = apply_ollama_structured_capability(
@@ -1486,6 +1529,8 @@ def _planner_model_kw(model: str, state_num_ctx: int = 0, state_: Optional[dict]
     opts: dict = {"num_predict": MAX_PLANNER_TOKENS}
     if ctx > 0:
         opts["num_ctx"] = ctx
+    if state_ and (state_.get("pin_prefix_cache") or state_.get("template_prefix_locked")):
+        opts["keep_alive"] = -1  # Static Template KV-Locking (vLLM/Ollama Pinned Prefix Cache)
     if state_ and state_.get("enable_habe"):
         _inject_habe_prefix_embeddings(opts, state_)
     out["extra_body"] = {"options": opts}
@@ -1565,7 +1610,14 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     from config import EXPERTS, EXPERT_TIMEOUT
     from main import _get_expert_prompt
 
-    experts_for_cat = EXPERTS.get(cat, [])
+    # Template-scoped experts take precedence over the global fallback — same
+    # precedence used everywhere else this state key is consulted (see
+    # graph/expert.py and services/routing.py._get_template_expert_catalog).
+    # Without this, a refinement round silently ignores the active template's
+    # per-category endpoint pinning and can dispatch to a stale global
+    # endpoint the template never authorized.
+    _user_experts = state.get("user_experts") or {}
+    experts_for_cat = _user_experts.get(cat) or EXPERTS.get(cat, [])
     if not experts_for_cat:
         return None
     scored = [(await _get_expert_score(e["model"], cat), e) for e in experts_for_cat]
@@ -1589,7 +1641,36 @@ async def _refine_expert_response(cat: str, gap_feedback: str, state: "AgentStat
     ]
     _refine_extra: dict = {}
     if token == "ollama":
-        _refine_num_ctx = int(JUDGE_NUM_CTX or 32768)
+        _refine_num_ctx = int(JUDGE_NUM_CTX or 262144)
+        # Never downgrade (or needlessly upgrade) a warm model: this call
+        # previously always requested a fixed, large ctx regardless of what
+        # was already resident, forcing an unload+reload whenever the model
+        # was already loaded at a smaller context -- the same bug class
+        # already fixed at the judge/planner/expert call sites (see
+        # agent_status/claude-code.md, feedback_ollama_num_ctx_reuse_pattern
+        # in project memory). Reuse the loaded context if it's already large
+        # enough instead of forcing a resize.
+        try:
+            _ollama_base = url.rstrip("/").removesuffix("/v1")
+            async with httpx.AsyncClient(timeout=2.0) as _ps_cl:
+                _ps_r = await _ps_cl.get(
+                    f"{_ollama_base}/api/ps",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                for _loaded in _ps_r.json().get("models", []):
+                    _lname = _loaded.get("name", "").split(":")[0]
+                    _ename = best_expert["model"].split(":")[0]
+                    _loaded_ctx = _loaded.get("context_length", 0)
+                    if _lname == _ename and _loaded_ctx >= _refine_num_ctx:
+                        logger.info(
+                            "expert refinement: reusing warm model ctx=%d "
+                            "(requested %d, no reload needed, model=%s)",
+                            _loaded_ctx, _refine_num_ctx, best_expert["model"],
+                        )
+                        _refine_num_ctx = _loaded_ctx
+                        break
+        except Exception:
+            pass  # non-fatal — fall through to the configured num_ctx
         _refine_extra = {"extra_body": {"options": {"num_ctx": _refine_num_ctx}}}
     llm = ChatOpenAI(model=best_expert["model"], base_url=url, api_key=token,
                      timeout=_timeout, **_refine_extra)
@@ -1760,8 +1841,9 @@ async def _select_node(model_name: str, allowed_endpoints: List[str],
                 logger.info(f"🔒 VRAM filter: {model_name} needs ~{est_vram:.1f}GB — excluded {excluded}")
             candidates = vram_ok
         else:
-            # Hard filter: only keep nodes WITHOUT a vram_gb limit (cloud/external)
-            no_limit = [s for s in candidates if not s.get("vram_gb")]
+            # Hard filter: only keep nodes WITHOUT a vram_gb limit (cloud/external).
+            # Nodes with no_auto_fallback:true are excluded — they require explicit routing.
+            no_limit = [s for s in candidates if not s.get("vram_gb") and not s.get("no_auto_fallback")]
             if no_limit:
                 logger.warning(f"⚠️ No local node has enough VRAM for {model_name} (~{est_vram:.1f}GB) — using cloud/external nodes only")
                 candidates = no_limit

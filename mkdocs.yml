@@ -135,6 +135,7 @@ nav:
     - Data Flow: system/dataflow.md
     - Infrastructure: system/infrastructure.md
     - Hardware: system/hardware.md
+    - LUMI-G Training Paper: system/lumi_training_paper.md
     - Tool Stack:
       - system/toolstack/index.md
       - LangGraph: system/toolstack/langgraph.md
@@ -158,7 +159,7 @@ nav:
     - Context Extension: system/intelligence/context_extension.md
     - Compounding Knowledge Base: system/intelligence/compounding_knowledge.md
     - Memory Palace: system/intelligence/memory_palace.md
-    - Reinforcement Learning Flywheel: system/intelligence/rl_flywheel.md
+    - Adaptive Feedback Loop (RL Flywheel): system/intelligence/rl_flywheel.md
     - Autonomous Knowledge Healing: system/intelligence/autonomous_healing.md
     - Enterprise Features: system/intelligence/enterprise_features.md
     - 7B Ensemble Capability: system/intelligence/7b_ensemble_capability.md
@@ -183,6 +184,8 @@ nav:
     - Claude Code Profile: guide/de/claude-code-profiles.md
     - GPU-Monitoring: deployment/de/gpu-monitoring.md
     - Import & Export: reference/de/import-export.md
+    - LUMI-G Trainingsbericht: system/de/lumi_training_paper.md
+  - Publications: publications.md
   - Changelog: changelog.md
   - Legal:
     - Privacy & Data Handling: PRIVACY.md

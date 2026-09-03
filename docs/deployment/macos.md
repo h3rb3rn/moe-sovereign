@@ -1,7 +1,8 @@
-# macOS Deployment (Docker Desktop)
+# macOS Deployment (Docker Desktop or Podman)
 
-MoE Sovereign runs on macOS via Docker Desktop, including Apple Silicon
-(M1/M2/M3/M4). The compose stack uses bind mounts for state directories
+MoE Sovereign runs on macOS via Docker Desktop or Podman, including Apple
+Silicon (M1/M2/M3/M4). Both runtimes execute the containers in a Linux VM.
+The compose stack uses bind mounts for state directories
 (Postgres, Neo4j, Redis, ChromaDB, Kafka, Prometheus, Grafana) — those
 need to live in a path that Docker Desktop is allowed to share.
 
@@ -21,31 +22,43 @@ that list.
 ## One-time setup
 
 `install.sh` is Linux-only (it uses `apt-get` and `/etc/os-release`). On
-macOS, use the dedicated bootstrap script — it generates the same
-`.env`, creates the host directories, and prints the next steps.
+macOS, use the dedicated installer. It never uses `sudo`, Linux package
+management, UID remapping, or `/opt` bind mounts.
 
 1. Install Docker Desktop ≥ 4.30 from
-   <https://docs.docker.com/desktop/install/mac-install/>.
+   <https://docs.docker.com/desktop/setup/install/mac-install/>, or install
+   Podman / Podman Desktop from <https://podman.io/docs/installation>.
 2. Clone the repository:
    ```bash
    git clone https://github.com/h3rb3rn/moe-sovereign.git
    cd moe-sovereign
    ```
-3. Run the macOS bootstrap (interactive — asks for admin password):
+3. Run the macOS installer (interactive — asks for admin password):
    ```bash
-   bash scripts/bootstrap-macos.sh
+   bash install-macos.sh
    ```
    It defaults `MOE_DATA_ROOT=$HOME/moe-data` and
    `GRAFANA_DATA_ROOT=$HOME/moe-grafana`, creates the subdirectories,
-   generates random secrets for Postgres / Neo4j / Redis / Grafana, and
-   writes everything to `.env`.
-4. Open **Docker Desktop → Settings → Resources → File Sharing** and add
-   both paths the script printed (`$HOME/moe-data` and
-   `$HOME/moe-grafana`). Click **Apply & Restart**.
-5. Bring up the stack:
+   preserves existing secrets, validates Compose, and starts the stack.
+   Docker Desktop is chosen automatically when ready. To select Podman, run:
    ```bash
-   docker compose up -d
+   bash install-macos.sh --runtime podman
    ```
+   To clone into `~/moe-sovereign` and install in one step, use (never use
+   `sudo`):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install-macos.sh | bash
+   ```
+4. With Docker Desktop, verify that both paths are allowed in **Settings →
+   Resources → File Sharing** and apply the change. Home-directory paths are
+   normally shared already. With Podman, the installer creates or starts a
+   rootless Podman machine; ensure a Compose provider is configured in
+   **Podman Desktop → Settings → Resources → Compose** (or install
+   `podman-compose`).
+
+The installer leaves the Caddy profile disabled because this repository's
+Caddy service uses Linux host networking. Use a macOS-compatible reverse
+proxy if the installation must be exposed beyond localhost.
 
 ## Manual setup (without install.sh)
 

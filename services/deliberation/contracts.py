@@ -113,6 +113,38 @@ def legacy_deliberation_policy(enabled: bool) -> DeliberationPolicy:
     )
 
 
+def analytical_reasoning_policy() -> DeliberationPolicy:
+    """Policy preset for structured analytical tasks with verifiable answers.
+
+    Designed for tasks where correctness can be checked (ARC-AGI, math proofs,
+    logic puzzles, algorithm correctness). Uses a focused four-agent panel with
+    a higher convergence bar and two specialised roles not in the generic roster:
+    counterexample_hunter and simplicity_checker (defined in runtime.py).
+
+    Activation is adaptive — only fires when complexity=complex or cynefin=COMPLEX/
+    COMPLICATED with multiple domains. Falls back to micro-debate on tight budgets.
+    """
+    return parse_deliberation_policy(
+        {
+            "schema_version": "1.0",
+            "activation": "adaptive",
+            "mode": "moderated",
+            "min_agents": 2,
+            "initial_agent_cap": 4,
+            "reserve_agents": 2,
+            "absolute_max_agents": 6,
+            "min_rounds": 1,
+            "initial_round_cap": 2,
+            "reserve_rounds": 1,
+            "absolute_max_rounds": 3,
+            "convergence_threshold": 0.88,
+            "max_model_calls": 12,
+            "max_turn_tokens": 512,
+            "fallback": "standard",
+        }
+    )
+
+
 def dynamic_deliberation_policy(activation: str = "adaptive") -> DeliberationPolicy:
     """Build the validated policy emitted by the ``moe-auto`` compiler."""
 

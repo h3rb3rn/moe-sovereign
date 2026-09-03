@@ -45,18 +45,19 @@ async def _require_feature_admin(request: Request) -> None:
     raw_key = _extract_api_key(request)
     if not raw_key:
         raise HTTPException(status_code=401, detail="Missing API key")
+    system_key = os.getenv("SYSTEM_API_KEY", "")
+    if bool(system_key) and hmac.compare_digest(raw_key, system_key):
+        return
     user_ctx = await _validate_api_key(raw_key)
     if not user_ctx or "error" in user_ctx:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    system_key = os.getenv("SYSTEM_API_KEY", "")
-    is_system = bool(system_key) and hmac.compare_digest(raw_key, system_key)
     is_admin = str(user_ctx.get("is_admin", "")).strip().lower() in {
         "1",
         "true",
         "yes",
         "admin",
     }
-    if not (is_system or is_admin):
+    if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
 
 

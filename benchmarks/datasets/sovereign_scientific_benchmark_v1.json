@@ -1,0 +1,296 @@
+{
+  "name": "MoE-Sovereign-Scientific-Benchmark-v1",
+  "version": "1.0.0",
+  "description": "Rigorous multidisciplinary scientific benchmark comparing MoE-Sovereign Compound AI (Student 4B Planner on N04-RGTX + Sovereign-Judge 35B on N04-RTX + Qwen3.8:27B Experts + Full MCP Tooling + GraphRAG) vs. MoE-Sovereign Ablation (No GraphRAG) vs. Native Qwen3.8:27B Baseline.",
+  "author": "Philipp Horn <kontakt@philipp-horn.dev>",
+  "created_at": "2026-08-14",
+  "target_configurations": {
+    "compound_ai": "tmpl-sovereign-scientific-benchmark",
+    "ablation_no_graphrag": "tmpl-sovereign-benchmark-no-graphrag",
+    "native_baseline": "qwen3.8:27b@N04-RTX"
+  },
+  "test_cases": [
+    {
+      "id": "sci-sysprog-01-lockfree-ringbuffer",
+      "category": "systems_programming",
+      "discipline": "Low-Level Systems & Concurrency",
+      "complexity": "expert",
+      "name": "Lock-Free MPSC Ring Buffer with Memory Orderings",
+      "description": "Requires writing a production-grade multi-producer single-consumer lock-free ring buffer in Rust or C++11. Must correctly specify Acquire-Release semantics, handle buffer wrap-around via bitwise masking on power-of-two capacity, prevent false sharing with cacheline alignment (64 bytes), and include concurrent stress tests.",
+      "type": "single_turn",
+      "prompt": "Implement a high-performance, bounded lock-free Multi-Producer Single-Consumer (MPSC) queue in Rust (or modern C++20). The implementation must satisfy:\n1. Power-of-two capacity with bitwise index wrapping.\n2. Strict atomic memory orderings (no sequential consistency std::memory_order_seq_cst overhead; use memory_order_acquire / memory_order_release / memory_order_relaxed explicitly where appropriate).\n3. Cacheline padding (64 bytes / alignas(64)) to eliminate false sharing between producer tail and consumer head.\n4. Safe handling of buffer full (backpressure/error) and buffer empty conditions without blocking or spin-lock deadlocks.\n5. Provide a rigorous unit test demonstrating multi-threaded producer contention with a single consumer thread validating zero message loss and FIFO order per producer.",
+      "expected_answer": {
+        "required_concepts": [
+          "atomic",
+          "acquire",
+          "release",
+          "relaxed",
+          "align",
+          "padding",
+          "power of two",
+          "mask",
+          "test"
+        ],
+        "verification_keywords": [
+          "Ordering::Acquire",
+          "Ordering::Release",
+          "Ordering::Relaxed",
+          "align",
+          "64",
+          "test",
+          "producer",
+          "consumer"
+        ]
+      },
+      "scoring": {
+        "type": "keyword_and_judge",
+        "required_keywords": ["Acquire", "Release", "Relaxed", "64", "test"],
+        "rubric": "Code correctness, atomic memory ordering justification, cacheline alignment, and thorough concurrent test coverage."
+      }
+    },
+    {
+      "id": "sci-sysprog-02-ebpf-xdp-packet-filter",
+      "category": "systems_programming",
+      "discipline": "Kernel & Networking Architecture",
+      "complexity": "expert",
+      "name": "Linux eBPF XDP Packet Filter & Map Sync",
+      "description": "Requires constructing an eBPF XDP kernel program in C that parses IPv4 TCP packets, enforces dynamic rate-limiting via BPF_MAP_TYPE_LRU_HASH, drops blacklisted CIDR blocks directly in the driver layer, and updates statistics in a per-CPU array map.",
+      "type": "single_turn",
+      "prompt": "Write a complete Linux kernel eBPF program (C syntax with SEC(\"xdp\")) for high-throughput packet filtering:\n1. Parse Ethernet, IPv4, and TCP headers with strict eBPF verifier bounds checking (data + offset > data_end checks).\n2. Look up the source IP in a BPF_MAP_TYPE_HASH or BPF_MAP_TYPE_LRU_HASH blacklist map. If found, return XDP_DROP.\n3. Track packet and byte counts in a BPF_MAP_TYPE_PERCPU_ARRAY map.\n4. Forward non-matching traffic with XDP_PASS.\n5. Explain how the BPF verifier ensures safety and why bounds checks are mandatory before every pointer dereference.",
+      "expected_answer": {
+        "required_concepts": [
+          "SEC(\"xdp\")",
+          "data_end",
+          "data",
+          "XDP_DROP",
+          "XDP_PASS",
+          "bpf_map_lookup_elem",
+          "ethhdr",
+          "iphdr",
+          "tcphdr"
+        ],
+        "verification_keywords": [
+          "SEC",
+          "xdp",
+          "data_end",
+          "XDP_DROP",
+          "XDP_PASS",
+          "bpf_map_lookup_elem"
+        ]
+      },
+      "scoring": {
+        "type": "keyword_and_judge",
+        "required_keywords": ["xdp", "data_end", "XDP_DROP", "XDP_PASS", "bpf_map_lookup_elem"],
+        "rubric": "Strict adherence to eBPF verifier constraints, correct pointer validation, map definition syntax, and network header parsing."
+      }
+    },
+    {
+      "id": "sci-graphrag-01-topology-cascade",
+      "category": "compounding_knowledge",
+      "discipline": "Knowledge Graph & Multi-Turn Synthesis",
+      "complexity": "complex",
+      "name": "Multi-Turn Sovereign Microservices Dependency & Cascade Analysis",
+      "description": "Injects proprietary non-public infrastructure relations across Turns 1 & 2 into the knowledge graph, then queries a multi-hop cascading failure impact across 4 tiers in Turn 3. Measures the GraphRAG / Knowledge Graph preservation delta.",
+      "type": "multi_turn",
+      "turns": [
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Persistent Architecture Registration: Cluster 'Apex-Central' runs the following topology:\n- Gateway Service 'mcp-edge-gw' (Port 8443) routes authentication to 'auth-vault-01' (Port 9110) and telemetry to 'metrics-kafka-broker' (Port 9092).\n- 'auth-vault-01' synchronously depends on 'valkey-session-primary' (Port 6379) for distributed token leases and asynchronously replicates audit records to 'neo4j-ledger-node' (Port 7687).\nStore this relationship topology in the Sovereign Knowledge Graph.",
+          "expected_behavior": "Acknowledge receipt and persist entity nodes (mcp-edge-gw, auth-vault-01, valkey-session-primary, neo4j-ledger-node) and dependency edges."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Topology Update & Quorum Policy: In 'Apex-Central', 'valkey-session-primary' requires a quorum heartbeat with 'valkey-sentinel-cluster' (Port 26379). If 'valkey-session-primary' loses quorum or fails, 'auth-vault-01' enters degraded fail-closed mode, which immediately blocks all new token issuance at 'mcp-edge-gw' while allowing existing cached JWT validation for up to 300 seconds.",
+          "expected_behavior": "Integrate failure mode policy and connect sentinel dependencies to session primary."
+        },
+        {
+          "turn": 3,
+          "role": "query_synthesis",
+          "prompt": "Incident Simulation: A network partition isolates 'valkey-sentinel-cluster' from 'valkey-session-primary' on Port 26379 for 450 seconds. Based on the persistent architecture in the Sovereign Knowledge Base:\n1. Trace the exact cascading failure sequence step-by-step across all 5 affected services.\n2. What is the operational state of 'mcp-edge-gw' at t=100s vs t=400s?\n3. Which ports and database ledgers remain unaffected?",
+          "expected_behavior": "Synthesizes facts from Turn 1 and Turn 2: Explains quorum loss -> auth-vault-01 fail-closed -> t=100s cached JWT allowed, new issuance blocked -> t=400s cached JWT expired (>300s), full auth outage at mcp-edge-gw -> metrics-kafka-broker (Port 9092) and neo4j-ledger-node (Port 7687) remain structurally unaffected."
+        }
+      ],
+      "scoring": {
+        "type": "keyword_and_judge",
+        "turn3_required_keywords": ["fail-closed", "300", "400", "auth-vault-01", "valkey-session-primary", "mcp-edge-gw"],
+        "rubric": "Accurate cross-turn synthesis of multi-hop dependency graph, precise timeline evaluation (100s vs 400s), and failure isolation."
+      }
+    },
+    {
+      "id": "sci-graphrag-02-paraconsistent-reconciliation",
+      "category": "compounding_knowledge",
+      "discipline": "Epistemic Contradiction & Temporal Knowledge Graph",
+      "complexity": "complex",
+      "name": "Temporal Rule Override & Contradiction Resolution",
+      "description": "Injects a legacy compliance rule and a newly amended sovereign governance constraint that partially contradicts it. Tests whether GraphRAG and paraconsistent logic correctly identify the timestamped override rather than hallucinating an invalid compromise.",
+      "type": "multi_turn",
+      "turns": [
+        {
+          "turn": 1,
+          "role": "inject_fact",
+          "prompt": "Archive Policy Record (Directive 2024-B): 'All sovereign LLM training logs containing prompt telemetry must be stored in encrypted S3 cold storage for 730 days before irreversible cryptographic erasure.'",
+          "expected_behavior": "Record historical Directive 2024-B."
+        },
+        {
+          "turn": 2,
+          "role": "inject_fact",
+          "prompt": "Sovereign Executive Amendment (Directive 2026-S-Rev4, Effective Immediately): 'Section 4 amends Directive 2024-B: Prompt telemetry classified as Confidential-Enterprise or higher must be purged within 30 days. Only anonymized token routing metadata may be retained for 730 days in the local cold storage.'",
+          "expected_behavior": "Update graph with superseding Directive 2026-S-Rev4."
+        },
+        {
+          "turn": 3,
+          "role": "query_synthesis",
+          "prompt": "Compliance Verification: An audit discovers raw prompt telemetry with user queries classified as 'Confidential-Enterprise' from 60 days ago stored in S3 cold storage. Under the current Sovereign governance rules, is this compliant, non-compliant, or grandfathered? Explain the exact legal/technical hierarchy between Directive 2024-B and Directive 2026-S-Rev4.",
+          "expected_behavior": "Determines NON-COMPLIANT under Directive 2026-S-Rev4 (30-day purge threshold exceeded); explains that the 2026 amendment supersedes the 2024 730-day rule for Confidential-Enterprise data."
+        }
+      ],
+      "scoring": {
+        "type": "keyword_and_judge",
+        "turn3_required_keywords": ["non-compliant", "30", "2026-S-Rev4", "Confidential-Enterprise"],
+        "rubric": "Correct identification of non-compliance, resolution of temporal contradiction using the superseding amendment."
+      }
+    },
+    {
+      "id": "sci-precision-01-vlsm-subnetting",
+      "category": "precision",
+      "discipline": "Deterministic Networking & Tool Integration",
+      "complexity": "moderate",
+      "name": "Asymmetric VLSM IPv4 Partition & Broadcast Computation",
+      "description": "Requires calculating a multi-subnet VLSM partition of 10.180.0.0/19 into 4 custom subnets (1x 2000 hosts, 1x 1000 hosts, 2x 250 hosts). Verified against deterministic network math.",
+      "type": "single_turn",
+      "prompt": "Perform an exact Variable Length Subnet Mask (VLSM) subnetting calculation for the network 10.180.0.0/19:\nSubnet A: Needs 2,000 usable host addresses.\nSubnet B: Needs 1,000 usable host addresses.\nSubnet C: Needs 250 usable host addresses.\nSubnet D: Needs 250 usable host addresses.\n\nFor each subnet (A, B, C, D), calculate and list:\n1. Network ID with CIDR notation\n2. Subnet Mask (dotted decimal)\n3. First Usable Host IP\n4. Last Usable Host IP\n5. Broadcast Address\n6. Total usable host count",
+      "expected_answer": {
+        "subnet_a": {
+          "cidr": "10.180.0.0/21",
+          "netmask": "255.255.248.0",
+          "first_host": "10.180.0.1",
+          "last_host": "10.180.7.254",
+          "broadcast": "10.180.7.255",
+          "usable": 2046
+        },
+        "subnet_b": {
+          "cidr": "10.180.8.0/22",
+          "netmask": "255.255.252.0",
+          "first_host": "10.180.8.1",
+          "last_host": "10.180.11.254",
+          "broadcast": "10.180.11.255",
+          "usable": 1022
+        },
+        "subnet_c": {
+          "cidr": "10.180.12.0/24",
+          "netmask": "255.255.255.0",
+          "first_host": "10.180.12.1",
+          "last_host": "10.180.12.254",
+          "broadcast": "10.180.12.255",
+          "usable": 254
+        },
+        "subnet_d": {
+          "cidr": "10.180.13.0/24",
+          "netmask": "255.255.255.0",
+          "first_host": "10.180.13.1",
+          "last_host": "10.180.13.254",
+          "broadcast": "10.180.13.255",
+          "usable": 254
+        }
+      },
+      "scoring": {
+        "type": "exact_match_and_keywords",
+        "required_keywords": ["10.180.0.0/21", "255.255.248.0", "10.180.7.255", "10.180.8.0/22", "255.255.252.0", "10.180.11.255", "10.180.12.0/24", "10.180.13.0/24"],
+        "rubric": "Exact mathematical precision on network boundaries, masks, usable host ranges, and broadcast IPs."
+      }
+    },
+    {
+      "id": "sci-precision-02-ast-financial-arithmetic",
+      "category": "precision",
+      "discipline": "Deterministic AST Math & Conversion",
+      "complexity": "moderate",
+      "name": "High-Precision Compounded Energy Cost & Carbon Offset Calculation",
+      "description": "Multi-step arithmetic involving kilowatt-hours, tiered electricity tariffs, inflation compounding over 3 years, and metric tons of CO2 offset.",
+      "type": "single_turn",
+      "prompt": "Calculate the exact mathematical figures for the following datacenter expansion:\n- Baseline load: 840 kW constant draw, 24 hours/day, 365 days/year.\n- Base energy tariff: 0.1850 EUR/kWh in Year 1.\n- Annual tariff escalation: +4.5% in Year 2 and +3.8% in Year 3.\n- Grid emission intensity: 385 grams CO2 per kWh.\n\nCalculate:\n1. Total energy consumption in MWh per year.\n2. Total electricity cost in EUR for Year 1, Year 2, and Year 3 (rounded to 2 decimal places).\n3. 3-Year Cumulative Electricity Cost in EUR.\n4. Total CO2 emissions across all 3 years in metric tonnes (t CO2).\nShow exact step-by-step arithmetic.",
+      "expected_answer": {
+        "annual_mwh": 7358.4,
+        "cost_year_1": 1361304.0,
+        "cost_year_2": 1422562.68,
+        "cost_year_3": 1476620.06,
+        "cumulative_3yr_cost": 4260486.74,
+        "total_co2_tonnes": 8502.66
+      },
+      "scoring": {
+        "type": "numeric_tolerance",
+        "tolerance_pct": 0.5,
+        "required_keywords": ["7358.4", "1361304", "1422562", "1476620", "4260486", "8502"]
+      }
+    },
+    {
+      "id": "sci-reasoning-01-distributed-consensus-safety",
+      "category": "reasoning",
+      "discipline": "Formal Distributed Systems Reasoning",
+      "complexity": "expert",
+      "name": "Raft Consensus Log Matching & Leader Invariant Proof",
+      "description": "Requires constructing a formal proof/reasoning chain for Raft's Leader Completeness and Log Matching Property under split-brain network partition scenarios.",
+      "type": "single_turn",
+      "prompt": "Provide a rigorous formal reasoning proof for the Raft Consensus Algorithm:\nScenario: A 5-node Raft cluster (Nodes A, B, C, D, E) experiences a network partition separating {A, B} from {C, D, E}. Node A was the leader in Term 1.\n1. Can {A, B} commit new log entries in Term 1? Prove why or why not using quorum intersection.\n2. When Node C initiates an election in Term 2 within {C, D, E}, what invariant guarantees that Node C's log contains all committed entries from Term 1?\n3. When the partition heals, how does the Log Matching Property resolve conflicting uncommitted entries in {A, B}? Specify the role of leader AppendEntries RPCs and term comparisons step-by-step.",
+      "expected_answer": {
+        "required_concepts": [
+          "quorum",
+          "majority",
+          "split-brain",
+          "Leader Completeness Property",
+          "Log Matching Property",
+          "AppendEntries",
+          "matchIndex",
+          "nextIndex"
+        ],
+        "verification_keywords": [
+          "quorum",
+          "majority",
+          "Leader Completeness",
+          "Log Matching",
+          "AppendEntries"
+        ]
+      },
+      "scoring": {
+        "type": "keyword_and_judge",
+        "required_keywords": ["quorum", "majority", "Leader Completeness", "Log Matching", "AppendEntries"],
+        "rubric": "Logical soundness, accurate application of quorum intersection theorems, and precise explanation of log truncation."
+      }
+    },
+    {
+      "id": "sci-governance-01-technical-sovereignty",
+      "category": "governance",
+      "discipline": "Digital Sovereignty & Safety Verification",
+      "complexity": "complex",
+      "name": "Technical Sovereignty & Data Protection by Design Audit",
+      "description": "Evaluates a proposed healthcare compound AI architecture against technical sovereignty, air-gapping, model provenance, and cryptographic auditability without making unverified blanket compliance claims.",
+      "type": "single_turn",
+      "prompt": "Evaluate an on-premises hospital compound AI architecture:\nComponents: Local SLMs (4B Planner, 35B Specialist), self-hosted Vector DB (ChromaDB), local GraphRAG (Neo4j), and a confidential inference enclave.\n1. Identify the 4 critical technical prerequisites supporting Data Protection by Design and preventing unauthorized external telemetry exfiltration.\n2. Formulate an auditable egress-filtering and cryptographic logging policy (using OpenLineage/Marquez and Kafka immutable logs).\n3. Explain why this architectural pattern provides 'technical prerequisites for privacy and operational sovereignty' rather than a blanket legal certification.",
+      "expected_answer": {
+        "required_concepts": [
+          "Data Protection by Design",
+          "air-gap",
+          "egress filtering",
+          "cryptographic logging",
+          "immutable audit log",
+          "technical prerequisites",
+          "operational sovereignty"
+        ],
+        "verification_keywords": [
+          "Data Protection by Design",
+          "egress",
+          "immutable",
+          "provenance",
+          "technical prerequisites",
+          "sovereignty"
+        ]
+      },
+      "scoring": {
+        "type": "keyword_and_judge",
+        "required_keywords": ["Data Protection by Design", "egress", "immutable", "provenance", "technical prerequisites"],
+        "rubric": "Adherence to MoE Sovereign terminology (compiler of workflows, technical prerequisites, no blanket legal claims), rigorous security controls."
+      }
+    }
+  ]
+}

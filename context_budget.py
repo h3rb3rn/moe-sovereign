@@ -146,6 +146,7 @@ _CLAUDE_CTX_TABLE: dict[str, int] = {
     # qwen3-planner: SFT fine-tune on Qwen3-8B base (n_ctx_train=40960, no RoPE scaling).
     # Must appear before "qwen3" so the prefix check matches this first.
     "qwen3-planner":    40_960,
+    "moe-sovereign-student": 40_960,
     # Qwen3 family (all generations) — 262k native context window.
     # Name-based entry needed because the tag carries no k-suffix; the param-count
     # heuristic would otherwise cap these at 32 768 (conservative VRAM estimate).
@@ -244,19 +245,26 @@ def adaptive_context_window(
 ) -> int:
     """Choose the smallest standard context tier that safely fits this call.
 
-    A template's large window remains the hard ceiling, not the default
-    allocation for every short request. The estimate is deliberately
-    conservative for mixed German/English/JSON prompts.
+    Scale DOWN only: a template's large window is reduced for short prompts to
+    save VRAM. But if the actual prompt exceeds the requested window, the tier
+    is expanded so the model has room to produce output — the hard env-var cap
+    (PLANNER_NUM_CTX / JUDGE_NUM_CTX) is applied by the caller afterwards.
     """
     requested = max(0, int(requested_ctx or 0))
     if requested <= 0:
         return 0
 
-    estimated_input_tokens = math.ceil(len(prompt or "") / 3.5)
+    # 3.0 chars/token: conservative estimate for mixed JSON/template/code prompts.
+    # BPE tokenizers encode JSON keys, braces, and code constructs at lower
+    # density than plain prose (≈4 chars/token), so 3.0 is a safe lower bound.
+    estimated_input_tokens = math.ceil(len(prompt or "") / 3.0)
     required = estimated_input_tokens + max(1, int(output_tokens or 0)) + 1024
     tiers = (16_384, 32_768, 65_536, 131_072, 262_144)
     selected = next((tier for tier in tiers if tier >= required), requested)
-    return min(requested, max(4_096, selected))
+    return min(requested, selected)
+    # Prompt is too large for the requested window: expand to the required tier.
+    # The caller is responsible for capping at the hard env-var maximum.
+    return max(4_096, selected)
 
 
 async def _fetch_litellm_model_info(model: str, base_url: str, token: str,

@@ -17,6 +17,7 @@
 | **Intelligence** | [Agentic Loop](system/intelligence/agentic_loop.md) · [7B Ensemble](system/intelligence/7b_ensemble_capability.md) · [Causal Learning](system/intelligence/causal_learning.md) | Agentic re-planning, ensemble benchmarks, knowledge accumulation |
 | **Reference** | [Authentication](reference/auth.md) · [Expert Prompts](reference/expert-prompts.md) · [Import/Export](reference/import-export.md) | API reference, system prompts, schemas |
 | **FAQ** | [FAQ](faq.md) | Common questions about Claude Code, API, troubleshooting |
+| **Publications** | [Whitepaper EN/DE · LUMI-G Paper](publications.md) | All PDFs in this repository |
 | **Changelog** | [Changelog](changelog.md) | Version history of all releases |
 
 ---
@@ -34,11 +35,12 @@
 | **Neo4j Browser** | `http://localhost:7474` | Knowledge graph explorer |
 | **MCP Server** | `http://localhost:8003` | Precision tools |
 
-## 7B Ensemble — GPT-4o Class Performance, Self-Hosted
+## 7B Ensemble — Internal Benchmark Results, Self-Hosted
 
 > **Benchmark result (April 2026):** 8 domain-specialist 7–9B models on legacy Tesla M10 GPUs
-> achieve **6.11 / 10** on MoE-Eval — the same score class as GPT-4o mini — with zero data
-> leaving the cluster. Three consecutive overnight epochs, 36 scenarios, 0 failures.
+> achieve **6.11 / 10** on MoE-Eval (internal system health suite, not a controlled comparison
+> against external frontier benchmarks) — with zero data leaving the cluster.
+> Three consecutive overnight epochs, 36 scenarios, 0 failures.
 
 | | Single 7B | 8× 7B Ensemble | 30B+14B Orchestrated | H200 Cloud (120B) |
 |---|---|---|---|---|
@@ -73,7 +75,7 @@ The classifier's outputs are used by a **Dynamic Allocator** to compile an optim
 | **Warmed bonus** | Models already in GPU VRAM are strongly preferred |
 | **Local priority** | On-premise nodes score higher than cloud |
 | **Benchmark score** | MMLU / HumanEval / GSM8k from `model_metadata` DB |
-| **Thompson Sampling** | Beta-Bernoulli per (model, category) from live feedback history |
+| **Bayesian Expert Scoring** | Laplace-smoothed posterior mean (M+1)/(N+2) per (model, category) from live feedback; optional Thompson Sampling exploration mode (`THOMPSON_SAMPLING_ENABLED`) |
 
 ```mermaid
 flowchart LR
@@ -81,7 +83,7 @@ flowchart LR
     E --> C{"ChromaDB\nTemplate Cache\ndist < 0.18?"}
     C -->|"🎯 HIT"| R["Reuse Template"]
     C -->|"MISS"| O["ONNX Router\n< 5ms CPU"]
-    O --> A["Dynamic Allocator\nThompson + Compliance Gate"]
+    O --> A["Dynamic Allocator\nBayesian Scoring + Compliance Gate"]
     A --> T["Expert Template\n→ LangGraph Pipeline"]
     T --> DB["Postgres + ChromaDB\n(cached for future hits)"]
 ```
@@ -92,7 +94,7 @@ Every dynamically compiled template is stored in ChromaDB with the **raw prompt*
 
 ### Compliance Gate
 
-`local_only` mode now works end-to-end through the full gating layer: all cloud endpoint entries from `INFERENCE_SERVERS` are excluded automatically. Zero data egress is guaranteed without any configuration change.
+`local_only` mode now works end-to-end through the full gating layer: all cloud endpoint entries from `INFERENCE_SERVERS` are excluded automatically. Zero data egress is enforced without any configuration change.
 
 ### Cloud Endpoints — Fully Admin-Configurable
 

@@ -95,7 +95,53 @@ def log_decision(
     except Exception as e:
         logger.warning("decision_log: fallback write failed: %s", e)
 
+    # Local ACID persistence if DECISION_LOG_DB_PATH is set
+    db_path = os.getenv("DECISION_LOG_DB_PATH")
+    if db_path:
+        try:
+            initialize_wal_db(db_path)
+            log_decision_acid(db_path, {"task_id": request_id, "decision": decision_type.value, "metadata": entry})
+        except Exception as e:
+            logger.warning("decision_log: SQLite WAL acid logging failed: %s", e)
+
     logger.info(
         "📋 Decision[%s] req=%s: %s",
         entry["decision_type"], request_id, rationale[:120],
     )
+
+import sqlite3
+import uuid
+
+def initialize_wal_db(db_path: str) -> None:
+    """Initialize SQLite database with WAL mode and create decisions table."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS decisions (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                metadata TEXT,
+                created_at REAL NOT NULL
+            )
+        ''')
+
+def log_decision_acid(db_path: str, decision_event: dict) -> str:
+    """Log a decision atomically to the SQLite database."""
+    task_id = decision_event.get('task_id')
+    decision = decision_event.get('decision')
+    
+    if not task_id or not decision:
+        raise ValueError("task_id and decision must be provided")
+        
+    record_id = str(uuid.uuid4())
+    metadata = decision_event.get('metadata')
+    metadata_json = json.dumps(metadata) if metadata is not None else None
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO decisions (id, task_id, decision, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
+            (record_id, task_id, decision, metadata_json, time.time())
+        )
+    return record_id
