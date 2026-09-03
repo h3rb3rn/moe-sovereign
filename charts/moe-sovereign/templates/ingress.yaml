@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "moe.fullname" . }}
+  name: {{ include "moe.fullname" . }}-api
   labels:
     {{- include "moe.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
@@ -28,11 +28,69 @@ spec:
                 name: {{ include "moe.fullname" . }}-orchestrator
                 port:
                   number: {{ .Values.orchestrator.port }}
-          - path: /admin
+{{- end }}
+{{- if and .Values.portalIngress.enabled (ne (include "moe.isOpenShift" .) "true") }}
+---
+# User-Portal – gleicher Service wie Admin-UI (/user/* Routen)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "moe.fullname" . }}-portal
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+  {{- with .Values.portalIngress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.portalIngress.className }}
+  {{- if .Values.portalIngress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.portalIngress.host | quote }}
+      secretName: {{ .Values.portalIngress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.portalIngress.host | quote }}
+      http:
+        paths:
+          - path: /
             pathType: Prefix
             backend:
               service:
                 name: {{ include "moe.fullname" . }}-admin
                 port:
                   number: {{ .Values.admin.port }}
-{{- end -}}
+{{- end }}
+{{- if and .Values.adminIngress.enabled (ne (include "moe.isOpenShift" .) "true") }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "moe.fullname" . }}-admin
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+  {{- with .Values.adminIngress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.adminIngress.className }}
+  {{- if .Values.adminIngress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.adminIngress.host | quote }}
+      secretName: {{ .Values.adminIngress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.adminIngress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "moe.fullname" . }}-admin
+                port:
+                  number: {{ .Values.admin.port }}
+{{- end }}

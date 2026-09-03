@@ -34,14 +34,34 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.mcp.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "moe.fullname" . }}-env
+          {{- if .Values.neo4j.enabled }}
+          env:
+            - name: NEO4J_USER
+              value: "neo4j"
+            - name: NEO4J_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.neo4jAuth.existingSecret }}
+                  key: NEO4J_PASSWORD
+          {{- end }}
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
           readinessProbe:
             httpGet: { path: /health, port: http }
+            periodSeconds: 15
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: generated
+              mountPath: /app/generated
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: generated
           emptyDir: {}
