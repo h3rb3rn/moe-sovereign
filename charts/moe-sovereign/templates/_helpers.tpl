@@ -77,7 +77,7 @@ postgres://{{ .Values.postgresql.auth.username }}@{{ .Release.Name }}-postgresql
 
 {{- define "moe.valkeyUrl" -}}
 {{- if .Values.valkey.enabled -}}
-redis://{{ .Release.Name }}-valkey-master:6379/0
+redis://{{ .Release.Name }}-valkey-primary:6379/0
 {{- else -}}
 {{ .Values.external.valkeyUrl }}
 {{- end -}}

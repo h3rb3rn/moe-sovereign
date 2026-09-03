@@ -7,6 +7,14 @@ metadata:
     app.kubernetes.io/component: admin
 spec:
   replicas: {{ .Values.admin.replicas }}
+  # admin-data / oidc-envfile are ReadWriteOnce PVCs. RollingUpdate's default
+  # create-before-destroy would try to attach them to a second pod (possibly
+  # on a different node) while the old pod still holds them, which Longhorn
+  # rejects outright ("Multi-Attach error"), wedging the rollout. Recreate
+  # tears the old pod down first — the right choice for a single-replica
+  # deployment backed by RWO storage.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "moe.selectorLabels" . | nindent 6 }}
@@ -17,15 +25,75 @@ spec:
         {{- include "moe.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: admin
     spec:
-      serviceAccountName: {{ include "moe.serviceAccountName" . }}
+      serviceAccountName: {{ include "moe.fullname" . }}-admin
       {{- if ne (include "moe.isOpenShift" .) "true" }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- end }}
+      {{- if .Values.auth.oidc.enabled }}
+      initContainers:
+        # admin_ui/app.py reads SSO config from a literal /app/.env file
+        # (read_env()), not from process env vars — this lets the admin UI
+        # hot-reload SSO settings without a restart in the Docker Compose
+        # deployment. On k8s there is no such file, so the SSO login button
+        # stays hidden even though envFrom sets the right env vars. This
+        # writes the subset read_env() needs into a file at that same path.
+        - name: write-oidc-envfile
+          image: {{ include "moe.image.admin" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              # Merge-only: admin-ui's write_env() persists runtime config
+              # (INFERENCE_SERVERS, EXPERT_MODELS, ...) into this same file.
+              # Overwriting it wholesale on every pod start would silently
+              # discard anything an operator configured through the
+              # dashboard, so only our own keys are ever replaced here.
+              FILE=/envfile/.env
+              touch "$FILE"
+              for KEY in AUTHENTIK_URL OIDC_CLIENT_ID OIDC_CLIENT_SECRET PUBLIC_SSO_URL APP_BASE_URL PUBLIC_ADMIN_URL PUBLIC_API_URL AUTHENTIK_API_TOKEN; do
+                grep -v "^${KEY}=" "$FILE" > "${FILE}.tmp" || true
+                mv "${FILE}.tmp" "$FILE"
+              done
+              cat <<EOF >> "$FILE"
+              AUTHENTIK_URL=$AUTHENTIK_URL
+              OIDC_CLIENT_ID=$OIDC_CLIENT_ID
+              OIDC_CLIENT_SECRET=$OIDC_CLIENT_SECRET
+              PUBLIC_SSO_URL=$PUBLIC_SSO_URL
+              APP_BASE_URL=$APP_BASE_URL
+              PUBLIC_ADMIN_URL=$PUBLIC_ADMIN_URL
+              PUBLIC_API_URL=$PUBLIC_API_URL
+              AUTHENTIK_API_TOKEN=$AUTHENTIK_API_TOKEN
+              EOF
+          envFrom:
+            - configMapRef:
+                name: {{ include "moe.fullname" . }}-env
+            - secretRef:
+                name: {{ .Values.auth.oidc.secretName }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: oidc-envfile
+              mountPath: /envfile
       {{- end }}
       containers:
         - name: admin
           image: {{ include "moe.image.admin" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - uvicorn
+            - app:app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8088"
+            - --proxy-headers
+            - --forwarded-allow-ips
+            - "*"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -37,18 +105,41 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "moe.fullname" . }}-env
+            {{- if .Values.auth.oidc.enabled }}
+            - secretRef:
+                name: {{ .Values.auth.oidc.secretName }}
+            {{- end }}
           livenessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /api/status, port: http }
             initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
           readinessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /api/status, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
           volumeMounts:
             - name: tmp
               mountPath: /tmp
             - name: admin-data
               mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+            {{- if .Values.auth.oidc.enabled }}
+            - name: oidc-envfile
+              mountPath: /app/.env
+              subPath: .env
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
         - name: admin-data
+          persistentVolumeClaim:
+            claimName: {{ include "moe.fullname" . }}-admin-data
+        - name: logs
           emptyDir: {}
+        {{- if .Values.auth.oidc.enabled }}
+        - name: oidc-envfile
+          persistentVolumeClaim:
+            claimName: {{ include "moe.fullname" . }}-admin-envfile
+        {{- end }}

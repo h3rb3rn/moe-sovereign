@@ -25,6 +25,12 @@ admin:
     tag: ""
   replicas: 1
   port: 8088
+  persistence:
+    # Backs /app/data (knowledge-base uploads, etc.) and, when auth.oidc.enabled,
+    # /app/.env (admin-ui's runtime config store — INFERENCE_SERVERS, EXPERT_MODELS).
+    # Must be a real PVC: emptyDir silently loses both on every pod restart.
+    size: 5Gi
+    storageClass: ""
 
 orchestrator:
   replicas: 2
@@ -83,6 +89,25 @@ ingress:
     secretName: moe-tls
   annotations: {}
 
+adminIngress:
+  enabled: false
+  className: nginx
+  host: admin.moe.local
+  tls:
+    enabled: false
+    secretName: moe-admin-tls
+  annotations: {}
+
+portalIngress:
+  enabled: false
+  className: nginx
+  host: portal.moe.local
+  tls:
+    enabled: false
+    secretName: moe-portal-tls
+  annotations: {}
+  # port: override when portal service is known
+
 route:
   enabled: false       # automatically flipped when .Values.openshift.enabled
   host: ""
@@ -103,6 +128,22 @@ auth:
   existingSecret: ""
   # key of the data entry inside the secret that holds the PEM public key
   publicKeyField: "jwt_public_key.pem"
+  # Admin UI SSO login (separate from the orchestrator's JWT bearer-token
+  # verification above). When enabled, the admin-ui container gets
+  # AUTHENTIK_URL / OIDC_CLIENT_ID / PUBLIC_SSO_URL from the ConfigMap, and
+  # OIDC_CLIENT_SECRET / AUTHENTIK_API_TOKEN from `oidc.secretName`
+  # (a pre-existing Secret this chart does not create).
+  oidc:
+    enabled: false
+    authentikUrl: ""
+    clientId: "moe-infra"
+    publicSsoUrl: ""
+    secretName: "moe-sovereign-oidc"
+
+publicUrls:
+  appBaseUrl: ""
+  adminUrl: ""
+  apiUrl: ""
 
 rateLimit:
   defaultRpm: 60
@@ -148,3 +189,17 @@ valkey:
 
 neo4j:
   enabled: false
+
+# Referenced by orchestrator/mcp for NEO4J_PASS (key: NEO4J_PASSWORD) and by
+# the neo4j subchart itself via neo4j.passwordFromSecret (key: NEO4J_AUTH,
+# format "neo4j/<password>" — the neo4j chart's own contract). Not created
+# by this chart; must exist before neo4j.enabled: true is synced.
+neo4jAuth:
+  existingSecret: "neo4j-credentials"
+
+# Internes PostgreSQL für Admin-UI (moe_userdb)
+moeUserdb:
+  enabled: false
+  image: postgres:16-alpine
+  user: moe_admin
+  database: moe_userdb
