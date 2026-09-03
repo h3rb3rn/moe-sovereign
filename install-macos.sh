@@ -3,6 +3,7 @@
 #  MoE Sovereign — macOS installer
 #
 #  Usage: bash install-macos.sh [--runtime docker|podman]
+#         curl -fsSL https://raw.githubusercontent.com/h3rb3rn/moe-sovereign/main/install-macos.sh | bash
 #
 #  This is the macOS counterpart to install.sh. It deliberately does not use
 #  apt, sudo, systemd, Linux UID remapping, or /opt bind mounts. Docker Desktop
@@ -11,6 +12,12 @@
 # =============================================================================
 set -euo pipefail
 IFS=$'\n\t'
+
+if [[ $EUID -eq 0 ]]; then
+  echo "[ERROR] Do not run the macOS installer with sudo."
+  echo "        Docker Desktop and rootless Podman must run as your regular macOS user."
+  exit 1
+fi
 
 RUNTIME_REQUESTED="${MOE_CONTAINER_RUNTIME:-}"
 if [[ "${1:-}" == "--runtime" ]]; then
@@ -27,11 +34,20 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${INSTALL_DIR:-${SCRIPT_DIR}}"
+# BASH_SOURCE is unset when bash reads the script from stdin (`curl | bash`).
+# A checked-out script uses its containing directory; streamed execution clones
+# the repository below $HOME in ensure_repo().
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
+if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+INSTALL_DIR="${INSTALL_DIR:-${SCRIPT_DIR:-${HOME}/moe-sovereign}}"
 ENV_FILE="${INSTALL_DIR}/.env"
 MOE_DATA_ROOT_DEFAULT="${MOE_DATA_ROOT:-${HOME}/moe-data}"
 GRAFANA_DATA_ROOT_DEFAULT="${GRAFANA_DATA_ROOT:-${HOME}/moe-grafana}"
+MOE_REPO_URL="${MOE_REPO_URL:-https://github.com/h3rb3rn/moe-sovereign.git}"
 
 print_banner() {
   cat <<'EOF'
@@ -208,9 +224,25 @@ resolve_runtime() {
 }
 
 ensure_repo() {
+  if [[ -f "${INSTALL_DIR}/docker-compose.yml" && -f "${INSTALL_DIR}/.env.example" ]]; then
+    return 0
+  fi
+
+  if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
+    echo "[ERROR] ${INSTALL_DIR} exists but is not a directory."
+    exit 1
+  fi
+  if [[ -d "$INSTALL_DIR" && -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+    echo "[ERROR] ${INSTALL_DIR} exists but is not a MoE Sovereign checkout."
+    echo "        Choose an empty INSTALL_DIR or clone the repository there first."
+    exit 1
+  fi
+
+  ensure_command git "Install Xcode Command Line Tools first: xcode-select --install"
+  echo "  Cloning MoE Sovereign into ${INSTALL_DIR}..."
+  git clone "$MOE_REPO_URL" "$INSTALL_DIR"
   if [[ ! -f "${INSTALL_DIR}/docker-compose.yml" || ! -f "${INSTALL_DIR}/.env.example" ]]; then
-    echo "[ERROR] ${INSTALL_DIR} does not look like a MoE Sovereign checkout."
-    echo "        Clone the repository and run this script from its root."
+    echo "[ERROR] The cloned repository is missing its Compose configuration."
     exit 1
   fi
 }
