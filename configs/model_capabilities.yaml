@@ -100,12 +100,23 @@ models:
     json_object: false
     stream: true
 
-  # Tool model for cc-agent-augmented (horndev test key / north-mini-code
-  # profile). Ollama's GBNF grammar compiler fails to initialize on the
-  # full Claude Code tool set (e.g. /init sends ~26 tool schemas), returning
-  # HTTP 400 "Failed to initialize samplers: failed to parse grammar" and
-  # aborting the whole request before generation starts.
+  # tool_model for several static cc-profiles (cc-innovator-fast, cc-ref-*,
+  # cc-agent-augmented). Ollama's GBNF grammar compiler fails to initialize
+  # on the full Claude Code tool set (e.g. /init sends ~26 tool schemas),
+  # returning HTTP 400 "Failed to initialize samplers: failed to parse
+  # grammar" and aborting the whole request before generation starts.
   "gemma4:31b":
+    json_schema: false
+    json_object: true
+    stream: true
+    native_tool_calling: false
+
+  # Live tool_model behind the DB-stored "RTX ornith:35b" user_cc_profile
+  # (ucp-6a07091b21064cad8b7b49597a3ff0a2), which the "ki-vm-node05 cc" key
+  # (horndev) is actually assigned to as of 2026-09-04 — confirmed via
+  # user_cc_profiles.config_json, not just the static cc_profiles/*.json
+  # templates. Same grammar/sampler crash as gemma4:31b above.
+  "ornith-1.5:35b":
     json_schema: false
     json_object: true
     stream: true

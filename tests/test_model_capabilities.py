@@ -93,3 +93,9 @@ def test_native_tool_calling_false_for_gemma4_31b():
     # gemma4:31b's Ollama grammar/sampler compiler fails to initialize on
     # Claude Code's larger tool schemas (400 "failed to parse grammar").
     assert model_supports_native_tool_calling("gemma4:31b") is False
+
+
+def test_native_tool_calling_false_for_ornith_1_5_35b():
+    # Live tool_model behind horndev's "RTX ornith:35b" user_cc_profile —
+    # same grammar/sampler crash as gemma4:31b.
+    assert model_supports_native_tool_calling("ornith-1.5:35b") is False
