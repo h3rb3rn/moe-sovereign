@@ -303,9 +303,30 @@ keine Konflikte, Boot-Zeit desselben Tages).
   3 Instanzen, alle `compiles:true, passed:true`. RAM danach: 7,2GB frei,
   kein Swap-Verbrauch (vs. dem knappen moe-infra-Host) — bestätigt sicheren
   Spielraum für die geplante Nutzung.
-- **Zweite, ebenfalls gekündigte VM mit identischen Daten vom Nutzer
-  angeboten** (2026-09-08) — würde die Kapazität auf 6 parallele Instanzen
-  über zwei Maschinen verdoppeln; SSH-Zugang noch ausstehend.
+- **Zweite, ebenfalls gekündigte VM** (`vm-lumi-g-netcup-02`, Debian 13
+  trixie, 4 Kerne, 7,8GB RAM) vom Nutzer bereitgestellt, Docker CE fehlte
+  noch (nur `containerd.io` aus dem bereits konfigurierten Docker-Apt-Repo
+  vorhanden) — nachinstalliert.
+  **Unerwarteter Zwischenfall:** das Starten des Docker-Daemons hat wegen
+  `restart: always`-Policies automatisch **23 Container einer zweiten,
+  fast vollständigen MoE-Sovereign-Stack-Instanz** hochgefahren (Neo4j,
+  Postgres, Kafka, ChromaDB, Ollama, Open-WebUI, Grafana, MinIO,
+  mcp-precision u.a., real mit Daten unter `/opt/moe-sovereign`) — die VM
+  war entgegen der Ankündigung nicht leer. Auf Nutzeranweisung
+  ("Alle Container abreisen und das System säubern") vollständig bereinigt:
+  alle 23 Container gestoppt/entfernt, `docker system prune -a --volumes`
+  (58,56GB freigegeben), 5 vom automatischen Prune übersehene Volumes
+  manuell nachentfernt (`libre-api-main_*`, `moe-sovereign_caddy_*`,
+  `moe-sovereign_moe_storage_data`) — Enddiskstand: 34GB statt zuvor 111GB
+  belegt, keine Container/Volumes/Images mehr vorhanden.
+  Danach identisches Setup wie VM1: Image gebaut, 3 Instanzen gestartet,
+  realer 3-fach-Paralleltest bestanden (`compiles:true, passed:true`
+  auf allen 3 Ports), 7,0GB RAM frei danach.
+
+**Gesamtkapazität nach beiden VMs: 6 parallele `rust-loom-sandbox`-Instanzen
+über zwei unabhängige Maschinen**, beide real end-to-end verifiziert (nicht
+nur Health-Check, sondern echte `/loom-check`-Aufrufe mit korrektem
+Ergebnis).
 
 ---
 
