@@ -330,13 +330,43 @@ Ergebnis).
 
 ---
 
+## Teil 5: Planner- und Judge-spezifische Modi (2026-09-09) — real verifiziert
+
+**Planner-Modus:** `_PLANNER_TRAINING_SYSTEM_PROMPT` (kondensierte, statische
+Regeln aus `graph/planner.py`: exaktes MCP-Schema, `$task_result`-Verkettung,
+Wissensspeicher-Prosa-Muster, VLSM-vs-subnet_calc) + 8 rotierende
+Muster-Fokusse (`_PLANNER_PATTERN_FOCUS`) für gezielte Diversität +
+`_validate_planner_task_array()` (echte strukturelle JSON-Validierung, kein
+Längen-Ersatz). Reale Stichprobe (Mistral Large 3, 7/8 erfolgreich)
+bestätigte alle Zielmuster: Einheiten-Umrechnung, korrektes VLSM,
+Wissensspeicherung als flache Prosa-Bestätigung (Kandidat 4 direkt
+getroffen), BGB-Paragraphen-Recherche, `$task_result`-Verkettung mit
+`"id"`-Feld, einfache Einzelaufgabe, Research-vor-Code-Muster.
+
+**Judge-Modus:** `_JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT` + 4 Muster-Fokusse
+(CONFIRMED bei Code/Prosa, Korrektur bei Code/Fakten) +
+`_critic_response_is_noncompliant()` — spiegelt exakt die reale
+Produktionsprüfung `_critic_is_noncompliant_confirmation()` aus
+`graph/synthesis.py`. Reale Stichprobe (8/8 erfolgreich) bestätigte
+korrekte CONFIRMED-Erkennung UND korrekte präambelfreie Direktkorrekturen
+(z.B. Frage "Hauptstadt von Australien?", falsche Antwort "Sydney" im
+Check → Judge korrigiert korrekt zu "Canberra", ohne Präambel).
+
+**Gefundener und gefixter Bug:** `scripts/generate_role_sft_openrouter.py`
+hat eine eigene Generierungsschleife, getrennt von
+`generate_diverse_training_seeds.py`s `run_role_sft_mode` — bei der
+Ersteinführung der Planner-/Judge-Logik nicht mitaktualisiert. Ein erster
+Testlauf (`--role planner` über OpenRouter) meldete "8/8 erfolgreich",
+lieferte aber ausschließlich generische Prosa zum selben Thema
+(MoE-Video-Transcoding) statt JSON-Task-Arrays — der neue Code lief nie,
+weil das Skript weiterhin den alten generischen Pfad nutzte. Erst durch
+Lesen der echten Inhalte (nicht nur der Erfolgszahl) entdeckt und behoben
+(Musterrotation + korrekte Parser/Templates in beide Skripte verdrahtet).
+
 ## Offene Punkte (Lastenheft für die Fortsetzung)
 
-1. Planner-spezifischer `role_sft`-Modus (echter Tool-Katalog, MCP-Schema-
-   Validierung, `$task_result`-Verkettung, Skill-Katalog) — größter Hebel,
-   noch nicht begonnen.
-2. Judge-spezifischer Modus (CONFIRMED/Direct-Correction-Kontrakt) — noch
-   nicht begonnen.
+1. ~~Planner-spezifischer `role_sft`-Modus~~ — **erledigt, siehe Teil 5**.
+2. ~~Judge-spezifischer Modus~~ — **erledigt, siehe Teil 5**.
 3. Loom-Merge-Workflow: Lehrer-Rohkandidaten (LUMI-G oder OpenRouter) →
    Sandbox-Verifikation (künftig Netcup-VM) → finaler `coder`-Datensatz.
 4. Merge-Skript: alle Quellen (LUMI-G-direkt, hochgeladene OpenRouter-Daten,

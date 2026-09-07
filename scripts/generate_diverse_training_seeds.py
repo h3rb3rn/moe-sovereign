@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -194,6 +195,231 @@ _ROLE_SYSTEM_PROMPTS: Dict[str, str] = {
         "and safety with maximum precision across up to 258,000 context tokens."
     ),
 }
+
+# ---------------------------------------------------------------------------
+# Planner-specific generation (self-critique finding, 2026-09-08): the
+# generic template above produces prose Q&A, but the real Planner output is
+# a structured JSON task-array with an exact MCP tool schema, $task_result
+# chaining, and specific formatting rules -- none of which the generic
+# template ever exercises. This directly targets 3 of 5 documented
+# benchmark failures (docs/experiments/lumig_posttraining_candidates.md
+# Candidates 2/4/5 + the multi-step under-decomposition finding), extracted
+# verbatim from the real, static rules in graph/planner.py (not the dynamic
+# per-request bits like _build_filtered_tool_desc/_build_skill_catalog,
+# which depend on live MCP tool registration and can't be reproduced
+# standalone here).
+# ---------------------------------------------------------------------------
+
+_PLANNER_TRAINING_SYSTEM_PROMPT = (
+    "You are the orchestrator (Planner) of a Mixture-of-Experts system. Given a "
+    "user request, output a JSON array of task objects that decomposes it. Each "
+    "task object has at minimum a \"task\" (string, concrete description) and a "
+    "\"category\" (string) field.\n\n"
+    "VALID CATEGORIES: code_reviewer, precision_tools, compounding_knowledge, "
+    "governance, research, security, technical_support, general, legal_advisor, "
+    "vision, dynamic.\n\n"
+    "PRECISION TOOLS -- mandatory for exact calculations (LLMs calculate wrong): "
+    "{\"task\": \"...\", \"category\": \"precision_tools\", \"mcp_tool\": \"<name>\", "
+    "\"mcp_args\": {<args>}}. Example tools: calculate (args: expression), "
+    "decimal_finance (args: operation [add|subtract|multiply|divide|percentage|"
+    "simple_interest|compound_interest], operands [list of decimal strings], "
+    "currency [ISO 4217], scale [int 0-12], rounding), subnet_calc (args: cidr -- "
+    "ONE network only), vlsm_subnet_calc (args: cidr, subnets [list of {id, hosts}] "
+    "-- splitting one block into MULTIPLE named subnets; never pass a subnets list "
+    "to subnet_calc, it only accepts cidr).\n\n"
+    "CHAINED CALCULATIONS -- when one calculation needs a PREVIOUS calculation's "
+    "result: give each precision_tools task a stable \"id\", reference an earlier "
+    "task's result as {\"$task_result\": \"<id>\"} instead of computing it yourself. "
+    "A reference must point to an earlier task in the same array, never to itself "
+    "or a later task. Multi-step numeric problems (e.g. multi-year cost/tariff "
+    "escalation) need ONE precision_tools task PER step, fully chained -- never "
+    "collapse several dependent steps into one task or leave later steps for "
+    "free-form prose estimation.\n\n"
+    "KNOWLEDGE STORAGE -- when the user asks to store/persist/remember information "
+    "(including multiple entities or a multi-clause rule/directive hierarchy in one "
+    "request): do NOT hand-encode the data as a JSON string inside \"task\", and do "
+    "NOT produce nested or escaped JSON. A single plain-language task that restates "
+    "and acknowledges the information is sufficient: {\"task\": \"Acknowledge the "
+    "following information and confirm it is noted: <restate the facts in plain "
+    "prose>\", \"category\": \"compounding_knowledge\"}.\n\n"
+    "LEGAL RESEARCH -- combine a precision_tools legal-lookup task with a "
+    "legal_advisor interpretation task; never let legal_advisor alone answer a "
+    "specific-paragraph question (it hallucinates legal text).\n\n"
+    "GROUNDING -- every task MUST have a concrete lexical/semantic connection to "
+    "the actual user request. Never invent tasks about topics (networking, "
+    "security audits, compliance frameworks, unrelated APIs) that are not present "
+    "in the request, even loosely -- this is the single most damaging failure mode "
+    "for this role. Simple requests get exactly one task, no overengineering.\n\n"
+    "Output ONLY the JSON array, no prose, no markdown fences."
+)
+
+_PLANNER_PATTERN_FOCUS: Dict[str, str] = {
+    "simple_precision": "a single-step exact calculation, unit conversion, or date/time arithmetic (one precision_tools task)",
+    "chained_calculation": "a multi-step numeric problem where later steps depend on earlier results (e.g. multi-year cost escalation, running totals, compound growth) -- MUST use $task_result chaining across at least 3 dependent precision_tools tasks, not one collapsed task",
+    "vlsm_vs_subnet": "either a single-network subnet/CIDR question (use subnet_calc) or a multi-subnet VLSM allocation from one parent block (use vlsm_subnet_calc) -- pick one, get the tool choice right",
+    "knowledge_storage_multi_entity": "a request to store/register multiple related entities or a multi-clause rule hierarchy in one turn (e.g. a team roster, a system topology, a multi-clause policy update) -- MUST use the plain-prose acknowledgment pattern, not nested JSON",
+    "legal_research": "a question about a specific German law paragraph (BGB, StGB, etc.) -- MUST combine a precision_tools legal lookup with a legal_advisor interpretation task",
+    "dynamic_expert": "a request needing deep domain expertise outside the standard categories (e.g. real-estate valuation, chemical process optimization, emergency medicine, maritime law) -- use category \"dynamic\" with a \"domain\" field",
+    "research_then_code": "an implementation request with domain-specific rules that must be correct (a game, a protocol, an algorithm with precise semantics) -- MUST include a research task before the code task, with all known rules embedded in the code task's description",
+    "simple_single_task": "a simple, everyday request needing exactly one non-precision task (e.g. a code review, a governance question, a research question) -- no overengineering, no fabricated additional tasks",
+}
+
+_PLANNER_SFT_GENERATION_TEMPLATE = """{system_prompt}
+
+Invent ONE new, realistic training example for the pattern: {pattern_description}
+
+Write a specific, concrete user request, then write the CORRECT JSON task array that a well-trained Planner would produce for it -- following every rule above exactly.
+
+Output EXACTLY in this plain-text format, with no other text before the first marker or after ===END===:
+===USER_REQUEST===
+<a specific, realistic user message>
+===ASSISTANT_RESPONSE===
+<the correct JSON task array as a single line or pretty-printed, starting with [ and ending with ]>
+===END==="""
+
+
+def _validate_planner_task_array(text: str) -> bool:
+    """Real structural validation, not just a length guard: the
+    assistant_response for the planner role claims to be a JSON task array,
+    so actually parse it and check it has the shape a real Planner output
+    must have (list of dicts, each with "task" and "category", any
+    mcp_args is itself a dict) -- catches a fluent-looking but structurally
+    wrong response that a bare length check would miss entirely.
+    """
+    try:
+        arr = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(arr, list) or not arr:
+        return False
+    for item in arr:
+        if not isinstance(item, dict):
+            return False
+        if not isinstance(item.get("task"), str) or not item["task"].strip():
+            return False
+        if not isinstance(item.get("category"), str) or not item["category"].strip():
+            return False
+        if "mcp_args" in item and not isinstance(item["mcp_args"], dict):
+            return False
+    return True
+
+
+def parse_planner_sft_output(text: str) -> Optional[Dict[str, str]]:
+    """Planner-specific counterpart to parse_role_sft_output: same delimited
+    extraction, but the assistant_response is additionally validated as a
+    real, structurally-correct JSON task array (see
+    _validate_planner_task_array) rather than accepted as any non-empty
+    text. Returns None on any parse/validation failure.
+    """
+    fields = _parse_delimited_fields(text, ["USER_REQUEST", "ASSISTANT_RESPONSE"])
+    if fields is None:
+        return None
+    response = fields["ASSISTANT_RESPONSE"].strip()
+    # Teachers sometimes wrap the array in a fence despite instructions not to.
+    if response.startswith("```"):
+        response = response.split("\n", 1)[-1]
+        if response.rstrip().endswith("```"):
+            response = response.rstrip()[:-3]
+        response = response.strip()
+    if not _validate_planner_task_array(response):
+        return None
+    return {
+        "user_request": fields["USER_REQUEST"],
+        "assistant_response": response,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Judge-specific generation (self-critique finding, 2026-09-08): Candidate 3
+# (docs/experiments/lumig_posttraining_candidates.md) needs a very specific
+# format contract for critic-style prompts -- bare "CONFIRMED" or a direct
+# corrected answer, zero preamble/meta-commentary -- that the generic
+# template never exercises. The compliance check below mirrors
+# graph/synthesis.py's real, production _critic_is_noncompliant_confirmation
+# (same two regexes), inverted: a generated training target must PASS the
+# same check the real system uses to reject bad Judge output, or it would
+# train the model on exactly the behavior this is meant to eliminate.
+# ---------------------------------------------------------------------------
+
+_JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT = (
+    "You are Sovereign Judge 27B, acting as a critic that checks a candidate "
+    "answer against a question. You will be shown a QUESTION and an ANSWER TO "
+    "CHECK. Respond with EXACTLY the single word CONFIRMED if the answer is "
+    "correct and complete. Otherwise, respond with ONLY the corrected answer -- "
+    "no preamble, no meta-commentary, no phrases like 'The answer contains "
+    "mistakes' or 'Factual errors were found', no restating the question. Start "
+    "directly with the corrected content itself (code, prose, or data, whatever "
+    "the answer's own format is)."
+)
+
+_JUDGE_CRITIC_PATTERN_FOCUS: Dict[str, str] = {
+    "confirmed_code": "a QUESTION asking for a small, correct piece of code, and an ANSWER TO CHECK that is genuinely correct -- the right response is the bare word CONFIRMED",
+    "confirmed_prose": "a QUESTION asking a factual/explanatory question, and an ANSWER TO CHECK that is genuinely correct and complete -- the right response is the bare word CONFIRMED",
+    "corrected_code": "a QUESTION asking for code (e.g. involving concurrency, memory ordering, or a common off-by-one/edge-case bug), and an ANSWER TO CHECK containing a real, specific bug -- the right response is ONLY the corrected code, no preamble",
+    "corrected_fact": "a QUESTION asking a factual question, and an ANSWER TO CHECK containing a real factual error or unsupported claim -- the right response is ONLY the corrected answer, no preamble, no phrase like 'the answer contains an error'",
+}
+
+_JUDGE_CRITIC_SFT_GENERATION_TEMPLATE = """{system_prompt}
+
+Invent ONE new, realistic example for this pattern: {pattern_description}
+
+Output EXACTLY in this plain-text format, with no other text before the first marker or after ===END===:
+===QUESTION===
+<the original question/task, one or more lines>
+===ANSWER_TO_CHECK===
+<the candidate answer being checked, may be multiple paragraphs or code>
+===CRITIC_RESPONSE===
+<either the bare word CONFIRMED, or ONLY the corrected answer with zero preamble>
+===END==="""
+
+_CRITIC_TRAILING_CONFIRMED_RE = re.compile(r'\bCONFIRMED\b\s*$', re.IGNORECASE)
+_CRITIC_PREAMBLE_RE = re.compile(
+    r'^\s*the\s+(provided\s+|given\s+)?["“]?'
+    r'(answer(\s+to\s+check)?|response|implementation|code)["”]?\b'
+    r'|^\s*(unsupported|incorrect|critical)\s+(claim|flaw|error)\b',
+    re.IGNORECASE,
+)
+
+
+def _critic_response_is_noncompliant(critic_out: str) -> bool:
+    """Mirrors graph/synthesis.py's real _critic_is_noncompliant_confirmation
+    (same two regexes) -- a generated training target must pass this check,
+    or it would train the model to reproduce exactly the non-compliant
+    format the real system already has to guard against in production.
+    """
+    stripped = critic_out.strip()
+    if not stripped:
+        return True
+    if stripped.upper() != "CONFIRMED" and _CRITIC_TRAILING_CONFIRMED_RE.search(stripped):
+        return True
+    if _CRITIC_PREAMBLE_RE.match(stripped):
+        return True
+    return False
+
+
+def parse_judge_critic_sft_output(text: str) -> Optional[Dict[str, str]]:
+    """Judge-critic-specific counterpart to parse_role_sft_output: extracts
+    QUESTION/ANSWER_TO_CHECK/CRITIC_RESPONSE, validates the critic response
+    against the real production compliance check, and renders the final
+    training pair as (user_request, assistant_response) for render_chatml --
+    the "user" turn is the critic-style prompt (question + answer to check),
+    the "assistant" turn is the compliant critic response.
+    """
+    fields = _parse_delimited_fields(text, ["QUESTION", "ANSWER_TO_CHECK", "CRITIC_RESPONSE"])
+    if fields is None:
+        return None
+    critic_response = fields["CRITIC_RESPONSE"].strip()
+    if _critic_response_is_noncompliant(critic_response):
+        return None
+    if critic_response.upper() != "CONFIRMED" and len(critic_response) < _MIN_RESPONSE_LEN:
+        return None
+    user_turn = (
+        f"QUESTION:\n{fields['QUESTION']}\n\n"
+        f"ANSWER TO CHECK:\n{fields['ANSWER_TO_CHECK']}\n\n"
+        "Respond with CONFIRMED if the answer is correct and complete. Otherwise, "
+        "respond with ONLY the corrected answer -- no preamble, no meta-commentary."
+    )
+    return {"user_request": user_turn, "assistant_response": critic_response}
 
 # Delimiter-based, not JSON -- see the comment above _LOOM_GENERATION_PROMPT:
 # an assistant_response for a code-heavy role (coder/datainfra/security) is
@@ -517,6 +743,8 @@ def render_chatml(system: str, user: str, assistant: str) -> str:
 def run_role_sft_mode(args: argparse.Namespace) -> None:
     from vllm import SamplingParams  # noqa: PLC0415
 
+    is_planner = args.role == "planner"
+    is_judge = args.role == "judge"
     system_prompt = _ROLE_SYSTEM_PROMPTS[args.role]
     llm = _load_llm(args.model, args.tensor_parallel_size, args.max_model_len, args.gpu_memory_utilization)
     sampling = SamplingParams(temperature=1.0, top_p=0.95, max_tokens=args.max_tokens)
@@ -526,15 +754,45 @@ def run_role_sft_mode(args: argparse.Namespace) -> None:
     debug_path = output_path.with_suffix(output_path.suffix + ".debug.log")
     written = 0
     total = 0
-    prompt = _ROLE_SFT_GENERATION_TEMPLATE.format(system_prompt=system_prompt)
+
+    if is_planner:
+        pattern_names = list(_PLANNER_PATTERN_FOCUS.keys())
+        prompts_by_pattern = {
+            name: _PLANNER_SFT_GENERATION_TEMPLATE.format(
+                system_prompt=_PLANNER_TRAINING_SYSTEM_PROMPT, pattern_description=desc)
+            for name, desc in _PLANNER_PATTERN_FOCUS.items()
+        }
+    elif is_judge:
+        pattern_names = list(_JUDGE_CRITIC_PATTERN_FOCUS.keys())
+        prompts_by_pattern = {
+            name: _JUDGE_CRITIC_SFT_GENERATION_TEMPLATE.format(
+                system_prompt=_JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT, pattern_description=desc)
+            for name, desc in _JUDGE_CRITIC_PATTERN_FOCUS.items()
+        }
+    else:
+        generic_prompt = _ROLE_SFT_GENERATION_TEMPLATE.format(system_prompt=system_prompt)
+
     with open(output_path, "a", encoding="utf-8") as f:
         for start in range(0, args.count, args.batch_size):
             batch_n = min(args.batch_size, args.count - start)
-            outputs = llm.generate([prompt] * batch_n, sampling)
+            if is_planner or is_judge:
+                # Cycle through pattern focuses so a batch covers a spread of
+                # the specific failure modes instead of N copies of one
+                # randomly-chosen pattern.
+                batch_patterns = [pattern_names[(start + i) % len(pattern_names)] for i in range(batch_n)]
+                batch_prompts = [prompts_by_pattern[p] for p in batch_patterns]
+            else:
+                batch_prompts = [generic_prompt] * batch_n
+            outputs = llm.generate(batch_prompts, sampling)
             for out in outputs:
                 total += 1
                 raw_text = out.outputs[0].text
-                parsed = parse_role_sft_output(raw_text)
+                if is_planner:
+                    parsed = parse_planner_sft_output(raw_text)
+                elif is_judge:
+                    parsed = parse_judge_critic_sft_output(raw_text)
+                else:
+                    parsed = parse_role_sft_output(raw_text)
                 if parsed is not None:
                     text = render_chatml(system_prompt, parsed["user_request"], parsed["assistant_response"])
                     f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")

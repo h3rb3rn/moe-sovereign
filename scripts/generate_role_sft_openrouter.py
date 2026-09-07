@@ -65,8 +65,16 @@ import httpx
 from dotenv import load_dotenv
 
 from scripts.generate_diverse_training_seeds import (
+    _JUDGE_CRITIC_PATTERN_FOCUS,
+    _JUDGE_CRITIC_SFT_GENERATION_TEMPLATE,
+    _JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT,
+    _PLANNER_PATTERN_FOCUS,
+    _PLANNER_SFT_GENERATION_TEMPLATE,
+    _PLANNER_TRAINING_SYSTEM_PROMPT,
     _ROLE_SFT_GENERATION_TEMPLATE,
     _ROLE_SYSTEM_PROMPTS,
+    parse_judge_critic_sft_output,
+    parse_planner_sft_output,
     parse_role_sft_output,
     render_chatml,
 )
@@ -280,8 +288,35 @@ async def run(args: argparse.Namespace) -> None:
 
     preflight_check(min_free_ram_mb=args.min_free_ram_mb, min_free_disk_gb=args.min_free_disk_gb)
 
+    # Planner/judge need structured, schema-validated output (JSON task-array
+    # with real MCP tool schemas; CONFIRMED/direct-correction critic
+    # contract) that the generic template never exercises -- see
+    # docs/experiments/lumig_openrouter_teacher_verification.md Teil 3.4.
+    # Bug found live (2026-09-08): this script has its own generation loop
+    # separate from generate_diverse_training_seeds.py's run_role_sft_mode,
+    # and was never updated when the planner/judge-specific modes were
+    # added there -- a --role planner run silently fell back to the generic
+    # prose template with 0 structural validation, "8/8 written" while
+    # every single example was markdown prose, not a JSON task array.
+    is_planner = args.role == "planner"
+    is_judge = args.role == "judge"
     system_prompt = _ROLE_SYSTEM_PROMPTS[args.role]
-    prompt = _ROLE_SFT_GENERATION_TEMPLATE.format(system_prompt=system_prompt)
+    if is_planner:
+        pattern_names = list(_PLANNER_PATTERN_FOCUS.keys())
+        prompts_by_pattern = {
+            name: _PLANNER_SFT_GENERATION_TEMPLATE.format(
+                system_prompt=_PLANNER_TRAINING_SYSTEM_PROMPT, pattern_description=desc)
+            for name, desc in _PLANNER_PATTERN_FOCUS.items()
+        }
+    elif is_judge:
+        pattern_names = list(_JUDGE_CRITIC_PATTERN_FOCUS.keys())
+        prompts_by_pattern = {
+            name: _JUDGE_CRITIC_SFT_GENERATION_TEMPLATE.format(
+                system_prompt=_JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT, pattern_description=desc)
+            for name, desc in _JUDGE_CRITIC_PATTERN_FOCUS.items()
+        }
+    else:
+        prompt = _ROLE_SFT_GENERATION_TEMPLATE.format(system_prompt=system_prompt)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,12 +348,16 @@ async def run(args: argparse.Namespace) -> None:
         print(f"OpenRouter key: limit_remaining={key_info.get('limit_remaining')}, "
               f"usage={key_info.get('usage')}")
 
-        async def worker() -> None:
+        async def worker(i: int) -> None:
             async with semaphore:
                 if stop_event.is_set() or tracker.over_budget():
                     return
+                if is_planner or is_judge:
+                    this_prompt = prompts_by_pattern[pattern_names[i % len(pattern_names)]]
+                else:
+                    this_prompt = prompt
                 try:
-                    raw_text, cost = await generate_one(client, api_key, args.model, prompt,
+                    raw_text, cost = await generate_one(client, api_key, args.model, this_prompt,
                                                           args.max_tokens, args.reasoning_effort)
                 except OutOfCreditsError:
                     print("OpenRouter returned 402 (out of credits) -- stopping cleanly, "
@@ -330,7 +369,12 @@ async def run(args: argparse.Namespace) -> None:
                     print(f"Request failed after retries: {exc!r} -- skipping this example.")
                     return
 
-                parsed = parse_role_sft_output(raw_text)
+                if is_planner:
+                    parsed = parse_planner_sft_output(raw_text)
+                elif is_judge:
+                    parsed = parse_judge_critic_sft_output(raw_text)
+                else:
+                    parsed = parse_role_sft_output(raw_text)
                 async with file_lock:
                     if parsed is not None:
                         text = render_chatml(system_prompt, parsed["user_request"], parsed["assistant_response"])
@@ -360,7 +404,7 @@ async def run(args: argparse.Namespace) -> None:
                         print(f"Reached --max-cost-usd {args.max_cost_usd} -- stopping cleanly.")
                         stop_event.set()
 
-        tasks = [asyncio.create_task(worker()) for _ in range(remaining)]
+        tasks = [asyncio.create_task(worker(i)) for i in range(remaining)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         # return_exceptions=True means a worker() bug does not abort the
         # whole batch -- but it also means it fails SILENTLY unless the

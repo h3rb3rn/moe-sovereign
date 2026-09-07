@@ -12,9 +12,15 @@ from __future__ import annotations
 import json
 
 from scripts.generate_diverse_training_seeds import (
+    _JUDGE_CRITIC_PATTERN_FOCUS,
+    _PLANNER_PATTERN_FOCUS,
     _ROLE_SYSTEM_PROMPTS,
+    _critic_response_is_noncompliant,
+    _validate_planner_task_array,
     parse_grounding_output,
+    parse_judge_critic_sft_output,
     parse_loom_output,
+    parse_planner_sft_output,
     parse_role_sft_output,
     render_chatml,
 )
@@ -196,6 +202,136 @@ class TestParseRoleSftOutput:
             "coder", "precision", "graphrag", "governance", "research",
             "security", "datainfra", "omni", "planner", "judge",
         }
+
+
+class TestValidatePlannerTaskArray:
+    def test_accepts_a_real_simple_task(self):
+        assert _validate_planner_task_array(json.dumps(
+            [{"task": "Calculate 47+53", "category": "precision_tools", "mcp_tool": "calculate", "mcp_args": {"expression": "47+53"}}]
+        )) is True
+
+    def test_accepts_a_chained_task_array(self):
+        assert _validate_planner_task_array(json.dumps([
+            {"id": "year1", "task": "Year 1 tariff", "category": "precision_tools", "mcp_tool": "decimal_finance",
+             "mcp_args": {"operation": "add", "operands": ["0.10", "0"], "currency": "EUR", "scale": 4, "rounding": "half_even"}},
+            {"id": "year2", "task": "Year 2 tariff (+5%)", "category": "precision_tools", "mcp_tool": "decimal_finance",
+             "mcp_args": {"operation": "percentage", "operands": [{"$task_result": "year1"}, "105"], "currency": "EUR", "scale": 4, "rounding": "half_even"}},
+        ])) is True
+
+    def test_rejects_malformed_json(self):
+        assert _validate_planner_task_array("[not valid json") is False
+
+    def test_rejects_a_json_object_instead_of_array(self):
+        assert _validate_planner_task_array(json.dumps({"task": "x", "category": "research"})) is False
+
+    def test_rejects_empty_array(self):
+        assert _validate_planner_task_array("[]") is False
+
+    def test_rejects_task_missing_category(self):
+        assert _validate_planner_task_array(json.dumps([{"task": "Calculate 47+53"}])) is False
+
+    def test_rejects_mcp_args_that_is_not_a_dict(self):
+        # The exact real failure mode (Candidate 5): a plausible-looking but
+        # wrong argument encoding should fail structural validation even
+        # though the JSON itself parses.
+        assert _validate_planner_task_array(json.dumps(
+            [{"task": "x", "category": "precision_tools", "mcp_tool": "decimal_finance", "mcp_args": "operation=add"}]
+        )) is False
+
+
+class TestParsePlannerSftOutput:
+    def test_parses_well_formed_output(self):
+        payload = (
+            "===USER_REQUEST===\nWhat is 47+53?\n"
+            "===ASSISTANT_RESPONSE===\n"
+            + json.dumps([{"task": "Calculate 47+53", "category": "precision_tools", "mcp_tool": "calculate", "mcp_args": {"expression": "47+53"}}])
+            + "\n===END==="
+        )
+        result = parse_planner_sft_output(payload)
+        assert result is not None
+        assert result["user_request"] == "What is 47+53?"
+        assert _validate_planner_task_array(result["assistant_response"])
+
+    def test_strips_a_markdown_fence_around_the_json(self):
+        arr = json.dumps([{"task": "x", "category": "research"}])
+        payload = f"===USER_REQUEST===\nResearch x\n===ASSISTANT_RESPONSE===\n```json\n{arr}\n```\n===END==="
+        result = parse_planner_sft_output(payload)
+        assert result is not None
+        assert json.loads(result["assistant_response"]) == [{"task": "x", "category": "research"}]
+
+    def test_returns_none_when_response_is_prose_not_json(self):
+        payload = "===USER_REQUEST===\nWhat is 47+53?\n===ASSISTANT_RESPONSE===\nThe answer is 100.\n===END==="
+        assert parse_planner_sft_output(payload) is None
+
+    def test_returns_none_when_a_marker_is_missing(self):
+        payload = "===USER_REQUEST===\nWhat is 47+53?\n===END==="
+        assert parse_planner_sft_output(payload) is None
+
+    def test_all_pattern_focuses_are_nonempty_strings(self):
+        assert len(_PLANNER_PATTERN_FOCUS) >= 6
+        assert all(isinstance(v, str) and v.strip() for v in _PLANNER_PATTERN_FOCUS.values())
+
+
+class TestCriticResponseIsNoncompliant:
+    def test_bare_confirmed_is_compliant(self):
+        assert _critic_response_is_noncompliant("CONFIRMED") is False
+
+    def test_direct_correction_is_compliant(self):
+        assert _critic_response_is_noncompliant("fn f() { Ordering::Release }") is False
+
+    def test_preamble_before_confirmed_is_noncompliant(self):
+        # Root cause example from graph/synthesis.py's own docstring: an
+        # ~800-word deliberation ending in a bare CONFIRMED still fails,
+        # because .startswith("CONFIRMED") in production would reject it.
+        assert _critic_response_is_noncompliant("Let me think about whether this is unsupported... CONFIRMED") is True
+
+    def test_answer_preamble_is_noncompliant(self):
+        assert _critic_response_is_noncompliant('The provided "answer to check" is severely corrupted.') is True
+
+    def test_empty_is_noncompliant(self):
+        assert _critic_response_is_noncompliant("") is True
+
+
+class TestParseJudgeCriticSftOutput:
+    def test_parses_a_confirmed_example(self):
+        payload = (
+            "===QUESTION===\nWhat is 2+2?\n"
+            "===ANSWER_TO_CHECK===\n4\n"
+            "===CRITIC_RESPONSE===\nCONFIRMED\n===END==="
+        )
+        result = parse_judge_critic_sft_output(payload)
+        assert result is not None
+        assert result["assistant_response"] == "CONFIRMED"
+        assert "QUESTION:" in result["user_request"]
+        assert "ANSWER TO CHECK:" in result["user_request"]
+
+    def test_parses_a_direct_correction_example(self):
+        payload = (
+            "===QUESTION===\nImplement a Rust SPSC ring buffer publish.\n"
+            "===ANSWER_TO_CHECK===\npayload.store(x, Ordering::Relaxed);\n"
+            "===CRITIC_RESPONSE===\npayload.store(x, Ordering::Release);\n===END==="
+        )
+        result = parse_judge_critic_sft_output(payload)
+        assert result is not None
+        assert result["assistant_response"] == "payload.store(x, Ordering::Release);"
+
+    def test_rejects_a_response_with_preamble(self):
+        payload = (
+            "===QUESTION===\nWhat is 2+2?\n===ANSWER_TO_CHECK===\n5\n"
+            "===CRITIC_RESPONSE===\nThe answer contains an error. It should be 4.\n===END==="
+        )
+        assert parse_judge_critic_sft_output(payload) is None
+
+    def test_rejects_a_deliberation_ending_in_confirmed(self):
+        payload = (
+            "===QUESTION===\nWhat is 2+2?\n===ANSWER_TO_CHECK===\n4\n"
+            "===CRITIC_RESPONSE===\nLet me carefully consider this claim... CONFIRMED\n===END==="
+        )
+        assert parse_judge_critic_sft_output(payload) is None
+
+    def test_all_pattern_focuses_are_nonempty_strings(self):
+        assert len(_JUDGE_CRITIC_PATTERN_FOCUS) >= 3
+        assert all(isinstance(v, str) and v.strip() for v in _JUDGE_CRITIC_PATTERN_FOCUS.values())
 
 
 class TestRenderChatml:
