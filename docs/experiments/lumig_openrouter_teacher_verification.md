@@ -276,10 +276,36 @@ Host selbst hat aktuell sehr wenig Puffer (35GB RAM gesamt, 839MB sofort
 frei, Swap nahezu voll, 6-8 weitere Produktionsdienste bereits resident).
 
 **Entscheidung:** Batch-Verifikation von Lehrer-generierten Loom-Kandidaten
-auf eine separate Netcup-VM (8 Kerne, 16GB RAM, 512GB SSD, frisch installiertes
-Debian 13 + Docker CE, wird vom Nutzer vorbereitet) auslagern statt den
-angespannten moe-infra-Host mit parallelen Sandbox-Instanzen weiter zu
-belasten — dort realistisch 6-8 parallele Instanzen statt 1-2 sicher möglich.
+auf eine separate VM auslagern statt den angespannten moe-infra-Host mit
+parallelen Sandbox-Instanzen weiter zu belasten.
+
+**Umgesetzt und real verifiziert (2026-09-08):** Bereitgestellte VM
+(`vm-lumi-g-netcup`, SSH-Alias) wich von der ursprünglichen Ankündigung ab
+(real: Debian 12 bookworm, 4 Kerne, 7,8GB RAM statt der angekündigten
+Debian 13/8 Kerne/16GB) — laut Nutzer bewusst eine zum Oktober gekündigte,
+sonst ungenutzte "monitoring"-VM, vor dem Einrichten per `ps`/`ss`/
+`systemctl` verifiziert als tatsächlich frei (nur `atop` als Alt-Dienst,
+keine Konflikte, Boot-Zeit desselben Tages).
+
+- `services/rust_loom_sandbox/` (Dockerfile, app.py, scaffold) per `scp`
+  übertragen, Image dort gebaut (`cargo build --release` mit vendorierter
+  `loom`-Abhängigkeit, danach netzwerklos lauffähig).
+- Neue `docker-compose.loom-sandbox-remote.yml` (3 Instanzen statt 1, an
+  4 echten Kernen — 1 Kern Puffer für OS/Docker-Daemon). **Erste Version
+  nutzte `deploy.resources.limits` — von `docker compose up` ohne Swarm-Mode
+  nicht durchgesetzt** (`CpuQuota=0` trotz `cpus: '1'`); auf die klassischen
+  Top-Level-Schlüssel (`cpus:`, `mem_limit:`, `pids_limit:`) umgestellt,
+  danach korrekt angewendet (`NanoCpus=1000000000` bestätigt).
+- Ports nur auf `127.0.0.1` gebunden (kein Internet-Exposure) — die
+  Verifikations-Läufe laufen direkt auf der VM selbst, nicht über einen
+  Tunnel von außen.
+- **Realer Parallel-Test**: 3 gleichzeitige `/loom-check`-Anfragen an alle
+  3 Instanzen, alle `compiles:true, passed:true`. RAM danach: 7,2GB frei,
+  kein Swap-Verbrauch (vs. dem knappen moe-infra-Host) — bestätigt sicheren
+  Spielraum für die geplante Nutzung.
+- **Zweite, ebenfalls gekündigte VM mit identischen Daten vom Nutzer
+  angeboten** (2026-09-08) — würde die Kapazität auf 6 parallele Instanzen
+  über zwei Maschinen verdoppeln; SSH-Zugang noch ausstehend.
 
 ---
 
