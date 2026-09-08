@@ -363,22 +363,84 @@ weil das Skript weiterhin den alten generischen Pfad nutzte. Erst durch
 Lesen der echten Inhalte (nicht nur der Erfolgszahl) entdeckt und behoben
 (Musterrotation + korrekte Parser/Templates in beide Skripte verdrahtet).
 
+## Teil 6: Loom-Merge-Workflow (Kandidat 1) — erste echte End-to-End-Ausführung (2026-09-09)
+
+Die 3-stufige Pipeline (`--mode loom` generieren → `generate_loom_seed_examples.py
+--llm-scenarios-file` sandbox-verifizieren → `curate_coder_expert_dataset.py`
+kuratieren) existierte bereits aus früherer Arbeit — hier zum ersten Mal
+echt end-to-end mit den gefixten Komponenten ausgeführt.
+
+**GLM-4.5-Air auf LUMI-G (SLURM-Job 21805142, 20 Rohversuche):** nur
+6/20 geparst (Reasoning-Trace `<think>` frisst Token-Budget, keine
+Reasoning-Kontrolle bei direkten vLLM-Aufrufen verfügbar). **Reale
+Sandbox-Verifikation: 0 von 6 Paaren brauchbar** — entweder kompiliert der
+Code nicht, oder der "Fix" behebt das Problem tatsächlich nicht. Kuration
+bestätigt: 0 finale Trainingsbeispiele. Auf Nutzerentscheidung hin auf
+Kimi K3 umgestellt.
+
+**Kimi K3 über OpenRouter** (dafür `generate_role_sft_openrouter.py` um
+einen `--mode loom`-Zweig erweitert, wiederverwendet dieselben
+`_LOOM_GENERATION_PROMPT`/`parse_loom_output`-Bausteine): 10/10 Rohversuche
+geparst, $0.175 für 10 Beispiele.
+
+**Bei der Sandbox-Verifikation zwei reale Infrastruktur-Bugs gefunden und
+gefixt:**
+1. **Ein einzelner pathologischer Kandidat legt die ganze Instanz lahm.**
+   Ein Kimi-K3-Kandidat ("ticket_lock_payload_handoff", vermutlich eine
+   CAS-Retry-Schleife ohne sauberes Loom-Yield) ließ die Sandbox-Instanz
+   hart hängen bleiben — jede nachfolgende Anfrage (auch für andere,
+   unbeteiligte Kandidaten) schlug fehl, bis die Instanz neugestartet
+   wurde. `generate_loom_seed_examples.py` brach vorher beim ersten Fehler
+   komplett ab; jetzt wird ein einzelner Sandbox-Fehler abgefangen und
+   protokolliert, die Verifikation der restlichen Kandidaten läuft weiter.
+2. **tmpfs-Berechtigungsfehler nach Container-Neustart.**
+   `PermissionError: [Errno 13] Permission denied: '/build/...'` — das
+   `/build`-tmpfs-Mount (`exec,nosuid,size=1024m`) hatte nach
+   `docker restart` falsche Berechtigungen für den Nicht-root-Container-
+   User, wodurch **jede** Anfrage mit 500/Verbindungsabbruch scheiterte,
+   auch bereits mehrfach bestätigt gute Kandidaten. Fix:
+   `uid=1003,gid=0,mode=1770` explizit in den tmpfs-Optionen ergänzt
+   (`docker-compose.loom-sandbox-remote.yml`), Container neu erstellt
+   (nicht nur neugestartet). **Wichtig:** die identische tmpfs-Zeile ohne
+   explizite `uid`/`gid` existiert auch in der Produktions-`docker-
+   compose.yml` (`rust-loom-sandbox`-Service) — dieselbe latente Schwäche
+   dort vermutlich vorhanden, nur bisher nie durch einen Neustart
+   ausgelöst; nicht in dieser Session gefixt (Produktionsänderung
+   außerhalb des Scopes).
+
+**Reales Endergebnis nach beiden Fixes** (9 von 10 Kimi-K3-Kandidaten
+verifiziert, der bekannte Störer ausgeschlossen): **6 von 9 Paaren zeigen
+das korrekte Muster** (broken scheitert, fixed besteht) — 3 zeigen korrekt
+erkannt, dass der Fix das Problem nicht behebt. Kuration:
+**6 finale, sandbox-verifizierte ChatML-Trainingsbeispiele** für den
+`coder`-Experten (echte Acquire/Release-Korrekturen bestätigt, 2,7-3,8KB
+pro Beispiel). Der Kandidat "ticket_gate_payload_publish" bestand die
+Sandbox-Prüfung **dreimal unabhängig identisch** (broken=False,
+fixed=True) über verschiedene Instanzen hinweg.
+
 ## Offene Punkte (Lastenheft für die Fortsetzung)
 
 1. ~~Planner-spezifischer `role_sft`-Modus~~ — **erledigt, siehe Teil 5**.
 2. ~~Judge-spezifischer Modus~~ — **erledigt, siehe Teil 5**.
-3. Loom-Merge-Workflow: Lehrer-Rohkandidaten (LUMI-G oder OpenRouter) →
-   Sandbox-Verifikation (künftig Netcup-VM) → finaler `coder`-Datensatz.
-4. Merge-Skript: alle Quellen (LUMI-G-direkt, hochgeladene OpenRouter-Daten,
+3. ~~Loom-Merge-Workflow~~ — **erledigt, siehe Teil 6** (erste echte Charge:
+   6 verifizierte Beispiele; Skalierung auf mehr Rohversuche noch offen).
+4. ~~Netcup-VM(s) einrichten~~ — **erledigt, siehe Teil 4** (2 VMs, 6 parallele
+   Sandbox-Instanzen).
+5. Produktions-`docker-compose.yml`s `rust-loom-sandbox`-tmpfs-Mount hat
+   dieselbe fehlende `uid`/`gid`-Angabe wie der in Teil 6 gefundene Fehler
+   in `docker-compose.loom-sandbox-remote.yml` — sollte dort ebenfalls
+   ergänzt werden, aber nicht ohne separate Rücksprache (Produktionsdienst).
+6. Merge-Skript: alle Quellen (LUMI-G-direkt, hochgeladene OpenRouter-Daten,
    Loom-verifizierte Beispiele) zu einer Datei pro Rolle auf LUMI-G-Scratch
    zusammenführen, VOR Beginn von Phase 3 (Training) — kein sequenzielles
    Nachtrainieren, um katastrophales Vergessen zu vermeiden.
-5. Netcup-VM einrichten (Docker Compose für `rust-loom-sandbox`, skaliert)
-   und `generate_loom_seed_examples.py` auf die entfernte URL umstellen —
-   wartet auf SSH-Zugangsdaten vom Nutzer.
-6. `security`-Rollen-Prompt real gegen Qwen3-235B/DeepSeek-Coder-V2 testen,
+7. `security`-Rollen-Prompt real gegen Qwen3-235B/DeepSeek-Coder-V2 testen,
    um zu klären, ob die Verweigerung auch dort auftritt.
-7. Mistral-Large-Instruct-2411s MRL-Lizenzstatus für MoE-Sovereign als
+8. Mistral-Large-Instruct-2411s MRL-Lizenzstatus für MoE-Sovereign als
    Ganzes abschließend einordnen (Forschungsprojekt vs. jede kommerzielle
    Berührung) — vom Nutzer selbst zu entscheiden, nicht rein technisch
    lösbar.
+9. Skalierung des Loom-Kandidaten-Volumens (aktuell nur 1 kleine Charge
+   getestet) — Kimi K3 hat sich als deutlich zuverlässiger als GLM-4.5-Air
+   erwiesen (6/9 vs. 0/6 sandbox-verifiziert), sollte für die Vollskalierung
+   priorisiert werden.

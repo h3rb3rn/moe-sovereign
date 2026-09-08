@@ -37,7 +37,7 @@ services:
       - ALL
     read_only: true
     tmpfs:
-      - /build:exec,nosuid,size=1024m
+      - /build:exec,nosuid,size=1024m,uid=1003,gid=0,mode=1770
     network_mode: bridge
     cpus: 1.0
     mem_limit: 768m
@@ -61,7 +61,7 @@ services:
       - ALL
     read_only: true
     tmpfs:
-      - /build:exec,nosuid,size=1024m
+      - /build:exec,nosuid,size=1024m,uid=1003,gid=0,mode=1770
     network_mode: bridge
     cpus: 1.0
     mem_limit: 768m
@@ -85,7 +85,7 @@ services:
       - ALL
     read_only: true
     tmpfs:
-      - /build:exec,nosuid,size=1024m
+      - /build:exec,nosuid,size=1024m,uid=1003,gid=0,mode=1770
     network_mode: bridge
     cpus: 1.0
     mem_limit: 768m

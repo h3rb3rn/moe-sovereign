@@ -68,12 +68,14 @@ from scripts.generate_diverse_training_seeds import (
     _JUDGE_CRITIC_PATTERN_FOCUS,
     _JUDGE_CRITIC_SFT_GENERATION_TEMPLATE,
     _JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT,
+    _LOOM_GENERATION_PROMPT,
     _PLANNER_PATTERN_FOCUS,
     _PLANNER_SFT_GENERATION_TEMPLATE,
     _PLANNER_TRAINING_SYSTEM_PROMPT,
     _ROLE_SFT_GENERATION_TEMPLATE,
     _ROLE_SYSTEM_PROMPTS,
     parse_judge_critic_sft_output,
+    parse_loom_output,
     parse_planner_sft_output,
     parse_role_sft_output,
     render_chatml,
@@ -298,10 +300,13 @@ async def run(args: argparse.Namespace) -> None:
     # added there -- a --role planner run silently fell back to the generic
     # prose template with 0 structural validation, "8/8 written" while
     # every single example was markdown prose, not a JSON task array.
-    is_planner = args.role == "planner"
-    is_judge = args.role == "judge"
-    system_prompt = _ROLE_SYSTEM_PROMPTS[args.role]
-    if is_planner:
+    is_loom = args.mode == "loom"
+    is_planner = not is_loom and args.role == "planner"
+    is_judge = not is_loom and args.role == "judge"
+    system_prompt = _ROLE_SYSTEM_PROMPTS[args.role] if not is_loom else None
+    if is_loom:
+        prompt = _LOOM_GENERATION_PROMPT
+    elif is_planner:
         pattern_names = list(_PLANNER_PATTERN_FOCUS.keys())
         prompts_by_pattern = {
             name: _PLANNER_SFT_GENERATION_TEMPLATE.format(
@@ -369,7 +374,9 @@ async def run(args: argparse.Namespace) -> None:
                     print(f"Request failed after retries: {exc!r} -- skipping this example.")
                     return
 
-                if is_planner:
+                if is_loom:
+                    parsed = parse_loom_output(raw_text)
+                elif is_planner:
                     parsed = parse_planner_sft_output(raw_text)
                 elif is_judge:
                     parsed = parse_judge_critic_sft_output(raw_text)
@@ -377,9 +384,18 @@ async def run(args: argparse.Namespace) -> None:
                     parsed = parse_role_sft_output(raw_text)
                 async with file_lock:
                     if parsed is not None:
-                        text = render_chatml(system_prompt, parsed["user_request"], parsed["assistant_response"])
+                        if is_loom:
+                            # Raw candidate for generate_loom_seed_examples.py
+                            # --llm-scenarios-file -- NOT yet sandbox-verified,
+                            # NOT ChatML, must not be used as training data
+                            # directly (see docs/experiments/
+                            # lumig_openrouter_teacher_verification.md).
+                            record = parsed
+                        else:
+                            text = render_chatml(system_prompt, parsed["user_request"], parsed["assistant_response"])
+                            record = {"text": text}
                         with open(output_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
+                            f.write(json.dumps(record, ensure_ascii=False) + "\n")
                             f.flush()
                     else:
                         with open(debug_path, "a", encoding="utf-8") as f:
@@ -394,7 +410,7 @@ async def run(args: argparse.Namespace) -> None:
                             pass
                         _write_budget_sidecar(budget_path, args.role, args.model, tracker,
                                                args.count, already_written, key_remaining)
-                        print(f"[{args.role}] {already_written + tracker.examples_written}/{args.count} written "
+                        print(f"[{args.role or args.mode}] {already_written + tracker.examples_written}/{args.count} written "
                               f"({tracker.examples_failed_parse} parse-failed this run), "
                               f"${tracker.total_cost_usd:.3f} spent "
                               f"(${tracker.avg_cost_per_example():.4f}/example avg), "
@@ -427,7 +443,13 @@ async def run(args: argparse.Namespace) -> None:
 def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--role", required=True, choices=sorted(_ROLE_SYSTEM_PROMPTS.keys()))
+    parser.add_argument("--mode", default="role_sft", choices=["role_sft", "loom"],
+                         help="role_sft: per-role training examples (default). loom: Candidate-1 "
+                              "memory-ordering scenario pairs (--role is ignored in this mode, output "
+                              "must still be sandbox-verified via generate_loom_seed_examples.py "
+                              "--llm-scenarios-file before use -- this script only generates candidates)")
+    parser.add_argument("--role", choices=sorted(_ROLE_SYSTEM_PROMPTS.keys()),
+                         help="required for --mode role_sft, ignored for --mode loom")
     parser.add_argument("--model", required=True, help="OpenRouter model id, e.g. moonshotai/kimi-k3 or z-ai/glm-5.3")
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--output", required=True)
@@ -444,6 +466,8 @@ def main() -> int:
     parser.add_argument("--min-free-ram-mb", type=int, default=500, help="preflight check threshold")
     parser.add_argument("--min-free-disk-gb", type=float, default=2.0, help="preflight check threshold")
     args = parser.parse_args()
+    if args.mode == "role_sft" and not args.role:
+        parser.error("--mode role_sft requires --role")
     asyncio.run(run(args))
     return 0
 
