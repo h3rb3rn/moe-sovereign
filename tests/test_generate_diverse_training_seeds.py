@@ -12,10 +12,14 @@ from __future__ import annotations
 import json
 
 from scripts.generate_diverse_training_seeds import (
+    _GENERIC_ROLE_ATTRACTOR_KEYWORDS,
+    _GENERIC_ROLE_TOPIC_HINTS,
     _JUDGE_CRITIC_PATTERN_FOCUS,
     _PLANNER_PATTERN_FOCUS,
+    _ROLE_SFT_GENERATION_TEMPLATE,
     _ROLE_SYSTEM_PROMPTS,
     _critic_response_is_noncompliant,
+    _role_sft_output_violates_topic,
     _validate_planner_task_array,
     parse_grounding_output,
     parse_judge_critic_sft_output,
@@ -162,6 +166,58 @@ class TestParseRoleSftOutput:
         assert result is not None
         assert result["user_request"] == "Write a function returning a quoted string."
         assert result["assistant_response"] == code
+
+    def test_rejects_unfilled_template_placeholder(self):
+        # Found live, job 21829009 (GLM-4.5-Air): 10/577 "successfully
+        # parsed" examples were the model echoing the template's own
+        # placeholder text verbatim instead of generating real content.
+        payload = (
+            "===USER_REQUEST===\n<a specific, realistic user message, one or more lines>\n"
+            "===ASSISTANT_RESPONSE===\nA real, on-topic response that is long enough to pass length checks.\n"
+            "===END==="
+        )
+        assert parse_role_sft_output(payload) is None
+
+    def test_does_not_reject_real_content_containing_angle_brackets(self):
+        # A real Rust/C++ generic type (Vec<T>, HashMap<K, V>) must not be
+        # mistaken for a placeholder -- only a field that is ENTIRELY one
+        # bracket pair start-to-end is a template echo.
+        payload = (
+            "===USER_REQUEST===\nWrite a function that returns a Vec<T> of results.\n"
+            "===ASSISTANT_RESPONSE===\nHere is an implementation using Vec<T> and HashMap<K, V> as requested.\n"
+            "===END==="
+        )
+        result = parse_role_sft_output(payload)
+        assert result is not None
+        assert "Vec<T>" in result["user_request"]
+
+    def test_rejects_degenerate_short_user_request_fragment(self):
+        # Found live, job 21832982 (governance, GLM-4.5-Air): USER_REQUEST
+        # fields of "and", "` and `" -- clearly leaked fragments, not real
+        # requests -- slipped through because only ASSISTANT_RESPONSE had a
+        # minimum-length floor.
+        payload = (
+            "===USER_REQUEST===\nand\n"
+            "===ASSISTANT_RESPONSE===\nA real, on-topic response that is long enough to pass length checks.\n"
+            "===END==="
+        )
+        assert parse_role_sft_output(payload) is None
+
+    def test_rejects_bracketed_placeholder_fragment(self):
+        payload = (
+            "===USER_REQUEST===\n[User query]\n"
+            "===ASSISTANT_RESPONSE===\nA real, on-topic response that is long enough to pass length checks.\n"
+            "===END==="
+        )
+        assert parse_role_sft_output(payload) is None
+
+    def test_does_not_reject_real_short_request(self):
+        payload = (
+            "===USER_REQUEST===\nWhat is 2+2?\n"
+            "===ASSISTANT_RESPONSE===\nA real, on-topic response that is long enough to pass length checks.\n"
+            "===END==="
+        )
+        assert parse_role_sft_output(payload) is not None
 
     def test_returns_none_when_a_marker_is_missing(self):
         payload = "===USER_REQUEST===\nOnly a request, no response.\n===END==="
@@ -342,3 +398,67 @@ class TestRenderChatml:
             "<|im_start|>user\nUSER MSG<|im_end|>\n"
             "<|im_start|>assistant\nASSISTANT REPLY<|im_end|>\n"
         )
+
+
+class TestGenericRoleTopicHints:
+    """Regression coverage for the 2026-09-08 self-critique finding: a
+    single static role_sft prompt with no topic scaffolding let teacher
+    models collapse onto the one example named in their own system prompt
+    (Mistral Large 3: 99/400 `coder` examples near-identical "lock-free MPSC
+    queue"; Kimi K3: 86/258 near-identical SPSC-ring-buffer variants). Every
+    generic (non-planner, non-judge) role must have a real, plural set of
+    topic anchors, and the template must accept one.
+    """
+
+    def test_every_generic_role_has_topic_hints(self):
+        generic_roles = set(_ROLE_SYSTEM_PROMPTS) - {"planner", "judge"}
+        assert generic_roles == set(_GENERIC_ROLE_TOPIC_HINTS)
+
+    def test_every_role_has_multiple_distinct_hints(self):
+        for role, hints in _GENERIC_ROLE_TOPIC_HINTS.items():
+            assert len(hints) >= 4, f"{role} has too few topic hints for real diversity"
+            assert len(set(hints)) == len(hints), f"{role} has duplicate topic hints"
+            assert all(isinstance(h, str) and h.strip() for h in hints)
+
+    def test_template_formats_with_topic_hint(self):
+        rendered = _ROLE_SFT_GENERATION_TEMPLATE.format(
+            system_prompt="SYS", topic_hint="HINT", other_hints="OTHER1; OTHER2")
+        assert "SYS" in rendered
+        assert "HINT" in rendered
+        assert "OTHER1; OTHER2" in rendered
+
+
+class TestRoleSftOutputViolatesTopic:
+    """Regression coverage for the 2026-09-08 mechanical post-filter: the
+    {other_hints} negative-constraint prompt reduced but did not eliminate
+    GLM-4.5-Air's bias toward `coder`'s "lock-free memory ordering" example
+    (72% -> 54% on a 111-example sample, still far above the ~10% a uniform
+    10-hint rotation would produce) -- this filter discards the residual
+    off-topic examples rather than accepting the partial prompt-engineering
+    fix as final.
+    """
+
+    def test_flags_offtopic_example_using_attractor_keyword(self):
+        offtopic_hint = _GENERIC_ROLE_TOPIC_HINTS["coder"][1]  # python data pipeline
+        assert _role_sft_output_violates_topic(
+            "coder", offtopic_hint, "Implement a lock-free SPSC ring buffer in Rust."
+        )
+
+    def test_allows_ontopic_example_on_the_attractor_hint_itself(self):
+        memory_ordering_hint = next(
+            h for h in _GENERIC_ROLE_TOPIC_HINTS["coder"] if "lock-free" in h.lower())
+        assert not _role_sft_output_violates_topic(
+            "coder", memory_ordering_hint, "Implement a lock-free SPSC ring buffer in Rust.")
+
+    def test_allows_offtopic_hint_with_clean_content(self):
+        offtopic_hint = _GENERIC_ROLE_TOPIC_HINTS["coder"][1]
+        assert not _role_sft_output_violates_topic(
+            "coder", offtopic_hint, "Write a Python CLI tool that tails a log file.")
+
+    def test_role_with_no_confirmed_attractor_keywords_never_flags(self):
+        assert not _role_sft_output_violates_topic(
+            "precision", _GENERIC_ROLE_TOPIC_HINTS["precision"][0],
+            "This mentions lock-free and atomic just to check no false positive.")
+
+    def test_every_attractor_keyword_role_is_a_real_generic_role(self):
+        assert set(_GENERIC_ROLE_ATTRACTOR_KEYWORDS) <= set(_GENERIC_ROLE_TOPIC_HINTS)

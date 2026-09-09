@@ -3467,3 +3467,306 @@ abgeschlossen. **Nächster Schritt (noch nicht begonnen):** Plan-Phase 2
 (Datengenerierung-Skalierung: `--mode role_sft` in
 `generate_diverse_training_seeds.py` implementieren, Volumen aus
 gemessenem Durchsatz zurückrechnen) — noch nicht beim Nutzer angefragt.
+
+## 2026-09-08T10:50:00Z — Coder-Pilot-Generierung: thematischer Kollaps im generischen role_sft-Prompt gefunden + gefixt — done, Läufe neu gestartet
+
+**Kontext:** Nutzer-Freigabe ("mache es so...") zum coder-Pilot: 1800
+LUMI-G-Beispiele (GLM-4.5-Air, Job 21814113) + 700 OpenRouter-Beispiele
+(Kimi K3 300 + Mistral Large 3 400) + 500 rohe Loom-Kandidaten
+(Kimi K3, OpenRouter).
+
+**Fund (durch echte Inhaltsprüfung, nicht Zeilenzahl):** Mistral Large 3
+(400/400 "erfolgreich") legte 99 Beispiele als nahezu identische
+"lock-free MPSC queue"-Variante an (nur 116 einzigartige Prompt-Anfänge);
+Kimi K3 (264 geschrieben, laufend) zeigte dasselbe Muster (86/258
+SPSC-Ringpuffer-Varianten). Root Cause: `_ROLE_SFT_GENERATION_TEMPLATE`
+gab dem Modell außer dem Rollen-System-Prompt keine Themen-Vorgabe — beide
+Modelle regredierten auf die eine im System-Prompt genannte Beispieltechnik
+("lock-free memory ordering"). Identische Fehlerklasse wie Kandidat 2
+(Planner-Fabrikation). Betraf beide Pfade (LUMI-G `run_role_sft_mode()` +
+OpenRouter `run()`/`worker()`) und strukturell alle 8 generischen Rollen.
+Details: `docs/experiments/lumig_openrouter_teacher_verification.md`
+Abschnitt 3.2, Punkt 6.
+
+**Fix:** neues `_GENERIC_ROLE_TOPIC_HINTS`-Dict (8-10 Themen-Anker je Rolle)
+in `scripts/generate_diverse_training_seeds.py`, Template um
+`{topic_hint}` erweitert, beide Generierungsschleifen rotieren jetzt
+zyklisch durch die Themenliste (analog zum bereits bestehenden
+Planner/Judge-Pattern-Cycling und zum Loom-Prompt). Regressionstest
+`TestGenericRoleTopicHints` ergänzt (`tests/test_generate_diverse_training_seeds.py`,
+alle 65 Tests grün). Live-Smoketest nach Fix (Kimi K3, 16 Beispiele): 15
+klar unterschiedliche Themen — Fix verifiziert, nicht nur code-reviewt.
+
+**Durchgeführte Korrekturmaßnahmen:**
+- Gefixtes `generate_diverse_training_seeds.py` nach LUMI-G synchronisiert
+  (`scp`, MD5 verifiziert identisch) — Job 21814113 war zu diesem Zeitpunkt
+  noch PENDING (keine Node zugewiesen), Fix griff rechtzeitig vor Jobstart.
+- Kompromittierte OpenRouter-Läufe (264 Kimi-K3- + 400 Mistral-Beispiele)
+  laufend gestoppt bzw. nach Abschluss archiviert als
+  `role_sft_coder_{kimik3,mistral3}_COMPROMISED_diversity_bug.jsonl`
+  (nicht gelöscht, zur Nachvollziehbarkeit).
+- Beide OpenRouter-role_sft-Läufe mit gefixtem Skript neu gestartet
+  (Kimi K3 Ziel 300, Mistral Large 3 Ziel 400).
+- Loom-Kandidaten-Lauf (497/500, $7,97, Kimi K3) blieb unberührt gültig —
+  dessen Prompt hatte schon vorher eine Diversitäts-Vorgabe; moderate,
+  nicht blockierende Konzentration festgestellt (131 einzigartige
+  Szenarionamen/497, `ticket_lock_handoff`+`seqlock_snapshot_read` ~30%).
+
+**Offen:** neue OpenRouter-Läufe laufen (Stand dieses Eintrags), LUMI-G-Job
+21814113 noch PENDING mit gefixtem Skript. Nach Abschluss aller Stränge:
+Loom-Kandidaten via Sandbox verifizieren, `curate_coder_expert_dataset.py`,
+dann `merge_training_datasets.py` für den finalen `coder`-Datensatz.
+
+## 2026-09-08T12:55:00Z — Loom-Kandidaten sandbox-verifiziert + kuratiert, weiterer Infra-Bug gefunden — done
+
+**Sandbox-Verifikation der 497 Kimi-K3-Loom-Kandidaten** (Netcup-VM,
+3 parallele `rust-loom-sandbox`-Instanzen): 486 von 497 Kandidaten sauber
+verarbeitet, 1 bestätigt pathologisch (`seqlock_torn_read`, Position 71 in
+Chunk 0 — `ReadTimeout` nach >20 Minuten, Sandbox-1 dauerhaft blockiert,
+gleiches Bugmuster wie das früher bereits dokumentierte
+`ticket_lock_payload_handoff`-Wedging). **Neuer Infra-Fund:** nach
+`docker compose restart` eines gewedgten Containers braucht dieser eine
+Aufwärmphase — 91 direkt nachfolgende Kandidaten wurden fälschlich als
+"Connection reset by peer" übersprungen, weil der Client sofort
+weiterlief statt auf die Restart-Erholung zu warten (kein Code-Fix
+gemacht, nur re-verifiziert: erneuter Lauf gegen den jetzt gesunden
+Container ergab 91/91 sauber, 0 Fehler). Empfehlung für später: nach einem
+`docker compose restart` im Loom-Script kurz auf `/health` pollen statt
+sofort weiterzumachen — nicht umgesetzt, da hier durch manuellen Retry
+gelöst.
+
+**Ergebnis:** 973 determinate Sandbox-Records (aus 973 von ursprünglich
+994 möglichen Aufrufen, 1 Kandidat komplett ausgeschlossen) →
+`scripts/curate_coder_expert_dataset.py` → **301 kuratierte
+Korrektur-Beispiele** (aus 487 request_id-Gruppen; die übrigen 186 Gruppen
+hatten keinen echten broken→fixed-Fortschritt und wurden korrekt
+verworfen, nicht fabriziert).
+
+**Gesamtstand coder-Pilot:**
+- Kimi K3 role_sft: 691/700 (Mistral Large 3 ausgeschlossen, siehe letzter
+  Eintrag)
+- Loom-Korrektur-Beispiele: 301 (sandbox-verifiziert)
+- LUMI-G-Bulk (GLM-4.5-Air, Ziel 1800): Job 21814113 weiterhin PENDING
+  (Cluster-Priorität, keine Node zugewiesen) — gefixtes Skript bereits
+  synchronisiert
+
+**Offen:** sobald Job 21814113 fertig ist, `merge_training_datasets.py`
+für den finalen `dataset_expert_coder_*.jsonl` ausführen (3 Quellen: LUMI-G
+role_sft, Kimi-K3 role_sft, Loom-Korrektur-Beispiele), dann Upload nach
+LUMI-G-Scratch und Start der Trainings-Pipeline (Phase 3).
+
+## 2026-09-08T20:55:00Z — GLM-4.5-Air-Bias gefunden, Prompt verschärft, Job neu eingereicht — done
+
+**Fund während Job 21814113 (LUMI-G-Bulk, 319/1800):** GLM-4.5-Air
+produziert wortlautmäßig einzigartige Beispiele (318/319 unique), bleibt
+aber zu 72% thematisch auf Lock-free/Concurrency fixiert trotz
+Themenrotation über 10 Hints. Nutzer-Entscheidung (AskUserQuestion):
+abbrechen, Prompt verschärfen, neu starten (statt so übernehmen).
+
+**Fix:** `_ROLE_SFT_GENERATION_TEMPLATE` um `{other_hints}` erweitert —
+pro Themen-Index werden jetzt alle 9 anderen Themen explizit als
+"NICHT darüber schreiben" genannt. Vorab-Test via OpenRouter
+(`z-ai/glm-4.5-air`, günstige Iteration ohne LUMI-G-Zeit) mit
+`max_tokens=4096`: 3/6 Kontrollthemen klar getroffen, 1 verbessert,
+1 weiterhin verfehlt (C++ RAII), 1 unklar (Reasoning-Token-Verbrauch bei
+schwer erfüllbaren Themen). Realer, verifizierter Fortschritt, nicht
+perfekt — akzeptiert (abnehmender Grenznutzen bei weiterer Iteration).
+Details: `docs/experiments/lumig_openrouter_teacher_verification.md`
+Abschnitt 3.3.
+
+**Durchgeführt:**
+- Job 21814113 gecancelt (~1,3 GPU-h verloren, vernachlässigbar).
+- Gefixtes Skript nach LUMI-G synchronisiert (MD5 verifiziert).
+- Alte 319-Zeilen-Datei archiviert als
+  `role_sft_coder_lumig_glm45air_PRE_NEGCONSTRAINT.jsonl`.
+- Job 21827844 neu eingereicht, läuft bereits (Monitor eingerichtet).
+
+**Budget-Kontext (auf Nutzerfrage "zu teuer"):** OpenRouter-Gesamtverbrauch
+$37,70/$50, $12,30 Rest. Nutzer-Entscheidung: restliche 9 Rollen primär via
+LUMI-G (kostenlos), kleiner Kimi-K3-Zusatz für Risiko-Rollen bis Budget
+erschöpft ist, kein weiteres Nachladen für diese Phase. Alternativen
+(lokale Modelle auf N04-RTX z.B. gpt-oss:120b, OpenRouter-Free-Tier)
+genannt, aber noch nicht genutzt.
+
+**Offen:** Job 21827844 auf Fertigstellung + Inhaltsqualität prüfen, dann
+`merge_training_datasets.py` für den finalen coder-Datensatz (LUMI-G +
+Kimi-K3-role_sft 691 + Loom-Korrektur 301). Danach Entscheidung zu Phase 3
+(Training) und zur Reihenfolge/Timing der restlichen 9 Rollen.
+
+## 2026-09-08T21:15:00Z — Mechanischer Themen-Filter statt drittem Prompt-Versuch — done
+
+Nutzer-Entscheidung nach zweitem gemessenem Zwischenstand (Job 21827844,
+111 Beispiele: 54% statt 72% Lock-free-Konzentration, echte aber nur
+teilweise Verbesserung durch den {other_hints}-Fix): mechanischen
+Nachfilter statt weiterer Prompt-Iteration einbauen.
+
+**Fix:** `_GENERIC_ROLE_ATTRACTOR_KEYWORDS` (bisher nur `coder`) +
+`_role_sft_output_violates_topic()` in `generate_diverse_training_seeds.py`,
+in beiden Generierungsskripten verdrahtet. Verwirft (nie fabriziert)
+Beispiele, deren zugewiesenes Thema nicht Memory-Ordering ist, aber
+trotzdem Lock-free/Atomic-Vokabular verwenden. 5 neue Tests, alle 64 Tests
+grün. Kontrolliert via OpenRouter verifiziert (20 Anfragen, 5/12 erfolgreich
+geparster Beispiele hätten den Filter ausgelöst — Filter arbeitet korrekt).
+
+**Durchgeführt:** Job 21827844 gecancelt (~51min GPU-Zeit), Skript
+synchronisiert (MD5 verifiziert), alte Datei archiviert als
+`role_sft_coder_lumig_glm45air_PRE_MECHFILTER.jsonl`, Job 21829009 neu
+eingereicht (Monitor läuft).
+
+**Bewusste Scope-Grenze:** Filter nur für `coder` aktiviert, da nur dort
+empirisch bestätigt — andere Rollen bekommen erst nach eigener Messung
+denselben Filter, keine Analogie-Annahme (Session-Prinzip: "kein
+Gemini-Vorfall", jede Rolle einzeln verifizieren).
+
+**Erwartete Konsequenz:** niedrigere Gesamt-Ausbeute des LUMI-G-Bulk-Laufs
+(mehr verworfene Rohgenerierungen), aber sauberere Themenverteilung.
+Details: `docs/experiments/lumig_openrouter_teacher_verification.md`
+Abschnitt 3.3.
+
+## 2026-09-08T22:25:00Z — Filter-Ausbeute gemessen, Nutzer akzeptiert reduzierte Menge — done
+
+Mit mechanischem Filter (Job 21829009): 22% Lock-free-Anteil bei 50
+Beispielen (runter von 54% ohne Filter, nah am erwarteten ~10%-Basiswert) —
+Filter arbeitet wie gewollt. Preis: Ausbeute fiel von ~71% auf ~35%
+(50/144 verarbeitet). Bei fester Anfragezahl (1800) ergibt das
+hochgerechnet ~630 statt 1800 LUMI-G-Beispiele für `coder`.
+
+Nutzer-Entscheidung (AskUserQuestion): Job durchlaufen lassen, ~630
+akzeptieren statt erneut abzubrechen und --count zu erhöhen. Zusammen mit
+Kimi K3 (691) + Loom (301) ergibt das ~1.622 Beispiele für den
+coder-Piloten — kein weiterer Abbruch/Neustart-Zyklus.
+
+**Offen:** Job 21829009 auf Fertigstellung warten (Monitor läuft), dann
+`merge_training_datasets.py` für den finalen coder-Datensatz ausführen.
+
+## 2026-09-08T22:40:00Z — 9 SLURM-Skripte für restliche Rollen vorbereitet — done, Submit steht noch aus
+
+Auf Nutzeranfrage ("kannst du im Anschluss die restlichen Trainingsdaten
+auf dem LUMI-G synthetisieren?"): 9 neue SLURM-Skripte erstellt
+(`slurm/lumig_job15_role_sft_{precision,graphrag,governance,research,
+security,datainfra,omni,planner,judge}.slurm`), abgeleitet aus
+`lumig_job14_coder_pilot_bulk.slurm`, je Rolle mit korrektem Lehrer-Modell
+gemäß finaler Plan-Zuordnung:
+- Qwen/Qwen3-Next-80B-A3B-Instruct: planner, precision, graphrag, research,
+  omni, judge (Reasoning-Cluster)
+- zai-org/GLM-4.5-Air: security, datainfra, governance (Code/Governance-
+  Cluster)
+
+Alle 9 syntaktisch geprüft (`bash -n`) und nach LUMI-G synchronisiert.
+Header-Kommentare korrekt pro Rolle verfasst (keine falsche Übertragung
+der coder-spezifischen Job-IDs/Bugs) — insbesondere klargestellt: der
+mechanische `_GENERIC_ROLE_ATTRACTOR_KEYWORDS`-Filter ist NUR für `coder`
+befüllt, die 7 generischen Experten brauchen eine eigene
+Diversitäts-Stichprobenprüfung nach den ersten ~100 Zeilen (keine Analogie-
+Annahme); Planner/Judge nutzen ihren eigenen, bereits robusteren
+Pattern-Cycling-Mechanismus (nicht die generische Themen-Rotation),
+entsprechend anders kommentiert.
+
+**Noch NICHT eingereicht** — läuft laut Nutzerwunsch "im Anschluss" an den
+laufenden coder-Piloten (Job 21829009). Sobald der fertig ist: alle 9 Jobs
+einreichen (unabhängige Single-Node-Jobs, können parallel laufen), dann
+Diversitäts-Stichproben pro Rolle nach ersten ~100 Zeilen wie beim
+coder-Piloten prüfen.
+
+## 2026-09-09T00:15:00Z — coder-LUMI-G-Job fertig (577→564 nach Fix), 9 Rollen-Jobs eingereicht — done
+
+**Job 21829009 (coder, mit mechanischem Filter) real verifiziert:**
+COMPLETED, Exit 0:0, 577/1800 geschrieben (~32% Ausbeute, wie erwartet).
+Bei der Verifikation neuer Fund: 13 der 577 Zeilen waren wortwörtliche
+Template-Platzhalter (`<a specific, realistic user message...>`) statt
+echtem Inhalt — Mindestlängenprüfung griff nicht, da der Platzhaltertext
+selbst lang genug ist. Mechanisch sauber erkennbar (im Gegensatz zum
+dokumentierten Kimi-K3-Fall) und zentral in `_parse_delimited_fields()`
+gefixt (`_is_unfilled_placeholder()`, gilt automatisch für alle 4 Modi:
+loom/role_sft/planner/judge). 2 neue Tests, alle 66 grün. Datei bereinigt
+(577→564), Fix vor den restlichen Jobs nach LUMI-G synchronisiert. Details:
+`docs/experiments/lumig_openrouter_teacher_verification.md` 3.2 Punkt 4b.
+
+**9 Rollen-Jobs eingereicht** (LUMI-G, wie in der vorigen Session-Notiz
+vorbereitet): datainfra 21832981, governance 21832982, graphrag 21832983,
+judge 21832984, omni 21832985, planner 21832986, precision 21832987,
+research 21832988, security 21832989. Alle nutzen den bereits gefixten
+Stand des Skripts (Themenrotation + {other_hints}-Constraint + Platzhalter-
+Filter; mechanischer Attractor-Keyword-Filter bewusst nur für `coder`).
+Kombinierter Monitor läuft.
+
+**coder-Pilot Gesamtstand:** LUMI-G 564 + Kimi K3 691 + Loom-Korrektur 301
+= ~1.556 Beispiele. Sobald alle 9 neuen Jobs fertig sind: pro Rolle
+Diversitäts-Stichprobe (~100 Zeilen) prüfen, dann `merge_training_datasets.py`
+für jede Rolle ausführen und zu Phase 3 (Training) übergehen.
+
+## 2026-09-09T02:30:00Z — 6/9 Rollen-Jobs verifiziert, ein echter Bug gefixt, zwei Fehlalarme korrigiert — done
+
+**Echter Fund + Fix:** governance (GLM-4.5-Air) hatte 12 Zeilen mit
+degenerierten USER_REQUEST-Fragmenten ("and", "` and `", "[User query]")
+statt echtem Inhalt — Mindestlängenprüfung galt bisher nur für
+ASSISTANT_RESPONSE. Fix: `_MIN_REQUEST_LEN=10` in `parse_role_sft_output()`
++ `_is_unfilled_placeholder()` um `[...]`-Klammerstil erweitert (bounded auf
+<40 Zeichen, damit legitime Fußnoten/Zitate nicht fälschlich greifen). 3
+neue Tests, alle 69 grün. Nach LUMI-G synchronisiert (MD5 verifiziert).
+Retroaktiv auf alle 6 bereits fertigen Rollen angewendet: datainfra
+-6 (1591→1585), governance -12 (1574→1562), graphrag/judge/omni/planner
+0 (kein Vorkommen).
+
+**Zwei Fehlalarme korrigiert:** graphrag (152/1793 identischer Eröffnungssatz
+"Extract structured knowledge triplets...") und omni (302/1799 "regulatory
+audit"-Thema) sahen in der schnellen Prefix-Heuristik nach Konzentration
+aus wie beim coder-Bug — bei genauerem Hinsehen (volle Texte statt nur
+50-Zeichen-Prefix) stellte sich heraus: beides ist korrektes,
+themen-treues Verhalten mit echt unterschiedlichem Inhalt (verschiedene
+Firmen/Studien bzw. verschiedene DSGVO-Artikel), nur mit ähnlicher
+Eröffnungsformulierung — anders als coder, wo das FALSCHE Thema komplett
+übernommen wurde. Kein Fix nötig, keine Analogie zum coder-Bug.
+
+**Planner/Judge strukturell verifiziert:** reale JSON-Task-Arrays mit
+korrektem MCP-Schema (legal_lookup, vlsm_subnet_calc mit benannten
+Subnetzen, decimal_finance mit $task_result-Chaining), Judge-Antworten
+korrekt bare "CONFIRMED" oder direkte Korrektur ohne Präambel (Contract
+eingehalten).
+
+**Finale Zeilenzahlen (6/9 fertig):** datainfra 1585, governance 1562,
+graphrag 1793, judge 1428, omni 1799, planner 1789.
+**Noch laufend:** precision (21832987), research (21832988),
+security (21832989).
+
+**Offen:** restliche 3 Jobs abwarten + verifizieren (inkl. Bereinigung mit
+demselben Fix), dann pro Rolle `merge_training_datasets.py` mit den
+jeweiligen OpenRouter-Kimi-K3-Ergänzungen (noch nicht generiert für die
+9 Rollen — Budget-Rest $12,30, laut Nutzerentscheidung nur für
+Risiko-Rollen) ausführen.
+
+## 2026-09-09T03:10:00Z — Themen-Listen um je 3 Rollen-Themen erweitert, Ergänzungsläufe gestartet — done
+
+Nutzerfrage: "Reichen die generierten Samples oder Mehrwert durch mehr/
+breiteres Generieren, ohne in andere Experten-Domänen zu wildern?"
+Antwort: aktuelles Volumen (~1.500-1.800/Rolle) ausreichend für einen
+ersten Trainingslauf, aber mehr Volumen auf denselben 5-10 Themen bringt
+kaum Mehrwert. Nutzer-Entscheidung: Themen-Listen zuerst erweitern statt
+nur Menge erhöhen.
+
+**Durchgeführt:** `_GENERIC_ROLE_TOPIC_HINTS` um je 3 neue, gegen
+Nachbarrollen abgegrenzte Themen erweitert (8 generische Rollen, +24
+Themen gesamt) — z.B. coder: FFI/Binding, Performance-Profiling,
+Embedded/no_std; precision: Versicherungsmathematik, Dosierungsrechnung,
+Krypto-Verifikation; security: Auth/OAuth-Review, Krypto-Misuse,
+Incident-Response; governance: SOC2/PCI-DSS, grenzüberschreitender
+Datentransfer, EU-AI-Act-Art.12-Logging; usw. (vollständige Liste in
+`scripts/generate_diverse_training_seeds.py`). Bewusste Domain-Grenzen
+dokumentiert (z.B. graphrags neues Zentralitäts-Thema explizit "graph-
+native reasoning, not raw statistics" um nicht in precision zu wildern).
+
+Alle 69 Tests grün, nach LUMI-G synchronisiert.
+
+**6 Ergänzungsjobs gestartet** (job16, je 600 zusätzliche Anfragen,
+hängen an bestehende Output-Dateien an): coder 21840250, datainfra
+21840251, governance 21840252, graphrag 21840253, omni 21840254,
+research 21840255. precision (21832987) und security (21832989) liefen
+noch mit der ALTEN Themenliste — deren eigene Ergänzung folgt, sobald sie
+fertig sind (kein Abbruch, ihre Arbeit auf den alten Themen bleibt gültig).
+
+Kombinierter Monitor eingerichtet, alter Monitor (nur ursprüngliche 9
+Jobs) gestoppt.
+
+**Zwischenfund während der Verifikation:** `research` (21832988) war
+bereits durchgelaufen (1799/1800, 0 Garbage-Zeilen nach Fix-Anwendung) —
+noch nicht im vorigen Log-Eintrag erwähnt, jetzt nachgetragen.
