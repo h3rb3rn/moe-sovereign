@@ -94,6 +94,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import _select_node as _select_node_svc, _get_available_models as _get_available_models_svc, _get_expert_score
+from services.rate_limiter import throttle as _throttle_endpoint
 from services.skills import _build_skill_catalog, _resolve_skill_secure
 from parsing import (
     _anthropic_content_to_text,
@@ -761,6 +762,21 @@ async def _anthropic_tool_handler(
     asyncio.create_task(_patch_active_request_backend(chat_id, effective_model, effective_url))
 
     _node_timeout   = float(session.tool_timeout)
+
+    # Self-imposed outbound throttling: a user-owned (BYOK) connection carries its
+    # own rate limit(s) (admin_ui → My Connections), scoped per user+connection so
+    # different users' identically named connections never share a bucket. Falls
+    # through to the admin-configured per-endpoint limit (config.RATE_LIMITS,
+    # keyed by effective_node) when the connection has none configured. Multiple
+    # limits (e.g. 20/minute AND 1000/24h) all apply simultaneously — see
+    # services/rate_limiter.py's _TokenBucketGroup.
+    _rl_override = None
+    _rl_key = effective_node
+    if session.is_user_conn and session.tool_rate_limit:
+        from config import rate_limits_to_list as _rate_limits_to_list
+        _rl_override = _rate_limits_to_list(session.tool_rate_limit.get("limits", []))
+        if _rl_override:
+            _rl_key = f"user-conn:{user_id}:{effective_node}"
 
     # Context budget guard: trim history and cap max_tokens so input + output ≤ ctx_window.
     # Fetched from Redis cache (TTL 3600s) — negligible overhead on warm path.
@@ -1447,6 +1463,11 @@ async def _anthropic_tool_handler(
 
             async def _ollama_fetch() -> None:
                 try:
+                    # Proactive self-throttle: waits here (behind the message_start/
+                    # ping keep-alive already streaming to the client) instead of
+                    # firing and risking a provider 429 that aborts the CC session.
+                    await _throttle_endpoint(effective_node, stage="cc_tool_stream_rate_limit",
+                                              limit=_rl_override, key=_rl_key)
                     async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
                         async with _scl.stream(
                             "POST", _call_url, json=_call_payload,
@@ -1953,6 +1974,9 @@ async def _anthropic_tool_handler(
 
             async def _openai_fetch() -> None:
                 try:
+                    # Proactive self-throttle — see _ollama_fetch above.
+                    await _throttle_endpoint(effective_node, stage="cc_tool_stream_rate_limit",
+                                              limit=_rl_override, key=_rl_key)
                     async with httpx.AsyncClient(timeout=_node_timeout) as _scl:
                         async with _scl.stream(
                             "POST", _call_url, json=_streaming_payload,
@@ -2165,6 +2189,10 @@ async def _anthropic_tool_handler(
     # ── Non-streaming fallback (non-Ollama or non-streaming request) ───────────
     _llm_t0 = time.monotonic()
     try:
+        # Proactive self-throttle — see _ollama_fetch above; no keep-alive stream
+        # to hide the wait behind here, so keep endpoint rate limits realistic.
+        await _throttle_endpoint(effective_node, stage="cc_tool_rate_limit",
+                                  limit=_rl_override, key=_rl_key)
         async with httpx.AsyncClient(timeout=_node_timeout) as client:
             resp = await client.post(
                 _call_url,

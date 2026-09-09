@@ -920,6 +920,11 @@ def write_env(updates: dict) -> None:
 
 _DOUBLE_QUOTED_KEYS = {"EXPERT_MODELS", "INFERENCE_SERVERS", "CUSTOM_EXPERT_PROMPTS", "CLAUDE_CODE_PROFILES", "EXPERT_TEMPLATES"}
 
+# Self-imposed outbound rate limit: "N requests per <amount> <unit>". Mirrors
+# config.RATE_LIMIT_UNIT_SECONDS (kept as a local literal — admin_ui edits the
+# .env source of truth directly and does not import the runtime config module).
+RATE_LIMIT_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600}
+
 def _format_env_line(key: str, value: str) -> str:
     if key in _DOUBLE_QUOTED_KEYS:
         # Escape backslashes first, then quotes, then control chars that Docker
@@ -975,6 +980,19 @@ def rebuild_inference_servers(form) -> list:
                 vram_gb_val = int(vram_gb_raw) if vram_gb_raw else None
             except (ValueError, TypeError):
                 vram_gb_val = None
+            rate_limit_requests_raw = form.get(f"srv_rate_limit_requests_{i}", "").strip()
+            try:
+                rate_limit_requests_val = float(rate_limit_requests_raw) if rate_limit_requests_raw else None
+            except (ValueError, TypeError):
+                rate_limit_requests_val = None
+            rate_limit_period_amount_raw = form.get(f"srv_rate_limit_period_amount_{i}", "").strip()
+            try:
+                rate_limit_period_amount_val = float(rate_limit_period_amount_raw) if rate_limit_period_amount_raw else 1.0
+            except (ValueError, TypeError):
+                rate_limit_period_amount_val = 1.0
+            rate_limit_period_unit_val = form.get(f"srv_rate_limit_period_unit_{i}", "second").strip() or "second"
+            if rate_limit_period_unit_val not in RATE_LIMIT_UNIT_SECONDS:
+                rate_limit_period_unit_val = "second"
             enabled = form.get(f"srv_enabled_{i}") == "1"
             ontology_enabled = form.get(f"srv_ontology_enabled_{i}") == "1"
             curator_model_val = (form.get(f"srv_curator_model_{i}", "") or "").strip()
@@ -991,6 +1009,10 @@ def rebuild_inference_servers(form) -> list:
                 entry["timeout"] = timeout_val
             if vram_gb_val is not None:
                 entry["vram_gb"] = vram_gb_val
+            if rate_limit_requests_val is not None and rate_limit_requests_val > 0:
+                entry["rate_limit_requests"] = rate_limit_requests_val
+                entry["rate_limit_period_amount"] = rate_limit_period_amount_val
+                entry["rate_limit_period_unit"] = rate_limit_period_unit_val
             if ontology_enabled:
                 entry["ontology_enabled"] = True
             if curator_model_val:
@@ -7983,20 +8005,41 @@ async def user_api_update_model_tags(
 async def user_api_update_rate_limit(
     conn_id: str, request: Request, user_id: str = Depends(require_user_login)
 ):
-    """Store rate-limit config for a connection.
+    """Store rate-limit config for a connection: self-imposed outbound throttling
+    toward this connection's provider (see services/rate_limiter.py) — MoE-Sovereign
+    queues and waits internally instead of forwarding calls the provider would
+    answer with a session-breaking 429.
 
-    Body: {window_seconds: int, max_requests: int, tagged: list[str]}
-    tagged defaults to ["free"]. Pass {} to clear the rate limit.
+    Body: {limits: [{max_requests: int, period_amount: int, period_unit:
+    "second"|"minute"|"hour"}, ...], tagged: list[str]}. All entries in `limits`
+    apply simultaneously (e.g. OpenRouter free models: 20/minute AND 1000/24h —
+    pass both). tagged defaults to ["free"]. Pass {} (or an empty `limits`) to
+    clear the rate limit.
     """
     await _require_connections_access(user_id)
     body = await request.json()
-    if body:
-        window   = int(body.get("window_seconds", 60))
-        max_req  = int(body.get("max_requests", 60))
-        tagged   = body.get("tagged", ["free"])
+    limits_raw = body.get("limits", []) if body else []
+    if not isinstance(limits_raw, list):
+        raise HTTPException(status_code=400, detail="limits must be a list")
+    if limits_raw:
+        limits = []
+        for i, entry in enumerate(limits_raw):
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=400, detail=f"limits[{i}] must be an object")
+            max_req = int(entry.get("max_requests", 0))
+            if max_req <= 0:
+                raise HTTPException(status_code=400, detail=f"limits[{i}].max_requests must be > 0")
+            period_amount = int(entry.get("period_amount", 1))
+            if period_amount <= 0:
+                raise HTTPException(status_code=400, detail=f"limits[{i}].period_amount must be > 0")
+            period_unit = entry.get("period_unit", "minute")
+            if period_unit not in RATE_LIMIT_UNIT_SECONDS:
+                raise HTTPException(status_code=400, detail=f"limits[{i}].period_unit must be one of {sorted(RATE_LIMIT_UNIT_SECONDS)}")
+            limits.append({"max_requests": max_req, "period_amount": period_amount, "period_unit": period_unit})
+        tagged = body.get("tagged", ["free"])
         if not isinstance(tagged, list):
             raise HTTPException(status_code=400, detail="tagged must be a list")
-        config = {"window_seconds": window, "max_requests": max_req, "tagged": tagged}
+        config = {"limits": limits, "tagged": tagged}
     else:
         config = {}
     conn = await db.update_connection_rate_limit(conn_id, user_id, config)

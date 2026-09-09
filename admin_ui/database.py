@@ -347,7 +347,7 @@ ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS native_num_ctx INTEGER NOT NULL DE
 -- Soft-archive: key is hidden from UI but kept for audit trail (only valid when is_active=FALSE)
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Connection-level rate limit config for tagged models (JSON: {window_seconds, max_requests, tagged})
+-- Connection-level rate limit config for tagged models (JSON: {max_requests, period_amount, period_unit, tagged})
 ALTER TABLE user_api_connections ADD COLUMN IF NOT EXISTS rate_limit_config TEXT NOT NULL DEFAULT '{}';
 
 -- Global auto-detected tags on model metadata (free, vision, agentic, reasoning, code)
@@ -2019,12 +2019,17 @@ async def sync_user_to_redis(user_id: str) -> None:
     user_conns_map = {}
     for c in user_conns_raw:
         if c.get("is_active", True):
+            try:
+                rate_limit_config = json.loads(c.get("rate_limit_config") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                rate_limit_config = {}
             user_conns_map[c["name"]] = {
-                "id":           c["id"],
-                "url":          c["url"],
-                "api_type":     c.get("api_type", "openai"),
-                "api_key":      decrypt_api_key(c.get("api_key_enc", "")),
-                "models_cache": json.loads(c.get("models_cache", "[]")),
+                "id":                c["id"],
+                "url":               c["url"],
+                "api_type":          c.get("api_type", "openai"),
+                "api_key":           decrypt_api_key(c.get("api_key_enc", "")),
+                "models_cache":      json.loads(c.get("models_cache", "[]")),
+                "rate_limit_config": rate_limit_config,
             }
     user_connections_json = json.dumps(user_conns_map)
 
