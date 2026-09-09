@@ -199,6 +199,22 @@ Chronologisch, jeweils mit Regressionstest abgesichert:
    Platzhalter-Fehlversuch, dachte laut nach, setzte neu an — Parser griff
    den ersten statt den letzten Versuch): Fix auf rückwärtssuchende
    Markerzuordnung umgestellt.
+4b. **Unausgefüllter Template-Platzhalter wortwörtlich zurückgegeben**
+   (gefunden 2026-09-09, Job 21829009, GLM-4.5-Air role_sft/coder, 577
+   "erfolgreich geparste" Zeilen): 13 Beispiele bestanden exakt aus dem
+   Platzhaltertext selbst (`<a specific, realistic user message, one or
+   more lines>` bzw. das Antwort-Pendant) statt echtem Inhalt —
+   `_MIN_RESPONSE_LEN`/`_MIN_SOURCE_LEN` griffen nicht, da der
+   Platzhaltertext lang genug ist. Anders als der Kimi-K3-Fall unten
+   mechanisch sauber erkennbar (exaktes, einzelnes `<...>`-Klammerpaar über
+   das GESAMTE Feld — echter Inhalt wie Rust-Generics `Vec<T>` hat immer
+   weiteren Text drumherum). Fix: `_is_unfilled_placeholder()` zentral in
+   `_parse_delimited_fields()` verdrahtet, gilt also automatisch für
+   loom/role_sft/planner/judge gleichermaßen. 2 neue Regressionstests
+   (Ablehnung des Platzhalters, Nicht-Ablehnung von `Vec<T>`/`HashMap<K,V>`
+   als False-Positive-Guard). Bereits generierte Datei nachträglich bereinigt
+   (13 Zeilen entfernt, 577→564), Fix vor den 9 restlichen Rollen-Jobs nach
+   LUMI-G synchronisiert.
 5. **Template-Leak, nicht zuverlässig automatisch erkennbar** (Kimi K3 schrieb
    `` `, then request, then ` `` als "Anfrage" — wörtliche Wiederholung der
    Formatanweisung statt echtem Inhalt): bewusst **kein** Heuristik-Fix
@@ -206,8 +222,114 @@ Chronologisch, jeweils mit Regressionstest abgesichert:
    kurze Beispiele ("What is 2+2?") gleichermaßen erfasst hätte. Verbleibt
    ein Restrisiko, das nur durch die ohnehin vorgesehene manuelle
    Stichprobenprüfung (5 Beispiele/Rolle) abgefangen wird.
+6. **Thematischer Kollaps im generischen `role_sft`-Prompt** (gefunden
+   2026-09-08 beim `coder`-Pilot, durch echte Prompt-Diversitätsprüfung, nicht
+   Zeilenzahl): `_ROLE_SFT_GENERATION_TEMPLATE` gab dem Lehrer-Modell keinerlei
+   Themen-Vorgabe außer dem Rollen-System-Prompt selbst — beide getesteten
+   Modelle regredierten auf die eine im System-Prompt konkret genannte
+   Beispieltechnik. Belege: Mistral Large 3 legte 99 von 400 `coder`-
+   Beispielen als nahezu identische "lock-free MPSC queue"-Variante an
+   (116 einzigartige Prompt-Anfänge bei 400 Zeilen), Kimi K3 86 von 258 als
+   SPSC-Ringpuffer-Varianten (133 einzigartige Anfänge bei 258 Zeilen) — beide
+   ankerten auf die Phrase "lock-free memory ordering (acquire/release
+   pairing)" in `_ROLE_SYSTEM_PROMPTS["coder"]`. Dieselbe Fehlerklasse wie
+   Kandidat 2 (Planner-Fabrikation: Kollaps auf das eine gegebene Beispiel
+   statt der beabsichtigten Breite). Betraf **beide** Pfade identisch
+   (`generate_diverse_training_seeds.py`s `run_role_sft_mode()` UND
+   `generate_role_sft_openrouter.py`s `run()`/`worker()`) sowie strukturell
+   alle 8 generischen Rollen (coder, precision, graphrag, governance,
+   research, security, datainfra, omni) — Planner/Judge waren durch ihre
+   eigene Pattern-Cycling-Logik bereits nicht betroffen. Fix: neues
+   `_GENERIC_ROLE_TOPIC_HINTS`-Dict (8-10 konkrete, wechselseitig
+   unterschiedliche Themen-Anker pro Rolle), `_ROLE_SFT_GENERATION_TEMPLATE`
+   um `{topic_hint}`-Platzhalter erweitert, beide `run_role_sft_mode()`/
+   `worker()`-Schleifen rotieren jetzt zyklisch durch die Themenliste — exakt
+   nach dem Muster, das der Loom-Prompt ("distinct from X, Y, Z... draw
+   inspiration from...") schon vorher nutzte. Live-Smoketest nach Fix (Kimi
+   K3, 16 Beispiele `coder`): 15 klar unterschiedliche Themen, keine
+   Wiederholung über 2 hinaus. Kompromittierte Läufe (264 Kimi-K3- und 400
+   Mistral-Beispiele) verworfen (als `*_COMPROMISED_diversity_bug.jsonl`
+   archiviert, nicht gelöscht) und mit gefixtem Skript neu gestartet; der
+   gefixte Loom-Kandidaten-Lauf blieb unberührt gültig (dessen eigener Prompt
+   hatte schon vorher eine Diversitäts-Vorgabe, zeigte im selben Datensatz nur
+   moderate Konzentration: 131 einzigartige Szenarionamen bei 497 Zeilen,
+   `ticket_lock_handoff`/`seqlock_snapshot_read` zusammen ~30 %). Regressions-
+   test: `TestGenericRoleTopicHints` in
+   `tests/test_generate_diverse_training_seeds.py` (jede generische Rolle hat
+   ≥4 einzigartige Hints, Template formatiert mit `topic_hint` fehlerfrei).
 
 ### 3.3 Modell-Verhalten (kein Code-Bug, echte Eigenschaft der Modelle)
+
+- **Mistral Large 3 (2512) ignoriert die Themen-Vorgabe aus 3.2 Punkt 6
+  vollständig** (gefunden 2026-09-08, direkt nach Einbau des
+  `_GENERIC_ROLE_TOPIC_HINTS`-Fixes): kontrollierter Test mit 4 explizit
+  NICHT-Memory-Ordering-Themen (Wire-Format-Parsing, Python-Pipeline, C++
+  RAII, Go-Worker-Pool), sequenziell, isoliert — alle 4 Antworten waren
+  trotzdem "lock-free SPSC ring buffer"-Varianten. Der frische 400er-Lauf
+  (nach dem Fix) zeigte 39/39 Zeilen mit Lock-free-Bezug im User-Turn
+  (100 %, sogar schlechter als der ungefixte Lauf zuvor: dort waren es nur
+  99/400 = 25 %, weil der ungefixte Prompt wenigstens noch Sampling-bedingt
+  streute). Kimi K3 mit demselben Fix/Prompt zeigt dagegen echte Diversität
+  (12/41 = 29 % Lock-free-Bezug im User-Turn, Rest klar andere Themen —
+  siehe die Themenliste im Statuslog). Kein Code-Bug (der Fix ist über
+  `TestGenericRoleTopicHints` und den Kimi-K3-Vergleich verifiziert
+  korrekt) — echte, modellspezifische Nichtbefolgung einer weichen
+  Grounding-Anweisung durch Mistral Large 3 bei genau diesem System-Prompt.
+  **Konsequenz:** Mistral Large 3 aus der `coder`-role_sft-Generierung
+  entfernt, sein 400er-Kontingent auf Kimi K3 umgeschichtet (Kimi-K3-Ziel
+  300 → 700). Noch nicht geprüft, ob Mistral Large 3 bei anderen Rollen
+  (governance, precision, ...) dasselbe Verhalten zeigt oder nur bei
+  `coder`s spezifischem Lock-free-Anker.
+- **GLM-4.5-Air (LUMI-G-Bulk-Lauf) zeigt eine schwächere Form desselben
+  Bias** (gefunden 2026-09-08, Job 21814113, live während des Laufs): anders
+  als Mistral Large 3 produziert GLM-4.5-Air wortlautmäßig einzigartige
+  Beispiele (318/319 unique Prompt-Anfänge, kein Duplikat-Problem), bleibt
+  aber bei 72 % thematisch auf Lock-free/Concurrency fixiert, obwohl nur
+  1 von 10 Themen dafür vorgesehen ist. Job nach Nutzerentscheidung bei
+  319/1800 abgebrochen (~1,3 GPU-h verloren, bei 15.854h Restbudget
+  vernachlässigbar). **Fix:** `_ROLE_SFT_GENERATION_TEMPLATE` um ein
+  explizites `{other_hints}`-Feld erweitert — pro Themen-Index werden jetzt
+  alle ANDEREN 9 Themen explizit als "NICHT darüber schreiben" aufgeführt
+  (statt nur positiv das Zielthema zu nennen). Kontrollierter Vorab-Test via
+  OpenRouter (GLM-4.5-Air ist dort ebenfalls verfügbar, `z-ai/glm-4.5-air` —
+  günstige/schnelle Iteration ohne LUMI-G-GPU-Zeit) mit `max_tokens=4096`
+  (Produktionswert): 3 von 6 Kontroll-Themen klar getroffen (Python-CLI,
+  Go-Worker-Pool, Code-Review), 1 verbessert aber noch concurrency-lastig
+  (Wire-Format), 1 weiterhin verfehlt (C++ RAII), 1 unklar wegen
+  Reasoning-Token-Verbrauch (`[reasoning-only, no content]`-Fallback bei zu
+  niedrigem `max_tokens=1200` im allerersten Testlauf — mit 4096 seltener,
+  aber nicht verschwunden: das Modell "denkt" bei schwer zu erfüllenden
+  Themen sichtbar länger über die Einhaltung nach, was bei manchen Themen
+  das Budget vor der eigentlichen Antwort aufbraucht). Kein perfekter, aber
+  ein real verifizierter Fortschritt gegenüber der 72%-Konzentration vorher
+  — Job 21827844 mit dem Fix neu eingereicht. Restliches Risiko (C++-RAII-
+  Thema, gelegentlicher Reasoning-Token-Verbrauch) bleibt bestehen und wird
+  wie beim Kimi-K3-Restrisiko über die ohnehin vorgesehene Stichprobenprüfung
+  abgefangen, kein weiterer Prompt-Iterationsversuch unternommen
+  (abnehmender Grenznutzen).
+
+  **Nachtrag (mechanischer Filter statt drittem Prompt-Versuch):** Auf
+  LUMI-G bei 111 echten Beispielen gemessen: 54 % weiterhin
+  Lock-free/Concurrency-lastig (Job 21827844, nach dem {other_hints}-Fix,
+  Verbesserung ggue. 72 % vorher, aber immer noch weit ueber den erwarteten
+  ~10 %). Nutzer-Entscheidung: statt einer dritten Prompt-Iteration einen
+  mechanischen Nachfilter einbauen. Neu: _GENERIC_ROLE_ATTRACTOR_KEYWORDS
+  (aktuell nur fuer coder befuellt -- lock-free/atomic/memory-ordering-
+  Begriffe) + _role_sft_output_violates_topic(): verwirft (nie fabriziert
+  oder relabelt) jedes Beispiel, dessen zugewiesenes Thema NICHT die
+  Memory-Ordering-Kategorie ist, aber trotzdem eines der Schluesselwoerter
+  enthaelt; Beispiele auf dem Memory-Ordering-Thema selbst sind ausgenommen.
+  In beiden Skripten verdrahtet (run_role_sft_mode() und
+  generate_role_sft_openrouter.pys worker()), 5 neue Regressionstests.
+  Kontrollierter Vorab-Test via OpenRouter (20 Anfragen, alle 10 Themen
+  zyklisch, z-ai/glm-4.5-air): von 12 erfolgreich geparsten Beispielen
+  haetten 5 (42 %) den Filter ausgeloest -- der Filter erkennt Verstoesse
+  zuverlaessig. Erwartete Konsequenz: niedrigere Gesamt-Ausbeute (mehr
+  verworfene Rohgenerierungen), aber sauberere Themenverteilung im finalen
+  Datensatz. Bewusst nur fuer coder aktiviert -- andere Rollen erst nach
+  eigener empirischer Pruefung, keine Annahme per Analogie. Job 21827844
+  gecancelt (~51min GPU-Zeit, vernachlaessigbar), Job 21829009 mit Filter
+  neu eingereicht.
 
 - **`security`-Kategorie-Verweigerung**: Qwen3-235B-A22B und
   DeepSeek-Coder-V2 verweigern beide konsequent (0/2) den generischen

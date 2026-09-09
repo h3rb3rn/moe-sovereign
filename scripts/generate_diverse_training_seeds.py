@@ -196,6 +196,159 @@ _ROLE_SYSTEM_PROMPTS: Dict[str, str] = {
     ),
 }
 
+# Self-critique finding, 2026-09-08 (coder pilot generation): the generic
+# _ROLE_SFT_GENERATION_TEMPLATE below, with no topic scaffolding, let every
+# tested teacher model regress to the single most salient concrete example
+# named in its own role's system prompt -- confirmed live, both LUMI-G-side
+# and OpenRouter-side, same bug in both: Mistral Large 3 put 99/400 `coder`
+# examples into one near-identical "lock-free MPSC queue" template, Kimi K3
+# put 86/258 into near-identical SPSC-ring-buffer variants, both anchored on
+# the one phrase "lock-free memory ordering (acquire/release pairing)" in
+# _ROLE_SYSTEM_PROMPTS["coder"]. This is the same failure class as Candidate
+# 2's Planner task fabrication (a model collapses onto the one example it
+# was given instead of the intended breadth) -- fixed the same way the loom
+# prompt already avoids it: cycle through an explicit list of concrete,
+# mutually distinct topic anchors per role rather than relying on sampling
+# temperature alone for diversity. One list per generic (non-planner,
+# non-judge) role; each entry should be a plausible request under that
+# role's real system prompt above, deliberately spanning DIFFERENT concerns
+# so no single theme dominates a batch.
+_GENERIC_ROLE_TOPIC_HINTS: Dict[str, List[str]] = {
+    "coder": [
+        "parsing or serializing a binary/text wire format (e.g. a length-prefixed frame, a config file format) in Rust or Go",
+        "a Python data pipeline, CLI tool, or async I/O script with correct error handling and type hints",
+        "a C++ RAII/smart-pointer resource-management design or move-semantics question",
+        "a Go concurrent worker pool, context-cancellation, or channel-based pipeline (not raw atomics)",
+        "debugging a buggy code snippet the user pastes in, in any of Rust/C++/Python/Go",
+        "a code-review request for a diff/pull request, flagging correctness or safety issues",
+        "a build-system, dependency-resolution, or toolchain configuration problem (Cargo, CMake, pip/poetry, go.mod)",
+        "an algorithm or data-structure implementation unrelated to concurrency (e.g. a trie, graph traversal, custom allocator, sorting variant)",
+        "a lock-free/atomic memory-ordering question (acquire/release pairing, SPSC/MPSC queues, ring buffers)",
+        "a testing, property-based-testing, or fuzzing question for one of the four languages",
+        "a cross-language FFI/binding question (e.g. exposing a Rust library to Python via PyO3, or C ABI safety at an `unsafe extern` boundary)",
+        "a CPU-bound performance-profiling or optimization question unrelated to concurrency (cache locality, allocation pressure, hot-loop vectorization)",
+        "a resource-constrained/embedded-target question (no_std, fixed memory budget, no heap) distinct from the build-system topic above",
+    ],
+    "precision": [
+        "a multi-step financial calculation (compound interest, amortization, currency conversion) that must be decomposed into exact tool calls",
+        "a unit-conversion or dimensional-analysis problem with several intermediate steps",
+        "an SMT/constraint-satisfaction formulation for a scheduling, allocation, or combinatorial problem",
+        "a date/time arithmetic problem across timezones or calendar edge cases (leap years, DST)",
+        "a probability or statistics computation requiring exact intermediate values, not estimation",
+        "a network/subnet or bitwise numerical calculation (e.g. IP addressing, checksum size, encoding overhead)",
+        "a physics/engineering unit calculation involving tolerances, error propagation, or significant figures",
+        "catching and correcting an incorrect numeric claim the user or another model made, redoing it exactly",
+        "an actuarial/insurance calculation (premium, mortality-table lookup, reserve requirement) needing an exact intermediate value at each step",
+        "a dosage or concentration calculation (medical, chemical, or industrial-mixing) where an off-by-one-decimal error would be dangerous",
+        "verifying a cryptographic or hashing computation bit-for-bit (e.g. a checksum, HMAC, or key-derivation parameter) rather than estimating it",
+    ],
+    "graphrag": [
+        "formulating a multi-hop Cypher query given an explicit schema with several node/relationship types",
+        "resolving an ambiguous entity mention in text to a canonical graph node given candidate matches",
+        "extracting structured knowledge triplets (subject-predicate-object) from a paragraph of unstructured text",
+        "declining a query that would require a node/relationship type not present in the given schema",
+        "bounding a multi-hop traversal that could otherwise produce a runaway cartesian product",
+        "merging or deduplicating two graph query results that refer to the same real-world entity",
+        "explaining a retrieved subgraph's relevance back to the user's original natural-language question",
+        "a temporal/point-in-time graph query (e.g. 'what did this org structure look like as of a given date') given a schema with versioned relationships",
+        "a graph-schema-evolution question: how to add a new node or relationship type without breaking existing queries, given the current schema",
+        "a centrality or community-detection style question over a described graph (most-connected node, tightly-clustered subgroup) using only graph-native reasoning, not raw statistics",
+    ],
+    "governance": [
+        "a GDPR data-subject-rights or lawful-basis question grounded in a specific article",
+        "an EU AI Act risk-classification question for a specific described system or use case",
+        "a BSI IT-Grundschutz or ISO 27001 control-mapping gap analysis",
+        "a HIPAA question about a specific covered-entity or business-associate scenario",
+        "a privacy-by-design review of a proposed feature or data flow",
+        "persisting or amending a multi-clause internal policy/directive where a later clause references an earlier one",
+        "explicitly flagging that a compliance question cannot be answered with confidence because the exact citation is uncertain",
+        "a SOC 2 or PCI-DSS control-mapping question (a different framework family than GDPR/AI-Act/BSI/ISO/HIPAA above) grounded in a specific control ID",
+        "a cross-border data-transfer question (Standard Contractual Clauses, adequacy decision, transfer impact assessment) for a described data flow",
+        "an EU AI Act Article 12-style documentation/audit-trail/logging requirement question for a described AI system, distinct from the risk-classification topic above",
+    ],
+    "research": [
+        "synthesizing a technical trade-off comparison across multiple named approaches or tools, each grounded in a cited source",
+        "a literature-review-style question about recent developments in a specific technical subfield",
+        "verifying whether a specific claim in a document is well-supported, flagging uncertainty where it is not",
+        "a request needing current external information (news, prices, recent releases) explicitly flagged as needing live retrieval",
+        "reconciling two sources that give conflicting numbers or claims about the same topic",
+        "assessing whether a described experiment or methodology (not a code vulnerability, not a compliance question) is reproducible given the reported setup",
+        "a technology-maturity or adoption-curve assessment for a named tool/approach, grounded in cited evidence rather than opinion",
+        "synthesizing findings across a SPECIFIC set of named papers or sources the user provides, rather than an open-ended live-information request",
+    ],
+    "security": [
+        "identifying a memory-safety flaw (buffer overflow, use-after-free, double-free) in a pasted code snippet, with the exact CWE ID",
+        "an injection-vulnerability review (SQL, command, template, SSRF) of a pasted code snippet or API design",
+        "building a STRIDE-based threat model for a described system architecture with named trust boundaries",
+        "scanning a pasted config/log/code snippet for an exposed secret or credential",
+        "producing a concrete hardening manifest (seccomp profile, AppArmor policy, Kubernetes NetworkPolicy) for a described service",
+        "a dependency/supply-chain vulnerability triage question about a CVE affecting a named library version",
+        "an authentication/authorization design review (OAuth/OIDC flow flaw, JWT validation gap, session-fixation) for a described login/API system",
+        "identifying cryptographic misuse (weak algorithm choice, IV/nonce reuse, hardcoded key, insufficient key length) in a pasted snippet or design description",
+        "an incident-response or log-forensics triage question given a described suspicious log excerpt, distinct from the secret-scanning topic above",
+    ],
+    "datainfra": [
+        "diagnosing a slow query via an EXPLAIN ANALYZE output the user pastes in (PostgreSQL, DuckDB, or ClickHouse)",
+        "designing a zero-downtime schema migration (adding a NOT NULL column, changing a type) for a live table",
+        "recommending a precise index or set of indexes for a described query workload",
+        "writing execution-ready SQL for a multi-table join/aggregation reporting request",
+        "a data-modeling question about normalization vs. denormalization trade-offs for a specific access pattern",
+        "diagnosing a replication-lag, lock-contention, or connection-pool-exhaustion symptom",
+        "designing a backup, point-in-time-recovery, or disaster-recovery strategy for a described database workload",
+        "a table-partitioning or sharding-key design question for a described large-table or high-write-volume scenario",
+        "designing a materialized-view or caching-layer strategy for a described reporting/analytics workload",
+    ],
+    "omni": [
+        "reconciling conflicting outputs from two named specialists (e.g. coder vs. security) on the same request",
+        "synthesizing a coherent final answer from several partial expert outputs into one consistent response",
+        "explicitly declining a deep mathematical-proof or raw kernel/driver-code request and naming the specialist actually required",
+        "explicitly declining a standalone regulatory-audit request and naming the governance specialist instead",
+        "harmonizing terminology or formatting differences between two expert outputs before presenting them to the user",
+        "identifying that a user request spans 3+ specialist domains at once (e.g. build a feature, secure it, and document its compliance posture) and sequencing which specialist output is needed first",
+        "recognizing that a request is too under-specified for any specialist to act on yet, and asking the one clarifying question that unblocks routing -- without attempting the deep work of any specialist itself",
+        "prioritizing between two specialists' conflicting recommendations when only one can be acted on first, explaining the trade-off rather than picking arbitrarily",
+    ],
+}
+
+# Mechanical post-filter for the residual bias the {other_hints} negative
+# constraint above reduces but does not eliminate (found live, 2026-09-08,
+# job 21814113/21827844): GLM-4.5-Air dropped from 72% to 54% lock-free/
+# concurrency-themed `coder` examples after the negative-constraint fix,
+# still far above the ~10% a uniform 10-hint rotation would produce. Rather
+# than a third round of prompt engineering (diminishing returns, confirmed
+# by the OpenRouter control test showing the same partial-only effect),
+# this discards -- never relabels or fabricates -- any example assigned a
+# DIFFERENT hint that still contains one of that role's attractor keywords.
+# Only populate a role here after the same empirical bias is actually
+# observed for it, the way coder's was -- never assume another role has the
+# same failure mode without measuring it first (the whole point of this
+# project's "kein Gemini-Vorfall" discipline).
+_GENERIC_ROLE_ATTRACTOR_KEYWORDS: Dict[str, List[str]] = {
+    "coder": [
+        "lock-free", "lock free", "wait-free", "wait free", "spsc", "mpsc", "mpmc",
+        "acquire/release", "acquire-release", "compare_exchange", "compare-and-swap",
+        "memory ordering", "memory-ordering", "ring buffer", "atomicusize", "atomicptr",
+        "atomicbool", "ordering::acquire", "ordering::release",
+    ],
+}
+
+
+def _role_sft_output_violates_topic(role: str, hint: str, user_request: str) -> bool:
+    """True if user_request uses one of role's attractor keywords (see
+    _GENERIC_ROLE_ATTRACTOR_KEYWORDS above) despite hint not being about
+    that theme itself. A hint whose own text already contains the keyword
+    (e.g. coder's memory-ordering hint) is exempt -- it is allowed to use
+    it. Returns False for any role with no confirmed attractor keywords.
+    """
+    keywords = _GENERIC_ROLE_ATTRACTOR_KEYWORDS.get(role)
+    if not keywords:
+        return False
+    hint_lower = hint.lower()
+    if any(kw in hint_lower for kw in keywords):
+        return False
+    text_lower = user_request.lower()
+    return any(kw in text_lower for kw in keywords)
+
 # ---------------------------------------------------------------------------
 # Planner-specific generation (self-critique finding, 2026-09-08): the
 # generic template above produces prose Q&A, but the real Planner output is
@@ -427,7 +580,7 @@ def parse_judge_critic_sft_output(text: str) -> Optional[Dict[str, str]]:
 # do not reliably JSON-escape (root-caused live, job 21798250).
 _ROLE_SFT_GENERATION_TEMPLATE = """{system_prompt}
 
-Invent ONE new, realistic training example for fine-tuning a smaller model to perform exactly this role. Write a specific, concrete user request that clearly falls within this domain (not a generic placeholder), then write the complete, ideal expert response you would give to it -- fully in character with the role above, showing real reasoning/work, not a stub.
+Invent ONE new, realistic training example for fine-tuning a smaller model to perform exactly this role. The example MUST be grounded in this specific theme -- do NOT default to the most generic or most obvious example implied by the role description above: {topic_hint}. This is a hard requirement: your answer is WRONG if it is not clearly and specifically about this theme, even if it stays unique in wording. Do NOT write about any of these other themes instead, even partially or as a side detail: {other_hints}. Write a specific, concrete user request that clearly falls within this domain (not a generic placeholder), then write the complete, ideal expert response you would give to it -- fully in character with the role above, showing real reasoning/work, not a stub.
 
 Output EXACTLY in this plain-text format, with no other text before the first marker or after ===END===, and no markdown code fences around the markers themselves (code fences INSIDE the response text, e.g. for a code snippet, are fine):
 ===USER_REQUEST===
@@ -537,10 +690,38 @@ def _parse_delimited_fields(text: str, field_names: List[str]) -> Optional[Dict[
         else:
             content_end = len(text)
         content = text[content_start:content_end].strip()
-        if not content:
+        if not content or _is_unfilled_placeholder(content):
             return None
         result[name] = content
     return result
+
+
+def _is_unfilled_placeholder(text: str) -> bool:
+    """True if text is still an unfilled template placeholder echoed back
+    verbatim (e.g. "<a specific, realistic user message, one or more
+    lines>") instead of real generated content -- found live, 2026-09-08,
+    role_sft/coder job 21829009 (GLM-4.5-Air): 10/577 "successfully parsed"
+    examples were exactly this literal echo of
+    _ROLE_SFT_GENERATION_TEMPLATE's own placeholder text, long enough to
+    pass _MIN_RESPONSE_LEN/_MIN_SOURCE_LEN by length alone. Every
+    delimited template in this file (loom/role_sft/planner/judge) uses the
+    same `<description of what goes here>` placeholder convention, so this
+    is checked centrally in _parse_delimited_fields rather than per-parser.
+    A single outer angle-bracket pair spanning the whole field is not
+    something real generated content (a user request, Rust source, a JSON
+    task array) would ever produce, so this has no plausible false positive.
+    """
+    stripped = text.strip()
+    if stripped.startswith("<") and stripped.endswith(">") and stripped.count("<") == 1 and stripped.count(">") == 1:
+        return True
+    # A short bracketed placeholder like "[User query]" (found live,
+    # 2026-09-09, job 21832982/governance) -- bounded to short strings so a
+    # real answer that happens to end in a bracketed citation/footnote is
+    # never mistaken for this.
+    if (stripped.startswith("[") and stripped.endswith("]") and stripped.count("[") == 1
+            and stripped.count("]") == 1 and len(stripped) < 40):
+        return True
+    return False
 
 
 # Minimum plausible length for a field that claims to be a full, compilable
@@ -556,6 +737,16 @@ def _parse_delimited_fields(text: str, field_names: List[str]) -> Optional[Dict[
 # reliable than hoping every consumer re-validates length itself.
 _MIN_SOURCE_LEN = 50
 _MIN_RESPONSE_LEN = 20
+# Found live, 2026-09-09, job 21832982 (governance, GLM-4.5-Air): a handful
+# of "successfully parsed" examples had a USER_REQUEST field of "and",
+# "` and `", or similarly degenerate 3-8 character fragments -- clearly a
+# template/self-reference leak (same failure class as the already-
+# documented Kimi K3 "template-leak" residual risk), but unlike that case
+# this one IS mechanically safe to filter: no plausible real user request
+# is this short even in the shortest legitimate case seen so far
+# ("What is 2+2?" is 12 chars). ASSISTANT_RESPONSE already had a length
+# floor; USER_REQUEST never did.
+_MIN_REQUEST_LEN = 10
 
 
 def parse_loom_output(text: str) -> Optional[Dict[str, str]]:
@@ -720,6 +911,8 @@ def parse_role_sft_output(text: str) -> Optional[Dict[str, str]]:
         return None
     if len(fields["ASSISTANT_RESPONSE"]) < _MIN_RESPONSE_LEN:
         return None
+    if len(fields["USER_REQUEST"]) < _MIN_REQUEST_LEN:
+        return None
     return {
         "user_request": fields["USER_REQUEST"],
         "assistant_response": fields["ASSISTANT_RESPONSE"],
@@ -770,21 +963,25 @@ def run_role_sft_mode(args: argparse.Namespace) -> None:
             for name, desc in _JUDGE_CRITIC_PATTERN_FOCUS.items()
         }
     else:
-        generic_prompt = _ROLE_SFT_GENERATION_TEMPLATE.format(system_prompt=system_prompt)
+        hints = _GENERIC_ROLE_TOPIC_HINTS[args.role]
+        pattern_names = list(range(len(hints)))
+        prompts_by_pattern = {
+            i: _ROLE_SFT_GENERATION_TEMPLATE.format(
+                system_prompt=system_prompt, topic_hint=hint,
+                other_hints="; ".join(h for j, h in enumerate(hints) if j != i))
+            for i, hint in enumerate(hints)
+        }
 
     with open(output_path, "a", encoding="utf-8") as f:
         for start in range(0, args.count, args.batch_size):
             batch_n = min(args.batch_size, args.count - start)
-            if is_planner or is_judge:
-                # Cycle through pattern focuses so a batch covers a spread of
-                # the specific failure modes instead of N copies of one
-                # randomly-chosen pattern.
-                batch_patterns = [pattern_names[(start + i) % len(pattern_names)] for i in range(batch_n)]
-                batch_prompts = [prompts_by_pattern[p] for p in batch_patterns]
-            else:
-                batch_prompts = [generic_prompt] * batch_n
+            # Cycle through pattern/topic focuses so a batch covers a spread
+            # instead of N copies of one dominant theme (see the
+            # self-critique note above _GENERIC_ROLE_TOPIC_HINTS).
+            batch_patterns = [pattern_names[(start + i) % len(pattern_names)] for i in range(batch_n)]
+            batch_prompts = [prompts_by_pattern[p] for p in batch_patterns]
             outputs = llm.generate(batch_prompts, sampling)
-            for out in outputs:
+            for i, out in enumerate(outputs):
                 total += 1
                 raw_text = out.outputs[0].text
                 if is_planner:
@@ -793,6 +990,9 @@ def run_role_sft_mode(args: argparse.Namespace) -> None:
                     parsed = parse_judge_critic_sft_output(raw_text)
                 else:
                     parsed = parse_role_sft_output(raw_text)
+                if parsed is not None and not (is_planner or is_judge) and _role_sft_output_violates_topic(
+                        args.role, hints[batch_patterns[i]], parsed["user_request"]):
+                    parsed = None
                 if parsed is not None:
                     text = render_chatml(system_prompt, parsed["user_request"], parsed["assistant_response"])
                     f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")

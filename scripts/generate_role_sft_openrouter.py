@@ -65,6 +65,8 @@ import httpx
 from dotenv import load_dotenv
 
 from scripts.generate_diverse_training_seeds import (
+    _GENERIC_ROLE_TOPIC_HINTS,
+    _role_sft_output_violates_topic,
     _JUDGE_CRITIC_PATTERN_FOCUS,
     _JUDGE_CRITIC_SFT_GENERATION_TEMPLATE,
     _JUDGE_CRITIC_TRAINING_SYSTEM_PROMPT,
@@ -321,7 +323,22 @@ async def run(args: argparse.Namespace) -> None:
             for name, desc in _JUDGE_CRITIC_PATTERN_FOCUS.items()
         }
     else:
-        prompt = _ROLE_SFT_GENERATION_TEMPLATE.format(system_prompt=system_prompt)
+        # Self-critique finding (2026-09-08): a single static prompt reused
+        # for every request let the teacher model regress to the one
+        # concrete example named in its own role's system prompt -- confirmed
+        # live here: Mistral Large 3 put 99/400 `coder` examples into one
+        # near-identical "lock-free MPSC queue" template, Kimi K3 put 86/258
+        # into near-identical SPSC-ring-buffer variants. Fixed identically to
+        # generate_diverse_training_seeds.py's run_role_sft_mode: cycle
+        # through _GENERIC_ROLE_TOPIC_HINTS instead of one static prompt.
+        hints = _GENERIC_ROLE_TOPIC_HINTS[args.role]
+        pattern_names = list(range(len(hints)))
+        prompts_by_pattern = {
+            i: _ROLE_SFT_GENERATION_TEMPLATE.format(
+                system_prompt=system_prompt, topic_hint=hint,
+                other_hints="; ".join(h for j, h in enumerate(hints) if j != i))
+            for i, hint in enumerate(hints)
+        }
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,10 +374,10 @@ async def run(args: argparse.Namespace) -> None:
             async with semaphore:
                 if stop_event.is_set() or tracker.over_budget():
                     return
-                if is_planner or is_judge:
-                    this_prompt = prompts_by_pattern[pattern_names[i % len(pattern_names)]]
-                else:
+                if is_loom:
                     this_prompt = prompt
+                else:
+                    this_prompt = prompts_by_pattern[pattern_names[i % len(pattern_names)]]
                 try:
                     raw_text, cost = await generate_one(client, api_key, args.model, this_prompt,
                                                           args.max_tokens, args.reasoning_effort)
@@ -382,6 +399,9 @@ async def run(args: argparse.Namespace) -> None:
                     parsed = parse_judge_critic_sft_output(raw_text)
                 else:
                     parsed = parse_role_sft_output(raw_text)
+                    if parsed is not None and _role_sft_output_violates_topic(
+                            args.role, hints[pattern_names[i % len(pattern_names)]], parsed["user_request"]):
+                        parsed = None
                 async with file_lock:
                     if parsed is not None:
                         if is_loom:
