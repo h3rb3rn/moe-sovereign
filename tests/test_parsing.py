@@ -355,6 +355,54 @@ class TestAnthropicToOpenaiMessages:
         assert result[0]["role"] == "tool"
         assert result[0]["tool_call_id"] == "t1"
 
+    def test_mid_conversation_system_message_merged_not_duplicated(self):
+        # Regression: Claude Code can send an in-band system-role message
+        # (e.g. a system-reminder) inside `messages`, alongside the top-level
+        # `system` field. Forwarding both as separate role:system entries
+        # produces a payload some providers reject with HTTP 400 ("System
+        # message must be at the beginning") — observed live on Hetzner.
+        messages = [
+            {"role": "user", "content": "do X"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "system", "content": "reminder: stay on task"},
+            {"role": "user", "content": "continue"},
+        ]
+        result = _anthropic_to_openai_messages(messages, system="Be helpful.")
+
+        roles = [m["role"] for m in result]
+        assert roles.count("system") == 1
+        assert roles[0] == "system"
+        assert "Be helpful." in result[0]["content"]
+        assert "reminder: stay on task" in result[0]["content"]
+        assert roles == ["system", "user", "assistant", "user"]
+
+    def test_mid_conversation_system_message_without_top_level_system(self):
+        # No top-level `system` at all — the in-band one must still end up
+        # as the single leading system message, not wherever it appeared.
+        messages = [
+            {"role": "user", "content": "do X"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "system", "content": "reminder"},
+            {"role": "user", "content": "continue"},
+        ]
+        result = _anthropic_to_openai_messages(messages, system=None)
+        assert result[0] == {"role": "system", "content": "reminder"}
+        assert [m["role"] for m in result] == ["system", "user", "assistant", "user"]
+
+    def test_multiple_mid_conversation_system_messages_all_merged(self):
+        messages = [
+            {"role": "user", "content": "do X"},
+            {"role": "system", "content": "reminder one"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "system", "content": "reminder two"},
+        ]
+        result = _anthropic_to_openai_messages(messages, system="Be helpful.")
+        roles = [m["role"] for m in result]
+        assert roles.count("system") == 1
+        assert roles[0] == "system"
+        assert "reminder one" in result[0]["content"]
+        assert "reminder two" in result[0]["content"]
+
 
 class TestAnthropicToolsToOpenai:
     def test_converts_input_schema_to_parameters(self):

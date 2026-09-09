@@ -90,6 +90,88 @@ TOKEN_MAP    = {s["name"]: s.get("token", "ollama")  for s in INFERENCE_SERVERS_
 API_TYPE_MAP = {s["name"]: s.get("api_type", "ollama") for s in INFERENCE_SERVERS_LIST}
 TIMEOUT_MAP  = {s["name"]: s.get("timeout", 300)     for s in INFERENCE_SERVERS_LIST}
 
+
+# "N requests per <amount> <unit>" — the unit and its multiplier are both
+# configurable (e.g. 60/minute, 4/second, 1000/hour, or 200 per 5 minutes).
+RATE_LIMIT_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600}
+
+
+def rate_limit_to_rps(max_requests, period_amount=1, period_unit="second", burst=None):
+    """(requests_per_second, burst) from a max_requests/period_amount/period_unit
+    triple, or None when max_requests is unset/invalid. `burst` is an optional
+    advanced override; it defaults to max_requests (the full quota may fire at
+    once, then refills smoothly — standard "N per period" semantics)."""
+    try:
+        requests = float(max_requests)
+    except (TypeError, ValueError):
+        return None
+    if requests <= 0:
+        return None
+    try:
+        amount = float(period_amount) if period_amount else 1.0
+    except (TypeError, ValueError):
+        amount = 1.0
+    if amount <= 0:
+        amount = 1.0
+    unit_seconds = RATE_LIMIT_UNIT_SECONDS.get(period_unit, 1)
+    rps = requests / (amount * unit_seconds)
+    try:
+        burst_val = float(burst) if burst else requests
+    except (TypeError, ValueError):
+        burst_val = requests
+    return (rps, max(1.0, burst_val))
+
+
+def rate_limits_to_list(limits):
+    """[(rps, burst), ...] from a list of {requests|max_requests, period_amount,
+    period_unit, burst} dicts, or None when empty/all-invalid. Multiple entries
+    all apply simultaneously — e.g. OpenRouter free models: 20/minute AND
+    1000/24h — see services.rate_limiter._TokenBucketGroup."""
+    if not isinstance(limits, list):
+        return None
+    result = []
+    for entry in limits:
+        if not isinstance(entry, dict):
+            continue
+        parsed = rate_limit_to_rps(
+            entry.get("requests", entry.get("max_requests")),
+            entry.get("period_amount", 1),
+            entry.get("period_unit", "second"),
+            entry.get("burst"),
+        )
+        if parsed is not None:
+            result.append(parsed)
+    return result or None
+
+
+def _parse_rate_limit(s: dict):
+    """[(rps, burst), ...] for one INFERENCE_SERVERS entry, or None when
+    unconfigured/invalid. "rate_limit_limits" (a list — see rate_limits_to_list)
+    takes precedence when present; otherwise falls back to the single
+    rate_limit_requests/rate_limit_period_amount/rate_limit_period_unit fields."""
+    if isinstance(s.get("rate_limit_limits"), list):
+        return rate_limits_to_list(s["rate_limit_limits"])
+    if not s.get("rate_limit_requests"):
+        return None
+    single = rate_limit_to_rps(
+        s.get("rate_limit_requests"),
+        s.get("rate_limit_period_amount", 1),
+        s.get("rate_limit_period_unit", "second"),
+        s.get("rate_limit_burst"),
+    )
+    return [single] if single is not None else None
+
+
+# Self-imposed outbound throttling toward a provider: {name: [(requests_per_second, burst), ...]}.
+# Proactively paces requests below the provider's own rate limit instead of
+# reacting to 429s after the fact — see services/rate_limiter.py. An endpoint
+# absent from this map is unlimited (opt-in via admin UI → Inference Servers).
+RATE_LIMITS = {
+    s["name"]: _parse_rate_limit(s)
+    for s in INFERENCE_SERVERS_LIST
+    if _parse_rate_limit(s) is not None
+}
+
 JUDGE_ENDPOINT_NAME = os.getenv("JUDGE_ENDPOINT", "")
 JUDGE_URL           = URL_MAP.get(JUDGE_ENDPOINT_NAME) if JUDGE_ENDPOINT_NAME else None
 JUDGE_TOKEN         = TOKEN_MAP.get(JUDGE_ENDPOINT_NAME, "ollama") if JUDGE_ENDPOINT_NAME else "ollama"
@@ -311,7 +393,7 @@ CC_HISTORY_COMPRESS_THRESHOLD  = int(os.getenv("CC_HISTORY_COMPRESS_THRESHOLD", 
 CC_HISTORY_COMPRESS_KEEP_TURNS = int(os.getenv("CC_HISTORY_COMPRESS_KEEP_TURNS", "8"))
 # Fallback delay (seconds) before the CC pre-analysis planner fires.
 # Overridden per-server via model_load_delay in Admin UI → Servers.
-CC_PREANALYSIS_DELAY_SECS = int(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
+CC_PREANALYSIS_DELAY_SECS = float(os.getenv("CC_PREANALYSIS_DELAY_SECS", "20"))
 
 # Master kill-switch for the infrastructure-side "1M+ context" path on CC tool
 # requests: ChromaDB context indexing (Tier-3), Tier-2 semantic-memory injection

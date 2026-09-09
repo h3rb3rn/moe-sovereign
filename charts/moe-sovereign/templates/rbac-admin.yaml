@@ -1,0 +1,50 @@
+{{- /*
+Dedicated, minimal-privilege identity for the admin-ui pod only —
+orchestrator/mcp/alloy keep using the shared ServiceAccount (created in
+serviceaccount.yaml) with its token NOT auto-mounted. admin-ui needs its
+own token to read pod status for the Config Dashboard's service-status
+widget (see admin_ui/app.py's Kubernetes-mode get_container_status()).
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "moe.fullname" . }}-admin
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "moe.fullname" . }}-admin-pod-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Best-effort CPU/mem enrichment — silently skipped if metrics-server
+  # isn't installed or this API group doesn't exist on the cluster.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "moe.fullname" . }}-admin-pod-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "moe.fullname" . }}-admin
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "moe.fullname" . }}-admin-pod-reader
+  apiGroup: rbac.authorization.k8s.io

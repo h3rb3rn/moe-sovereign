@@ -59,6 +59,11 @@ class CCSession:
     template_num_ctx: int = 0
     tool_choice: str = "auto"
     is_user_conn: bool = False
+    # Self-imposed outbound rate limit(s) for a user-owned connection (BYOK):
+    # {limits: [{max_requests, period_amount, period_unit}, ...], tagged}. All
+    # entries in `limits` apply simultaneously. Empty = unlimited. See
+    # services/rate_limiter.py / admin_ui user_api_connections.rate_limit_config.
+    tool_rate_limit: dict = dataclasses.field(default_factory=dict)
 
     # ── Reasoning (moe_reasoning mode) ───────────────────────────────────────
     reasoning_max_tokens: int = 0
@@ -165,6 +170,7 @@ def _resolve_cc_session(
     tool_token     = TOKEN_MAP.get(tool_endpoint, "ollama")
     tool_api_type  = API_TYPE_MAP.get(tool_endpoint, "ollama") if tool_endpoint else "openai"
     is_user_conn   = False
+    tool_rate_limit = {}
     # System prompt injected from the template's tool_agent expert (see below).
     _tool_agent_system_prompt: str = ""
 
@@ -235,6 +241,7 @@ def _resolve_cc_session(
             tool_token    = uc.get("api_key") or "ollama"
             tool_api_type = uc.get("api_type", "openai")  # preserve user-conn api_type
             is_user_conn  = True
+            tool_rate_limit = uc.get("rate_limit_config") or {}
         else:
             tool_url      = _CLAUDE_CODE_TOOL_URL
             tool_token    = _CLAUDE_CODE_TOOL_TOKEN
@@ -420,6 +427,7 @@ def _resolve_cc_session(
         template_num_ctx=_tmpl_ctx,
         tool_choice=tool_choice,
         is_user_conn=is_user_conn,
+        tool_rate_limit=tool_rate_limit,
         long_memory=long_memory,
         agent_cache=agent_cache,
         agent_graphrag=agent_graphrag,

@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "moe.fullname" . }}-admin-data
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.admin.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.admin.persistence.size }}
+---
+{{- if .Values.auth.oidc.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "moe.fullname" . }}-admin-envfile
+  labels:
+    {{- include "moe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.admin.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      # Holds a single small text file (/app/.env). admin-ui writes runtime
+      # config here (INFERENCE_SERVERS, EXPERT_MODELS, ...) via write_env() —
+      # this MUST be a real PVC, not emptyDir, or every pod restart silently
+      # discards everything an operator configured through the dashboard.
+      storage: 64Mi
+{{- end }}

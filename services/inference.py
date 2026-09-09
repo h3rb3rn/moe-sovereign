@@ -80,6 +80,7 @@ from services.deadline import (
     sleep_with_budget,
     wait_for_budget,
 )
+from services.rate_limiter import throttle as _throttle_endpoint
 
 _DEFAULT_OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "24h")
 
@@ -182,6 +183,7 @@ async def _audited_ainvoke(
         {"prompt": prompt},
     )
     try:
+        await _throttle_endpoint(endpoint, context, stage=f"{stage}_rate_limit")
         response = await llm.ainvoke(prompt)
         prompt_tokens, completion_tokens = _audit_usage(response)
         await _audit_complete(

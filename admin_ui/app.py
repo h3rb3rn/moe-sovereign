@@ -146,6 +146,37 @@ _OPTIONAL_CONTAINERS: dict[str, list[str]] = {
     "prometheus_stack": ["moe-grafana", "moe-prometheus", "node-exporter", "cadvisor"],
 }
 
+# Container name → Kubernetes label selector, used only when running inside
+# a cluster (KUBERNETES_SERVICE_HOST set). Scoped to the admin pod's own
+# namespace — cross-namespace pod visibility would need broader RBAC than
+# this deployment is granted. A name with no entry here (e.g. moe-kafka
+# when the Kafka subchart is disabled, or authentik-server/-worker which
+# run in a separate "authentik" namespace on the moe-sovereign Helm chart)
+# reports "not found", matching Docker mode's behavior for an optional
+# container that was never started.
+_K8S_LABEL_SELECTORS: dict[str, str] = {
+    "langgraph-orchestrator": "app.kubernetes.io/component=orchestrator",
+    "mcp-precision":          "app.kubernetes.io/component=mcp",
+    "moe-admin":              "app.kubernetes.io/component=admin",
+    "terra_cache":            "app.kubernetes.io/name=valkey",
+    "chromadb-vector":        "app=chromadb",
+}
+
+_K8S_API_SERVER = "https://kubernetes.default.svc"
+_K8S_SA_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+
+
+def _k8s_available() -> bool:
+    """True when running as a Kubernetes pod with a mounted API token."""
+    return bool(os.getenv("KUBERNETES_SERVICE_HOST")) and (_K8S_SA_DIR / "token").exists()
+
+
+def _k8s_namespace() -> str:
+    try:
+        return (_K8S_SA_DIR / "namespace").read_text().strip()
+    except OSError:
+        return "default"
+
 
 def _get_monitored_containers() -> list[str]:
     """Return the container list filtered by the services manifest.
@@ -889,6 +920,11 @@ def write_env(updates: dict) -> None:
 
 _DOUBLE_QUOTED_KEYS = {"EXPERT_MODELS", "INFERENCE_SERVERS", "CUSTOM_EXPERT_PROMPTS", "CLAUDE_CODE_PROFILES", "EXPERT_TEMPLATES"}
 
+# Self-imposed outbound rate limit: "N requests per <amount> <unit>". Mirrors
+# config.RATE_LIMIT_UNIT_SECONDS (kept as a local literal — admin_ui edits the
+# .env source of truth directly and does not import the runtime config module).
+RATE_LIMIT_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600}
+
 def _format_env_line(key: str, value: str) -> str:
     if key in _DOUBLE_QUOTED_KEYS:
         # Escape backslashes first, then quotes, then control chars that Docker
@@ -944,6 +980,19 @@ def rebuild_inference_servers(form) -> list:
                 vram_gb_val = int(vram_gb_raw) if vram_gb_raw else None
             except (ValueError, TypeError):
                 vram_gb_val = None
+            rate_limit_requests_raw = form.get(f"srv_rate_limit_requests_{i}", "").strip()
+            try:
+                rate_limit_requests_val = float(rate_limit_requests_raw) if rate_limit_requests_raw else None
+            except (ValueError, TypeError):
+                rate_limit_requests_val = None
+            rate_limit_period_amount_raw = form.get(f"srv_rate_limit_period_amount_{i}", "").strip()
+            try:
+                rate_limit_period_amount_val = float(rate_limit_period_amount_raw) if rate_limit_period_amount_raw else 1.0
+            except (ValueError, TypeError):
+                rate_limit_period_amount_val = 1.0
+            rate_limit_period_unit_val = form.get(f"srv_rate_limit_period_unit_{i}", "second").strip() or "second"
+            if rate_limit_period_unit_val not in RATE_LIMIT_UNIT_SECONDS:
+                rate_limit_period_unit_val = "second"
             enabled = form.get(f"srv_enabled_{i}") == "1"
             ontology_enabled = form.get(f"srv_ontology_enabled_{i}") == "1"
             curator_model_val = (form.get(f"srv_curator_model_{i}", "") or "").strip()
@@ -960,6 +1009,10 @@ def rebuild_inference_servers(form) -> list:
                 entry["timeout"] = timeout_val
             if vram_gb_val is not None:
                 entry["vram_gb"] = vram_gb_val
+            if rate_limit_requests_val is not None and rate_limit_requests_val > 0:
+                entry["rate_limit_requests"] = rate_limit_requests_val
+                entry["rate_limit_period_amount"] = rate_limit_period_amount_val
+                entry["rate_limit_period_unit"] = rate_limit_period_unit_val
             if ontology_enabled:
                 entry["ontology_enabled"] = True
             if curator_model_val:
@@ -1306,7 +1359,11 @@ def rebuild_custom_prompts(form, all_cats: list) -> dict:
     return result
 
 
-# ─── Docker helpers ──────────────────────────────────────────────────────────
+# ─── Docker / Kubernetes helpers ─────────────────────────────────────────────
+# get_container_status() supports both runtimes; restart_orchestrator() below
+# is still Docker/Podman-only (fails safe — logs and no-ops — on Kubernetes,
+# since a rolling restart there needs a "patch deployment" RBAC grant this
+# admin UI is not given by default).
 
 def restart_orchestrator() -> None:
     try:
@@ -1343,7 +1400,101 @@ def _calc_mem_str(stats: dict) -> str:
     return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
 
 
+async def _get_k8s_container_status(names: list[str]) -> dict:
+    """Kubernetes equivalent of the Docker/Podman fetch below.
+
+    One list-pods call covers every monitored name (cheaper than N
+    label-selector queries), matched client-side via _K8S_LABEL_SELECTORS.
+    CPU/mem come from metrics.k8s.io on a best-effort basis — that API
+    requires metrics-server, which is not guaranteed to be installed, so any
+    failure there is swallowed exactly like the Docker path swallows a
+    failed `stats()` call.
+    """
+    token = (_K8S_SA_DIR / "token").read_text().strip()
+    ca_path = str(_K8S_SA_DIR / "ca.crt")
+    namespace = _k8s_namespace()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        async with httpx.AsyncClient(verify=ca_path, timeout=5.0) as client:
+            r = await client.get(
+                f"{_K8S_API_SERVER}/api/v1/namespaces/{namespace}/pods",
+                headers=headers,
+            )
+            r.raise_for_status()
+            pods = r.json().get("items", [])
+    except Exception as e:
+        logger.warning("K8s pod list failed: %s", e)
+        pods = []
+
+    result: dict = {}
+    pod_name_by_container: dict[str, str] = {}
+    for name in names:
+        selector = _K8S_LABEL_SELECTORS.get(name)
+        if not selector:
+            result[name] = {"status": "not found", "running": False}
+            continue
+        label_key, _, label_val = selector.partition("=")
+        pod = next(
+            (p for p in pods if p.get("metadata", {}).get("labels", {}).get(label_key) == label_val),
+            None,
+        )
+        if not pod:
+            result[name] = {"status": "not found", "running": False}
+            continue
+        status = pod.get("status", {})
+        phase = status.get("phase", "Unknown")
+        ready = any(
+            c.get("type") == "Ready" and c.get("status") == "True"
+            for c in status.get("conditions", [])
+        )
+        info: dict = {"status": phase.lower(), "running": phase == "Running" and ready}
+        started = status.get("startTime")
+        if started:
+            try:
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                uptime_sec = int((datetime.now(timezone.utc) - started_dt).total_seconds())
+                info["uptime"] = _fmt_uptime(uptime_sec)
+            except ValueError:
+                pass
+        result[name] = info
+        pod_name_by_container[pod.get("metadata", {}).get("name", "")] = name
+
+    try:
+        async with httpx.AsyncClient(verify=ca_path, timeout=3.0) as client:
+            r = await client.get(
+                f"{_K8S_API_SERVER}/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods",
+                headers=headers,
+            )
+            if r.status_code == 200:
+                for item in r.json().get("items", []):
+                    name = pod_name_by_container.get(item.get("metadata", {}).get("name", ""))
+                    if not name:
+                        continue
+                    cpu_nano = sum(
+                        int(c["usage"]["cpu"][:-1]) for c in item.get("containers", [])
+                        if c.get("usage", {}).get("cpu", "").endswith("n")
+                    )
+                    mem_ki = sum(
+                        int(c["usage"]["memory"][:-2]) for c in item.get("containers", [])
+                        if c.get("usage", {}).get("memory", "").endswith("Ki")
+                    )
+                    if cpu_nano:
+                        result[name]["cpu_pct"] = round(cpu_nano / 1e7, 1)  # nanocores -> %
+                    if mem_ki:
+                        mb = mem_ki / 1024
+                        result[name]["mem"] = f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+    except Exception:
+        pass  # metrics-server not installed or unreachable — status without cpu/mem is still useful
+
+    return result
+
+
 async def get_container_status() -> dict:
+    names = _get_monitored_containers()
+    if _k8s_available():
+        return await _get_k8s_container_status(names)
+
     def _fetch(name: str):
         try:
             dc = docker.from_env()
@@ -1367,7 +1518,7 @@ async def get_container_status() -> dict:
         except Exception:
             return name, {"status": "error", "running": False}
 
-    pairs = await asyncio.gather(*[asyncio.to_thread(_fetch, n) for n in _get_monitored_containers()])
+    pairs = await asyncio.gather(*[asyncio.to_thread(_fetch, n) for n in names])
     return dict(pairs)
 
 
@@ -7854,20 +8005,41 @@ async def user_api_update_model_tags(
 async def user_api_update_rate_limit(
     conn_id: str, request: Request, user_id: str = Depends(require_user_login)
 ):
-    """Store rate-limit config for a connection.
+    """Store rate-limit config for a connection: self-imposed outbound throttling
+    toward this connection's provider (see services/rate_limiter.py) — MoE-Sovereign
+    queues and waits internally instead of forwarding calls the provider would
+    answer with a session-breaking 429.
 
-    Body: {window_seconds: int, max_requests: int, tagged: list[str]}
-    tagged defaults to ["free"]. Pass {} to clear the rate limit.
+    Body: {limits: [{max_requests: int, period_amount: int, period_unit:
+    "second"|"minute"|"hour"}, ...], tagged: list[str]}. All entries in `limits`
+    apply simultaneously (e.g. OpenRouter free models: 20/minute AND 1000/24h —
+    pass both). tagged defaults to ["free"]. Pass {} (or an empty `limits`) to
+    clear the rate limit.
     """
     await _require_connections_access(user_id)
     body = await request.json()
-    if body:
-        window   = int(body.get("window_seconds", 60))
-        max_req  = int(body.get("max_requests", 60))
-        tagged   = body.get("tagged", ["free"])
+    limits_raw = body.get("limits", []) if body else []
+    if not isinstance(limits_raw, list):
+        raise HTTPException(status_code=400, detail="limits must be a list")
+    if limits_raw:
+        limits = []
+        for i, entry in enumerate(limits_raw):
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=400, detail=f"limits[{i}] must be an object")
+            max_req = int(entry.get("max_requests", 0))
+            if max_req <= 0:
+                raise HTTPException(status_code=400, detail=f"limits[{i}].max_requests must be > 0")
+            period_amount = int(entry.get("period_amount", 1))
+            if period_amount <= 0:
+                raise HTTPException(status_code=400, detail=f"limits[{i}].period_amount must be > 0")
+            period_unit = entry.get("period_unit", "minute")
+            if period_unit not in RATE_LIMIT_UNIT_SECONDS:
+                raise HTTPException(status_code=400, detail=f"limits[{i}].period_unit must be one of {sorted(RATE_LIMIT_UNIT_SECONDS)}")
+            limits.append({"max_requests": max_req, "period_amount": period_amount, "period_unit": period_unit})
+        tagged = body.get("tagged", ["free"])
         if not isinstance(tagged, list):
             raise HTTPException(status_code=400, detail="tagged must be a list")
-        config = {"window_seconds": window, "max_requests": max_req, "tagged": tagged}
+        config = {"limits": limits, "tagged": tagged}
     else:
         config = {}
     conn = await db.update_connection_rate_limit(conn_id, user_id, config)
