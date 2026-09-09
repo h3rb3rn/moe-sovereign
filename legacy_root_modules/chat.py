@@ -417,7 +417,7 @@ async def _handle_tool_calls(
                     {"role": "system", "content": _sys},
                     {"role": "user", "content": _task_content},
                 ]
-                _content_endpoint = content_url.rstrip("/") + "/chat/completions"
+                _content_endpoint = content_url.rstrip("/").removesuffix("/v1") + "/v1/chat/completions"
                 if request.temperature is not None:
                     _content_extra = {"temperature": request.temperature}
                 else:
@@ -543,7 +543,7 @@ async def _handle_tool_calls(
             _ollama_base = _ollama_base[:-3]
         _tool_endpoint = _ollama_base + "/api/chat"
     else:
-        _tool_endpoint = tool_base_url.rstrip("/") + "/chat/completions"
+        _tool_endpoint = tool_base_url.rstrip("/").removesuffix("/v1") + "/v1/chat/completions"
 
     payload: dict = {
         "model":    tool_model,
@@ -1204,7 +1204,7 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
         # Non-streaming native: blockierender httpx-Call
         async with httpx.AsyncClient(timeout=300) as _hc:
             _nr = await _hc.post(
-                _native_endpoint["url"].rstrip("/") + "/chat/completions",
+                _native_endpoint["url"].rstrip("/").removesuffix("/v1") + "/v1/chat/completions",
                 headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
                 json={"model": _native_endpoint["model"],
                       "messages": [{"role": m.role, "content": m.content if m.content is not None else ""} for m in request.messages],

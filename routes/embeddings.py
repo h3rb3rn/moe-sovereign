@@ -253,7 +253,7 @@ async def legacy_completions(raw_request: Request):
         token   = TOKEN_MAP.get(_srv["name"], _srv.get("token", "ollama"))
         api_type = _srv.get("api_type", "ollama")
 
-    chat_url = base + "/chat/completions"
+    chat_url = base.removesuffix("/v1") + "/v1/chat/completions"
 
     chat_payload: dict = {
         "model":    model_base or model,
