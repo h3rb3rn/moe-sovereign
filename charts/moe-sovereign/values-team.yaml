@@ -25,3 +25,14 @@ valkey:
 
 neo4j:
   enabled: true
+  neo4j:
+    name: "neo4j"
+    # password left unset: the neo4j chart auto-generates one on first
+    # install (see charts/neo4j/values.yaml). Set neo4jAuth.existingSecret
+    # and neo4j.neo4j.passwordFromSecret to pin credentials instead.
+  volumes:
+    data:
+      mode: "defaultStorageClass"
+      defaultStorageClass:
+        requests:
+          storage: 8Gi

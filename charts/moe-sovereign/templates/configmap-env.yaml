@@ -17,3 +17,12 @@ data:
   MOE_LOGS_DIR: /app/logs
   MOE_CACHE_DIR: /app/cache
   MOE_EXPERTS_DIR: {{ .Values.experts.mountPath | quote }}
+  MOE_USERDB_URL: {{ .Values.external.moeuserdbUrl | default "" | quote }}
+  {{- if .Values.auth.oidc.enabled }}
+  AUTHENTIK_URL: {{ .Values.auth.oidc.authentikUrl | quote }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+  PUBLIC_SSO_URL: {{ .Values.auth.oidc.publicSsoUrl | quote }}
+  {{- end }}
+  APP_BASE_URL: {{ .Values.publicUrls.appBaseUrl | quote }}
+  PUBLIC_ADMIN_URL: {{ .Values.publicUrls.adminUrl | quote }}
+  PUBLIC_API_URL: {{ .Values.publicUrls.apiUrl | quote }}
