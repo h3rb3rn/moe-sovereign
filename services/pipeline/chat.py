@@ -103,6 +103,7 @@ from services.helpers import (
 )
 from services.templates import _read_expert_templates, _read_cc_profiles
 from services.inference import (
+    _audit_cancel,
     _audit_complete,
     _audit_create,
     _get_available_models as _get_available_models_svc,
@@ -1591,6 +1592,20 @@ async def _handle_tool_calls(
     )
 
 
+def _build_diagnostic_metadata(result: dict) -> dict:
+    """Additive, non-standard response metadata for benchmarking/observability.
+
+    Callers must merge this via resp.setdefault("metadata", {}).update(...),
+    never a direct assignment, so it can never clobber the "sources" or
+    "candidate" metadata keys set elsewhere in chat_completions().
+    """
+    return {
+        "self_critique_round": int(result.get("self_critique_round") or 0),
+        "trust_score": result.get("trust_score"),
+        "trust_verdict": result.get("trust_verdict") or None,
+    }
+
+
 async def chat_completions(raw_request: Request, request: ChatCompletionRequest):
     # The non-streaming orchestration timeout is an end-to-end request budget,
     # including auth, template resolution and dynamic routing before LangGraph.
@@ -2399,13 +2414,21 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "native_direct",
                 _ns_payload,
             )
-            try:
+            async def _ns_do_post() -> httpx.Response:
+                # Shielded: a client disconnect must not cancel an in-flight
+                # model load on the shared Ollama node. Ollama's GPU-discovery
+                # startup does not handle a cancelled load cleanly and gets
+                # stuck ("GPU discovery watchdog timed out") for every
+                # subsequent request until the container is restarted -- this
+                # keeps our own cancellation from ever triggering that.
                 async with httpx.AsyncClient(timeout=float(_native_endpoint.get("timeout", 300))) as _hc:
-                    _nr = await _hc.post(
+                    return await _hc.post(
                         _ns_base + "/api/chat",
                         headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
                         json=_ns_payload,
                     )
+            try:
+                _nr = await asyncio.shield(_ns_do_post())
                 _nr.raise_for_status()
                 _rdata = _nr.json()
                 await _audit_complete(
@@ -2414,6 +2437,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                     _rdata.get("prompt_eval_count"),
                     _rdata.get("eval_count"),
                 )
+            except asyncio.CancelledError:
+                await _audit_cancel(_native_audit)
+                raise
             except Exception as _native_exc:
                 await _audit_complete(
                     _native_audit,
@@ -2500,13 +2526,18 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                 "native_direct",
                 _native_oai_payload,
             )
-            try:
+            async def _native_oai_do_post() -> httpx.Response:
+                # Shielded for the same reason as the native-Ollama branch
+                # above: a client disconnect must not cancel an in-flight
+                # model load on the shared node.
                 async with httpx.AsyncClient(timeout=float(_native_endpoint.get("timeout", 300))) as _hc:
-                    _nr = await _hc.post(
+                    return await _hc.post(
                         _native_oai_url,
                         headers={"Authorization": f"Bearer {_native_endpoint['token']}", "Content-Type": "application/json"},
                         json=_native_oai_payload,
                     )
+            try:
+                _nr = await asyncio.shield(_native_oai_do_post())
                 _nr.raise_for_status()
                 _nj = _nr.json()
                 _native_usage = _nj.get("usage") or {}
@@ -2516,6 +2547,9 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
                     _native_usage.get("prompt_tokens"),
                     _native_usage.get("completion_tokens"),
                 )
+            except asyncio.CancelledError:
+                await _audit_cancel(_native_audit)
+                raise
             except Exception as _native_exc:
                 await _audit_complete(
                     _native_audit,
@@ -3211,6 +3245,10 @@ async def chat_completions(raw_request: Request, request: ChatCompletionRequest)
             "status": "degraded",
             "reason": result.get("candidate_reason", ""),
         }
+    # Additive, non-standard diagnostic metadata for benchmarking/observability
+    # (self-critique round count, trust score/verdict). Merged via update() so
+    # it can never clobber the sources/candidate keys set above.
+    resp.setdefault("metadata", {}).update(_build_diagnostic_metadata(result))
     await _ol_complete(_ol_run_id, job_name="chat_completion",
                        outputs=[dataset_response(chat_id)])
     if _moe_resp_headers:

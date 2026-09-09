@@ -74,6 +74,14 @@ def configured_jobs() -> list[Job]:
             _seconds("EURISKO_TIMEOUT_SECONDS", 1800),
             {},
         ))
+    if _enabled("KNOWLEDGE_INGESTION_SCHEDULER_ENABLED", "1"):
+        jobs.append(Job(
+            "knowledge_ingestion",
+            ROOT / "scripts" / "cron_knowledge_ingestion.py",
+            _seconds("KNOWLEDGE_INGESTION_INTERVAL_SECONDS", 300, minimum=30),
+            _seconds("KNOWLEDGE_INGESTION_TIMEOUT_SECONDS", 1800),
+            {},
+        ))
     return jobs
 
 

@@ -385,6 +385,14 @@ flowchart LR
 
 ---
 
+## Ecosystem & Integrations
+
+- [openDesk Edu](https://github.com/opendesk-edu/opendesk-edu) —
+  Educational digital workplace for universities, with planned
+  integration of MoE Sovereign as a self-hosted AI orchestration layer.
+
+---
+
 ## Competitive Landscape
 
 | Feature | MoE Sovereign | Palantir AIP | Databricks | Glean | LocalAI | CrewAI | Ollama+WebUI |

@@ -164,10 +164,37 @@ async def save_few_shot(
 
 # ── Few-shot retrieval for planner ───────────────────────────────────────────
 
+_SIGNIFICANT_TOKEN_RE = re.compile(r"[a-zA-ZäöüßÄÖÜ]{5,}")
+_MIN_SHARED_TOKENS = 3
+
+
+def _significant_tokens(text: str) -> set[str]:
+    """Lowercased alphabetic tokens of length >= 5, used as a cheap topic fingerprint."""
+    return {t for t in _SIGNIFICANT_TOKEN_RE.findall((text or "").lower())}
+
+
+def _is_topically_relevant(current_query: str, stored_query: str) -> bool:
+    """Require real lexical overlap before an unrelated past error is shown as an example.
+
+    Without this, a stored "wrong output" from a completely unrelated earlier
+    request (e.g. a fictional microservice topology) gets pattern-matched and
+    imitated by a small planner model instead of the current request -- observed
+    live during the scientific benchmark, where a financial-arithmetic prompt's
+    plan was replaced wholesale by a prior task's fabricated "datacenter audit"
+    content pulled in through this exact mechanism.
+    """
+    current_tokens = _significant_tokens(current_query)
+    stored_tokens = _significant_tokens(stored_query)
+    if not current_tokens or not stored_tokens:
+        return False
+    return len(current_tokens & stored_tokens) >= _MIN_SHARED_TOKENS
+
+
 async def get_few_shot_context(
     categories: list[str],
     redis_client=None,
     max_per_cat: int = 3,
+    query: str = "",
 ) -> str:
     """Returns few-shot context for the planner (top-N per category).
 
@@ -175,6 +202,10 @@ async def get_few_shot_context(
         categories: List of plan categories for the current request.
         redis_client: Optional Redis client.
         max_per_cat: Max entries per category.
+        query: The current request's input text. When non-empty, a stored
+            entry is only included if its own query shares real lexical
+            overlap with this one (see _is_topically_relevant) -- prevents
+            wholesale topic contamination from unrelated past requests.
 
     Returns:
         Formatted string for planner prompt injection, or ''.
@@ -193,6 +224,8 @@ async def get_few_shot_context(
                 for raw in entries_raw:
                     try:
                         e = json.loads(raw)
+                        if query and not _is_topically_relevant(query, e.get("query", "")):
+                            continue
                         cat_blocks.append(
                             f"  Q: {e.get('query', '')[:150]}\n"
                             f"  WRONG: {e.get('wrong', '')[:150]}\n"
@@ -208,13 +241,25 @@ async def get_few_shot_context(
             except Exception as e:
                 logger.debug(f"Few-shot retrieval error [{cat}]: {e}")
         else:
-            # File-based fallback
+            # File-based fallback -- same topical-relevance gate as the Redis
+            # path, applied to each entry block rather than the whole file.
             fpath = _few_shot_file(cat)
             if fpath.exists():
                 try:
                     content = fpath.read_text(encoding="utf-8")
-                    if content.strip():
+                    if not content.strip():
+                        continue
+                    if not query:
                         blocks.append(f"CORRECTIONS [{cat}]:\n" + content[:600])
+                        continue
+                    relevant_entries = [
+                        entry for entry in content.split("\n---\n")
+                        if _is_topically_relevant(query, entry)
+                    ]
+                    if relevant_entries:
+                        blocks.append(
+                            f"CORRECTIONS [{cat}]:\n" + "\n---\n".join(relevant_entries)[:600]
+                        )
                 except Exception as fe:
                     logger.debug(f"Few-shot file read error [{cat}]: {fe}")
     if not blocks:

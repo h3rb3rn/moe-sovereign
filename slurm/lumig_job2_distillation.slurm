@@ -143,21 +143,34 @@ export OMP_NUM_THREADS=7
 export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
 export TOKENIZERS_PARALLELISM=false
-export PYTHONUSERBASE="${SCRATCH}/.user_site"
-mkdir -p "$PYTHONUSERBASE"
+export CUSTOM_SITE="${SCRATCH}/.user_site"
+mkdir -p "$CUSTOM_SITE"
 
-echo "[$(date +%H:%M:%S)] Upgrading transformers in user site package for Qwen3.5 support..."
+# ── Pre-Flight Check ──────────────────────────────────────────────────────────
+echo "[$(date +%H:%M:%S)] Executing Pre-Flight Validation Check ..."
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONUSERBASE="$PYTHONUSERBASE" \
-    "$CONTAINER" python3 -m pip install --upgrade --user git+https://github.com/huggingface/transformers.git
+    --env PYTHONPATH="$CUSTOM_SITE" \
+    --env HF_HOME="$HF_CACHE" \
+    "$CONTAINER" \
+    python3 "$SCRIPT_DIR/lumig_preflight_check.py" \
+        --model-id   "$LOCAL_MODEL" \
+        --dataset    "$DATASET" \
+        --deepspeed  "$SCRIPT_DIR/deepspeed_zero2_qwen3.json" \
+        --max-seq-len "$MAX_SEQ_LEN"
+
+PREFLIGHT_EXIT=$?
+if [ $PREFLIGHT_EXIT -ne 0 ]; then
+    echo "ERROR: Pre-Flight Check failed with code $PREFLIGHT_EXIT — aborting before training!"
+    exit $PREFLIGHT_EXIT
+fi
 
 # ── Training starten ─────────────────────────────────────────────────────────
 echo "[$(date +%H:%M:%S)] Starting SFT distillation for Qwen3.5-4B (run: $TRAIN_RUN) ..."
 
 singularity exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
-    --env PYTHONUSERBASE="$PYTHONUSERBASE" \
+    --env PYTHONPATH="$CUSTOM_SITE" \
     --env HF_HOME="$HF_CACHE" \
     --env HUGGING_FACE_HUB_TOKEN="$HF_TOKEN" \
     --env ROCR_VISIBLE_DEVICES="$ROCR_VISIBLE_DEVICES" \

@@ -1,5 +1,6 @@
 """Pure final-quality decision used by the LangGraph enforcement node."""
 
+import re
 from dataclasses import dataclass
 
 from jsonschema import Draft202012Validator
@@ -262,7 +263,7 @@ def evaluate_quality_gate(state_: dict) -> QualityGateDecision:
     # Autonomous Self-Plausibility Check
     final_resp = str(state_.get("final_response") or "")
     if final_resp:
-        plaus_res = verify_response_plausibility(final_resp, state_.get("mcp_evidence") or [])
+        plaus_res = verify_response_plausibility(final_resp, state_.get("mcp_evidence") or [], task_text=state_.get("input"))
         if not plaus_res.get("plausible"):
             return QualityGateDecision("block", f"plausibility_failed:{plaus_res.get('reason')}", cynefin_domain)
 
@@ -351,12 +352,38 @@ def run_dspy_teleprompter_gate(trace: dict) -> dict:
     return {'passed': True, 'tier_failed': None, 'reason': 'Passed all tiers'}
 
 
-def verify_response_plausibility(response_text: str, context_facts: list = None) -> dict:
+_CODE_TASK_VERB_RE = re.compile(r'\b(implement|write|refactor|debug|fix)\b', re.IGNORECASE)
+_CODE_TASK_LANG_RE = re.compile(
+    r'\b(rust|c\+\+|c#|python|javascript|typescript|java|golang|go|sql|bash|shell|kotlin|swift|ruby|php)\b',
+    re.IGNORECASE,
+)
+
+
+def _task_requires_code(task_text: str) -> bool:
+    """Heuristic: does the task explicitly ask for an implementation in a
+    named programming language? Catches a failure mode distinct from
+    empty/too-short or an unclosed code fence: a long, fluent-looking
+    response that free-associates through unrelated vocabulary and never
+    once produces actual code. Observed live -- a merger synthesis response
+    to "Implement ... in Rust (or modern C++20)" degenerated (under
+    repeat_penalty, which suppresses verbatim repetition but not topic
+    drift) into a multi-thousand-word chain of loosely associated nouns and
+    verbs with zero code fences, which passed the emptiness/code-block
+    checks below undetected.
+    """
+    if not task_text:
+        return False
+    return bool(_CODE_TASK_VERB_RE.search(task_text) and _CODE_TASK_LANG_RE.search(task_text))
+
+
+def verify_response_plausibility(response_text: str, context_facts: list = None, task_text: str = None) -> dict:
     """
     Performs autonomous self-plausibility checks on a generated response:
     1. Empty / Whitespace check
     2. Contradiction & Negation check against context facts
     3. Structural formatting check (no unclosed code blocks)
+    4. Required-code check (task_text, when given, must be answered with
+       actual code if it explicitly asked for an implementation)
     """
     if not response_text or len(response_text.strip()) < 10:
         return {"plausible": False, "reason": "empty_or_too_short"}
@@ -364,6 +391,9 @@ def verify_response_plausibility(response_text: str, context_facts: list = None)
     # Check unclosed code blocks
     if response_text.count("```") % 2 != 0:
         return {"plausible": False, "reason": "unclosed_code_block"}
+
+    if task_text and _task_requires_code(task_text) and "```" not in response_text:
+        return {"plausible": False, "reason": "missing_required_code"}
 
     # Fact contradiction check if context provided
     if context_facts:

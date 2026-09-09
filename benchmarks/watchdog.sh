@@ -17,30 +17,92 @@ RESTART_COUNT=0
 
 _log() { echo "[$(date '+%H:%M:%S')] [watchdog] $*" | tee -a "$WATCHDOG_LOG"; }
 
-_bench_alive() {
-    # Primary: PID check
+STALE_HEARTBEAT_SECONDS="${MOE_WATCHDOG_STALE_SECONDS:-7200}"  # 2h: PoC hardware, not enterprise -- single compound-AI
+                                                                # calls have been observed taking up to ~78min (4689s)
+                                                                # on this hardware; 2400s (40min) caused repeated
+                                                                # false-positive restarts mid-request (2026-08-31)
+
+_bench_pid() {
+    # Never returns non-zero: under `set -e`, a bare `[[ cond ]] || return 1`
+    # (or `&& return 0`) trips the WHOLE SCRIPT the moment this function is
+    # called from anything other than a direct `if`/`while` condition -- which
+    # is exactly what happened live (_kill_hung_benchmark calls this via a
+    # plain assignment, not a condition; the script silently died right after
+    # logging "process dead or hung" and never restarted). If the lock file is
+    # missing, just produce no output instead of a nonzero return.
     if [[ -f "$LOCK_FILE" ]]; then
-        local pid
-        pid=$(python3 -c "import json,sys; d=json.load(open('$LOCK_FILE')); print(d.get('pid',''))" 2>/dev/null || echo "")
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            return 0
-        fi
+        python3 -c "import json,sys; d=json.load(open('$LOCK_FILE')); print(d.get('pid',''))" 2>/dev/null
     fi
-    # Fallback: heartbeat freshness (< 90s)
+    return 0
+}
+
+_bench_alive() {
+    # A process that is technically running but stuck inside one HTTP call with
+    # no server-side progress (observed live: a native-baseline call sat at 0%
+    # GPU utilization for ~5h, well inside its own client timeout) is NOT
+    # "alive" for watchdog purposes -- PID liveness alone cannot tell a hang
+    # from real work. Require BOTH: PID alive AND heartbeat fresher than
+    # STALE_HEARTBEAT_SECONDS. Heartbeat freshness alone (no lock file at all)
+    # remains a valid fallback signal of life.
+    #
+    # Written entirely with `if`/`fi` blocks, not `[[ ]] && cmd` one-liners:
+    # the latter trips `set -e` whenever the test is false and the statement
+    # isn't itself a condition (see _bench_pid's comment for the live incident
+    # this caused).
+    local pid
+    pid=$(_bench_pid)
+    local pid_alive=1
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        pid_alive=0
+    fi
+
     if [[ -f "$HEARTBEAT_FILE" ]]; then
         local age
         age=$(( $(date +%s) - $(stat -c %Y "$HEARTBEAT_FILE") ))
-        if [[ "$age" -lt 90 ]]; then
-            return 0
+        if [[ "$age" -lt "$STALE_HEARTBEAT_SECONDS" ]]; then
+            if [[ "$pid_alive" -eq 0 ]]; then
+                return 0
+            fi
+            # No lock file / no resolvable PID, but a fresh heartbeat -- still alive.
+            if [[ ! -f "$LOCK_FILE" ]]; then
+                return 0
+            fi
+            return 1
         fi
+        _log "Heartbeat stale (${age}s >= ${STALE_HEARTBEAT_SECONDS}s) -- treating as hung even though PID is alive."
+        return 1
+    fi
+
+    # No heartbeat file at all yet (very early startup) -- trust PID alone.
+    if [[ "$pid_alive" -eq 0 ]]; then
+        return 0
     fi
     return 1
+}
+
+_kill_hung_benchmark() {
+    local pid
+    pid=$(_bench_pid)
+    if [[ -n "$pid" ]]; then
+        if kill -0 "$pid" 2>/dev/null; then
+            _log "Killing hung benchmark PID $pid (SIGTERM)..."
+            kill "$pid" 2>/dev/null || true
+            sleep 5
+            if kill -0 "$pid" 2>/dev/null; then
+                _log "PID $pid still alive after SIGTERM -- SIGKILL."
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        fi
+    fi
+    return 0
 }
 
 _start_benchmark() {
     _log "Starting benchmark run #$((RESTART_COUNT + 1))..."
     cd "$SCRIPT_DIR/.."
-    nohup bash benchmarks/run_overnight.sh >> "$BENCH_LOG" 2>&1 &
+    # Resume from checkpoint on restart (not --fresh) -- the checkpoint-validity fix in
+    # run_scientific_benchmark.py (_result_is_valid) makes resume trustworthy again.
+    nohup python3 -u benchmarks/run_scientific_benchmark.py >> "$BENCH_LOG" 2>&1 &
     local new_pid=$!
     _log "Benchmark PID: $new_pid"
     sleep 10
@@ -54,17 +116,34 @@ _start_benchmark() {
 }
 
 _check_already_complete() {
-    # If all 10 epochs have result files and overnight_report.json exists → done
-    local results_dir
-    results_dir=$(ls -td "$SCRIPT_DIR/results"/overnight_* 2>/dev/null | head -1)
-    if [[ -z "$results_dir" ]]; then return 1; fi
-    if [[ -f "$results_dir/overnight_report.json" ]]; then
-        _log "overnight_report.json found — benchmark complete!"
+    # run_scientific_benchmark.py writes knowledge_graph_impact_delta only in the final
+    # payload (interim checkpoint writes during the run omit it) -- that key's presence is
+    # the real completion signal for this script, not overnight_report.json (GAIA suite).
+    #
+    # Must also be newer than WATCHDOG_START_EPOCH: without that check, a leftover
+    # latest_scientific_benchmark.json from a PRIOR (unrelated) completed run looks
+    # identical to this run's own completion. Observed live: a fresh, filtered
+    # single-task run was declared "complete" and the watchdog exited 30s after
+    # starting -- purely because an earlier run's result file was still sitting
+    # there with the same key -- leaving the actual run unsupervised for the rest
+    # of its (failing) execution.
+    local latest="$SCRIPT_DIR/results/latest_scientific_benchmark.json"
+    if [[ ! -f "$latest" ]]; then
+        return 1
+    fi
+    local mtime
+    mtime=$(stat -c %Y "$latest" 2>/dev/null || echo 0)
+    if [[ "$mtime" -le "$WATCHDOG_START_EPOCH" ]]; then
+        return 1
+    fi
+    if python3 -c "import json,sys; sys.exit(0 if 'knowledge_graph_impact_delta' in json.load(open('$latest')) else 1)" 2>/dev/null; then
+        _log "latest_scientific_benchmark.json has a final result from THIS run — benchmark complete!"
         return 0
     fi
     return 1
 }
 
+WATCHDOG_START_EPOCH=$(date +%s)
 _log "Watchdog started. Monitoring benchmark process..."
 _log "Max restarts: $MAX_RESTARTS"
 
@@ -78,7 +157,8 @@ while true; do
     fi
 
     if ! _bench_alive; then
-        _log "Benchmark process dead (heartbeat stale or PID gone)."
+        _log "Benchmark process dead or hung (heartbeat stale or PID gone)."
+        _kill_hung_benchmark
 
         if _check_already_complete; then
             _log "Report exists — clean completion. Exiting watchdog."

@@ -7,6 +7,7 @@ before the plan can be handed to LangGraph.
 """
 
 import copy
+import difflib
 import hashlib
 import json
 import logging
@@ -65,6 +66,71 @@ class PlannerContractError(ValueError):
             f"{details}\n"
             "Return JSON only:"
         )
+
+
+def is_task_result_ref(value: Any) -> bool:
+    """Return True for an explicit chained-operand reference object.
+
+    A reference is ``{"$task_result": "<task_id>", "field": "<optional>"}``.
+    ``field`` defaults to ``"result"`` when absent, matching the field name
+    every precision tool's structured facts use for its primary output.
+    """
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("$task_result"), str)
+        and value.get("$task_result").strip() != ""
+    )
+
+
+def resolve_task_result_refs(
+    args: Mapping[str, Any],
+    resolved_results: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Substitute ``$task_result`` references with already-produced facts.
+
+    Returns ``None`` (fail-closed) the moment any reference cannot be
+    resolved — a partially substituted argument set is never handed to a
+    tool, since that would silently run the calculation with a missing or
+    guessed operand.
+    """
+    resolved: dict[str, Any] = {}
+    for key, value in args.items():
+        if is_task_result_ref(value):
+            task_id = str(value["$task_result"])
+            field = str(value.get("field") or "result")
+            facts = resolved_results.get(task_id)
+            if not isinstance(facts, Mapping) or field not in facts:
+                return None
+            resolved[key] = facts[field]
+        elif isinstance(value, list):
+            new_list = []
+            for item in value:
+                if is_task_result_ref(item):
+                    task_id = str(item["$task_result"])
+                    field = str(item.get("field") or "result")
+                    facts = resolved_results.get(task_id)
+                    if not isinstance(facts, Mapping) or field not in facts:
+                        return None
+                    new_list.append(facts[field])
+                else:
+                    new_list.append(item)
+            resolved[key] = new_list
+        else:
+            resolved[key] = value
+    return resolved
+
+
+def _find_task_result_ref_ids(args: Mapping[str, Any]) -> list[str]:
+    """Collect every ``$task_result`` reference's task id inside ``args``."""
+    ids: list[str] = []
+    for value in args.values():
+        if is_task_result_ref(value):
+            ids.append(str(value["$task_result"]))
+        elif isinstance(value, list):
+            for item in value:
+                if is_task_result_ref(item):
+                    ids.append(str(item["$task_result"]))
+    return ids
 
 
 @dataclass(frozen=True)
@@ -143,15 +209,26 @@ def parse_plan(raw: str) -> PlannerPlan:
     plan = PlannerPlan(raw=raw or "")
     cleaned = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
     obj = _first_json(cleaned)
-    tasks = obj.get("tasks") if isinstance(obj, dict) else obj
+    if isinstance(obj, dict) and "tasks" not in obj and ("task" in obj or "category" in obj or "instruction" in obj or "description" in obj or "mcp_tool" in obj):
+        tasks = [obj]
+    else:
+        tasks = obj.get("tasks") if isinstance(obj, dict) else obj
     if isinstance(tasks, list):
         for t in tasks:
-            if isinstance(t, dict) and (t.get("category") or t.get("instruction") or t.get("task")):
-                plan.tasks.append(PlanTask(
-                    category=str(t.get("category", "general")),
-                    instruction=str(t.get("instruction") or t.get("task") or ""),
-                    payload=dict(t),
-                ))
+            if isinstance(t, dict):
+                cat = str(t.get("category") or t.get("task_type") or t.get("type") or "general")
+                instruction = str(t.get("instruction") or t.get("task") or t.get("task_description") or t.get("description") or "")
+                if cat or instruction:
+                    payload = dict(t)
+                    if "task" not in payload and instruction:
+                        payload["task"] = instruction
+                    if "category" not in payload and cat:
+                        payload["category"] = cat
+                    plan.tasks.append(PlanTask(
+                        category=cat,
+                        instruction=instruction,
+                        payload=payload,
+                    ))
         plan.valid = bool(plan.tasks)
     if not plan.valid and os.getenv("MOE_STRICT_CONTRACTS", "0") == "1":
         logger.error("contracts: planner output failed schema parse (chars=%d)", len(raw or ""))
@@ -173,6 +250,68 @@ def assign_stable_task_ids(tasks: list[dict]) -> list[dict]:
         task["id"] = task_id
         used.add(task_id)
     return tasks
+
+
+_DEP_MATCH_THRESHOLD = 0.6  # difflib.SequenceMatcher ratio for fuzzy depends_on repair
+
+
+def normalize_task_dependencies(tasks: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Repair or drop planner-emitted `depends_on` values, in place.
+
+    The planner is instructed to reference a prior task's `id` in
+    `depends_on`, but sometimes emits that task's natural-language `task`
+    description instead (or, less often, a forward reference to a task that
+    has not run yet). Neither form resolves against `working_memory` at
+    dispatch time (see services/dor_check.py, rule "unresolved_dependency"),
+    and a single unresolved dependency currently causes the *entire* plan to
+    be reported as incomplete downstream (services/quality_gate.py,
+    incomplete_plan_tasks) — one bad depends_on field blocks the whole
+    response, not just the dependent task.
+
+    Must run after assign_stable_task_ids() so every task already has its
+    final `id`. Repairs a depends_on value that fuzzy-matches an *earlier*
+    task's description to that task's id; drops (clears) a depends_on value
+    that cannot be resolved to any earlier task, so the task is scheduled as
+    independent instead of being treated as permanently not-ready.
+
+    Returns (tasks, repairs) — repairs is a list of
+    {"task_id", "from", "to"} dicts for logging (to == "" means dropped).
+    """
+    repairs: list[dict] = []
+    known_ids = {str(t.get("id") or "") for t in tasks}
+    for index, task in enumerate(tasks):
+        dep = str(task.get("depends_on") or "").strip()
+        if not dep:
+            continue
+        if dep in known_ids:
+            # Guard against a self-reference or a forward reference — both
+            # are unresolvable at dispatch time regardless of the id being
+            # syntactically valid.
+            earlier_ids = {str(t.get("id") or "") for t in tasks[:index]}
+            if dep in earlier_ids:
+                continue
+            repairs.append({"task_id": task.get("id"), "from": dep, "to": ""})
+            task["depends_on"] = ""
+            continue
+
+        best_id, best_ratio = "", 0.0
+        dep_norm = dep.casefold().strip()
+        for earlier in tasks[:index]:
+            candidate_text = str(earlier.get("task") or "").casefold().strip()
+            if not candidate_text:
+                continue
+            if dep_norm == candidate_text or dep_norm in candidate_text or candidate_text in dep_norm:
+                best_id, best_ratio = str(earlier.get("id") or ""), 1.0
+                break
+            ratio = difflib.SequenceMatcher(None, dep_norm, candidate_text).ratio()
+            if ratio > best_ratio:
+                best_id, best_ratio = str(earlier.get("id") or ""), ratio
+
+        resolved = best_id if best_ratio >= _DEP_MATCH_THRESHOLD else ""
+        if resolved != dep:
+            repairs.append({"task_id": task.get("id"), "from": dep, "to": resolved})
+            task["depends_on"] = resolved
+    return tasks, repairs
 
 
 def _infer_precision_contracts(text: str) -> list[tuple[str, dict]]:
@@ -1095,6 +1234,11 @@ def validate_plan_tasks(
         )
 
     schemas = tool_schemas or {}
+    _task_id_positions = {
+        task.get("id"): position
+        for position, task in enumerate(tasks)
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
     for index, task in enumerate(tasks):
         if not isinstance(task, dict):
             issues.append(
@@ -1209,6 +1353,47 @@ def validate_plan_tasks(
                     "mcp_args",
                 )
             )
+
+        for ref_task_id in _find_task_result_ref_ids(args):
+            if ref_task_id == task.get("id"):
+                issues.append(
+                    PlannerContractIssue(
+                        index,
+                        "task_result_reference_cycle",
+                        f"task references its own result ('{ref_task_id}')",
+                        "mcp_args",
+                    )
+                )
+                continue
+            ref_index = _task_id_positions.get(ref_task_id)
+            if ref_index is None or ref_index >= index:
+                issues.append(
+                    PlannerContractIssue(
+                        index,
+                        "invalid_task_result_reference",
+                        f"'{ref_task_id}' must reference an earlier "
+                        "precision_tools task in the same plan",
+                        "mcp_args",
+                    )
+                )
+                continue
+            ref_task = tasks[ref_index]
+            ref_tool = ref_task.get("mcp_tool") if isinstance(ref_task, dict) else None
+            if (
+                not isinstance(ref_task, dict)
+                or ref_task.get("category") != "precision_tools"
+                or not isinstance(ref_tool, str)
+                or not ref_tool.strip()
+            ):
+                issues.append(
+                    PlannerContractIssue(
+                        index,
+                        "invalid_task_result_reference",
+                        f"'{ref_task_id}' does not identify a "
+                        "precision_tools task with a resolved mcp_tool",
+                        "mcp_args",
+                    )
+                )
 
     if input_query:
         issues.extend(

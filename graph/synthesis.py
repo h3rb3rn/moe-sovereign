@@ -121,6 +121,129 @@ from graph.research import _rerank_graph_context, _compress_graph_context_llm
 from services.deadline import RequestDeadlineExceeded, remaining_timeout
 from episodic_memory import log_episode
 
+_RUST_CODE_FENCE_RE = re.compile(r"```rust\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+_RUST_COMPILE_CHECK_CATEGORIES = {"systems_programming", "code_reviewer"}
+_RUST_COMPILE_CHECK_TIMEOUT_S = 60.0  # PoC hardware -- above mcp_server's own _RUST_COMPILE_HTTP_TIMEOUT_S (45s)
+
+# Loom (Phase 2) only makes sense for a response that is *already written*
+# as a loom-model test (a `#[test] fn` calling `loom::model(...)` against
+# loom's own Arc/Mutex/Atomic/thread shims) -- rust_compile_check's plain
+# "does it compile" fence can be arbitrary code, but feeding that same
+# arbitrary code straight into the loom sandbox would almost always fail to
+# compile there (no loom imports, no loom::model call) and generate a
+# meaningless "fix these errors" retry prompt. Gating on the literal `loom::`
+# marker means this only activates when the expert/merger response already
+# demonstrates concurrency verification, not on every concurrent-looking fence.
+#
+# Kept in sync with _RUST_COMPILE_CHECK_CATEGORIES: EXPERT_MODELS has no
+# "systems_programming" key, so a planner-assigned category of that name
+# falls back to the "general" expert at dispatch time (graph/expert.py) --
+# without "code_reviewer" here too, the gate would silently never fire for
+# the actual routed coder expert and this file would never collect examples.
+_RUST_LOOM_CHECK_CATEGORIES = {"systems_programming", "code_reviewer"}
+_RUST_LOOM_MARKER_RE = re.compile(r"\bloom::")
+_RUST_LOOM_CHECK_TIMEOUT_S = 280.0  # PoC hardware -- above mcp_server's own _RUST_LOOM_HTTP_TIMEOUT_S (240s)
+
+# Raw material for a future LUMI-G SFT/DPO pass on Candidate 1 (acquire-
+# release memory-ordering reasoning, docs/experiments/
+# lumig_posttraining_candidates.md) -- that document's own recommendation is
+# a compiler/sanitizer-verified reward signal instead of pure LLM-judge
+# feedback, which rust_loom_check now provides live. Written under data/
+# (bind-mounted, ./data:/app/data:rw in docker-compose.yml) rather than
+# docs/ or any other image-baked path, so entries survive a langgraph-app
+# rebuild instead of vanishing with the old container layer.
+_LOOM_TRAINING_EXAMPLES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "loom_training_examples.jsonl"
+)
+
+
+def _record_loom_training_example(
+    request_id: str, source: str, loom_result: dict, attempt: int, max_attempts: int,
+) -> None:
+    """Best-effort, append-only collection of real rust_loom_check outcomes.
+
+    Only records a determinate verdict (compiles is not None, not timed out)
+    -- a sandbox-unreachable/timeout result carries no training signal.
+    `request_id` lets a later curation pass group every attempt for the same
+    response and derive a (rejected, chosen) pair from a failing attempt
+    followed by the eventually-accepted corrected one. Never raises: this is
+    data collection, not a control path, and must never affect the actual
+    merger retry logic it sits alongside.
+    """
+    if loom_result.get("compiles") is None or loom_result.get("timed_out"):
+        return
+    try:
+        from datetime import datetime, timezone
+        record = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "request_id": request_id,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "source": source,
+            "compiles": loom_result.get("compiles"),
+            "passed": loom_result.get("passed"),
+            "output_tail": (loom_result.get("output_tail") or "")[-2000:],
+            "duration_ms": loom_result.get("duration_ms"),
+        }
+        os.makedirs(os.path.dirname(_LOOM_TRAINING_EXAMPLES_FILE), exist_ok=True)
+        with open(_LOOM_TRAINING_EXAMPLES_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.debug("Failed recording loom training example (non-fatal): %s", exc)
+
+
+async def _call_rust_compile_check(source: str) -> dict:
+    """Call the rust_compile_check MCP precision tool directly via HTTP,
+    bypassing the planner-mediated dispatch (mirrors graph/hypothesis_verifier.py's
+    _call_sandbox pattern for python_sandbox). Fail-open: any sandbox/transport
+    error returns compiles=None rather than raising, since this check is a
+    quality improvement, not a hard gate, in this first increment.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_COMPILE_CHECK_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{MCP_URL}/invoke",
+                json={"tool": "rust_compile_check", "args": {"source": source}},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        result_str = payload.get("result") if isinstance(payload, dict) else None
+        if not result_str:
+            return {"compiles": None}
+        return json.loads(result_str)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug("rust_compile_check call failed (fail-open): %s", exc)
+        return {"compiles": None}
+
+
+async def _call_rust_loom_check(source: str) -> dict:
+    """Call the rust_loom_check MCP precision tool directly via HTTP, same
+    bypass pattern as _call_rust_compile_check above. Fail-open: any
+    sandbox/transport error (including the sandbox being stopped entirely)
+    returns compiles=None/passed=None rather than raising -- like the
+    compile check, this is a quality improvement on top of an already-passed
+    compile check, not a hard gate.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_LOOM_CHECK_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{MCP_URL}/invoke",
+                json={"tool": "rust_loom_check", "args": {"source": source}},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        result_str = payload.get("result") if isinstance(payload, dict) else None
+        if not result_str:
+            return {"compiles": None, "passed": None}
+        return json.loads(result_str)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug("rust_loom_check call failed (fail-open): %s", exc)
+        return {"compiles": None, "passed": None}
+
 
 async def merger_node(state_: AgentState):
     from datetime import datetime
@@ -320,14 +443,35 @@ async def merger_node(state_: AgentState):
         _max_refine = 0
     elif state_.get("complexity_level") in ("trivial", "moderate"):
         _max_refine = min(1, JUDGE_REFINE_MAX_ROUNDS)
+    # Categories with an unresolved paraconsistent conflict (_new_conflicts,
+    # collected above) get folded into this same refinement loop, for ANY
+    # category -- not just _SAFETY_CRITICAL_CATS. Two experts disagreeing is
+    # itself worth Judge attention regardless of domain: the chain shouldn't
+    # end at "Judge observes and logs a dismissed conflict" when the exact
+    # mechanism to feed a verdict back into a real re-generation already
+    # exists (this loop). Previously, resolve_conflicts_node (which runs
+    # AFTER this node has already synthesized final_response -- too late to
+    # help) only arbitrated safety-critical conflicts and only ever recorded
+    # the verdict as an audit trail, never regenerating anything; everything
+    # else was silently dismissed ("Strategy C: no LLM cost warranted"),
+    # which let contradicting expert answers erode Trust-Score round after
+    # round with nothing ever correcting them.
+    _pending_conflict_cats = {
+        c["category"] for c in _new_conflicts if c.get("resolution") == "pending"
+    }
     if _max_refine > 0 and expert_results:
         for _refine_round in range(_max_refine):
             low_conf_list = [r for r in expert_results if _parse_expert_confidence(r) == "low"]
-            if not low_conf_list:
+            conflict_list = [
+                r for r in expert_results
+                if _expert_category(r) in _pending_conflict_cats and r not in low_conf_list
+            ]
+            refine_list = low_conf_list + conflict_list
+            if not refine_list:
                 break
-            _judge_refined_cats.update(_expert_category(r) for r in low_conf_list)
+            _judge_refined_cats.update(_expert_category(r) for r in refine_list)
             await _report(f"🔄 Refinement round {_refine_round + 1}/{_max_refine}: "
-                          f"{len(low_conf_list)} low-confidence experts")
+                          f"{len(low_conf_list)} low-confidence, {len(conflict_list)} conflicted experts")
             # Judge generates feedback — enriched with web/graph context
             _ctx_snippet = ""
             _jbudget = _judge_ctx_budget(state_.get("judge_num_ctx", 0))
@@ -335,11 +479,31 @@ async def merger_node(state_: AgentState):
                 _ctx_snippet += f"\nWEB CONTEXT (excerpt):\n{web[:_jbudget['web_context']]}"
             if graph_ctx:
                 _ctx_snippet += f"\nGRAPH KNOWLEDGE (excerpt):\n{graph_ctx[:_jbudget['graph_context']]}"
+            _conflict_cats_this_round = {_expert_category(r) for r in conflict_list}
+            _conflict_section = ""
+            if _conflict_cats_this_round:
+                _conflict_parts = [
+                    f"[{c['category']}] Two experts disagree:\n"
+                    f"PROPOSITION A:\n{c['proposition_a']}\n\n"
+                    f"PROPOSITION B:\n{c['proposition_b']}\n"
+                    "Determine which approach is technically correct (or synthesize "
+                    "the correct answer if both are partially right/wrong), and give "
+                    "the expert concrete corrective guidance to produce the right "
+                    "implementation."
+                    for c in _new_conflicts
+                    if c.get("resolution") == "pending" and c["category"] in _conflict_cats_this_round
+                ]
+                _conflict_section = (
+                    "\n\nADDITIONALLY, arbitrate these expert disagreements and "
+                    "include your arbitration guidance in the same [CATEGORY]: <...> "
+                    "format below:\n\n" + "\n\n".join(_conflict_parts)
+                )
             gap_prompt = (
                 "Analyze these expert responses with CONFIDENCE: low and formulate "
                 "concrete, specific improvement hints for each category (max. 3 sentences). "
                 "Use available context to directly name missing facts:\n\n"
-                + "\n\n".join(low_conf_list)
+                + ("\n\n".join(low_conf_list) if low_conf_list else "(none)")
+                + _conflict_section
                 + _ctx_snippet
                 + "\n\nFormat: [CATEGORY]: <improvement hints with concrete facts>"
             )
@@ -354,10 +518,10 @@ async def merger_node(state_: AgentState):
             except Exception as _ge:
                 logger.warning(f"⚠️ Refinement judge feedback round {_refine_round + 1}: {_ge}")
                 break
-            # Per low-confidence category: re-invoke the best expert
+            # Per low-confidence/conflicted category: re-invoke the best expert
             any_improvement = False
             new_expert_results = list(expert_results)
-            for old_result in low_conf_list:
+            for old_result in refine_list:
                 _cat = _expert_category(old_result)
                 # Extract category-specific feedback
                 cat_feedback = gap_feedback_text
@@ -391,6 +555,17 @@ async def merger_node(state_: AgentState):
                             "correction_source": "judge_refinement",
                             "tenant_id": ",".join(state_.get("tenant_ids", [])),
                         })
+                    if _cat in _pending_conflict_cats:
+                        # Mutating the dicts in _new_conflicts in place is
+                        # sufficient: that same list object is returned
+                        # verbatim as conflict_registry below, and
+                        # resolve_conflicts_node only re-arbitrates entries
+                        # still marked "pending".
+                        for _c in _new_conflicts:
+                            if _c.get("resolution") == "pending" and _c["category"] == _cat:
+                                _c["resolution"] = "resolved"
+                                _c["resolved_by"] = "merger_refine_arbitration"
+                        _pending_conflict_cats.discard(_cat)
             expert_results = new_expert_results
             if not any_improvement:
                 await _report(f"⏹️ Refinement stopped: no significant improvement "
@@ -975,6 +1150,8 @@ async def merger_node(state_: AgentState):
     res = None
     _last_judge_error: Optional[Exception] = None
     _retry_model_override = ""
+    _current_prompt = prompt
+    _code_categories_present = {_expert_category(r) for r in expert_results} & _RUST_COMPILE_CHECK_CATEGORIES
     for _sf_attempt in range(_structured_attempts):
         _attempt_state = state_
         _using_fallback = bool(_retry_model_override)
@@ -986,11 +1163,113 @@ async def merger_node(state_: AgentState):
         try:
             res = await _invoke_judge_with_retry(
                 _attempt_state,
-                prompt,
+                _current_prompt,
                 max_retries=1,
                 temperature=state_.get("query_temperature"),
+                # Discourage degenerate repetition loops: observed live, the
+                # merger synthesis call fell into repeating a single line
+                # ("// I will output the SPSC code.") dozens of times instead
+                # of emitting the actual answer, cutting the response off
+                # mid code-fence. repeat_last_n widens the lookback window so
+                # a repeated multi-token phrase (not just a single token) is
+                # penalized too.
+                # 1.3 was too aggressive: on a code-generation task, observed
+                # live (4 separate runs) to push the model into a different
+                # degenerate mode instead -- a multi-thousand-token chain of
+                # loosely associated, topically unrelated words that reads as
+                # fluent prose and produces zero actual code, one run growing
+                # past 22k tokens before being manually aborted. Lowered to
+                # 1.15, still enough to suppress verbatim repetition without
+                # penalizing recently-used *concepts* so hard that the model
+                # is forced to keep hunting for novel (unrelated) vocabulary.
+                repeat_penalty=1.15,
+                repeat_last_n=256,
             )
-            break
+            from services.quality_gate import verify_response_plausibility
+            _plausibility = verify_response_plausibility(res.content or "", task_text=state_.get("input"))
+            if _plausibility["plausible"]:
+                # Deterministic ground-truth check on top of the plausibility
+                # heuristic: for code-generation categories, actually
+                # type/borrow-check any Rust code fence via the isolated
+                # rust_compile_check sandbox, instead of relying solely on
+                # LLM self-review to catch lifetime/ownership/interior-
+                # mutability defects (see docs/experiments/
+                # lumig_posttraining_candidates.md for the motivating,
+                # repeatedly-observed evidence). Fail-open on sandbox errors
+                # (compiles is None) -- this is a quality improvement, not a
+                # hard gate, in this first increment.
+                _rust_match = _RUST_CODE_FENCE_RE.search(res.content or "") if _code_categories_present else None
+                if _rust_match:
+                    _compile_result = await _call_rust_compile_check(_rust_match.group(1))
+                    if _compile_result.get("compiles") is False:
+                        _diag_lines = [
+                            f"  line {d.get('line')}: {d.get('message')}"
+                            for d in (_compile_result.get("diagnostics") or [])[:10]
+                        ]
+                        logger.warning(
+                            "Merger synthesis attempt %d/%d: Rust code fence does not compile:\n%s",
+                            _sf_attempt + 1, _structured_attempts, "\n".join(_diag_lines),
+                        )
+                        _last_judge_error = RuntimeError("rust_compile_check: does not compile")
+                        if _sf_attempt + 1 < _structured_attempts:
+                            _current_prompt = (
+                                prompt
+                                + "\n\nYour previous answer's Rust code does not compile. "
+                                "Fix these exact compiler errors and provide a corrected, "
+                                "complete answer:\n" + "\n".join(_diag_lines)
+                            )
+                            continue
+                        # Attempts exhausted -- fall through and keep the last
+                        # (non-compiling) result, same policy as the
+                        # plausibility check below.
+                    elif (
+                        _code_categories_present & _RUST_LOOM_CHECK_CATEGORIES
+                        and _RUST_LOOM_MARKER_RE.search(_rust_match.group(1))
+                    ):
+                        # Compiled cleanly and is already written as a loom
+                        # test -- actually run it to catch a memory-ordering
+                        # data race, which compiling alone cannot (see
+                        # docs/experiments/lumig_posttraining_candidates.md).
+                        _loom_result = await _call_rust_loom_check(_rust_match.group(1))
+                        _record_loom_training_example(
+                            state_.get("response_id", ""), _rust_match.group(1),
+                            _loom_result, _sf_attempt + 1, _structured_attempts,
+                        )
+                        if _loom_result.get("passed") is False:
+                            logger.warning(
+                                "Merger synthesis attempt %d/%d: loom found a concurrency violation:\n%s",
+                                _sf_attempt + 1, _structured_attempts,
+                                (_loom_result.get("output_tail") or "")[-1500:],
+                            )
+                            _last_judge_error = RuntimeError("rust_loom_check: concurrency violation found")
+                            if _sf_attempt + 1 < _structured_attempts:
+                                _current_prompt = (
+                                    prompt
+                                    + "\n\nYour previous answer's Rust code compiles but Loom found a "
+                                    "concurrency/memory-ordering violation when actually running it. "
+                                    "Fix the synchronization and provide a corrected, complete answer:\n"
+                                    + (_loom_result.get("output_tail") or "")[-1500:]
+                                )
+                                continue
+                            # Attempts exhausted -- fall through and keep the
+                            # last (loom-failing) result, same policy as above.
+                break
+            logger.warning(
+                "Merger synthesis attempt %d/%d failed plausibility check: %s",
+                _sf_attempt + 1, _structured_attempts, _plausibility["reason"],
+            )
+            _last_judge_error = RuntimeError(
+                f"implausible response: {_plausibility['reason']}"
+            )
+            if _sf_attempt + 1 >= _structured_attempts:
+                # Attempts exhausted -- keep the last (implausible) result
+                # rather than discarding it silently. Downstream checks
+                # (quality_gate_node's own plausibility gate, Constitution
+                # enforcement) still see it and can reject it properly;
+                # this loop's job is only to reduce how OFTEN that happens,
+                # not to guarantee it never does.
+                break
+            continue
         except RequestDeadlineExceeded:
             _degraded = _validated_degraded_candidate(
                 "merger_deadline_exceeded"
@@ -1893,18 +2172,28 @@ async def self_critique_node(state_: AgentState):
     return {"self_critique_round": round_num}
 
 
-def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
+def _log_hallucination_check(state_: AgentState, corrected: bool, upgraded: bool = False) -> None:
     """Decision-log entry for the critic_node's hallucination-risk trigger
     (see critic_node docstring) — separate from the pre-existing
     safety-critical fact-check path, which isn't logged as a distinct
-    decision type."""
+    decision type. `upgraded` must reflect what the caller's return value
+    actually does to trust_verdict, not be re-derived here from the prior
+    verdict alone -- a non-compliant critic reply also has a prior BLOCK
+    verdict but performs no upgrade, and the two must not read the same in
+    the log."""
     try:
         from services.decision_log import log_decision, DecisionType
+        _prior_verdict = (state_.get("trust_verdict") or "").upper()
+        _verdict_note = (
+            "upgraded a stale BLOCK to PROCEED_WITH_ASSUMPTION"
+            if upgraded
+            else f"Trust-Score stayed {_prior_verdict or 'PROCEED_WITH_ASSUMPTION'}"
+        )
         log_decision(
             DecisionType.HALLUCINATION_CHECK,
             state_.get("response_id", ""),
             rationale=(
-                f"Trust-Score stayed PROCEED_WITH_ASSUMPTION — claim check "
+                f"{_verdict_note} — claim check "
                 f"against retrieved sources {'found and corrected unsupported claims' if corrected else 'found no unsupported claims'}"
             ),
             metadata={
@@ -1915,6 +2204,61 @@ def _log_hallucination_check(state_: AgentState, corrected: bool) -> None:
         )
     except Exception as _e:
         logger.debug("Hallucination-check decision log failed: %s", _e)
+
+
+_CRITIC_TRAILING_CONFIRMED_RE = re.compile(r'\bCONFIRMED\b\s*$', re.IGNORECASE)
+
+# The critic prompt explicitly bans opening with meta-commentary and names
+# "Factual errors were found"/"The answer contains mistakes" as examples of
+# what NOT to write. Observed live, twice, across unrelated tasks: the judge
+# opens a "corrected answer" with exactly this banned pattern ("The answer
+# contains a critical factual error regarding the Rust implementation...",
+# "The answer contains a critical technical error in its reasoning
+# regarding memory orderings...") and then never gets around to providing a
+# complete replacement -- just an analysis of what's wrong. This is a
+# distinct failure mode from the trailing-CONFIRMED case: the model isn't
+# confirming, it's diagnosing without delivering a fix, which the pure
+# code-marker check below can miss when the diagnosis quotes fragments of
+# the original code (e.g. inline `tail_` CAS mentions or a fenced excerpt of
+# the flawed snippet), making it look like "code is still present". A fifth
+# variant quotes the prompt's own "ANSWER TO CHECK:" section header back
+# verbatim, optionally in quotes ('The provided "ANSWER TO CHECK" is
+# severely corrupted...') instead of using a plain noun -- the quote
+# handling and the "to check" suffix below cover it.
+_CRITIC_PREAMBLE_RE = re.compile(
+    r'^\s*the\s+(provided\s+|given\s+)?["“]?'
+    r'(answer(\s+to\s+check)?|response|implementation|code)["”]?\b'
+    r'|^\s*(unsupported|incorrect|critical)\s+(claim|flaw|error)\b',
+    re.IGNORECASE,
+)
+
+
+def _critic_is_noncompliant_confirmation(critic_out: str, original: str) -> bool:
+    """Detect a judge reply that either reached a CONFIRMED verdict, or
+    diagnosed a problem, without the required "start with CONFIRMED, or a
+    direct corrected answer, no preamble" format.
+
+    critic_node's prompt requires either the bare word CONFIRMED or a direct
+    corrected answer with zero preamble. A judge that free-associates a long
+    deliberation and only concludes CONFIRMED at the very end fails the
+    ``.startswith("CONFIRMED")`` check below, so without this guard the
+    entire deliberation trace silently replaces the real answer. Observed
+    live: a correct Rust implementation replaced by an ~800-word internal
+    monologue about whether the claim counts as "unsupported", ending in a
+    bare "CONFIRMED" instead of a corrected answer.
+    """
+    stripped = critic_out.strip()
+    if _CRITIC_TRAILING_CONFIRMED_RE.search(stripped):
+        return True
+    if _CRITIC_PREAMBLE_RE.match(stripped):
+        return True
+    # A real correction of a code answer still contains code. A reply with
+    # none, while the original clearly had some, is deliberation/meta-
+    # commentary rather than a replacement answer.
+    _CODE_MARKERS = ("```", "<!DOCTYPE", "<html", "def ", "function ", "class ", "import ", "setInterval")
+    if any(m in original for m in _CODE_MARKERS) and not any(m in critic_out for m in _CODE_MARKERS):
+        return True
+    return False
 
 
 async def critic_node(state_: AgentState):
@@ -2125,6 +2469,34 @@ async def critic_node(state_: AgentState):
             await _record_stage(state_.get("response_id", ""), "critic", "confirmed")
             logger.info("✅ Critic: no errors found")
             if hallucination_risk and not active:
+                # The unsupported-claims check that just ran is exactly what
+                # a BLOCK verdict challenges (see the "else" critic_prompt
+                # branch above, which fires specifically because trust stayed
+                # low after self-critique). Finding no unsupported claims
+                # addresses that reason, so a stale BLOCK from an earlier
+                # merger round must not keep quality_gate_node blocking a
+                # response the fact-check just cleared.
+                _will_upgrade = trust_verdict == "BLOCK"
+                _log_hallucination_check(state_, corrected=False, upgraded=_will_upgrade)
+                if _will_upgrade:
+                    return {"final_response": final_response, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
+            return {"final_response": final_response, **usage}
+
+        if _critic_is_noncompliant_confirmation(critic_out, final_response):
+            logger.warning(
+                "⚠️ Critic: non-compliant judge format (CONFIRMED reached without "
+                "the required leading format, or code dropped from the reply) — "
+                "preserving merger answer instead of overwriting it with the "
+                "judge's deliberation trace"
+            )
+            await _report(
+                "⚠️ Critic: judge reply was a non-compliant deliberation, not a "
+                "correction — merger answer preserved"
+            )
+            await _record_stage(
+                state_.get("response_id", ""), "critic", "confirmed", "non_compliant_format"
+            )
+            if hallucination_risk and not active:
                 _log_hallucination_check(state_, corrected=False)
             return {"final_response": final_response, **usage}
 
@@ -2132,7 +2504,14 @@ async def critic_node(state_: AgentState):
         await _record_stage(state_.get("response_id", ""), "critic", "corrected")
         logger.info(f"⚠️ Critic hat Korrekturen vorgenommen: {critic_out[:100]}")
         if hallucination_risk and not active:
-            _log_hallucination_check(state_, corrected=True)
+            # See the CONFIRMED branch above: the critic just grounded the
+            # unsupported claims that a stale BLOCK verdict was flagging, so
+            # let the corrected response through instead of quality_gate_node
+            # discarding it based on a trust_verdict computed before this fix.
+            _will_upgrade = trust_verdict == "BLOCK"
+            _log_hallucination_check(state_, corrected=True, upgraded=_will_upgrade)
+            if _will_upgrade:
+                return {"final_response": critic_out, "trust_verdict": "PROCEED_WITH_ASSUMPTION", **usage}
         return {"final_response": critic_out, **usage}
     except Exception as e:
         logger.warning(f"Critic node error: {e}")
@@ -2184,7 +2563,8 @@ async def quality_gate_node(state_: AgentState):
         }
 
     if decision.action == "block":
-        await _record_stage(request_id, "quality_gate", "blocked")
+        logger.warning("Quality gate blocked req=%s reason=%s", request_id, decision.reason)
+        await _record_stage(request_id, "quality_gate", "blocked", str(decision.reason))
         _record_precision_quality("blocked")
         if required_precision and str(decision.reason).startswith("precision_"):
             from services.precision_telemetry import record_precision_event
@@ -2233,7 +2613,8 @@ async def quality_gate_node(state_: AgentState):
 
     if not gate_id:
         # A required human gate may never fail open by releasing the draft.
-        await _record_stage(request_id, "quality_gate", "storage_unavailable")
+        logger.warning("HITL gate storage unavailable req=%s reason=%s", request_id, reason)
+        await _record_stage(request_id, "quality_gate", "storage_unavailable", str(reason))
         _record_precision_quality("blocked")
         return {
             "final_response": "",

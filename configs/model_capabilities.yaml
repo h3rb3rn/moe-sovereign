@@ -24,6 +24,11 @@ models:
     json_object: true
     stream: true
 
+  "qwen3.8:27b":
+    json_schema: true
+    json_object: true
+    stream: true
+
   "qwen2.5:32b":
     json_schema: true
     json_object: true
@@ -82,3 +87,9 @@ models:
     json_schema: false
     json_object: false
     stream: true
+
+  "moe-sovereign-student:4b":
+    json_schema: false
+    json_object: false
+    stream: true
+

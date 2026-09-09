@@ -67,9 +67,10 @@ COPY --chown=1001:0 . /app
 
 # Writable paths must exist before USER switch, then be chgrp'd to GID 0 so
 # OpenShift's random-UID + GID-0 convention can write to them.
-RUN mkdir -p "$MOE_LOGS_DIR" "$MOE_SKILLS_DIR" "$MOE_CACHE_DIR" \
- && chgrp -R 0 /app \
- && chmod -R g=u /app
+RUN mkdir -p "$MOE_LOGS_DIR" "$MOE_SKILLS_DIR" "$MOE_CACHE_DIR" /app/.cache/chroma/onnx_models /app/.cache/huggingface /app/.cache/torch \
+ && chown -R 1001:0 /app \
+ && chmod -R g=u /app \
+ && chmod -R 777 /app/logs /app/skills /app/cache /app/.cache
 
 USER 1001:0
 

@@ -167,3 +167,75 @@ def test_quality_router_only_selects_commit_after_pass():
     assert _route_quality_gate({"quality_gate_status": "passed"}) == "response_commit"
     assert _route_quality_gate({"quality_gate_status": "blocked"}) == "end"
     assert _route_quality_gate({"quality_gate_status": "pending"}) == "end"
+
+
+class _FailingRedis(_Redis):
+    """Raises on every call -- simulates a Redis outage (e.g. Valkey's
+    stop-writes-on-bgsave-error MISCONF state), not merely a missing client."""
+
+    async def get(self, key):
+        raise ConnectionError("simulated redis outage")
+
+    async def set(self, key, value, ex=None, nx=False):
+        raise ConnectionError("simulated redis outage")
+
+    async def delete(self, key):
+        raise ConnectionError("simulated redis outage")
+
+
+@pytest.mark.asyncio
+async def test_commit_completes_despite_redis_outage(monkeypatch):
+    """response_commit_node sits last before END in the graph -- a Redis
+    error here must never discard an otherwise-complete pipeline run
+    (planner/expert/merger/judge already finished). Every Redis touch in
+    commit_response_payload must fail open, matching the rate limiter,
+    planner cache, and node-reservation checks elsewhere in the codebase."""
+    monkeypatch.setattr(commit.state, "redis_client", _FailingRedis())
+    calls = {"cache": 0}
+
+    async def cache_sink():
+        calls["cache"] += 1
+
+    async def sinks(_payload):
+        return {"cache": cache_sink}
+
+    monkeypatch.setattr(commit, "_sink_map", sinks)
+
+    result = await commit.commit_response_payload(_payload())
+
+    assert result["status"] == "complete"
+    assert calls == {"cache": 1}
+
+
+@pytest.mark.asyncio
+async def test_journal_read_failure_returns_empty_not_raises():
+    async def _boom():
+        raise ConnectionError("simulated redis outage")
+
+    class _R:
+        async def get(self, key):
+            raise ConnectionError("simulated redis outage")
+
+    import state as _state_mod
+    original = _state_mod.redis_client
+    _state_mod.redis_client = _R()
+    try:
+        journal = await commit._read_journal("moe:response_commit:some-key")
+    finally:
+        _state_mod.redis_client = original
+    assert journal == {}
+
+
+@pytest.mark.asyncio
+async def test_journal_write_failure_does_not_raise():
+    class _R:
+        async def set(self, key, value, ex=None):
+            raise ConnectionError("simulated redis outage")
+
+    import state as _state_mod
+    original = _state_mod.redis_client
+    _state_mod.redis_client = _R()
+    try:
+        await commit._write_journal("moe:response_commit:some-key", {"status": "complete"})  # must not raise
+    finally:
+        _state_mod.redis_client = original

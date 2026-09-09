@@ -951,6 +951,107 @@ def structured_validate(
     return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+_RUST_COMPILE_SANDBOX_URL = os.getenv(
+    "RUST_COMPILE_SANDBOX_URL", "http://rust-compile-sandbox:8080"
+)
+_RUST_COMPILE_MAX_SOURCE_CHARS = 200_000
+_RUST_COMPILE_HTTP_TIMEOUT_S = 45.0  # PoC hardware -- must stay above rust_compile_sandbox's own _COMPILE_TIMEOUT_S (30s)
+
+
+@mcp.tool()
+async def rust_compile_check(source: str, edition: str = "2021") -> str:
+    """Type/borrow-check Rust source in an isolated, network-free sandbox.
+
+    Runs `rustc --emit=metadata` (analysis only -- no codegen, no linking,
+    the code is never executed) against the given source and returns
+    structured diagnostics. Use this to verify a Rust answer actually
+    compiles before presenting it as correct; it catches lifetime,
+    ownership, interior-mutability and type errors deterministically,
+    which LLM self-review misses or catches inconsistently.
+    """
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source_must_be_non_empty_string")
+    if len(source) > _RUST_COMPILE_MAX_SOURCE_CHARS:
+        raise ValueError("source_exceeds_size_limit")
+    if edition not in {"2015", "2018", "2021", "2024"}:
+        raise ValueError("unsupported_edition")
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_COMPILE_HTTP_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{_RUST_COMPILE_SANDBOX_URL}/compile-check",
+                json={"source": source, "edition": edition},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        logger.warning(f"rust_compile_check sandbox call failed: {exc}")
+        return json.dumps(
+            {"compiles": None, "diagnostics": [], "duration_ms": 0, "sandbox_error": str(exc)[:300]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+    facts = {
+        "compiles": result.get("compiles"),
+        "diagnostics": (result.get("diagnostics") or [])[:50],
+        "duration_ms": result.get("duration_ms"),
+        "timed_out": result.get("timed_out", False),
+        "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_RUST_LOOM_SANDBOX_URL = os.getenv(
+    "RUST_LOOM_SANDBOX_URL", "http://rust-loom-sandbox:8080"
+)
+_RUST_LOOM_MAX_SOURCE_CHARS = 200_000
+_RUST_LOOM_HTTP_TIMEOUT_S = 240.0  # PoC hardware -- must stay above rust_loom_sandbox's own _RUN_TIMEOUT_S (180s)
+
+
+@mcp.tool()
+async def rust_loom_check(source: str, edition: str = "2021") -> str:
+    """Model-check concurrent Rust source for memory-ordering bugs (data
+    races) using Loom, in an isolated sandbox that actually executes the
+    submitted code (unlike rust_compile_check, which never executes
+    anything).
+
+    A data race from incorrect atomic/lock ordering compiles cleanly -- it
+    is not a compile error, only a real concurrency-model checker can catch
+    it. `source` must be valid content for a Cargo lib.rs containing a
+    `#[test] fn ...` that calls `loom::model(|| { ... })`; only use this for
+    code that already passed rust_compile_check and involves shared-state
+    concurrency (Arc/Mutex/atomics/threads).
+    """
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source_must_be_non_empty_string")
+    if len(source) > _RUST_LOOM_MAX_SOURCE_CHARS:
+        raise ValueError("source_exceeds_size_limit")
+    if edition not in {"2021"}:
+        raise ValueError("unsupported_edition")
+    try:
+        async with httpx.AsyncClient(timeout=_RUST_LOOM_HTTP_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{_RUST_LOOM_SANDBOX_URL}/loom-check",
+                json={"source": source, "edition": edition},
+            )
+            resp.raise_for_status()
+            result = resp.json()
+    except Exception as exc:
+        logger.warning(f"rust_loom_check sandbox call failed: {exc}")
+        return json.dumps(
+            {"compiles": None, "passed": None, "output_tail": "", "duration_ms": 0,
+             "timed_out": False, "sandbox_error": str(exc)[:300]},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+    facts = {
+        "compiles": result.get("compiles"),
+        "passed": result.get("passed"),
+        "output_tail": (result.get("output_tail") or "")[:4000],
+        "duration_ms": result.get("duration_ms"),
+        "timed_out": result.get("timed_out", False),
+        "source_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
+    return json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 @mcp.tool()
 def day_of_week(date_str: str) -> str:
     """
@@ -1104,6 +1205,75 @@ def subnet_calc(cidr: str) -> str:
             f"Last host IP: {hosts[-1] if hosts else 'N/A'}\n"
             f"Version: IPv{network.version}"
         )
+    except Exception as e:
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def vlsm_subnet_calc(cidr: str, subnets: list[dict]) -> str:
+    """
+    Allocates Variable Length Subnet Masks (VLSM) for multiple named subnets
+    within one parent CIDR block, sized by required host count each.
+    subnets: list of {"id": <name>, "hosts": <required usable hosts>}.
+    Allocates largest subnets first (standard VLSM practice) to minimize
+    fragmentation, then reports each subnet in its original input order.
+    Example: vlsm_subnet_calc("10.180.0.0/19", [{"id": "A", "hosts": 2000},
+        {"id": "B", "hosts": 1000}, {"id": "C", "hosts": 250}])
+    """
+    try:
+        parent = ipaddress.ip_network(cidr, strict=False)
+        if parent.version != 4:
+            return "Error: VLSM allocation currently supports IPv4 only"
+        ordered = sorted(
+            enumerate(subnets),
+            key=lambda item: (-int(item[1]["hosts"]), item[0]),
+        )
+        next_addr = int(parent.network_address)
+        parent_end = int(parent.broadcast_address)
+        allocations: dict[int, dict] = {}
+        for orig_index, spec in ordered:
+            subnet_id = str(spec.get("id", orig_index))
+            hosts_needed = int(spec["hosts"])
+            needed = hosts_needed + 2  # network + broadcast address
+            prefix = 32
+            while prefix > 0 and (2 ** (32 - prefix)) < needed:
+                prefix -= 1
+            if prefix < parent.prefixlen:
+                return (
+                    f"Error: subnet '{subnet_id}' needs {hosts_needed} hosts — "
+                    f"no prefix fits within parent {cidr}"
+                )
+            block_size = 2 ** (32 - prefix)
+            aligned = -(-next_addr // block_size) * block_size
+            if aligned + block_size - 1 > parent_end:
+                return (
+                    f"Error: {cidr} is too small to also fit subnet '{subnet_id}' "
+                    f"({hosts_needed} hosts) after the previously allocated subnets"
+                )
+            sub_net = ipaddress.ip_network(
+                f"{ipaddress.ip_address(aligned)}/{prefix}", strict=True
+            )
+            host_list = list(sub_net.hosts())
+            allocations[orig_index] = {
+                "id": subnet_id,
+                "requested_hosts": hosts_needed,
+                "cidr": str(sub_net),
+                "netmask": str(sub_net.netmask),
+                "usable_hosts": len(host_list),
+                "first_host": str(host_list[0]) if host_list else "N/A",
+                "last_host": str(host_list[-1]) if host_list else "N/A",
+                "broadcast": str(sub_net.broadcast_address),
+            }
+            next_addr = aligned + block_size
+        lines = [f"VLSM allocation for {cidr}:"]
+        for i in range(len(subnets)):
+            a = allocations[i]
+            lines.append(
+                f"  {a['id']}: {a['cidr']} (mask {a['netmask']}) — "
+                f"{a['usable_hosts']} usable hosts (needed {a['requested_hosts']}), "
+                f"range {a['first_host']}–{a['last_host']}, broadcast {a['broadcast']}"
+            )
+        return "\n".join(lines)
     except Exception as e:
         return f"Error: {e}"
 
@@ -4563,6 +4733,8 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "decimal_finance": decimal_finance,
     "exact_probability": exact_probability,
     "structured_validate": structured_validate,
+    "rust_compile_check": rust_compile_check,
+    "rust_loom_check": rust_loom_check,
     "day_of_week": day_of_week,
     "unit_convert": unit_convert,
     "statistics_calc": statistics_calc,
@@ -4570,6 +4742,7 @@ _TOOL_REGISTRY: Dict[str, Any] = {
     "base64_codec": base64_codec,
     "regex_extract": regex_extract,
     "subnet_calc": subnet_calc,
+    "vlsm_subnet_calc": vlsm_subnet_calc,
     "text_analyze": text_analyze,
     "prime_factorize": prime_factorize,
     "gcd_lcm": gcd_lcm,
@@ -4640,6 +4813,8 @@ _TOOL_DESCRIPTIONS = {
     "decimal_finance": "Decimal-string finance arithmetic with explicit currency, scale and rounding",
     "exact_probability": "Exact bounded rational probability and combinatorics with optional Decimal projection",
     "structured_validate": "Network-free bounded JSON, YAML, XML and CSV parser/validator",
+    "rust_compile_check": "Type/borrow-check Rust source in an isolated, network-free sandbox (analysis only, never executes the code)",
+    "rust_loom_check": "Model-check concurrent Rust source for data races via Loom in an isolated, network-free sandbox (executes the submitted test)",
     "day_of_week": "Weekday, calendar week, day of year for a date",
     "unit_convert": "Physical unit conversion (km/h→m/s, °F→°C, etc.)",
     "statistics_calc": "Statistical measures for data sets (mean, median, stdev, etc.)",
@@ -4647,6 +4822,7 @@ _TOOL_DESCRIPTIONS = {
     "base64_codec": "Base64 encode/decode",
     "regex_extract": "Regex pattern matching and extraction",
     "subnet_calc": "IP/network calculations (CIDR, subnet mask, host range)",
+    "vlsm_subnet_calc": "VLSM allocation of multiple named subnets (by required host count) within one parent CIDR",
     "text_analyze": "Text metrics (words, characters, sentences, reading time)",
     "prime_factorize": "Prime factorization",
     "gcd_lcm": "GCD and LCM of two numbers",
@@ -4722,7 +4898,8 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "day_of_week": "read",
     "unit_convert": "read",
     "statistics_calc": "read", "hash_text": "read", "base64_codec": "read",
-    "regex_extract": "read", "subnet_calc": "read", "text_analyze": "read",
+    "regex_extract": "read", "subnet_calc": "read", "vlsm_subnet_calc": "read",
+    "text_analyze": "read",
     "prime_factorize": "read", "gcd_lcm": "read", "json_query": "read",
     "roman_numeral": "read",
     # Legal — internal DB lookups
@@ -4747,6 +4924,8 @@ _TOOL_ACCESS_KIND: Dict[str, str] = {
     "openalex_search": "search",
     # Code execution / local computation
     "python_sandbox": "execute",
+    "rust_compile_check": "execute",
+    "rust_loom_check": "execute",
     "grid_repr":      "read",
     # Chess — chess_analyze_position calls the external Lichess cloud-eval API;
     # chess_legal_moves is local python-chess computation
@@ -4961,6 +5140,51 @@ _STRUCTURED_VALIDATE_OUTPUT_SCHEMA: Dict[str, Any] = {
         },
     },
     "required": ["valid", "format", "payload_hash", "schema_hash", "errors", "warnings", "details"],
+    "additionalProperties": False,
+}
+
+
+_RUST_COMPILE_CHECK_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "compiles": {"type": ["boolean", "null"]},
+        "diagnostics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "level": {"type": "string", "enum": ["error", "warning"]},
+                    "message": {"type": "string"},
+                    "line": {"type": ["integer", "null"], "minimum": 1},
+                    "column": {"type": ["integer", "null"], "minimum": 1},
+                },
+                "required": ["level", "message"],
+                "additionalProperties": False,
+            },
+            "maxItems": 50,
+        },
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "timed_out": {"type": "boolean"},
+        "source_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "sandbox_error": {"type": "string"},
+    },
+    "required": ["compiles", "diagnostics"],
+    "additionalProperties": False,
+}
+
+
+_RUST_LOOM_CHECK_OUTPUT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "compiles": {"type": ["boolean", "null"]},
+        "passed": {"type": ["boolean", "null"]},
+        "output_tail": {"type": "string", "maxLength": 4000},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "timed_out": {"type": "boolean"},
+        "source_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "sandbox_error": {"type": "string"},
+    },
+    "required": ["compiles", "passed", "output_tail"],
     "additionalProperties": False,
 }
 
@@ -5200,6 +5424,56 @@ _TOOL_CONTRACTS: Dict[str, Dict[str, Any]] = {
             "max_csv_columns": _STRUCTURED_MAX_CSV_COLUMNS,
         },
     },
+    "rust_compile_check": {
+        "contract_id": "moe.precision.rust_compile_check",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "pinned_toolchain", "name": "rustc 1.98 (rust:1-slim image digest)"},
+        "evidence_policy": {
+            "redact_input_fields": ["source"],
+            "replacement": "sha256_and_utf8_bytes",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "minLength": 1, "maxLength": _RUST_COMPILE_MAX_SOURCE_CHARS},
+                "edition": {"type": "string", "enum": ["2015", "2018", "2021", "2024"], "default": "2021"},
+            },
+            "required": ["source"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _RUST_COMPILE_CHECK_OUTPUT_SCHEMA,
+        "limits": {
+            "max_result_chars": 32768,
+            "max_source_chars": _RUST_COMPILE_MAX_SOURCE_CHARS,
+            "compile_timeout_s": _RUST_COMPILE_HTTP_TIMEOUT_S,
+        },
+    },
+    "rust_loom_check": {
+        "contract_id": "moe.precision.rust_loom_check",
+        "contract_version": "1.0.0",
+        "determinism": "library_pinned",
+        "source_policy": {"kind": "pinned_toolchain", "name": "rustc 1.98 + loom=0.7.2 (rust:1-slim image digest)"},
+        "evidence_policy": {
+            "redact_input_fields": ["source"],
+            "replacement": "sha256_and_utf8_bytes",
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "minLength": 1, "maxLength": _RUST_LOOM_MAX_SOURCE_CHARS},
+                "edition": {"type": "string", "enum": ["2021"], "default": "2021"},
+            },
+            "required": ["source"],
+            "additionalProperties": False,
+        },
+        "outputSchema": _RUST_LOOM_CHECK_OUTPUT_SCHEMA,
+        "limits": {
+            "max_result_chars": 32768,
+            "max_source_chars": _RUST_LOOM_MAX_SOURCE_CHARS,
+            "compile_timeout_s": _RUST_LOOM_HTTP_TIMEOUT_S,
+        },
+    },
     "gcd_lcm": {
         "contract_id": "moe.precision.gcd_lcm",
         "contract_version": "1.0.0",
@@ -5391,6 +5665,7 @@ def _structured_facts(name: str, args: Dict[str, Any], result: str) -> Dict[str,
     if name in {
         "calendar_facts", "time_facts", "timezone_convert",
         "decimal_finance", "exact_probability", "structured_validate",
+        "rust_compile_check", "rust_loom_check",
     }:
         facts = json.loads(result)
         if not isinstance(facts, dict):

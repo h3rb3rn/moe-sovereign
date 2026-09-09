@@ -60,7 +60,9 @@ CLOUD_ENDPOINTS: list[dict] = [
         "token": s.get("token", ""),
     }
     for s in INFERENCE_SERVERS_LIST
-    if s.get("api_type", "ollama") != "ollama" and s.get("enabled", True)
+    if s.get("api_type", "ollama") != "ollama"
+    and s.get("enabled", True)
+    and not s.get("no_auto_fallback")
 ]
 
 # Heuristic helpers to generate training targets and fallbacks
@@ -662,7 +664,7 @@ _CATEGORY_MCP_TOOLS: dict[str, list[str]] = {
     "science":          ["calculate", "unit_convert"],
     "data_analysis":    ["statistics_calc", "json_query", "calculate", "unit_convert"],
     "legal_advisor":    ["legal_get_paragraph", "legal_search_laws", "legal_get_law_overview"],
-    "technical_support":["subnet_calc", "hash_text", "regex_extract"],
+    "technical_support":["subnet_calc", "vlsm_subnet_calc", "hash_text", "regex_extract"],
     "code_reviewer":    ["regex_extract", "hash_text"],
     "vision":           ["text_analyze", "regex_extract"],
     "precision_tools":  ["calculate", "unit_convert", "date_diff", "date_add",
