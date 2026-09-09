@@ -12,9 +12,10 @@ from pathlib import Path
 logger = logging.getLogger("MOE-SOVEREIGN")
 
 _DEFAULT_CAPS: dict = {
-    "json_schema":   False,
-    "json_object":   True,
-    "stream":        True,
+    "json_schema":         False,
+    "json_object":         True,
+    "stream":              True,
+    "native_tool_calling": True,
 }
 
 _CAPS_PATH = Path(__file__).parent.parent / "configs" / "model_capabilities.yaml"
@@ -65,6 +66,13 @@ def model_supports_json_object(model: str) -> bool:
 def model_supports_streaming(model: str) -> bool:
     """True if the model can stream tokens."""
     return bool(get_model_caps(model).get("stream", True))
+
+
+def model_supports_native_tool_calling(model: str) -> bool:
+    """True if the model's Ollama `tools` param can be trusted not to crash
+    grammar/sampler initialization (some models fail with 400 "failed to
+    parse grammar" on the larger/nested Claude Code tool schemas)."""
+    return bool(get_model_caps(model).get("native_tool_calling", True))
 
 
 def enforce_streaming_capability(model: str, requested: bool) -> bool:

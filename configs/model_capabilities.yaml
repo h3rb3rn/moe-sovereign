@@ -4,14 +4,21 @@
 # Hot-reload: set CAPABILITIES_RELOAD_ON_REQUEST=true (dev only, avoids rebuild).
 #
 # Fields:
-#   json_schema  — honours response_format={"type":"json_schema",...}
-#   json_object  — honours response_format={"type":"json_object"}
-#   stream       — supports streaming (stream=true)
+#   json_schema         — honours response_format={"type":"json_schema",...}
+#   json_object         — honours response_format={"type":"json_object"}
+#   stream              — supports streaming (stream=true)
+#   native_tool_calling — Ollama's `tools` param can be sent without the
+#                         grammar/sampler failing to initialize. Set false
+#                         for models whose GBNF compiler chokes on Claude
+#                         Code's larger tool schemas (400 "failed to parse
+#                         grammar") — the caller then omits `tools` and
+#                         falls back to text-mode tool-call parsing instead.
 
 default:
   json_schema: false
   json_object: true
   stream: true
+  native_tool_calling: true
 
 models:
   "qwen3:32b":
@@ -92,4 +99,26 @@ models:
     json_schema: false
     json_object: false
     stream: true
+
+  # tool_model for several static cc-profiles (cc-innovator-fast, cc-ref-*,
+  # cc-agent-augmented). Ollama's GBNF grammar compiler fails to initialize
+  # on the full Claude Code tool set (e.g. /init sends ~26 tool schemas),
+  # returning HTTP 400 "Failed to initialize samplers: failed to parse
+  # grammar" and aborting the whole request before generation starts.
+  "gemma4:31b":
+    json_schema: false
+    json_object: true
+    stream: true
+    native_tool_calling: false
+
+  # Live tool_model behind the DB-stored "RTX ornith:35b" user_cc_profile
+  # (ucp-6a07091b21064cad8b7b49597a3ff0a2), which the "ki-vm-node05 cc" key
+  # (horndev) is actually assigned to as of 2026-09-04 — confirmed via
+  # user_cc_profiles.config_json, not just the static cc_profiles/*.json
+  # templates. Same grammar/sampler crash as gemma4:31b above.
+  "ornith-1.5:35b":
+    json_schema: false
+    json_object: true
+    stream: true
+    native_tool_calling: false
 
