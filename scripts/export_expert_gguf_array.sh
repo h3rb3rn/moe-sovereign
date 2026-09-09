@@ -11,6 +11,19 @@ SCRATCH="${SCRATCH:-/scratch/project_465003058/hornphil}"
 ROLE="${1:-coder}"
 MERGED_DIR="${2:-${SCRATCH}/checkpoints/merged_expert_${ROLE}}"
 EXPORT_DIR="${3:-${SCRATCH}/exports/moe-expert-${ROLE}-4b}"
+# $4 lets the caller (lumig_expert_ensemble_pipeline.slurm) pass down the
+# already-resolved singularity path, so Stage 3 does not depend on its own
+# PATH lookup succeeding independently of Stage 1/2's -- root cause of the
+# "singularity: command not found" failure that broke 9/10 export runs was
+# never fully isolated, so this removes the dependency instead of assuming
+# the PATH lookup will work.
+SINGULARITY_BIN="${4:-$(command -v singularity || true)}"
+if [ -z "$SINGULARITY_BIN" ] || [ ! -x "$SINGULARITY_BIN" ]; then
+    echo "ERROR: singularity binary not found (checked \$4 and \`command -v singularity\`)." >&2
+    echo "Stage 3 cannot run the HF->GGUF conversion without it. Aborting before any work is lost." >&2
+    exit 1
+fi
+echo "Using singularity: $SINGULARITY_BIN"
 
 echo "================================================================================"
 echo "📦 GGUF EXPORT & QUANTIZATION PIPELINE: [moe-${ROLE}]"
@@ -54,7 +67,7 @@ CONTAINER="${SCRATCH}/lumi-multitorch-latest.sif"
 
 # 1. Convert HuggingFace model to F16 GGUF (inside Singularity container for PyTorch/Transformers)
 echo "⏳ Converting HuggingFace model to F16 GGUF..."
-singularity exec \
+"$SINGULARITY_BIN" exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
     --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TMPDIR="${SCRATCH}/tmp" \
     "$CONTAINER" \

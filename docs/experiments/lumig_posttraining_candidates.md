@@ -248,6 +248,16 @@ Kontaminationsvektor.
 semantischen Bezug zum tatsächlichen Nutzer-Input), oder ein Reward-Signal,
 das Tasks ohne Rückbezug zum Input bestraft.
 
+**Root-Cause-Nachtrag (2026-09-02):** Der tatsächliche Planner-Trainingskorpus
+(`dataset_expert_planner_100k.jsonl`, LUMI-G-Scratch) enthält nur 4
+einzigartige (Prompt, Plan)-Paare bei 100.000 Zeilen — und alle 4 erhalten
+denselben themenfremden 3-Task-DAG als Zielantwort, unabhängig vom
+jeweiligen Prompt-Thema. Das erklärt dieses Fabrikationsmuster direkt und
+mechanisch, nicht als reine Modellgrenze. Vollständiger Befund inkl. des
+nie ausgeführten, ursprünglich geplanten Frontier-Teacher-Pipelines
+(Kimi-K3, GLM-5.2, DeepSeek-Coder-V2 u.a.): siehe
+`docs/experiments/antigravity_frontier_pipeline_postmortem.md`.
+
 **Weitere bestätigte Instanz, neuer Schweregrad (Runde 1, Task 9
 `sci-governance-01-technical-sovereignty`, Bedingung `compound_ai`,
 2026-08-25 01:38 CEST):** Prompt war ein Hospital-Compound-AI-Architektur-

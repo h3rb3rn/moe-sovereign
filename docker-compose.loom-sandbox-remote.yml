@@ -1,0 +1,92 @@
+# docker-compose.loom-sandbox-remote.yml
+# Standalone deployment of rust-loom-sandbox for batch Loom-candidate
+# verification, run on a decommissioned/spare host (not the production
+# moe-infra server, which has too little RAM headroom for parallel
+# instances -- see docs/experiments/lumig_openrouter_teacher_verification.md
+# Teil 4). Three parallel instances instead of one: 4 real CPU cores on this
+# host, 1 core reserved per instance in the resource limits below, 1 core
+# left as headroom for the OS/Docker daemon.
+#
+# Deliberately different from the production docker-compose.yml service:
+# no rust_loom_internal network (that only exists in the main stack's
+# compose project) -- ports are bound to 127.0.0.1 only. The intended usage
+# is running the verification client ON THIS HOST (see
+# scripts/generate_loom_seed_examples.py --sandbox-urls), never exposing
+# these ports to the internet.
+#
+# Usage:
+#   sudo docker compose -f docker-compose.loom-sandbox-remote.yml up -d
+#   sudo docker compose -f docker-compose.loom-sandbox-remote.yml ps
+
+services:
+  rust-loom-sandbox-1:
+    image: moe-infra-rust-loom-sandbox:latest
+    container_name: rust-loom-sandbox-1
+    restart: always
+    ports:
+      - "127.0.0.1:8081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /build:exec,nosuid,size=1024m,uid=1003,gid=0,mode=1770
+    network_mode: bridge
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 128
+
+  rust-loom-sandbox-2:
+    image: moe-infra-rust-loom-sandbox:latest
+    container_name: rust-loom-sandbox-2
+    restart: always
+    ports:
+      - "127.0.0.1:8082:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /build:exec,nosuid,size=1024m,uid=1003,gid=0,mode=1770
+    network_mode: bridge
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 128
+
+  rust-loom-sandbox-3:
+    image: moe-infra-rust-loom-sandbox:latest
+    container_name: rust-loom-sandbox-3
+    restart: always
+    ports:
+      - "127.0.0.1:8083:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /build:exec,nosuid,size=1024m,uid=1003,gid=0,mode=1770
+    network_mode: bridge
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 128

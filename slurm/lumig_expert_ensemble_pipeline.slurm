@@ -37,6 +37,18 @@ SCRIPT_DIR="${SCRATCH}/moe-sovereign/scripts"
 DATASET_DIR="${SCRATCH}/datasets"
 DATASET_FILE=$(ls "${DATASET_DIR}/dataset_expert_${ROLE}_"*.jsonl 2>/dev/null | head -n1 || echo "")
 
+# Resolved once, up front, and passed explicitly into Stage 3's script
+# (export_expert_gguf_array.sh) instead of relying on that separately
+# invoked script re-doing its own PATH lookup -- 9/10 historical runs of
+# this pipeline failed at exactly that lookup with "singularity: command
+# not found" despite Stage 1/2 in this same job using singularity
+# successfully moments earlier.
+SINGULARITY_BIN="$(command -v singularity || true)"
+if [ -z "$SINGULARITY_BIN" ] || [ ! -x "$SINGULARITY_BIN" ]; then
+    echo "ERROR: singularity binary not found on PATH at job start. Aborting before Stage 1." >&2
+    exit 1
+fi
+
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:512
 export PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}"
@@ -97,7 +109,7 @@ mkdir -p "$TRAIN_OUT_DIR" "$MERGE_OUT_DIR" "$EXPORT_DIR" "${SCRATCH}/moe-soverei
 
 # ── STAGE 1: SFT Training with Torchrun Distributed ─────────────────────────
 echo "[$(date +%H:%M:%S)] === STAGE 1: Distributed SFT Training on 8x MI250X (Torchrun) ==="
-singularity exec \
+"$SINGULARITY_BIN" exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
     --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TRITON_CACHE_DIR="${SCRATCH}/cache/triton",TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions",TMPDIR="${SCRATCH}/tmp" \
     "$CONTAINER" \
@@ -121,7 +133,7 @@ fi
 
 # ── STAGE 2: CPU-BF16 LoRA Merge ───────────────────────────────────────────
 echo "[$(date +%H:%M:%S)] === STAGE 2: CPU-BF16 LoRA Merge ==="
-singularity exec \
+"$SINGULARITY_BIN" exec \
     --bind /scratch/project_465003058:/scratch/project_465003058 \
     --env PYTHONPATH="/scratch/project_465003058/hornphil/.user_site:${PYTHONPATH:-}",HF_HOME="${SCRATCH}/cache/huggingface",XDG_CACHE_HOME="${SCRATCH}/cache",TRITON_CACHE_DIR="${SCRATCH}/cache/triton",TORCH_EXTENSIONS_DIR="${SCRATCH}/cache/torch_extensions",TMPDIR="${SCRATCH}/tmp" \
     "$CONTAINER" \
@@ -132,6 +144,6 @@ singularity exec \
 
 # ── STAGE 3: GGUF Q8_0 & Q4_K_M Quantization ──────────────────────────────
 echo "[$(date +%H:%M:%S)] === STAGE 3: GGUF Quantization (Q8_0 & Q4_K_M) ==="
-bash "${SCRIPT_DIR}/export_expert_gguf_array.sh" "$ROLE" "$MERGE_OUT_DIR" "$EXPORT_DIR"
+bash "${SCRIPT_DIR}/export_expert_gguf_array.sh" "$ROLE" "$MERGE_OUT_DIR" "$EXPORT_DIR" "$SINGULARITY_BIN"
 
 echo "[$(date +%H:%M:%S)] 🎉 PIPELINE COMPLETED SUCCESSFULLY FOR [moe-${ROLE}]!"

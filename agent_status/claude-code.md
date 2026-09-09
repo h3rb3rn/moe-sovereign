@@ -2916,12 +2916,554 @@ jetzt live mit allen Fixes aktiv.
 
 ---
 
-**2026-08-28 — claude-code — starting: K8s/K3s service-status monitoring support**
+## 2026-08-29T09:xxZ — Langfuse-Observability-Integration — starting
 
-Owner: claude-code. Files: `admin_ui/app.py` (container status/monitoring
-section only). Scope: extend the Docker/Podman-only service-status check
-(`get_container_status()`) to also work when the admin UI runs inside
-Kubernetes, so the K3s deployment's Config Dashboard shows real pod status
-instead of failing against a nonexistent Docker socket. Branch:
-`feat/k8s-service-monitoring` (worktree at
-`/opt/deployment/moe-sovereign/moe-infra-k8s-monitoring`).
+Plan / progress:
+- Nutzerwunsch: Langfuse (self-hosted LLM-Tracing für den LangGraph-Teil)
+  als neuer optionaler Stack integrieren, angehängt an das bestehende
+  "Monitoring"-Angebot in `install.sh`. Plan wurde in Plan-Mode erarbeitet
+  (2 Explore-Agents + 1 Plan-Agent, vom Nutzer per Rückfrage bestätigte
+  Design-Entscheidungen: dedizierte Postgres/ClickHouse/Redis/MinIO-Container,
+  exaktes Image-Pinning, Mitfix eines unabhängig gefundenen Bugs).
+- Zusätzlicher Fund während der Exploration: `INSTALL_MONITORING` in
+  `install.sh` wird abgefragt, aber nie in `_PROFILE_ARGS`/`_env_profiles`
+  übernommen — Prometheus/Grafana/Dozzle/AKHQ starten seither nie
+  automatisch. Wird im selben Change gefixt (vom Nutzer bestätigt).
+- Betroffene/zu ändernde Dateien: `install.sh`, neue
+  `docker-compose.langfuse.yml`, `.env.example`, `config.py`, neues Modul
+  `services/langfuse_client.py`, 4 `.ainvoke()`-Call-Sites (`main.py`,
+  `services/pipeline/chat.py`, `services/pipeline/anthropic.py`,
+  `legacy_root_modules/chat.py`), `requirements.txt`/`requirements.lock.txt`.
+- Arbeit erfolgt direkt (keine Sub-Agent-Delegation, gemäß CLAUDE.md
+  "Do not delegate to sub-agents unless the user explicitly requested
+  parallel agent work" — nur die vorgelagerte Plan-Mode-Recherche nutzte
+  Explore/Plan-Agents, das ist Teil des Claude-Code-Planungsworkflows).
+- Feature-Branch `feature/langfuse-observability` angelegt (vom
+  gleichstandigen `fix/aihub-no-auto-fallback-buildkit-network-host`
+  abgezweigt, dessen unabhängige dirty WIP-Änderungen — `docs/experts/index.md`,
+  `docs/system/status.md`, `prompts.py`, `skills-upstream`, Benchmark-
+  Runtime-Dateien — unangetastet im Working Tree belassen wurden; nur die
+  für diese Task relevanten neuen/geänderten Dateien werden committet).
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log (`agy.md`, `codex-cli.md`, `cursor.md`,
+  `opencode.md`) zeigt aktuelles `in_progress` auf einer der oben genannten
+  Zieldateien.
+- Der zuletzt in diesem Log referenzierte Scientific-Benchmark-Prozess
+  (PID 3740559) läuft nicht mehr (`ps aux` leer) — kein Risiko, einen
+  laufenden Benchmark durch einen späteren `langgraph-app`-Rebuild zu
+  unterbrechen.
+- `docker ps`: kein Monitoring-Stack (Prometheus/Grafana/Dozzle/AKHQ)
+  aktuell laufend — bestätigt den oben genannten Profile-Wiring-Bug
+  unabhängig vom Code.
+- Kein bestehender Backlog-/Lastenheft-Eintrag zu "langfuse" oder
+  "monitoring" gefunden (`grep -ril` über `docs/backlog/`,
+  `AGENT_LASTENHEFT.md`).
+
+---
+
+## 2026-08-29T02:05Z — Langfuse-Observability-Integration — done
+
+Implementiert auf Branch `feature/langfuse-observability` (von
+`fix/aihub-no-auto-fallback-buildkit-network-host` abgezweigt, dessen
+fremder WIP-Stand unangetastet blieb).
+
+**Changes:**
+- `install.sh`: Bugfix `INSTALL_MONITORING` → `COMPOSE_PROFILES`/`_PROFILE_ARGS`
+  (Prometheus/Grafana/Dozzle/AKHQ starteten vorher nie automatisch). Neuer
+  Langfuse-Sub-Prompt nach dem Monitoring-Prompt (Default N, ~3.5 GB RAM-Zuschlag,
+  Re-Run-sicherer Default via `EXISTING_INSTALL_LANGFUSE`), Secret-Generierung
+  (DB/ClickHouse/Redis/MinIO-Passwörter, NEXTAUTH_SECRET/SALT/ENCRYPTION_KEY,
+  synthetische PUBLIC_KEY/SECRET_KEY), `.env`-Block, Compose-Start (fresh install
+  + Update-Modus, analog zum Codex-Muster), `_write_services_manifest()`- und
+  Erfolgs-Banner-Erweiterung.
+- Neue `docker-compose.langfuse.yml`: dedizierte Postgres/ClickHouse/Redis/MinIO
+  + langfuse-worker/-web, alle exakt gepinnt (inkl. Digest-Pin für
+  `cgr.dev/chainguard/minio`, da MinIOs eigene Docker-Hub/Quay-Images seit
+  Okt. 2025 nicht mehr gepflegt werden — Repo im Apr. 2026 archiviert). Env-Var-
+  Namen und Bucket-Init-Trick gegen die offizielle Langfuse-Compose-Referenz
+  verifiziert (`raw.githubusercontent.com/langfuse/langfuse/main/docker-compose.yml`).
+  Alle Ports bewusst nur `127.0.0.1`-gebunden (kein Caddy-Routing), da Trace-
+  Inhalte sensibel sind.
+- `config.py`: `LANGFUSE_PUBLIC_KEY`/`_SECRET_KEY`/`_BASE_URL` +
+  abgeleitetes `LANGFUSE_ENABLED` (kein separates Enable-Flag).
+- Neues `services/langfuse_client.py`: `get_langfuse_handler()`/
+  `with_langfuse_callbacks()`, lazy + fail-safe (nie eine Exception, No-Op
+  wenn nicht konfiguriert). Wichtiger Rechercheergebnis: das aktuelle Python-
+  SDK (v4, PyPI 4.15.1) erwartet `LANGFUSE_BASE_URL`, nicht das ältere
+  `LANGFUSE_HOST` — durchgängig korrekt benannt.
+- An den 4 identifizierten `.ainvoke()`-Call-Sites eingehängt (`main.py`,
+  `services/pipeline/chat.py`, `services/pipeline/anthropic.py` — 1 Variable,
+  2 Call-Sites —, `legacy_root_modules/chat.py`), ohne die
+  `asyncio.wait_for`-Deadline-Logik anzufassen.
+- `requirements.txt` (`langfuse>=3.8.0`) + `requirements.lock.txt` (exakt
+  `langfuse==4.15.1` + 3 neue transitive Deps `backoff==2.2.1`,
+  `opentelemetry-exporter-otlp-proto-http==1.44.0`, `wrapt==2.3.0` —
+  ermittelt durch echten `pip install` gegen den bestehenden Lock-Satz in
+  einem `python:3.11-slim`-Container, keine Versionskonflikte, keine
+  Bumps an bestehenden Pins).
+
+**Verifikation:**
+- `bash -n install.sh`, `python3 -c "import ast; ast.parse(...)"` auf allen
+  5 geänderten Python-Dateien, `docker compose -f docker-compose.langfuse.yml
+  config` — alle grün.
+- `sudo docker compose build langgraph-app` — sauber, `pip check`: "No broken
+  requirements found".
+- Container `langgraph-orchestrator` neu erstellt, healthy.
+- In-Container: `config.LANGFUSE_ENABLED == False`, `get_langfuse_handler()
+  == None`, `with_langfuse_callbacks()` gibt Config unverändert zurück —
+  Graceful-No-Op bestätigt (keine `LANGFUSE_*`-Keys in der laufenden `.env`,
+  da Langfuse-Opt-in bewusst NICHT über `install.sh` ausgeführt wurde — das
+  bleibt eine bewusste, separate Nutzerentscheidung, siehe unten).
+- `pytest tests/smoke/test_graph_wiring.py` (pytest ephemer im Container
+  nachinstalliert, nicht Teil des Prod-Images) → 5/5 grün.
+- 2 echte E2E-Requests über die MoE-API (`moe-auto`, Test-Key horndev): ein
+  Trivial-Prompt wurde vom Quality-Gate korrekt als
+  `plausibility_failed:empty_or_too_short` geblockt (422, unabhängig von
+  dieser Änderung — bekanntes, bereits geloggtes Verhalten), ein zweiter
+  Prompt lief sauber durch (HTTP 200, korrekte Antwort, 15973 Tokens).
+  Keine `langfuse`-, Traceback- oder Exception-Zeilen in den Logs.
+
+**Bewusst NICHT gemacht:**
+- `install.sh` wurde nicht interaktiv mit `INSTALL_LANGFUSE=true` durchlaufen
+  — das würde 6 neue, dauerhafte Container (Postgres/ClickHouse/Redis/MinIO/
+  Worker/Web) mit neuen Secrets provisionieren. Das ist eine bewusste,
+  separate Entscheidung für den Nutzer, nicht Teil der Code-Verifikation.
+- Kein Commit/Push — Branch `feature/langfuse-observability` liegt lokal
+  bereit, nur auf explizite Nutzeranfrage committen (AGENTS.md §8).
+
+Notes: `scripts/check_governance.py --check` nicht ausgeführt, da keine
+Backlog/Governance-Datei in diesem Change berührt wurde (reiner
+Infra-/Code-Change, kein Lastenheft-Task-Update).
+
+---
+
+## 2026-09-03T14:33:12Z — LUMI-G-Vollnachtraining Phase 0 (Stage-3-GGUF-Bugfix) — starting
+
+Plan / progress:
+- Nutzer hat einen umfassenden Plan (Plan-Mode) für vollständiges Nachtraining
+  aller 10 MoE-Sovereign-Modelle (Planner, 8 Experten, Judge) auf LUMI-G
+  genehmigt, Plandatei `~/.claude/plans/zazzy-beaming-koala.md`. Grund für
+  das Nachtraining: der vorige Lauf (9/10 Rollen) trainierte auf fabrizierten
+  Daten (siehe `docs/experiments/antigravity_frontier_pipeline_postmortem.md`);
+  die HuggingFace-Model-Cards wurden dazu bereits korrigiert.
+- Beginne mit Plan-Phase 0: defensiver Fix für den bekannten
+  `singularity: command not found`-Bug in Stage 3
+  (`scripts/export_expert_gguf_array.sh` Zeile ~57), verifiziert per
+  Log-Grep (`expert_pipe_21190761.err`) und Vollzitat beider Skripte in der
+  vorigen Session. Danach ein isolierter Stage-3-Smoke-Test gegen den
+  bereits vorhandenen (technisch validen) `merged_sovereign_student_4b`-
+  Checkpoint, um den Export-Schritt ohne neue Trainings-GPU-Stunden zu
+  verifizieren.
+- Zieldateien: `scripts/export_expert_gguf_array.sh`,
+  `slurm/lumig_expert_ensemble_pipeline.slurm`,
+  `scripts/generate_diverse_training_seeds.py` (neuer `--mode role_sft`,
+  `--max-tokens`-Fix für `loom`), neue SLURM-Smoke-Test-Skripte.
+
+Pre-conditions verified:
+- Kein anderer Agent-Status-Log (`agy.md`, `codex-cli.md`, `cursor.md`,
+  `opencode.md`) zeigt aktuelles `in_progress` auf einer der Zieldateien
+  (grep über alle `agent_status/*.md` durchgeführt, nur alte/abgeschlossene
+  Einträge gefunden).
+- Working Tree hat bereits umfangreiche fremde/eigene unfertige Änderungen
+  aus vorherigen Sessions auf diesem Branch (`feature/lumig-posttraining-
+  data-prep`) — Model-Card-Korrekturen, Langfuse-Reste, Workstream-1-4-
+  Skripte. Diese bleiben unangetastet; nur die oben genannten Zieldateien
+  dieser Aufgabe werden bearbeitet.
+
+---
+
+## 2026-09-03T17:44:00Z — LUMI-G-Vollnachtraining Phase 0 — done (real verifiziert)
+
+**Fix:** `SINGULARITY_BIN` wird jetzt einmal zu Jobbeginn in
+`lumig_expert_ensemble_pipeline.slurm` per `command -v singularity`
+aufgelöst (hartes Abbrechen bei leer/nicht-ausführbar), an alle 3 Stages
+durchgereicht und als 4. Positionsargument an
+`export_expert_gguf_array.sh` übergeben; dessen eigener Fallback
+(`command -v singularity`) greift weiterhin bei eigenständigem Aufruf.
+Root-Ursache des ursprünglichen PATH-Verlusts zwischen Stage 2 und 3 bleibt
+ungeklärt (nicht mehr nötig — der Fix entfernt die Abhängigkeit von der
+PATH-Vererbung überhaupt).
+
+**Isolierter Stage-3-Smoke-Test** (neues Skript
+`slurm/lumig_job6_stage3_gguf_smoketest.slurm`, 1 GPU statt 8, 1h
+Walltime, gegen den bereits vorhandenen validen
+`merged_sovereign_student_4b`-Checkpoint, keine neuen Trainings-GPU-Stunden):
+- SLURM-Job 21698556, `small-g`, COMPLETED, Exit 0:0, Laufzeit 00:03:33.
+- Log zeigt `Using singularity: /usr/bin/singularity` (Fix greift).
+- **Reale Dateien verifiziert** (nicht nur Exit-Code): `moe-sovereign-
+  student-4b-Q8_0.gguf` (4.482.395.232 Bytes) und `-Q4_K_M.gguf`
+  (2.708.796.512 Bytes) existieren auf `/scratch/.../exports/
+  _stage3_smoketest/`, Modellgröße laut llama.cpp-Log 8023.67 MiB F16
+  (16.00 BPW) — plausibel für ein ~4B-Modell.
+- Damit ist Plan-Phase 0 (`~/.claude/plans/zazzy-beaming-koala.md`)
+  abgeschlossen und real bewiesen, nicht nur angenommen.
+
+**Nächster Schritt (noch nicht begonnen):** Plan-Phase 1 (Lehrer-Modell-
+Smoke-Tests, Tier A/B) — braucht laut Plan jeweils eigene SLURM-Freigabe,
+noch nicht beim Nutzer angefragt.
+
+Geänderte/neue Dateien (noch nicht committet):
+`scripts/export_expert_gguf_array.sh`,
+`slurm/lumig_expert_ensemble_pipeline.slurm`,
+`slurm/lumig_job6_stage3_gguf_smoketest.slurm` (lokal + auf LUMI-G-Scratch
+synchronisiert).
+
+---
+
+## 2026-09-03T18:26:00Z — LUMI-G-Vollnachtraining Phase 1 — Teacher-Smoke-Test Qwen3-Next-80B-A3B-Instruct — done (real verifiziert)
+
+Erster Tier-A-Lehrer (Reasoning-Cluster: Planner/precision/graphrag/
+research/omni/judge) aus `~/.claude/plans/zazzy-beaming-koala.md` Phase 1
+getestet, auf Nutzeranfrage ("Ja, starte mit Qwen3-Next-80B-A3B").
+
+**Vorprüfung** (kein Download nötig): `HfApi().model_info(...)` +
+`config.json` bestätigt `Qwen/Qwen3-Next-80B-A3B-Instruct`, ungated,
+Architektur `Qwen3NextForCausalLM`, keine `quantization_config`.
+
+**Neues Skript** `slurm/lumig_job7_teacher_qwen3next80b_smoketest.slurm`
+(Muster von `lumig_job5_enrichment_smoketest.slurm` übernommen, nur
+`--mode grounding`, `--mode loom` bewusst ausgelassen — dessen 0-parsed-
+Bug ist separat/unabhängig vom Lehrer-Modell selbst).
+
+**SLURM-Job 21699042**, `small-g`, 8 GPUs, COMPLETED, Exit 0:0, Laufzeit
+00:08:23. Engine-Init (inkl. torch.compile + CUDA-Graph-Capture für beide
+Phasen) 200,19s. KV-Cache: 37,64 GiB / 3.113.369 Tokens / 380x Konkurrenz
+bei 8192 Tokens/Request — bestätigt komfortablen VRAM-Puffer wie in der
+Drei-Filter-Matrix vorhergesagt (163GB Gewichte vs. ~512GB/Node).
+
+**Reale Verifikation** (nicht nur Exit-Code): 24/24 angeforderte
+Grounding-Prompts über alle 8 Kategorien erfolgreich generiert und
+geparst (`general`, `precision_tools`, `code_reviewer`,
+`compounding_knowledge`, `governance`, `research`, `security`,
+`technical_support`), Stichprobe der `.jsonl`-Datei zeigt inhaltlich
+kohärente, thematisch passende Prompts (z.B. GDPR-Frage unter
+`governance`, Async/Await-Debugging unter `code_reviewer`). Skript-eigene
+`SMOKE TEST PASSED`-Prüfung ebenfalls bestätigt.
+
+**Ergebnis:** Qwen3-Next-80B-A3B-Instruct ist als Tier-A-Lehrer für den
+Reasoning-Cluster real bestätigt, nicht nur angenommen.
+
+**Nächster Schritt (noch nicht begonnen):** weitere Phase-1-Lehrer-Smoke-
+Tests (GLM-4.5-Air für Code/Governance-Cluster; Tier-B-Stretch-Modelle
+Qwen3-235B-A22B / DeepSeek-Coder-V2 / Mistral-Large-2411) — noch nicht
+beim Nutzer angefragt.
+
+Geänderte/neue Dateien (noch nicht committet):
+`slurm/lumig_job7_teacher_qwen3next80b_smoketest.slurm` (lokal + auf
+LUMI-G-Scratch synchronisiert).
+
+---
+
+## 2026-09-03T18:50:00Z — LUMI-G-Vollnachtraining Phase 1 — restliche 4 Lehrer-Smoke-Tests eingereicht — in_progress
+
+Auf Nutzerfreigabe ("ja, alle Modelle sollen verwendet werden") alle
+verbleibenden Phase-1-Kandidaten aus dem Plan vorgeprüft
+(`HfApi().model_info()`+`config.json`, kein Download) und als 4 unabhängige
+SLURM-Jobs eingereicht:
+- Job 21701726 — `zai-org/GLM-4.5-Air` (Tier A, Code/Governance-Cluster,
+  Glm4MoeForCausalLM, ~221GB, komfortabel).
+- Job 21701731 — `Qwen/Qwen3-235B-A22B-Instruct-2507` (Tier B,
+  Reasoning-Cluster-Stretch, Qwen3MoeForCausalLM, ~470GB, eng).
+- Job 21701732 — `deepseek-ai/DeepSeek-Coder-V2-Instruct` (Tier B,
+  Coder-Cluster-Stretch, DeepseekV2ForCausalLM, ~472GB, eng).
+- Job 21701733 — `mistralai/Mistral-Large-Instruct-2411` (Tier B,
+  Governance-Cluster-Stretch, MistralForCausalLM, ~490GB, sehr eng).
+
+**Code-Ergänzung** (`scripts/generate_diverse_training_seeds.py`):
+`--gpu-memory-utilization`-Parameter hinzugefügt (Default 0.9, unverändertes
+Verhalten für bestehende Aufrufe), da vLLMs Default-Budget (90% von 64GB/GPU
+= 57,6GB) für die 3 engen Tier-B-Kandidaten kleiner ist als deren reine
+Gewichtsgröße pro GPU (58,75-61,25GB) — ohne den Parameter würden diese
+3 Jobs an einer willkürlichen Default-Schwelle scheitern statt an echter
+Kapazität. Jobs 9-11 nutzen 0.95/0.95/0.97 + reduziertes `--max-model-len 2048`.
+Ein sauberer OOM bei den enge-Fit-Modellen ist ein echtes, nützliches
+Ergebnis (Tier A deckt den jeweiligen Cluster weiterhin ab), kein Bug.
+
+Alle 4 Jobs aktuell `PENDING` (Cluster-Auslastung durch andere Nutzer,
+Priority-Warteschlange, nicht durch diese Jobs verursacht). Hintergrund-
+Monitoring wiederholt vom Terminal unterbrochen (gleiches Muster wie bei
+Job 21699042 — vermutlich Interrupt-Gesten, kein LUMI-G-Problem) — auf
+direkte `sacct`-Checks umgestellt.
+
+---
+
+## 2026-09-03T22:35:00Z — LUMI-G-Vollnachtraining Phase 1 — Ergebnisse der 4 Smoke-Tests + 1 neuer Infra-Fund — done/in_progress (siehe Details)
+
+**Job 21701726 (GLM-4.5-Air, Tier A Code/Governance) — COMPLETED, aber
+qualitativ mangelhaft.** Lud + generierte real (kein Fehler in .err), aber
+`parse_grounding_output()` fand nur bei 1 von 8 Kategorien (`security`)
+ein valides JSON-Array — 7/8 lieferten 0 brauchbare Zeilen trotz realer
+Text-Generierung (Rohtext vorhanden, `Processed prompts: 100%` mit realen
+Token-Raten). Verdacht: GLM-4.5-Air produziert vor dem eigentlichen
+JSON-Array zusätzlichen Text/Reasoning, wodurch der aktuelle gierige
+Regex (`_JSON_ARRAY_RE`) über zu viel Text hinweg matched und `json.loads()`
+fehlschlägt — nicht empirisch tiefer verifiziert. Skript-eigenes
+"PASSED"-Kriterium (`>0` Zeilen) technisch erfüllt, aber NICHT als
+verlässlichen Tier-A-Lehrer für Skalierung werten, ohne diesen Parsing-
+Bug vorher zu beheben (gleiche Bug-Klasse wie der bekannte `--mode loom`
+0-parsed-Bug).
+
+**Job 21701733 (Mistral-Large-Instruct-2411, Tier B Governance) —
+COMPLETED, 16/16 real geparst, sauber.** Wichtige Korrektur der
+Drei-Filter-Matrix aus der letzten Session: reale Checkpoint-Größe laut
+vLLM-Log ist **228,38 GiB, nicht ~490GB** wie ursprünglich abgeschätzt —
+die alte Zahl war falsch (ca. 2x zu hoch). Damit ist Mistral-Large
+tatsächlich ein SICHERER, kein enger Kandidat und könnte auch als Tier-A-
+Alternative behandelt werden.
+
+**Jobs 21701731 (Qwen3-235B-A22B) und 21701732 (DeepSeek-Coder-V2) —
+TIMEOUT nach vollen 2h, NEUER Infra-Fund (4. Constraint neben Architektur/
+Quant/VRAM-Größe):** beide lösten die vLLM-Warnung "Checkpoint size
+(437,9GiB bzw. 439,1GiB) exceeds 90% of available RAM (447,9GiB bzw.
+442,0GiB). Skipping auto-prefetch" aus, danach direktes Shard-für-Shard-
+Lesen von Lustre mit ~100-228s/Shard statt ~1-1,2s/Shard bei kleineren
+Checkpoints — kein OOM, reine Walltime-Erschöpfung (78% bzw. 89% geladen
+bei Abbruch). Root cause: Checkpoint-Größe relativ zu Node-**RAM** (nicht
+VRAM) bestimmt, ob vLLMs Lustre-Auto-Prefetch greift. **Fix:** beide Jobs
+mit `--time=04:00:00` (statt 2h) neu eingereicht — Jobs 21705837
+(Qwen3-235B) und 21705838 (DeepSeek-Coder-V2), noch laufend/pending.
+
+**Code-Änderung, bereits synchronisiert:** `--gpu-memory-utilization`
+CLI-Parameter in `scripts/generate_diverse_training_seeds.py` (siehe
+vorheriger Eintrag) — unverändert relevant, betrifft nicht den RAM-
+Prefetch-Fund.
+
+**Nächster Schritt:** Ergebnis von Job 21705837/21705838 abwarten
+(erwartete Ladezeit ~2,5-3h + Generierung); GLM-4.5-Air-Parsing-Bug ist
+noch offen, nicht behoben — dem Nutzer mitgeteilt, noch keine
+Entscheidung getroffen ob/wie reparieren.
+
+---
+
+## 2026-09-07T~12:00Z — Plan-Phase 2 — `--mode role_sft` implementiert, Smoke-Test eingereicht — in_progress
+
+Auf Nutzeranfrage ("mach mit Phase 2 weiter") begonnen. Format-Recherche
+zuerst (wichtige Korrektur einer früheren Plan-Annahme): direkte Lektüre
+von `scripts/train_expert_slm_pipeline.py` und `scripts/train_judge_lora.py`
+zeigt, dass **alle 10 Rollen inkl. Judge** über
+`train_expert_slm_pipeline.py` mit `dataset_text_field="text"` (ChatML)
+laufen — `train_judge_lora.py` (Alpaca instruction/input/output) ist ein
+separates, älteres Skript, das die aktuelle Produktionspipeline
+(`lumig_expert_ensemble_pipeline.slurm`) für Judge gar nicht aufruft. Die
+frühere Plan-Aussage "`messages` für Judge via `train_judge_lora.py`" war
+falsch und im Plan korrigiert.
+
+**Implementiert** (`scripts/generate_diverse_training_seeds.py`):
+- Rollen-Systemprompts für alle 10 Rollen als lokale Konstanten
+  (`_ROLE_SYSTEM_PROMPTS`) übernommen — bewusst kopiert statt importiert
+  aus `prompts.py`/`services/inference.py` (Container-Standalone-Lauf,
+  kein garantiertes `sys.path` auf den Repo-Root; gleiche Begründung wie
+  das bereits bestehende Muster in `curate_coder_expert_dataset.py`).
+- Neuer Modus `--mode role_sft --role <...> --model <Lehrer>`: Lehrer
+  generiert in einem Schritt ein realistisches (user_request,
+  assistant_response)-Paar im Charakter der Rolle, Ausgabe als
+  ChatML-`"text"` (`render_chatml()`).
+- **Parser-Robustheit verallgemeinert:** der gierige `_JSON_ARRAY_RE`/
+  `_JSON_OBJECT_RE`-Regex-Ansatz (Bug-Klasse von GLM-4.5-Air, siehe vorigen
+  Eintrag) durch einen gemeinsamen `_find_balanced_spans()`-Scanner ersetzt
+  (parametrisiert über Klammer-Typ), verwendet jetzt sowohl für
+  `parse_grounding_output` als auch für das bisher ungefixte
+  `parse_loom_output` (gleiche Bug-Klasse, präventiv mitbehoben) und den
+  neuen `parse_role_sft_output`.
+- 6 neue Tests (`TestParseRoleSftOutput`, `TestRenderChatml`) +
+  alle 14 bestehenden weiter grün: `pytest
+  tests/test_generate_diverse_training_seeds.py -v` → **20 passed**.
+- Lokal + remote syntaxgeprüft, auf LUMI-G synchronisiert.
+
+**Smoke-Test Job 21794616** (`slurm/lumig_job12_role_sft_smoketest.slurm`,
+`--role coder`, GLM-4.5-Air, count=5) eingereicht, PENDING — bewusst mit
+einem Tier-A-Modell (schnelles Laden), um role_sft selbst zu isolieren vom
+bereits verstandenen RAM/Lustre-Walltime-Thema der Tier-B-Modelle.
+
+**Nutzerhinweis zur Ziel-Hardware (M60-Server, 12 GPUs, CUDA-12-Ollama-Fork)
+im Plan dokumentiert** (siehe Plan-Datei, neuer Abschnitt vor Phase 4):
+zwei echte Konsequenzen aufgenommen — Trainings-`--max-seq-len` (aktuell
+4096) vs. Deployment-`num_ctx` (32768)-Lücke, und eine noch fehlende
+Verifikation, dass die exportierte GGUF-Datei auf der echten M60-Hardware
+tatsächlich lädt (nicht nur der LUMI-G-seitige Export selbst).
+
+**Nächster Schritt:** Ergebnis von Job 21794616 abwarten; danach
+Skalierungsentscheidung (Volumen/Budget pro Rolle) mit dem Nutzer
+besprechen, bevor die Phase-2-Shard-Jobs für alle 10 Rollen eingereicht
+werden.
+
+Geänderte/neue Dateien (noch nicht committet):
+`scripts/generate_diverse_training_seeds.py`,
+`tests/test_generate_diverse_training_seeds.py`,
+`slurm/lumig_job12_role_sft_smoketest.slurm`.
+
+---
+
+## 2026-09-07T~19:25Z — role_sft-Smoke-Test FAILED (0/5) — echte Root-Cause gefunden, JSON durch Trennzeichen-Format ersetzt
+
+Job 21794616 (`role_sft`/coder, GLM-4.5-Air): Laden lief einwandfrei, aber
+0/5 geparst. Kein Debug-Logging vorhanden — als ersten Schritt
+`_log_parse_failure()` ergänzt (Rohtext bei Parse-Fehler in
+`<output>.debug.log`, bis 4000 Zeichen/Eintrag), Re-Test (Job 21798250)
+eingereicht — ebenfalls FAILED (0/5), aber diesmal mit echtem Debug-Log.
+
+**Root Cause gefunden** (Debug-Log gelesen): Das Modell generierte
+durchweg REALEN, thematisch korrekten Rust-Code — aber json.loads()
+schlug bei allen 5 Versuchen fehl, weil mehrzeiliger Code mit
+Anführungszeichen/Zeilenumbrüchen/Backslashes nicht zuverlässig als
+JSON-String escaped wurde (z.B. bei einem Versuch sogar ein zusätzlicher,
+schlüsselloser String im Objekt — grundlegend kaputtes JSON, nicht nur
+Escaping). **Das erklärt vermutlich auch den seit Wochen bekannten,
+nie gelösten `--mode loom` 0-parsed-Bug** — exakt dieselbe Bug-Klasse
+(volle Rust-Quelldateien in JSON-Strings), vorher fälschlich auf
+`--max-tokens` zurückgeführt.
+
+**Fix (Format-Wechsel, nicht nur Regex-Fix):** `_LOOM_GENERATION_PROMPT`
+und `_ROLE_SFT_GENERATION_TEMPLATE` fragen jetzt ein
+Trennzeichen-Format ab (`===FIELD_NAME===\n<Inhalt>\n...===END===`) statt
+JSON — kein Escaping mehr nötig. Neuer generischer Parser
+`_parse_delimited_fields()` ersetzt `parse_loom_output`/
+`parse_role_sft_output`s bisherige JSON-Logik vollständig; die JSON-
+basierte `_find_bracket_balanced_objects` ist jetzt tot und entfernt
+(`_find_bracket_balanced_arrays` bleibt, `parse_grounding_output`
+unverändert — dort nur kurze Ein-Zeilen-Strings ohne Code, bereits
+zweimal bei 24/24 bestätigt, kein Escaping-Risiko).
+
+**Tests komplett neu geschrieben** für das neue Format (inkl. Regressionstest
+mit echtem mehrzeiligem Code inkl. Anführungszeichen/Klammern, der unter
+JSON garantiert gebrochen wäre) — alle 20 Tests grün.
+
+**Re-Verifikation eingereicht (beide noch PENDING):**
+- Job 21798692: `role_sft`/coder, GLM-4.5-Air, neues Format.
+- Job 21798693: bestehender `lumig_job5_enrichment_smoketest.slurm`
+  (Loom+Grounding, Qwen3.5-35B-A3B) erneut eingereicht, um zu verifizieren,
+  dass der Fix auch den alten Loom-Bug tatsächlich behebt — nicht nur
+  angenommen.
+
+Geänderte Dateien (noch nicht committet, zusätzlich zu oben):
+`scripts/generate_diverse_training_seeds.py` (Format-Wechsel + Debug-Log),
+`tests/test_generate_diverse_training_seeds.py` (Tests neu geschrieben).
+
+---
+
+## 2026-09-07T~20:35Z — Format-Fix real verifiziert, ZWEITER echter Bug beim Gegenlesen gefunden + gefixt
+
+**Re-Tests (Jobs 21798692 role_sft/coder, 21798693 loom+grounding) beide
+COMPLETED, Format-Fix bestätigt:**
+- `role_sft`/coder: **4/5 geparst** (vorher 0/5). Stichprobe: vollständige,
+  reale Linux-Kernel-MPMC-Queue-Implementierung mit korrekter
+  Memory-Ordering-Diskussion (smp_store_release/smp_load_acquire) —
+  inhaltlich hochwertig, nicht nur formal valide.
+- `--mode loom`: **2/2 geparst** (vorher 0/2 — der seit Wochen bekannte,
+  nie gelöste Bug ist behoben).
+
+**Beim Gegenlesen der eigentlichen Inhalte (nicht nur Zeilenzahl) fiel
+auf: 1 der 2 Loom-Einträge war Müll** — alle drei Felder
+(`scenario_name`, `broken_source`, `fixed_source`) enthielten nur den
+4-Zeichen-String `` `, ` ``. Der Parser akzeptierte das, weil er nur auf
+"nicht-leer" prüfte, nicht auf plausible Mindestlänge. Loom selbst hätte
+das später über die reale `rust-loom-sandbox`-Verifikation
+(Compile-Fehler) noch abgefangen — `role_sft` hat aber KEINE
+automatisierte Nachverifikation, würde also stillschweigend Müll-Zeilen
+in echte Trainingsdaten schreiben.
+
+**Fix:** `_MIN_SOURCE_LEN = 50` (loom `broken_source`/`fixed_source`),
+`_MIN_RESPONSE_LEN = 20` (role_sft `assistant_response`) — Mindestlängen-
+Guards in `parse_loom_output`/`parse_role_sft_output`. 2 neue
+Regressionstests (inkl. exaktem Reproduktionsfall `` `, ` ``). Zusätzlich
+`_log_parse_failure()`-Debug-Logging jetzt konsistent in allen 3 Modi
+verdrahtet (vorher nur `role_sft`).
+
+**24 Tests grün** (`pytest tests/test_generate_diverse_training_seeds.py -v`).
+Lokal+remote syntaxgeprüft, auf LUMI-G synchronisiert. Finaler
+End-to-End-Re-Test **Job 21799570** eingereicht (PENDING) — verifiziert,
+dass der Müll-Eintrag jetzt tatsächlich rausgefiltert wird, nicht nur per
+Unit-Test angenommen.
+
+Notes: Dieser Fund zeigt genau die Disziplin, die der Plan verlangt —
+Zeilenzahl-Erfolg allein ("PASSED") war beim ersten Loom-Retest bereits
+falsch-positiv beruhigend; erst das Gegenlesen der echten Inhalte deckte
+den zweiten Bug auf.
+
+---
+
+## 2026-09-03T23:05:00Z — GLM-4.5-Air-Parsing-Bug gefixt (root-caused + Regressionstests) — done, Re-Verifikation läuft
+
+Auf Nutzeranfrage ("Fix den GLM-4.5-Air-Parsing-Bug jetzt") root-caused und
+behoben, ohne neuen GPU-Job zur reinen Diagnose (Fix per Code-Lektüre +
+lokalen synthetischen Repro-Fällen entwickelt, dann mit einem einzigen
+günstigen Re-Smoke-Test verifiziert statt zu raten).
+
+**Root Cause:** `_JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)` ist
+gierig — matched vom ERSTEN `[` bis zum LETZTEN `]` im gesamten Text. Wenn
+das Modell vor dem eigentlichen Antwort-Array eigene Klammerzeichen in
+Reasoning/Präambel-Text produziert (z.B. "Let me think [step 1] ... here's
+the array: [...]"), spannt der Regex über beides hinweg zu einem einzigen,
+nicht parsebaren String — `json.loads()` schlägt fehl, 0 Ergebnisse trotz
+realer, thematisch passender Generierung. Erklärt exakt das beobachtete
+7/8-Kategorien-Muster bei GLM-4.5-Air (job 21701726).
+
+**Fix** (`scripts/generate_diverse_training_seeds.py`): neue
+`_find_bracket_balanced_arrays()` — klammertiefen- und
+String-Literal-bewusster Scanner (behandelt Escapes, ignoriert Klammern
+innerhalb von Anführungszeichen), findet ALLE Top-Level-`[...]`-Spans statt
+nur einen gierigen. `parse_grounding_output()` probiert jeden Kandidaten,
+behält den mit den meisten validen String-Items (Unentschieden zugunsten
+des späteren Kandidaten — eine echte finale Antwort folgt öfter auf
+Reasoning als ihm vorauszugehen). Tote `_JSON_ARRAY_RE`-Konstante entfernt.
+
+**Verifikation:**
+- 3 neue Regressionstests in `tests/test_generate_diverse_training_seeds.py`
+  (Präambel-mit-Klammern — exakter GLM-Fall, Decoy-Array + Streu-Klammer,
+  Klammer innerhalb eines String-Werts) + alle 11 bestehenden Tests weiter
+  grün: `pytest tests/test_generate_diverse_training_seeds.py -v` → 14
+  passed.
+- Fix lokal+remote syntaxgeprüft, auf LUMI-G synchronisiert.
+- Alte, größtenteils fehlgeschlagene Output-Datei
+  (`glm45air_grounding_smoketest.jsonl`, nur 3/24 brauchbar) beiseite
+  gesichert (`.pre_parserfix_bak`), damit der Re-Test sauber neu schreibt.
+- **Re-Smoke-Test Job 21705930** (GLM-4.5-Air, gleiches Skript wie job8)
+  eingereicht, noch PENDING — Ergebnis noch nicht verifiziert, hier
+  nachtragen sobald abgeschlossen.
+
+Geänderte Dateien (noch nicht committet):
+`scripts/generate_diverse_training_seeds.py`,
+`tests/test_generate_diverse_training_seeds.py`.
+
+---
+
+## 2026-09-07T~10:00Z — LUMI-G-Vollnachtraining Phase 1 — abgeschlossen, alle 5 Lehrer real verifiziert
+
+Alle 3 zuvor offenen Jobs liefen (4 Tage zuvor bereits COMPLETED, erst
+jetzt auf Nutzeranfrage "Wie ist der Status?" ausgewertet):
+
+- **Job 21705930 (GLM-4.5-Air, Parser-Fix-Retest): 24/24**, vollständig
+  sauber — Fix bestätigt (vorher 3/24). Stichprobe (4 Zeilen) inhaltlich
+  kohärent, alle 8 Kategorien vertreten inkl. `security`.
+- **Job 21705837 (Qwen3-235B-A22B, 4h-Neuversuch): 14/16.** Checkpoint-Load
+  diesmal abgeschlossen (RAM-Prefetch-Fund vom 03.09. bestätigt: 4h reichten).
+  7/8 Kategorien perfekt (2/2), nur `security` 0/2.
+- **Job 21705838 (DeepSeek-Coder-V2, 4h-Neuversuch): 14/16.** Identisches
+  Muster wie Qwen3-235B — 7/8 perfekt, nur `security` 0/2.
+
+**Neuer, kleiner Befund:** beide Tier-B-"eng"-Modelle (Qwen3-235B,
+DeepSeek-Coder-V2) scheitern konsistent an genau der `security`-Kategorie
+(0/2 bei beiden, identisches Muster) — vermutlich Content-Moderation/
+Refusal-Verhalten auf den Meta-Prompt ("generiere Beispielanfragen zu
+Sicherheitsprüfung/Schwachstellenbewertung"), nicht der bereits gefixte
+Parser-Bug (der beträfe alle Kategorien gleichermaßen, nicht selektiv).
+Nicht weiter untersucht (Rohtext bei Parse-Fehler wird aktuell nicht
+geloggt) — kein Blocker für Phase 1, aber als offener Punkt für Phase 2
+vermerkt (Meta-Prompt-Formulierung für die `security`-Kategorie ggf.
+präzisieren, oder Rohtext-Debug-Logging ergänzen).
+
+**Phase 1 Gesamtergebnis — alle 5 geplanten Lehrer real bestätigt:**
+| Lehrer | Tier | Cluster | Ergebnis |
+|---|---|---|---|
+| Qwen3-Next-80B-A3B-Instruct | A | Reasoning (Planner/precision/graphrag/research/omni/judge) | 24/24 |
+| GLM-4.5-Air | A | Code/Governance (coder/security/datainfra/governance) | 24/24 (nach Fix) |
+| Mistral-Large-Instruct-2411 | B | Governance-Boost | 16/16, zudem Größenkorrektur 228GB statt ~490GB |
+| Qwen3-235B-A22B-Instruct-2507 | B | Reasoning-Boost | 14/16 |
+| DeepSeek-Coder-V2-Instruct | B | Coder-Boost | 14/16 |
+
+Plan-Phase 1 (`~/.claude/plans/zazzy-beaming-koala.md`) ist damit
+abgeschlossen. **Nächster Schritt (noch nicht begonnen):** Plan-Phase 2
+(Datengenerierung-Skalierung: `--mode role_sft` in
+`generate_diverse_training_seeds.py` implementieren, Volumen aus
+gemessenem Durchsatz zurückrechnen) — noch nicht beim Nutzer angefragt.

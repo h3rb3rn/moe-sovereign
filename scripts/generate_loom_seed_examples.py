@@ -248,42 +248,104 @@ def _record(request_id: str, source: str, result: Dict[str, Any], attempt: int, 
     }
 
 
+def _verify_pair(client: httpx.Client, sandbox_url: str, request_id: str, broken_source: str, fixed_source: str) -> int:
+    """Runs a broken/fixed source pair through the real sandbox and prints
+    any determinate JSONL record(s) to stdout. Returns the number of records
+    written (0, 1, or 2)."""
+    written = 0
+    t0 = time.monotonic()
+    broken_result = _call_sandbox(client, sandbox_url, broken_source)
+    print(f"  broken: compiles={broken_result.get('compiles')} passed={broken_result.get('passed')} "
+          f"({time.monotonic() - t0:.1f}s)", file=sys.stderr)
+    record = _record(request_id, broken_source, broken_result, attempt=1, max_attempts=2)
+    if record is not None:
+        print(json.dumps(record, ensure_ascii=False))
+        written += 1
+
+    t0 = time.monotonic()
+    fixed_result = _call_sandbox(client, sandbox_url, fixed_source)
+    print(f"  fixed:  compiles={fixed_result.get('compiles')} passed={fixed_result.get('passed')} "
+          f"({time.monotonic() - t0:.1f}s)", file=sys.stderr)
+    record = _record(request_id, fixed_source, fixed_result, attempt=2, max_attempts=2)
+    if record is not None:
+        print(json.dumps(record, ensure_ascii=False))
+        written += 1
+    return written
+
+
+def _load_llm_scenarios(path: str) -> List[Tuple[str, str, str]]:
+    """Reads the {scenario_name, broken_source, fixed_source} JSONL produced
+    by scripts/generate_diverse_training_seeds.py --mode loom. Malformed
+    lines are skipped (logged to stderr), never raise -- a single bad
+    generation must not abort verification of the rest of the file."""
+    scenarios = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line_no, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                scenarios.append((obj["scenario_name"], obj["broken_source"], obj["fixed_source"]))
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(f"  skipping malformed line {line_no} in {path}: {e}", file=sys.stderr)
+    return scenarios
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sandbox-url", default=DEFAULT_SANDBOX_URL)
-    parser.add_argument("--count", type=int, default=3, help="variants per archetype (2 sandbox calls each: broken + fixed)")
+    parser.add_argument("--count", type=int, default=3, help="variants per hand-written archetype (2 sandbox calls each: broken + fixed)")
+    parser.add_argument("--llm-scenarios-file", default=None,
+                         help="additionally verify DeepSeek-V4-Flash-generated scenario pairs from "
+                              "scripts/generate_diverse_training_seeds.py --mode loom output")
     args = parser.parse_args()
 
-    total_pairs = len(_ARCHETYPES) * args.count
+    total_archetype_pairs = len(_ARCHETYPES) * args.count
+    llm_scenarios = _load_llm_scenarios(args.llm_scenarios_file) if args.llm_scenarios_file else []
+    total_pairs = total_archetype_pairs + len(llm_scenarios)
     written = 0
+    idx = 0
     with httpx.Client(timeout=_HTTP_TIMEOUT_S) as client:
-        for idx, (archetype_id, params) in enumerate(_iter_variants(args.count), start=1):
+        skipped = 0
+        for archetype_id, params in _iter_variants(args.count):
+            idx += 1
             fn = _ARCHETYPES[archetype_id][0]
             request_id = f"loom-seed-{archetype_id}-{params['test_name']}-{uuid.uuid4().hex[:8]}"
             print(f"[{idx}/{total_pairs}] {request_id} ...", file=sys.stderr)
+            try:
+                written += _verify_pair(client, args.sandbox_url, request_id, fn(params, broken=True), fn(params, broken=False))
+            except httpx.HTTPError as e:
+                # A single pathological candidate (e.g. a retry/CAS loop that
+                # sends Loom's state-space exploration past the sandbox's own
+                # 180s timeout without cleanly returning timed_out=true, or
+                # actually wedges that container instance) must not abort
+                # verification of every other candidate in the file. Observed
+                # live, 2026-09-09: one Kimi-K3-generated pair ("ticket_lock_
+                # payload_handoff") hung the sandbox container hard enough
+                # that even a trivial unrelated request then also timed out
+                # until the container was restarted.
+                print(f"  SKIPPED after sandbox error: {e!r} -- this candidate is likely "
+                      f"pathological (unbounded state-space exploration or a wedged "
+                      f"container); continuing with the rest.", file=sys.stderr)
+                skipped += 1
 
-            broken_source = fn(params, broken=True)
-            fixed_source = fn(params, broken=False)
+        for scenario_name, broken_source, fixed_source in llm_scenarios:
+            idx += 1
+            request_id = f"loom-llm-{scenario_name}-{uuid.uuid4().hex[:8]}"
+            print(f"[{idx}/{total_pairs}] {request_id} (LLM-generated: {scenario_name}) ...", file=sys.stderr)
+            try:
+                written += _verify_pair(client, args.sandbox_url, request_id, broken_source, fixed_source)
+            except httpx.HTTPError as e:
+                print(f"  SKIPPED after sandbox error: {e!r} -- this candidate is likely "
+                      f"pathological (unbounded state-space exploration or a wedged "
+                      f"container); continuing with the rest.", file=sys.stderr)
+                skipped += 1
 
-            t0 = time.monotonic()
-            broken_result = _call_sandbox(client, args.sandbox_url, broken_source)
-            print(f"  broken: compiles={broken_result.get('compiles')} passed={broken_result.get('passed')} "
-                  f"({time.monotonic() - t0:.1f}s)", file=sys.stderr)
-            record = _record(request_id, broken_source, broken_result, attempt=1, max_attempts=2)
-            if record is not None:
-                print(json.dumps(record, ensure_ascii=False))
-                written += 1
-
-            t0 = time.monotonic()
-            fixed_result = _call_sandbox(client, args.sandbox_url, fixed_source)
-            print(f"  fixed:  compiles={fixed_result.get('compiles')} passed={fixed_result.get('passed')} "
-                  f"({time.monotonic() - t0:.1f}s)", file=sys.stderr)
-            record = _record(request_id, fixed_source, fixed_result, attempt=2, max_attempts=2)
-            if record is not None:
-                print(json.dumps(record, ensure_ascii=False))
-                written += 1
-
-    print(f"Done: {written} determinate JSONL records written from {total_pairs} archetype pairs.", file=sys.stderr)
+    print(f"Done: {written} determinate JSONL records written from {total_pairs} pairs "
+          f"({total_archetype_pairs} hand-written archetype variants + {len(llm_scenarios)} LLM-generated), "
+          f"{skipped} pair(s) skipped after a sandbox error.",
+          file=sys.stderr)
     return 0
 
 
